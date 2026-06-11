@@ -1,36 +1,40 @@
 import type { Component } from '@earendil-works/pi-tui';
 import { Spacer, Text, visibleWidth } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
+import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { CronTranscriptData } from '#/tui/types';
 
 export class CronMessageComponent implements Component {
   private readonly spacer = new Spacer(1);
+  private readonly data: CronTranscriptData;
   private readonly title: string;
   private readonly detail: string | undefined;
-  private readonly titleColor: string;
   private readonly promptText: Text;
+  private readonly prompt: string;
 
   constructor(
     prompt: string,
     data: CronTranscriptData,
-    private readonly colors: ColorPalette,
   ) {
     const missed = data.missedCount !== undefined;
+    this.data = data;
     this.title = missed ? 'Missed scheduled reminders' : 'Scheduled reminder fired';
     this.detail = cronDetail(data);
-    this.titleColor = data.stale === true || missed ? colors.warning : colors.accent;
-    this.promptText = new Text(chalk.hex(colors.text)(prompt), 0, 0);
+    this.prompt = prompt;
+    this.promptText = new Text(currentTheme.fg('text', prompt), 0, 0);
   }
 
   invalidate(): void {
+    this.promptText.setText(currentTheme.fg('text', this.prompt));
     this.promptText.invalidate();
   }
 
   render(width: number): string[] {
-    const bullet = chalk.hex(this.titleColor).bold(STATUS_BULLET);
+    const missed = this.data.missedCount !== undefined;
+    const titleToken: keyof ColorPalette = this.data.stale === true || missed ? 'warning' : 'accent';
+    const bullet = currentTheme.boldFg(titleToken, STATUS_BULLET);
     const bulletWidth = visibleWidth(bullet);
     const contentWidth = Math.max(1, width - bulletWidth);
     const lines: string[] = [];
@@ -39,11 +43,11 @@ export class CronMessageComponent implements Component {
       lines.push(line);
     }
 
-    const title = chalk.hex(this.titleColor).bold(this.title);
+    const title = currentTheme.boldFg(titleToken, this.title);
     lines.push(`${bullet}${title}`);
 
     if (this.detail !== undefined) {
-      lines.push(`${' '.repeat(bulletWidth)}${chalk.hex(this.colors.textDim)(this.detail)}`);
+      lines.push(`${' '.repeat(bulletWidth)}${currentTheme.fg('textDim', this.detail)}`);
     }
 
     const promptLines = this.promptText.render(contentWidth);

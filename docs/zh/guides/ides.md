@@ -62,6 +62,28 @@ JetBrains 系列 IDE（IntelliJ IDEA、PyCharm、WebStorm 等）通过 AI 聊天
 
 JetBrains 这一侧对 `command` 字段处理较严格——务必填写**绝对路径**，可以在终端执行 `which kimi` 拿到。保存后，AI 聊天的 Agent 选择器里就会出现 `Kimi Code CLI`。
 
+## 在 Paseo 中使用
+
+[Paseo](https://paseo.sh/) 是一个自托管的编排器，能在桌面、网页和手机上统一启动并接管各类 agent 的 CLI。它和 IDE 一样，通过 ACP 接入 Kimi Code CLI。
+
+在 Paseo 内置的 ACP provider 目录里选择 **Kimi Code CLI**，或在 `~/.paseo/config.json` 里添加一个自定义 provider：
+
+```json
+{
+  "agents": {
+    "providers": {
+      "kimi": {
+        "extends": "acp",
+        "label": "Kimi Code CLI",
+        "command": ["kimi", "acp"]
+      }
+    }
+  }
+}
+```
+
+Paseo 的通用 ACP 适配层不会帮你走登录流程，所以请先完成终端登录（见[前置准备](#前置准备)）——否则创建会话会以 `Authentication required` 失败。
+
 ## 故障排查
 
 - **会话立刻被中断 / IDE 提示 "agent exited"**：通常是 `command` 路径不对或 kimi 没登录。先在终端跑一次 `kimi acp` 验证：如果阻塞等待标准输入则说明 CLI 本身没问题，问题在 IDE 配置；如果立刻报错则按报错提示处理（多数是没 `/login`）。

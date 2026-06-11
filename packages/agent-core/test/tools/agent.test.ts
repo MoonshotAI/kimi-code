@@ -92,33 +92,21 @@ describe('AgentTool', () => {
     expect(properties['run_in_background']?.description).toContain('false');
   });
 
-  it('does not mention background-only timeout details in the timeout description', () => {
+  it('does not expose a timeout parameter in the JSON schema', () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
     const tool = new AgentTool(host);
-    const properties = (
-      tool.parameters as {
-        properties: Record<string, { description?: string }>;
-      }
-    ).properties;
+    const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
 
-    const timeoutDescription = properties['timeout']?.description ?? '';
-    // #5: the background default-timeout note is kept out of the static
-    // describe — it would mislead in the background-disabled variant
-    expect(timeoutDescription).not.toContain('Background');
-    expect(timeoutDescription).not.toContain('15min');
+    expect(properties).not.toHaveProperty('timeout');
   });
 
-  it('explains background timeout fallback in the background-enabled description without claiming a 15min default', () => {
+  it('explains the fixed background subagent timeout', () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
     const tool = new AgentTool(host, createBackgroundManager().manager);
 
-    // #5: the background-enabled variant describes the real timeout fallback —
-    // an omitted timeout falls back to the operator-configured background
-    // timeout, or no time limit when the operator configured none — and must
-    // never claim an incorrect "15min default".
-    expect(tool.description).toContain('operator-configured background timeout');
-    expect(tool.description).toContain('no time limit');
-    expect(tool.description).not.toContain('15min');
+    expect(tool.description).toContain('fixed 30-minute timeout');
+    expect(tool.description).not.toContain('operator-configured background timeout');
+    expect(tool.description).not.toContain('no time limit');
   });
 
   it('does not expose a model parameter in the JSON schema', () => {
@@ -219,13 +207,16 @@ describe('AgentTool', () => {
       }),
     );
 
-    expect(host.spawn).toHaveBeenCalledWith('explore', {
-      parentToolCallId: 'call_agent',
-      prompt: 'Investigate',
-      description: 'Find cause',
-      runInBackground: false,
-      signal,
-    });
+    expect(host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileName: 'explore',
+        parentToolCallId: 'call_agent',
+        prompt: 'Investigate',
+        description: 'Find cause',
+        runInBackground: false,
+        signal: expect.any(AbortSignal),
+      }),
+    );
     expect(result.output).toContain('agent_id: agent-child');
     expect(result.output).toContain('actual_subagent_type: explore');
     expect(result.output).toContain('child result');
@@ -251,9 +242,9 @@ describe('AgentTool', () => {
     );
 
     expect(host.spawn).toHaveBeenCalledWith(
-      'coder',
       expect.objectContaining({
         parentToolCallId: 'call_agent',
+        profileName: 'coder',
       }),
     );
   });
@@ -279,13 +270,16 @@ describe('AgentTool', () => {
     );
 
     expect(host.spawn).not.toHaveBeenCalled();
-    expect(host.resume).toHaveBeenCalledWith('agent-existing', {
-      parentToolCallId: 'call_agent',
-      prompt: 'Continue',
-      description: 'Continue work',
-      runInBackground: false,
-      signal,
-    });
+    expect(host.resume).toHaveBeenCalledWith(
+      'agent-existing',
+      expect.objectContaining({
+        parentToolCallId: 'call_agent',
+        prompt: 'Continue',
+        description: 'Continue work',
+        runInBackground: false,
+        signal: expect.any(AbortSignal),
+      }),
+    );
     expect(result.output).toContain('agent_id: agent-existing');
     expect(result.output).toContain('actual_subagent_type: explore');
     expect(result.output).toContain('resumed result');
@@ -375,13 +369,16 @@ describe('AgentTool', () => {
     );
 
     expect(host.spawn).not.toHaveBeenCalled();
-    expect(host.resume).toHaveBeenCalledWith('agent-existing', {
-      parentToolCallId: 'call_agent',
-      prompt: 'Continue',
-      description: 'Continue work',
-      runInBackground: false,
-      signal,
-    });
+    expect(host.resume).toHaveBeenCalledWith(
+      'agent-existing',
+      expect.objectContaining({
+        parentToolCallId: 'call_agent',
+        prompt: 'Continue',
+        description: 'Continue work',
+        runInBackground: false,
+        signal: expect.any(AbortSignal),
+      }),
+    );
     expect(result.output).toContain('actual_subagent_type: explore');
   });
 
@@ -445,6 +442,7 @@ describe('AgentTool', () => {
     expect(background.getTask(taskId!)).toMatchObject({
       status: 'running',
       description: 'Find cause',
+      timeoutMs: 30 * 60 * 1000,
     });
   });
 
@@ -671,17 +669,25 @@ describe('AgentTool', () => {
   it('reports a deliberate user interruption when a foreground subagent is cancelled by the user', async () => {
     const controller = new AbortController();
     const host = mockSubagentHost({
-      spawn: vi.fn((_profileName: string, options: { signal: AbortSignal }) =>
+      spawn: vi.fn(
+        (
+          profileNameOrOptions: string | { readonly signal: AbortSignal },
+          legacyOptions?: { readonly signal: AbortSignal },
+        ) =>
         Promise.resolve({
           agentId: 'agent-child',
           profileName: 'coder',
           resumed: false,
           completion: new Promise<{ result: string }>((_resolve, reject) => {
+            const signal =
+              typeof profileNameOrOptions === 'string'
+                ? legacyOptions!.signal
+                : profileNameOrOptions.signal;
             const onAbort = (): void => {
-              reject(options.signal.reason);
+              reject(signal.reason);
             };
-            if (options.signal.aborted) onAbort();
-            else options.signal.addEventListener('abort', onAbort, { once: true });
+            if (signal.aborted) onAbort();
+            else signal.addEventListener('abort', onAbort, { once: true });
           }),
         }),
       ),
@@ -713,16 +719,24 @@ describe('AgentTool', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       const host = mockSubagentHost({
-        spawn: vi.fn((_profileName: string, options: { signal: AbortSignal }) =>
+        spawn: vi.fn(
+          (
+            profileNameOrOptions: string | { readonly signal: AbortSignal },
+            legacyOptions?: { readonly signal: AbortSignal },
+          ) =>
           Promise.resolve({
             agentId: 'agent-child',
             profileName: 'coder',
             resumed: false,
             completion: new Promise<{ result: string }>((_resolve, reject) => {
-              options.signal.addEventListener(
+              const signal =
+                typeof profileNameOrOptions === 'string'
+                  ? legacyOptions!.signal
+                  : profileNameOrOptions.signal;
+              signal.addEventListener(
                 'abort',
                 () => {
-                  reject(options.signal.reason);
+                  reject(signal.reason);
                 },
                 { once: true },
               );
@@ -736,17 +750,20 @@ describe('AgentTool', () => {
         context({
           prompt: 'Investigate',
           description: 'Find cause',
-          timeout: 30,
         }),
       );
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
       const result = await resultPromise;
 
       expect(result).toMatchObject({ isError: true });
       expect(result.output).toContain('agent_id: agent-child');
       expect(result.output).toContain('actual_subagent_type: coder');
       expect(result.output).toContain('status: failed');
-      expect(result.output).toContain('subagent error: Agent timed out after 30s.');
+      expect(result.output).toContain('subagent error: Agent timed out after 30 minutes.');
+      expect(result.output).toContain('resume_hint:');
+      expect(result.output).toContain('Agent(resume="agent-child", prompt="continue")');
+      expect(result.output).toContain('do not set subagent_type');
+      expect(result.output).toContain('retains its prior context');
     } finally {
       vi.useRealTimers();
     }

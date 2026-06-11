@@ -12,25 +12,6 @@ import { isHideOutputMarker } from './marker';
  * Convert an array of ACP {@link ContentBlock}s into the SDK's
  * {@link PromptPart} array.
  *
- * Phase 9.1 lifts `image` blocks into `image_url` parts: per the ACP
- * schema (`ImageContent` at types.gen.d.ts:1905-1920) the `data` field
- * is a raw base64-encoded payload accompanied by a required `mimeType`,
- * so the data URL is constructed at the adapter boundary as
- * `data:<mimeType>;base64,<data>`. We treat `data` as opaque base64 —
- * if a caller pre-wraps it as a `data:` URL the prefix detection isn't
- * worth the complexity and that string lands inside another `data:`
- * envelope (documented limitation; ACP spec says base64, so callers
- * conforming to spec are unaffected).
- *
- * Phase 9.2 inlines `resource_link` and `resource` (EmbeddedResource)
- * blocks as XML-flavoured text the model can read directly:
- *   - `resource_link` → `<resource_link uri="..." name="..." />`
- *   - `resource` with TextResourceContents → `<resource uri="...">text</resource>`
- *   - `resource` with BlobResourceContents → dropped with a warn
- *     (per PLAN D3: "blob 忽略并 warn").
- * Attribute values are escaped via {@link escapeXmlAttr}.
- *
- * `audio` blocks remain dropped with a warn.
  */
 export function acpBlocksToPromptParts(
   blocks: readonly ContentBlock[],
@@ -53,6 +34,11 @@ export function acpBlocksToPromptParts(
       continue;
     }
     if (block.type === 'resource_link') {
+      const fileRef = fileLinkToTextRef(block.uri);
+      if (fileRef !== null) {
+        out.push({ type: 'text', text: fileRef });
+        continue;
+      }
       const text = `<resource_link uri="${escapeXmlAttr(
         block.uri,
       )}" name="${escapeXmlAttr(block.name)}" />`;
@@ -101,28 +87,51 @@ function escapeXmlAttr(s: string): string {
     .replace(/'/g, '&apos;');
 }
 
-/**
- * Convert an SDK {@link ToolInputDisplay} block into an ACP
- * {@link ToolCallContent} entry, when (and only when) the block carries
- * structured before/after text suitable for a diff view or a Phase 13.2
- * plan-review markdown body.
- *
- * Mapped variants:
- *  - `kind: 'diff'` — always rendered (both `before` and `after` are
- *    required on the schema).
- *  - `kind: 'file_io'` with **both** `before` and `after` populated —
- *    matches the Edit tool's display payload; rendered as a diff too.
- *  - `kind: 'plan_review'` — rendered as a text block via
- *    {@link composePlanContent} so the ACP client surfaces the full plan
- *    markdown (and the optional `Plan saved to:` path prefix) at the top
- *    of the approval prompt. Empty plans defensively return `null` —
- *    the policy already guarantees non-empty, but the adapter must not
- *    trust that to avoid emitting a blank content entry.
- *
- * All other display kinds (command, search, url_fetch, agent_call,
- * skill_call, todo_list, …) return `null` and the caller drops them.
- * Phase 7 will add a `terminal` variant; Phase 9 may add image/resource.
- */
+function fileLinkToTextRef(uri: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'file:') return null;
+
+  let path: string;
+  try {
+    path = decodeURIComponent(url.pathname);
+  } catch {
+    return null;
+  }
+
+  // `file://server/share/a.ts` is the URI form of a Windows UNC path
+  // (`\\server\share\a.ts`). `URL.pathname` only carries `/share/a.ts`; the
+  // host is part of the file location, so keep it in the projected text ref.
+  // `file://localhost/...` is still treated as local. Host is lower-cased so
+  // `file://Server/...` and `file://server/...` collapse to one ref.
+  const host = url.hostname.toLowerCase();
+  const isUncHost = host !== '' && host !== 'localhost';
+
+  // Drive-letter normalization is local-only: a UNC URI never legitimately
+  // carries `/C:/...` in its path, so we leave such inputs untouched rather
+  // than stripping a leading slash that would alter the UNC payload.
+  if (!isUncHost && /^\/[A-Za-z]:/.test(path)) path = path.slice(1);
+
+  if (isUncHost) {
+    path = `//${host}${path.startsWith('/') ? path : `/${path}`}`;
+  }
+
+  const range = parseLineRange(url.hash) ?? parseLineRange(url.search);
+  return range !== null ? `${path}:${range}` : path;
+}
+
+function parseLineRange(suffix: string): string | null {
+  if (!suffix) return null;
+  const body = suffix.replace(/^[#?]/, '');
+  const match = /^(?:lines?=|L)(\d+)(?:[-:]L?(\d+))?/i.exec(body);
+  if (!match) return null;
+  return match[2] !== undefined ? `${match[1]}-${match[2]}` : match[1]!;
+}
+
 export function displayBlockToAcpContent(
   block: ToolInputDisplay,
 ): ToolCallContent | null {

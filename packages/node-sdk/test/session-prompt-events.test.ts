@@ -250,7 +250,7 @@ describe('Session.prompt events', () => {
     }
   });
 
-  it('runs init through generateAgentsMd RPC as a system trigger without prompt metadata updates', async () => {
+  it('runs init through generateAgentsMd RPC as a subagent system trigger without prompt metadata updates', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({
@@ -282,7 +282,7 @@ describe('Session.prompt events', () => {
           type: 'turn.started',
           sessionId: session.id,
           agentId: spawned?.type === 'subagent.spawned' ? spawned.subagentId : undefined,
-          origin: { kind: 'system_trigger', name: 'init' },
+          origin: { kind: 'system_trigger', name: 'subagent' },
         }),
       );
       expect(events).not.toContainEqual(
@@ -337,10 +337,12 @@ describe('Session.prompt events', () => {
       );
 
       const agentId = await session.startBtw();
-      harness.interactiveAgentId = agentId;
-      await session.prompt('What are you working on right now?');
+      await harness.withInteractiveAgent(agentId, () =>
+        session.prompt('What are you working on right now?'),
+      );
       await done;
       unsubscribe();
+      expect(harness.interactiveAgentId).toBe('main');
 
       const started = events.find(
         (event) =>

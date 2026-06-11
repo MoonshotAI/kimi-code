@@ -20,7 +20,7 @@ kimi acp
 | --- | --- | --- |
 | `promptCapabilities.image` | `true` | 支持 ACP `image` 内容块（base64 + mimeType） |
 | `promptCapabilities.audio` | `false` | 暂不支持音频 prompt |
-| `promptCapabilities.embeddedContext` | `false` | 暂不支持嵌入式资源 prompt（`resource`/`resource_link` 走文本通道） |
+| `promptCapabilities.embeddedContext` | `true` | 客户端可发送 `resource`/`resource_link` 嵌入式资源块，文本内容会以 `<resource uri="...">...</resource>` 形式注入 prompt；blob 资源被丢弃并写 warn |
 | `mcpCapabilities.http` | `true` | 转发 IDE 配置的 HTTP MCP 服务 |
 | `mcpCapabilities.sse` | `false` | 不支持 SSE MCP 服务，相关条目会被丢弃并写 warn 日志 |
 | `loadSession` | `true` | 支持 `session/load` 续接已有会话，加载时会同步回放历史 |

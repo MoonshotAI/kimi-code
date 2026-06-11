@@ -16,9 +16,7 @@ import {
   type Focusable,
   truncateToWidth,
 } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
-
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 export interface KeyboardShortcut {
   readonly keys: string;
@@ -48,7 +46,6 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
 export interface HelpPanelOptions {
   readonly commands: readonly HelpPanelCommand[];
   readonly shortcuts?: readonly KeyboardShortcut[];
-  readonly colors: ColorPalette;
   readonly onClose: () => void;
   /** Terminal height — used to decide whether to show the hint tail. */
   readonly maxVisible?: number;
@@ -93,16 +90,15 @@ export class HelpPanelComponent extends Container implements Focusable {
   }
 
   override render(width: number): string[] {
-    const colors = this.opts.colors;
-    const accent = chalk.hex(colors.primary);
-    const dim = chalk.hex(colors.textDim);
-    const muted = chalk.hex(colors.textMuted);
-    const kbdColor = chalk.hex(colors.warning);
-    const slashColor = chalk.hex(colors.primary);
+    const accent = (text: string) => currentTheme.fg('primary', text);
+    const dim = (text: string) => currentTheme.fg('textDim', text);
+    const muted = (text: string) => currentTheme.fg('textMuted', text);
+    const kbdColor = (text: string) => currentTheme.fg('warning', text);
+    const slashColor = (text: string) => currentTheme.fg('primary', text);
 
     const shortcuts = this.opts.shortcuts ?? DEFAULT_KEYBOARD_SHORTCUTS;
     const kbdWidth = Math.max(8, ...shortcuts.map((s) => s.keys.length));
-    const sortedCmds = [...this.opts.commands].toSorted((a, b) => a.name.localeCompare(b.name));
+    const sortedCmds = [...this.opts.commands].toSorted(compareSlashCommandsForDisplay);
     const cmdLabels = sortedCmds.map((c) => {
       const aliases = c.aliases.length > 0 ? ` (${c.aliases.map((a) => '/' + a).join(', ')})` : '';
       return `/${c.name}${aliases}`;
@@ -110,17 +106,17 @@ export class HelpPanelComponent extends Container implements Focusable {
     const cmdWidth = Math.max(12, ...cmdLabels.map((l) => l.length));
     const lines: string[] = [
       accent('─'.repeat(width)),
-      accent.bold(' help ') + muted('· Esc / Enter / q to cancel · ↑↓ scroll'),
+      currentTheme.boldFg('primary', ' help ') + muted('· Esc / Enter / q to cancel · ↑↓ scroll'),
       '',
       // Greeting
       `  ${dim('Sure, Kimi is ready to help! Just send a message to get started.')}`,
       '',
       // Section: keyboard shortcuts
-      `  ${chalk.bold('Keyboard shortcuts')}`,
+      `  ${currentTheme.bold('Keyboard shortcuts')}`,
       ...shortcuts.map((s) => `    ${kbdColor(s.keys.padEnd(kbdWidth))}  ${dim(s.description)}`),
       '',
       // Section: slash commands
-      `  ${chalk.bold('Slash commands')}`,
+      `  ${currentTheme.bold('Slash commands')}`,
       ...sortedCmds.map((cmd, i) => {
         const label = cmdLabels[i] ?? `/${cmd.name}`;
         return `    ${slashColor(label.padEnd(cmdWidth))}  ${dim(cmd.description)}`;
@@ -145,4 +141,15 @@ export class HelpPanelComponent extends Container implements Focusable {
     this.scrollTop = 0;
     return lines.map((line) => truncateToWidth(line, width));
   }
+}
+
+function compareSlashCommandsForDisplay(a: HelpPanelCommand, b: HelpPanelCommand): number {
+  return (
+    getSlashCommandDisplayGroup(a.name) - getSlashCommandDisplayGroup(b.name) ||
+    a.name.localeCompare(b.name)
+  );
+}
+
+function getSlashCommandDisplayGroup(name: string): number {
+  return name.startsWith('skill:') ? 1 : 0;
 }

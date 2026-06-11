@@ -1,7 +1,7 @@
 import type { ModelCapability } from '#/capability';
 import {
   APIContextOverflowError,
-  APIStatusError,
+  APIProviderRateLimitError,
   ChatProviderError,
   isContextOverflowErrorCode,
 } from '#/errors';
@@ -25,6 +25,9 @@ import {
 } from './capability-registry';
 import {
   convertOpenAIError,
+  isMediaPart,
+  TOOL_RESULT_MEDIA_PLACEHOLDER,
+  TOOL_RESULT_MEDIA_PROMPT,
   type ToolMessageConversion,
   reasoningEffortToThinkingEffort,
   thinkingEffortToReasoningEffort,
@@ -247,7 +250,7 @@ function errorFromOpenAIResponsesEvent(
     return new APIContextOverflowError(400, fullMessage);
   }
   if (code === 'rate_limit_exceeded') {
-    return new APIStatusError(429, fullMessage);
+    return new APIProviderRateLimitError(fullMessage);
   }
   return new ChatProviderError(fullMessage);
 }
@@ -363,6 +366,12 @@ interface ResponseToolParam {
   parameters: Record<string, unknown>;
   strict: boolean;
 }
+// The Responses API has no input type for video, and only mp3/wav audio can
+// be inlined as input_file data. Degrade such parts to placeholder text so
+// the model still learns an attachment existed instead of silently losing it.
+const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: unsupported audio format)';
+const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
+
 function contentPartsToInputItems(parts: ContentPart[]): unknown[] {
   const items: unknown[] = [];
   for (const part of parts) {
@@ -381,14 +390,14 @@ function contentPartsToInputItems(parts: ContentPart[]): unknown[] {
         break;
       case 'audio_url': {
         const mapped = mapAudioUrlToInputItem(part.audioUrl.url);
-        if (mapped !== null) {
-          items.push(mapped);
-        }
+        items.push(mapped ?? { type: 'input_text', text: OMITTED_AUDIO_PLACEHOLDER });
         break;
       }
-      case 'think':
       case 'video_url':
-        // think: handled separately. video_url: not supported by Responses API.
+        items.push({ type: 'input_text', text: OMITTED_VIDEO_PLACEHOLDER });
+        break;
+      case 'think':
+        // Handled separately as reasoning items.
         break;
     }
   }
@@ -405,7 +414,7 @@ function contentPartsToOutputItems(parts: ContentPart[]): unknown[] {
   return items;
 }
 
-function messageContentToFunctionOutputItems(content: ContentPart[]): string | unknown[] {
+function messageContentToFunctionOutputItems(content: ContentPart[]): unknown[] {
   const items: unknown[] = [];
   for (const part of content) {
     switch (part.type) {
@@ -424,15 +433,14 @@ function messageContentToFunctionOutputItems(content: ContentPart[]): string | u
         // branch here, audio returned by a tool would be dropped on the
         // next turn.
         const mapped = mapAudioUrlToInputItem(part.audioUrl.url);
-        if (mapped !== null) {
-          items.push(mapped);
-        }
+        items.push(mapped ?? { type: 'input_text', text: OMITTED_AUDIO_PLACEHOLDER });
         break;
       }
-      case 'think':
       case 'video_url':
-        // think / video_url still intentionally skipped: the Responses
-        // API has no representation for them inside a function_call_output.
+        items.push({ type: 'input_text', text: OMITTED_VIDEO_PLACEHOLDER });
+        break;
+      case 'think':
+        // Handled separately as reasoning items.
         break;
     }
   }
@@ -477,10 +485,20 @@ function convertMessage(
   // tool role -> function_call_output
   if (role === 'tool') {
     const callId = message.toolCallId ?? '';
-    const output: string | unknown[] =
-      toolMessageConversion === 'extract_text'
-        ? extractText(message)
-        : messageContentToFunctionOutputItems(message.content);
+    let output: string | unknown[];
+    if (toolMessageConversion === 'extract_text') {
+      // Plain-string output for backends that reject structured
+      // function_call_output. Media parts are reattached as a user message
+      // by `convertHistoryMessages`; when the result carries no text at
+      // all, point the model at that follow-up message.
+      const text = extractText(message);
+      output =
+        text.length === 0 && message.content.some(isMediaPart)
+          ? TOOL_RESULT_MEDIA_PLACEHOLDER
+          : text;
+    } else {
+      output = messageContentToFunctionOutputItems(message.content);
+    }
     return [
       {
         call_id: callId,
@@ -570,6 +588,49 @@ function convertTool(tool: Tool): ResponseToolParam {
     parameters: tool.parameters,
     strict: false,
   };
+}
+
+/**
+ * Convert the history, buffering tool-result media when `extract_text`
+ * flattens tool outputs to plain strings. The buffered media items are
+ * reattached as a single user message after each run of consecutive tool
+ * messages — mirroring the OpenAI Chat Completions provider.
+ */
+function convertHistoryMessages(
+  history: readonly Message[],
+  modelName: string,
+  toolMessageConversion: ToolMessageConversion,
+): unknown[] {
+  const input: unknown[] = [];
+  const pendingToolResultMedia: unknown[] = [];
+
+  const flushPendingMedia = (): void => {
+    if (pendingToolResultMedia.length === 0) return;
+    input.push({
+      type: 'message',
+      role: 'user',
+      content: [
+        { type: 'input_text', text: TOOL_RESULT_MEDIA_PROMPT },
+        ...pendingToolResultMedia,
+      ],
+    });
+    pendingToolResultMedia.length = 0;
+  };
+
+  for (const msg of history) {
+    if (msg.role !== 'tool') {
+      flushPendingMedia();
+    }
+    input.push(...convertMessage(msg, modelName, toolMessageConversion));
+    if (msg.role === 'tool' && toolMessageConversion === 'extract_text') {
+      pendingToolResultMedia.push(
+        ...messageContentToFunctionOutputItems(msg.content.filter(isMediaPart)),
+      );
+    }
+  }
+
+  flushPendingMedia();
+  return input;
 }
 export class OpenAIResponsesStreamedMessage implements StreamedMessage {
   private _id: string | null = null;
@@ -979,21 +1040,14 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     options?: GenerateOptions,
   ): Promise<StreamedMessage> {
     const input: unknown[] = [];
-    if (systemPrompt) {
-      const sysItem: Record<string, unknown> = { role: 'system', content: systemPrompt };
-      if (usesOpenAIResponsesDeveloperRole(this._model)) {
-        sysItem['role'] = 'developer';
-      }
-      input.push(sysItem);
-    }
 
     const normalizedHistory = normalizeToolCallIdsForProvider(
       history,
       OPENAI_RESPONSES_TOOL_CALL_ID_POLICY,
     );
-    for (const msg of normalizedHistory) {
-      input.push(...convertMessage(msg, this._model, this._toolMessageConversion));
-    }
+    input.push(
+      ...convertHistoryMessages(normalizedHistory, this._model, this._toolMessageConversion),
+    );
 
     const kwargs: Record<string, unknown> = { ...this._generationKwargs };
     const reasoningEffort = kwargs['reasoning_effort'] as string | undefined;
@@ -1025,6 +1079,9 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
         stream: this._stream,
         ...kwargs,
       };
+      if (systemPrompt) {
+        createParams['instructions'] = systemPrompt;
+      }
 
       if (
         !('responses' in client) ||

@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kosong",
-  "version": "0.3.2",
+  "version": "0.4.3",
   "private": true,
   "description": "The LLM abstraction layer for modern AI agent applications",
   "license": "MIT",
@@ -49,7 +49,7 @@
     "@anthropic-ai/sdk": "^0.95.2",
     "@google/genai": "^1.49.0",
     "openai": "^6.34.0",
-    "zod": "catalog:",
+    "zod": "^4.3.6",
     "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {

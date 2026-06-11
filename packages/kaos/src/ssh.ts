@@ -430,6 +430,7 @@ export class SSHKaos implements Kaos {
   private _sftp: SFTPWrapper;
   private _home: string;
   private _cwd: string;
+  private readonly _envLayers: readonly Record<string, string>[];
 
   // Stub: real wiring (probing the remote host via `uname` / `$SHELL` over the
   // SSH transport) is deferred.
@@ -439,15 +440,26 @@ export class SSHKaos implements Kaos {
     );
   }
 
-  private constructor(client: Client, sftp: SFTPWrapper, home: string, cwd: string) {
+  private constructor(
+    client: Client,
+    sftp: SFTPWrapper,
+    home: string,
+    cwd: string,
+    envLayers: readonly Record<string, string>[] = [],
+  ) {
     this._client = client;
     this._sftp = sftp;
     this._home = home;
     this._cwd = cwd;
+    this._envLayers = envLayers;
   }
 
   withCwd(cwd: string): SSHKaos {
-    return new SSHKaos(this._client, this._sftp, this._home, cwd);
+    return new SSHKaos(this._client, this._sftp, this._home, cwd, this._envLayers);
+  }
+
+  withEnv(env: Record<string, string>): SSHKaos {
+    return new SSHKaos(this._client, this._sftp, this._home, this._cwd, [...this._envLayers, env]);
   }
 
   private _resolvePath(path: string): string {
@@ -834,7 +846,7 @@ export class SSHKaos implements Kaos {
         'SSHKaos.exec(): at least one argument (the command to run) is required.',
       );
     }
-    return this._execInternal(args);
+    return this._execInternal(args, this._buildExecEnv());
   }
 
   execWithEnv(args: string[], env?: Record<string, string>): Promise<KaosProcess> {
@@ -843,7 +855,16 @@ export class SSHKaos implements Kaos {
         'SSHKaos.execWithEnv(): at least one argument (the command to run) is required.',
       );
     }
-    return this._execInternal(args, env);
+    return this._execInternal(args, this._buildExecEnv(env));
+  }
+
+  private _buildExecEnv(invocationEnv?: Record<string, string>): Record<string, string> | undefined {
+    if (this._envLayers.length === 0) return invocationEnv;
+    const merged: Record<string, string> = { ...invocationEnv };
+    for (const layer of this._envLayers) {
+      Object.assign(merged, layer);
+    }
+    return merged;
   }
 
   /**

@@ -17,9 +17,9 @@ import {
   type SessionStatus,
   type TelemetryClient,
 } from '@moonshot-ai/kimi-code-sdk';
+import { resolve } from 'pathe';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
-import { experimentalFeatureMap } from '#/utils/experimental-features';
 
 import type { CLIOptions, PromptOutputFormat } from './options';
 import {
@@ -147,8 +147,7 @@ export async function runPrompt(
     // the turn-run alive across continuation turns, so the normal prompt-turn
     // waiter blocks until the goal is terminal; we then emit a summary and set a
     // distinct exit code.
-    const flagMap = experimentalFeatureMap(await harness.getExperimentalFeatures());
-    const goalCreate = parseHeadlessGoalCreate(opts.prompt!, flagMap['goal_command'] === true);
+    const goalCreate = parseHeadlessGoalCreate(opts.prompt!);
     if (goalCreate !== undefined) {
       await runHeadlessGoal(session, goalCreate, goalModel, outputFormat, stdout, stderr);
     } else {
@@ -181,6 +180,7 @@ async function runHeadlessGoal(
   const unsubscribeGoalEvents = session.onEvent((event) => {
     if (
       event.type === 'goal.updated' &&
+      event.agentId === 'main' &&
       event.change?.kind === 'completion' &&
       event.snapshot !== null
     ) {
@@ -229,7 +229,7 @@ async function resolvePromptSession(
     if (target === undefined) {
       throw new Error(`Session "${opts.session}" not found.`);
     }
-    if (target.workDir !== workDir) {
+    if (resolve(target.workDir) !== resolve(workDir)) {
       stderr.write(
         `${chalk.hex('#E8A838')(
           `Session "${opts.session}" was created under a different directory.\n` +
@@ -353,16 +353,21 @@ function installPromptTerminationCleanup(
   };
   const onSigint = () => exitAfterCleanup('SIGINT');
   const onSigterm = () => exitAfterCleanup('SIGTERM');
+  const onSighup = () => exitAfterCleanup('SIGHUP');
   promptProcess.once('SIGINT', onSigint);
   promptProcess.once('SIGTERM', onSigterm);
+  promptProcess.once('SIGHUP', onSighup);
   return () => {
     promptProcess.off('SIGINT', onSigint);
     promptProcess.off('SIGTERM', onSigterm);
+    promptProcess.off('SIGHUP', onSighup);
   };
 }
 
 function signalExitCode(signal: NodeJS.Signals): number {
-  return signal === 'SIGINT' ? 130 : 143;
+  if (signal === 'SIGINT') return 130;
+  if (signal === 'SIGHUP') return 129;
+  return 143;
 }
 
 function runPromptTurn(
@@ -474,6 +479,8 @@ function runPromptTurn(
         case 'subagent.completed':
         case 'subagent.failed':
         case 'subagent.spawned':
+        case 'subagent.started':
+        case 'subagent.suspended':
         case 'tool.list.updated':
         case 'turn.started':
         case 'turn.step.completed':

@@ -5,24 +5,20 @@
  * to align after the bullet.
  */
 
-import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
+import type { Component } from '@earendil-works/pi-tui';
 import { Container, Markdown, visibleWidth } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
+import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 
 export class AssistantMessageComponent implements Component {
   private contentContainer: Container;
-  private markdownTheme: MarkdownTheme;
-  private bulletColor: string;
   private lastText = '';
   private showBullet: boolean;
 
-  constructor(markdownTheme: MarkdownTheme, colors: ColorPalette, showBullet: boolean = true) {
-    this.markdownTheme = markdownTheme;
-    this.bulletColor = colors.roleAssistant;
+  constructor(showBullet: boolean = true) {
     this.showBullet = showBullet;
     this.contentContainer = new Container();
   }
@@ -37,12 +33,20 @@ export class AssistantMessageComponent implements Component {
     this.lastText = displayText;
     this.contentContainer.clear();
     if (displayText.trim().length > 0) {
-      this.contentContainer.addChild(new Markdown(displayText.trim(), 0, 0, this.markdownTheme));
+      this.contentContainer.addChild(new Markdown(displayText.trim(), 0, 0, createMarkdownTheme()));
     }
   }
 
   invalidate(): void {
-    this.contentContainer.invalidate?.();
+    // Markdown caches ANSI colour codes keyed on (text, width).  When the
+    // theme changes the cached strings contain stale colours, so we rebuild
+    // the Markdown child with the new theme.
+    this.contentContainer.clear();
+    if (this.lastText.trim().length > 0) {
+      this.contentContainer.addChild(
+        new Markdown(this.lastText.trim(), 0, 0, createMarkdownTheme()),
+      );
+    }
   }
 
   render(width: number): string[] {
@@ -55,7 +59,7 @@ export class AssistantMessageComponent implements Component {
     const lines: string[] = [''];
     for (let i = 0; i < contentLines.length; i++) {
       const p =
-        i === 0 && this.showBullet ? chalk.hex(this.bulletColor)(STATUS_BULLET) : MESSAGE_INDENT;
+        i === 0 && this.showBullet ? currentTheme.fg('text', STATUS_BULLET) : MESSAGE_INDENT;
       lines.push(p + contentLines[i]);
     }
     return lines;

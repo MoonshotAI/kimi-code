@@ -1,3 +1,4 @@
+import type { Kaos } from '@moonshot-ai/kaos';
 import {
   ErrorCodes,
   KimiError,
@@ -71,8 +72,8 @@ export class KimiHarness {
     return this.rpc.interactiveAgentId;
   }
 
-  set interactiveAgentId(agentId: string) {
-    this.rpc.interactiveAgentId = agentId;
+  withInteractiveAgent<T>(agentId: string, fn: () => T): T {
+    return this.rpc.withInteractiveAgent(agentId, fn);
   }
 
   track(event: string, properties?: TelemetryProperties): void {
@@ -84,8 +85,11 @@ export class KimiHarness {
   }
 
   async createSession(options: CreateSessionOptions): Promise<Session> {
-    const { planMode, ...coreOptions } = options;
-    const summary = await this.rpc.createSession(coreOptions);
+    const { planMode, kaos, persistenceKaos, ...coreOptions } = options;
+    const summary =
+      kaos === undefined && persistenceKaos === undefined
+        ? await this.rpc.createSession(coreOptions)
+        : await this.rpc.createSessionWithKaos(coreOptions, kaos ?? persistenceKaos as Kaos, persistenceKaos);
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -107,9 +111,18 @@ export class KimiHarness {
   async resumeSession(input: ResumeSessionInput): Promise<Session> {
     const id = normalizeSessionId(input.id);
     const active = this.activeSessions.get(id);
-    if (active !== undefined) return active;
+    const { kaos, persistenceKaos, ...resumeInput } = input;
+    if (active !== undefined) {
+      if (kaos !== undefined || persistenceKaos !== undefined) {
+        await this.rpc.resumeSessionWithKaos({ ...resumeInput, id }, kaos ?? persistenceKaos as Kaos, persistenceKaos);
+      }
+      return active;
+    }
 
-    const summary = await this.rpc.resumeSession({ ...input, id });
+    const summary =
+      kaos === undefined && persistenceKaos === undefined
+        ? await this.rpc.resumeSession({ ...resumeInput, id })
+        : await this.rpc.resumeSessionWithKaos({ ...resumeInput, id }, kaos ?? persistenceKaos as Kaos, persistenceKaos);
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,

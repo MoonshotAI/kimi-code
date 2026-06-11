@@ -309,10 +309,11 @@ export class BashTool implements BuiltinTool<BashInput> {
 
     try {
       const builder = new ToolResultBuilder();
+      const isTerminating = (): boolean => timedOut || aborted || killed;
       const [, exitCode] = await Promise.all([
         Promise.all([
-          readStreamIntoBuilder(proc.stdout, builder),
-          readStreamIntoBuilder(proc.stderr, builder),
+          readStreamIntoBuilder(proc.stdout, builder, isTerminating),
+          readStreamIntoBuilder(proc.stderr, builder, isTerminating),
         ]),
         proc.wait(),
       ]);
@@ -404,7 +405,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     }
 
     if (timeoutMs !== undefined) {
-      setTimeout(() => {
+      const timeoutHandle = setTimeout(() => {
         void (async (): Promise<void> => {
           if (proc.exitCode !== null) return;
           const info = backgroundManager.getTask(taskId);
@@ -413,6 +414,7 @@ export class BashTool implements BuiltinTool<BashInput> {
           }
         })();
       }, timeoutMs);
+      timeoutHandle.unref?.();
     }
 
     // registerTask() synchronously inserts taskId into the manager's Map, so
@@ -437,13 +439,28 @@ export class BashTool implements BuiltinTool<BashInput> {
 async function readStreamIntoBuilder(
   stream: Readable,
   builder: ToolResultBuilder,
+  suppressPrematureClose?: () => boolean,
 ): Promise<void> {
   const decoder = new StringDecoder('utf8');
-  for await (const chunk of stream) {
-    const buf: Buffer = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : (chunk as Buffer);
-    builder.write(decoder.write(buf));
+  try {
+    for await (const chunk of stream) {
+      const buf: Buffer =
+        typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : (chunk as Buffer);
+      builder.write(decoder.write(buf));
+    }
+  } catch (error) {
+    if (!isPrematureCloseError(error) || suppressPrematureClose?.() !== true) {
+      throw error;
+    }
   }
   builder.write(decoder.end());
+}
+
+function isPrematureCloseError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as NodeJS.ErrnoException).code === 'ERR_STREAM_PREMATURE_CLOSE'
+  );
 }
 
 function shellQuote(s: string): string {

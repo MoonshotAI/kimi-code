@@ -287,6 +287,18 @@ export function normalizeOpenAIFinishReason(raw: string | null | undefined): {
 export type ToolMessageConversion = 'extract_text' | null;
 
 /**
+ * Shared wording for tool-result media that cannot live inside the tool
+ * message itself and is reattached as a follow-up user message instead.
+ */
+export const TOOL_RESULT_MEDIA_PROMPT = 'Attached media from tool result:';
+export const TOOL_RESULT_MEDIA_PLACEHOLDER = '(see attached media)';
+
+/** A content part that is neither plain text nor reasoning. */
+export function isMediaPart(part: ContentPart): boolean {
+  return part.type !== 'text' && part.type !== 'think';
+}
+
+/**
  * Convert tool-role message content according to the chosen strategy.
  */
 export function convertToolMessageContent(

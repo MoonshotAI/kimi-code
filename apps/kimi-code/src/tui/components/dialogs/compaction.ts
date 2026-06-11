@@ -15,17 +15,16 @@
 
 import { Container, Text, Spacer } from '@earendil-works/pi-tui';
 import type { TUI } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 const BLINK_INTERVAL = 500;
 
 export class CompactionComponent extends Container {
-  private readonly colors: ColorPalette;
   private readonly ui: TUI | undefined;
   private readonly headerText: Text;
+  private readonly instruction: string | undefined;
   private blinkOn = true;
   private blinkTimer: ReturnType<typeof setInterval> | null = null;
   private done = false;
@@ -33,21 +32,40 @@ export class CompactionComponent extends Container {
   private tokensBefore: number | undefined;
   private tokensAfter: number | undefined;
 
-  constructor(colors: ColorPalette, ui?: TUI, instruction?: string | undefined) {
+  constructor(ui?: TUI, instruction?: string | undefined) {
     super();
-    this.colors = colors;
     this.ui = ui;
+    this.instruction = instruction;
 
     // Top margin so the block isn't glued to the previous transcript
     // entry (status line, tool result, etc.).
     this.addChild(new Spacer(1));
     this.headerText = new Text(this.buildHeader(), 0, 0);
     this.addChild(this.headerText);
-    if (instruction !== undefined) {
-      this.addChild(new Text(chalk.dim(`  ${instruction}`), 0, 0));
-    }
+    this.addInstructionChild();
 
     this.startBlink();
+  }
+
+  private addInstructionChild(): void {
+    if (this.instruction !== undefined) {
+      this.addChild(new Text(currentTheme.dim(`  ${this.instruction}`), 0, 0));
+    }
+  }
+
+  override invalidate(): void {
+    // Repaint the header with the active palette (it caches ANSI codes).
+    this.headerText.setText(this.buildHeader());
+    // Rebuild instruction line with fresh theme colours.
+    if (this.instruction !== undefined) {
+      // Remove the last child if it is the instruction line (it is always
+      // added after headerText and Spacer).
+      if (this.children.length > 2) {
+        this.children.pop();
+      }
+      this.addInstructionChild();
+    }
+    super.invalidate();
   }
 
   markDone(tokensBefore?: number, tokensAfter?: number): void {
@@ -74,21 +92,21 @@ export class CompactionComponent extends Container {
 
   private buildHeader(): string {
     if (this.done) {
-      const bullet = chalk.hex(this.colors.success)(STATUS_BULLET);
-      const label = chalk.hex(this.colors.success).bold('Compaction complete');
+      const bullet = currentTheme.fg('success', STATUS_BULLET);
+      const label = currentTheme.boldFg('success', 'Compaction complete');
       const detail =
         this.tokensBefore !== undefined && this.tokensAfter !== undefined
-          ? chalk.dim(` (${String(this.tokensBefore)} → ${String(this.tokensAfter)} tokens)`)
+          ? currentTheme.dim(` (${String(this.tokensBefore)} → ${String(this.tokensAfter)} tokens)`)
           : '';
       return `${bullet}${label}${detail}`;
     }
     if (this.canceled) {
-      const bullet = chalk.hex(this.colors.warning)(STATUS_BULLET);
-      const label = chalk.hex(this.colors.warning).bold('Compaction cancelled');
+      const bullet = currentTheme.fg('warning', STATUS_BULLET);
+      const label = currentTheme.boldFg('warning', 'Compaction cancelled');
       return `${bullet}${label}`;
     }
-    const bullet = this.blinkOn ? chalk.hex(this.colors.roleAssistant)(STATUS_BULLET) : '  ';
-    const label = chalk.hex(this.colors.primary).bold('Compacting context...');
+    const bullet = this.blinkOn ? currentTheme.fg('text', STATUS_BULLET) : '  ';
+    const label = currentTheme.boldFg('primary', 'Compacting context...');
     return `${bullet}${label}`;
   }
 

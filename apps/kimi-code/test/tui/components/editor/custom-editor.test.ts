@@ -7,13 +7,13 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';
-import { getColorPalette } from '#/tui/theme/index';
 
 function makeEditor(): CustomEditor {
   const tui = {
     requestRender: vi.fn(),
+    terminal: { rows: 40, cols: 120 },
   } as unknown as TUI;
-  return new CustomEditor(tui, { ...getColorPalette('dark') });
+  return new CustomEditor(tui);
 }
 
 async function flushAutocomplete(): Promise<void> {
@@ -70,6 +70,54 @@ describe('CustomEditor autocomplete Escape handling', () => {
 
     expect(editor.isShowingAutocomplete()).toBe(false);
     expect(onEscape).not.toHaveBeenCalled();
+  });
+});
+
+describe('CustomEditor slash menu description wrapping', () => {
+  // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
+  const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
+
+  it('wraps long slash command descriptions to at most two lines with an ellipsis', async () => {
+    const editor = makeEditor();
+    const description = 'word '.repeat(60).trim();
+    editor.setAutocompleteProvider(
+      providerReturning([{ value: 'deep', label: 'deep', description }]),
+    );
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+
+    const plain = editor.render(90).map(stripAnsi);
+    const descriptionLines = plain.filter((line) => line.includes('word'));
+    expect(descriptionLines).toHaveLength(2);
+    expect(descriptionLines[1]).toContain('…');
+  });
+
+  it('keeps non-slash autocomplete descriptions on a single line', async () => {
+    const editor = makeEditor();
+    const description = 'path '.repeat(60).trim();
+    const provider: AutocompleteProvider = {
+      getSuggestions: vi.fn(async () => ({
+        items: [{ value: '@src/file.ts', label: 'file.ts', description }],
+        prefix: '@f',
+      })),
+      applyCompletion: vi.fn((lines, cursorLine, cursorCol) => ({
+        lines,
+        cursorLine,
+        cursorCol,
+      })),
+    };
+    editor.setAutocompleteProvider(provider);
+
+    editor.handleInput('@');
+    // @-mention requests are debounced (20ms), unlike slash menus.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flushAutocomplete();
+
+    const plain = editor.render(90).map(stripAnsi);
+    const descriptionLines = plain.filter((line) => line.includes('path'));
+    expect(descriptionLines).toHaveLength(1);
+    expect(plain.join('\n')).not.toContain('…');
   });
 });
 

@@ -1,12 +1,169 @@
+---
+outline: 2
+---
+
 # 变更记录
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
-## 0.9.0
+## 0.14.0（2026-06-10）
 
 ### 新功能
 
-- 支持 `kimi acp` 子命令：kimi-code 现在可通过 stdio 使用 [Agent Client Protocol 0.23](https://agentclientprotocol.com/)，因此 IDE（Zed、JetBrains AI Chat、自定义客户端）可以直接驱动会话；覆盖矩阵、Zed 配置和破坏性预发布说明见 [kimi acp 子命令页面](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp.html)。
+- 新增 `Interrupt` hook 事件，当用户中断某一轮次时（例如按 Esc）触发，让 hooks 可以观察到轮次正在停止，而不再卡在 working 状态。
+
+### 修复
+
+- 在使用 OpenAI 兼容的 Chat Completions 时保留工具输出的图像。
+
+## 0.13.1（2026-06-10）
+
+### 修复
+
+- 阻止在活跃 turn 期间 fork 会话，并将 wire protocol 定义整合到共享的内部包中。
+- 修复 Kimi Datasource，使其在当前 Kimi Code 环境中使用匹配的 OAuth 凭证和服务端点。
+- 修复 goal 标记文本超出终端宽度的问题。
+
+### 优化
+
+- 在 Anthropic 供应商中新增对 Claude Fable 5 的支持。
+- 新增交互式 undo 选择器和更清晰的 undo 限制提示消息。
+- YOLO 模式在工作目录外写入或编辑文件时不再询问。
+- 优化活跃 skill 提示词，使已加载的 skills 不再被表示为系统提醒。
+- 收紧文件工具引导，使增量编辑通过 Edit 工具执行。
+
+## 0.13.0（2026-06-10）
+
+### 新功能
+
+- 新增自定义颜色主题。在 `~/.kimi-code/themes/` 中以 JSON 文件定义自己的调色板，或使用内置的 `/custom-theme` Skill 命令生成。
+- 新增 `/import-from-cc-codex` 命令，用于导入选定的 Claude Code 和 Codex 指令、Skills 以及 MCP 设置。
+- 在 marketplace 中显示可用的 plugin 更新。
+
+### 修复
+
+- 修复 Windows 构建和开发启动可能因 package binary 解析到命令 shim 而失败的问题。
+- 修复设备登录，在浏览器无法打开时保持 URL 和验证码可见。
+
+### 优化
+
+- 通过活跃状态细分和已用时间，更清晰地展示分组子 Agent 进度。
+- 当排队消息超过终端宽度时，将其截断为单行并显示省略号。
+
+## 0.12.1（2026-06-09）
+
+### 修复
+
+- 允许过时的实验性配置条目保留而不阻塞启动。
+- 为 OpenAI 兼容的 Chat Completions 请求透传 xhigh reasoning effort。
+
+## 0.12.0（2026-06-09）
+
+### 新功能
+
+- 新增 `/swarm` 命令，用于运行 Agent Swarm，支持实时进度展示和速率限制感知重试。
+- goals、background questions 和 sub-skill discovery 不再需要实验性开关即可使用。
+- 支持标准环境变量 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`（包括 SOCKS 代理）用于所有出站流量。
+- 支持 Homebrew 安装。
+- 默认启用 micro compaction，可在 `/experiments` 中关闭。
+
+### 修复
+
+- 修复 ACP 斜杠 Skill 路由、bootstrap 上下文读取、文件与权限边界情况、子 Agent 事件处理以及过期文件编辑消息的问题。
+- 修复 goal 恢复行为，通过从 Agent 记录中恢复 goal 状态。
+- 修复子 Agent 的 thinking 文本和工具输出显示。
+- 修复 Windows 上由不一致的路径分隔符导致的会话工作目录不匹配问题。
+- 修复 `/mcp` 状态面板边框被多行 MCP server 错误破坏的问题，现在会折叠到单行显示。
+- 检测通过 Scoop 安装的 Git Bash 以及 Windows 上的其他 Git shim。
+- 在迁移失败时显示底层错误。
+- 允许通过重复按 Ctrl-C 或 Ctrl-D 退出启动会话选择器。
+
+### 优化
+
+- 移除每轮自动压缩上限，让长对话可以继续压缩而不是提前失败。
+- 改进 goal 模式的结果处理，包括后续消息、更安全的错误暂停和更清晰的 TUI 对话记录展示。
+- 直接展示完整 plan 卡片，并移除 Plan 卡片键盘快捷键。
+- 在审批提示中换行显示过长的单行 shell 命令，以便完整命令始终可见。
+- 重构 TUI 中的文件引用补全。
+- 当设置了 `KIMI_CODE_HOME` 时，从该路径加载 Kimi 特定的用户 Skills 和全局 Agent 指令。
+
+## 0.11.0（2026-06-05）
+
+### 新功能
+
+- 新增由环境变量 `KIMI_CODE_EXPERIMENTAL_SUB_SKILL` 控制的实验性子 Skill 发现能力。随附 `sub-skill` 内置包（`sub-skill.review`、`sub-skill.consolidate`），用于盘点 Skill 并将其整理为分层分组。
+- 新增以下环境变量：
+
+  - `KIMI_MODEL_TEMPERATURE`、`KIMI_MODEL_TOP_P` —— 全局应用于任意 `kimi` 供应商的采样参数（不绑定到 `KIMI_MODEL_NAME`）。
+  - `KIMI_MODEL_THINKING_KEEP` —— Moonshot 的 preserved-thinking 透传（`thinking.keep`），仅在开启 Thinking 时注入。
+  - `KIMI_CODE_NO_AUTO_UPDATE`（旧别名 `KIMI_CLI_NO_AUTO_UPDATE`）—— 完全禁用更新预检（不检查、不后台安装、不提示）。
+- 将内置 Skill 显示为直接斜杠命令，并将其分组排在外部 Skill 命令之前。
+
+### 修复
+
+- 修复斜杠命令自动补全，让光标位于已有文本之前时也能提交目标文本。
+- 修复已排队目标在晋升尝试失败时会丢失或重复的问题。
+- 修复编辑或粘贴已排队目标时的待处理目标队列处理。
+- 在 YOLO 模式下启动目标前进行询问，方便用户切换到 Auto 来处理无人值守工作。
+- 当响应在产生可见输出前被拦截时，显示简洁的供应商过滤错误。
+- 输入无效子命令时显示 “unknown command” 而不是 “too many arguments”。
+- 将 OpenAI Chat Completions 的 `xhigh` 和 `max` thinking effort 限制为 `high`，除非模型在 `v1/chat/completions` 上支持 `xhigh`。
+- 在压缩长对话时保留 thinking effort。
+- 当能力变化而模型 ID 未变化时刷新供应商模型元数据。
+
+### 优化
+
+- 让待处理目标的确认样式与目标生命周期消息使用相同的强调处理。
+- 当没有活跃目标需要等待时立即启动待处理目标。
+  支持在管理待处理目标时进行多行编辑。
+- 为子 Agent 使用固定的 30 分钟超时，并在超时后显示简洁的恢复说明。
+- 输入斜杠命令时高亮目标队列子命令。
+
+## 0.10.1（2026-06-05）
+
+### 修复
+
+- 修复在 TUI 中启动目标时的崩溃问题。
+
+## 0.10.0（2026-06-04）
+
+### 新功能
+
+- 用户现在可以为 Agent 准备多个目标，让它按顺序逐一处理。当前目标完成后，Agent 会自动从队列中取出下一个目标。使用 `/goal next <objective>` 将目标加入队列，使用 `/goal next manage` 交互式查看和修改队列。
+- 新增内置的 `update-config` Skill —— 你现在可以让 Kimi 编辑它自己的配置文件。
+- 新增持久化的实验性功能开关，以及一个 TUI 面板，确认后会通过重载当前会话来应用变更。
+- 新增 `/reload` 以重载当前会话并应用更新后的配置文件，以及 `/reload-tui` 以仅重载 TUI 偏好设置。
+- 新增 doctor 命令，用于校验 Kimi Code 的配置文件。
+
+### 修复
+
+- 将格式错误的 Responses 流速限错误规范化为供应商速率限制失败。
+- 让托管的 OAuth 凭据始终限定在其配置的认证和 API 端点范围内。
+- 阻止将活跃和已排队的目标带入派生会话。
+- Windows 上若缺少 Git Bash，则在启动 CLI 会话前提前失败。
+- 在展示前台更新提示前刷新更新目标，确保显示版本与安装版本一致。
+- 将会话错误诊断指向 `/export-debug-zip` 命令。
+- 设置终端标签页标题时不再重命名运行中的进程。
+
+### 优化
+
+- 启动时的更新检查一旦发现新版本，立即开始自动后台更新。
+- 在启动期间将 CLI 进程标题设置为 `kimi-code`。
+- 将编辑工具错误中的过期文件内容提示改为小写。
+
+### 重构
+
+- 确保 Nix 打包的 CLI 构建能够找到 ripgrep 和 fd。
+
+### 其他
+
+- 在 Windows 安装说明中补充 Git Bash 前置条件。
+
+## 0.9.0（2026-06-03）
+
+### 新功能
+
+- 支持 `kimi acp` 子命令：kimi-code 现在可通过 stdio 使用 [Agent Client Protocol 0.23](https://agentclientprotocol.com/)，因此 IDE（Zed、JetBrains AI Chat、自定义客户端）可以直接驱动会话；覆盖矩阵、Zed 配置和破坏性预发布说明见 [kimi acp 子命令页面](https://moonshotai.github.io/kimi-code/zh/reference/kimi-acp.html)。
 - 新增 `/btw`，用于进行不会引导当前主轮次的侧通道对话，并允许 `/btw` 在输入问题前打开侧通道面板。
 
 ### 修复
@@ -26,7 +183,7 @@
 
 - 允许 SDK 运行时创建使用单独的 RPC client，同时保留本地 CLI 启动流程。
 
-## 0.8.0
+## 0.8.0（2026-06-02）
 
 ### 新功能
 
@@ -72,7 +229,7 @@
 
 - 将后台任务管理统一到 Agent 后台运行时中。
 
-## 0.7.0
+## 0.7.0（2026-06-02）
 
 ### 新功能
 
@@ -90,7 +247,7 @@
 - 明确 Kimi Platform API 密钥登录的标签和提示细节。
 - 优化终端界面中的一处细微视觉交互。
 
-## 0.6.0
+## 0.6.0（2026-05-29）
 
 ### 新功能
 
@@ -127,7 +284,7 @@
 - 精简 LLM 诊断日志，使用更少、更紧凑的字段。
 - 将共享的工具服务类型定义迁移到工具支持层。
 
-## 0.5.0
+## 0.5.0（2026-05-28）
 
 ### 新功能
 
@@ -161,7 +318,7 @@
 
 - 重构终端界面的代码结构。
 
-## 0.4.0
+## 0.4.0（2026-05-27）
 
 ### 新功能
 
@@ -188,7 +345,7 @@
 
 - 增强 `kimi export`，在 manifest 中记录更多诊断信息。
 
-## 0.3.0
+## 0.3.0（2026-05-26）
 
 ### 新功能
 
@@ -216,7 +373,7 @@
 
 - 改进 `Write` 工具的交互体验。
 
-## 0.2.0
+## 0.2.0（2026-05-26）
 
 ### 新功能
 

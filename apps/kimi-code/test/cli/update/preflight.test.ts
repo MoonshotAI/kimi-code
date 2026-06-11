@@ -183,7 +183,32 @@ describe('runUpdatePreflight', () => {
     });
   });
 
-  afterEach(() => { vi.clearAllMocks(); });
+  afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
+
+  it('skips all update work when KIMI_CODE_NO_AUTO_UPDATE is set', async () => {
+    vi.stubEnv('KIMI_CODE_NO_AUTO_UPDATE', '1');
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    const { options } = captureOutput();
+
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+
+    expect(readUpdateCache).not.toHaveBeenCalled();
+    expect(refreshUpdateCache).not.toHaveBeenCalled();
+    expect(detectInstallSource).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it('also honors the legacy KIMI_CLI_NO_AUTO_UPDATE alias', async () => {
+    vi.stubEnv('KIMI_CLI_NO_AUTO_UPDATE', 'true');
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    const { options } = captureOutput();
+
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+
+    expect(readUpdateCache).not.toHaveBeenCalled();
+    expect(detectInstallSource).not.toHaveBeenCalled();
+  });
 
   it('starts an automatic update from the first fresh check when the cache is empty', async () => {
     mocks.readUpdateCache.mockResolvedValue(emptyUpdateCache());
@@ -370,6 +395,17 @@ describe('runUpdatePreflight', () => {
       ['add', '-g', '@moonshot-ai/kimi-code@0.5.0'],
       { stdio: 'inherit' },
     );
+  });
+
+  it('homebrew: prints manual brew upgrade command, does not spawn', async () => {
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('homebrew');
+    const { stdout, options } = captureOutput();
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+    expect(stdout.join('')).toContain('brew upgrade kimi-code');
+    expect(promptForInstallChoice).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
   it('native on darwin: spawns bash -c with pipefail-guarded curl|bash', async () => {

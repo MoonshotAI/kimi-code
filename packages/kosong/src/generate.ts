@@ -165,7 +165,13 @@ export async function generate(
   }
   if (message.content.length === 0 && message.toolCalls.length === 0) {
     throw new APIEmptyResponseError(
-      `The API returned an empty response (no content, no tool calls). Provider: ${provider.name}, model: ${provider.modelName}`,
+      'The API returned an empty response (no content, no tool calls).' +
+        formatFinishReasonHint(stream) +
+        ` Provider: ${provider.name}, model: ${provider.modelName}`,
+      {
+        finishReason: stream.finishReason,
+        rawFinishReason: stream.rawFinishReason,
+      },
     );
   }
 
@@ -179,7 +185,13 @@ export async function generate(
       'The API returned a response containing only thinking content ' +
         'without any text or tool calls. This usually indicates the ' +
         'stream was interrupted or the output token budget was exhausted ' +
-        `during reasoning. Provider: ${provider.name}, model: ${provider.modelName}`,
+        'during reasoning.' +
+        formatFinishReasonHint(stream) +
+        ` Provider: ${provider.name}, model: ${provider.modelName}`,
+      {
+        finishReason: stream.finishReason,
+        rawFinishReason: stream.rawFinishReason,
+      },
     );
   }
 
@@ -274,6 +286,19 @@ function flushPart(
     }
   }
   // ToolCallPart: orphaned delta — silently ignore.
+}
+
+function formatFinishReasonHint(stream: StreamedMessage): string {
+  if (stream.finishReason === null && stream.rawFinishReason === null) return '';
+
+  const raw =
+    stream.rawFinishReason === null ? '' : `, rawFinishReason=${stream.rawFinishReason}`;
+  const filteredHint =
+    stream.finishReason === 'filtered'
+      ? ' The provider filtered the response before visible output was emitted.'
+      : '';
+
+  return ` Provider stop details: finishReason=${stream.finishReason ?? 'unknown'}${raw}.${filteredHint}`;
 }
 
 /**

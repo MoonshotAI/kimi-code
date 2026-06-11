@@ -7,10 +7,9 @@ import {
   type Focusable,
 } from '@earendil-works/pi-tui';
 import type { ExperimentalFeatureState } from '@moonshot-ai/kimi-code-sdk';
-import chalk from 'chalk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
@@ -23,7 +22,6 @@ export interface ExperimentalFeatureDraftChange {
 
 export interface ExperimentsSelectorOptions {
   readonly features: readonly ExperimentalFeatureState[];
-  readonly colors: ColorPalette;
   readonly onApply: (changes: readonly ExperimentalFeatureDraftChange[]) => void;
   readonly onCancel: () => void;
 }
@@ -66,28 +64,27 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
   }
 
   override render(width: number): string[] {
-    const { colors } = this.opts;
     const view = this.list.view();
     const titleSuffix =
-      view.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
+      view.query.length === 0 ? currentTheme.fg('textMuted', '  (type to search)') : '';
     const hintParts = ['↑↓ navigate'];
     if (view.page.pageCount > 1) hintParts.push('PgUp/PgDn page');
     hintParts.push('Space toggle', 'Enter apply', 'Esc cancel');
     if (view.query.length > 0) hintParts.push('Backspace clear');
 
     const lines: string[] = [
-      chalk.hex(colors.primary)('─'.repeat(width)),
-      chalk.hex(colors.primary).bold(' Experimental features') + titleSuffix,
-      chalk.hex(colors.textMuted)(` ${hintParts.join(' · ')}`),
+      currentTheme.fg('primary', '─'.repeat(width)),
+      currentTheme.boldFg('primary', ' Experimental features') + titleSuffix,
+      currentTheme.fg('textMuted', ` ${hintParts.join(' · ')}`),
       '',
     ];
 
     if (view.query.length > 0) {
-      lines.push(chalk.hex(colors.primary)(` Search: `) + chalk.hex(colors.text)(view.query));
+      lines.push(currentTheme.fg('primary', ` Search: `) + currentTheme.fg('text', view.query));
     }
 
     if (view.items.length === 0) {
-      lines.push(chalk.hex(colors.textMuted)('   No matches'));
+      lines.push(currentTheme.fg('textMuted', '   No matches'));
     }
 
     for (let i = view.page.start; i < view.page.end; i++) {
@@ -99,19 +96,21 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
     lines.push('');
     if (view.query.length > 0) {
       lines.push(
-        chalk.hex(colors.textMuted)(
+        currentTheme.fg(
+          'textMuted',
           ` ${String(view.items.length)} / ${String(this.opts.features.length)}`,
         ),
       );
     } else if (view.page.end < view.items.length) {
       lines.push(
-        chalk.hex(colors.textMuted)(
+        currentTheme.fg(
+          'textMuted',
           ` ▼ ${String(view.items.length - view.page.end)} more`,
         ),
       );
     }
     lines.push(this.renderApplyButton());
-    lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
+    lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width, ELLIPSIS));
   }
 
@@ -145,15 +144,18 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
   }
 
   private renderApplyButton(): string {
-    const { colors } = this.opts;
     const changes = this.draftChanges();
     const count = changes.length;
     const label = '[ Apply changes and reload ]';
     const summary =
       count === 0 ? 'no changes' : `${String(count)} ${count === 1 ? 'change' : 'changes'}`;
-    const buttonStyle = count === 0 ? chalk.hex(colors.textDim) : chalk.hex(colors.primary).bold;
-    const summaryStyle = count === 0 ? chalk.hex(colors.textMuted) : chalk.hex(colors.success);
-    return ` ${buttonStyle(label)}  ${summaryStyle(summary)}`;
+    const button = count === 0
+      ? currentTheme.fg('textDim', label)
+      : currentTheme.boldFg('primary', label);
+    const summaryText = count === 0
+      ? currentTheme.fg('textMuted', summary)
+      : currentTheme.fg('success', summary);
+    return ` ${button}  ${summaryText}`;
   }
 
   private renderFeature(
@@ -161,23 +163,22 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
     selected: boolean,
     width: number,
   ): string[] {
-    const { colors } = this.opts;
     const pointer = selected ? SELECT_POINTER : ' ';
-    const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
-    const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
+    const prefix = currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `);
+    const label = selected ? currentTheme.boldFg('primary', feature.title) : currentTheme.fg('text', feature.title);
     const enabled = this.effectiveEnabled(feature);
     const status = enabled ? 'enabled' : 'disabled';
-    const statusStyle = enabled ? chalk.hex(colors.success) : chalk.hex(colors.textDim);
+    const statusText = enabled ? currentTheme.fg('success', status) : currentTheme.fg('textDim', status);
     const detail = this.isDraftChanged(feature)
       ? `${featureDetail(feature)} · modified`
       : featureDetail(feature);
     const lines = [
-      `${prefix}${labelStyle(feature.title)}  ${statusStyle(status)}`,
-      chalk.hex(colors.textMuted)(`    ${detail}`),
+      `${prefix}${label}  ${statusText}`,
+      currentTheme.fg('textMuted', `    ${detail}`),
     ];
     const descriptionWidth = Math.max(1, width - 4);
     for (const line of wrapText(feature.description, descriptionWidth)) {
-      lines.push(chalk.hex(colors.textMuted)(`    ${line}`));
+      lines.push(currentTheme.fg('textMuted', `    ${line}`));
     }
     return lines;
   }

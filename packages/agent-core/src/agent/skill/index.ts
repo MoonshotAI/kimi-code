@@ -6,8 +6,8 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '#/errors';
 import { isUserActivatableSkillType, type SkillRegistry } from '../../skill';
-import { escapeXml } from '#/utils/xml-escape';
 import type { SkillActivationOrigin } from '../context';
+import { renderUserSlashSkillPrompt } from './prompt';
 
 export class SkillManager {
   constructor(
@@ -24,18 +24,17 @@ export class SkillManager {
       throw new KimiError(ErrorCodes.SKILL_TYPE_UNSUPPORTED, `Skill "${skill.name}" cannot be activated by the user`);
     }
 
-    const skillContent = this.registry.renderSkillPrompt(skill, input.args ?? '');
-    const args = input.args;
-    const argsAttr = args ? ` args="${escapeXml(args)}"` : '';
+    const skillArgs = input.args ?? '';
+    const skillContent = this.registry.renderSkillPrompt(skill, skillArgs);
     const wrapped = [
       {
         type: 'text' as const,
-        text:
-          `<system-reminder>\n` +
-          `<kimi-skill-loaded name="${escapeXml(skill.name)}"${argsAttr}>\n` +
-          `${skillContent}\n` +
-          `</kimi-skill-loaded>\n` +
-          `</system-reminder>`,
+        text: renderUserSlashSkillPrompt({
+          skillName: skill.name,
+          skillArgs,
+          skillContent,
+          skillSource: skill.source,
+        }),
       },
     ];
 

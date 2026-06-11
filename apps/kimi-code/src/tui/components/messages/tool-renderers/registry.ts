@@ -12,6 +12,7 @@
 
 import { readMediaSummary } from './media';
 import { shellExecutionResultRenderer } from '../shell-execution';
+import { goalSummary } from './goal';
 import {
   editSummary,
   fetchSummary,
@@ -24,6 +25,16 @@ import {
 } from './summary';
 import { renderTruncated } from './truncated';
 import type { ResultRenderer } from './types';
+
+/**
+ * True when a tool has no dedicated renderer and falls back to the generic
+ * truncated output (every MCP tool and any tool not listed below). Used to
+ * decide whether subagent sub-tool output should be previewed the same way
+ * the main agent previews it.
+ */
+export function isGenericToolResult(toolName: string): boolean {
+  return pickResultRenderer(toolName) === renderTruncated;
+}
 
 export function pickResultRenderer(toolName: string): ResultRenderer {
   switch (toolName) {
@@ -47,6 +58,11 @@ export function pickResultRenderer(toolName: string): ResultRenderer {
       return editSummary;
     case 'Write':
       return writeSummary;
+    case 'CreateGoal':
+    case 'GetGoal':
+    case 'SetGoalBudget':
+    case 'UpdateGoal':
+      return goalSummary;
     default:
       return renderTruncated;
   }

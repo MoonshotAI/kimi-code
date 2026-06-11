@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import chalk from 'chalk';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { CompactionComponent } from '#/tui/components/dialogs/compaction';
-import { darkColors } from '#/tui/theme/colors';
+import { currentTheme, darkColors, lightColors } from '#/tui/theme';
+
+afterEach(() => {
+  currentTheme.setPalette(darkColors);
+});
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -9,7 +14,7 @@ function strip(text: string): string {
 
 describe('CompactionComponent', () => {
   it('renders the custom instruction below the compacting label', () => {
-    const component = new CompactionComponent(darkColors, undefined, 'keep the recent files only');
+    const component = new CompactionComponent(undefined, 'keep the recent files only');
 
     try {
       const lines = component.render(120).map(strip);
@@ -23,7 +28,7 @@ describe('CompactionComponent', () => {
   });
 
   it('renders a cancelled terminal state', () => {
-    const component = new CompactionComponent(darkColors);
+    const component = new CompactionComponent();
 
     try {
       component.markCanceled();
@@ -33,6 +38,34 @@ describe('CompactionComponent', () => {
       expect(text).toContain('Compaction cancelled');
       expect(text).not.toContain('Compacting context...');
     } finally {
+      component.dispose();
+    }
+  });
+
+  it('repaints the header with the active palette on invalidate', () => {
+    // Force truecolor so palette differences surface as ANSI codes even when
+    // the test runner has no TTY.
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    const component = new CompactionComponent();
+
+    try {
+      const headerOf = (): string => {
+        const line = component.render(120).find((l) => strip(l).includes('Compacting context...'));
+        if (line === undefined) throw new Error('header line not found');
+        return line;
+      };
+      const before = headerOf();
+
+      currentTheme.setPalette(lightColors);
+      component.invalidate();
+      const after = headerOf();
+
+      // Same visible text, different ANSI colour codes.
+      expect(strip(after)).toBe(strip(before));
+      expect(after).not.toBe(before);
+    } finally {
+      chalk.level = previousLevel;
       component.dispose();
     }
   });

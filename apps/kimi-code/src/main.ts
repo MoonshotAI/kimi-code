@@ -8,6 +8,7 @@
 import {
   createKimiHarness,
   flushDiagnosticLogs,
+  installGlobalProxyDispatcher,
   log,
   resolveGlobalLogPath,
   resolveKimiHome,
@@ -117,6 +118,10 @@ const MIGRATE_CLI_OPTIONS: CLIOptions = {
 export function main(): void {
   process.title = PROCESS_NAME;
   installCrashHandlers();
+  // Route all outbound fetch through HTTP_PROXY/HTTPS_PROXY (honoring NO_PROXY)
+  // before any client is constructed. No-op when no proxy variable is set; an
+  // invalid proxy URL is reported and ignored rather than aborting startup.
+  installGlobalProxyDispatcher();
   installNativeModuleHook();
   if (runNativeAssetSmokeIfRequested()) return;
 

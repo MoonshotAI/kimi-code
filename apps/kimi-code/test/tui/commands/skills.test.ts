@@ -27,22 +27,58 @@ describe('skill slash commands', () => {
     expect(isUserActivatableSkill(skill('agent', 'agent'))).toBe(false);
   });
 
-  it('builds slash commands and command map entries with skill prefixes', () => {
+  it('builds slash commands and command map entries with skill prefixes for non-built-in skills', () => {
     const built = buildSkillSlashCommands([
       skill('review', 'prompt'),
+      skill('nested-review', 'prompt', {
+        description: 'Nested review skill',
+        path: '/skills/parent/nested-review/SKILL.md',
+      }),
       skill('agent-only', 'agent'),
       skill('commit', 'flow'),
     ]);
 
-    expect(built.commands.map((command) => command.name)).toEqual(['skill:review', 'skill:commit']);
+    expect(built.commands.map((command) => command.name)).toEqual([
+      'skill:commit',
+      'skill:nested-review',
+      'skill:review',
+    ]);
     expect(built.commands[0]).toMatchObject({
-      name: 'skill:review',
+      name: 'skill:commit',
       aliases: [],
-      description: 'review skill',
+      description: 'commit skill',
+    });
+    expect(built.commands[1]).toMatchObject({
+      name: 'skill:nested-review',
+      aliases: [],
+      description: 'Nested review skill',
     });
     expect([...built.commandMap.entries()]).toEqual([
-      ['skill:review', 'review'],
       ['skill:commit', 'commit'],
+      ['skill:nested-review', 'nested-review'],
+      ['skill:review', 'review'],
+    ]);
+  });
+
+  it('sorts built-in skill slash commands before external skill commands', () => {
+    const built = buildSkillSlashCommands([
+      skill('zeta', 'prompt', { source: 'user' }),
+      skill('alpha', 'prompt', { source: 'project' }),
+      skill('update-config', 'inline', { source: 'builtin' }),
+      skill('mcp-config', 'inline', { source: 'builtin' }),
+    ]);
+
+    expect(built.commands.map((command) => command.name)).toEqual([
+      'mcp-config',
+      'update-config',
+      'skill:alpha',
+      'skill:zeta',
+    ]);
+    expect([...built.commandMap.entries()]).toEqual([
+      ['mcp-config', 'mcp-config'],
+      ['update-config', 'update-config'],
+      ['skill:alpha', 'alpha'],
+      ['skill:zeta', 'zeta'],
     ]);
   });
 
@@ -51,7 +87,7 @@ describe('skill slash commands', () => {
       skill('mcp-config', 'inline', { disableModelInvocation: true, source: 'builtin' }),
     ]);
 
-    expect(built.commands.map((command) => command.name)).toEqual(['skill:mcp-config']);
-    expect(built.commandMap.get('skill:mcp-config')).toBe('mcp-config');
+    expect(built.commands.map((command) => command.name)).toEqual(['mcp-config']);
+    expect(built.commandMap.get('mcp-config')).toBe('mcp-config');
   });
 });

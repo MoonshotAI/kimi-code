@@ -17,11 +17,11 @@ import { z } from 'zod';
 
 import type { Agent } from '../../../agent';
 import type { SkillActivationOrigin } from '../../../agent/context';
+import { renderModelToolSkillPrompt } from '../../../agent/skill/prompt';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { isInlineSkillType, type SkillDefinition } from '../../../skill';
 import { renderPrompt } from '../../../utils/render-prompt';
-import { escapeXml } from '../../../utils/xml-escape';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { matchesGlobRuleSubject } from '../../support/rule-match';
 import skillDescriptionTemplate from './skill-tool.md';
@@ -129,12 +129,22 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
     }
 
     const origin = skillOrigin(skill, skillArgs, currentDepth);
+    const promptTrigger = origin.trigger === 'nested-skill' ? 'nested-skill' : 'model-tool';
     skills.recordActivation(origin);
     const skillContent = skills.registry.renderSkillPrompt(skill, skillArgs);
-    this.agent.context.appendSystemReminder(
-      `<kimi-skill-loaded name="${escapeXml(skill.name)}" args="${escapeXml(skillArgs)}">\n` +
-        `${skillContent}\n` +
-        `</kimi-skill-loaded>`,
+    this.agent.context.appendUserMessage(
+      [
+        {
+          type: 'text' as const,
+          text: renderModelToolSkillPrompt({
+            skillName: skill.name,
+            skillArgs,
+            skillContent,
+            skillSource: skill.source,
+            trigger: promptTrigger,
+          }),
+        },
+      ],
       origin,
     );
     return {

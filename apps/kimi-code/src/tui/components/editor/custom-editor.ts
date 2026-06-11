@@ -2,11 +2,20 @@
  * Custom editor extending pi-tui Editor with app-level keybindings.
  */
 
-import { Editor, isKeyRelease, matchesKey, Key, type TUI } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
+import {
+  Editor,
+  isKeyRelease,
+  matchesKey,
+  Key,
+  SelectList,
+  type SelectItem,
+  type TUI,
+} from '@earendil-works/pi-tui';
 
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
+
+import { WrappingSelectList } from './wrapping-select-list';
 
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
@@ -31,6 +40,17 @@ interface AutocompleteInternals {
   readonly autocompleteAbort?: AbortController;
   readonly autocompleteDebounceTimer?: ReturnType<typeof setTimeout>;
 }
+
+interface AutocompleteListFactoryInternals {
+  createAutocompleteList?: (prefix: string, items: SelectItem[]) => SelectList;
+}
+
+// Mirror pi-tui's private SLASH_COMMAND_SELECT_LIST_LAYOUT
+// (dist/components/editor.js); keep in sync when bumping pi-tui.
+const SLASH_COMMAND_SELECT_LIST_LAYOUT = {
+  minPrimaryColumnWidth: 12,
+  maxPrimaryColumnWidth: 32,
+} as const;
 
 /**
  * Workaround for a pi-tui bug that surfaces when Kitty keyboard protocol
@@ -96,10 +116,6 @@ export class CustomEditor extends Editor {
   public onCtrlD?: () => void;
   public onCtrlC?: () => void;
   public onToggleToolExpand?: () => void;
-  // Returns true when a plan card actually handled the toggle. When it
-  // returns false (no plan in the transcript) the keystroke falls through
-  // to pi-tui's default ctrl+e binding (move cursor to end of line).
-  public onTogglePlanExpand?: () => boolean;
   public onOpenExternalEditor?: () => void;
   public onCtrlS?: () => void;
   public onUndo?: () => void;
@@ -128,26 +144,33 @@ export class CustomEditor extends Editor {
   private consumingPaste = false;
   private consumeBuffer = '';
 
-  /**
-   * `colors` is the live `ColorPalette` reference — the host mutates it
-   * in place on theme switch (`Object.assign(state.theme.colors, ...)`), so
-   * reading `this.colors.<token>` at render time always sees the
-   * current theme without any setter plumbing. The `EditorTheme` that
-   * pi-tui's `Editor` requires is derived from the same palette, and
-   * `paddingX: 2` reserves the two leading columns where `render()`
-   * paints the terminal-style `> ` prompt — both are implementation
-   * details, not caller knobs.
-   */
-  constructor(
-    tui: TUI,
-    private readonly colors: ColorPalette,
-  ) {
+  constructor(tui: TUI) {
     // paddingX: 4 reserves column 0 for the left vertical border (│),
     // column 1 as a single space between border and prompt, column 2 for
     // the `>` prompt token, and column 3 as the space between prompt and
     // content. The right side mirrors with 3 padding columns and the right
     // border at the last column.
-    super(tui, createEditorTheme(colors), { paddingX: 4 });
+    const theme = createEditorTheme();
+    super(tui, theme, { paddingX: 4 });
+
+    // pi-tui keeps `createAutocompleteList` private; shadow it with an
+    // instance property so slash command menus render descriptions wrapped
+    // to at most two lines. Non-slash completion (paths, @ mentions) keeps
+    // pi-tui's single-line list.
+    (this as unknown as AutocompleteListFactoryInternals).createAutocompleteList = (
+      prefix,
+      items,
+    ) => {
+      if (prefix.startsWith('/')) {
+        return new WrappingSelectList(
+          items,
+          this.getAutocompleteMaxVisible(),
+          theme.selectList,
+          SLASH_COMMAND_SELECT_LIST_LAYOUT,
+        );
+      }
+      return new SelectList(items, this.getAutocompleteMaxVisible(), theme.selectList);
+    };
   }
 
   private expandPasteMarkerAtCursor(): boolean {
@@ -199,7 +222,7 @@ export class CustomEditor extends Editor {
       // are not a thing in practice.
       const original = lines[firstContentIdx];
       if (original !== undefined) {
-        const highlighted = highlightFirstSlashToken(original, this.colors.primary);
+        const highlighted = highlightFirstSlashToken(original, 'primary');
         if (highlighted !== undefined) {
           lines[firstContentIdx] = highlighted;
         }
@@ -292,11 +315,6 @@ export class CustomEditor extends Editor {
       return;
     }
 
-    if (matchesKey(normalized, Key.ctrl('e'))) {
-      if (this.onTogglePlanExpand?.() === true) return;
-      // No plan to toggle — fall through to pi-tui's end-of-line.
-    }
-
     if (matchesKey(normalized, Key.ctrl('s'))) {
       this.onCtrlS?.();
       return;
@@ -346,11 +364,12 @@ export class CustomEditor extends Editor {
 
 /**
  * Return a copy of `line` with the first `/token` coloured using `hex`.
+ * For `/goal next manage`, also colour the command-path tokens.
  * `line` may already contain SGR escapes (cursor inverse, etc.); we
  * locate `/` via visible-index math so ANSI pass-through survives.
  * Returns `undefined` if no token is found.
  */
-export function highlightFirstSlashToken(line: string, hex: string): string | undefined {
+export function highlightFirstSlashToken(line: string, token: 'primary'): string | undefined {
   const visible = stripSgr(line);
   const slashIdx = visible.indexOf('/');
   if (slashIdx < 0) return undefined;
@@ -368,12 +387,60 @@ export function highlightFirstSlashToken(line: string, hex: string): string | un
   }
   const visibleToken = visible.slice(slashIdx, endVisible);
   if (visibleToken.slice(1).includes('/')) return undefined;
-  const rawStart = mapVisibleIdxToRaw(line, slashIdx);
-  const rawEnd = mapVisibleIdxToRaw(line, endVisible);
-  const before = line.slice(0, rawStart);
-  const token = line.slice(rawStart, rawEnd);
-  const after = line.slice(rawEnd);
-  return before + chalk.hex(hex).bold(token) + after;
+  const ranges = [{ start: slashIdx, end: endVisible }];
+  if (visibleToken === '/goal') {
+    ranges.push(...goalCommandPathRanges(visible, endVisible));
+  }
+  return highlightVisibleRanges(line, ranges, token);
+}
+
+function goalCommandPathRanges(
+  visible: string,
+  commandEnd: number,
+): Array<{ start: number; end: number }> {
+  const nextRange = readTokenRange(visible, commandEnd);
+  if (nextRange === null || visible.slice(nextRange.start, nextRange.end) !== 'next') {
+    return [];
+  }
+  const ranges = [nextRange];
+  const manageRange = readTokenRange(visible, nextRange.end);
+  if (manageRange !== null && visible.slice(manageRange.start, manageRange.end) === 'manage') {
+    ranges.push(manageRange);
+  }
+  return ranges;
+}
+
+function readTokenRange(
+  visible: string,
+  start: number,
+): { start: number; end: number } | null {
+  let tokenStart = start;
+  while (tokenStart < visible.length && isTokenSpace(visible[tokenStart])) tokenStart++;
+  if (tokenStart >= visible.length) return null;
+  let tokenEnd = tokenStart;
+  while (tokenEnd < visible.length && !isTokenSpace(visible[tokenEnd])) tokenEnd++;
+  return { start: tokenStart, end: tokenEnd };
+}
+
+function isTokenSpace(ch: string | undefined): boolean {
+  return ch === ' ' || ch === '\t';
+}
+
+function highlightVisibleRanges(
+  line: string,
+  ranges: Array<{ start: number; end: number }>,
+  token: 'primary',
+): string {
+  let out = '';
+  let rawCursor = 0;
+  for (const range of ranges) {
+    const rawStart = mapVisibleIdxToRaw(line, range.start);
+    const rawEnd = mapVisibleIdxToRaw(line, range.end);
+    out += line.slice(rawCursor, rawStart);
+    out += currentTheme.boldFg(token, line.slice(rawStart, rawEnd));
+    rawCursor = rawEnd;
+  }
+  return out + line.slice(rawCursor);
 }
 
 /**

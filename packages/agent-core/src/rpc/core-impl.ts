@@ -20,6 +20,7 @@ import {
   resolveKimiHome,
   writeConfigFile,
   type KimiConfig,
+  type McpServerConfig,
   type MoonshotServiceConfig,
 } from '../config';
 import {
@@ -36,7 +37,7 @@ import {
   type OAuthTokenProviderResolver
 } from '../session/provider-manager';
 import { SessionAPIImpl } from '../session/rpc';
-import { normalizeWorkDir, SessionStore } from '../session/store';
+import { normalizeWorkDir, SessionStore } from '../session/store/index';
 import { noopTelemetryClient, withTelemetryContext, type TelemetryClient } from '../telemetry';
 import type { CoreRPCClient } from './client';
 import type {
@@ -50,7 +51,7 @@ import type {
   CreateGoalPayload,
   CreateSessionPayload,
   EmptyPayload,
-  GoalControlPayload,
+  EnterSwarmPayload,
   GoalSnapshot,
   GoalToolResult,
   ExportSessionPayload,
@@ -98,7 +99,9 @@ import { KaosShellNotFoundError, LocalKaos, type Kaos } from '@moonshot-ai/kaos'
 import type { ToolServices } from '../tools/support/services';
 
 const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
-
+const KIMI_CODE_BASE_URL_ENV = 'KIMI_CODE_BASE_URL';
+const KIMI_CODE_OAUTH_HOST_ENV = 'KIMI_CODE_OAUTH_HOST';
+const KIMI_OAUTH_HOST_ENV = 'KIMI_OAUTH_HOST';
 type AgentScopedPayload<T> = T & { readonly agentId: string };
 type SessionScopedPayload<T> = T & { readonly sessionId: string };
 type SessionAgentPayload<T> = SessionScopedPayload<AgentScopedPayload<T>>;
@@ -123,7 +126,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   readonly sessions = new Map<string, Session>();
   readonly telemetry: TelemetryClient;
 
-  private kaos: Promise<Kaos>;
+  private kaos: Promise<Kaos> | undefined;
   private runtime: ToolServices | undefined;
   private config: KimiConfig;
   private readonly runtimeOverride: ToolServices | undefined;
@@ -147,12 +150,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.configPath = resolveConfigPath({
       homeDir: this.homeDir,
       configPath: options.configPath,
-    });
-    this.kaos = LocalKaos.create().catch((error: unknown) => {
-      if (error instanceof KaosShellNotFoundError) {
-        throw new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
-      }
-      throw error;
     });
     this.runtimeOverride = options.runtime;
     this.runtime = options.runtime;
@@ -183,6 +180,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   async createSession(input: CreateSessionPayload): Promise<SessionSummary> {
+    return this.createSessionWithOverrides(input, {});
+  }
+
+  async createSessionWithOverrides(
+    input: CreateSessionPayload,
+    overrides: { kaos?: Kaos; persistenceKaos?: Kaos },
+  ): Promise<SessionSummary> {
     const options = input;
     const workDir = requiredWorkDir('createSession', options.workDir);
     const config = this.reloadProviderManager();
@@ -210,8 +214,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
     const runtime = await this.resolveRuntime(config);
+    const parentKaos = overrides.kaos ?? (await this.getKaos());
+    const persistenceKaos = overrides.persistenceKaos ?? parentKaos;
     const session = new Session({
-      kaos: (await this.kaos).withCwd(workDir),
+      kaos: parentKaos.withCwd(workDir),
+      persistenceKaos,
       toolServices: runtime,
       config,
       id,
@@ -282,9 +289,19 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   async resumeSession(input: ResumeSessionPayload): Promise<ResumeSessionResult> {
+    return this.resumeSessionWithOverrides(input, {});
+  }
+
+  async resumeSessionWithOverrides(
+    input: ResumeSessionPayload,
+    overrides: { kaos?: Kaos; persistenceKaos?: Kaos },
+  ): Promise<ResumeSessionResult> {
     const summary = await this.sessionStore.get(input.sessionId);
     const active = this.sessions.get(summary.id);
     if (active !== undefined) {
+      if (overrides.kaos !== undefined) {
+        active.setToolKaos(overrides.kaos.withCwd(summary.workDir));
+      }
       return resumeSessionResult(summary, active);
     }
 
@@ -298,8 +315,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
     const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
     const runtime = await this.resolveRuntime(config);
+    const parentKaos = overrides.kaos ?? (await this.getKaos());
+    const persistenceKaos = overrides.persistenceKaos ?? parentKaos;
     const session = new Session({
-      kaos: (await this.kaos).withCwd(summary.workDir),
+      kaos: parentKaos.withCwd(summary.workDir),
+      persistenceKaos,
       toolServices: runtime,
       config,
       id: summary.id,
@@ -359,6 +379,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {
     const source = await this.sessionStore.get(input.sessionId);
     const active = this.sessions.get(source.id);
+    if (active?.hasActiveTurn === true) {
+      throw new KimiError(
+        ErrorCodes.SESSION_FORK_ACTIVE_TURN,
+        `Session "${source.id}" cannot be forked while a turn is running`,
+        { details: { sessionId: source.id } },
+      );
+    }
+
     if (active !== undefined) {
       await active.flushMetadata();
     }
@@ -509,6 +537,18 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).clearPlan(payload);
   }
 
+  enterSwarm({ sessionId, ...payload }: SessionAgentPayload<EnterSwarmPayload>) {
+    return this.sessionApi(sessionId).enterSwarm(payload);
+  }
+
+  exitSwarm({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).exitSwarm(payload);
+  }
+
+  getSwarmMode({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).getSwarmMode(payload);
+  }
+
   beginCompaction({ sessionId, ...payload }: SessionAgentPayload<BeginCompactionPayload>) {
     return this.sessionApi(sessionId).beginCompaction(payload);
   }
@@ -623,32 +663,32 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   createGoal({
     sessionId,
     ...payload
-  }: SessionScopedPayload<CreateGoalPayload>): Promise<GoalSnapshot> {
+  }: SessionAgentPayload<CreateGoalPayload>): Promise<GoalSnapshot> {
     return Promise.resolve(this.sessionApi(sessionId).createGoal(payload));
   }
 
-  getGoal({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): GoalToolResult {
-    return this.sessionApi(sessionId).getGoal(payload);
+  getGoal({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>): Promise<GoalToolResult> {
+    return Promise.resolve(this.sessionApi(sessionId).getGoal(payload));
   }
 
   pauseGoal({
     sessionId,
     ...payload
-  }: SessionScopedPayload<GoalControlPayload>): Promise<GoalSnapshot> {
+  }: SessionAgentPayload<EmptyPayload>): Promise<GoalSnapshot> {
     return Promise.resolve(this.sessionApi(sessionId).pauseGoal(payload));
   }
 
   resumeGoal({
     sessionId,
     ...payload
-  }: SessionScopedPayload<GoalControlPayload>): Promise<GoalSnapshot> {
+  }: SessionAgentPayload<EmptyPayload>): Promise<GoalSnapshot> {
     return Promise.resolve(this.sessionApi(sessionId).resumeGoal(payload));
   }
 
   cancelGoal({
     sessionId,
     ...payload
-  }: SessionScopedPayload<GoalControlPayload>): Promise<GoalSnapshot> {
+  }: SessionAgentPayload<EmptyPayload>): Promise<GoalSnapshot> {
     return Promise.resolve(this.sessionApi(sessionId).cancelGoal(payload));
   }
 
@@ -737,10 +777,21 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return runtime;
   }
 
+  private getKaos(): Promise<Kaos> {
+    this.kaos ??= LocalKaos.create().catch((error: unknown) => {
+      if (error instanceof KaosShellNotFoundError) {
+        throw new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
+      }
+      throw error;
+    });
+    return this.kaos;
+  }
+
   private resolveSessionSkillConfig(config: KimiConfig): SessionSkillConfig {
     const explicitDirs = this.skillDirs.length > 0 ? this.skillDirs : undefined;
     return {
       userHomeDir: this.userHomeDir,
+      brandHomeDir: this.homeDir,
       explicitDirs,
       extraDirs: config.extraSkillDirs,
       pluginSkillRoots: this.plugins.pluginSkillRoots(),
@@ -758,7 +809,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   private mergePluginMcpConfig(base: SessionMcpConfig | undefined): SessionMcpConfig | undefined {
-    const pluginServers = this.plugins.enabledMcpServers();
+    const pluginServers = this.withManagedKimiPluginEnv(this.plugins.enabledMcpServers());
     if (Object.keys(pluginServers).length === 0) return base;
     return {
       servers: {
@@ -766,6 +817,36 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         ...pluginServers,
       },
     };
+  }
+
+  private withManagedKimiPluginEnv(
+    pluginServers: Record<string, McpServerConfig>,
+  ): Record<string, McpServerConfig> {
+    const managedEnv = this.managedKimiCodeEnvForPlugins();
+    if (Object.keys(managedEnv).length === 0) return pluginServers;
+
+    const out: Record<string, McpServerConfig> = {};
+    for (const [name, server] of Object.entries(pluginServers)) {
+      out[name] =
+        server.transport === 'stdio'
+          ? { ...server, env: { ...server.env, ...managedEnv } }
+          : server;
+    }
+    return out;
+  }
+
+  private managedKimiCodeEnvForPlugins(): Record<string, string> {
+    const provider = this.config.providers[KIMI_CODE_PROVIDER_NAME];
+    const envBaseUrl = process.env[KIMI_CODE_BASE_URL_ENV];
+    const envOAuthHost = process.env[KIMI_CODE_OAUTH_HOST_ENV] ?? process.env[KIMI_OAUTH_HOST_ENV];
+    const hasEnvOverride = envBaseUrl !== undefined || envOAuthHost !== undefined;
+    const baseUrl =
+      envBaseUrl !== undefined ? envBaseUrl.replace(/\/+$/, '') : provider?.baseUrl;
+    const oauthHost = hasEnvOverride ? envOAuthHost : provider?.oauth?.oauthHost;
+    const env: Record<string, string> = {};
+    if (baseUrl !== undefined) env[KIMI_CODE_BASE_URL_ENV] = baseUrl;
+    if (oauthHost !== undefined) env[KIMI_CODE_OAUTH_HOST_ENV] = oauthHost;
+    return env;
   }
 
   private sessionApi(sessionId: string): SessionAPIImpl {
@@ -915,6 +996,7 @@ async function resumeSessionResult(
     const context = await api.getContext({ agentId });
     const permission = await api.getPermission({ agentId });
     const plan = await api.getPlan({ agentId });
+    const swarmMode = await api.getSwarmMode({ agentId });
     const usage = await api.getUsage({ agentId });
     agents[agentId] = {
       type: agent.type,
@@ -923,6 +1005,7 @@ async function resumeSessionResult(
       replay: agent.replayBuilder.buildResult(),
       permission,
       plan,
+      swarmMode,
       usage,
       tools: await api.getTools({ agentId }),
       toolStore: agent.tools.storeData(),

@@ -5,11 +5,10 @@ import {
   ExperimentsSelectorComponent,
   type ExperimentalFeatureDraftChange,
 } from '#/tui/components/dialogs/experiments-selector';
-import { darkColors } from '#/tui/theme/colors';
+
 
 const ANSI = /\u001B\[[0-9;]*m/g;
 const ESC = String.fromCodePoint(27);
-const DOWN = `${ESC}[B`;
 const ENTER = '\r';
 
 function strip(text: string): string {
@@ -20,13 +19,13 @@ function feature(
   overrides: Partial<ExperimentalFeatureState> = {},
 ): ExperimentalFeatureState {
   return {
-    id: 'goal_command',
-    title: 'Goal command',
-    description: 'Enable goal mode.',
-    surface: 'both',
-    env: 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND',
-    defaultEnabled: false,
-    enabled: false,
+    id: 'micro_compaction',
+    title: 'Micro compaction',
+    description: 'Trim older tool results.',
+    surface: 'core',
+    env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
+    defaultEnabled: true,
+    enabled: true,
     source: 'default',
     ...overrides,
   };
@@ -41,16 +40,7 @@ describe('ExperimentsSelectorComponent', () => {
     const selector = new ExperimentsSelectorComponent({
       features: [
         feature({ enabled: true, source: 'config', configValue: true }),
-        feature({
-          id: 'background_ask',
-          title: 'Background questions',
-          description: 'Ask questions without blocking the current turn.',
-          env: 'KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK',
-          enabled: false,
-          source: 'env',
-        }),
       ],
-      colors: darkColors,
       onApply: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -59,25 +49,17 @@ describe('ExperimentsSelectorComponent', () => {
 
     expect(out).toContain(' Experimental features  (type to search)');
     expect(out).toContain(' ↑↓ navigate · Space toggle · Enter apply · Esc cancel');
-    expect(out).toContain('  ❯ Goal command  enabled');
-    expect(out).toContain('    id goal_command · config · KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND');
-    expect(out).toContain('    Enable goal mode.');
-    expect(out).toContain('    Background questions  disabled');
-    expect(out).toContain('    id background_ask · locked by KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK');
+    expect(out).toContain('  ❯ Micro compaction  enabled');
+    expect(out).toContain('    id micro_compaction · config · KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION');
+    expect(out).toContain('    Trim older tool results.');
     expect(out).toContain(' [ Apply changes and reload ]  no changes');
   });
 
   it('drafts changes with Space and applies them with Enter', () => {
     const onApply = vi.fn<(changes: readonly ExperimentalFeatureDraftChange[]) => void>();
-    const first = feature({ id: 'goal_command', title: 'Goal command' });
-    const second = feature({
-      id: 'micro_compaction',
-      title: 'Micro compaction',
-      env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
-    });
+    const first = feature();
     const selector = new ExperimentsSelectorComponent({
-      features: [first, second],
-      colors: darkColors,
+      features: [first],
       onApply,
       onCancel: vi.fn(),
     });
@@ -85,19 +67,16 @@ describe('ExperimentsSelectorComponent', () => {
     selector.handleInput(' ');
 
     expect(onApply).not.toHaveBeenCalled();
-    expect(text(selector)).toContain('  ❯ Goal command  enabled');
+    expect(text(selector)).toContain('  ❯ Micro compaction  disabled');
     expect(text(selector)).toContain(
-      '    id goal_command · default · KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND · modified',
+      '    id micro_compaction · default · KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION · modified',
     );
     expect(text(selector)).toContain(' [ Apply changes and reload ]  1 change');
 
-    selector.handleInput(DOWN);
-    selector.handleInput(' ');
     selector.handleInput(ENTER);
 
     expect(onApply).toHaveBeenCalledWith([
-      { id: 'goal_command', enabled: true },
-      { id: 'micro_compaction', enabled: true },
+      { id: 'micro_compaction', enabled: false },
     ]);
   });
 
@@ -110,7 +89,6 @@ describe('ExperimentsSelectorComponent', () => {
           source: 'env',
         }),
       ],
-      colors: darkColors,
       onApply,
       onCancel: vi.fn(),
     });
@@ -118,7 +96,7 @@ describe('ExperimentsSelectorComponent', () => {
     selector.handleInput(' ');
     selector.handleInput(ENTER);
 
-    expect(text(selector)).toContain('  ❯ Goal command  enabled');
+    expect(text(selector)).toContain('  ❯ Micro compaction  enabled');
     expect(text(selector)).toContain(' [ Apply changes and reload ]  no changes');
     expect(onApply).not.toHaveBeenCalled();
   });
@@ -126,26 +104,16 @@ describe('ExperimentsSelectorComponent', () => {
   it('filters by typing and clears the query before cancelling', () => {
     const onCancel = vi.fn();
     const selector = new ExperimentsSelectorComponent({
-      features: [
-        feature({ id: 'goal_command', title: 'Goal command' }),
-        feature({
-          id: 'background_ask',
-          title: 'Background questions',
-          env: 'KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK',
-        }),
-      ],
-      colors: darkColors,
+      features: [feature()],
       onApply: vi.fn(),
       onCancel,
     });
 
-    selector.handleInput('b');
-    selector.handleInput('a');
+    selector.handleInput('m');
+    selector.handleInput('i');
     selector.handleInput('c');
-    selector.handleInput('k');
-    expect(text(selector)).toContain('Search: back');
-    expect(text(selector)).toContain('Background questions');
-    expect(text(selector)).not.toContain('Goal command');
+    expect(text(selector)).toContain('Search: mic');
+    expect(text(selector)).toContain('Micro compaction');
 
     selector.handleInput(ESC);
     expect(onCancel).not.toHaveBeenCalled();

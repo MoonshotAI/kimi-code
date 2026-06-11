@@ -21,6 +21,9 @@ function fakeAgent(calls: unknown[] = []): Agent {
     config: {
       data: () => ({ provider: undefined }),
     },
+    goal: {
+      getGoal: () => ({ goal: null }),
+    },
   } as unknown as Agent;
 }
 

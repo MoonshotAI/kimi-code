@@ -16,13 +16,11 @@ If you need to move the data directory elsewhere (for example, to isolate config
 export KIMI_CODE_HOME="$HOME/.config/kimi-code"
 ```
 
-Once set, **all** data — config, sessions, logs, OAuth credentials, and more — lands under the new path. For the full reference on `KIMI_CODE_HOME`, see [Environment variables](./env-vars.md).
+Once set, **all** Kimi Code data — config, sessions, logs, OAuth credentials, Kimi-specific user Skills, global `AGENTS.md`, and more — lands under the new path. For the full reference on `KIMI_CODE_HOME`, see [Environment variables](./env-vars.md).
 
-::: tip Two types of data are not affected by `KIMI_CODE_HOME`
+::: tip Note
 
-**Built-in tool cache** (ripgrep binary) uses `KIMI_CODE_CACHE_DIR` instead. When that is unset, the platform cache directory is used: `~/Library/Caches/kimi-code` on macOS, `~/.cache/kimi-code` on Linux, and `%LOCALAPPDATA%\kimi-code` on Windows.
-
-**Agent Skills** search paths are `~/.kimi-code/skills` and `~/.agents/skills` (user level), and `.kimi-code/skills` and `.agents/skills` under the working directory (project level). See [Agent Skills](../customization/skills.md).
+**Generic `.agents` resources** stay under the real OS home so they can be shared across tools. For example, user-level generic Skills remain at `~/.agents/skills/`, while Kimi-specific user Skills move with `KIMI_CODE_HOME` as `$KIMI_CODE_HOME/skills/`.
 :::
 
 ## Directory layout
@@ -31,7 +29,9 @@ Once set, **all** data — config, sessions, logs, OAuth credentials, and more �
 $KIMI_CODE_HOME  (default: ~/.kimi-code)
 ├── config.toml             # User configuration
 ├── tui.toml                # Terminal UI preferences (including auto-update toggle)
+├── AGENTS.md               # Global Kimi-specific agent instructions (optional)
 ├── mcp.json                # User-level MCP server declarations (optional)
+├── skills/                 # Kimi-specific user-level Skills (optional)
 ├── plugins/
 │   ├── installed.json      # Installed plugin records and enabled state
 │   └── managed/            # Plugin copies installed from zip/local paths
@@ -43,7 +43,8 @@ $KIMI_CODE_HOME  (default: ~/.kimi-code)
 ├── sessions/               # Session data (see below)
 │   └── <workDirKey>/<sessionId>/
 ├── bin/
-│   └── rg                  # ripgrep cache (rg.exe on Windows)
+│   ├── rg                  # managed ripgrep binary for Grep (rg.exe on Windows)
+│   └── fd                  # managed fd binary for file references (fd.exe on Windows)
 ├── logs/
 │   └── kimi-code.log       # Global diagnostic log
 ├── updates/
@@ -60,7 +61,9 @@ Each top-level file under the data root serves a specific purpose; most are mana
 
 - **`config.toml`**: the main runtime configuration file, storing user-level settings such as providers, models, and loop control. See [Configuration files](./config-files.md).
 - **`tui.toml`**: terminal UI client preferences, including `[upgrade].auto_install` (auto-update, on by default). You can disable it in `/settings` or by manually setting `auto_install = false`.
+- **`AGENTS.md`**: global Kimi-specific agent instructions. This file moves with `KIMI_CODE_HOME`; generic cross-tool instructions can still live under `~/.agents/AGENTS.md`.
 - **`mcp.json`**: user-level MCP server declarations, merged with the project-local `.kimi-code/mcp.json` on startup. See [MCP](../customization/mcp.md).
+- **`skills/`**: Kimi-specific user-level Skills. This directory moves with `KIMI_CODE_HOME`; generic cross-tool Skills can still live under `~/.agents/skills/`. See [Agent Skills](../customization/skills.md).
 - **`plugins/installed.json`**: records installed plugins, each plugin's enabled state, and MCP server capability state changes made via `/plugins` or `/plugins mcp disable|enable`. Files installed from local paths or zip URLs are copied to `plugins/managed/<id>/`. See [Plugins](../customization/plugins.md).
 - **`credentials/`**: OAuth credential directory, with permissions `0o700` (directory) / `0o600` (files), readable and writable only by the current user. Managed provider credentials are stored as `credentials/<name>.json`; MCP server credentials are stored under `credentials/mcp/`. Credentials are written using an atomic flow (tmp → fsync → rename) to prevent corruption.
 
@@ -71,6 +74,7 @@ Each session's data is stored under `sessions/<workDirKey>/<sessionId>/`, and a 
 Inside each session directory:
 
 - **`state.json`**: session metadata including title, `lastPrompt`, creation/update timestamps, and `forkedFrom`.
+- **`upcoming-goals.json`**: the TUI-only queue created by `/goal next <objective>`. It is not part of the agent conversation until a queued goal is promoted after the current goal completes.
 - **`agents/main/wire.jsonl`**: the main Agent's complete communication record, used for session resumption and replay.
 - **`agents/main/plans/`**: plan files written in Plan mode, named by plan id (`<id>.md`).
 - **`agents/agent-0/` etc.**: sub-Agent instance directories, each containing their own `wire.jsonl`.
@@ -80,7 +84,7 @@ Inside each session directory:
 
 ## Built-in tool cache
 
-The first time the CLI needs ripgrep, it automatically downloads and caches it at `bin/rg` (`bin/rg.exe` on Windows); subsequent runs reuse the cached binary. If `rg` is already available on the system `PATH`, that version takes precedence. Deleting the `bin/` directory triggers a fresh download on the next use.
+The first time the `Grep` tool needs ripgrep, the CLI can automatically download `rg` and cache it at `bin/rg` (`bin/rg.exe` on Windows). File-reference completion in the terminal UI uses `fd`; the CLI downloads and caches it at `bin/fd` (`bin/fd.exe` on Windows) in the background when needed. Subsequent runs reuse the cached binaries. `rg` prefers the system `PATH` before the cache, while `fd` checks the managed cache before falling back to system `fd` / `fdfind`. Deleting the `bin/` directory triggers a fresh download on the next use.
 
 ## Logs and update state
 
@@ -107,12 +111,13 @@ Deleting the data root directory (`~/.kimi-code/` or the path set by `KIMI_CODE_
 | Clear diagnostic logs | Delete `~/.kimi-code/logs/` |
 | Clear input history | Delete `~/.kimi-code/user-history/` |
 | Reset update state | Delete `~/.kimi-code/updates/latest.json` |
-| Force re-download of ripgrep | Delete `~/.kimi-code/bin/` |
+| Force re-download of managed `rg` and `fd` | Delete `~/.kimi-code/bin/` |
 | Clear provider OAuth login state | Run `/logout`, or delete the corresponding `credentials/<name>.json` |
 | Clear MCP server OAuth login state | Delete `credentials/mcp/` (`/logout` does not clear MCP credentials) |
-| Remove user-level MCP declarations | Delete `~/.kimi-code/mcp.json` |
-| Clear plugin install records | Delete `~/.kimi-code/plugins/` (local plugin source directories are not affected) |
-| Clear user-level Skills | Delete `~/.kimi-code/skills/` |
+| Remove user-level MCP declarations | Delete `$KIMI_CODE_HOME/mcp.json` (default `~/.kimi-code/mcp.json`) |
+| Clear global Kimi-specific agent instructions | Delete `$KIMI_CODE_HOME/AGENTS.md` (default `~/.kimi-code/AGENTS.md`) |
+| Clear plugin install records | Delete `$KIMI_CODE_HOME/plugins/` (local plugin source directories are not affected) |
+| Clear Kimi-specific user-level Skills | Delete `$KIMI_CODE_HOME/skills/` (default `~/.kimi-code/skills/`) |
 
 ## Next steps
 

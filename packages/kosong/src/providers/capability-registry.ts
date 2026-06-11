@@ -28,12 +28,19 @@ const OPENAI_VISION_TOOL_PREFIXES = [
   'gpt-4.5',
 ] as const;
 
-const CLAUDE_3_PREFIXES = ['claude-3-', 'claude-3.5-', 'claude-3.7-'] as const;
+// Claude prefixes are grouped by capability set, not by version family:
+// a new model joins the group whose capability it matches (e.g. Fable sits
+// with Opus/Sonnet/Haiku 4), rather than getting a per-version group.
 
-const CLAUDE_4_PREFIXES = [
+// Vision + tool use, no thinking (-> ANTHROPIC_VISION_TOOL_CAPABILITY).
+const CLAUDE_VISION_TOOL_PREFIXES = ['claude-3-', 'claude-3.5-', 'claude-3.7-'] as const;
+
+// Vision + tool use + thinking (-> ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY).
+const CLAUDE_THINKING_VISION_TOOL_PREFIXES = [
   'claude-opus-4',
   'claude-sonnet-4',
   'claude-haiku-4',
+  'claude-fable',
 ] as const;
 
 const GEMINI_CATALOGUED_PREFIXES = [
@@ -136,11 +143,11 @@ const OPENAI_RESPONSES_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
 
 const ANTHROPIC_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
   {
-    matches: (name) => hasPrefix(name, CLAUDE_3_PREFIXES),
+    matches: (name) => hasPrefix(name, CLAUDE_VISION_TOOL_PREFIXES),
     capability: ANTHROPIC_VISION_TOOL_CAPABILITY,
   },
   {
-    matches: (name) => hasPrefix(name, CLAUDE_4_PREFIXES),
+    matches: (name) => hasPrefix(name, CLAUDE_THINKING_VISION_TOOL_PREFIXES),
     capability: ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY,
   },
 ];

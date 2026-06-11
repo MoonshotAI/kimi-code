@@ -22,7 +22,6 @@ describe('ChoicePickerComponent', () => {
         { value: 'a', label: 'Alpha' },
         { value: 'b', label: 'Beta' },
       ],
-      colors: darkColors,
       searchable: true,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
@@ -61,7 +60,6 @@ describe('ChoicePickerComponent', () => {
         },
       ],
       currentValue: 'manual',
-      colors: darkColors,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -79,7 +77,6 @@ describe('ChoicePickerComponent', () => {
 
     const editor = new EditorSelectorComponent({
       currentValue: 'vim',
-      colors: darkColors,
       onSelect,
       onCancel,
     });
@@ -87,7 +84,6 @@ describe('ChoicePickerComponent', () => {
 
     const theme = new ThemeSelectorComponent({
       currentValue: 'light',
-      colors: darkColors,
       onSelect,
       onCancel,
     });
@@ -95,14 +91,12 @@ describe('ChoicePickerComponent', () => {
 
     const permission = new PermissionSelectorComponent({
       currentValue: 'manual',
-      colors: darkColors,
       onSelect,
       onCancel,
     });
     expect(permission.render(120).map(strip)).toContain('  ❯ Manual ← current');
 
     const settings = new SettingsSelectorComponent({
-      colors: darkColors,
       onSelect,
       onCancel,
     });
@@ -113,7 +107,6 @@ describe('ChoicePickerComponent', () => {
 
     const upgradePreference = new UpdatePreferenceSelectorComponent({
       currentValue: true,
-      colors: darkColors,
       onSelect,
       onCancel,
     });
@@ -131,7 +124,6 @@ describe('ChoicePickerComponent', () => {
         { value: 'azure', label: 'Azure OpenAI' },
       ],
       searchable: true,
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -145,7 +137,6 @@ describe('ChoicePickerComponent', () => {
     const picker = new ChoicePickerComponent({
       title: 'Pick one',
       options: [{ value: 'a', label: 'Alpha' }],
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });

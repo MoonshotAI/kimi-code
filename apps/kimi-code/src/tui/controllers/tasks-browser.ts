@@ -3,13 +3,13 @@ import type { Component, ProcessTerminal, TUI } from '@earendil-works/pi-tui';
 
 import { TaskOutputViewer } from '../components/dialogs/task-output-viewer';
 import { TasksBrowserApp, type TasksFilter } from '../components/dialogs/tasks-browser';
-import type { ColorPalette } from '../theme';
+import type { Theme } from '#/tui/theme';
 import type { CustomEditor } from '../components/editor/custom-editor';
 
 export interface TasksBrowserHost {
   readonly state: {
     readonly tasksBrowser: TasksBrowserState | undefined;
-    readonly theme: { readonly colors: ColorPalette };
+    readonly theme: Theme;
     readonly terminal: ProcessTerminal;
     readonly ui: TUI;
     readonly editor: CustomEditor;
@@ -77,7 +77,6 @@ export class TasksBrowserController {
         tailOutput: undefined,
         tailLoading: false,
         flashMessage: undefined,
-        colors: state.theme.colors,
         ...this.buildCallbacks(),
       },
       state.terminal,
@@ -167,7 +166,6 @@ export class TasksBrowserController {
       taskId: viewer.taskId,
       info,
       output,
-      colors: state.theme.colors,
       onClose: () => {
         this.closeOutputViewer();
       },
@@ -229,7 +227,6 @@ export class TasksBrowserController {
       tailOutput: browser.tailOutput,
       tailLoading: browser.tailLoading,
       flashMessage: browser.flashMessage,
-      colors: this.host.state.theme.colors,
       ...this.buildCallbacks(),
     });
     this.host.state.ui.requestRender();
@@ -343,7 +340,6 @@ export class TasksBrowserController {
         taskId,
         info,
         output,
-        colors: state.theme.colors,
         onClose: () => {
           this.closeOutputViewer();
         },

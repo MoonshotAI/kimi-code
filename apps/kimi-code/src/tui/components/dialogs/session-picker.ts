@@ -10,11 +10,9 @@ import {
   visibleWidth,
   type Focusable,
 } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
-
 import { formatSessionLabel } from '#/migration/index';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 export interface SessionRow {
   readonly id: string;
@@ -78,7 +76,6 @@ function singleLine(text: string): string {
 export class SessionPickerComponent extends Container implements Focusable {
   private sessions: SessionRow[];
   private currentSessionId: string;
-  private colors: ColorPalette;
   private onSelect: (sessionId: string) => void;
   private onCancel: () => void;
   private maxVisibleSessions: number;
@@ -91,22 +88,35 @@ export class SessionPickerComponent extends Container implements Focusable {
     sessions: SessionRow[];
     loading: boolean;
     currentSessionId: string;
-    colors: ColorPalette;
     onSelect: (sessionId: string) => void;
     onCancel: () => void;
+    onCtrlC?: () => void;
+    onCtrlD?: () => void;
     maxVisibleSessions?: number;
   }) {
     super();
     this.sessions = opts.sessions;
     this.loading = opts.loading;
     this.currentSessionId = opts.currentSessionId;
-    this.colors = opts.colors;
     this.onSelect = opts.onSelect;
     this.onCancel = opts.onCancel;
     this.maxVisibleSessions = opts.maxVisibleSessions ?? 4;
+    this.onCtrlC = opts.onCtrlC;
+    this.onCtrlD = opts.onCtrlD;
   }
 
+  private readonly onCtrlC?: () => void;
+  private readonly onCtrlD?: () => void;
+
   handleInput(data: string): void {
+    if (matchesKey(data, Key.ctrl('c'))) {
+      this.onCtrlC?.();
+      return;
+    }
+    if (matchesKey(data, Key.ctrl('d'))) {
+      this.onCtrlD?.();
+      return;
+    }
     if (matchesKey(data, Key.escape)) {
       this.onCancel();
       return;
@@ -136,26 +146,26 @@ export class SessionPickerComponent extends Container implements Focusable {
   // the clamp in `render()` is what guarantees the renderer's invariant and
   // prevents the "Rendered line exceeds terminal width" crash (issue #240).
   private renderLines(width: number): string[] {
-    const colors = this.colors;
-    const lines: string[] = [chalk.hex(colors.primary)('─'.repeat(width))];
+    const lines: string[] = [currentTheme.fg('primary', '─'.repeat(width))];
 
     if (this.loading) {
-      lines.push(chalk.hex(colors.primary).bold(truncateToWidth('Sessions', width, ELLIPSIS)));
+      lines.push(currentTheme.boldFg('primary', truncateToWidth('Sessions', width, ELLIPSIS)));
       lines.push(
-        chalk.hex(colors.textMuted)(truncateToWidth('Loading sessions...', width, ELLIPSIS)),
+        currentTheme.fg('textMuted', truncateToWidth('Loading sessions...', width, ELLIPSIS)),
       );
-      lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
+      lines.push(currentTheme.fg('primary', '─'.repeat(width)));
       return lines;
     }
 
     if (this.sessions.length === 0) {
-      lines.push(chalk.hex(colors.primary).bold(truncateToWidth('Sessions', width, ELLIPSIS)));
+      lines.push(currentTheme.boldFg('primary', truncateToWidth('Sessions', width, ELLIPSIS)));
       lines.push(
-        chalk.hex(colors.textMuted)(
+        currentTheme.fg(
+          'textMuted',
           truncateToWidth('No sessions found. Press Escape to close.', width, ELLIPSIS),
         ),
       );
-      lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
+      lines.push(currentTheme.fg('primary', '─'.repeat(width)));
       return lines;
     }
 
@@ -165,7 +175,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     const hintBudget = Math.max(0, width - labelWidth);
     const shownHint = truncateToWidth(headerHint, hintBudget, ELLIPSIS);
     lines.push(
-      chalk.hex(colors.primary).bold(headerLabel) + chalk.hex(colors.textMuted)(shownHint),
+      currentTheme.boldFg('primary', headerLabel) + currentTheme.fg('textMuted', shownHint),
     );
     lines.push('');
 
@@ -193,10 +203,10 @@ export class SessionPickerComponent extends Container implements Focusable {
     if (this.sessions.length > visibleSessions.length) {
       lines.push('');
       const footer = `Showing ${String(visibleStart + 1)}-${String(visibleStart + visibleSessions.length)} of ${String(this.sessions.length)} sessions`;
-      lines.push(chalk.hex(colors.textMuted)(truncateToWidth(footer, width, ELLIPSIS)));
+      lines.push(currentTheme.fg('textMuted', truncateToWidth(footer, width, ELLIPSIS)));
     }
 
-    lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
+    lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines;
   }
 
@@ -206,12 +216,12 @@ export class SessionPickerComponent extends Container implements Focusable {
     isSelected: boolean,
     isCurrent: boolean,
   ): string[] {
-    const colors = this.colors;
     const pointer = isSelected ? SELECT_POINTER : ' ';
     const indent = '  ';
     const indentWidth = visibleWidth(indent);
-    const titleColor = isSelected ? colors.primary : colors.text;
-    const titleStyle = isSelected ? chalk.hex(titleColor).bold : chalk.hex(titleColor);
+    const titleColor: 'primary' | 'text' = isSelected ? 'primary' : 'text';
+    const titleStyle = (text: string) =>
+      isSelected ? currentTheme.boldFg(titleColor, text) : currentTheme.fg(titleColor, text);
 
     const time = formatRelativeTime(session.updated_at);
     const badge = isCurrent ? CURRENT_MARK : '';
@@ -226,10 +236,10 @@ export class SessionPickerComponent extends Container implements Focusable {
     const titleBudget = Math.max(8, width - headerPrefixWidth - trailingWidth);
     const shownTitle = truncateToWidth(singleLine(titleSource), titleBudget, ELLIPSIS);
 
-    let header = chalk.hex(isSelected ? colors.primary : colors.textDim)(pointer + ' ');
+    let header = currentTheme.fg(isSelected ? 'primary' : 'textDim', pointer + ' ');
     header += titleStyle(shownTitle);
-    if (time.length > 0) header += '  ' + chalk.hex(colors.textDim)(time);
-    if (badge.length > 0) header += '  ' + chalk.hex(colors.success)(badge);
+    if (time.length > 0) header += '  ' + currentTheme.fg('textDim', time);
+    if (badge.length > 0) header += '  ' + currentTheme.fg('success', badge);
     const card: string[] = [header];
 
     // Session id is rendered in full at normal widths (the final clamp in
@@ -246,22 +256,23 @@ export class SessionPickerComponent extends Container implements Focusable {
     if (idLineWidth + metaGapWidth + dirWidth <= width) {
       card.push(
         indent +
-          chalk.hex(colors.textMuted)(fullId) +
-          chalk.hex(colors.textDim)(metaGap) +
-          chalk.hex(colors.textMuted)(aliasedDir),
+          currentTheme.fg('textMuted', fullId) +
+          currentTheme.fg('textDim', metaGap) +
+          currentTheme.fg('textMuted', aliasedDir),
       );
     } else {
       // Not enough room for both on one line — keep the id intact and put the
       // directory on the next line (left-truncated only if it still doesn't fit).
       card.push(
         indent +
-          chalk.hex(colors.textMuted)(
+          currentTheme.fg(
+            'textMuted',
             truncateToWidth(fullId, Math.max(idWidth, width - indentWidth), ELLIPSIS),
           ),
       );
       const dirBudget = Math.max(8, width - indentWidth);
       const dir = truncatePathLeft(aliasedDir, dirBudget);
-      card.push(indent + chalk.hex(colors.textMuted)(dir));
+      card.push(indent + currentTheme.fg('textMuted', dir));
     }
 
     const rawPrompt = session.last_prompt?.trim();
@@ -270,7 +281,7 @@ export class SessionPickerComponent extends Container implements Focusable {
       const promptMarkerWidth = visibleWidth(promptMarker);
       const promptBudget = Math.max(8, width - indentWidth - promptMarkerWidth);
       const promptText = truncateToWidth(singleLine(rawPrompt), promptBudget, ELLIPSIS);
-      const promptLine = indent + chalk.hex(colors.textDim)(promptMarker + promptText);
+      const promptLine = indent + currentTheme.fg('textDim', promptMarker + promptText);
       card.push(promptLine);
     }
 

@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kimi-code-sdk",
-  "version": "0.7.0",
+  "version": "0.9.1",
   "private": true,
   "description": "TypeScript SDK for the Kimi Code Agent",
   "license": "MIT",
@@ -59,7 +59,7 @@
     "@antfu/utils": "^9.3.0",
     "smol-toml": "^1.6.1",
     "yazl": "^3.3.1",
-    "zod": "catalog:"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@moonshot-ai/agent-core": "workspace:^",

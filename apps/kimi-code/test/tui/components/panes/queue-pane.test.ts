@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { QueuePaneComponent } from '#/tui/components/panes/queue-pane';
-import { darkColors } from '#/tui/theme/colors';
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -10,7 +9,6 @@ function stripAnsi(text: string): string {
 describe('QueuePaneComponent', () => {
   it('renders queued messages with the steer hint', () => {
     const component = new QueuePaneComponent({
-      colors: darkColors,
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: true,
@@ -29,7 +27,6 @@ describe('QueuePaneComponent', () => {
 
   it('renders compaction hint when waiting for compaction', () => {
     const component = new QueuePaneComponent({
-      colors: darkColors,
       isCompacting: true,
       isStreaming: false,
       canSteerImmediately: true,
@@ -43,7 +40,6 @@ describe('QueuePaneComponent', () => {
 
   it('omits the steer hint when immediate steering is disabled', () => {
     const component = new QueuePaneComponent({
-      colors: darkColors,
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: false,
@@ -54,5 +50,36 @@ describe('QueuePaneComponent', () => {
 
     expect(output).toContain('will send after current task');
     expect(output).not.toContain('ctrl-s to steer immediately');
+  });
+
+  it('truncates long messages to a single line', () => {
+    const longText = 'a'.repeat(200);
+    const component = new QueuePaneComponent({
+      isCompacting: false,
+      isStreaming: true,
+      canSteerImmediately: true,
+      messages: [{ text: longText }],
+    });
+
+    const lines = component.render(30);
+    expect(lines).toHaveLength(2); // message + hint
+    const messageLine = stripAnsi(lines[0] as string);
+    expect(messageLine).not.toContain('a'.repeat(30));
+    expect(messageLine.endsWith('…')).toBe(true);
+  });
+
+  it('collapses multiline text into a single line', () => {
+    const component = new QueuePaneComponent({
+      isCompacting: false,
+      isStreaming: true,
+      canSteerImmediately: true,
+      messages: [{ text: 'line one\nline two\nline three' }],
+    });
+
+    const lines = component.render(120);
+    expect(lines).toHaveLength(2); // message + hint
+    const messageLine = stripAnsi(lines[0] as string);
+    expect(messageLine).toContain('line one line two line three');
+    expect(messageLine).not.toContain('\n');
   });
 });

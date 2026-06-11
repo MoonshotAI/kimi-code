@@ -1,7 +1,7 @@
 import type {
   AgentReplayRecord,
-  BackgroundTaskInfo,
   ContextMessage,
+  GoalChange,
   PermissionMode,
   PromptOrigin,
   ResumedAgentState,
@@ -20,6 +20,7 @@ import type {
 import { formatErrorMessage, isTodoItemShape } from '../utils/event-payload';
 import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
+import { buildGoalCompletionMessage } from '../utils/goal-completion';
 import {
   appStateFromResumeAgent,
   backgroundOrigin,
@@ -42,6 +43,9 @@ import {
 import type { StreamingUIController } from './streaming-ui';
 import type { SessionEventHandler } from './session-event-handler';
 import type { TUIState } from '../tui-state';
+
+type GoalReplayRecord = Extract<AgentReplayRecord, { type: 'goal_updated' }>;
+type GoalReplayLifecycleChange = GoalChange & { readonly kind: 'lifecycle' };
 
 export interface SessionReplayHost {
   state: TUIState;
@@ -139,10 +143,13 @@ export class SessionReplayRenderer {
   private hydrateBackgroundState(agent: ResumedAgentState): void {
     const { state, sessionEventHandler } = this.host;
     const projection = replayBackgroundProjection(agent.background);
-    sessionEventHandler.backgroundAgentMetadata = new Map(projection.backgroundAgentMetadata);
-    sessionEventHandler.backgroundTasks = new Map<string, BackgroundTaskInfo>(
-      agent.background.map((info) => [info.taskId, info]),
+    sessionEventHandler.subAgentEventHandler.backgroundAgentMetadata = new Map(
+      projection.backgroundAgentMetadata,
     );
+    sessionEventHandler.backgroundTasks.clear();
+    for (const info of agent.background) {
+      sessionEventHandler.backgroundTasks.set(info.taskId, info);
+    }
     sessionEventHandler.backgroundTaskTranscriptedTerminal.clear();
     for (const info of agent.background) {
       if (isTerminalBackgroundTask(info)) {
@@ -170,6 +177,9 @@ export class SessionReplayRenderer {
     switch (record.type) {
       case 'message':
         this.renderMessage(context, record.message);
+        return;
+      case 'goal_updated':
+        this.renderGoalReplayRecord(context, record);
         return;
       case 'plan_updated':
         this.flushAssistant(context);
@@ -243,12 +253,17 @@ export class SessionReplayRenderer {
       this.renderCronMissed(context, message);
       return;
     }
-    const goalCompletion = goalCompletionFromSystemReminder(message);
-    if (goalCompletion !== null) {
-      this.flushAssistant(context);
-      this.host.appendTranscriptEntry(
-        replayEntry(context, 'assistant', goalCompletion, 'markdown'),
-      );
+    if (isGoalForkClearedSystemReminder(message)) {
+      return;
+    }
+    const goalReminder = goalOutcomeReminderFromSystemMessage(message);
+    if (goalReminder !== null) {
+      if (goalReminder !== undefined) {
+        this.flushAssistant(context);
+        this.host.appendTranscriptEntry(
+          replayEntry(context, 'assistant', goalReminder, 'markdown'),
+        );
+      }
       return;
     }
 
@@ -355,6 +370,43 @@ export class SessionReplayRenderer {
       skillName: skill.skillName,
       skillArgs: skill.skillArgs,
       skillTrigger: skill.trigger,
+    });
+  }
+
+  private renderGoalReplayRecord(context: ReplayRenderContext, record: GoalReplayRecord): void {
+    this.flushAssistant(context);
+    const { change } = record;
+    switch (change.kind) {
+      case 'created':
+        this.host.appendTranscriptEntry({
+          ...replayEntry(context, 'goal', 'Goal set', 'plain'),
+          goalData: { kind: 'created' },
+        });
+        return;
+      case 'completion':
+        this.host.appendTranscriptEntry(
+          replayEntry(context, 'assistant', buildGoalCompletionMessage(record.snapshot), 'markdown'),
+        );
+        return;
+      case 'lifecycle': {
+        const lifecycleChange: GoalReplayLifecycleChange = { ...change, kind: 'lifecycle' };
+        if (isResumeNormalizationGoalPause(lifecycleChange)) return;
+        if (isModelBlockedGoalLifecycle(lifecycleChange)) {
+          return;
+        }
+        this.appendGoalLifecycleReplayEntry(context, lifecycleChange);
+        return;
+      }
+    }
+  }
+
+  private appendGoalLifecycleReplayEntry(
+    context: ReplayRenderContext,
+    change: GoalReplayLifecycleChange,
+  ): void {
+    this.host.appendTranscriptEntry({
+      ...replayEntry(context, 'goal', goalLifecycleReplayContent(change), 'plain'),
+      goalData: { kind: 'lifecycle', change },
     });
   }
 
@@ -547,17 +599,51 @@ export class SessionReplayRenderer {
       detail: status.detail,
       backgroundAgentStatus: status,
     });
-    sessionEventHandler.backgroundAgentMetadata.delete(meta.agentId);
+    sessionEventHandler.subAgentEventHandler.backgroundAgentMetadata.delete(meta.agentId);
   }
 }
 
-function goalCompletionFromSystemReminder(message: ContextMessage): string | null {
-  if (message.origin?.kind !== 'system_trigger' || message.origin.name !== 'goal_completion') {
+const RESUME_NORMALIZATION_GOAL_PAUSE_REASONS = new Set([
+  'Paused after agent resume',
+  'Paused after session resume',
+]);
+
+function isResumeNormalizationGoalPause(change: GoalReplayLifecycleChange): boolean {
+  return (
+    change.status === 'paused' &&
+    change.reason !== undefined &&
+    RESUME_NORMALIZATION_GOAL_PAUSE_REASONS.has(change.reason)
+  );
+}
+
+function goalLifecycleReplayContent(change: GoalReplayLifecycleChange): string {
+  switch (change.status) {
+    case 'paused':
+      return 'Goal paused';
+    case 'active':
+      return 'Goal resumed';
+    case 'blocked':
+      return 'Goal blocked';
+    case 'complete':
+    case undefined:
+      return 'Goal updated';
+  }
+}
+
+function isModelBlockedGoalLifecycle(change: GoalReplayLifecycleChange): boolean {
+  return change.status === 'blocked' && change.actor === 'model';
+}
+
+function goalOutcomeReminderFromSystemMessage(message: ContextMessage): string | undefined | null {
+  if (message.origin?.kind !== 'system_trigger') return null;
+  if (message.origin.name !== 'goal_completion' && message.origin.name !== 'goal_blocked') {
     return null;
   }
-  const text = contentPartsToText(message.content);
-  const match = /^<system-reminder>\n([\s\S]*)\n<\/system-reminder>$/.exec(text);
-  return match?.[1] ?? text;
+  return undefined;
+}
+
+function isGoalForkClearedSystemReminder(message: ContextMessage): boolean {
+  return message.origin?.kind === 'system_trigger' && message.origin.name === 'goal_fork_cleared';
 }
 
 function extractCronPrompt(text: string): string {

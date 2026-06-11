@@ -22,7 +22,7 @@ import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { KimiTUI } from '#/tui/index';
-import { detectTerminalTheme } from '#/tui/theme/detect';
+import { currentTheme, getColorPalette } from '#/tui/theme';
 
 import type { CLIOptions } from './options';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
@@ -45,9 +45,9 @@ export async function runShell(
     configWarning = error.message;
   }
 
-  // Resolve `theme = "auto"` against the live terminal once, before pi-tui
-  // grabs stdin. Explicit `dark` / `light` skip detection.
-  const resolvedTheme = tuiConfig.theme === 'auto' ? await detectTerminalTheme() : tuiConfig.theme;
+  // Initialise the global Theme singleton before pi-tui grabs stdin.
+  const palette = await getColorPalette(tuiConfig.theme);
+  currentTheme.setPalette(palette);
 
   const workDir = process.cwd();
   const telemetryBootstrap = createCliTelemetryBootstrap();
@@ -78,6 +78,7 @@ export async function runShell(
     platform: `${process.platform}/${process.arch}`,
     workDir,
   });
+
   await harness.ensureConfigFile();
   const migrationPlan = await detectPendingMigration({
     sourceHome: join(homedir(), '.kimi'),
@@ -97,7 +98,6 @@ export async function runShell(
     version,
     workDir,
     startupNotice: configWarning,
-    resolvedTheme,
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
   });

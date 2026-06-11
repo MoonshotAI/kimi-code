@@ -69,7 +69,7 @@ export function isUserActivatableSkillType(type: string | undefined): boolean {
 }
 
 export function isSupportedSkillType(type: string | undefined): boolean {
-  return isUserActivatableSkillType(type);
+  return isUserActivatableSkillType(type) || type === 'reference';
 }
 
 export function summarizeSkill(skill: SkillDefinition): SkillSummary {

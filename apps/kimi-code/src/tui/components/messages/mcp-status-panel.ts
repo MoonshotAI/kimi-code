@@ -1,10 +1,8 @@
 import type { McpServerInfo } from '@moonshot-ai/kimi-code-sdk';
-import chalk from 'chalk';
 
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 export interface McpStatusReportOptions {
-  readonly colors: ColorPalette;
   readonly servers: readonly McpServerInfo[];
 }
 
@@ -34,18 +32,17 @@ const SUMMARY_ORDER: readonly McpServerInfo['status'][] = [
 
 function statusPainter(
   status: McpServerInfo['status'],
-  colors: ColorPalette,
 ): (text: string) => string {
   switch (status) {
     case 'connected':
-      return chalk.hex(colors.success);
+      return (text) => currentTheme.fg('success', text);
     case 'failed':
-      return chalk.hex(colors.error);
+      return (text) => currentTheme.fg('error', text);
     case 'needs-auth':
     case 'pending':
-      return chalk.hex(colors.warning);
+      return (text) => currentTheme.fg('warning', text);
     case 'disabled':
-      return chalk.hex(colors.textDim);
+      return (text) => currentTheme.fg('textDim', text);
   }
 }
 
@@ -56,6 +53,19 @@ function formatToolCount(server: McpServerInfo): string {
 
 function formatToolsAvailable(count: number): string {
   return `${count} tool${count === 1 ? '' : 's'} available`;
+}
+
+/**
+ * Collapse a (possibly multi-line) MCP error into a single line. The status
+ * panel renders each returned string as exactly one boxed row (see
+ * `UsagePanelComponent.render`), so an embedded newline — e.g. the
+ * `\nstderr: ...` a failed stdio server appends — would drop the trailing
+ * text to column 0 and punch through the rounded border. Folding every run
+ * of whitespace to a single space keeps the error on one row, which the
+ * panel then truncates to the available width.
+ */
+function formatErrorLine(error: string): string {
+  return error.trim().replaceAll(/\s+/g, ' ');
 }
 
 function sortedServers(servers: readonly McpServerInfo[]): McpServerInfo[] {
@@ -84,11 +94,10 @@ function buildSummary(servers: readonly McpServerInfo[]): string {
 
 export function buildMcpStatusReportLines(options: McpStatusReportOptions): string[] {
   const servers = sortedServers(options.servers);
-  const colors = options.colors;
-  const accent = chalk.hex(colors.primary).bold;
-  const muted = chalk.hex(colors.textDim);
-  const value = chalk.hex(colors.text);
-  const error = chalk.hex(colors.error);
+  const accent = (text: string) => currentTheme.boldFg('primary', text);
+  const muted = (text: string) => currentTheme.fg('textDim', text);
+  const value = (text: string) => currentTheme.fg('text', text);
+  const error = (text: string) => currentTheme.fg('error', text);
 
   const lines: string[] = [accent('Servers')];
 
@@ -116,7 +125,6 @@ export function buildMcpStatusReportLines(options: McpStatusReportOptions): stri
   for (const server of servers) {
     const status = statusPainter(
       server.status,
-      colors,
     )(STATUS_LABEL[server.status].padEnd(statusWidth));
     lines.push(
       `  ${value(server.name.padEnd(nameWidth))}  ${status}  ${muted(
@@ -129,7 +137,7 @@ export function buildMcpStatusReportLines(options: McpStatusReportOptions): stri
       server.error !== undefined &&
       server.error.trim().length > 0
     ) {
-      lines.push(`    ${muted('error:')} ${error(server.error.trim())}`);
+      lines.push(`    ${muted('error:')} ${error(formatErrorLine(server.error))}`);
     }
     if (server.status === 'needs-auth') {
       lines.push(`    ${muted('action:')} ${value(`run /mcp-config login ${server.name}`)}`);

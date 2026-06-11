@@ -68,6 +68,8 @@ export function installCommandFor(
       return `yarn global add ${NPM_PACKAGE_NAME}@${version}`;
     case 'bun-global':
       return `bun add -g ${NPM_PACKAGE_NAME}@${version}`;
+    case 'homebrew':
+      return 'brew upgrade kimi-code';
     case 'native':
       return platform === 'win32' ? NATIVE_INSTALL_COMMAND_WIN : NATIVE_INSTALL_COMMAND_UNIX;
     case 'unsupported':
@@ -82,6 +84,10 @@ export function canAutoInstall(source: InstallSource, platform: NodeJS.Platform)
     case 'yarn-global':
     case 'bun-global':
       return true;
+    case 'homebrew':
+      // Homebrew upgrade may mutate other dependents and the formula can lag
+      // behind the CDN release — prompt the user to run `brew upgrade` manually.
+      return false;
     case 'native':
       return platform !== 'win32';
     case 'unsupported':
@@ -108,6 +114,8 @@ export function spawnForSource(
       return { cmd: withCmdSuffix('yarn', platform), args: ['global', 'add', `${NPM_PACKAGE_NAME}@${version}`] };
     case 'bun-global':
       return { cmd: bunCommand(platform), args: ['add', '-g', `${NPM_PACKAGE_NAME}@${version}`] };
+    case 'homebrew':
+      return { cmd: 'brew', args: ['upgrade', 'kimi-code'] };
     case 'native':
       // `curl … | bash` reports only the trailing bash's exit status, so a
       // failed download (curl can't connect → empty stdin → bash exits 0)
@@ -137,6 +145,9 @@ export function renderManualUpdateMessage(
     case 'yarn-global':
     case 'bun-global':
       sourceDesc = source;
+      break;
+    case 'homebrew':
+      sourceDesc = 'homebrew';
       break;
     case 'native':
       sourceDesc = 'native (windows). Auto-update is not supported on this platform.';
@@ -291,6 +302,18 @@ async function showPendingBackgroundInstallNotice(
   };
   await writeUpdateInstallState(nextState).catch(() => {});
   return nextState;
+}
+
+/**
+ * `KIMI_CODE_NO_AUTO_UPDATE` (or the legacy `KIMI_CLI_NO_AUTO_UPDATE` alias)
+ * fully disables the update preflight — no check, no background install, no
+ * prompt. Migrated from kimi-cli, where the variable gated all auto-update
+ * behavior. Accepts the usual truthy values (`1`/`true`/`yes`/`on`).
+ */
+function isAutoUpdateDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  const truthy = (value?: string): boolean =>
+    ['1', 'true', 'yes', 'on'].includes((value ?? '').trim().toLowerCase());
+  return truthy(env['KIMI_CODE_NO_AUTO_UPDATE']) || truthy(env['KIMI_CLI_NO_AUTO_UPDATE']);
 }
 
 async function shouldAutoInstallUpdates(): Promise<boolean> {
@@ -531,6 +554,10 @@ export async function runUpdatePreflight(
   const stderr = options.stderr ?? process.stderr;
   const logger = options.logger ?? log;
   const platform = process.platform;
+
+  if (isAutoUpdateDisabledByEnv()) {
+    return 'continue';
+  }
 
   try {
     const isInteractive =

@@ -13,9 +13,9 @@ import {
   type Focusable,
   truncateToWidth,
   visibleWidth,
+  wrapTextWithAnsi,
 } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
-
+import { currentTheme } from '#/tui/theme';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
 import type {
@@ -25,7 +25,6 @@ import type {
   FileContentDisplayBlock,
   PendingApproval,
 } from '#/tui/reverse-rpc/types';
-import type { ColorPalette } from '#/tui/theme/colors';
 
 export interface ApprovalPanelResponse {
   readonly response: 'approved' | 'approved_for_session' | 'rejected' | 'cancelled';
@@ -49,24 +48,66 @@ interface BlockStyles {
   errorBold: (s: string) => string;
 }
 
-function makeBlockStyles(colors: ColorPalette): BlockStyles {
+function makeBlockStyles(): BlockStyles {
   return {
-    strong: (s) => chalk.hex(colors.textStrong)(s),
-    dim: (s) => chalk.hex(colors.textDim)(s),
-    accent: (s) => chalk.hex(colors.accent)(s),
-    gutter: (s) => chalk.hex(colors.diffGutter)(s),
-    errorBold: (s) => chalk.bold.hex(colors.error)(s),
+    strong: (s) => currentTheme.fg('textStrong', s),
+    dim: (s) => currentTheme.fg('textDim', s),
+    accent: (s) => currentTheme.fg('accent', s),
+    gutter: (s) => currentTheme.fg('diffGutter', s),
+    errorBold: (s) => currentTheme.boldFg('error', s),
   };
+}
+
+function appendWrappedLine(
+  lines: string[],
+  firstPrefix: string,
+  continuationPrefix: string,
+  content: string,
+  width: number,
+): void {
+  const prefixWidth = Math.max(visibleWidth(firstPrefix), visibleWidth(continuationPrefix));
+  const wrapped = wrapTextWithAnsi(content, Math.max(1, width - prefixWidth));
+  if (wrapped.length === 0) {
+    lines.push(firstPrefix);
+    return;
+  }
+  lines.push(`${firstPrefix}${wrapped[0] ?? ''}`);
+  for (let i = 1; i < wrapped.length; i++) {
+    lines.push(`${continuationPrefix}${wrapped[i] ?? ''}`);
+  }
+}
+
+function renderShellDisplayBlock(
+  block: Extract<DisplayBlock, { type: 'shell' }>,
+  s: BlockStyles,
+  width: number,
+): string[] {
+  const lines: string[] = [];
+  if (block.cwd !== undefined && block.cwd.length > 0) {
+    lines.push(s.dim(`cwd: ${block.cwd}`));
+  }
+  if (block.danger !== undefined) {
+    lines.push(s.errorBold(`Dangerous: ${block.danger}`));
+  }
+  const cmdLines = block.command.length > 0 ? block.command.split('\n') : [''];
+  cmdLines.forEach((cmdLine, idx) => {
+    const prefix = idx === 0 ? `${s.accent('$')} ` : `${s.dim('·')} `;
+    appendWrappedLine(lines, prefix, '  ', s.strong(cmdLine), width);
+  });
+  if (block.description !== undefined && block.description.length > 0) {
+    lines.push(`  ${s.dim(block.description)}`);
+  }
+  return lines;
 }
 
 function renderDisplayBlock(
   block: DisplayBlock,
   s: BlockStyles,
-  colors: ColorPalette,
+  contentWidth: number,
 ): string[] {
   switch (block.type) {
     case 'diff':
-      return renderDiffLinesClustered(block.old_text, block.new_text, block.path, colors, {
+      return renderDiffLinesClustered(block.old_text, block.new_text, block.path, {
         contextLines: 3,
         expandKeyHint: 'ctrl+e to preview',
         maxLines: DIFF_SUMMARY_MAX_LINES,
@@ -89,24 +130,8 @@ function renderDisplayBlock(
       }
       return lines;
     }
-    case 'shell': {
-      const lines: string[] = [];
-      if (block.cwd !== undefined && block.cwd.length > 0) {
-        lines.push(s.dim(`cwd: ${block.cwd}`));
-      }
-      if (block.danger !== undefined) {
-        lines.push(s.errorBold(`Dangerous: ${block.danger}`));
-      }
-      const cmdLines = block.command.length > 0 ? block.command.split('\n') : [''];
-      cmdLines.forEach((cmdLine, idx) => {
-        const prefix = idx === 0 ? s.accent('$') : s.dim('·');
-        lines.push(`${prefix} ${s.strong(cmdLine)}`);
-      });
-      if (block.description !== undefined && block.description.length > 0) {
-        lines.push(`  ${s.dim(block.description)}`);
-      }
-      return lines;
-    }
+    case 'shell':
+      return renderShellDisplayBlock(block, s, contentWidth);
     case 'file_op': {
       const op = s.accent(block.operation.padEnd(5));
       const lines = [`${op} ${s.strong(block.path)}`];
@@ -187,9 +212,7 @@ export class ApprovalPanelComponent extends Container implements Focusable {
   private readonly feedbackInput = new Input();
   private onResponse: (response: ApprovalPanelResponse) => void;
   private request: PendingApproval;
-  private readonly colors: ColorPalette;
   private readonly onToggleToolOutput: (() => void) | undefined;
-  private readonly onTogglePlanExpand: (() => void) | undefined;
   private readonly onOpenPreview:
     | ((block: DiffDisplayBlock | FileContentDisplayBlock) => void)
     | undefined;
@@ -197,17 +220,13 @@ export class ApprovalPanelComponent extends Container implements Focusable {
   constructor(
     request: PendingApproval,
     onResponse: (response: ApprovalPanelResponse) => void,
-    colors: ColorPalette,
     onToggleToolOutput?: () => void,
-    onTogglePlanExpand?: () => void,
     onOpenPreview?: (block: DiffDisplayBlock | FileContentDisplayBlock) => void,
   ) {
     super();
     this.request = request;
     this.onResponse = onResponse;
-    this.colors = colors;
     this.onToggleToolOutput = onToggleToolOutput;
-    this.onTogglePlanExpand = onTogglePlanExpand;
     this.onOpenPreview = onOpenPreview;
     this.feedbackInput.onSubmit = (value) => {
       this.submit(this.selectedIndex, value);
@@ -253,8 +272,6 @@ export class ApprovalPanelComponent extends Container implements Focusable {
       const previewable = this.findPreviewableBlock();
       if (previewable !== undefined && this.onOpenPreview !== undefined) {
         this.onOpenPreview(previewable);
-      } else {
-        this.onTogglePlanExpand?.();
       }
       return;
     }
@@ -305,12 +322,12 @@ export class ApprovalPanelComponent extends Container implements Focusable {
     this.ensureValidSelection();
     this.feedbackInput.focused = this.focused && this.feedbackMode;
     const { data } = this.request;
-    const blockStyles = makeBlockStyles(this.colors);
-    const borderColor = chalk.hex(this.colors.borderFocus);
-    const borderColorBold = chalk.bold.hex(this.colors.borderFocus);
-    const selectColorBold = chalk.bold.hex(this.colors.accent);
-    const dim = chalk.hex(this.colors.textDim);
-    const strong = chalk.hex(this.colors.textStrong);
+    const blockStyles = makeBlockStyles();
+    const borderColor = (text: string) => currentTheme.fg('borderFocus', text);
+    const borderColorBold = (text: string) => currentTheme.boldFg('borderFocus', text);
+    const selectColorBold = (text: string) => currentTheme.boldFg('accent', text);
+    const dim = (text: string) => currentTheme.fg('textDim', text);
+    const strong = (text: string) => currentTheme.fg('textStrong', text);
     const horizontalBar = borderColor('─'.repeat(width));
     const indent = (s: string): string => `  ${s}`;
 
@@ -331,7 +348,11 @@ export class ApprovalPanelComponent extends Container implements Focusable {
     if (visibleBlocks.length > 0) {
       lines.push('');
       for (const block of visibleBlocks) {
-        const blockLines = renderDisplayBlock(block, blockStyles, this.colors);
+        const blockLines = renderDisplayBlock(
+          block,
+          blockStyles,
+          Math.max(1, width - 2),
+        );
         for (const line of blockLines) {
           lines.push(indent(line));
         }
@@ -405,8 +426,7 @@ export class ApprovalPanelComponent extends Container implements Focusable {
   }
 
   private renderInlineFeedbackLine(width: number, labelWithNum: string): string {
-    const selectColorBold = chalk.bold.hex(this.colors.accent);
-    const prefix = `${selectColorBold('▶')} ${selectColorBold(labelWithNum)}  `;
+    const prefix = `${currentTheme.boldFg('accent', '▶')} ${currentTheme.boldFg('accent', labelWithNum)}  `;
     const inputWidth = Math.max(4, width - visibleWidth(prefix) + 2);
     const inputLine = this.feedbackInput.render(inputWidth)[0] ?? '> ';
     const inlineInput = inputLine.startsWith('> ') ? inputLine.slice(2) : inputLine;

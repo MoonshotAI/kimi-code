@@ -8,7 +8,7 @@ import {
 import chalk from 'chalk';
 
 import { THINKING_PREVIEW_LINES } from '../../constant/rendering';
-import type { ColorPalette } from '../../theme/colors';
+import { currentTheme } from '../../theme';
 
 type BtwPanelPhase = 'running' | 'done' | 'failed';
 
@@ -28,7 +28,6 @@ interface BtwBodyRender {
 }
 
 export interface BtwPanelOptions {
-  readonly colors: ColorPalette;
   readonly markdownTheme: MarkdownTheme;
   readonly canUseScrollKeys: () => boolean;
   readonly onPrompt: (prompt: string) => void;
@@ -119,14 +118,14 @@ export class BtwPanelComponent implements Component {
   }
 
   private renderTopBorder(width: number, truncated: boolean): string {
-    const paint = (s: string): string => chalk.hex(this.options.colors.border)(s);
+    const paint = (s: string): string => chalk.hex(currentTheme.palette.border)(s);
     const hint = truncated && this.options.canUseScrollKeys()
       ? 'Esc close · ↑↓ scroll '
       : 'Esc close ';
     const title =
-      chalk.hex(this.options.colors.accent).bold(' BTW ') +
+      chalk.hex(currentTheme.palette.accent).bold(' BTW ') +
       paint('─ ') +
-      chalk.hex(this.options.colors.textMuted)(hint);
+      chalk.hex(currentTheme.palette.textMuted)(hint);
     const innerWidth = Math.max(1, width - 2);
     const clippedTitle =
       visibleWidth(title) > innerWidth ? truncateToWidth(title, innerWidth, '') : title;
@@ -141,7 +140,7 @@ export class BtwPanelComponent implements Component {
       lines.push(...this.renderTurn(turn, width));
     }
     if (this.turns.length === 0) {
-      lines.push(chalk.hex(this.options.colors.textDim)('Ready for a side question...'));
+      lines.push(chalk.hex(currentTheme.palette.textDim)('Ready for a side question...'));
     }
     lines.push(...this.renderTransientNotices(width));
     return this.fitBodyLines(lines);
@@ -150,7 +149,7 @@ export class BtwPanelComponent implements Component {
   private renderTransientNotices(width: number): string[] {
     const lines: string[] = [];
     for (const notice of this.transientNotices) {
-      lines.push(...new Text(chalk.hex(this.options.colors.textDim)(notice), 0, 0).render(width));
+      lines.push(...new Text(chalk.hex(currentTheme.palette.textDim)(notice), 0, 0).render(width));
     }
     return lines;
   }
@@ -191,14 +190,14 @@ export class BtwPanelComponent implements Component {
   }
 
   private renderTurn(turn: BtwTurn, width: number): string[] {
-    const prompt = chalk.hex(this.options.colors.accent)(`Q: ${turn.prompt}`);
+    const prompt = chalk.hex(currentTheme.palette.accent)(`Q: ${turn.prompt}`);
     const lines = [...new Text(prompt, 0, 0).render(width)];
     const answer = turn.answer.trim();
     const thinking = turn.thinking.trim();
     if (answer.length > 0) {
       lines.push(...new Markdown(answer, 0, 0, this.options.markdownTheme).render(width));
     } else if (thinking.length > 0) {
-      const thinkingLines = new Text(chalk.hex(this.options.colors.textDim)(thinking), 0, 0).render(
+      const thinkingLines = new Text(chalk.hex(currentTheme.palette.textDim)(thinking), 0, 0).render(
         width,
       );
       const visibleThinking =
@@ -207,17 +206,17 @@ export class BtwPanelComponent implements Component {
           : thinkingLines;
       lines.push(...visibleThinking);
     } else if (turn.error === undefined) {
-      lines.push(chalk.hex(this.options.colors.textDim)('Waiting for answer...'));
+      lines.push(chalk.hex(currentTheme.palette.textDim)('Waiting for answer...'));
     }
     if (turn.error !== undefined) {
-      const error = chalk.hex(this.options.colors.error)(turn.error);
+      const error = chalk.hex(currentTheme.palette.error)(turn.error);
       lines.push(...new Text(error, 0, 0).render(width));
     }
     return lines;
   }
 
   private renderBodyLine(line: string, width: number): string {
-    const paint = (s: string): string => chalk.hex(this.options.colors.border)(s);
+    const paint = (s: string): string => chalk.hex(currentTheme.palette.border)(s);
     const contentWidth = Math.max(1, width - 4);
     const clipped =
       visibleWidth(line) > contentWidth ? truncateToWidth(line, contentWidth, '…') : line;

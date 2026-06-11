@@ -214,6 +214,22 @@ describe('runPrompt', () => {
     expect(mocks.harnessClose).toHaveBeenCalled();
   });
 
+  it('stops prompt startup when session creation fails', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    mocks.harnessCreateSession.mockRejectedValueOnce(new Error('Git Bash missing'));
+
+    await expect(runPrompt(opts(), '1.2.3-test', { stdout, stderr })).rejects.toThrow(
+      'Git Bash missing',
+    );
+
+    expect(mocks.harnessEnsureConfigFile).toHaveBeenCalledOnce();
+    expect(mocks.harnessGetConfig).toHaveBeenCalledOnce();
+    expect(mocks.harnessCreateSession).toHaveBeenCalledOnce();
+    expect(mocks.session.prompt).not.toHaveBeenCalled();
+    expect(mocks.harnessClose).toHaveBeenCalledOnce();
+  });
+
   it('uses the CLI model override when creating a fresh prompt session', async () => {
     await runPrompt(opts({ model: 'kimi-code/k2.5' }), '1.2.3-test', {
       stdout: { write: vi.fn(() => true) },
@@ -424,6 +440,28 @@ describe('runPrompt', () => {
     expect(mocks.session.setPermission).toHaveBeenNthCalledWith(2, 'manual');
   });
 
+  it('allows resuming a concrete session when Windows workdir uses backslashes', async () => {
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(String.raw`C:\Users\kimi\project`);
+    mocks.harnessListSessions.mockResolvedValueOnce([
+      { id: 'ses_existing', workDir: 'C:/Users/kimi/project' },
+    ]);
+
+    try {
+      await runPrompt(opts({ session: 'ses_existing' }), '1.2.3-test', {
+        stdout: { write: vi.fn(() => true) },
+        stderr: { write: vi.fn(() => true) },
+      });
+    } finally {
+      cwd.mockRestore();
+    }
+
+    expect(mocks.harnessListSessions).toHaveBeenCalledWith({
+      sessionId: 'ses_existing',
+      workDir: String.raw`C:\Users\kimi\project`,
+    });
+    expect(mocks.harnessResumeSession).toHaveBeenCalledWith({ id: 'ses_existing' });
+  });
+
   it('applies the CLI model override to resumed prompt sessions', async () => {
     await runPrompt(opts({ session: 'ses_existing', model: 'kimi-code/k2.5' }), '1.2.3-test', {
       stdout: { write: vi.fn(() => true) },
@@ -611,6 +649,47 @@ describe('runPrompt', () => {
 
     for (const handler of mocks.eventHandlers) {
       handler(mocks.mainEvent({ type: 'turn.ended', turnId: 6, reason: 'completed' }));
+    }
+    releasePrompt();
+    await run;
+
+    expect(mocks.harnessClose).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['SIGTERM' as NodeJS.Signals, 143],
+    ['SIGHUP' as NodeJS.Signals, 129],
+  ])('cleans up prompt mode before exiting on %s', async (signal, exitCode) => {
+    let releasePrompt!: () => void;
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(
+          mocks.mainEvent({ type: 'turn.started', turnId: 7, origin: { kind: 'user' } }),
+        );
+      }
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
+    });
+    const processMock = fakeProcess();
+    const run = runPrompt(opts(), '1.2.3-test', {
+      stdout: { write: vi.fn(() => true) },
+      stderr: { write: vi.fn(() => true) },
+      process: processMock,
+    } as Parameters<typeof runPrompt>[2] & { process: ReturnType<typeof fakeProcess> });
+
+    await waitForAssertion(() => {
+      expect(processMock.listener(signal)).toBeDefined();
+    });
+
+    await processMock.listener(signal)?.();
+
+    expect(mocks.shutdownTelemetry).toHaveBeenCalled();
+    expect(mocks.harnessClose).toHaveBeenCalled();
+    expect(processMock.exit).toHaveBeenCalledWith(exitCode);
+
+    for (const handler of mocks.eventHandlers) {
+      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 7, reason: 'completed' }));
     }
     releasePrompt();
     await run;

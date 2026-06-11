@@ -278,7 +278,7 @@ export class StreamingUIController {
       existingComponent.updateToolCall(toolCall);
     } else if (existing === undefined) {
       this.finalizeLiveTextBuffers('tool');
-      if (toolCall.name !== 'Agent') {
+      if (toolCall.name !== 'Agent' && toolCall.name !== 'AgentSwarm') {
         this.onToolCallStart(toolCall);
       }
     }
@@ -297,6 +297,19 @@ export class StreamingUIController {
     const startedAtMs = existing?.startedAtMs ?? Date.now();
     this._streamingToolCallArguments.set(id, { name, argumentsText, startedAtMs });
     this.pendingToolCallFlushIds.add(id);
+  }
+
+  getStreamingToolCallPreview(
+    id: string,
+  ): { name: string; args: Record<string, unknown>; argumentsText: string; startedAtMs: number } | undefined {
+    const streaming = this._streamingToolCallArguments.get(id);
+    if (streaming === undefined) return undefined;
+    return {
+      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? 'Tool',
+      args: parseStreamingArgs(streaming.argumentsText),
+      argumentsText: streaming.argumentsText,
+      startedAtMs: streaming.startedAtMs,
+    };
   }
 
   /** Completes a tool call: delivers the result and removes tracking state.
@@ -540,10 +553,7 @@ export class StreamingUIController {
       renderMode: 'markdown' as const,
       content: '',
     };
-    const component = new AssistantMessageComponent(
-      state.theme.markdownTheme,
-      state.theme.colors,
-    );
+    const component = new AssistantMessageComponent();
     this._streamingBlock = { component, entry };
     this.host.pushTranscriptEntry(entry);
     state.transcriptContainer.addChild(component);
@@ -571,7 +581,6 @@ export class StreamingUIController {
       this._pendingReadGroup = null;
       this._activeThinkingComponent = new ThinkingComponent(
         fullText,
-        state.theme.colors,
         true,
         'live',
         state.ui,
@@ -598,13 +607,10 @@ export class StreamingUIController {
     const tc = new ToolCallComponent(
       toolCall,
       undefined,
-      state.theme.colors,
       state.ui,
-      state.theme.markdownTheme,
       state.appState.workDir,
     );
     if (state.toolOutputExpanded) tc.setExpanded(true);
-    if (state.planExpanded) tc.setPlanExpanded(true);
     this._pendingToolComponents.set(toolCall.id, tc);
 
     if (toolCall.name !== 'Agent') this._pendingAgentGroup = null;
@@ -645,13 +651,10 @@ export class StreamingUIController {
       const completed = new ToolCallComponent(
         matchedCall,
         result,
-        state.theme.colors,
         state.ui,
-        state.theme.markdownTheme,
         state.appState.workDir,
       );
       if (state.toolOutputExpanded) completed.setExpanded(true);
-      if (state.planExpanded) completed.setPlanExpanded(true);
       state.transcriptContainer.addChild(completed);
       state.ui.requestRender();
     }
@@ -673,7 +676,7 @@ export class StreamingUIController {
       this._activeCompactionBlock.markDone();
       this._activeCompactionBlock = undefined;
     }
-    const block = new CompactionComponent(state.theme.colors, state.ui, instruction);
+    const block = new CompactionComponent(state.ui, instruction);
     this._activeCompactionBlock = block;
     state.transcriptContainer.addChild(block);
     state.ui.requestRender();
@@ -720,7 +723,7 @@ export class StreamingUIController {
     const existingComponent = this._pendingToolComponents.get(id);
     if (existingComponent !== undefined) {
       existingComponent.updateToolCall(toolCall);
-    } else if (toolCall.name !== 'Agent') {
+    } else if (toolCall.name !== 'Agent' && toolCall.name !== 'AgentSwarm') {
       this.onToolCallStart(toolCall);
     }
   }
@@ -769,7 +772,7 @@ export class StreamingUIController {
 
   private upgradeSoloAgentToGroup(solo: ToolCallComponent): AgentGroupComponent {
     const { state } = this.host;
-    const group = new AgentGroupComponent(state.theme.colors, state.ui);
+    const group = new AgentGroupComponent(state.ui);
     const children = state.transcriptContainer.children;
     const idx = children.indexOf(solo);
     if (idx >= 0) {
@@ -826,7 +829,7 @@ export class StreamingUIController {
 
   private upgradeSoloReadToGroup(solo: ToolCallComponent): ReadGroupComponent {
     const { state } = this.host;
-    const group = new ReadGroupComponent(state.theme.colors, state.ui);
+    const group = new ReadGroupComponent(state.ui);
     const children = state.transcriptContainer.children;
     const idx = children.indexOf(solo);
     if (idx >= 0) {

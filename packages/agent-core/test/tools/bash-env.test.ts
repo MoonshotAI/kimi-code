@@ -64,4 +64,37 @@ describe('BashTool noninteractive env semantics', () => {
       if (previous !== undefined) process.env['GIT_TERMINAL_PROMPT'] = previous;
     }
   });
+
+  it('lets kaos-level env override BashTool env and observes in-place updates', async () => {
+    const execWithEnv = vi.fn().mockResolvedValue(fakeProcess());
+    const sessionEnv = {
+      GIT_TERMINAL_PROMPT: 'configured',
+      KIMI_CODE_ENV: 'initial',
+    };
+    const kaos = createFakeKaos({ execWithEnv, osEnv: posixEnv }).withEnv(sessionEnv);
+    const tool = new BashTool(kaos, '/workspace');
+
+    await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'tc_kaos_env_1',
+      args: { command: 'true', timeout: 1000 },
+      signal,
+    });
+
+    const firstEnv = execWithEnv.mock.calls[0]?.[1] as Record<string, string>;
+    expect(firstEnv['GIT_TERMINAL_PROMPT']).toBe('configured');
+    expect(firstEnv['KIMI_CODE_ENV']).toBe('initial');
+
+    sessionEnv.KIMI_CODE_ENV = 'updated';
+    await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'tc_kaos_env_2',
+      args: { command: 'true', timeout: 1000 },
+      signal,
+    });
+
+    const secondEnv = execWithEnv.mock.calls[1]?.[1] as Record<string, string>;
+    expect(secondEnv['GIT_TERMINAL_PROMPT']).toBe('configured');
+    expect(secondEnv['KIMI_CODE_ENV']).toBe('updated');
+  });
 });
