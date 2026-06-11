@@ -41,6 +41,8 @@ export class ToolManager {
   private mcpAccessPatterns: string[] = [];
   /** Tracks how many times each base qualified name has been disambiguated across registrations. */
   private readonly mcpCollisionCount = new Map<string, number>();
+  /** Maps server name → base qualified names (before disambiguation) for cleanup. */
+  private readonly mcpServerToolBases = new Map<string, string[]>();
   protected readonly store: Partial<ToolStoreData> = {};
   private mcpToolStatusUnsubscribe: (() => void) | undefined;
 
@@ -143,6 +145,7 @@ export class ToolManager {
   ): McpServerRegistrationResult {
     this.unregisterMcpServer(serverName);
     const qualifiedNames: string[] = [];
+    const baseNames: string[] = [];
     const collisions: McpToolCollision[] = [];
     const seenInThisCall = new Map<string, string>();
     for (const tool of tools) {
@@ -158,6 +161,7 @@ export class ToolManager {
         continue;
       }
       const existingEntry = this.mcpTools.get(qualified);
+      const baseName = qualified;
       if (existingEntry !== undefined) {
         // Cross-server collision: disambiguate by appending a numeric suffix
         // so both tools remain accessible.
@@ -206,8 +210,10 @@ export class ToolManager {
       };
       this.mcpTools.set(qualified, { tool: wrapped, serverName });
       qualifiedNames.push(qualified);
+      baseNames.push(baseName);
     }
     this.mcpToolsByServer.set(serverName, qualifiedNames);
+    this.mcpServerToolBases.set(serverName, baseNames);
     return { registered: qualifiedNames, collisions };
   }
 
@@ -218,6 +224,15 @@ export class ToolManager {
       this.mcpTools.delete(qualified);
     }
     this.mcpToolsByServer.delete(serverName);
+    // Clear collision counts for this server's base tool names so that
+    // re-registration after a reconnect reuses the same suffix numbers.
+    const bases = this.mcpServerToolBases.get(serverName);
+    if (bases !== undefined) {
+      for (const base of bases) {
+        this.mcpCollisionCount.delete(base);
+      }
+      this.mcpServerToolBases.delete(serverName);
+    }
     return true;
   }
 

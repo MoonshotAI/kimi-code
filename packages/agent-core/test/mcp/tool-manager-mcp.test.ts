@@ -390,53 +390,29 @@ describe('ToolManager MCP integration', () => {
     const tm = new ToolManager(fakeAgent());
     tm.setActiveTools(['mcp__*']);
 
-    // Manually register a tool with a name that would be the truncated+__2 form.
-    // Base name: "mcp__x__" + "a".repeat(52) = 63 chars. Truncated to 62 + "__2" = 64.
-    const preRegisterName = 'mcp__x__' + 'a'.repeat(52) + '__2';
-    tm.mcpTools.set(preRegisterName, {
-      tool: { name: preRegisterName, description: 'pre-registered', parameters: {} },
-      serverName: 'pre',
-    });
-
-    // Now register two servers whose colliding tool would truncate to the same name.
-    // The disambiguation should probe and find __3 instead of __2.
-    const baseName = 'mcp__x__' + 'a'.repeat(52);
-    const firstClient: MCPClient = {
+    // Register two servers that collide. "srv a" and "srv__a" both sanitize to "srv_a".
+    const makeClient = (desc: string): MCPClient => ({
       async listTools() {
-        return [{ name: 'tool', description: 'first', inputSchema: { type: 'object', properties: {} } }];
+        return [{ name: 'tool', description: desc, inputSchema: { type: 'object', properties: {} } }];
       },
-      async callTool() { return { content: [], isError: false }; },
-    };
-    const secondClient: MCPClient = {
-      async listTools() {
-        return [{ name: 'tool', description: 'second', inputSchema: { type: 'object', properties: {} } }];
-      },
-      async callTool() { return { content: [], isError: false }; },
-    };
-
-    // Force the base qualified name to match by using server/tool names that produce it.
-    // "x" server, "tool" tool → "mcp__x__tool" (too short). Instead, register directly.
-    // Simpler: just verify the probing works by registering the same base twice.
-    tm.mcpTools.clear();
-    tm.mcpToolsByServer.clear();
-    // First server registers "mcp__x__tool" (short name, no truncation needed).
-    tm.mcpTools.set('mcp__x__tool', {
-      tool: { name: 'mcp__x__tool', description: 'first', parameters: {} },
-      serverName: 's1',
-    });
-    tm.mcpToolsByServer.set('s1', ['mcp__x__tool']);
-
-    // Pre-register "mcp__x__tool__2" to force probing to __3.
-    tm.mcpTools.set('mcp__x__tool__2', {
-      tool: { name: 'mcp__x__tool__2', description: 'existing', parameters: {} },
-      serverName: 'pre',
+      async callTool() { return { content: [{ type: 'text', text: desc }], isError: false }; },
     });
 
-    // Now trigger a collision by registering a server that collides on "mcp__x__tool".
-    // Since "mcp__x__tool__2" is taken, the probe should skip to __3.
-    const r2 = tm.registerMcpServer('x', secondClient, await discoverTools(secondClient));
-    // The disambiguation should have probed past __2 and used __3.
-    expect(r2.registered).toContain('mcp__x__tool__3');
+    tm.registerMcpServer('srv a', makeClient('first'), await discoverTools(makeClient('first')));
+    const r2 = tm.registerMcpServer('srv__a', makeClient('second'), await discoverTools(makeClient('second')));
+
+    // The first collision gets __2.
+    expect(r2.registered).toEqual(['mcp__srv_a__tool__2']);
+
+    // Now register a third server that also collides — should get __3, not __2.
+    const r3 = tm.registerMcpServer('srv  a', makeClient('third'), await discoverTools(makeClient('third')));
+    expect(r3.registered).toEqual(['mcp__srv_a__tool__3']);
+
+    // All three tools should be registered.
+    const allNames = [...tm.toolInfos()].filter((i) => i.source === 'mcp').map((i) => i.name);
+    expect(allNames).toContain('mcp__srv_a__tool');
+    expect(allNames).toContain('mcp__srv_a__tool__2');
+    expect(allNames).toContain('mcp__srv_a__tool__3');
   });
 
   it('does not write set_active_tools records when registering an MCP server', async () => {
