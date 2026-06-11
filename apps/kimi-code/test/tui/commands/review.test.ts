@@ -13,6 +13,7 @@ import { currentTheme } from '#/tui/theme';
 
 const ENTER = '\r';
 const DOWN = '\u001B[B';
+const ESC = '\u001B';
 
 interface TestPicker {
   handleInput(data: string): void;
@@ -67,6 +68,7 @@ function makeHost(input: {
     startReview: vi.fn(async (reviewInput) => result(reviewInput.target, reviewInput.intensity)),
   };
   const spinnerStop = vi.fn();
+  const transientStatusClear = vi.fn();
   const host = {
     state: {
       appState: {
@@ -79,13 +81,14 @@ function makeHost(input: {
     requireSession: () => session,
     showError: vi.fn(),
     showStatus: vi.fn(),
+    showTransientStatus: vi.fn(() => ({ clear: transientStatusClear })),
     showNotice: vi.fn(),
     appendTranscriptEntry: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
     showProgressSpinner: vi.fn(() => ({ stop: spinnerStop })),
   } as unknown as SlashCommandHost;
-  return { host, session, spinnerStop, workingTreePreview };
+  return { host, session, spinnerStop, transientStatusClear, workingTreePreview };
 }
 
 function mountedPicker(host: SlashCommandHost, index: number): TestPicker {
@@ -124,6 +127,21 @@ describe('handleReviewCommand', () => {
         content: expect.stringContaining('Missing validation'),
       }),
     );
+  });
+
+  it('removes the preview status when intensity selection is cancelled', async () => {
+    const { host, session, transientStatusClear } = makeHost();
+    const task = handleReviewCommand(host, '');
+
+    await waitForPicker(host, 1);
+    mountedPicker(host, 0).handleInput(ENTER);
+    await waitForPicker(host, 2);
+    mountedPicker(host, 1).handleInput(ESC);
+    await task;
+
+    expect(host.showTransientStatus).toHaveBeenCalledWith('Reviewing 1 file: +2 -1.');
+    expect(transientStatusClear).toHaveBeenCalledTimes(1);
+    expect(session.startReview).not.toHaveBeenCalled();
   });
 
   it('selects a base ref for current-branch review', async () => {

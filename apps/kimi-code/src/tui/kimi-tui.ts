@@ -1427,6 +1427,25 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
+  showTransientStatus(message: string, color?: ColorToken): { clear(): void } {
+    const component = new StatusMessageComponent(message, color);
+    this.state.transcriptContainer.addChild(component);
+    this.state.ui.requestRender();
+    let cleared = false;
+    return {
+      clear: () => {
+        if (cleared) return;
+        cleared = true;
+        const children = this.state.transcriptContainer.children;
+        const index = children.indexOf(component);
+        if (index < 0) return;
+        children.splice(index, 1);
+        this.state.transcriptContainer.invalidate();
+        this.state.ui.requestRender();
+      },
+    };
+  }
+
   showNotice(title: string, detail?: string): void {
     this.state.transcriptContainer.addChild(
       new NoticeMessageComponent(title, detail),

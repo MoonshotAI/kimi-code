@@ -46,10 +46,14 @@ export async function handleReviewCommand(host: SlashCommandHost, args: string):
     host.showStatus('No changes to review.');
     return;
   }
-  host.showStatus(`Reviewing ${formatReviewStats(preview.stats)}.`);
+  const previewStatus = host.showTransientStatus(`Reviewing ${formatReviewStats(preview.stats)}.`);
 
   const intensity = await promptReviewIntensity(host);
-  if (intensity === undefined) return;
+  if (intensity === undefined) {
+    previewStatus.clear();
+    return;
+  }
+  previewStatus.clear();
   if (intensity === 'thorough') {
     host.showNotice(
       'Thorough review',

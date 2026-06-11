@@ -115,6 +115,7 @@ export interface SlashCommandHost {
   resetLivePane(): void;
   showError(msg: string): void;
   showStatus(msg: string, color?: ColorToken): void;
+  showTransientStatus(msg: string, color?: ColorToken): { clear(): void };
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   track(event: string, props?: Record<string, unknown>): void;
