@@ -147,6 +147,7 @@ export interface LoopStepHookContext {
 
 export interface ToolExecutionHookContext extends LoopStepHookContext {
   readonly toolCall: ToolCall;
+  readonly toolCalls: readonly ToolCall[];
   readonly tool?: ExecutableTool | undefined;
   readonly args: unknown;
 }

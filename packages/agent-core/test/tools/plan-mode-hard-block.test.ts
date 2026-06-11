@@ -35,15 +35,23 @@ function hookContext(toolName: string, args: unknown): ToolExecutionHookContext 
     turnId: '0',
     stepNumber: 1,
     signal,
-    llm: {},
+    llm: {} as ToolExecutionHookContext['llm'],
     args,
     toolCall: {
       type: 'function',
       id: `call_${toolName}`,
       name: toolName,
-        arguments: JSON.stringify(args),
+      arguments: JSON.stringify(args),
     } satisfies ToolCall,
-  } as ToolExecutionHookContext;
+    toolCalls: [
+      {
+        type: 'function',
+        id: `call_${toolName}`,
+        name: toolName,
+        arguments: JSON.stringify(args),
+      },
+    ],
+  };
 }
 
 function policyContext(
