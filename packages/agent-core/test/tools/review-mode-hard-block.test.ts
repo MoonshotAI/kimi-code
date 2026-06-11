@@ -51,9 +51,36 @@ describe('review mode permission guard', () => {
       }
     },
   );
+
+  it('auto-approves review-scoped tools in manual mode', async () => {
+    const requestApproval = vi.fn(async () => ({ decision: 'approved' as const }));
+    const manager = makeReviewPermissionManager('manual', requestApproval);
+
+    for (const toolName of [
+      'GetAssignment',
+      'GetChangedFiles',
+      'ReadPatch',
+      'ReadFileVersion',
+      'UpdateProgress',
+      'AddComment',
+      'GetComments',
+      'GetCommentEvidence',
+      'MergeComments',
+      'DismissComment',
+    ]) {
+      await expect(
+        manager.beforeToolCall(hookContext({ id: `call_${toolName}`, toolName })),
+      ).resolves.toBeUndefined();
+    }
+
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
 });
 
-function makeReviewPermissionManager(mode: PermissionMode): PermissionManager {
+function makeReviewPermissionManager(
+  mode: PermissionMode,
+  requestApproval?: NonNullable<Agent['rpc']>['requestApproval'],
+): PermissionManager {
   let manager!: PermissionManager;
   const agent = {
     type: 'sub',
@@ -61,6 +88,7 @@ function makeReviewPermissionManager(mode: PermissionMode): PermissionManager {
     config: { cwd: '/workspace' },
     kaos: createFakeKaos(),
     emitStatusUpdated: vi.fn(),
+    rpc: requestApproval === undefined ? undefined : { requestApproval },
     records: { logRecord: vi.fn() },
     replayBuilder: { push: vi.fn() },
     telemetry: { track: vi.fn() },

@@ -15,6 +15,7 @@ import { PlanModeGuardDenyPermissionPolicy } from './plan-mode-guard-deny';
 import { PlanModeToolApprovePermissionPolicy } from './plan-mode-tool-approve';
 import { PreToolCallHookPermissionPolicy } from './pre-tool-call-hook';
 import { ReviewModeGuardDenyPermissionPolicy } from './review-mode-guard-deny';
+import { ReviewModeToolApprovePermissionPolicy } from './review-mode-tool-approve';
 import { SessionApprovalHistoryPermissionPolicy } from './session-approval-history';
 import { SwarmModeAgentSwarmApprovePermissionPolicy } from './swarm-mode-agent-swarm-approve';
 import {
@@ -59,6 +60,8 @@ export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy
     new YoloModeApprovePermissionPolicy(agent),
     // Swarm mode keeps AgentSwarm available without making it a globally default-approved tool.
     new SwarmModeAgentSwarmApprovePermissionPolicy(agent),
+    // Review assignment tools mutate only review runtime state and read assigned content.
+    new ReviewModeToolApprovePermissionPolicy(agent),
     // Tool is in the default-approve list (read-only / UI helpers) → approve.
     new DefaultToolApprovePermissionPolicy(),
     // Write/Edit on POSIX paths inside cwd inside a git work tree → approve.

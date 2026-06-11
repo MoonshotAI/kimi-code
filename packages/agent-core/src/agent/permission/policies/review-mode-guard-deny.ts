@@ -1,7 +1,7 @@
 import type { Agent } from '../..';
 import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../types';
 
-const REVIEW_MODE_ALLOWED_TOOLS = new Set([
+export const REVIEW_MODE_ALLOWED_TOOLS = new Set([
   'GetAssignment',
   'GetChangedFiles',
   'ReadPatch',
