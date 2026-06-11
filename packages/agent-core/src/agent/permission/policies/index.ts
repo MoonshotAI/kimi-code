@@ -1,5 +1,6 @@
 import type { Agent } from '../..';
 import type { PermissionPolicy } from '../types';
+import { AgentSwarmExclusiveDenyPermissionPolicy } from './agent-swarm-exclusive-deny';
 import { AutoModeApprovePermissionPolicy } from './auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicy } from './auto-mode-ask-user-question-deny';
 import { DefaultToolApprovePermissionPolicy } from './default-tool-approve';
@@ -27,6 +28,8 @@ export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy
   return [
     // PreToolUse hook returned a block → deny.
     new PreToolCallHookPermissionPolicy(agent),
+    // AgentSwarm is batch-exclusive and must run alone, regardless of permission mode.
+    new AgentSwarmExclusiveDenyPermissionPolicy(),
     // auto mode + AskUserQuestion → deny.
     new AutoModeAskUserQuestionDenyPermissionPolicy(agent),
     // plan mode: Write/Edit outside the plan file, or TaskStop → deny.
