@@ -1483,6 +1483,12 @@ function openWorkspace(id: string): void {
   }
 }
 
+/** Clear the active session without creating a new one — used by the "+" button. */
+function clearActiveSession(): void {
+  rawState.activeSessionId = undefined;
+  writeSessionUrl(undefined, 'push');
+}
+
 /**
  * Create a session in a workspace — the one-click path (no cwd typing).
  * Register/touch the workspace first when the daemon supports it; if that
@@ -1509,13 +1515,50 @@ async function createSessionInWorkspace(workspaceId: string): Promise<AppSession
       // metadata.cwd only.
     }
     const session = await api.createSession({ workspaceId: workspaceIdForCreate, cwd: cwdForCreate });
-    rawState.sessions = [session, ...rawState.sessions];
+    rawState.sessions = [session, ...rawState.sessions.filter((s) => s.id !== session.id)];
     selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
     await selectSession(session.id);
     return session;
   } catch (err) {
     rawState.warnings = [...rawState.warnings, `createSessionInWorkspace failed: ${String(err)}`];
     return undefined;
+  }
+}
+
+/**
+ * Create a session and immediately submit the first prompt.
+ * This is the unified path when there is no active session (e.g. after
+ * clicking "+" or in an empty workspace).
+ */
+async function startSessionAndSendPrompt(
+  workspaceId: string,
+  text: string,
+  attachments?: { fileId: string }[],
+): Promise<void> {
+  const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
+  if (!ws) return;
+  try {
+    const api = getKimiWebApi();
+    let workspaceIdForCreate: string | undefined;
+    let cwdForCreate = ws.root;
+    try {
+      const registered = await api.addWorkspace({ root: ws.root });
+      workspaceIdForCreate = registered.id;
+      cwdForCreate = registered.root;
+      rawState.workspaces = [
+        registered,
+        ...rawState.workspaces.filter((w) => w.root !== registered.root && w.root !== ws.root),
+      ];
+    } catch {
+      // Older daemons may not have /workspaces.
+    }
+    const session = await api.createSession({ workspaceId: workspaceIdForCreate, cwd: cwdForCreate });
+    rawState.sessions = [session, ...rawState.sessions.filter((s) => s.id !== session.id)];
+    selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
+    await selectSession(session.id);
+    await submitPromptInternal(session.id, text, attachments);
+  } catch (err) {
+    rawState.warnings = [...rawState.warnings, `startSessionAndSendPrompt failed: ${String(err)}`];
   }
 }
 
@@ -1698,7 +1741,7 @@ async function createSession(cwd: string, opts?: { title?: string; model?: strin
   try {
     const api = getKimiWebApi();
     const session = await api.createSession({ cwd, title: opts?.title, model: opts?.model });
-    rawState.sessions = [session, ...rawState.sessions];
+    rawState.sessions = [session, ...rawState.sessions.filter((s) => s.id !== session.id)];
     await selectSession(session.id);
   } catch (err) {
     rawState.warnings = [...rawState.warnings, `createSession failed: ${String(err)}`];
@@ -2565,7 +2608,9 @@ export function useKimiWebClient() {
     loadWorkspaces,
     selectWorkspace,
     openWorkspace,
+    clearActiveSession,
     createSessionInWorkspace,
+    startSessionAndSendPrompt,
     addWorkspaceByPath,
     browseFs,
     getFsHome,

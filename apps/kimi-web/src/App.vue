@@ -48,10 +48,6 @@ const activeWorkspaceSessionCount = computed<number>(
   () => client.visibleWorkspace.value?.sessionCount ?? 0,
 );
 
-// True when the active workspace has no sessions — drives the centred input
-// placeholder in ChatPane so the user can start typing immediately.
-const workspaceEmpty = computed<boolean>(() => activeWorkspaceSessionCount.value === 0);
-
 // Thinking is on/off (TUI parity — no effort-level cycling). The /thinking
 // command flips between off and the backend default effort ('high').
 function nextThinkingLevel(current: ThinkingLevel): ThinkingLevel {
@@ -450,23 +446,31 @@ function handleEditQueued(index: number): void {
 
 async function handleSubmit(payload: { text: string; attachments: { fileId: string }[] }): Promise<void> {
   const wsId = client.activeWorkspaceId.value;
-  if (wsId && workspaceEmpty.value) {
-    const session = await client.createSessionInWorkspace(wsId);
-    if (session === undefined) return;
+  if (!client.activeSessionId.value && wsId) {
+    await client.startSessionAndSendPrompt(wsId, payload.text, payload.attachments);
+    return;
   }
   void client.sendPrompt(payload.text, payload.attachments);
 }
 
-// Primary "+ New": one-click session in the active workspace. If there is no
-// active workspace yet (no sessions / no folder added), fall back to the cwd
-// dialog so the user can still start somewhere.
+// Primary "+ New": clear the active session so the right pane shows the
+// onboarding composer. The session is only created when the user sends the
+// first message.
 function handleCreateSession(): void {
   const wsId = client.activeWorkspaceId.value;
   if (wsId) {
-    void client.createSessionInWorkspace(wsId);
+    client.clearActiveSession();
   } else {
     showNewSession.value = true;
   }
+}
+
+// Workspace-level "+ New" (sidebar group or mobile switcher): switch to the
+// workspace and show the onboarding composer. No backend session is created
+// until the user actually sends a message.
+function handleCreateSessionInWorkspace(workspaceId: string): void {
+  client.selectWorkspace(workspaceId);
+  client.clearActiveSession();
 }
 </script>
 
@@ -493,7 +497,7 @@ function handleCreateSession(): void {
         :accent="client.accent.value"
         @select="client.selectSession($event)"
         @create="handleCreateSession"
-        @create-in-workspace="client.createSessionInWorkspace($event)"
+        @create-in-workspace="handleCreateSessionInWorkspace($event)"
         @select-workspace="client.openWorkspace($event)"
         @add-workspace="showAddWorkspace = true"
         @rename="(id, title) => client.renameSession(id, title)"
@@ -750,7 +754,7 @@ function handleCreateSession(): void {
       :attention-by-session="client.attentionBySession.value"
       :attention-by-workspace="client.attentionByWorkspace.value"
       @select="client.selectSession($event)"
-      @create-in-workspace="client.createSessionInWorkspace($event)"
+      @create-in-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="showAddWorkspace = true"
       @rename="(id, title) => client.renameSession(id, title)"
       @delete="(id) => client.deleteSession(id)"
