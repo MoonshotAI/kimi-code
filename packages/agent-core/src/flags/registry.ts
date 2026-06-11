@@ -20,6 +20,14 @@ export const FLAG_DEFINITIONS = [
     default: true,
     surface: 'core',
   },
+  {
+    id: 'code_review',
+    title: 'Code review',
+    description: 'Enable the built-in /review workflow and review worker runtime.',
+    env: 'KIMI_CODE_EXPERIMENTAL_CODE_REVIEW',
+    default: false,
+    surface: 'both',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */
