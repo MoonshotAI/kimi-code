@@ -148,7 +148,7 @@ describe('ToolManager MCP integration', () => {
     expect(mcpNames).toEqual(['mcp__srv__a_b']);
   });
 
-  it('reports cross-server collisions instead of silently overwriting another server tool', async () => {
+  it('disambiguates cross-server collisions with a numeric suffix instead of dropping', async () => {
     const tm = new ToolManager(fakeAgent());
     tm.setActiveTools(['mcp__*']);
     const firstClient: MCPClient = {
@@ -181,16 +181,19 @@ describe('ToolManager MCP integration', () => {
     tm.registerMcpServer('srv a', firstClient, await discoverTools(firstClient));
     const result = tm.registerMcpServer('srv__a', secondClient, await discoverTools(secondClient));
 
-    expect(result.registered).toEqual([]);
+    // The second server's tool is disambiguated with __2 suffix.
+    expect(result.registered).toEqual(['mcp__srv_a__shared__2']);
     expect(result.collisions).toEqual([
       {
-        qualified: 'mcp__srv_a__shared',
+        qualified: 'mcp__srv_a__shared__2',
         toolName: 'shared',
         collidesWith: { kind: 'other_server', serverName: 'srv a' },
       },
     ]);
-    // First server's tool still wins and stays callable.
-    expect(tm.loopTools.map((t) => t.name)).toEqual(['mcp__srv_a__shared']);
+    // Both tools are now accessible.
+    const mcpNames = [...tm.toolInfos()].filter((i) => i.source === 'mcp').map((i) => i.name);
+    expect(mcpNames).toContain('mcp__srv_a__shared');
+    expect(mcpNames).toContain('mcp__srv_a__shared__2');
   });
 
   it('re-registering the same server replaces its previous tool set', async () => {
@@ -217,6 +220,132 @@ describe('ToolManager MCP integration', () => {
 
     const mcpNames = [...tm.toolInfos()].filter((i) => i.source === 'mcp').map((i) => i.name);
     expect(mcpNames).toEqual(['mcp__s__only']);
+  });
+
+  it('assigns incrementing suffixes for multiple cross-server collisions on the same tool', async () => {
+    const tm = new ToolManager(fakeAgent());
+    tm.setActiveTools(['mcp__*']);
+    const makeClient = (desc: string): MCPClient => ({
+      async listTools() {
+        return [
+          { name: 'shared', description: desc, inputSchema: { type: 'object', properties: {} } },
+        ];
+      },
+      async callTool() {
+        return { content: [{ type: 'text', text: desc }], isError: false };
+      },
+    });
+
+    // "srv a", "srv__a", "srv  a" all sanitize to "srv_a" so they collide.
+    tm.registerMcpServer('srv a', makeClient('first'), await discoverTools(makeClient('first')));
+    const r2 = tm.registerMcpServer('srv__a', makeClient('second'), await discoverTools(makeClient('second')));
+    const r3 = tm.registerMcpServer('srv  a', makeClient('third'), await discoverTools(makeClient('third')));
+
+    expect(r2.registered).toEqual(['mcp__srv_a__shared__2']);
+    expect(r3.registered).toEqual(['mcp__srv_a__shared__3']);
+    const mcpNames = [...tm.toolInfos()].filter((i) => i.source === 'mcp').map((i) => i.name);
+    expect(mcpNames).toContain('mcp__srv_a__shared');
+    expect(mcpNames).toContain('mcp__srv_a__shared__2');
+    expect(mcpNames).toContain('mcp__srv_a__shared__3');
+  });
+
+  it('allows calling both original and disambiguated MCP tools independently', async () => {
+    const tm = new ToolManager(fakeAgent());
+    tm.setActiveTools(['mcp__*']);
+    const firstClient: MCPClient = {
+      async listTools() {
+        return [
+          { name: 'query', description: 'first', inputSchema: { type: 'object', properties: {} } },
+        ];
+      },
+      async callTool() {
+        return { content: [{ type: 'text', text: 'result-from-first' }], isError: false };
+      },
+    };
+    const secondClient: MCPClient = {
+      async listTools() {
+        return [
+          { name: 'query', description: 'second', inputSchema: { type: 'object', properties: {} } },
+        ];
+      },
+      async callTool() {
+        return { content: [{ type: 'text', text: 'result-from-second' }], isError: false };
+      },
+    };
+
+    // "alpha beta" and "alpha__beta" both sanitize to "alpha_beta", causing collision.
+    tm.registerMcpServer('alpha beta', firstClient, await discoverTools(firstClient));
+    tm.registerMcpServer('alpha__beta', secondClient, await discoverTools(secondClient));
+
+    // Both tools should be registered.
+    const allNames = [...tm.toolInfos()].filter((i) => i.source === 'mcp').map((i) => i.name);
+    expect(allNames).toContain('mcp__alpha_beta__query');
+    expect(allNames).toContain('mcp__alpha_beta__query__2');
+
+    // Call the original tool.
+    const alphaExec = tm.loopTools.find((t) => t.name === 'mcp__alpha_beta__query');
+    expect(alphaExec).toBeDefined();
+    const alphaResult = await alphaExec!.resolveExecution({}).execute({
+      turnId: '0',
+      toolCallId: 'c1',
+      args: {},
+      signal: new AbortController().signal,
+    });
+    expect(alphaResult.output).toContain('result-from-first');
+
+    // Call the disambiguated tool.
+    const betaExec = tm.loopTools.find((t) => t.name === 'mcp__alpha_beta__query__2');
+    expect(betaExec).toBeDefined();
+    const betaResult = await betaExec!.resolveExecution({}).execute({
+      turnId: '0',
+      toolCallId: 'c2',
+      args: {},
+      signal: new AbortController().signal,
+    });
+    expect(betaResult.output).toContain('result-from-second');
+  });
+
+  it('reports disambiguation details in collision results for cross-server collisions', async () => {
+    const tm = new ToolManager(fakeAgent());
+    tm.setActiveTools(['mcp__*']);
+    const firstClient: MCPClient = {
+      async listTools() {
+        return [
+          { name: 'search', description: 'v1', inputSchema: { type: 'object', properties: {} } },
+        ];
+      },
+      async callTool() {
+        return { content: [], isError: false };
+      },
+    };
+    const secondClient: MCPClient = {
+      async listTools() {
+        return [
+          { name: 'search', description: 'v2', inputSchema: { type: 'object', properties: {} } },
+        ];
+      },
+      async callTool() {
+        return { content: [], isError: false };
+      },
+    };
+
+    // "srv a" and "srv__a" both sanitize to "srv_a", causing collision.
+    tm.registerMcpServer('srv a', firstClient, await discoverTools(firstClient));
+    const result = tm.registerMcpServer('srv__a', secondClient, await discoverTools(secondClient));
+
+    // The collision result should contain disambiguation details.
+    expect(result.collisions).toHaveLength(1);
+    expect(result.collisions[0]).toMatchObject({
+      qualified: 'mcp__srv_a__search__2',
+      toolName: 'search',
+      collidesWith: { kind: 'other_server', serverName: 'srv a' },
+    });
+    // The second tool should be registered under the disambiguated name.
+    expect(result.registered).toEqual(['mcp__srv_a__search__2']);
+    // Both tools should be in the tool list.
+    const allNames = [...tm.toolInfos()].filter((i) => i.source === 'mcp').map((i) => i.name);
+    expect(allNames).toContain('mcp__srv_a__search');
+    expect(allNames).toContain('mcp__srv_a__search__2');
   });
 
   it('does not write set_active_tools records when registering an MCP server', async () => {

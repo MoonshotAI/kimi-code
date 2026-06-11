@@ -39,6 +39,8 @@ export class ToolManager {
   protected enabledTools: Set<string> = new Set();
   /** Glob patterns (e.g. `mcp__*`, `mcp__github__*`) gating which MCP tools the profile exposes. */
   private mcpAccessPatterns: string[] = [];
+  /** Tracks how many times each base qualified name has been disambiguated across registrations. */
+  private readonly mcpCollisionCount = new Map<string, number>();
   protected readonly store: Partial<ToolStoreData> = {};
   private mcpToolStatusUnsubscribe: (() => void) | undefined;
 
@@ -145,7 +147,7 @@ export class ToolManager {
     const seenInThisCall = new Map<string, string>();
     for (const tool of tools) {
       if (enabledTools !== undefined && !enabledTools.has(tool.name)) continue;
-      const qualified = qualifyMcpToolName(serverName, tool.name);
+      let qualified = qualifyMcpToolName(serverName, tool.name);
       const firstInThisCall = seenInThisCall.get(qualified);
       if (firstInThisCall !== undefined) {
         collisions.push({
@@ -157,12 +159,16 @@ export class ToolManager {
       }
       const existingEntry = this.mcpTools.get(qualified);
       if (existingEntry !== undefined) {
+        // Cross-server collision: disambiguate by appending a numeric suffix
+        // so both tools remain accessible.
+        const count = (this.mcpCollisionCount.get(qualified) ?? 1) + 1;
+        this.mcpCollisionCount.set(qualified, count);
+        qualified = `${qualified}__${String(count)}`;
         collisions.push({
           qualified,
           toolName: tool.name,
           collidesWith: { kind: 'other_server', serverName: existingEntry.serverName },
         });
-        continue;
       }
       seenInThisCall.set(qualified, tool.name);
       const wrapped: ExecutableTool = {
@@ -286,8 +292,8 @@ export class ToolManager {
     const summary = collisions
       .map((c) =>
         c.collidesWith.kind === 'same_server'
-          ? `"${c.toolName}" -> ${c.qualified} (collides with "${c.collidesWith.toolName}" from the same server)`
-          : `"${c.toolName}" -> ${c.qualified} (collides with server "${c.collidesWith.serverName}")`,
+          ? `"${c.toolName}" -> ${c.qualified} (collides with "${c.collidesWith.toolName}" from the same server; duplicate dropped)`
+          : `"${c.toolName}" -> ${c.qualified} (disambiguated from server "${c.collidesWith.serverName}")`,
       )
       .join('; ');
     this.agent.emitEvent({
@@ -296,7 +302,7 @@ export class ToolManager {
         'mcp.tool_name_collision',
         `MCP server "${serverName}" registered ${collisions.length} tool name` +
           `${collisions.length === 1 ? '' : 's'} ` +
-          `that collide with existing qualified names; the losing tools were dropped: ${summary}`,
+          `that collide with existing qualified names; cross-server duplicates are disambiguated with a numeric suffix: ${summary}`,
         { details: { serverName, collisions: collisions as readonly unknown[] } },
       ),
     });
