@@ -55,6 +55,73 @@ function replaceOnceLiteral(content: string, oldString: string, newString: strin
   return content.slice(0, index) + newString + content.slice(index + oldString.length);
 }
 
+/**
+ * Attempt to fix common LLM backslash-encoding mistakes in `old_string`.
+ *
+ * Models sometimes double-escape backslashes when encoding old_string in
+ * JSON (e.g. sending `\\\\n` when the file contains `\\n`).  This helper
+ * tries progressively less-escaped variants and returns the first one
+ * that matches in `content`, or `undefined` if none match.
+ */
+function findBackslashAdjustedMatch(
+  content: string,
+  oldString: string,
+): { adjusted: string; variant: string } | undefined {
+  const variants: Array<{ adjusted: string; variant: string }> = [];
+
+  // Variant 1: the LLM double-escaped — unescape one level.
+  // "\\\\n" in JS string → "\\n" (backslash + n), but the file has "\n" (backslash + n).
+  // If old_string contains sequences like "\\n" that the file doesn't have,
+  // try replacing "\\n" → "\n" etc.
+  const unescaped = oldString
+    .replace(/\\\\n/g, '\n')
+    .replace(/\\\\t/g, '\t')
+    .replace(/\\\\r/g, '\r')
+    .replace(/\\\\\\\\/g, '\\');
+  if (unescaped !== oldString) {
+    variants.push({ adjusted: unescaped, variant: 'unescape-sequences' });
+  }
+
+  // Variant 2: the LLM under-escaped — the file has literal double-backslash
+  // but old_string has single.  Try the reverse.
+  const overEscaped = oldString
+    .replace(/\\n/g, '\\n')
+    .replace(/\\t/g, '\\t')
+    .replace(/\\r/g, '\\r');
+  // Only try this if it actually changed something and differs from variant 1.
+  if (overEscaped !== oldString && overEscaped !== unescaped) {
+    variants.push({ adjusted: overEscaped, variant: 'escape-sequences' });
+  }
+
+  for (const v of variants) {
+    if (content.indexOf(v.adjusted) !== -1) {
+      return v;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Build a short diagnostic snippet showing the first divergence between
+ * `oldString` and the file content, helpful when old_string is not found.
+ */
+function buildNotFoundHint(content: string, oldString: string, filePath: string): string {
+  const lines = content.split('\n');
+  const firstLine = oldString.split('\n')[0] ?? '';
+  if (firstLine.length === 0) return '';
+
+  // Find the closest matching line in the file content.
+  const candidates = lines.filter((l) => l.includes(firstLine.slice(0, 20)));
+  if (candidates.length === 0) {
+    return `The file does not contain a line matching the start of old_string: "${truncate(firstLine, 60)}"`;
+  }
+  return `Closest match in file: "${truncate(candidates[0]!, 80)}"`;
+}
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 3) + '...';
+}
+
 export class EditTool implements BuiltinTool<EditInput> {
   readonly name = 'Edit' as const;
   readonly description = EDIT_DESCRIPTION;
@@ -106,18 +173,31 @@ export class EditTool implements BuiltinTool<EditInput> {
       const content = modelView.text;
       const replaceAll = args.replace_all ?? false;
 
+      // Try the original old_string first; if not found, attempt backslash
+      // encoding fixes that cover common LLM mis-encodings.
+      let oldString = args.old_string;
+      let backslashHint: string | undefined;
+      if (content.indexOf(oldString) === -1) {
+        const adjusted = findBackslashAdjustedMatch(content, oldString);
+        if (adjusted !== undefined) {
+          oldString = adjusted.adjusted;
+          backslashHint = ` (matched after ${adjusted.variant} adjustment)`;
+        }
+      }
+
       if (!replaceAll) {
         let count = 0;
         let pos = 0;
         while (pos < content.length) {
-          const idx = content.indexOf(args.old_string, pos);
+          const idx = content.indexOf(oldString, pos);
           if (idx === -1) break;
           count++;
-          pos = idx + args.old_string.length;
+          pos = idx + oldString.length;
         }
 
         if (count === 0) {
-          return { isError: true, output: `old_string not found in ${args.path}, the file contents may be out of date. Please use the Read Tool to reload the content.
+          const hint = buildNotFoundHint(content, oldString, args.path);
+          return { isError: true, output: `old_string not found in ${args.path}. ${hint}\nThe file contents may be out of date. Please use the Read Tool to reload the content.
 ` };
         }
         if (count > 1) {
@@ -129,18 +209,19 @@ export class EditTool implements BuiltinTool<EditInput> {
           };
         }
 
-        const newContent = replaceOnceLiteral(content, args.old_string, args.new_string);
+        const newContent = replaceOnceLiteral(content, oldString, args.new_string);
         await this.kaos.writeText(
           safePath,
           materializeModelText(newContent, modelView.lineEndingStyle),
         );
-        return { output: `Replaced 1 occurrence in ${args.path}` };
+        return { output: `Replaced 1 occurrence in ${args.path}${backslashHint ?? ''}` };
       }
 
-      const parts = content.split(args.old_string);
+      const parts = content.split(oldString);
       const replacementCount = parts.length - 1;
       if (replacementCount === 0) {
-        return { isError: true, output: `old_string not found in ${args.path}, the file contents may be out of date. Please use the Read Tool to reload the content.
+        const hint = buildNotFoundHint(content, oldString, args.path);
+        return { isError: true, output: `old_string not found in ${args.path}. ${hint}\nThe file contents may be out of date. Please use the Read Tool to reload the content.
 ` };
       }
 
@@ -149,7 +230,7 @@ export class EditTool implements BuiltinTool<EditInput> {
         safePath,
         materializeModelText(newContent, modelView.lineEndingStyle),
       );
-      return { output: `Replaced ${String(replacementCount)} occurrences in ${args.path}` };
+      return { output: `Replaced ${String(replacementCount)} occurrences in ${args.path}${backslashHint ?? ''}` };
     } catch (error) {
       const code = (error as { code?: unknown } | null)?.code;
       if (code === 'EISDIR') {

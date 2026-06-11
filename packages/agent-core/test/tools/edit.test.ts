@@ -433,4 +433,83 @@ describe('EditTool', () => {
     expect(result.isError).toBeFalsy();
     expect(writeText).toHaveBeenCalledWith('/workspace-sneaky/test.txt', 'new');
   });
+
+  it('matches files with multiple literal backslashes (Rust string escapes)', async () => {
+    const writeText = vi.fn().mockResolvedValue(0);
+    const fileContent = 'let s = "hello\\nworld";\nlet t = "foo\\tbar";';
+    const tool = new EditTool(
+      createFakeKaos({
+        readText: vi.fn().mockResolvedValue(fileContent),
+        writeText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool,
+      context({
+        path: '/tmp/rust.rs',
+        old_string: 'let s = "hello\\nworld";',
+        new_string: 'let s = "hello\\nuniverse";',
+      }),
+    );
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith(
+      '/tmp/rust.rs',
+      'let s = "hello\\nuniverse";\nlet t = "foo\\tbar";',
+    );
+  });
+
+  it('recovers when old_string has double-escaped backslashes from LLM JSON encoding', async () => {
+    const writeText = vi.fn().mockResolvedValue(0);
+    // File has a literal backslash followed by 'n' (two chars).
+    const fileContent = 'path = "C:\\nUsers\\nadmin";';
+    const tool = new EditTool(
+      createFakeKaos({
+        readText: vi.fn().mockResolvedValue(fileContent),
+        writeText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    // LLM sent double-escaped: in JS string this is "\\n" (backslash + n)
+    // but it was meant to match the literal "\n" in the file.
+    const result = await executeTool(tool,
+      context({
+        path: '/tmp/config.txt',
+        old_string: 'path = "C:\\nUsers\\nadmin";',
+        new_string: 'path = "D:\\nUsers\\nadmin";',
+      }),
+    );
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith(
+      '/tmp/config.txt',
+      'path = "D:\\nUsers\\nadmin";',
+    );
+  });
+
+  it('provides a diagnostic hint when old_string with backslashes is not found', async () => {
+    const writeText = vi.fn().mockResolvedValue(0);
+    const tool = new EditTool(
+      createFakeKaos({
+        readText: vi.fn().mockResolvedValue('alpha beta gamma'),
+        writeText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool,
+      context({
+        path: '/tmp/a.txt',
+        old_string: 'delta\\nepsilon',
+        new_string: 'new',
+      }),
+    );
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('old_string not found');
+    expect(result.output).toContain('The file does not contain a line matching');
+    expect(writeText).not.toHaveBeenCalled();
+  });
 });
