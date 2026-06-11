@@ -144,7 +144,12 @@ export class ContextMemory {
       ...result,
     });
     this.agent.replayBuilder.patchLast('compaction', {
-      result,
+      result: {
+        summary: result.summary,
+        compactedCount: result.compactedCount,
+        tokensBefore: result.tokensBefore,
+        tokensAfter: result.tokensAfter,
+      },
     });
     this._history = [
       {
