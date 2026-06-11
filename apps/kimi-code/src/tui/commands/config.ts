@@ -209,6 +209,23 @@ export function handleModelCommand(host: SlashCommandHost, args: string): void {
   showModelPicker(host, alias);
 }
 
+export function handleSwarmModelCommand(host: SlashCommandHost, args: string): void {
+  const alias = args.trim();
+  if (alias.length === 0) {
+    showSwarmModelPicker(host);
+    return;
+  }
+  if (alias.toLowerCase() === 'off') {
+    void clearSwarmModel(host);
+    return;
+  }
+  if (host.state.appState.availableModels[alias] === undefined) {
+    host.showError(`Unknown model alias: ${alias}`);
+    return;
+  }
+  showSwarmModelPicker(host, alias);
+}
+
 // ---------------------------------------------------------------------------
 // Pickers & config apply
 // ---------------------------------------------------------------------------
@@ -283,6 +300,86 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
         host.restoreEditor();
       },
     }),
+  );
+}
+
+function showSwarmModelPicker(host: SlashCommandHost, selectedValue?: string): void {
+  const entries = Object.entries(host.state.appState.availableModels);
+  if (entries.length === 0) {
+    host.showNotice(
+      'No models configured',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+    );
+    return;
+  }
+  host.mountEditorReplacement(
+    new TabbedModelSelectorComponent({
+      models: host.state.appState.availableModels,
+      currentValue: host.state.appState.subAgentModel ?? '',
+      selectedValue,
+      currentThinking: false,
+      colors: host.state.theme.colors,
+      onSelect: ({ alias }) => {
+        host.restoreEditor();
+        void setSwarmModel(host, alias);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function setSwarmModel(host: SlashCommandHost, alias: string): Promise<void> {
+  if (host.state.appState.streamingPhase !== 'idle') {
+    host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
+    return;
+  }
+
+  try {
+    await host.harness.setConfig({ subAgentModel: alias });
+  } catch (error) {
+    host.showError(`Failed to save sub-agent model: ${formatErrorMessage(error)}`);
+    return;
+  }
+
+  // Push the updated config to the live session so active agents pick it up
+  const session = host.session;
+  if (session !== undefined) {
+    await session.reloadSession();
+  }
+
+  host.setAppState({ subAgentModel: alias });
+  host.showStatus(
+    `Swarm subagents will use ${alias}.`,
+    host.state.theme.colors.success,
+  );
+  host.track('swarm_model_switch', { model: alias });
+}
+
+async function clearSwarmModel(host: SlashCommandHost): Promise<void> {
+  if (host.state.appState.streamingPhase !== 'idle') {
+    host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
+    return;
+  }
+
+  try {
+    await host.harness.setConfig({ subAgentModel: null });
+  } catch (error) {
+    host.showError(`Failed to clear sub-agent model: ${formatErrorMessage(error)}`);
+    return;
+  }
+
+  // Push the updated config to the live session so active agents pick it up
+  const session = host.session;
+  if (session !== undefined) {
+    await session.reloadSession();
+  }
+
+  host.setAppState({ subAgentModel: undefined });
+  host.showStatus(
+    'Swarm subagents will inherit the main model.',
+    host.state.theme.colors.success,
   );
 }
 

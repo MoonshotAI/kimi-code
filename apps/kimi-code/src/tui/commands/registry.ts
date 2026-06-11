@@ -86,6 +86,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'idle-only',
   },
   {
+    name: 'swarm-model',
+    aliases: [],
+    description: 'Switch the model used by swarm subagents',
+    priority: 95,
+    availability: 'always',
+  },
+  {
     name: 'model',
     aliases: [],
     description: 'Switch LLM model',

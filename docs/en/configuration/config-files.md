@@ -24,6 +24,7 @@ The following example covers the most commonly used configuration fields. You ca
 
 ```toml
 default_model = "kimi-code/kimi-for-coding"
+# sub_agent_model = "kimi-code/kimi-for-coding"
 default_thinking = true
 default_permission_mode = "manual"
 default_plan_mode = false
@@ -76,6 +77,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | Default model alias; must be defined in `models` |
+| `sub_agent_model` | `string` | — | Model alias for subagents spawned by the Agent and AgentSwarm tools; when set, subagents use this model instead of inheriting from the parent. Set to `null` or omit to disable the override |
 | `default_thinking` | `boolean` | `false` | Whether new sessions enable Thinking (deep reasoning) mode by default; can be toggled from the model menu inside a session. Even when set to `true`, `[thinking].mode = "off"` will still force Thinking off |
 | `default_permission_mode` | `string` | `manual` | Default permission mode for new sessions; one of `manual` (prompt each time), `auto` (auto-approve read operations), or `yolo` (auto-approve everything) |
 | `default_plan_mode` | `boolean` | `false` | Whether new sessions start in Plan mode (produce a plan before executing) by default |
