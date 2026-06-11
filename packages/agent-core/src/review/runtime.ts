@@ -60,6 +60,7 @@ export interface ReviewRuntimeOptions {
 
 export interface ReviewAgentFacade {
   readonly assignmentId: string;
+  getActiveRun(): ReviewRuntimeRun;
   getAssignment(): ReviewAssignment;
   getChangedFiles(): ReviewDiffStats['files'];
   recordPatchRead(input: ReviewPatchCoverageInput): void;
@@ -67,6 +68,8 @@ export interface ReviewAgentFacade {
   updateProgress(input: ReviewProgressUpdate): ReviewProgress;
   addComment(input: ReviewCommentDraft): ReviewComment;
   getComments(filter?: ReviewCommentFilter): readonly ReviewComment[];
+  getMergedComments(): readonly ReviewMergedComment[];
+  getDismissedComments(): readonly ReviewDismissedComment[];
   getCommentEvidence(commentId: string): string | undefined;
   mergeComments(input: ReviewMergeCommentDraft): ReviewMergedComment;
   dismissComment(input: ReviewDismissCommentInput): ReviewDismissedComment;
@@ -147,6 +150,7 @@ export class SessionReviewRuntime {
     this.requireAssignment(assignmentId);
     return {
       assignmentId,
+      getActiveRun: () => this.requireActiveRun(),
       getAssignment: () => this.requireAssignment(assignmentId),
       getChangedFiles: () => this.requireActiveRun().stats?.files ?? [],
       recordPatchRead: (input) => {
@@ -160,6 +164,8 @@ export class SessionReviewRuntime {
       updateProgress: (input) => this.updateProgress(assignmentId, input),
       addComment: (input) => this.addComment(assignmentId, input),
       getComments: (filter) => this.getComments(filter),
+      getMergedComments: () => this.getMergedComments(),
+      getDismissedComments: () => this.getDismissedComments(),
       getCommentEvidence: (commentId) => this.getCommentEvidence(commentId),
       mergeComments: (input) => this.mergeComments(assignmentId, input),
       dismissComment: (input) => this.dismissComment(assignmentId, input),

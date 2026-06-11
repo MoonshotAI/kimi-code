@@ -148,26 +148,26 @@ Purpose: expose model-facing tools with small, clear schemas.
 
 **Tasks:**
 
-- [ ] Implement reviewer tools:
+- [x] Implement reviewer tools:
   - `GetAssignment({})`
   - `GetChangedFiles({ include?, statuses? })`
   - `ReadPatch({ path, hunk_id?, context_lines? })`
   - `ReadFileVersion({ path, version?, ref?, line_offset?, n_lines? })`
   - `UpdateProgress({ status, summary?, blocker? })`
   - `AddComment({ severity, path, line, title, body, evidence?, suggested_fix? })`
-- [ ] Implement reconciliator tools:
+- [x] Implement reconciliator tools:
   - `GetComments({ status?, scope?, paths?, include_sources? })`
   - `GetCommentEvidence({ comment_id })`
   - `MergeComments({ source_comment_ids, severity, path, line, title, body, evidence?, suggested_fix? })`
   - `DismissComment({ comment_id, reason, summary, merged_comment_id? })`
-- [ ] Keep descriptions direct and imperative. Avoid names or prose that make tools sound like general editing tools.
-- [ ] Make all tools return structured JSON strings where the model needs machine-readable missing requirements.
-- [ ] Register review tools only when the agent has an active review facade. They should not appear in normal tool lists.
-- [ ] Test schemas, missing active assignment errors, coverage rejection, merge provenance, and dismissal reasons.
+- [x] Keep descriptions direct and imperative. Avoid names or prose that make tools sound like general editing tools.
+- [x] Make all tools return structured JSON strings where the model needs machine-readable missing requirements.
+- [x] Register review tools only when the agent has an active review facade. They should not appear in normal tool lists.
+- [x] Test schemas, missing active assignment errors, coverage rejection, merge provenance, and dismissal reasons.
 
 **Verification:**
 
-- [ ] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/tools/review.test.ts`.
+- [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/tools/review.test.ts`. Executed as `pnpm --filter @moonshot-ai/agent-core exec vitest run test/tools/review.test.ts` because Vitest runs from the package directory.
 
 ## Phase 4: Profiles and Read-Only Enforcement
 
