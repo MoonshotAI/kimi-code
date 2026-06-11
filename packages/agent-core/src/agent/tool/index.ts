@@ -163,7 +163,12 @@ export class ToolManager {
         // so both tools remain accessible.
         const count = (this.mcpCollisionCount.get(qualified) ?? 1) + 1;
         this.mcpCollisionCount.set(qualified, count);
-        qualified = `${qualified}__${String(count)}`;
+        // Truncate the base name if the suffix would exceed the max length.
+        const suffix = `__${String(count)}`;
+        const maxBase = 64 - suffix.length;
+        qualified = qualified.length > maxBase
+          ? `${qualified.slice(0, maxBase)}${suffix}`
+          : `${qualified}${suffix}`;
         collisions.push({
           qualified,
           toolName: tool.name,

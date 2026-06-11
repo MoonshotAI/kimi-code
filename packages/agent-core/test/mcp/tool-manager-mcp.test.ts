@@ -348,6 +348,44 @@ describe('ToolManager MCP integration', () => {
     expect(allNames).toContain('mcp__srv_a__search__2');
   });
 
+  it('truncates disambiguated name when it would exceed MAX_QUALIFIED_LENGTH', async () => {
+    const tm = new ToolManager(fakeAgent());
+    tm.setActiveTools(['mcp__*']);
+    // Create a server name + tool name that produces a qualified name near the limit.
+    const longServer = 'a'.repeat(50);
+    const firstClient: MCPClient = {
+      async listTools() {
+        return [
+          { name: 'x', description: 'first', inputSchema: { type: 'object', properties: {} } },
+        ];
+      },
+      async callTool() {
+        return { content: [{ type: 'text', text: 'ok' }], isError: false };
+      },
+    };
+    const secondClient: MCPClient = {
+      async listTools() {
+        return [
+          { name: 'x', description: 'second', inputSchema: { type: 'object', properties: {} } },
+        ];
+      },
+      async callTool() {
+        return { content: [{ type: 'text', text: 'ok' }], isError: false };
+      },
+    };
+
+    tm.registerMcpServer(longServer, firstClient, await discoverTools(firstClient));
+    const result = tm.registerMcpServer(`${longServer} `, secondClient, await discoverTools(secondClient));
+
+    // The disambiguated name must not exceed 64 characters.
+    for (const name of result.registered) {
+      expect(name.length).toBeLessThanOrEqual(64);
+    }
+    // The tool should still be callable.
+    const allNames = [...tm.toolInfos()].filter((i) => i.source === 'mcp').map((i) => i.name);
+    expect(allNames.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('does not write set_active_tools records when registering an MCP server', async () => {
     const calls: unknown[] = [];
     const tm = new ToolManager(fakeAgent(calls));
