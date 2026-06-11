@@ -933,7 +933,7 @@ onUnmounted(() => {
 .dock:not(.align-mobile) :deep(.composer) {
   border-top: none;
   background: transparent;
-  padding-bottom: 4px;
+  padding-bottom: 14px;
 }
 
 /* Merged files pane: horizontal split (navigator | divider | content), no outer scroll */
