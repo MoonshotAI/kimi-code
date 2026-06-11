@@ -273,6 +273,57 @@ describe('runUpdatePreflight', () => {
     expect(stdout.join('')).toContain('Updated @moonshot-ai/kimi-code to 0.5.0');
   });
 
+  it('refreshes a stale cached target before showing the foreground install prompt', async () => {
+    disableAutoInstall();
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.6.0'));
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.7.0'));
+    mocks.detectInstallSource.mockResolvedValue('npm-global');
+    mocks.promptForInstallChoice.mockResolvedValue('install');
+    mockSpawnExit(0);
+    const { stdout, options } = captureOutput();
+
+    await expect(runUpdatePreflight('0.5.0', options)).resolves.toBe('exit');
+
+    expect(refreshUpdateCache).toHaveBeenCalledTimes(1);
+    expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { version: '0.7.0' },
+        installCommand: 'npm install -g @moonshot-ai/kimi-code@0.7.0',
+      }),
+    );
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      expect.stringMatching(/^npm(\.cmd)?$/),
+      ['install', '-g', '@moonshot-ai/kimi-code@0.7.0'],
+      { stdio: 'inherit' },
+    );
+    expect(stdout.join('')).toContain('Updated @moonshot-ai/kimi-code to 0.7.0');
+  });
+
+  it('falls back to the cached foreground prompt target when the refresh hangs', async () => {
+    vi.useFakeTimers();
+    try {
+      disableAutoInstall();
+      mocks.readUpdateCache.mockResolvedValue(cacheWith('0.6.0'));
+      mocks.refreshUpdateCache.mockReturnValue(new Promise(() => {}));
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      mocks.promptForInstallChoice.mockResolvedValue('skip');
+      const { options } = captureOutput();
+
+      const result = runUpdatePreflight('0.5.0', options);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expect(result).resolves.toBe('continue');
+      expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: { version: '0.6.0' },
+          installCommand: 'npm install -g @moonshot-ai/kimi-code@0.6.0',
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('pnpm-global: spawns pnpm add -g', async () => {
     disableAutoInstall();
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));

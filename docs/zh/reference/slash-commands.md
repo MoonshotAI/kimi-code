@@ -17,6 +17,7 @@
 | `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见[平台与模型 — `/provider` 与供应商管理](../configuration/providers.md#provider-与供应商管理) | 是 |
 | `/model` | — | 切换当前会话使用的 LLM 模型 | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板 | 是 |
+| `/experiments` | `/experimental` | 打开实验功能面板。确认后把变更持久化到 `config.toml` 并重载当前会话 | 是 |
 | `/permission` | — | 选择权限模式 | 是 |
 | `/editor` | — | 配置 `Ctrl-G` 调起的外部编辑器 | 是 |
 | `/theme` | — | 切换终端 UI 配色主题 | 是 |
@@ -43,7 +44,7 @@
 | `/auto [on\|off]` | — | 切换 auto 权限模式。开启后工具审批自动处理，Agent 不会向用户提问 | 是 |
 | `/plan [on\|off]` | — | 切换 Plan 模式。不带参数时翻转；显式传 `on`/`off` 时强制设置。单纯切换不会创建空计划文件 | 是 |
 | `/plan clear` | — | 清除当前 plan 方案 | 否 |
-| `/goal [...]` | — | 开始或管理一个自主 goal（实验功能，需启用 `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1`） | 见下文 |
+| `/goal [...]` | — | 开始或管理一个自主 goal（实验功能；可通过 `/experiments`、`[experimental].goal_command` 或 `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` 启用） | 见下文 |
 
 ::: warning 注意
 `/yolo` 会跳过普通工具调用的审批确认，使用前请确保了解可能的风险。Plan 模式的退出审批不会被 `/yolo` 跳过；Plan 模式下的 `Bash` 也按 `/yolo` 的普通放行规则处理。
@@ -52,7 +53,13 @@
 ## 自主 goal（实验功能）
 
 ::: info
-`/goal` 是实验命令，需在启动 `kimi` 时设置环境变量启用：
+`/goal` 是实验命令。可以通过 `/experiments` 启用，也可以写入 `~/.kimi-code/config.toml`：
+```toml
+[experimental]
+goal_command = true
+```
+
+也可以用环境变量只覆盖当前进程：
 ```sh
 KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 ```

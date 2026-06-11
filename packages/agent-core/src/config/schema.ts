@@ -1,6 +1,7 @@
 import { HOOK_EVENT_TYPES } from '../session/hooks/types';
 import { parsePattern } from '#/agent/permission/matches-rule';
 import { ErrorCodes, KimiError } from '#/errors';
+import { FLAG_DEFINITIONS, type FlagId } from '#/flags/registry';
 import { z } from 'zod';
 
 export const ProviderTypeSchema = z.enum([
@@ -17,6 +18,7 @@ export type ProviderType = z.infer<typeof ProviderTypeSchema>;
 export const OAuthRefSchema = z.object({
   storage: z.enum(['file', 'keyring']),
   key: z.string().min(1),
+  oauthHost: z.string().min(1).optional(),
 });
 
 export type OAuthRef = z.infer<typeof OAuthRefSchema>;
@@ -103,6 +105,23 @@ export const BackgroundConfigSchema = z.object({
 });
 
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
+
+const ExperimentalFlagIdSet = new Set<string>(FLAG_DEFINITIONS.map((def) => def.id));
+
+export const ExperimentalConfigSchema = z
+  .record(z.string(), z.boolean())
+  .superRefine((config, ctx) => {
+    for (const key of Object.keys(config)) {
+      if (ExperimentalFlagIdSet.has(key)) continue;
+      ctx.addIssue({
+        code: 'custom',
+        path: [key],
+        message: `Unknown experimental feature "${key}".`,
+      });
+    }
+  }) as z.ZodType<Partial<Record<FlagId, boolean>>>;
+
+export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
 
 export const HookDefSchema = z
   .object({
@@ -199,6 +218,7 @@ export const KimiConfigSchema = z.object({
   extraSkillDirs: z.array(z.string()).optional(),
   loopControl: LoopControlSchema.optional(),
   background: BackgroundConfigSchema.optional(),
+  experimental: ExperimentalConfigSchema.optional(),
   telemetry: z.boolean().optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });
@@ -211,6 +231,7 @@ const ThinkingConfigPatchSchema = ThinkingConfigSchema.partial();
 const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
 const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
+const ExperimentalConfigPatchSchema = ExperimentalConfigSchema;
 const MoonshotServiceConfigPatchSchema = MoonshotServiceConfigSchema.partial();
 const ServicesConfigPatchSchema = z.object({
   moonshotSearch: MoonshotServiceConfigPatchSchema.optional(),
@@ -236,6 +257,7 @@ export const KimiConfigPatchSchema = z
     extraSkillDirs: z.array(z.string()).optional(),
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
+    experimental: ExperimentalConfigPatchSchema.optional(),
     telemetry: z.boolean().optional(),
   })
   .strict();

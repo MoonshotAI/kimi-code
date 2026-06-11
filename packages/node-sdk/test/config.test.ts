@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createKimiHarness, KimiError } from '#/index';
 
@@ -16,6 +16,7 @@ import { TEST_IDENTITY } from './test-identity';
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -285,6 +286,42 @@ describe('KimiHarness config API', () => {
     await expect(harness.getConfig()).resolves.toEqual({ providers: {} });
   });
 
+  it('returns experimental feature metadata through the harness', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND', '');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION', '');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK', '');
+    const homeDir = await makeTempDir();
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[experimental]
+goal_command = true
+background_ask = false
+`,
+      'utf-8',
+    );
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    const features = await harness.getExperimentalFeatures();
+    const goalCommand = features.find((feature) => feature.id === 'goal_command');
+
+    expect(goalCommand).toMatchObject({
+      id: 'goal_command',
+      title: 'Goal command',
+      enabled: true,
+      source: 'config',
+      configValue: true,
+      env: 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND',
+    });
+    expect(features).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'goal_command', enabled: true }),
+        expect.objectContaining({ id: 'background_ask', enabled: false }),
+      ]),
+    );
+  });
+
   it('can create the default config scaffold without selecting a model', async () => {
     const homeDir = await makeTempDir();
     const configPath = join(homeDir, 'config.toml');
@@ -301,5 +338,27 @@ describe('KimiHarness config API', () => {
     expect(config.providers).toEqual({});
     expect(config.defaultModel).toBeUndefined();
     expect(config.defaultThinking).toBeUndefined();
+  });
+
+  it('reloads an active session without closing the SDK session wrapper', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = join(homeDir, 'work');
+    const configPath = join(homeDir, 'config.toml');
+    await writeFile(configPath, COMPLETE_TOML, 'utf-8');
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const session = await harness.createSession({
+      id: 'session-sdk-reload',
+      workDir,
+      model: 'kimi-for-coding',
+    });
+
+    expect(session.getResumeState()).toBeUndefined();
+
+    const reloaded = await harness.reloadSession({ id: session.id });
+
+    expect(reloaded).toBe(session);
+    expect(harness.getSession(session.id)).toBe(session);
+    expect(session.getResumeState()?.agents['main']).toBeDefined();
+    await expect(session.getStatus()).resolves.toMatchObject({ model: 'kimi-for-coding' });
   });
 });

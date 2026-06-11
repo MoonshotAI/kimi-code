@@ -608,7 +608,7 @@ export class SessionEventHandler {
     this.host.showError(`[${event.code}] ${event.message}`);
     const sessionId = this.host.state.appState.sessionId;
     if (sessionId.length > 0) {
-      this.host.showStatus(errorReportHintLine(sessionId));
+      this.host.showStatus(errorReportHintLine());
     }
   }
 

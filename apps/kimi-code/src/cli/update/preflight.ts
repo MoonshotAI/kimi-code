@@ -42,6 +42,7 @@ export interface RunUpdatePreflightOptions {
 
 const AUTO_INSTALL_FAILURE_PROMPT_THRESHOLD = 2;
 const AUTO_INSTALL_ACTIVE_TTL_MS = 6 * 60 * 60 * 1000;
+const USER_VISIBLE_UPDATE_REFRESH_TIMEOUT_MS = 1_000;
 
 type UpdateLogger = Pick<Logger, 'info' | 'warn'>;
 
@@ -189,6 +190,30 @@ function refreshAndMaybeInstallInBackground(
       logger,
     );
   })().catch(() => {});
+}
+
+async function refreshUserVisibleUpdateTarget(
+  currentVersion: string,
+  fallbackTarget: UpdateTarget,
+): Promise<UpdateTarget | null> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const refresh = refreshUpdateCache()
+      .then((refreshed) => selectUpdateTarget(currentVersion, refreshed.latest))
+      .catch(() => fallbackTarget);
+    const fallback = new Promise<UpdateTarget>((resolve) => {
+      timeout = setTimeout(() => {
+        resolve(fallbackTarget);
+      }, USER_VISIBLE_UPDATE_REFRESH_TIMEOUT_MS);
+    });
+    return await Promise.race([refresh, fallback]);
+  } catch {
+    return fallbackTarget;
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function nowIso(): string {
@@ -536,16 +561,17 @@ export async function runUpdatePreflight(
       return 'continue';
     }
 
-    refreshInBackground();
     const source: InstallSource =
       !isInteractive
         ? 'unsupported'
         : await detectInstallSource().catch(() => 'unsupported' as const);
 
     const decision = decideUpdateAction(target, isInteractive, source, platform);
-    if (decision === 'none') return 'continue';
+    if (decision === 'none') {
+      refreshInBackground();
+      return 'continue';
+    }
 
-    const installCommand = installCommandFor(source, target.version, platform);
     if (
       await tryStartAutomaticBackgroundInstall(
         installState,
@@ -557,26 +583,49 @@ export async function runUpdatePreflight(
         logger,
       )
     ) {
+      refreshInBackground();
       return 'continue';
     }
 
-    trackUpdatePrompted(options.track, currentVersion, target, source, decision);
+    const userVisibleTarget = await refreshUserVisibleUpdateTarget(currentVersion, target);
+    if (userVisibleTarget === null) return 'continue';
+    if (
+      await tryStartAutomaticBackgroundInstall(
+        installState,
+        currentVersion,
+        userVisibleTarget,
+        source,
+        platform,
+        options.track,
+        logger,
+      )
+    ) {
+      return 'continue';
+    }
+
+    const installCommand = installCommandFor(source, userVisibleTarget.version, platform);
+    trackUpdatePrompted(options.track, currentVersion, userVisibleTarget, source, decision);
 
     if (decision === 'manual-command') {
-      stdout.write(renderManualUpdateMessage(currentVersion, target, source, installCommand));
+      stdout.write(renderManualUpdateMessage(
+        currentVersion,
+        userVisibleTarget,
+        source,
+        installCommand,
+      ));
       return 'continue';
     }
 
-    const choice = await promptInstall(currentVersion, target, source, installCommand);
+    const choice = await promptInstall(currentVersion, userVisibleTarget, source, installCommand);
     if (choice === 'skip') return 'continue';
 
     try {
-      await installUpdate(source, target.version, platform);
-      stdout.write(renderInstallSuccessMessage(target));
+      await installUpdate(source, userVisibleTarget.version, platform);
+      stdout.write(renderInstallSuccessMessage(userVisibleTarget));
       return 'exit';
     } catch (error) {
       stderr.write(
-        `warning: failed to install ${NPM_PACKAGE_NAME}@${target.version}: ` +
+        `warning: failed to install ${NPM_PACKAGE_NAME}@${userVisibleTarget.version}: ` +
           `${formatErrorMessage(error)}\n`,
       );
       return 'continue';

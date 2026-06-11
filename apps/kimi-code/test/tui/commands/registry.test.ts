@@ -73,10 +73,10 @@ describe('built-in slash command registry', () => {
     ]);
   });
 
-  it('registers goal behind the goal-command flag with subcommand-aware availability', () => {
+  it('registers goal behind the goal_command flag with subcommand-aware availability', () => {
     const goal = findBuiltInSlashCommand('goal');
     expect(goal).toBeDefined();
-    expect((goal as KimiSlashCommand).experimentalFlag).toBe('goal-command');
+    expect((goal as KimiSlashCommand).experimentalFlag).toBe('goal_command');
     expect(resolveSlashCommandAvailability(goal!, '')).toBe('always');
     expect(resolveSlashCommandAvailability(goal!, 'status')).toBe('always');
     expect(resolveSlashCommandAvailability(goal!, 'pause')).toBe('always');
@@ -112,6 +112,8 @@ describe('built-in slash command registry', () => {
         'new',
         'permission',
         'plan',
+        'reload',
+        'reload-tui',
         'sessions',
         'settings',
         'status',
@@ -123,5 +125,15 @@ describe('built-in slash command registry', () => {
         'yolo',
       ]),
     );
+  });
+
+  it('keeps TUI reload always available and full reload idle-only', () => {
+    const reload = findBuiltInSlashCommand('reload');
+    const reloadTui = findBuiltInSlashCommand('reload-tui');
+
+    expect(reload).toBeDefined();
+    expect(reloadTui).toBeDefined();
+    expect(resolveSlashCommandAvailability(reload!, '')).toBe('idle-only');
+    expect(resolveSlashCommandAvailability(reloadTui!, '')).toBe('always');
   });
 });

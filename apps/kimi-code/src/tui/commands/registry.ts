@@ -115,6 +115,27 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'experiments',
+    aliases: ['experimental'],
+    description: 'Manage experimental features',
+    priority: 60,
+    availability: 'idle-only',
+  },
+  {
+    name: 'reload',
+    aliases: [],
+    description: 'Reload session and apply config.toml settings plus tui.toml UI preferences',
+    priority: 60,
+    availability: 'idle-only',
+  },
+  {
+    name: 'reload-tui',
+    aliases: [],
+    description: 'Reload only tui.toml UI preferences',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'compact',
     aliases: [],
     description: 'Compact the conversation context',
@@ -125,7 +146,7 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Start or manage an autonomous goal',
     priority: 80,
-    experimentalFlag: 'goal-command',
+    experimentalFlag: 'goal_command',
     // No argumentHint: the menu description stays as short as every other
     // command's. The subcommands (status/pause/resume/cancel/replace) surface in
     // the argument autocomplete list once the user types `/goal ` (see
