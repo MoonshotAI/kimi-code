@@ -1,5 +1,5 @@
 ---
-name: sub-skill.consolidate
+name: consolidate
 description: Apply an approved sub-skill grouping by moving user-specified skills into a parent bundle, with timestamped backups of every modified directory.
 disable-model-invocation: true
 ---
@@ -27,12 +27,17 @@ Execute the reorganization by moving user-specified skills into a parent bundle,
    - If the parent already exists, ensure its frontmatter includes `has-sub-skill: true`.
 4. **Move child skills into the parent.** Move each child skill's entire directory under the parent bundle.
    - Example: `web-search/` → `web-research/web-search/`
-5. **Verify the result.** List the new directory structure and confirm each moved skill still has a valid `SKILL.md` with required frontmatter (`name` and `description`).
-6. **Report the change.** Summarize what was moved, the new structure, and where backups are located.
+5. **Keep documentation directory alignment.** When moving documentation, references, examples, assets, or other payload directories, align them with the new skill directory layout.
+   - Preserve relative links from `SKILL.md` to files such as `references/`, `assets/`, `examples/`, or templates.
+   - If a child skill moves from `<root>/<child>/` to `<root>/<parent>/<child>/`, its documentation payload should move with that child unless the approved plan says otherwise.
+   - Do not leave documentation in the old location or merge unrelated documentation directories together.
+6. **Verify the result.** List the new directory structure and confirm each moved skill still has a valid `SKILL.md` with required frontmatter (`name` and `description`). Check documentation directory alignment and relative links after the move.
+7. **Report the change.** Summarize what was moved, the new structure, any documentation directories that moved, and where backups are located.
 
 ## Don'ts
 
 - **Never move skills without backing up first.**
 - **Never overwrite an existing backup** — always use a fresh timestamped suffix.
 - **Don't drop frontmatter or payload files** during the move; the entire directory must be preserved.
+- **Don't break documentation directory alignment** — references, assets, examples, and templates must stay aligned with the skill directory that uses them.
 - **Don't create deeply nested hierarchies** (3+ levels) unless the user explicitly requests it.

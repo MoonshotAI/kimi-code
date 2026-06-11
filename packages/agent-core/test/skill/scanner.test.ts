@@ -363,7 +363,9 @@ describe('discoverSkills shape and ordering', () => {
 
     const skills = await discoverSkills({ roots: [{ path: root, source: 'user' }] });
 
-    expect(skills.map((s) => s.name)).toEqual(['inner', 'outer']);
+    expect(skills.map((s) => s.name)).toEqual(['outer', 'outer.inner']);
+    expect(skills.find((s) => s.name === 'outer')?.metadata.isSubSkill).toBeUndefined();
+    expect(skills.find((s) => s.name === 'outer.inner')?.metadata.isSubSkill).toBe(true);
   });
 
   it('does not discover nested SKILL.md files when the parent bundle disables sub-skills', async () => {
