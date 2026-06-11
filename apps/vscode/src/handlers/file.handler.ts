@@ -226,8 +226,9 @@ const revertFiles: Handler<OptionalFilePathParams, { ok: boolean }> = async (par
   if (params.filePath) {
     await GitManager.revertFile(workDir, sessionId, toAbsolute(workDir, params.filePath));
   } else {
-    await GitManager.revertToBaseline(workDir, sessionId);
-    ctx.fileManager.clearTracked(ctx.webviewId);
+    const trackedFiles = ctx.fileManager.getTracked(ctx.webviewId);
+    await GitManager.revertFiles(workDir, sessionId, trackedFiles);
+    trackedFiles.clear();
   }
 
   const trackedFiles = ctx.fileManager.getTracked(ctx.webviewId);
@@ -243,12 +244,12 @@ const keepChanges: Handler<OptionalFilePathParams, { ok: boolean }> = async (par
     return { ok: false };
   }
 
-  await GitManager.updateBaseline(workDir, sessionId);
-
   if (params.filePath) {
     const absolutePath = toAbsolute(workDir, params.filePath);
+    await GitManager.updateBaselineFile(workDir, sessionId, absolutePath);
     ctx.fileManager.getTracked(ctx.webviewId).delete(absolutePath);
   } else {
+    await GitManager.updateBaseline(workDir, sessionId);
     ctx.fileManager.clearTracked(ctx.webviewId);
   }
 
