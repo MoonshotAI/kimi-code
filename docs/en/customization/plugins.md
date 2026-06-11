@@ -65,7 +65,7 @@ You must first complete OAuth login with a Kimi Code account via `/login`. The p
 2. Find **Kimi Datasource** and press `Space` to install
 3. After installation completes, run `/reload` to activate the plugin
 
-The current latest version is v3.1.1. The plugin does not update automatically — to upgrade to a newer version, go through the installation steps above again.
+The current latest version is v3.2.0. The plugin does not update automatically — to upgrade to a newer version, go through the installation steps above again.
 
 ### How to Use
 
