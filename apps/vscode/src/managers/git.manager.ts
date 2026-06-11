@@ -6,6 +6,7 @@ import type { FileChange } from "../../shared/types";
 
 const BASELINE_REF = "refs/kimi/baseline";
 const BASELINE_FAILURE_TTL_MS = 30_000;
+const COMMIT_AUTHOR = ["-c", "user.name=Kimi Code", "-c", "user.email=kimi-code@example.invalid"];
 
 interface PendingBaseline {
   kind: "initializing";
@@ -118,8 +119,16 @@ function git(workDir: string, sessionId: string, ...args: string[]): Promise<str
   return execGit([`--git-dir=${gitDir}`, `--work-tree=${workDir}`, ...args]);
 }
 
-function toRelative(workDir: string, absolutePath: string): string {
-  return path.relative(workDir, absolutePath);
+function gitWithAuthor(workDir: string, sessionId: string, ...args: string[]): Promise<string> {
+  return git(workDir, sessionId, ...COMMIT_AUTHOR, ...args);
+}
+
+function toRelativeInside(workDir: string, absolutePath: string): string | null {
+  const relativePath = path.relative(workDir, absolutePath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return null;
+  }
+  return relativePath;
 }
 
 async function ensureRepo(workDir: string, sessionId: string): Promise<void> {
@@ -131,8 +140,24 @@ async function ensureRepo(workDir: string, sessionId: string): Promise<void> {
 }
 
 async function commitAll(workDir: string, sessionId: string, message: string): Promise<string> {
-  await git(workDir, sessionId, "add", "-A").catch(() => {});
-  await git(workDir, sessionId, "commit", "--allow-empty", "-m", message).catch(() => {});
+  await git(workDir, sessionId, "add", "-A");
+  await gitWithAuthor(workDir, sessionId, "commit", "--allow-empty", "-m", message);
+  return git(workDir, sessionId, "rev-parse", "HEAD");
+}
+
+async function commitBaselineFile(workDir: string, sessionId: string, baseline: string, absolutePath: string): Promise<string | null> {
+  const rel = toRelativeInside(workDir, absolutePath);
+  if (!rel) {
+    return null;
+  }
+
+  await git(workDir, sessionId, "read-tree", baseline);
+  if (fs.existsSync(absolutePath)) {
+    await git(workDir, sessionId, "add", "--", rel);
+  } else {
+    await git(workDir, sessionId, "rm", "--cached", "--ignore-unmatch", "--", rel);
+  }
+  await gitWithAuthor(workDir, sessionId, "commit", "--allow-empty", "-m", "baseline file");
   return git(workDir, sessionId, "rev-parse", "HEAD");
 }
 
@@ -199,11 +224,11 @@ export const GitManager = {
 
   async updateBaseline(workDir: string, sessionId: string): Promise<void> {
     await ensureRepo(workDir, sessionId);
-    const head = await git(workDir, sessionId, "rev-parse", "HEAD");
+    const head = await commitAll(workDir, sessionId, "baseline");
     await setBaselineRef(workDir, sessionId, head);
   },
 
-  async revertToBaseline(workDir: string, sessionId: string): Promise<void> {
+  async updateBaselineFile(workDir: string, sessionId: string, absolutePath: string): Promise<void> {
     await ensureRepo(workDir, sessionId);
     let baseline = await getBaselineRef(workDir, sessionId);
     if (!baseline) {
@@ -211,7 +236,10 @@ export const GitManager = {
       baseline = await getBaselineRef(workDir, sessionId);
     }
     if (baseline) {
-      await git(workDir, sessionId, "reset", "--hard", baseline);
+      const head = await commitBaselineFile(workDir, sessionId, baseline, absolutePath);
+      if (head) {
+        await setBaselineRef(workDir, sessionId, head);
+      }
     }
   },
 
@@ -226,13 +254,23 @@ export const GitManager = {
       return;
     }
 
-    const rel = toRelative(workDir, absolutePath);
+    const rel = toRelativeInside(workDir, absolutePath);
+    if (!rel) {
+      return;
+    }
+
     try {
       await git(workDir, sessionId, "checkout", baseline, "--", rel);
     } catch {
       if (fs.existsSync(absolutePath)) {
         fs.unlinkSync(absolutePath);
       }
+    }
+  },
+
+  async revertFiles(workDir: string, sessionId: string, absolutePaths: Iterable<string>): Promise<void> {
+    for (const absolutePath of absolutePaths) {
+      await this.revertFile(workDir, sessionId, absolutePath);
     }
   },
 
@@ -250,8 +288,8 @@ export const GitManager = {
     const changes: FileChange[] = [];
 
     for (const absolutePath of trackedFiles) {
-      const relativePath = toRelative(workDir, absolutePath);
-      if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+      const relativePath = toRelativeInside(workDir, absolutePath);
+      if (!relativePath) {
         continue;
       }
 
@@ -310,7 +348,10 @@ export const GitManager = {
       return "";
     }
 
-    const rel = toRelative(workDir, absolutePath);
+    const rel = toRelativeInside(workDir, absolutePath);
+    if (!rel) {
+      return "";
+    }
     return git(workDir, sessionId, "diff", baseline, "--", rel).catch(() => "");
   },
 
@@ -321,7 +362,10 @@ export const GitManager = {
       return null;
     }
 
-    const rel = toRelative(workDir, absolutePath);
+    const rel = toRelativeInside(workDir, absolutePath);
+    if (!rel) {
+      return null;
+    }
     try {
       return await git(workDir, sessionId, "show", `${baseline}:${rel}`);
     } catch {
