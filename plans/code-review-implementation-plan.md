@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a built-in `/review` command with Standard, Thorough, and Deep review intensities, read-only reviewer workers, audited coverage, and provenance-preserving reconciliation.
+**Goal:** Build a built-in `/review` command with Standard, Thorough, and Deep review intensities, read-only reviewer workers, audited coverage, provenance-preserving reconciliation, and `AgentSwarm`-backed Deep review.
 
 **Architecture:** The TUI owns interaction and display, the SDK exposes typed review APIs, and `packages/agent-core` owns review state, git target resolution, review tools, reviewer orchestration, coverage auditing, and reconciliation. Start behind an experimental flag and ship the feature in slices: Standard first, then Thorough, then Deep.
 
@@ -20,10 +20,13 @@ The review lifecycle crosses these project areas:
 - `packages/node-sdk/src`: expose typed review methods so the app never imports `@moonshot-ai/agent-core` directly.
 - `packages/agent-core/src/rpc`: add review RPC payloads and methods.
 - `packages/agent-core/src/review`: new review domain runtime: targets, assignments, comments, coverage, progress, orchestration, reconciliation.
+- `packages/agent-core/src/tools/builtin/collaboration/agent-swarm.ts`: Deep reviewer execution must use the existing `AgentSwarm` tool contract, not a separate direct fan-out.
+- `packages/agent-core/src/session/subagent-batch.ts` and `packages/agent-core/src/agent/swarm`: Deep review must preserve the existing `AgentSwarm` child execution and `AgentSwarm` mode lifecycle.
 - `packages/agent-core/src/tools/builtin/review`: new review-safe tools: `GetAssignment`, `GetChangedFiles`, `ReadPatch`, `ReadFileVersion`, `UpdateProgress`, `AddComment`, `GetComments`, `GetCommentEvidence`, `MergeComments`, `DismissComment`.
 - `packages/agent-core/src/profile/default`: add `reviewer` and `reconciliator` profiles, then register them as subagent profiles for the main agent.
 - `packages/agent-core/src/agent/permission/policies`: add a review-mode guard that blocks mutation and orchestration tools for review workers.
 - `packages/agent-core/src/agent/injection`: inject review background and assignment context at reviewer turn start and after compaction.
+- `apps/kimi-code/src/tui/controllers/subagent-event-handler.ts` and `apps/kimi-code/src/tui/components/messages/agent-swarm-progress.ts`: Deep reviewer progress should render through the existing `AgentSwarm` UI.
 
 ## Phase 0: Feature Flag and Shared Types
 
@@ -245,7 +248,7 @@ Purpose: make review workers recover after compaction and keep running until req
   - continues the same subagent with missing requirements
   - stops when status is `complete` or `blocked`
   - fails after a bounded number of non-progress continuations
-- [x] Keep the driver internal to review runtime. Do not route reviewer orchestration through the generic model-facing `Agent` tool.
+- [x] Keep the driver internal to review runtime for `Standard`, `Thorough`, and reconciliator runs. Do not route those through the generic model-facing `Agent` tool. `Deep` reviewer execution has a separate `AgentSwarm` requirement in Phase 11.
 - [x] Test compaction re-injection and missing-coverage continuation.
 
 **Verification:**
@@ -348,7 +351,7 @@ Purpose: expose Standard review through the Codex-style command flow.
 - [x] Add intensity selector with labels:
   - `Standard   Single reviewer for everyday changes.`
   - `Thorough   Multiple focused reviewers before opening a PR.`
-  - `Deep       Swarm-backed review for risky or large changes.`
+  - `Deep       AgentSwarm-backed review for risky or large changes.`
 - [x] For this phase, allow only `Standard` to start. Show “coming soon” notice for `Thorough` and `Deep` until later phases land.
 - [x] Start review through `session.startReview()`.
 - [x] Use `ChoicePickerComponent` and follow `.agents/skills/write-tui/DESIGN.md`.
@@ -427,34 +430,47 @@ Purpose: add multi-perspective review with exactly one reconciliator.
 - [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/orchestrator-thorough.test.ts`. Executed with `test/review/orchestrator-thorough.test.ts test/review/runtime.test.ts` because Vitest runs from the package directory.
 - [x] Run `pnpm --filter @moonshot-ai/kimi-code exec vitest run apps/kimi-code/test/tui/commands/review.test.ts`. Executed as `pnpm --filter @moonshot-ai/kimi-code exec vitest run test/tui/commands/review.test.ts` because Vitest runs from the package directory.
 
-## Phase 11: Deep Review and Grouped Reconciliators
+## Phase 11: Deep Review with `AgentSwarm` and Grouped Reconciliators
 
-Purpose: add swarm-backed review with overlapping coverage and grouped reconciliation.
+Purpose: add `AgentSwarm`-backed reviewer execution with overlapping coverage and grouped reconciliation.
 
 **Files:**
 
 - Modify: `packages/agent-core/src/review/orchestrator.ts`
 - Create: `packages/agent-core/src/review/coverage-matrix.ts`
+- Modify: `packages/agent-core/src/tools/builtin/collaboration/agent-swarm.ts` if the tool needs review-assignment metadata, structured child status, or safer review display fields.
+- Modify: `packages/agent-core/src/session/subagent-batch.ts` if review assignments need to be bound to `AgentSwarm` children at spawn time.
+- Modify: `packages/agent-core/src/agent/swarm` only if review mode needs an explicit one-shot swarm lifecycle hook beyond the existing `tool` trigger.
 - Create: `packages/agent-core/test/review/orchestrator-deep.test.ts`
 - Create: `packages/agent-core/test/review/coverage-matrix.test.ts`
+- Extend tests: existing `AgentSwarm` tool, subagent-batch, and TUI `AgentSwarmProgressComponent` tests as needed.
 - Modify: `apps/kimi-code/src/tui/commands/review.ts`
+- Modify: `apps/kimi-code/src/tui/controllers/subagent-event-handler.ts` only if Deep review does not already produce the normal `AgentSwarm` events.
 
 **Tasks:**
 
 - [x] Implement coverage matrix creation for changed files.
 - [x] Partition work by file group and perspective.
 - [x] Ensure every changed file is assigned to at least two workers.
-- [x] Require Deep workers to read assigned changed files in full through `ReadFileVersion`.
-- [x] Launch multiple reconciliators grouped by perspective or subsystem.
-- [x] Perspective reconciliator rule: combine comments from all subagents with the same perspective across all assigned file groups.
-- [x] Subsystem reconciliator rule: combine comments from all subagents that reviewed that subsystem across all perspectives assigned to that subsystem.
-- [x] Coordinator emits final review from merged comments.
-- [x] Enable `Deep` in the intensity selector.
+- [ ] Replace direct Deep reviewer fan-out with an `AgentSwarm` reviewer phase.
+- [ ] Convert each coverage-matrix review assignment into one `AgentSwarm` item.
+- [ ] Call `AgentSwarm` with `subagent_type: 'reviewer'`, a review-assignment `prompt_template`, and one item per assignment.
+- [ ] Ensure each `AgentSwarm` child receives the active review facade, review background injection, and its assignment before it can use review tools.
+- [ ] Preserve the `AgentSwarm` parent tool call id so child progress renders in the existing `AgentSwarm` UI.
+- [ ] Require Deep workers to read assigned changed files in full through `ReadFileVersion`.
+- [ ] Audit `AgentSwarm` child outcomes after the reviewer phase. Failed, cancelled, or incomplete children should either be resumed through `AgentSwarm` or make the review fail clearly.
+- [ ] Launch multiple reconciliators grouped by perspective or subsystem after the `AgentSwarm` reviewer phase completes.
+- [ ] Perspective reconciliator rule: combine comments from all subagents with the same perspective across all assigned file groups.
+- [ ] Subsystem reconciliator rule: combine comments from all subagents that reviewed that subsystem across all perspectives assigned to that subsystem.
+- [ ] Coordinator emits final review from merged comments.
+- [ ] Enable `Deep` in the intensity selector only after the reviewer phase uses the concrete `AgentSwarm` path.
 
 **Verification:**
 
 - [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/coverage-matrix.test.ts`. Executed with `test/review/coverage-matrix.test.ts test/review/orchestrator-deep.test.ts` because Vitest runs from the package directory.
-- [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/orchestrator-deep.test.ts`. Executed with `test/review/coverage-matrix.test.ts test/review/orchestrator-deep.test.ts` because Vitest runs from the package directory.
+- [ ] Add and run an orchestrator test proving Deep launches reviewers through `AgentSwarm`, not direct worker fan-out.
+- [ ] Add and run a TUI/controller test proving Deep reviewer progress is handled as `AgentSwarm` progress.
+- [ ] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run test/review/orchestrator-deep.test.ts` after the `AgentSwarm` correction lands.
 
 ## Phase 12: Final Docs, Changeset, and Full Verification
 
@@ -480,7 +496,7 @@ Purpose: prepare the feature for review.
   - `/review focus on security` current branch against base
   - cancellation during active review
   - Thorough with duplicate comments
-  - Deep with at least one file covered by multiple workers
+  - Deep with `AgentSwarm` progress and at least one file covered by multiple workers
   - Covered by focused command, event, and orchestrator smoke tests rather than a live model-backed TUI session.
 
 ## Rollout Strategy
@@ -488,7 +504,7 @@ Purpose: prepare the feature for review.
 - Keep `code_review` default off until Standard, TUI flow, cancellation, and docs are complete.
 - Enable only `Standard` internally first.
 - Enable `Thorough` only after reconciliator provenance is tested.
-- Enable `Deep` only after coverage matrix and grouped reconciliators are tested.
+- Enable `Deep` only after the reviewer phase uses the concrete `AgentSwarm` path, the TUI renders `AgentSwarm` progress, and coverage matrix plus grouped reconciliators are tested.
 - Do not add auto-fix, GitHub PR comments, or separate `/security-review` in this implementation.
 
 ## Self-Review Checklist
@@ -499,6 +515,7 @@ Purpose: prepare the feature for review.
 - [x] Reviewer workers cannot mutate files or launch more agents.
 - [x] Background is injected at reviewer start and after compaction.
 - [x] `Thorough` uses exactly one reconciliator.
+- [ ] `Deep` reviewer execution uses the concrete `AgentSwarm` tool/runtime/UI path.
 - [x] `Deep` uses grouped reconciliators by perspective or subsystem.
 - [x] Every final multi-agent comment has source comment provenance.
 - [x] `apps/kimi-code` calls only the SDK, never `@moonshot-ai/agent-core` directly.
