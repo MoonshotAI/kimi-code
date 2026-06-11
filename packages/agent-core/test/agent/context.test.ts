@@ -783,7 +783,7 @@ describe('Agent context notification projection', () => {
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'I will run a tool' }],
-        toolCalls: [{ id: 'call_1', name: 'Bash', arguments: '{}' }],
+        toolCalls: [{ type: 'function', id: 'call_1', name: 'Bash', arguments: '{}' }],
       },
       // No tool result for call_1 — session was killed.
     ];
@@ -799,7 +799,7 @@ describe('Agent context notification projection', () => {
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'I will run a tool' }],
-        toolCalls: [{ id: 'call_1', name: 'Bash', arguments: '{}' }],
+        toolCalls: [{ type: 'function', id: 'call_1', name: 'Bash', arguments: '{}' }],
       },
       {
         role: 'tool',
@@ -828,11 +828,13 @@ describe('Agent context notification projection', () => {
       type: 'context.append_loop_event',
       event: {
         type: 'tool.call',
-        parentUuid: 'step-orphan',
+        uuid: 'tool-orphan',
         stepUuid: 'step-orphan',
+        turnId: '',
+        step: 1,
         toolCallId: 'orphan_call',
         name: 'Bash',
-        arguments: '{}',
+        args: {},
       },
     });
 
