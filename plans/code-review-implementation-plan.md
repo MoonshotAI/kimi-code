@@ -69,24 +69,24 @@ Purpose: support scope selection and diff-stat preview before any model work sta
 
 **Tasks:**
 
-- [ ] Implement `resolveReviewTarget(kaos, input)` for:
+- [x] Implement `resolveReviewTarget(kaos, input)` for:
   - working tree changes
   - current `HEAD` against a selected branch, commit, or tag
   - one selected commit
-- [ ] Implement `listReviewBaseRefs(kaos)` returning local branches, tags, and recent commits for the TUI selector.
-- [ ] Implement `listReviewCommits(kaos)` for the single-commit selector.
-- [ ] Implement `previewReviewTarget(kaos, target)` returning:
+- [x] Implement `listReviewBaseRefs(kaos)` returning local branches, tags, and recent commits for the TUI selector.
+- [x] Implement `listReviewCommits(kaos)` for the single-commit selector.
+- [x] Implement `previewReviewTarget(kaos, target)` returning:
   - file count
   - added lines
   - deleted lines
   - changed file manifest
-- [ ] Make untracked files part of working-tree review. For untracked text files, treat the whole file as an added patch.
-- [ ] Keep this layer model-free and side-effect-free. It may run read-only git commands through Kaos, but must not write to the repository.
-- [ ] Test renamed, deleted, untracked, and single-commit cases.
+- [x] Make untracked files part of working-tree review. For untracked text files, treat the whole file as an added patch.
+- [x] Keep this layer model-free and side-effect-free. It may run read-only git commands through Kaos, but must not write to the repository.
+- [x] Test renamed, deleted, untracked, and single-commit cases.
 
 **Verification:**
 
-- [ ] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/git-target.test.ts`.
+- [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/git-target.test.ts`. Executed as `pnpm --filter @moonshot-ai/agent-core exec vitest run test/review/git-target.test.ts` because Vitest runs from the package directory.
 
 ## Phase 2: Review Runtime Store, Coverage, and Comments
 
