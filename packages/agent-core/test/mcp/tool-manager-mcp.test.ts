@@ -285,7 +285,7 @@ describe('ToolManager MCP integration', () => {
     // Call the original tool.
     const alphaExec = tm.loopTools.find((t) => t.name === 'mcp__alpha_beta__query');
     expect(alphaExec).toBeDefined();
-    const alphaResult = await alphaExec!.resolveExecution({}).execute({
+    const alphaResult = await executeTool(alphaExec!, {
       turnId: '0',
       toolCallId: 'c1',
       args: {},
@@ -296,7 +296,7 @@ describe('ToolManager MCP integration', () => {
     // Call the disambiguated tool.
     const betaExec = tm.loopTools.find((t) => t.name === 'mcp__alpha_beta__query__2');
     expect(betaExec).toBeDefined();
-    const betaResult = await betaExec!.resolveExecution({}).execute({
+    const betaResult = await executeTool(betaExec!, {
       turnId: '0',
       toolCallId: 'c2',
       args: {},
