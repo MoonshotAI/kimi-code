@@ -60,6 +60,8 @@ describe('built-in slash command registry', () => {
   it('registers review as an experimental idle-only command', () => {
     const review = findBuiltInSlashCommand('review');
     expect(review).toBeDefined();
+    expect(review?.description).toBe('Review selected code changes with read-only reviewer agents.');
+    expect(review?.description).not.toContain('Git');
     expect((review as KimiSlashCommand).experimentalFlag).toBe('code_review');
     expect(resolveSlashCommandAvailability(review!, '')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(review!, 'focus on security')).toBe('idle-only');

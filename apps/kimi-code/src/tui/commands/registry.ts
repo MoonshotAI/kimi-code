@@ -88,7 +88,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'review',
     aliases: [],
-    description: 'Review Git changes',
+    description: 'Review selected code changes with read-only reviewer agents.',
     priority: 100,
     availability: 'idle-only',
     experimentalFlag: 'code_review',
