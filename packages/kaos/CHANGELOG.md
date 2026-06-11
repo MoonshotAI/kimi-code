@@ -1,5 +1,11 @@
 # @moonshot-ai/kaos
 
+## 0.1.5
+
+### Patch Changes
+
+- [#654](https://github.com/MoonshotAI/kimi-code/pull/654) [`ff80327`](https://github.com/MoonshotAI/kimi-code/commit/ff803273440f3a2ff53d2c529c6fc892fde1d93f) - Propagate configured execution environment overrides across spawned processes.
+
 ## 0.1.4
 
 ### Patch Changes
