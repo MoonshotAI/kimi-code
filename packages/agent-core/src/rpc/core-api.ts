@@ -124,6 +124,15 @@ export interface ExportSessionResult {
 export interface ListSessionsPayload {
   readonly workDir?: string;
   readonly sessionId?: string;
+  readonly includeArchived?: boolean | undefined;
+}
+
+export interface ArchiveSessionPayload {
+  readonly sessionId: string;
+}
+
+export interface UnarchiveSessionPayload {
+  readonly sessionId: string;
 }
 
 export interface CoreInfo {
@@ -372,6 +381,8 @@ export interface CoreAPI extends SessionAPIWithId {
   reloadSession: (payload: ReloadSessionPayload) => ResumeSessionResult;
   forkSession: (payload: ForkSessionPayload) => ResumeSessionResult;
   listSessions: (payload: ListSessionsPayload) => readonly SessionSummary[];
+  archiveSession: (payload: ArchiveSessionPayload) => SessionSummary;
+  unarchiveSession: (payload: UnarchiveSessionPayload) => SessionSummary;
   exportSession: (payload: ExportSessionPayload) => ExportSessionResult;
   listPlugins: (payload: EmptyPayload) => readonly PluginSummary[];
   installPlugin: (payload: InstallPluginPayload) => PluginSummary;

@@ -64,6 +64,8 @@ import type {
   GetPluginInfoPayload,
   InstallPluginPayload,
   ListSessionsPayload,
+  ArchiveSessionPayload,
+  UnarchiveSessionPayload,
   McpServerInfo,
   McpStartupMetrics,
   PluginInfo,
@@ -417,6 +419,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async listSessions(input: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
     return this.sessionStore.list(input);
+  }
+
+  async archiveSession({ sessionId }: ArchiveSessionPayload): Promise<SessionSummary> {
+    return this.sessionStore.archive(sessionId);
+  }
+
+  async unarchiveSession({ sessionId }: UnarchiveSessionPayload): Promise<SessionSummary> {
+    return this.sessionStore.unarchive(sessionId);
   }
 
   async renameSession({ sessionId, ...payload }: RenameSessionRequest): Promise<void> {

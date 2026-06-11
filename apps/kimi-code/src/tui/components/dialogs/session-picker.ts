@@ -20,6 +20,7 @@ export interface SessionRow {
   readonly last_prompt?: string | null;
   readonly work_dir: string;
   readonly updated_at: number;
+  readonly archived?: boolean | undefined;
   readonly metadata?: Readonly<Record<string, unknown>> | undefined;
 }
 
@@ -225,11 +226,12 @@ export class SessionPickerComponent extends Container implements Focusable {
 
     const time = formatRelativeTime(session.updated_at);
     const badge = isCurrent ? CURRENT_MARK : '';
+    const archivedBadge = session.archived === true ? 'archived' : '';
     const rawTitle = (session.title ?? session.id).trim() || session.id;
     const titleSource = formatSessionLabel({ title: rawTitle, metadata: session.metadata });
 
-    // Inline trailing parts after the title: "<title>  <time>  ← current".
-    const trailingParts = [time, badge].filter((p) => p.length > 0);
+    // Inline trailing parts after the title: "<title>  <time>  ← current  archived".
+    const trailingParts = [time, badge, archivedBadge].filter((p) => p.length > 0);
     const trailingText = trailingParts.length > 0 ? '  ' + trailingParts.join('  ') : '';
     const trailingWidth = visibleWidth(trailingText);
     const headerPrefixWidth = visibleWidth(pointer) + 1; // pointer + space

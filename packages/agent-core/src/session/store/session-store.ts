@@ -15,6 +15,7 @@ const SessionSummaryStateSchema = z.object({
   isCustomTitle: z.boolean().optional(),
   lastPrompt: z.string().optional(),
   title: z.string().optional(),
+  archived: z.boolean().optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -140,27 +141,67 @@ export class SessionStore {
     await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
   }
 
+  async archive(id: string): Promise<SessionSummary> {
+    return this.setArchived(id, true);
+  }
+
+  async unarchive(id: string): Promise<SessionSummary> {
+    return this.setArchived(id, false);
+  }
+
+  private async setArchived(id: string, archived: boolean): Promise<SessionSummary> {
+    const entry = await this.findExistingSessionEntry(id);
+    const statePath = join(entry.sessionDir, 'state.json');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readFile(statePath, 'utf-8')) as unknown;
+    } catch (error) {
+      throw new KimiError(ErrorCodes.SESSION_STATE_NOT_FOUND, `Session "${id}" state.json was not found`, {
+        cause: error,
+      });
+    }
+    if (!isRecord(parsed)) {
+      throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, `Session "${id}" state.json is invalid`);
+    }
+    const next: Record<string, unknown> = {
+      ...parsed,
+      archived,
+    };
+    await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+    await appendSessionIndexEntry(this.homeDir, {
+      sessionId: entry.sessionId,
+      sessionDir: entry.sessionDir,
+      workDir: entry.workDir,
+      archived,
+    });
+    return this.summaryFromDir(entry.sessionId, entry.sessionDir, entry.workDir);
+  }
+
   async list(options: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
     const workDir =
       options.workDir === undefined ? undefined : normalizeRequiredWorkDir(options.workDir);
     const sessionId = normalizeOptionalSessionId(options.sessionId);
+    const includeArchived = options.includeArchived === true;
 
     if (workDir !== undefined) {
       if (sessionId !== undefined) {
-        const local = await this.summaryFromWorkDirSession(sessionId, workDir);
+        const local = await this.summaryFromWorkDirSession(sessionId, workDir, includeArchived);
         if (local !== undefined) return [local];
         return this.listSessionId(sessionId);
       }
-      return this.listWorkDir(workDir);
+      return this.listWorkDir(workDir, includeArchived);
     }
 
     if (sessionId !== undefined) {
       return this.listSessionId(sessionId);
     }
-    return this.listAll();
+    return this.listAll(includeArchived);
   }
 
-  private async listWorkDir(workDir: string): Promise<readonly SessionSummary[]> {
+  private async listWorkDir(
+    workDir: string,
+    includeArchived: boolean,
+  ): Promise<readonly SessionSummary[]> {
     const bucketDir = join(this.sessionsDir, encodeWorkDirKey(workDir));
     let entries;
     try {
@@ -175,7 +216,9 @@ export class SessionStore {
       const id = entry.name;
       if (!isSafeSessionId(id)) continue;
       const dir = join(bucketDir, id);
-      sessions.push(await this.summaryFromDir(id, dir, workDir));
+      const summary = await this.summaryFromDir(id, dir, workDir);
+      if (summary.archived && !includeArchived) continue;
+      sessions.push(summary);
     }
     sessions.sort(compareSessionSummary);
     return sessions;
@@ -192,11 +235,14 @@ export class SessionStore {
     }
   }
 
-  private async listAll(): Promise<readonly SessionSummary[]> {
+  private async listAll(
+    includeArchived: boolean,
+  ): Promise<readonly SessionSummary[]> {
     const index = await readSessionIndex(this.homeDir, this.sessionsDir);
     const sessions: SessionSummary[] = [];
     for (const entry of index.values()) {
       if (!(await isDirectory(entry.sessionDir))) continue;
+      if (entry.archived && !includeArchived) continue;
       sessions.push(await this.summaryFromDir(entry.sessionId, entry.sessionDir, entry.workDir));
     }
     sessions.sort(compareSessionSummary);
@@ -206,11 +252,14 @@ export class SessionStore {
   private async summaryFromWorkDirSession(
     sessionId: string,
     workDir: string,
+    includeArchived: boolean,
   ): Promise<SessionSummary | undefined> {
     if (!isSafeSessionId(sessionId)) return undefined;
     const sessionDir = this.sessionDirFor({ id: sessionId, workDir });
     if (!(await isDirectory(sessionDir))) return undefined;
-    return this.summaryFromDir(sessionId, sessionDir, workDir);
+    const summary = await this.summaryFromDir(sessionId, sessionDir, workDir);
+    if (summary.archived && !includeArchived) return undefined;
+    return summary;
   }
 
   async assertDirectory(id: string): Promise<string> {
@@ -297,6 +346,7 @@ export class SessionStore {
       ),
       title: titleFromState(state),
       lastPrompt: state?.lastPrompt,
+      archived: state?.archived === true,
       metadata: metadataFromState(state),
     };
   }

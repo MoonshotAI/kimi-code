@@ -7,11 +7,13 @@ function summary(input: {
   readonly id: string;
   readonly title?: string;
   readonly lastPrompt?: string;
+  readonly archived?: boolean;
 }): SessionSummary {
   return {
     id: input.id,
     title: input.title,
     lastPrompt: input.lastPrompt,
+    archived: input.archived,
     workDir: '/tmp/project',
     sessionDir: `/tmp/home/sessions/${input.id}`,
     createdAt: 1,
@@ -60,5 +62,19 @@ describe('sessionRowsForPicker', () => {
     );
 
     expect(rows.map((row) => row.id)).toEqual(['ses_previous_empty']);
+  });
+
+  it('filters archived sessions from the default picker', () => {
+    const rows = sessionRowsForPicker(
+      [
+        summary({ id: 'ses_active', title: 'Active Session' }),
+        summary({ id: 'ses_archived', title: 'Archived Session', archived: true }),
+      ],
+      'ses_active',
+      true,
+    );
+
+    expect(rows.map((row) => row.id)).toEqual(['ses_active']);
+    expect(rows[0]?.archived).toBe(false);
   });
 });
