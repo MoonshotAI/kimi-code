@@ -150,7 +150,9 @@ export class ToolManager {
     const seenInThisCall = new Map<string, string>();
     for (const tool of tools) {
       if (enabledTools !== undefined && !enabledTools.has(tool.name)) continue;
-      let qualified = qualifyMcpToolName(serverName, tool.name);
+      const qualified = qualifyMcpToolName(serverName, tool.name);
+      // Track by base name (before disambiguation) so same-server duplicates
+      // are always caught, even when the base name collides with another server.
       const firstInThisCall = seenInThisCall.get(qualified);
       if (firstInThisCall !== undefined) {
         collisions.push({
@@ -160,8 +162,9 @@ export class ToolManager {
         });
         continue;
       }
+      seenInThisCall.set(qualified, tool.name);
       const existingEntry = this.mcpTools.get(qualified);
-      const baseName = qualified;
+      let finalName = qualified;
       if (existingEntry !== undefined) {
         // Cross-server collision: disambiguate by appending a numeric suffix
         // so both tools remain accessible.
@@ -179,21 +182,20 @@ export class ToolManager {
         } while (this.mcpTools.has(disambiguated));
         count--;
         this.mcpCollisionCount.set(qualified, count);
-        qualified = disambiguated;
+        finalName = disambiguated;
         collisions.push({
-          qualified,
+          qualified: finalName,
           toolName: tool.name,
           collidesWith: { kind: 'other_server', serverName: existingEntry.serverName },
         });
       }
-      seenInThisCall.set(qualified, tool.name);
       const wrapped: ExecutableTool = {
-        name: qualified,
+        name: finalName,
         description: tool.description,
         parameters: tool.parameters,
         resolveExecution: (args) => {
           return {
-            approvalRule: qualified,
+            approvalRule: finalName,
             execute: async (context) => {
               // `args` has already been JSON-parsed and schema-validated by
               // the loop's preflight (`loop/tool-call.ts`), so the MCP
@@ -203,14 +205,14 @@ export class ToolManager {
                 (args ?? {}) as Record<string, unknown>,
                 context.signal,
               );
-              return mcpResultToExecutableOutput(result, qualified);
+              return mcpResultToExecutableOutput(result, finalName);
             },
           };
         },
       };
-      this.mcpTools.set(qualified, { tool: wrapped, serverName });
-      qualifiedNames.push(qualified);
-      baseNames.push(baseName);
+      this.mcpTools.set(finalName, { tool: wrapped, serverName });
+      qualifiedNames.push(finalName);
+      baseNames.push(qualified);
     }
     this.mcpToolsByServer.set(serverName, qualifiedNames);
     this.mcpServerToolBases.set(serverName, baseNames);
