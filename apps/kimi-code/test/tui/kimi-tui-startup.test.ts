@@ -4,6 +4,9 @@ import type { MigrationPlan } from "@moonshot-ai/migration-legacy";
 import { log, type GoalSnapshot } from "@moonshot-ai/kimi-code-sdk";
 
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from "#/tui/kimi-tui";
+import { BannerProvider } from "#/tui/banner/banner-provider";
+import { BannerComponent } from "#/tui/components/chrome/banner";
+import { WelcomeComponent } from "#/tui/components/chrome/welcome";
 import {
   handleLoginCommand,
   handleLogoutCommand,
@@ -918,6 +921,48 @@ describe("KimiTUI startup", () => {
     await driver.initMainTui();
 
     expect(uiContainsFooter(driver)).toBe(true);
+  });
+
+  it("renders the banner below the welcome message after it loads", async () => {
+    const banner = {
+      tag: "New",
+      mainText: "Banner main",
+      subText: null,
+    };
+    const loadSpy = vi
+      .spyOn(BannerProvider.prototype, "load")
+      .mockResolvedValue(banner);
+    const session = makeSession({ id: "ses-target" });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: "ses-target", workDir: "/tmp/proj-a" }]),
+    });
+    const driver = makeDriver(
+      harness,
+      makeStartupInput({ session: "ses-target" }),
+    ) as unknown as MigrateExitDriver;
+
+    await driver.initMainTui();
+
+    await vi.waitFor(() => {
+      expect(
+        driver.state.transcriptContainer.children.some(
+          (child) => child instanceof BannerComponent,
+        ),
+      ).toBe(true);
+    });
+
+    // The banner is rendered directly below the welcome panel so it appears
+    // above later status messages such as MCP server connection summaries.
+    const welcomeIndex = driver.state.transcriptContainer.children.findIndex(
+      (child) => child instanceof WelcomeComponent,
+    );
+    const bannerIndex = driver.state.transcriptContainer.children.findIndex(
+      (child) => child instanceof BannerComponent,
+    );
+    expect(welcomeIndex).toBeGreaterThanOrEqual(0);
+    expect(bannerIndex).toBe(welcomeIndex + 1);
+
+    loadSpy.mockRestore();
   });
 
   it("resumes a startup session when Windows workdir uses backslashes", async () => {
