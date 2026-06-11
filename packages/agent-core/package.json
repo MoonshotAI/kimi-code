@@ -37,13 +37,13 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
-    "./agent/records/migration": {
-      "types": "./src/agent/records/migration/index.ts",
-      "default": "./src/agent/records/migration/index.ts"
+    "./package.json": {
+      "types": "./package.json",
+      "default": "./package.json"
     },
-    "./session/store": {
-      "types": "./src/session/store/index.ts",
-      "default": "./src/session/store/index.ts"
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
     }
   },
   "scripts": {

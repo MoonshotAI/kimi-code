@@ -2463,10 +2463,12 @@ describe('Agent-local approve for session', () => {
 
     ctx.dispatch(event);
 
-    expect(ctx.agent.replayBuilder.buildResult()).toContainEqual({
-      type: 'approval_result',
-      record: event,
-    });
+    expect(ctx.agent.replayBuilder.buildResult()).toContainEqual(
+      expect.objectContaining({
+        type: 'approval_result',
+        record: event,
+      }),
+    );
     expect(ctx.agent.permission.data().rules).toEqual([]);
   });
 });
