@@ -441,20 +441,20 @@ Purpose: add swarm-backed review with overlapping coverage and grouped reconcili
 
 **Tasks:**
 
-- [ ] Implement coverage matrix creation for changed files.
-- [ ] Partition work by file group and perspective.
-- [ ] Ensure every changed file is assigned to at least two workers.
-- [ ] Require Deep workers to read assigned changed files in full through `ReadFileVersion`.
-- [ ] Launch multiple reconciliators grouped by perspective or subsystem.
-- [ ] Perspective reconciliator rule: combine comments from all subagents with the same perspective across all assigned file groups.
-- [ ] Subsystem reconciliator rule: combine comments from all subagents that reviewed that subsystem across all perspectives assigned to that subsystem.
-- [ ] Coordinator emits final review from merged comments.
-- [ ] Enable `Deep` in the intensity selector.
+- [x] Implement coverage matrix creation for changed files.
+- [x] Partition work by file group and perspective.
+- [x] Ensure every changed file is assigned to at least two workers.
+- [x] Require Deep workers to read assigned changed files in full through `ReadFileVersion`.
+- [x] Launch multiple reconciliators grouped by perspective or subsystem.
+- [x] Perspective reconciliator rule: combine comments from all subagents with the same perspective across all assigned file groups.
+- [x] Subsystem reconciliator rule: combine comments from all subagents that reviewed that subsystem across all perspectives assigned to that subsystem.
+- [x] Coordinator emits final review from merged comments.
+- [x] Enable `Deep` in the intensity selector.
 
 **Verification:**
 
-- [ ] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/coverage-matrix.test.ts`.
-- [ ] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/orchestrator-deep.test.ts`.
+- [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/coverage-matrix.test.ts`. Executed with `test/review/coverage-matrix.test.ts test/review/orchestrator-deep.test.ts` because Vitest runs from the package directory.
+- [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/orchestrator-deep.test.ts`. Executed with `test/review/coverage-matrix.test.ts test/review/orchestrator-deep.test.ts` because Vitest runs from the package directory.
 
 ## Phase 12: Final Docs, Changeset, and Full Verification
 

@@ -3,6 +3,7 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import { loadAgentsMd } from '../profile';
 import type { AgentEvent } from '../rpc/events';
 import { linkAbortSignal, userCancellationReason } from '../utils/abort';
+import { createDeepCoverageMatrix } from './coverage-matrix';
 import {
   listReviewBaseRefs,
   listReviewCommits,
@@ -11,6 +12,7 @@ import {
 } from './git-target';
 import {
   buildReconciliatorPrompt,
+  buildDeepReviewerPrompt,
   buildReviewBackground,
   buildStandardReviewerPrompt,
   buildThoroughReviewerPrompt,
@@ -94,12 +96,6 @@ export class ReviewOrchestrator {
   }
 
   async start(input: ReviewStartInput): Promise<ReviewResult> {
-    if (input.intensity === 'deep') {
-      throw new ReviewRuntimeError(
-        `Review intensity "${input.intensity}" is not implemented yet`,
-      );
-    }
-
     let reviewStarted = false;
     try {
       if (this.options.runtime.getActiveRun() !== null) {
@@ -140,9 +136,7 @@ export class ReviewOrchestrator {
         stats: preview.stats,
         background,
       };
-      const result = input.intensity === 'thorough'
-        ? await this.runThoroughReview(context)
-        : await this.runStandardReview(context);
+      const result = await this.runReviewForIntensity(context);
       this.emitEvent({
         type: 'review.completed',
         status: result.status === 'blocked' ? 'blocked' : 'complete',
@@ -175,6 +169,17 @@ export class ReviewOrchestrator {
 
   private get signal(): AbortSignal {
     return this.controller.signal;
+  }
+
+  private runReviewForIntensity(context: ReviewRunContext): Promise<ReviewResult> {
+    switch (context.input.intensity) {
+      case 'standard':
+        return this.runStandardReview(context);
+      case 'thorough':
+        return this.runThoroughReview(context);
+      case 'deep':
+        return this.runDeepReview(context);
+    }
   }
 
   private async runStandardReview(context: ReviewRunContext): Promise<ReviewResult> {
@@ -252,6 +257,85 @@ export class ReviewOrchestrator {
     });
     const comments = this.options.runtime.getMergedComments().map(mergedToFinalComment);
     return this.buildResult(context, worker.status, comments, worker.summary);
+  }
+
+  private async runDeepReview(context: ReviewRunContext): Promise<ReviewResult> {
+    const matrix = createDeepCoverageMatrix({ files: context.stats.files });
+    const assignmentIdsByKey = new Map<string, string>();
+    const reviewerAssignments = matrix.reviewerAssignments.map((spec) => {
+      const assignment = this.options.runtime.createAssignment({
+        role: 'reviewer',
+        perspective: spec.perspective,
+        assignedFiles: spec.assignedFiles,
+        requiredCoverage: 'full_file',
+        group: spec.fileGroupId,
+      });
+      assignmentIdsByKey.set(spec.key, assignment.id);
+      return { spec, assignment };
+    });
+    const reviewers = await Promise.all(
+      reviewerAssignments.map(({ spec, assignment }) =>
+        this.runWorker({
+          assignment,
+          profileName: 'reviewer',
+          prompt: buildDeepReviewerPrompt({
+            background: context.background,
+            assignment,
+          }),
+          description: `Deep review: ${spec.fileGroupName} / ${spec.perspective}`,
+        }),
+      ),
+    );
+    const blockedReviewer = reviewers.find((worker) => worker.status === 'blocked');
+    if (blockedReviewer !== undefined) {
+      const comments = this.options.runtime
+        .getComments({ state: 'candidate' })
+        .map(candidateToFinalComment);
+      return this.buildResult(context, 'blocked', comments, blockedReviewer.summary);
+    }
+
+    const candidates = this.options.runtime.getComments({ state: 'candidate' });
+    const reconciliatorAssignments = matrix.reconciliationGroups.map((group) => {
+      const sourceAssignmentIds = new Set(
+        group.sourceAssignmentKeys
+          .map((key) => assignmentIdsByKey.get(key))
+          .filter((assignmentId): assignmentId is string => assignmentId !== undefined),
+      );
+      const sourceCommentIds = candidates
+        .filter((comment) => sourceAssignmentIds.has(comment.assignmentId))
+        .map((comment) => comment.id);
+      const assignment = this.options.runtime.createAssignment({
+        role: 'reconciliator',
+        perspective: group.label,
+        assignedFiles: group.assignedFiles,
+        requiredCoverage: 'patch',
+        sourceCommentIds,
+        group: group.id,
+      });
+      return { group, assignment, sourceCommentIds };
+    });
+    const reconciliators = await Promise.all(
+      reconciliatorAssignments.map(({ group, assignment, sourceCommentIds }) =>
+        this.runWorker({
+          assignment,
+          profileName: 'reconciliator',
+          prompt: buildReconciliatorPrompt({
+            background: context.background,
+            assignment,
+            sourceCommentCount: sourceCommentIds.length,
+          }),
+          description: `Reconcile Deep review: ${group.label}`,
+        }),
+      ),
+    );
+    const blockedReconciliator = reconciliators.find((worker) => worker.status === 'blocked');
+    const comments = this.options.runtime.getMergedComments().map(mergedToFinalComment);
+    return this.buildResult(
+      context,
+      blockedReconciliator === undefined ? 'complete' : 'blocked',
+      comments,
+      blockedReconciliator?.summary,
+    );
   }
 
   private runWorker(input: {

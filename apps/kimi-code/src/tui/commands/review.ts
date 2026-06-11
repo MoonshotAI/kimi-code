@@ -50,14 +50,15 @@ export async function handleReviewCommand(host: SlashCommandHost, args: string):
 
   const intensity = await promptReviewIntensity(host);
   if (intensity === undefined) return;
-  if (intensity === 'deep') {
-    host.showNotice(`${intensityLabel(intensity)} review coming soon`, 'Use Standard review for now.');
-    return;
-  }
   if (intensity === 'thorough') {
     host.showNotice(
       'Thorough review',
       `Focused reviewers: ${THOROUGH_REVIEW_PERSPECTIVE_LABELS.join('; ')}.`,
+    );
+  } else if (intensity === 'deep') {
+    host.showNotice(
+      'Deep review',
+      'Swarm-backed review will split files across overlapping focused reviewers.',
     );
   }
 
@@ -189,15 +190,4 @@ function toChoiceOption(choice: ReviewChoice): ChoiceOption {
     label: choice.label,
     description: choice.description,
   };
-}
-
-function intensityLabel(intensity: ReviewIntensity): string {
-  switch (intensity) {
-    case 'standard':
-      return 'Standard';
-    case 'thorough':
-      return 'Thorough';
-    case 'deep':
-      return 'Deep';
-  }
 }

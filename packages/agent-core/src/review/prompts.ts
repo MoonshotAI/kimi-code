@@ -37,7 +37,11 @@ export function buildStandardReviewerPrompt(input: {
   readonly background: ReviewBackground;
   readonly assignment: ReviewAssignment;
 }): string {
-  return buildReviewerPrompt('Review the assigned changes as the single Standard reviewer.', input);
+  return buildReviewerPrompt(
+    'Review the assigned changes as the single Standard reviewer.',
+    input,
+    patchCoverageWorkflow(),
+  );
 }
 
 export function buildThoroughReviewerPrompt(input: {
@@ -47,6 +51,18 @@ export function buildThoroughReviewerPrompt(input: {
   return buildReviewerPrompt(
     `Review the assigned changes from this perspective: ${input.assignment.perspective ?? 'focused review'}.`,
     input,
+    patchCoverageWorkflow(),
+  );
+}
+
+export function buildDeepReviewerPrompt(input: {
+  readonly background: ReviewBackground;
+  readonly assignment: ReviewAssignment;
+}): string {
+  return buildReviewerPrompt(
+    `Review the assigned file group from this Deep review perspective: ${input.assignment.perspective ?? 'focused review'}.`,
+    input,
+    fullFileCoverageWorkflow(),
   );
 }
 
@@ -56,6 +72,7 @@ function buildReviewerPrompt(
     readonly background: ReviewBackground;
     readonly assignment: ReviewAssignment;
   },
+  workflow: readonly string[],
 ): string {
   const { background, assignment } = input;
   const lines = [
@@ -74,13 +91,30 @@ function buildReviewerPrompt(
     '</review-assignment>',
     '',
     'Required workflow:',
+    ...workflow,
+  ];
+  return lines.join('\n');
+}
+
+function patchCoverageWorkflow(): readonly string[] {
+  return [
     '1. Call GetAssignment and GetChangedFiles to orient yourself.',
     '2. For every assigned file, call ReadPatch for the file before completing the assignment.',
     '3. Add one AddComment call per actionable finding. Each comment must cite a line you read.',
     '4. Call UpdateProgress with status `complete` when coverage is satisfied, even if there are no findings.',
     '5. Call UpdateProgress with status `blocked` only if the assignment cannot be completed.',
   ];
-  return lines.join('\n');
+}
+
+function fullFileCoverageWorkflow(): readonly string[] {
+  return [
+    '1. Call GetAssignment and GetChangedFiles to orient yourself.',
+    '2. For every assigned file, call ReadFileVersion until the entire file is covered before completing the assignment.',
+    '3. For deleted files, use ReadFileVersion with version `base`; for added or untracked files, use version `current`; for branch or commit reviews, use the version that contains the changed code unless you need the base for comparison.',
+    '4. Add one AddComment call per actionable finding. Each comment must cite a line you read.',
+    '5. Call UpdateProgress with status `complete` when full-file coverage is satisfied, even if there are no findings.',
+    '6. Call UpdateProgress with status `blocked` only if the assignment cannot be completed.',
+  ];
 }
 
 export function buildReconciliatorPrompt(input: {

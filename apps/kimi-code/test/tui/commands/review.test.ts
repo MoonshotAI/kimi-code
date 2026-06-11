@@ -176,7 +176,7 @@ describe('handleReviewCommand', () => {
     });
   });
 
-  it('selects a single commit and keeps Deep disabled for now', async () => {
+  it('selects a single commit and starts a Deep review', async () => {
     const { host, session } = makeHost({
       commits: [{ sha: 'abc123def456', title: 'change commit' }],
     });
@@ -200,9 +200,14 @@ describe('handleReviewCommand', () => {
       commit: 'abc123def456',
     });
     expect(host.showNotice).toHaveBeenCalledWith(
-      'Deep review coming soon',
-      'Use Standard review for now.',
+      'Deep review',
+      expect.stringContaining('overlapping focused reviewers'),
     );
-    expect(session.startReview).not.toHaveBeenCalled();
+    expect(session.startReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({ scope: 'single_commit', commit: 'abc123def456' }),
+        intensity: 'deep',
+      }),
+    );
   });
 });

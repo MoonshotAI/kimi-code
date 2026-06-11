@@ -1,4 +1,5 @@
 export * from './comments';
+export * from './coverage-matrix';
 export * from './coverage';
 export * from './git-target';
 export * from './orchestrator';
