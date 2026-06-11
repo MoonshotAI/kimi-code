@@ -345,6 +345,7 @@ micro_compaction = false
     });
     expect(features).toEqual([
       expect.objectContaining({ id: 'micro_compaction', enabled: false }),
+      expect.objectContaining({ id: 'code_review', enabled: false }),
     ]);
   });
 

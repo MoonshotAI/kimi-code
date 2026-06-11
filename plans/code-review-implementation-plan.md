@@ -467,20 +467,21 @@ Purpose: prepare the feature for review.
 
 **Tasks:**
 
-- [ ] Run `gen-docs` skill if `/review` is user-visible.
-- [ ] Run `gen-changesets` skill. Use `minor` unless the final behavior is judged breaking and the user explicitly confirms a major bump.
-- [ ] Run package checks:
+- [x] Run `gen-docs` skill if `/review` is user-visible. Updated bilingual slash-command and experimental-flag docs; `docs/scripts/sync-changelog.mjs` was not present, so changelog sync could not run.
+- [x] Run `gen-changesets` skill. Use `minor` unless the final behavior is judged breaking and the user explicitly confirms a major bump.
+- [x] Run package checks:
   - `pnpm --filter @moonshot-ai/agent-core run typecheck`
   - `pnpm --filter @moonshot-ai/kimi-code-sdk run typecheck`
   - `pnpm --filter @moonshot-ai/kimi-code run typecheck`
-- [ ] Run focused tests from all previous phases.
-- [ ] Run `pnpm test` if time allows.
-- [ ] Manually smoke test:
+- [x] Run focused tests from all previous phases.
+- [x] Run `pnpm test` if time allows.
+- [x] Manually smoke test:
   - `/review` working tree with one small change
   - `/review focus on security` current branch against base
   - cancellation during active review
   - Thorough with duplicate comments
   - Deep with at least one file covered by multiple workers
+  - Covered by focused command, event, and orchestrator smoke tests rather than a live model-backed TUI session.
 
 ## Rollout Strategy
 
@@ -492,12 +493,12 @@ Purpose: prepare the feature for review.
 
 ## Self-Review Checklist
 
-- [ ] `/review <focus>` maps to the user-facing flow in `plans/code-review-command-design.md`.
-- [ ] Review tool names match `plans/orchestration.md`: no `Review*` prefix in model-facing names.
-- [ ] The model never needs to pass `review_id` or `assignment_id`.
-- [ ] Reviewer workers cannot mutate files or launch more agents.
-- [ ] Background is injected at reviewer start and after compaction.
-- [ ] `Thorough` uses exactly one reconciliator.
-- [ ] `Deep` uses grouped reconciliators by perspective or subsystem.
-- [ ] Every final multi-agent comment has source comment provenance.
-- [ ] `apps/kimi-code` calls only the SDK, never `@moonshot-ai/agent-core` directly.
+- [x] `/review <focus>` maps to the user-facing flow in `plans/code-review-command-design.md`.
+- [x] Review tool names match `plans/orchestration.md`: no `Review*` prefix in model-facing names.
+- [x] The model never needs to pass `review_id` or `assignment_id`.
+- [x] Reviewer workers cannot mutate files or launch more agents.
+- [x] Background is injected at reviewer start and after compaction.
+- [x] `Thorough` uses exactly one reconciliator.
+- [x] `Deep` uses grouped reconciliators by perspective or subsystem.
+- [x] Every final multi-agent comment has source comment provenance.
+- [x] `apps/kimi-code` calls only the SDK, never `@moonshot-ai/agent-core` directly.
