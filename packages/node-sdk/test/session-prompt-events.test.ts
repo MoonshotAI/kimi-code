@@ -337,10 +337,12 @@ describe('Session.prompt events', () => {
       );
 
       const agentId = await session.startBtw();
-      harness.interactiveAgentId = agentId;
-      await session.prompt('What are you working on right now?');
+      await harness.withInteractiveAgent(agentId, () =>
+        session.prompt('What are you working on right now?'),
+      );
       await done;
       unsubscribe();
+      expect(harness.interactiveAgentId).toBe('main');
 
       const started = events.find(
         (event) =>
