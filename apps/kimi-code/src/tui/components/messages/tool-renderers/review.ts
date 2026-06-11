@@ -20,6 +20,8 @@ const REVIEW_TOOL_NAMES = new Set([
   'MergeComments',
   'DismissComment',
 ]);
+const FULL_GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
+const SHORT_GIT_OBJECT_ID_LENGTH = 7;
 
 export const reviewSummary: ResultRenderer = (toolCall, result, ctx) => {
   if (result.is_error) return renderTruncated(toolCall, result, ctx);
@@ -156,7 +158,9 @@ function readFileVersionDetail(
     numberArg(args, 'n_lines') !== undefined;
   if (!hasFileArgs) return displayDetail(display);
   const ref = stringArg(args, 'ref');
-  const source = ref === undefined ? stringArg(args, 'version') ?? 'current' : `ref ${ref}`;
+  const source = ref === undefined
+    ? stringArg(args, 'version') ?? 'current'
+    : `ref ${formatReviewRefForLabel(ref)}`;
   return joinDetails([source, lineRangeLabel(numberArg(args, 'line_offset'), numberArg(args, 'n_lines'))]);
 }
 
@@ -223,6 +227,10 @@ function joinDetails(parts: readonly (string | undefined)[]): string | undefined
 
 function prefixed(prefix: string, value: string | undefined): string | undefined {
   return value === undefined ? undefined : `${prefix}: ${value}`;
+}
+
+function formatReviewRefForLabel(ref: string): string {
+  return FULL_GIT_OBJECT_ID_RE.test(ref) ? ref.slice(0, SHORT_GIT_OBJECT_ID_LENGTH) : ref;
 }
 
 function countLabel(count: number, singular: string, plural: string): string {

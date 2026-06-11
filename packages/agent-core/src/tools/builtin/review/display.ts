@@ -1,6 +1,8 @@
 import type { ToolInputDisplay } from '../../display';
 
 const DETAIL_SEPARATOR = ' · ';
+const FULL_GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
+const SHORT_GIT_OBJECT_ID_LENGTH = 7;
 
 export function reviewDisplay(summary: string, detail?: string): ToolInputDisplay {
   if (detail !== undefined && detail.length > 0) {
@@ -24,4 +26,8 @@ export function lineRangeLabel(lineOffset: number | undefined, nLines: number | 
   if (nLines === undefined) return `from line ${String(start)}`;
   if (nLines === 1) return `line ${String(start)}`;
   return `lines ${String(start)}-${String(start + nLines - 1)}`;
+}
+
+export function formatReviewRefForDisplay(ref: string): string {
+  return FULL_GIT_OBJECT_ID_RE.test(ref) ? ref.slice(0, SHORT_GIT_OBJECT_ID_LENGTH) : ref;
 }

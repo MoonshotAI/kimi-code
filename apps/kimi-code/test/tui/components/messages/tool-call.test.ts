@@ -735,6 +735,33 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('context_lines');
   });
 
+  it('shortens full refs in ReadFileVersion labels only', () => {
+    const fullRef = '3980a555807687914079243f9476fef93cbfd081';
+    const component = new ToolCallComponent(
+      {
+        id: 'call_review_file_version',
+        name: 'ReadFileVersion',
+        args: { path: 'AGENTS.md', ref: fullRef, line_offset: 1 },
+      },
+      undefined,
+    );
+    const symbolic = new ToolCallComponent(
+      {
+        id: 'call_review_file_symbolic',
+        name: 'ReadFileVersion',
+        args: { path: 'AGENTS.md', ref: 'origin/main', line_offset: 1 },
+      },
+      undefined,
+    );
+
+    const out = strip(component.render(120).join('\n'));
+    const symbolicOut = strip(symbolic.render(120).join('\n'));
+
+    expect(out).toContain('Using file version: AGENTS.md (ref 3980a55 · from line 1)');
+    expect(out).not.toContain(fullRef);
+    expect(symbolicOut).toContain('Using file version: AGENTS.md (ref origin/main · from line 1)');
+  });
+
   it('renders a single foreground subagent without the generic Agent tool header', () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);

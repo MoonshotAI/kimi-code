@@ -74,6 +74,24 @@ describe('review tools', () => {
       summary: 'file version: src/a.ts',
       detail: 'base · lines 10-12',
     });
+    expect(displayOf(new ReadFileVersionTool(kaos, review).resolveExecution({
+      path: 'src/a.ts',
+      ref: '3980a555807687914079243f9476fef93cbfd081',
+      line_offset: 1,
+    }))).toEqual({
+      kind: 'generic',
+      summary: 'file version: src/a.ts',
+      detail: 'ref 3980a55 · from line 1',
+    });
+    expect(displayOf(new ReadFileVersionTool(kaos, review).resolveExecution({
+      path: 'src/a.ts',
+      ref: 'origin/main',
+      line_offset: 1,
+    }))).toEqual({
+      kind: 'generic',
+      summary: 'file version: src/a.ts',
+      detail: 'ref origin/main · from line 1',
+    });
     expect(displayOf(new UpdateProgressTool(review).resolveExecution({
       status: 'blocked',
       blocker: 'needs generated sources',
