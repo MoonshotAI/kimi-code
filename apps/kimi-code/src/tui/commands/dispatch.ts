@@ -47,6 +47,7 @@ import { handleProviderCommand } from './provider';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handlePluginsCommand } from './plugins';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
+import { handleReviewCommand } from './review';
 import { handleSwarmCommand } from './swarm';
 import {
   handleExportDebugZipCommand,
@@ -88,6 +89,7 @@ export {
 } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
+export { handleReviewCommand } from './review';
 export { handleGoalCommand } from './goal';
 export {
   handleExportDebugZipCommand,
@@ -310,6 +312,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'swarm':
       await handleSwarmCommand(host, args);
+      return;
+    case 'review':
+      await handleReviewCommand(host, args);
       return;
     case 'compact':
       await handleCompactCommand(host, args);

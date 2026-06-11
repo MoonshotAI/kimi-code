@@ -336,27 +336,27 @@ Purpose: expose Standard review through the Codex-style command flow.
 
 **Tasks:**
 
-- [ ] Register `/review` as idle-only and hidden or blocked when `code_review` is disabled.
-- [ ] Parse `/review <focus>` as optional free-form focus text.
-- [ ] Add scope selector:
+- [x] Register `/review` as idle-only and hidden or blocked when `code_review` is disabled.
+- [x] Parse `/review <focus>` as optional free-form focus text.
+- [x] Add scope selector:
   - `Working tree`
   - `Current branch`
   - `Single commit`
-- [ ] Add base ref selector for `Current branch`.
-- [ ] Add commit selector for `Single commit`.
-- [ ] Call `session.previewReviewTarget()` after target selection and show `Reviewing N files: +A -D`.
-- [ ] Add intensity selector with labels:
+- [x] Add base ref selector for `Current branch`.
+- [x] Add commit selector for `Single commit`.
+- [x] Call `session.previewReviewTarget()` after target selection and show `Reviewing N files: +A -D`.
+- [x] Add intensity selector with labels:
   - `Standard   Single reviewer for everyday changes.`
   - `Thorough   Multiple focused reviewers before opening a PR.`
   - `Deep       Swarm-backed review for risky or large changes.`
-- [ ] For this phase, allow only `Standard` to start. Show “coming soon” notice for `Thorough` and `Deep` until later phases land.
-- [ ] Start review through `session.startReview()`.
-- [ ] Use `ChoicePickerComponent` and follow `.agents/skills/write-tui/DESIGN.md`.
+- [x] For this phase, allow only `Standard` to start. Show “coming soon” notice for `Thorough` and `Deep` until later phases land.
+- [x] Start review through `session.startReview()`.
+- [x] Use `ChoicePickerComponent` and follow `.agents/skills/write-tui/DESIGN.md`.
 
 **Verification:**
 
-- [ ] Run `pnpm --filter @moonshot-ai/kimi-code exec vitest run apps/kimi-code/test/tui/commands/review.test.ts`.
-- [ ] Run `pnpm --filter @moonshot-ai/kimi-code exec vitest run apps/kimi-code/test/tui/commands/registry.test.ts`.
+- [x] Run `pnpm --filter @moonshot-ai/kimi-code exec vitest run apps/kimi-code/test/tui/commands/review.test.ts`. Executed with `test/tui/commands/review.test.ts test/tui/commands/registry.test.ts test/tui/commands/resolve.test.ts` because Vitest runs from the package directory.
+- [x] Run `pnpm --filter @moonshot-ai/kimi-code exec vitest run apps/kimi-code/test/tui/commands/registry.test.ts`. Executed with `test/tui/commands/review.test.ts test/tui/commands/registry.test.ts test/tui/commands/resolve.test.ts` because Vitest runs from the package directory.
 
 ## Phase 9: Review Progress Events, TUI Display, and Cancellation
 

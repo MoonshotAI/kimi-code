@@ -57,6 +57,14 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(swarm!, 'Ship feature X')).toBe('idle-only');
   });
 
+  it('registers review as an experimental idle-only command', () => {
+    const review = findBuiltInSlashCommand('review');
+    expect(review).toBeDefined();
+    expect((review as KimiSlashCommand).experimentalFlag).toBe('code_review');
+    expect(resolveSlashCommandAvailability(review!, '')).toBe('idle-only');
+    expect(resolveSlashCommandAvailability(review!, 'focus on security')).toBe('idle-only');
+  });
+
   it('offers swarm subcommand argument completions', () => {
     const values = (prefix: string): string[] | null => {
       const items = swarmArgumentCompletions(prefix);
@@ -143,6 +151,7 @@ describe('built-in slash command registry', () => {
         'plan',
         'reload',
         'reload-tui',
+        'review',
         'sessions',
         'settings',
         'status',

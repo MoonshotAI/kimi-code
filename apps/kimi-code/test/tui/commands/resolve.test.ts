@@ -103,6 +103,12 @@ describe('resolveSlashCommandInput', () => {
       commandName: 'swarm',
       reason: 'streaming',
     });
+    setExperimentalFeatures([{ id: 'code_review', enabled: true }]);
+    expect(resolve('/review focus on security', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'review',
+      reason: 'streaming',
+    });
   });
 
   it('blocks model and session pickers while compacting', () => {
@@ -215,6 +221,21 @@ describe('resolveSlashCommandInput', () => {
     expect(resolve('/does-not-exist arg')).toEqual({
       kind: 'message',
       input: '/does-not-exist arg',
+    });
+  });
+
+  it('hides review while code_review is disabled and resolves it when enabled', () => {
+    expect(resolve('/review focus on security')).toEqual({
+      kind: 'message',
+      input: '/review focus on security',
+    });
+
+    setExperimentalFeatures([{ id: 'code_review', enabled: true }]);
+
+    expect(resolve('/review focus on security')).toMatchObject({
+      kind: 'builtin',
+      name: 'review',
+      args: 'focus on security',
     });
   });
 

@@ -86,6 +86,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'idle-only',
   },
   {
+    name: 'review',
+    aliases: [],
+    description: 'Review Git changes',
+    priority: 100,
+    availability: 'idle-only',
+    experimentalFlag: 'code_review',
+  },
+  {
     name: 'model',
     aliases: [],
     description: 'Switch LLM model',
