@@ -7,6 +7,15 @@ export {
   SDKRpcClient,
   type SDKRpcClientOptions,
 } from '#/sdk-rpc-client';
+export {
+  createKimiConfigRpc,
+  KimiConfigRpcClient,
+  type KimiConfigRpc,
+  type KimiConfigValidationIssue,
+  type KimiConfigValidationPathSegment,
+  type ResolveKimiConfigPathInput,
+  type ValidateKimiConfigTomlInput,
+} from '#/config-rpc';
 export { SDKRpcClientBase } from '#/rpc';
 export { KimiForCodingProvider } from '#/kimi-code-model-provider';
 export type { KimiForCodingProviderOptions } from '#/kimi-code-model-provider';
@@ -53,9 +62,9 @@ export {
 } from '@moonshot-ai/agent-core';
 export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agent-core';
 
-// Goal completion message builder — single source of truth for the deterministic
-// "Goal complete · turns · tokens · time" text (live render + persisted message).
-export { buildGoalCompletionMessage } from '@moonshot-ai/agent-core';
+// Process-wide HTTP proxy bootstrap — installed once at CLI startup so all
+// outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.
+export { installGlobalProxyDispatcher } from '@moonshot-ai/agent-core';
 
 // Experimental feature flags — types only. Resolved values come from
 // `KimiHarness.getExperimentalFeatures()` over RPC, not from a re-exported runtime value.

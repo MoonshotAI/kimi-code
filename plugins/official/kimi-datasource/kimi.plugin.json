@@ -1,8 +1,8 @@
 {
   "name": "kimi-datasource",
-  "version": "3.1.1",
-  "description": "Finance, macro, enterprise, and academic data tools for Kimi Code.",
-  "keywords": ["finance", "data-source", "mcp"],
+  "version": "3.2.0",
+  "description": "Finance, macro, enterprise, academic, and legal data tools for Kimi Code.",
+  "keywords": ["finance", "data-source", "mcp", "legal"],
   "mcpServers": {
     "data": {
       "command": "node",
@@ -12,7 +12,7 @@
   },
   "interface": {
     "displayName": "Kimi Datasource",
-    "shortDescription": "Finance, macro, enterprise, and academic data tools",
+    "shortDescription": "Finance, macro, enterprise, academic, and legal data tools",
     "developerName": "Moonshot AI"
   }
 }

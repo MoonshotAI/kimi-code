@@ -68,3 +68,46 @@ describe('loadAgentsMd user-level discovery', () => {
     expect(result.split('home branded').length - 1).toBe(1);
   });
 });
+
+describe('loadAgentsMd brand home (KIMI_CODE_HOME)', () => {
+  let brandHome: string;
+
+  beforeEach(async () => {
+    brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-brand-'));
+  });
+
+  afterEach(async () => {
+    await rm(brandHome, { recursive: true, force: true });
+  });
+
+  it('loads the branded AGENTS.md from the brand home and generic from the real home', async () => {
+    await writeFile(join(brandHome, 'AGENTS.md'), 'brand home instructions', 'utf-8');
+    await mkdir(join(homeDir, '.agents'), { recursive: true });
+    await writeFile(join(homeDir, '.agents', 'AGENTS.md'), 'real home generic', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos, brandHome);
+
+    expect(result).toContain('brand home instructions');
+    expect(result).toContain('real home generic');
+  });
+
+  it('ignores the real-home .kimi-code/AGENTS.md when the brand home is elsewhere', async () => {
+    await writeFile(join(brandHome, 'AGENTS.md'), 'brand wins', 'utf-8');
+    await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'stale real-home brand', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos, brandHome);
+
+    expect(result).toContain('brand wins');
+    expect(result).not.toContain('stale real-home brand');
+  });
+
+  it('falls back to the real-home .kimi-code/AGENTS.md when no brand home is given', async () => {
+    await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'fallback branded', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos);
+
+    expect(result).toContain('fallback branded');
+  });
+});

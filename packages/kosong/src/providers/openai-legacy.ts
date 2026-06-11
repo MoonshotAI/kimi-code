@@ -21,6 +21,8 @@ import {
   isFunctionToolCall,
   normalizeOpenAIFinishReason,
   type OpenAIContentPart,
+  TOOL_RESULT_MEDIA_PLACEHOLDER,
+  TOOL_RESULT_MEDIA_PROMPT,
   type ToolMessageConversion,
   reasoningEffortToThinkingEffort,
   thinkingEffortToReasoningEffort,
@@ -165,7 +167,7 @@ function convertMessage(
       : toolMessageConversion;
 
     if (effectiveConversion !== null) {
-      result.content = convertToolMessageContent(message, effectiveConversion);
+      result.content = convertToolMessageContentForChat(message, effectiveConversion);
     } else {
       // Pure-text tool result with no conversion configured: serialize via the
       // generic content-part path so single-text messages become a plain string.
@@ -216,6 +218,79 @@ function convertMessage(
   }
 
   return result;
+}
+
+// Chat Completions has no url-based audio/video content part (only base64
+// `input_audio`), so unlike images these cannot be reattached as user input.
+// Note the omission inline in the tool message text instead.
+const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: not supported by this provider)';
+const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
+
+function convertToolMessageContentForChat(
+  message: Message,
+  conversion: ToolMessageConversion,
+): string | OpenAIContentPart[] {
+  const content = convertToolMessageContent(message, conversion);
+  if (typeof content !== 'string') {
+    return content;
+  }
+  const lines: string[] = content.length > 0 ? [content] : [];
+  if (message.content.some((part) => part.type === 'audio_url')) {
+    lines.push(OMITTED_AUDIO_PLACEHOLDER);
+  }
+  if (message.content.some((part) => part.type === 'video_url')) {
+    lines.push(OMITTED_VIDEO_PLACEHOLDER);
+  }
+  if (lines.length === 0 && message.content.some((part) => part.type === 'image_url')) {
+    return TOOL_RESULT_MEDIA_PLACEHOLDER;
+  }
+  return lines.join('\n');
+}
+
+function toolResultImageParts(message: Message): OpenAIContentPart[] {
+  const images: OpenAIContentPart[] = [];
+  for (const part of message.content) {
+    if (part.type !== 'image_url') continue;
+    const converted = convertContentPart(part);
+    if (converted !== null) {
+      images.push(converted);
+    }
+  }
+  return images;
+}
+
+function appendToolResultMediaMessage(
+  messages: OpenAIMessage[],
+  pendingToolResultMedia: OpenAIContentPart[],
+): void {
+  if (pendingToolResultMedia.length === 0) return;
+  messages.push({
+    role: 'user',
+    content: [{ type: 'text', text: TOOL_RESULT_MEDIA_PROMPT }, ...pendingToolResultMedia],
+  });
+  pendingToolResultMedia.length = 0;
+}
+
+function convertHistoryMessages(
+  history: readonly Message[],
+  reasoningKey: string | undefined,
+  toolMessageConversion: ToolMessageConversion,
+): OpenAIMessage[] {
+  const messages: OpenAIMessage[] = [];
+  const pendingToolResultMedia: OpenAIContentPart[] = [];
+
+  for (const msg of history) {
+    if (msg.role !== 'tool') {
+      appendToolResultMediaMessage(messages, pendingToolResultMedia);
+    }
+    messages.push(convertMessage(msg, reasoningKey, toolMessageConversion));
+    if (msg.role === 'tool') {
+      pendingToolResultMedia.push(...toolResultImageParts(msg));
+    }
+  }
+
+  appendToolResultMediaMessage(messages, pendingToolResultMedia);
+  return messages;
 }
 export class OpenAILegacyStreamedMessage implements StreamedMessage {
   private _id: string | null = null;
@@ -437,9 +512,9 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       history,
       OPENAI_CHAT_TOOL_CALL_ID_POLICY,
     );
-    for (const msg of normalizedHistory) {
-      messages.push(convertMessage(msg, this._reasoningKey, this._toolMessageConversion));
-    }
+    messages.push(
+      ...convertHistoryMessages(normalizedHistory, this._reasoningKey, this._toolMessageConversion),
+    );
 
     const kwargs: Record<string, unknown> = normalizeGenerationKwargs(
       this._model,

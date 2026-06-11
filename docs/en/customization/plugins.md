@@ -15,6 +15,8 @@ Run `/plugins` in the TUI to open the plugin manager, where you can perform all 
 | `M` | Manage MCP servers for the selected plugin |
 | `←` or `Esc` | Go back to the previous level |
 
+In the marketplace list, an installed plugin with a newer version available shows `update <local> → <latest>`, an up-to-date one shows `installed · v<version>`, and an uninstalled one shows `install v<version>`. Select an updatable entry and press `Enter` to update.
+
 You can also use slash commands directly:
 
 | Command | Description |
@@ -31,7 +33,11 @@ You can also use slash commands directly:
 | `/plugins mcp enable <id> <server>` | Enable an MCP server declared by a plugin |
 | `/plugins mcp disable <id> <server>` | Disable an MCP server declared by a plugin |
 
-**GitHub URL supports four forms:**
+The plugin manager shows the installation source and a trust badge for each install: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else).
+
+### Installing from GitHub
+
+Use `/plugins install <url>` to install directly from a GitHub repository. Four URL forms are supported:
 
 - `https://github.com/<owner>/<repo>`: Install the latest release; falls back to the default branch if no release exists
 - `https://github.com/<owner>/<repo>/tree/<ref>`: Install a specific branch, tag, or short commit SHA
@@ -40,14 +46,59 @@ You can also use slash commands directly:
 
 Network requests only go through `github.com` redirects and `codeload.github.com` downloads; `api.github.com` is not called.
 
-**A few notes:**
+### Notes
 
-- Plugin changes only take effect for new sessions. After installing, enabling/disabling, removing, or reloading a plugin, start a new session with `/new`; the current session will not update.
+- Plugin changes only take effect for new sessions. After installing, enabling/disabling, or removing a plugin, run `/reload` to reload plugins or `/new` to start a new session; the current session will not update.
 - Local installations are copied to `$KIMI_CODE_HOME/plugins/managed/<id>/`, and the CLI always runs from this managed copy. Editing the original source directory after installation has no effect; you must reinstall.
 - Removing a plugin only deletes the installation record; the managed copy and original source files remain on disk.
 - Plugins are currently installed per-user and apply to all projects; project-level installation scope is not yet supported.
 
-The plugin manager shows the installation source and a trust badge for each install: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else).
+## Kimi Datasource
+
+Kimi Datasource is the official Kimi Code data plugin. It lets you query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language — no manual API calls or data account registration required.
+
+### Installation
+
+You must first complete OAuth login with a Kimi Code account via `/login`. The plugin relies on local credentials to access data services.
+
+1. Run `/plugins` and select **Marketplace**
+2. Find **Kimi Datasource** and press `Space` to install
+3. After installation completes, run `/reload` to activate the plugin
+
+The current latest version is v3.2.0. The plugin does not update automatically — to upgrade to a newer version, repeat the installation steps above.
+
+### How to Use
+
+Once installed, describe your need in natural language and Kimi Code will automatically invoke the data capabilities. You can also explicitly trigger the data query skill with `/skill:kimi-datasource`.
+
+### What You Can Do
+
+**Live market research**: Want to run a quantitative analysis on a stock? Pull three years of daily closing prices, MACD, and KDJ signals in a single query — no third-party data platforms needed.
+
+**Cross-country macro comparison**: Studying supply-chain shifts across China, India, and Vietnam? Get complete GDP growth, trade volume, and demographic time-series from World Bank data spanning 50+ years, all in one go.
+
+**Pre-contract risk check**: Need to vet a counterparty fast? Type the company name and instantly get business registration, equity structure, litigation disputes, and credit blacklist status — right when you need it.
+
+**Literature review acceleration**: Tracing the research arc of RLHF? Get the most-cited papers, key authors, and core findings in seconds, so your literature review outline takes shape in half the time.
+
+**On-the-spot legal lookup**: Stuck on which statute governs a residence-right contract dispute? Pinpoint the relevant Civil Code articles — full text, authority level, and validity — then pull a few comparable precedents to back them up, without digging through statute databases.
+
+### Coverage
+
+| Category | Scope |
+|---|---|
+| Stock market data | A-shares, HK, US, and major global markets — real-time/historical prices, technical indicators, financial statements, stock screening |
+| Macroeconomic data | World Bank data for 189 countries, 50+ years of time series (GDP, trade, population, climate, and more) |
+| Corporate data | Business registration, equity chain, legal risk, and related-entity graph for mainland Chinese companies |
+| Academic literature | Millions of papers across physics, mathematics, CS, quantitative finance, economics — including preprints |
+| Legal | Chinese laws, regulations, and judicial cases — semantic/keyword search and detail lookup for statutes across all authority levels (constitution, laws, judicial interpretations, departmental rules), plus ordinary and authoritative case search |
+
+### Notes
+
+- Data queries are billed per call and consume Kimi Code account credits
+- The plugin provides read-only queries; no write or trading functionality is available
+- Technical indicators and real-time prices are only available during active trading hours
+- AI-generated output is for reference only and does not constitute investment or business advice
 
 ## Plugin Manifest
 
@@ -151,20 +202,6 @@ Plugin MCP servers only start in new sessions. To enable or disable a server:
 /new
 ```
 
-## Official Plugins
-
-The Kimi Code CLI official marketplace hosts reviewed official plugins. Currently available:
-
-**[Kimi Datasource](./datasource.md)** — Query financial market data, macroeconomic indicators, corporate registration records, and academic literature in natural language.
-
-Installation:
-
-1. Run `/plugins` and select **Marketplace**
-2. Find **Kimi Datasource** and press `Space` to install
-3. Run `/new` to start a new session after installation
-
-For data capabilities and usage examples, see the [Official Plugins documentation](./datasource.md).
-
 ## Security Model
 
 Plugins have a limited loading scope. The following operations do not occur during installation or session startup:
@@ -176,6 +213,5 @@ Plugins have a limited loading scope. The following operations do not occur duri
 
 ## Next steps
 
-- [Kimi Datasource](./datasource.md) — Official data plugin: installation and usage for financial market data, corporate records, and academic literature
 - [Agent Skills](./skills.md) — File format and frontmatter field reference for Skills
 - [MCP](./mcp.md) — Full schema and permission configuration for plugin MCP servers

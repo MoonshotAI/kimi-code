@@ -323,6 +323,49 @@ describe('Agent resume', () => {
     });
   });
 
+  it('rebuilds goal completion replay cards without adding model-visible context', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'goal.create',
+        goalId: 'goal-1',
+        objective: 'ship work',
+      },
+      {
+        type: 'goal.update',
+        status: 'complete',
+        reason: 'all tests passed',
+        turnsUsed: 2,
+        tokensUsed: 1200,
+        wallClockMs: 65_000,
+        actor: 'model',
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history).toHaveLength(0);
+    expect(ctx.agent.replayBuilder.buildResult()).toContainEqual(
+      expect.objectContaining({
+        type: 'goal_updated',
+        snapshot: expect.objectContaining({
+          status: 'complete',
+          terminalReason: 'all tests passed',
+          turnsUsed: 2,
+          tokensUsed: 1200,
+          wallClockMs: 65_000,
+        }),
+        change: {
+          kind: 'completion',
+          status: 'complete',
+          reason: 'all tests passed',
+          stats: { turnsUsed: 2, tokensUsed: 1200, wallClockMs: 65_000 },
+          actor: 'model',
+        },
+      }),
+    );
+  });
+
   it('removes replay messages matching undone history', async () => {
     const persistence = new RecordingAgentPersistence([
       {

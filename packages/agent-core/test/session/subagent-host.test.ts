@@ -3,16 +3,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { testKaos } from '../fixtures/test-kaos';
-import type { ToolCall } from '@moonshot-ai/kosong';
+import { APIStatusError, type Message, type ToolCall } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { Agent } from '../../src/agent';
+import type { Agent, AgentOptions } from '../../src/agent';
 import { AGENT_WIRE_PROTOCOL_VERSION } from '../../src/agent/records';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { collectGitContext } from '../../src/session/git-context';
-import { SessionSubagentHost } from '../../src/session/subagent-host';
+import {
+  SessionSubagentHost,
+  type QueuedSubagentTask,
+} from '../../src/session/subagent-host';
 import { abortError, userCancellationReason } from '../../src/utils/abort';
 import { testAgent, type AgentTestContext } from '../agent/harness/agent';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
@@ -27,6 +30,7 @@ vi.mock('../../src/session/git-context', () => ({
 
 const signal = new AbortController().signal;
 const tempDirs: string[] = [];
+type GenerateFn = NonNullable<AgentOptions['generate']>;
 
 afterEach(async () => {
   for (const dir of tempDirs.splice(0)) {
@@ -35,6 +39,62 @@ afterEach(async () => {
 });
 
 describe('SessionSubagentHost', () => {
+  it('emits a suspended event for a requeued child', () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.newEvents();
+    const child = testAgent();
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    host.suspended({
+      task: queuedTask(1),
+      agentId: 'agent-0',
+      reason: 'Provider rate limit; subagent requeued for retry.',
+    });
+
+    expect(parent.allEvents).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'subagent.suspended',
+        args: expect.objectContaining({
+          subagentId: 'agent-0',
+          reason: 'Provider rate limit; subagent requeued for retry.',
+        }),
+      }),
+    );
+  });
+
+  it('runQueued suppresses raw live Aborted failures from queued attempts', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.newEvents();
+
+    const controller = new AbortController();
+    const child = testAgent();
+    child.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const running = host.runQueued([{ ...queuedTask(1), signal: controller.signal }]);
+    void running.catch(() => {});
+
+    await child.untilApprovalRequest();
+    controller.abort(abortError());
+    await expect(running).rejects.toThrow('Aborted');
+    await child.untilTurnEnd();
+
+    expect(parent.allEvents).not.toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'subagent.failed',
+        args: expect.objectContaining({
+          error: 'Aborted',
+        }),
+      }),
+    );
+  });
+
   it('fires subagent lifecycle hooks around the child turn', async () => {
     const child = testAgent();
     const calls: Array<{ readonly event: string; readonly childLlmCallCount: number }> = [];
@@ -60,7 +120,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Implement the fix',
       description: 'Fix bug',
@@ -112,7 +173,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Implement the fix',
       description: 'Fix bug',
@@ -136,6 +198,38 @@ describe('SessionSubagentHost', () => {
     );
   });
 
+  it('marks a queued child ready when the model emits thinking output', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.newEvents();
+
+    const child = testAgent();
+    const summary =
+      'Completed the delegated subagent task with enough concrete detail for the parent agent to continue without repeating the work. '.repeat(
+        2,
+      );
+    child.mockNextResponse({ type: 'think', think: 'I can start.' }, { type: 'text', text: summary });
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+    const onReady = vi.fn();
+
+    const handle = await host.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'call_agent',
+      prompt: 'Implement the fix',
+      description: 'Fix bug',
+      runInBackground: false,
+      signal,
+      onReady,
+    });
+
+    await vi.waitFor(() => {
+      expect(onReady).toHaveBeenCalledTimes(1);
+    });
+    await expect(handle.completion).resolves.toMatchObject({ result: summary.trim() });
+    expect(onReady).toHaveBeenCalledTimes(1);
+  });
+
   it('runs a child agent turn and returns the last assistant text', async () => {
     const telemetryTrack = vi.fn();
     const parent = testAgent({ telemetry: { track: telemetryTrack } });
@@ -156,7 +250,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Find the cause',
       description: 'Find cause',
@@ -192,7 +287,6 @@ describe('SessionSubagentHost', () => {
         event: 'subagent.completed',
         args: expect.objectContaining({
           subagentId: 'agent-0',
-          parentToolCallId: 'call_agent',
           resultSummary: 'Investigated the request and completed the child task end to end. The relevant module was located, its behavior traced through every call site, and the requested change applied and verified against the existing test suite.',
         }),
       }),
@@ -240,7 +334,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Use the available lookup tool',
       description: 'Use lookup',
@@ -271,7 +366,9 @@ describe('SessionSubagentHost', () => {
     const routedTo = await Promise.race([
       child.untilToolCall({ output: 'moon-result' }).then(() => 'child'),
       parent.untilToolCall({ output: 'moon-result' }).then(() => 'parent'),
-      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 50)),
+      new Promise<'timeout'>((resolve) => setTimeout(() => {
+        resolve('timeout');
+      }, 50)),
     ]);
 
     expect(routedTo).toBe('child');
@@ -288,7 +385,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Implement the fix',
       description: 'Fix bug',
@@ -332,7 +430,8 @@ describe('SessionSubagentHost', () => {
     );
 
     await expect(
-      host.spawn('missing', {
+      host.spawn({
+        profileName: 'missing',
         parentToolCallId: 'call_agent',
         prompt: 'Find the cause',
         description: 'Find cause',
@@ -357,7 +456,8 @@ describe('SessionSubagentHost', () => {
     );
 
     await expect(
-      host.spawn('btw', {
+      host.spawn({
+        profileName: 'btw',
         parentToolCallId: 'call_agent',
         prompt: 'Answer a side question',
         description: 'Side question',
@@ -379,7 +479,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Keep working',
       description: 'Long task',
@@ -404,7 +505,6 @@ describe('SessionSubagentHost', () => {
         event: 'subagent.failed',
         args: expect.objectContaining({
           subagentId: 'agent-0',
-          parentToolCallId: 'call_agent',
           error: 'Aborted',
         }),
       }),
@@ -421,7 +521,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Keep working',
       description: 'Long task',
@@ -453,7 +554,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Keep working',
       description: 'Long task',
@@ -484,7 +586,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Keep working',
       description: 'Long task',
@@ -516,7 +619,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Keep working',
       description: 'Long task',
@@ -561,7 +665,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Investigate',
       description: 'Investigate',
@@ -593,7 +698,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Investigate',
       description: 'Investigate',
@@ -611,7 +717,6 @@ describe('SessionSubagentHost', () => {
         event: 'subagent.failed',
         args: expect.objectContaining({
           subagentId: 'agent-0',
-          parentToolCallId: 'call_agent',
           error: expect.stringContaining(
             'Subagent turn failed before completing its final summary: reason=max_tokens',
           ),
@@ -637,7 +742,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Investigate',
       description: 'Investigate',
@@ -664,7 +770,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Find the cause',
       description: 'Find cause',
@@ -696,7 +803,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Implement the fix',
       description: 'Fix bug',
@@ -777,6 +885,181 @@ describe('SessionSubagentHost', () => {
         }),
       }),
     );
+  });
+
+  it('runQueued resumes tasks that carry an existing agent id', async () => {
+    const parent = testAgent();
+    parent.configure();
+
+    const child = testAgent({ type: 'sub' });
+    child.configure();
+    child.agent.useProfile(
+      profile({ name: 'coder', tools: [], systemPrompt: 'coder prompt' }),
+    );
+    child.agent.context.appendUserMessage([{ type: 'text', text: 'Earlier swarm context' }]);
+    const summary =
+      'Resumed the queued swarm subagent from its prior context, completed the missing work, and returned a detailed enough handoff for the parent to proceed without starting over. '.repeat(
+        2,
+      );
+    child.mockNextResponse({ type: 'text', text: summary });
+
+    const session = fakeSession(parent.agent, child.agent, {
+      'agent-0': {
+        homedir: '/tmp/kimi-session/agents/agent-0',
+        type: 'sub',
+        parentAgentId: 'main',
+      },
+    });
+    const host = new SessionSubagentHost(session, 'main');
+
+    await expect(
+      host.runQueued(
+        [
+          {
+            ...queuedTask(1),
+            kind: 'resume',
+            prompt: 'Continue the previous swarm task',
+            resumeAgentId: 'agent-0',
+            signal,
+          },
+        ],
+      ),
+    ).resolves.toMatchObject([
+      {
+        agentId: 'agent-0',
+        status: 'completed',
+        result: summary.trim(),
+      },
+    ]);
+
+    expect(session.createAgent).not.toHaveBeenCalled();
+    expect(userTextMessages(child.llmCalls[0]?.history ?? [])).toEqual([
+      'Earlier swarm context',
+      'Continue the previous swarm task',
+    ]);
+  });
+
+  it('runQueued persists swarm item metadata for spawned tasks', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.newEvents();
+
+    const child = testAgent({ type: 'sub' });
+    child.configure();
+    const summary =
+      'Completed the queued swarm item and returned a detailed technical handoff so the parent can map the result back to the original swarm input. '.repeat(
+        2,
+      );
+    child.mockNextResponse({ type: 'text', text: summary });
+
+    const metadataAgents: Session['metadata']['agents'] = {};
+    const session = fakeSession(parent.agent, child.agent, metadataAgents);
+    const host = new SessionSubagentHost(session, 'main');
+
+    await expect(
+      host.runQueued([{ ...queuedTask(1), swarmItem: 'src/a.ts', signal }]),
+    ).resolves.toMatchObject([
+      {
+        agentId: 'agent-0',
+        status: 'completed',
+        result: summary.trim(),
+      },
+    ]);
+
+    expect(session.createAgent).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        parentAgentId: 'main',
+        swarmItem: 'src/a.ts',
+      }),
+    );
+    expect(metadataAgents['agent-0']).toMatchObject({
+      type: 'sub',
+      parentAgentId: 'main',
+      swarmItem: 'src/a.ts',
+    });
+    expect(host.getSwarmItem('agent-0')).toBe('src/a.ts');
+    expect(parent.allEvents).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'subagent.spawned',
+        args: expect.objectContaining({
+          subagentId: 'agent-0',
+          parentToolCallId: 'call_swarm',
+          swarmIndex: 1,
+        }),
+      }),
+    );
+    expect(parent.allEvents).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'subagent.started',
+        args: expect.objectContaining({
+          subagentId: 'agent-0',
+        }),
+      }),
+    );
+  });
+
+  it('retries a rate-limited child turn without appending the original prompt again', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.newEvents();
+
+    const summary =
+      'Recovered from a provider rate limit by retrying the latest subagent step with the original context intact, then completed the delegated work with a detailed enough summary for the parent to continue confidently. '.repeat(
+        2,
+      );
+    const histories: Message[][] = [];
+    let generateCalls = 0;
+    const generate: GenerateFn = async (
+      _provider,
+      _systemPrompt,
+      _tools,
+      history,
+      callbacks,
+    ) => {
+      histories.push(structuredClone(history));
+      generateCalls += 1;
+      if (generateCalls === 1) {
+        throw new APIStatusError(429, 'Rate limited', 'req-429');
+      }
+      await callbacks?.onMessagePart?.({ type: 'text', text: summary });
+      return textResult(summary);
+    };
+    const child = testAgent({
+      generate,
+      initialConfig: {
+        providers: {},
+        loopControl: { maxRetriesPerStep: 1 },
+      },
+    });
+    child.configure();
+
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'call_agent',
+      prompt: 'Implement the retry-safe change',
+      description: 'Fix rate-limit retry',
+      runInBackground: false,
+      signal,
+    });
+    await expect(handle.completion).rejects.toThrow('Rate limited');
+
+    const retryHandle = await host.retry(handle.agentId, {
+      parentToolCallId: 'call_agent',
+      prompt: 'Implement the retry-safe change',
+      description: 'Fix rate-limit retry',
+      runInBackground: false,
+      signal,
+    });
+
+    await expect(retryHandle.completion).resolves.toMatchObject({ result: summary.trim() });
+    expect(generateCalls).toBe(2);
+    expect(userTextMessages(histories[1] ?? [])).toEqual(['Implement the retry-safe change']);
   });
 
   it('realigns a resumed subagent to the parent agent current model', async () => {
@@ -1023,6 +1306,48 @@ describe('Session.createAgent', () => {
     expect(created.agent.config.systemPrompt).toContain('leaf instructions');
   });
 
+  it('uses the kimi home for global branded AGENTS.md files', async () => {
+    const realHome = '/real-home';
+    const kimiHome = '/kimi-home';
+    const workDir = '/repo/packages/app';
+    const kaos = createFakeKaos({
+      gethome: () => realHome,
+      mkdir: vi.fn(async () => {}),
+      writeText: vi.fn().mockResolvedValue(0),
+      stat: vi.fn(async (path: string) => {
+        if (['/repo', '/repo/.git', '/repo/packages', workDir].includes(path)) {
+          return stat('dir');
+        }
+        if ([`${kimiHome}/AGENTS.md`, `${realHome}/.kimi-code/AGENTS.md`].includes(path)) {
+          return stat('file');
+        }
+        throw new Error(`ENOENT ${path}`);
+      }),
+      // oxlint-disable-next-line require-yield
+      iterdir: async function* () {
+        return;
+      },
+      readText: vi.fn(async (path: string) => {
+        if (path === `${kimiHome}/AGENTS.md`) return 'kimi home instructions';
+        if (path === `${realHome}/.kimi-code/AGENTS.md`) return 'stale real-home instructions';
+        throw new Error(`ENOENT ${path}`);
+      }),
+    });
+    const session = new Session({
+      id: 'test-kimi-home-agents-md',
+      kaos: kaos.withCwd(workDir),
+      homedir: '/tmp/kimi-session',
+      kimiHomeDir: kimiHome,
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+    });
+
+    const created = await session.createAgent({ type: 'main' }, { profile: contextProfile() });
+
+    expect(created.agent.config.systemPrompt).toContain('kimi home instructions');
+    expect(created.agent.config.systemPrompt).not.toContain('stale real-home instructions');
+  });
+
   it('inherits the parent agent cwd when creating a subagent', async () => {
     const sessionWorkDir = '/session/work';
     const parentWorkDir = '/parent/work';
@@ -1126,6 +1451,7 @@ function fakeSession(
   }
   return {
     agents,
+    options: { kimiHomeDir: undefined },
     metadata: {
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
@@ -1135,6 +1461,7 @@ function fakeSession(
       custom: {},
     },
     writeMetadata: vi.fn(async () => {}),
+    systemContextKaos: vi.fn((cwd: string) => parent.kaos.withCwd(cwd)),
     getReadyAgent: vi.fn((id: string) => agents.get(id)),
     ensureAgentResumed: vi.fn(async (id: string) => {
       const agent = agents.get(id);
@@ -1155,6 +1482,7 @@ function fakeSession(
             homedir: '/tmp/kimi-session/agents/agent-0',
             type: config.type ?? 'main',
             parentAgentId,
+            swarmItem: options.swarmItem,
           };
         }
         if (options.profile !== undefined) {
@@ -1223,6 +1551,49 @@ function stat(kind: 'dir' | 'file') {
     stMtime: 0,
     stCtime: 0,
   };
+}
+
+function queuedTask(index: number): QueuedSubagentTask<number> {
+  return {
+    kind: 'spawn',
+    data: index,
+    profileName: 'coder',
+    parentToolCallId: 'call_swarm',
+    prompt: `Review item-${String(index)}`,
+    description: `Review #${String(index)}`,
+    swarmIndex: index,
+    runInBackground: false,
+  };
+}
+
+function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
+  return {
+    id: 'mock-text',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+    },
+    usage: {
+      inputOther: 0,
+      output: 0,
+      inputCacheRead: 0,
+      inputCacheCreation: 0,
+    },
+    finishReason: 'completed',
+    rawFinishReason: 'stop',
+  };
+}
+
+function userTextMessages(history: readonly Message[]): string[] {
+  return history
+    .filter((message) => message.role === 'user')
+    .map((message) =>
+      message.content
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join(''),
+    );
 }
 
 async function writeWire(homedir: string, records: readonly Record<string, unknown>[]) {

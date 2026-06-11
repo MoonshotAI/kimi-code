@@ -110,7 +110,7 @@ describe('Session lifecycle hooks', () => {
     await expect(session.close()).resolves.toBeUndefined();
   });
 
-  it('stops background tasks on close when keepAliveOnExit is false', async () => {
+  it('stops background tasks on close by default', async () => {
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({
       kaos: testKaos.withCwd(workDir),
@@ -118,7 +118,6 @@ describe('Session lifecycle hooks', () => {
       homedir: sessionDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
-      background: { keepAliveOnExit: false },
     });
     const agent = await session.createMain();
     const { proc, killSpy } = pendingProcess();
@@ -130,6 +129,28 @@ describe('Session lifecycle hooks', () => {
 
     expect(killSpy).toHaveBeenCalledWith('SIGTERM');
     expect(agent.background.getTask(taskId)?.status).toBe('killed');
+  });
+
+  it('keeps background tasks alive on close when keepAliveOnExit is true', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-bg-keepalive',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: true },
+    });
+    const agent = await session.createMain();
+    const { proc, killSpy } = pendingProcess();
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'keep alive'),
+    );
+
+    await session.close();
+
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(agent.background.getTask(taskId)?.status).toBe('running');
   });
 
   it('lets the environment override config when deciding background task cleanup', async () => {

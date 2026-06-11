@@ -19,12 +19,22 @@ export type { FileSystemAgentRecordPersistenceOptions } from './persistence';
 export { BlobStore, isBlobRef } from './blobref';
 export type { BlobStoreOptions } from './blobref';
 
-// Contract: restore MUST NOT emit UI events, call the LLM, execute tools, or
-// touch the filesystem in a way that triggers external side effects. Each case
-// should reproduce the in-memory state the live handler left behind, nothing more.
+// Contract: restore MUST only rebuild in-memory state. It must not emit UI
+// events, call the LLM, execute tools, start background work, make network
+// requests, or touch the filesystem in a way that triggers external side effects.
+//
+// Prefer restoring by calling the same method that wrote the record, so live
+// execution and resume share one state mutation path. For example,
+// permission.set_mode replays through agent.permission.setMode(input.mode),
+// not by assigning modeOverride here. records.logRecord, emitEvent, and
+// emitStatusUpdated already gate on records.restoring, so those calls are safe
+// during resume.
 function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
   switch (input.type) {
     case 'metadata':
+      return;
+    case 'forked':
+      agent.goal.restoreForked(input);
       return;
     case 'turn.prompt':
       agent.turn.restorePrompt();
@@ -68,6 +78,12 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'plan_mode.exit':
       agent.planMode.exit(input.id);
       return;
+    case 'swarm_mode.enter':
+      agent.swarmMode.restoreEnter(input.trigger);
+      return;
+    case 'swarm_mode.exit':
+      agent.swarmMode.exit();
+      return;
     case 'context.append_message':
       agent.context.appendMessage(input.message);
       return;
@@ -95,13 +111,14 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'tools.update_store':
       agent.tools.updateStore(input.key, input.value);
       return;
-    // Goal records are an audit trail only. Goal state is restored from
-    // `state.json` (metadata.custom.goal), never rebuilt from these records.
     case 'goal.create':
+      agent.goal.restoreCreate(input);
+      return;
     case 'goal.update':
-    case 'goal.account_usage':
-    case 'goal.continuation':
+      agent.goal.restoreUpdate(input);
+      return;
     case 'goal.clear':
+      agent.goal.restoreClear(input);
       return;
   }
 }

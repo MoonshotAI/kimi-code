@@ -66,8 +66,10 @@ Positional arguments support single and double quoting, so in `/skill:commit "fi
 Kimi Code CLI scans four tiers by scope; more specific scopes take higher priority: **Project > User > Extra > Built-in**
 
 **User level** (applies to all projects):
-- `~/.kimi-code/skills/`
+- `$KIMI_CODE_HOME/skills/` (default: `~/.kimi-code/skills/`)
 - `~/.agents/skills/`
+
+The Kimi-specific user Skill directory moves with `KIMI_CODE_HOME`, so isolated data roots also get isolated Kimi-specific Skills. The generic `~/.agents/skills/` directory stays under the real OS home so it can be shared across tools.
 
 **Project level** (project root = the nearest directory containing `.git`, searching upward from the working directory):
 - `.kimi-code/skills/`
@@ -79,7 +81,7 @@ Kimi Code CLI scans four tiers by scope; more specific scopes take higher priori
 extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 ```
 
-**Built-in Skills** are distributed with the CLI and have the lowest priority.
+**Built-in Skills** are distributed with the CLI and have the lowest priority. They provide out-of-the-box workflows for common tasks — for example, configuring MCP servers, customizing the TUI theme, and editing config files. See [Built-in skill commands](../reference/slash-commands.md#built-in-skill-commands) for the full list.
 
 ## Invoking a Skill
 
@@ -120,7 +122,7 @@ Please review the PR the user specified: $pr_ref
    - Noteworthy positives
 ```
 
-Save this as `~/.kimi-code/skills/review-pr/SKILL.md`, place the checklist at `references/checklist.md` in the same directory, and after starting a new session you can invoke it with `/skill:review-pr #1234`, where `#1234` is expanded into `$pr_ref`.
+Save this as `$KIMI_CODE_HOME/skills/review-pr/SKILL.md` (or `~/.kimi-code/skills/review-pr/SKILL.md` when `KIMI_CODE_HOME` is unset), place the checklist at `references/checklist.md` in the same directory, and after starting a new session you can invoke it with `/skill:review-pr #1234`, where `#1234` is expanded into `$pr_ref`.
 
 ## Next steps
 

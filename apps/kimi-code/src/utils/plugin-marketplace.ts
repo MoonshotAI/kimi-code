@@ -3,6 +3,8 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { gt, valid } from 'semver';
+
 import {
   KIMI_CODE_PLUGIN_MARKETPLACE_URL,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
@@ -27,6 +29,36 @@ export interface PluginMarketplace {
   readonly source: string;
   readonly version?: string;
   readonly plugins: readonly PluginMarketplaceEntry[];
+}
+
+export type PluginUpdateStatus =
+  | { readonly kind: 'not-installed' }
+  | { readonly kind: 'up-to-date'; readonly version?: string }
+  | { readonly kind: 'update'; readonly local: string; readonly latest: string };
+
+/**
+ * Compare a marketplace entry's (latest) version against the locally installed
+ * version. Only reports `update` when both are valid semver and latest > local,
+ * so a stale or non-semver version never produces a spurious or downgrading prompt.
+ */
+export function computeUpdateStatus(
+  latest: string | undefined,
+  local: string | undefined,
+  installed: boolean,
+): PluginUpdateStatus {
+  if (!installed) return { kind: 'not-installed' };
+  if (
+    latest !== undefined &&
+    local !== undefined &&
+    valid(latest) !== null &&
+    valid(local) !== null &&
+    gt(latest, local)
+  ) {
+    return { kind: 'update', local, latest };
+  }
+  // Report only the actual installed version. When it is unknown, don't borrow the
+  // marketplace version — that would falsely claim "up to date" and hide future updates.
+  return { kind: 'up-to-date', version: local };
 }
 
 interface MarketplaceLocation {

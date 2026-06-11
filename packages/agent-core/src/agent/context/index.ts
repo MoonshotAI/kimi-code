@@ -40,6 +40,7 @@ export class ContextMemory {
     content: readonly ContentPart[],
     origin: PromptOrigin = USER_PROMPT_ORIGIN,
   ): void {
+    if (content.length === 0) return;
     this.appendMessage({
       role: 'user',
       content: [...content],
@@ -49,13 +50,26 @@ export class ContextMemory {
   }
 
   appendSystemReminder(content: string, origin: PromptOrigin): void {
-    const text = `<system-reminder>\n${content}\n</system-reminder>`;
+    const text = `<system-reminder>\n${content.trim()}\n</system-reminder>`;
     this.appendMessage({
       role: 'user',
       content: [{ type: 'text', text }],
       toolCalls: [],
       origin,
     });
+  }
+
+  popMatchedMessage(matcher: (origin: PromptOrigin | undefined) => boolean): boolean {
+    const lastDeferred = this.deferredMessages.at(-1);
+    const last = lastDeferred ?? this._history.at(-1);
+    if (last === undefined) return false;
+    if (!matcher(last.origin)) return false;
+    if (lastDeferred !== undefined) {
+      this.deferredMessages.pop();
+    } else {
+      this._history.pop();
+    }
+    return true;
   }
 
   clear(): void {
@@ -119,7 +133,15 @@ export class ContextMemory {
     ) {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
-        'Nothing to undo in the active context.',
+        formatUndoUnavailableMessage(count, removedUserCount, stoppedAtBoundary),
+        {
+          details: {
+            reason: 'undo_limit',
+            requestedCount: count,
+            undoableCount: removedUserCount,
+            stoppedAtCompaction: stoppedAtBoundary,
+          },
+        },
       );
     }
   }
@@ -330,4 +352,17 @@ function isRealUserPrompt(message: ContextMessage): boolean {
     return origin.trigger === 'user-slash';
   }
   return false;
+}
+
+function formatUndoUnavailableMessage(
+  requestedCount: number,
+  undoableCount: number,
+  stoppedAtCompaction: boolean,
+): string {
+  const reason = stoppedAtCompaction ? ' after the last compaction' : '';
+  return `Cannot undo ${formatPromptCount(requestedCount)}; only ${formatPromptCount(undoableCount)} can be undone in the active context${reason}.`;
+
+  function formatPromptCount(count: number): string {
+    return `${String(count)} ${count === 1 ? 'prompt' : 'prompts'}`;
+  }
 }

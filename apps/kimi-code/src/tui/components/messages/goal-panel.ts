@@ -16,12 +16,13 @@
 import type { Component } from '@earendil-works/pi-tui';
 import { Text, visibleWidth } from '@earendil-works/pi-tui';
 import type { GoalSnapshot, GoalStatus } from '@moonshot-ai/kimi-code-sdk';
-import chalk from 'chalk';
 
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
+import type { ColorToken } from '#/tui/theme';
 import { formatTokenCount } from '#/utils/usage/usage-format';
+import { formatGoalElapsed } from './goal-format';
 import { UsagePanelComponent } from './usage-panel';
 
 const WRAP_WIDTH = 72;
@@ -29,28 +30,37 @@ const MAX_OBJECTIVE_LINES = 6;
 const MAX_CRITERION_LINES = 3;
 const LABEL_WIDTH = 11;
 
+function renderLifecycleLine(label: string): string[] {
+  const marker = currentTheme.boldFg('primary', STATUS_BULLET);
+  const text = currentTheme.boldFg('primary', label);
+  return ['', marker + text];
+}
+
 /**
  * The "Goal set" confirmation shown after `/goal <objective>`. The objective is
  * rendered as the following user prompt, so this message only marks the state
  * change in the transcript.
  */
 export class GoalSetMessageComponent implements Component {
-  constructor(private readonly colors: ColorPalette) {}
-
   invalidate(): void {}
 
   render(_width: number): string[] {
-    const marker = chalk.hex(this.colors.primary).bold(STATUS_BULLET);
-    const label = chalk.hex(this.colors.primary).bold('Goal set');
-    return ['', marker + label];
+    return renderLifecycleLine('Goal set');
+  }
+}
+
+export class UpcomingGoalAddedMessageComponent implements Component {
+  invalidate(): void {}
+
+  render(_width: number): string[] {
+    return renderLifecycleLine(
+      'Upcoming goal added. It will start after the current goal is complete.',
+    );
   }
 }
 
 export class GoalCompletionMessageComponent implements Component {
-  constructor(
-    private readonly message: string,
-    private readonly colors: ColorPalette,
-  ) {}
+  constructor(private readonly message: string) {}
 
   invalidate(): void {}
 
@@ -58,12 +68,12 @@ export class GoalCompletionMessageComponent implements Component {
     const [headline = '', ...details] = this.message.trim().split(/\r?\n/);
     if (headline.length === 0) return [];
 
-    const bullet = chalk.hex(this.colors.success).bold(STATUS_BULLET);
+    const bullet = currentTheme.boldFg('success', STATUS_BULLET);
     const bulletWidth = visibleWidth(STATUS_BULLET);
     const contentWidth = Math.max(1, width - bulletWidth);
     const lines: string[] = [''];
 
-    const headlineText = new Text(chalk.hex(this.colors.success).bold(headline), 0, 0);
+    const headlineText = new Text(currentTheme.boldFg('success', headline), 0, 0);
     const headlineLines = headlineText.render(contentWidth);
     for (let i = 0; i < headlineLines.length; i += 1) {
       lines.push((i === 0 ? bullet : MESSAGE_INDENT) + headlineLines[i]);
@@ -71,7 +81,7 @@ export class GoalCompletionMessageComponent implements Component {
 
     const detailText = details.join('\n').trim();
     if (detailText.length > 0) {
-      const detailLines = new Text(chalk.hex(this.colors.textDim)(detailText), 0, 0).render(
+      const detailLines = new Text(currentTheme.fg('textDim', detailText), 0, 0).render(
         contentWidth,
       );
       for (const line of detailLines) {
@@ -84,23 +94,18 @@ export class GoalCompletionMessageComponent implements Component {
 }
 
 export class GoalStatusMessageComponent implements Component {
-  constructor(
-    private readonly goal: GoalSnapshot,
-    private readonly colors: ColorPalette,
-  ) {}
+  constructor(private readonly goal: GoalSnapshot) {}
 
   invalidate(): void {}
 
   render(width: number): string[] {
-    const lines = buildGoalReportLines({ colors: this.colors, goal: this.goal });
-    const panel = new UsagePanelComponent(lines, this.colors.primary, goalPanelTitle(this.goal));
+    const panel = new UsagePanelComponent(
+      () => buildGoalReportLines(this.goal),
+      'primary',
+      goalPanelTitle(this.goal),
+    );
     return ['', ...panel.render(width)];
   }
-}
-
-export interface GoalReportOptions {
-  readonly colors: ColorPalette;
-  readonly goal: GoalSnapshot;
 }
 
 /** Box title, e.g. ` Goal · active `. */
@@ -108,11 +113,11 @@ export function goalPanelTitle(goal: GoalSnapshot): string {
   return ` Goal · ${goal.status} `;
 }
 
-export function buildGoalReportLines(options: GoalReportOptions): string[] {
-  const { colors, goal } = options;
-  const value = chalk.hex(colors.text);
-  const muted = chalk.hex(colors.textDim);
-  const bar = chalk.hex(statusHex(goal.status, colors));
+export function buildGoalReportLines(goal: GoalSnapshot): string[] {
+  const statusColor = statusToken(goal.status);
+  const bar = (s: string) => currentTheme.fg(statusColor, s);
+  const value = (s: string) => currentTheme.fg('text', s);
+  const muted = (s: string) => currentTheme.fg('textDim', s);
   // `complete` is the terminal outcome (the completion card); everything else
   // (active / paused / blocked) is a persisted, resumable goal that still shows
   // its stop condition. A reason is worth surfacing for stopped / complete states.
@@ -139,12 +144,12 @@ export function buildGoalReportLines(options: GoalReportOptions): string[] {
     lines.push(
       row(
         'Status',
-        chalk.hex(statusHex(goal.status, colors))(goal.status) +
+        currentTheme.fg(statusColor, goal.status) +
           (reason !== undefined ? muted(` — ${reason}`) : ''),
       ),
     );
   }
-  lines.push(row('Running', value(formatElapsed(goal.wallClockMs))));
+  lines.push(row('Running', value(formatGoalElapsed(goal.wallClockMs))));
   lines.push(row('Turns', value(`${goal.turnsUsed}`)));
   lines.push(row('Tokens', value(formatTokenCount(goal.tokensUsed))));
   if (!isComplete) {
@@ -169,37 +174,27 @@ function formatStopRow(goal: GoalSnapshot): string | null {
     parts.push(`at ${formatTokenCount(budget.tokenBudget)} tokens`);
   }
   if (budget.wallClockBudgetMs !== null) {
-    parts.push(`after ${formatElapsed(budget.wallClockBudgetMs)}`);
+    parts.push(`after ${formatGoalElapsed(budget.wallClockBudgetMs)}`);
   }
   return parts.length > 0 ? parts.join(', ') : null;
 }
 
-function statusHex(status: GoalStatus, colors: ColorPalette): string {
+function statusToken(status: GoalStatus): ColorToken {
   switch (status) {
     case 'active':
-      return colors.primary;
+      return 'primary';
     case 'complete':
-      return colors.success;
+      return 'success';
     case 'blocked':
-      return colors.warning;
-    default: // paused
-      return colors.textDim;
+      return 'warning';
+    case 'paused':
+      return 'textDim';
   }
-}
-
-function formatElapsed(ms: number): string {
-  const totalSeconds = Math.round(ms / 1000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${(minutes % 60).toString().padStart(2, '0')}m`;
 }
 
 /** Word-wrap to `width`, capped at `maxLines` (last line gets an ellipsis when clipped). */
 function wrap(text: string, width: number, maxLines: number): string[] {
-  const words = text.replace(/\s+/g, ' ').trim().split(' ');
+  const words = text.replaceAll(/\s+/g, ' ').trim().split(' ');
   const lines: string[] = [];
   let current = '';
   for (const word of words) {

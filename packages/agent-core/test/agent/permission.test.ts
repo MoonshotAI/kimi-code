@@ -17,10 +17,12 @@ import {
   parsePattern,
   type PermissionRuleMatchExecution,
 } from '../../src/agent/permission/matches-rule';
+import { AgentSwarmExclusiveDenyPermissionPolicy } from '../../src/agent/permission/policies/agent-swarm-exclusive-deny';
 import { AutoModeApprovePermissionPolicy } from '../../src/agent/permission/policies/auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicy } from '../../src/agent/permission/policies/auto-mode-ask-user-question-deny';
 import { FallbackAskPermissionPolicy } from '../../src/agent/permission/policies/fallback-ask';
 import { createPermissionDecisionPolicies } from '../../src/agent/permission/policies';
+import { SwarmModeAgentSwarmApprovePermissionPolicy } from '../../src/agent/permission/policies/swarm-mode-agent-swarm-approve';
 import { YoloModeApprovePermissionPolicy } from '../../src/agent/permission/policies/yolo-mode-approve';
 import { ToolAccesses } from '../../src/loop';
 import type { ToolInputDisplay } from '../../src/tools/display';
@@ -44,7 +46,7 @@ describe('Agent permission', () => {
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] permission.set_mode         { "mode": "auto", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "permission": "auto" }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "auto" }
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Run Bash in auto mode" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" } }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Run Bash in auto mode" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
@@ -61,7 +63,7 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 116, "maxContextTokens": 1000000, "contextUsage": 0.000116, "planMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 116, "maxContextTokens": 1000000, "contextUsage": 0.000116, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-3>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 2, "stepId": "<uuid-3>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "The command printed auto-output." }
@@ -69,7 +71,7 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 120, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 120, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 120, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 131, "maxContextTokens": 1000000, "contextUsage": 0.000131, "planMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 211, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 211, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 211, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 131, "maxContextTokens": 1000000, "contextUsage": 0.000131, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 211, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 211, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 211, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                  { "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
@@ -100,7 +102,7 @@ describe('Agent permission', () => {
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] permission.set_mode         { "mode": "yolo", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "permission": "yolo" }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "yolo" }
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Run Bash in yolo mode" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" } }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Run Bash in yolo mode" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
@@ -116,7 +118,7 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 32, "maxContextTokens": 1000000, "contextUsage": 0.000032, "planMode": false, "permission": "yolo", "usage": { "byModel": { "mock-model": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 32, "maxContextTokens": 1000000, "contextUsage": 0.000032, "planMode": false, "swarmMode": false, "permission": "yolo", "usage": { "byModel": { "mock-model": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-3>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 2, "stepId": "<uuid-3>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "The command printed yolo-output." }
@@ -124,7 +126,7 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 36, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 36, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 36, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 47, "maxContextTokens": 1000000, "contextUsage": 0.000047, "planMode": false, "permission": "yolo", "usage": { "byModel": { "mock-model": { "inputOther": 43, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 43, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 43, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 47, "maxContextTokens": 1000000, "contextUsage": 0.000047, "planMode": false, "swarmMode": false, "permission": "yolo", "usage": { "byModel": { "mock-model": { "inputOther": 43, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 43, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 43, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                  { "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
@@ -157,7 +159,7 @@ describe('Agent permission', () => {
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] permission.set_mode         { "mode": "manual", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 96, "maxContextTokens": 1000000, "contextUsage": 0.000096, "planMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 89, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 89, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 96, "maxContextTokens": 1000000, "contextUsage": 0.000096, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 89, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 89, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Back to manual" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started                { "turnId": 1, "origin": { "kind": "user" } }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Back to manual" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
@@ -169,7 +171,7 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "1", "step": 1, "usage": { "inputOther": 161, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 1, "step": 1, "stepId": "<uuid-3>", "usage": { "inputOther": 161, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 161, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 169, "maxContextTokens": 1000000, "contextUsage": 0.000169, "planMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 250, "output": 15, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 250, "output": 15, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 161, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 169, "maxContextTokens": 1000000, "contextUsage": 0.000169, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 250, "output": 15, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 250, "output": 15, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 161, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                  { "turnId": 1, "reason": "completed" }
     `);
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
@@ -233,7 +235,7 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
       [emit] turn.step.completed                 { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
       [wire] usage.record                        { "model": "mock-model", "usage": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 27, "maxContextTokens": 1000000, "contextUsage": 0.000027, "planMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 27, "maxContextTokens": 1000000, "contextUsage": 0.000027, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 5, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_loop_event           { "event": { "type": "step.begin", "uuid": "<uuid-3>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [emit] turn.step.started                   { "turnId": 0, "step": 2, "stepId": "<uuid-3>" }
       [emit] assistant.delta                     { "turnId": 0, "delta": "I will not run the command." }
@@ -241,7 +243,7 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 58, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
       [emit] turn.step.completed                 { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 58, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                        { "model": "mock-model", "usage": { "inputOther": 58, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 68, "maxContextTokens": 1000000, "contextUsage": 0.000068, "planMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 63, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 63, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 63, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 68, "maxContextTokens": 1000000, "contextUsage": 0.000068, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 63, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 63, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 63, "output": 32, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                          { "turnId": 0, "reason": "completed" }
     `);
     expect(execWithEnv).not.toHaveBeenCalled();
@@ -403,20 +405,16 @@ describe('Permission auto mode', () => {
     },
   );
 
-  it.each(
-    (['manual', 'yolo'] as const).flatMap((mode) =>
-      [
-        [mode, 'Write', { path: '/tmp/notes.md', content: 'x' }, 'write', 'write file'],
-        [mode, 'Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }, 'edit', 'edit file'],
-      ] as const,
-    ),
-  )(
-    'requests approval in %s mode for %s outside the cwd',
-    async (mode, toolName, args, operation, action) => {
-      const { manager, requestApproval } = makePermissionManager(async () => ({
+  it.each([
+    ['Write', { path: '/tmp/notes.md', content: 'x' }, 'write', 'write file'],
+    ['Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }, 'edit', 'edit file'],
+  ] as const)(
+    'requests approval in manual mode for %s outside the cwd',
+    async (toolName, args, operation, action) => {
+      const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
         decision: 'approved',
       }));
-      manager.setMode(mode);
+      manager.setMode('manual');
 
       await expect(
         manager.beforeToolCall(hookContext({ id: `call_${toolName}`, toolName, args })),
@@ -434,8 +432,42 @@ describe('Permission auto mode', () => {
         }),
         expect.any(Object),
       );
+      expect(telemetryTrack).toHaveBeenCalledWith(
+        'permission_policy_decision',
+        expect.objectContaining({
+          policy_name: 'fallback-ask',
+          tool_name: toolName,
+          permission_mode: 'manual',
+          decision: 'ask',
+        }),
+      );
     },
   );
+
+  it.each([
+    ['Write', { path: '/tmp/notes.md', content: 'x' }],
+    ['Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }],
+  ] as const)('approves %s outside the cwd in yolo mode', async (toolName, args) => {
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.setMode('yolo');
+
+    await expect(
+      manager.beforeToolCall(hookContext({ id: `call_${toolName}_yolo_outside`, toolName, args })),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({
+        policy_name: 'yolo-mode-approve',
+        tool_name: toolName,
+        permission_mode: 'yolo',
+        decision: 'approve',
+      }),
+    );
+  });
 
   it.each(
     (['manual', 'yolo'] as const).flatMap((mode) =>
@@ -637,7 +669,7 @@ describe('Permission auto mode', () => {
     );
   });
 
-  it('reuses approve-for-session for repeated outside-workspace writes in yolo mode', async () => {
+  it('approves repeated outside-workspace writes in yolo mode without session approval', async () => {
     const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
       scope: 'session',
@@ -656,8 +688,8 @@ describe('Permission auto mode', () => {
     await expect(call()).resolves.toBeUndefined();
     await expect(call()).resolves.toBeUndefined();
 
-    expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(manager.sessionApprovalRulePatterns).toEqual(['Write(/tmp/notes.md)']);
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(manager.sessionApprovalRulePatterns).toEqual([]);
     expect(manager.data().rules).toEqual([]);
   });
 });
@@ -666,6 +698,7 @@ describe('Permission policy chain', () => {
   it('keeps built-in policies in document order', () => {
     expect(createPermissionDecisionPolicies({} as Agent).map((policy) => policy.name)).toEqual([
       'pre-tool-call-hook',
+      'agent-swarm-exclusive-deny',
       'auto-mode-ask-user-question-deny',
       'plan-mode-guard-deny',
       'user-configured-deny',
@@ -677,14 +710,50 @@ describe('Permission policy chain', () => {
       'plan-mode-tool-approve',
       'sensitive-file-access-ask',
       'git-control-path-access-ask',
-      'cwd-outside-file-write-ask',
       'yolo-mode-approve',
+      'swarm-mode-agent-swarm-approve',
       'default-tool-approve',
       'git-cwd-write-approve',
       'fallback-ask',
     ]);
   });
 
+  it('denies invalid AgentSwarm batches before auto-mode approval', async () => {
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.mode = 'auto';
+    const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    const readCall = toolCall('call_read', 'Read', { path: 'src/a.ts' });
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_agent_swarm',
+          toolName: 'AgentSwarm',
+          toolCalls: [agentSwarmCall, readCall],
+        }),
+      ),
+    ).resolves.toMatchObject({
+      block: true,
+      reason: expect.stringContaining('AgentSwarm must be the only tool call'),
+    });
+
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({
+        policy_name: 'agent-swarm-exclusive-deny',
+        tool_name: 'AgentSwarm',
+        permission_mode: 'auto',
+        decision: 'deny',
+      }),
+    );
+  });
 });
 
 describe('Simple permission policy direct behavior', () => {
@@ -738,6 +807,116 @@ describe('Simple permission policy direct behavior', () => {
     expect(policy.evaluate()).toBeUndefined();
     Object.assign(agent.permission, { mode: 'yolo' });
     expect(policy.evaluate()).toEqual({ kind: 'approve' });
+  });
+
+  it('approves only AgentSwarm when swarm mode is active', () => {
+    const swarmMode = { isActive: false };
+    const agent = { swarmMode } as unknown as Agent;
+    const policy = new SwarmModeAgentSwarmApprovePermissionPolicy(agent);
+
+    expect(
+      policy.evaluate(hookContext({ id: 'call_agent_swarm_inactive', toolName: 'AgentSwarm' })),
+    ).toBeUndefined();
+    Object.assign(swarmMode, { isActive: true });
+    expect(
+      policy.evaluate(hookContext({ id: 'call_agent_swarm_active', toolName: 'AgentSwarm' })),
+    ).toEqual({ kind: 'approve' });
+    expect(
+      policy.evaluate(hookContext({ id: 'call_agent_active', toolName: 'Agent' })),
+    ).toBeUndefined();
+  });
+
+  it('denies AgentSwarm mixed with other tool calls in the same response', () => {
+    const policy = new AgentSwarmExclusiveDenyPermissionPolicy();
+    const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    const readCall = toolCall('call_read', 'Read', { path: 'src/a.ts' });
+
+    expect(
+      policy.evaluate(
+        hookContext({
+          id: 'call_agent_swarm',
+          toolName: 'AgentSwarm',
+          toolCalls: [agentSwarmCall, readCall],
+        }),
+      ),
+    ).toMatchObject({
+      kind: 'deny',
+      message: expect.stringContaining('AgentSwarm must be the only tool call'),
+      reason: {
+        agent_swarm_tool_calls: 1,
+        tool_calls: 2,
+      },
+    });
+    expect(
+      policy.evaluate(
+        hookContext({
+          id: 'call_read',
+          toolName: 'Read',
+          args: { path: 'src/a.ts' },
+          toolCalls: [agentSwarmCall, readCall],
+        }),
+      ),
+    ).toMatchObject({ kind: 'deny' });
+  });
+
+  it('denies multiple AgentSwarm calls with one-at-a-time guidance', () => {
+    const policy = new AgentSwarmExclusiveDenyPermissionPolicy();
+    const first = toolCall('call_agent_swarm_1', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    const second = toolCall('call_agent_swarm_2', 'AgentSwarm', {
+      description: 'Review tests',
+      prompt_template: 'Review {{item}}',
+      items: ['test/a.ts', 'test/b.ts'],
+    });
+
+    const result = policy.evaluate(
+      hookContext({
+        id: 'call_agent_swarm_1',
+        toolName: 'AgentSwarm',
+        toolCalls: [first, second],
+      }),
+    );
+
+    expect(result).toMatchObject({
+      kind: 'deny',
+      message: expect.stringContaining('Multiple AgentSwarm calls are not forbidden'),
+      reason: {
+        agent_swarm_tool_calls: 2,
+        tool_calls: 2,
+      },
+    });
+    expect(result).toMatchObject({
+      message: expect.stringContaining('call one AgentSwarm, wait for its result'),
+    });
+    expect(result).toMatchObject({
+      message: expect.stringContaining('merge the work into a single AgentSwarm'),
+    });
+  });
+
+  it('allows a single AgentSwarm call for later permission policies', () => {
+    const policy = new AgentSwarmExclusiveDenyPermissionPolicy();
+    const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+
+    expect(
+      policy.evaluate(
+        hookContext({
+          id: 'call_agent_swarm',
+          toolName: 'AgentSwarm',
+          toolCalls: [agentSwarmCall],
+        }),
+      ),
+    ).toBeUndefined();
   });
 
   it('always asks in FallbackAskPermissionPolicy', () => {
@@ -3282,7 +3461,7 @@ describe('Default git CWD Write/Edit permission', () => {
     expect(requestApproval).toHaveBeenCalledTimes(1);
     expect(telemetryTrack).toHaveBeenCalledWith(
       'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'cwd-outside-file-write-ask' }),
+      expect.objectContaining({ policy_name: 'fallback-ask' }),
     );
     expect(telemetryTrack).not.toHaveBeenCalledWith(
       'permission_policy_decision',
@@ -3335,146 +3514,6 @@ describe('Default git CWD Write/Edit permission', () => {
     expect(requestApproval).not.toHaveBeenCalled();
     const markerCalls = stat.mock.calls.filter(([path]) => path === '/workspace/.git');
     expect(markerCalls).toHaveLength(4);
-  });
-});
-
-describe('CWD outside file write permission policy', () => {
-  it('falls through when cwd is empty', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
-      async () => ({ decision: 'approved' }),
-      { cwd: '' },
-    );
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: 'call_empty_cwd_write',
-          toolName: 'Write',
-          args: { path: '/tmp/outside.ts', content: 'x' },
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'fallback-ask' }),
-    );
-  });
-
-  it('falls through when there are no file write accesses', async () => {
-    const args = { path: '/tmp/outside.ts', content: 'x' };
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
-      decision: 'approved',
-    }));
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: 'call_no_write_accesses',
-          toolName: 'Write',
-          args,
-          execution: {
-            ...testExecution('Write', args),
-            accesses: ToolAccesses.none(),
-          },
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'fallback-ask' }),
-    );
-  });
-
-  it('asks when any write access is outside the cwd', async () => {
-    const args = { path: '/workspace/src/a.ts', content: 'x' };
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
-      decision: 'approved',
-    }));
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: 'call_mixed_write_accesses',
-          toolName: 'Write',
-          args,
-          execution: {
-            ...testExecution('Write', args),
-            accesses: [
-              { kind: 'file', operation: 'write', path: '/workspace/src/a.ts' },
-              { kind: 'file', operation: 'readwrite', path: '/tmp/outside.ts' },
-            ],
-          },
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'cwd-outside-file-write-ask',
-        decision: 'ask',
-        cwd_outside: true,
-        file_access_operation: 'readwrite',
-      }),
-    );
-  });
-
-  it.each([
-    ['Read', { path: '/tmp/outside.ts' }],
-    ['Grep', { pattern: 'TODO', path: '/tmp' }],
-  ] as const)('does not ask for %s access outside cwd', async (toolName, args) => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
-      decision: 'approved',
-    }));
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: `call_${toolName}_outside_cwd`,
-          toolName,
-          args,
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'default-tool-approve' }),
-    );
-  });
-
-  it('uses Win32 path semantics for cwd containment', async () => {
-    const kaos = createFakeKaos({ pathClass: () => 'win32' });
-    const args = { path: 'c:\\repo\\src\\a.ts', content: 'x' };
-    const { manager, telemetryTrack } = makePermissionManager(
-      async () => ({ decision: 'approved' }),
-      { cwd: 'C:\\Repo', kaos },
-    );
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: 'call_win_inside_cwd',
-          toolName: 'Write',
-          args,
-          execution: {
-            ...testExecution('Write', args),
-            accesses: ToolAccesses.writeFile('c:\\repo\\src\\a.ts'),
-          },
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'cwd-outside-file-write-ask' }),
-    );
   });
 });
 
@@ -3574,6 +3613,7 @@ describe('Permission rule helpers', () => {
         path: '/workspace/a.ts',
       }),
     ).toBe(false);
+    expect(ruleMatches(permissionRule('AgentSwarm(swarm)'), 'AgentSwarm', {})).toBe(false);
   });
 
   it('treats empty arg patterns as tool-name-only matches', () => {
@@ -3639,6 +3679,7 @@ function makePermissionManager(
     readonly agentType?: Agent['type'];
     readonly hooks?: Agent['hooks'];
     readonly approvalRpc?: boolean;
+    readonly swarmModeActive?: boolean;
   } = {},
 ): {
   manager: PermissionManager;
@@ -3669,6 +3710,11 @@ function makePermissionManager(
       },
       data: vi.fn(async () => null),
       exit: vi.fn(),
+    },
+    swarmMode: {
+      get isActive() {
+        return options.swarmModeActive ?? false;
+      },
     },
   } as unknown as Agent;
   manager = new PermissionManager(agent, options);
@@ -3723,6 +3769,11 @@ function makePlanPermissionManager(input: {
       }),
       exit,
     },
+    swarmMode: {
+      get isActive() {
+        return false;
+      },
+    },
   } as unknown as Agent;
   const manager = new PermissionManager(agent);
   Object.assign(agent, { permission: manager });
@@ -3735,6 +3786,7 @@ function hookContext(input: {
   readonly toolName?: string | undefined;
   readonly args?: Record<string, unknown> | undefined;
   readonly execution?: PermissionPolicyContext['execution'] | undefined;
+  readonly toolCalls?: readonly ToolCall[] | undefined;
 }): PermissionPolicyContext {
   const toolName = input.toolName ?? 'Bash';
   const args = input.args ?? { command: 'printf first', timeout: 60 };
@@ -3742,7 +3794,7 @@ function hookContext(input: {
     type: 'function',
     id: input.id,
     name: toolName,
-      arguments: JSON.stringify(args),
+    arguments: JSON.stringify(args),
   };
   return {
     turnId: '0',
@@ -3750,8 +3802,18 @@ function hookContext(input: {
     signal: new AbortController().signal,
     llm: {} as PermissionPolicyContext['llm'],
     toolCall,
+    toolCalls: input.toolCalls ?? [toolCall],
     args,
     execution: input.execution ?? testExecution(toolName, args),
+  };
+}
+
+function toolCall(id: string, name: string, args: Record<string, unknown>): ToolCall {
+  return {
+    type: 'function',
+    id,
+    name,
+    arguments: JSON.stringify(args),
   };
 }
 

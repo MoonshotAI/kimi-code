@@ -10,11 +10,35 @@ const GOAL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'resume', description: 'Resume a paused goal' },
   { value: 'cancel', description: 'Cancel and remove the current goal' },
   { value: 'replace', description: 'Replace the current goal with a new objective' },
+  { value: 'next', description: 'Queue an upcoming goal' },
+];
+
+const GOAL_NEXT_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'manage', description: 'Manage upcoming goals' },
+];
+
+const SWARM_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'on', description: 'Turn swarm mode on' },
+  { value: 'off', description: 'Turn swarm mode off' },
 ];
 
 /** Argument autocompletion for the `/goal` command (subcommands). */
 export function goalArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  const nextMatch = argumentPrefix.match(/^next\s+(\S*)$/i);
+  if (nextMatch !== null) {
+    return (
+      completeLeadingArg(GOAL_NEXT_ARG_COMPLETIONS, nextMatch[1] ?? '')?.map((item) => ({
+        ...item,
+        value: `next ${item.value}`,
+      })) ?? null
+    );
+  }
   return completeLeadingArg(GOAL_ARG_COMPLETIONS, argumentPrefix);
+}
+
+/** Argument autocompletion for the `/swarm` command (subcommands). */
+export function swarmArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  return completeLeadingArg(SWARM_ARG_COMPLETIONS, argumentPrefix);
 }
 
 export const BUILTIN_SLASH_COMMANDS = [
@@ -52,6 +76,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     description: 'Toggle plan mode',
     priority: 100,
     availability: (args) => (args.trim().toLowerCase() === 'clear' ? 'idle-only' : 'always'),
+  },
+  {
+    name: 'swarm',
+    aliases: [],
+    description: 'Toggle swarm mode or run one task in swarm mode',
+    priority: 100,
+    completeArgs: swarmArgumentCompletions,
+    availability: 'idle-only',
   },
   {
     name: 'model',
@@ -146,7 +178,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Start or manage an autonomous goal',
     priority: 80,
-    experimentalFlag: 'goal_command',
     // No argumentHint: the menu description stays as short as every other
     // command's. The subcommands (status/pause/resume/cancel/replace) surface in
     // the argument autocomplete list once the user types `/goal ` (see
@@ -156,6 +187,7 @@ export const BUILTIN_SLASH_COMMANDS = [
     // resume start (or restart) a turn and so are idle-only.
     availability: (args) => {
       const trimmed = args.trim();
+      if (trimmed === 'next' || trimmed.startsWith('next ')) return 'always';
       return trimmed === '' || trimmed === 'status' || trimmed === 'pause' || trimmed === 'cancel'
         ? 'always'
         : 'idle-only';

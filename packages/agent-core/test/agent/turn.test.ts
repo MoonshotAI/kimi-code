@@ -16,16 +16,16 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { HookEngine } from '../../src/session/hooks';
+import { abortError } from '../../src/utils/abort';
 import type { AgentOptions } from '../../src/agent';
 import type { Logger, LogPayload } from '../../src/logging';
-import {
-  estimateTokens,
-  estimateTokensForMessages,
-  estimateTokensForTools,
-} from '../../src/utils/tokens';
+import type {
+  QueuedSubagentRunResult,
+  QueuedSubagentTask,
+  SessionSubagentHost,
+} from '../../src/session/subagent-host';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
-import { SessionGoalStore, type SessionGoalState } from '../../src/session/goal';
 import { createCommandKaos, testAgent, type TestAgentOptions } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
@@ -246,6 +246,182 @@ describe('Agent turn flow', () => {
       `[emit] error   { "code": "internal", "message": "Unexpected generate call #1", "name": "Error", "retryable": false, "details": { "turnId": 0 } }`,
     );
     await ctx.expectResumeMatches();
+  });
+
+  it('keeps manual swarm mode active after a turn completes normally', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'swarm done' });
+
+    await ctx.rpc.enterSwarm({ trigger: 'manual' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a swarm task' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.agent.swarmMode.isActive).toBe(true);
+    expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBe(-1);
+    await ctx.expectResumeMatches();
+  });
+
+  it('exits task swarm mode after a turn completes normally', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'swarm done' });
+
+    await ctx.rpc.enterSwarm({ trigger: 'task' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a swarm task' }] });
+    await ctx.untilTurnEnd();
+
+    const turnEndedIndex = eventIndex(ctx, '[rpc]', 'turn.ended');
+    const swarmExitIndex = eventIndex(ctx, '[wire]', 'swarm_mode.exit');
+    const inactiveStatusIndex = ctx.allEvents.findIndex((entry, index) => {
+      return (
+        index > turnEndedIndex &&
+        entry.type === '[rpc]' &&
+        entry.event === 'agent.status.updated' &&
+        (entry.args as { readonly swarmMode?: boolean }).swarmMode === false
+      );
+    });
+
+    expect(ctx.agent.swarmMode.isActive).toBe(false);
+    expect(swarmExitIndex).toBeGreaterThan(turnEndedIndex);
+    expect(inactiveStatusIndex).toBeGreaterThan(turnEndedIndex);
+    expect(ctx.agent.context.history.at(-1)?.origin).toEqual({
+      kind: 'injection',
+      variant: 'swarm_mode_exit',
+    });
+    await ctx.expectResumeMatches();
+  });
+
+  it('exits task swarm mode when the swarm turn fails', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    await ctx.rpc.enterSwarm({ trigger: 'task' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fail a swarm task' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.agent.swarmMode.isActive).toBe(false);
+    expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBeGreaterThan(-1);
+  });
+
+  it('exits task swarm mode when the user cancels the swarm turn', async () => {
+    const ctx = testAgent({ generate: abortableGenerate });
+    ctx.configure();
+
+    const stepStarted = ctx.once('turn.step.started');
+    await ctx.rpc.enterSwarm({ trigger: 'task' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Cancel a swarm task' }] });
+    await stepStarted;
+    await ctx.rpc.cancel({ turnId: 0 });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.agent.swarmMode.isActive).toBe(false);
+    expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBeGreaterThan(-1);
+  });
+
+  it('enters silent swarm mode when the agent calls AgentSwarm', async () => {
+    const runQueued = vi.fn(async <T>(
+      tasks: readonly QueuedSubagentTask<T>[],
+    ): Promise<Array<QueuedSubagentRunResult<T>>> => {
+      return tasks.map((task, index) => ({
+        task,
+        agentId: `agent-${String(index + 1)}`,
+        status: 'completed' as const,
+        result: `result ${String(index + 1)}`,
+      }));
+    });
+    const subagentHost = mockSubagentHost({
+      runQueued: runQueued as unknown as SessionSubagentHost['runQueued'],
+    });
+    const ctx = testAgent({
+      subagentHost,
+    });
+    ctx.configure({ tools: ['AgentSwarm'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'I will launch a swarm.' },
+      agentSwarmCall(),
+    );
+    ctx.mockNextResponse({ type: 'text', text: 'Swarm results reviewed.' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Use AgentSwarm' }] });
+    await ctx.untilTurnEnd();
+
+    const enterEvent = ctx.allEvents.find(
+      (entry) => entry.type === '[wire]' && entry.event === 'swarm_mode.enter',
+    );
+    const reminderOrigins = ctx.agent.context.history
+      .map((message) => message.origin)
+      .filter((origin) => origin?.kind === 'injection');
+
+    expect(runQueued).toHaveBeenCalledTimes(1);
+    expect(enterEvent?.args).toMatchObject({ trigger: 'tool' });
+    expect(ctx.agent.swarmMode.isActive).toBe(false);
+    expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBeGreaterThan(
+      eventIndex(ctx, '[rpc]', 'turn.ended'),
+    );
+    expect(reminderOrigins).not.toContainEqual({ kind: 'injection', variant: 'swarm_mode' });
+    expect(reminderOrigins).not.toContainEqual({
+      kind: 'injection',
+      variant: 'swarm_mode_exit',
+    });
+    await ctx.expectResumeMatches();
+  });
+
+  it('includes provider finish reason details on empty response failures', async () => {
+    const generate: GenerateFn = async () => {
+      throw new APIEmptyResponseError(
+        'The API returned a response containing only thinking content without any text or tool calls. ' +
+          'Provider stop details: finishReason=filtered, rawFinishReason=content_filter.',
+        {
+          finishReason: 'filtered',
+          rawFinishReason: 'content_filter',
+        },
+      );
+    };
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Trigger filtered response' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: 'provider.api_error',
+            name: 'APIEmptyResponseError',
+            details: expect.objectContaining({
+              finishReason: 'filtered',
+              rawFinishReason: 'content_filter',
+              turnId: 0,
+            }),
+          }),
+        }),
+      }),
+    );
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'error',
+        args: expect.objectContaining({
+          code: 'provider.api_error',
+          name: 'APIEmptyResponseError',
+          details: expect.objectContaining({
+            finishReason: 'filtered',
+            rawFinishReason: 'content_filter',
+            turnId: 0,
+          }),
+        }),
+      }),
+    );
   });
 
   it('emits a friendly model.not_configured error when no model is configured', async () => {
@@ -633,6 +809,71 @@ describe('Agent turn flow', () => {
     expect(triggered).toEqual([['StopFailure', 'Error', 1]]);
   });
 
+  it('fires Interrupt when the user cancels an active turn', async () => {
+    const triggered: Array<[string, string, number]> = [];
+    const hookEngine = new HookEngine(
+      [
+        {
+          event: 'Interrupt',
+          command: 'exit 0',
+        },
+      ],
+      {
+        onTriggered: (event, target, count) => {
+          triggered.push([event, target, count]);
+        },
+      },
+    );
+    const ctx = testAgent({
+      hookEngine,
+      kaos: createCommandKaos('should-not-run'),
+    });
+    ctx.configure({ tools: ['Bash'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command' }] });
+    await ctx.untilApprovalRequest();
+
+    await ctx.rpc.cancel({ turnId: 0 });
+    await ctx.untilTurnEnd();
+
+    expect(triggered).toEqual([['Interrupt', '', 1]]);
+  });
+
+  it('does not fire Interrupt for a non-user (programmatic) abort', async () => {
+    const triggered: Array<[string, string, number]> = [];
+    const hookEngine = new HookEngine(
+      [
+        {
+          event: 'Interrupt',
+          command: 'exit 0',
+        },
+      ],
+      {
+        onTriggered: (event, target, count) => {
+          triggered.push([event, target, count]);
+        },
+      },
+    );
+    const ctx = testAgent({
+      hookEngine,
+      kaos: createCommandKaos('should-not-run'),
+    });
+    ctx.configure({ tools: ['Bash'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command' }] });
+    await ctx.untilApprovalRequest();
+
+    // A programmatic abort (e.g. a subagent deadline timeout) carries a plain
+    // AbortError as its reason, not a UserCancellationError, so it must not be
+    // reported as a user interrupt.
+    ctx.agent.turn.cancel(0, abortError());
+    await ctx.untilTurnEnd();
+
+    expect(triggered).toEqual([]);
+  });
+
   it('resolves the latest request-scoped OAuth auth before each generation', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
@@ -737,7 +978,7 @@ describe('Agent turn flow', () => {
     expect(payload).toMatchObject({
       turnStep: '0.1',
     });
-    expect(payload['estimatedInputTokens']).toEqual(expect.any(Number));
+    expect(payload).not.toHaveProperty('estimatedInputTokens');
     expect(payload).not.toHaveProperty('turnId');
     expect(payload).not.toHaveProperty('step');
     expect(payload).not.toHaveProperty('attempt');
@@ -805,7 +1046,7 @@ describe('Agent turn flow', () => {
     }
   });
 
-  it('includes tool schemas in estimated LLM request tokens', async () => {
+  it('does not log estimated LLM request tokens when tools are present', async () => {
     const { logger, entries } = captureLogs();
     const ctx = testAgent({ log: logger });
     ctx.configure();
@@ -817,14 +1058,10 @@ describe('Agent turn flow', () => {
 
     const input = ctx.llmCalls[0];
     expect(input?.tools.length).toBeGreaterThan(0);
-    const expectedTokens =
-      estimateTokens(input!.systemPrompt) +
-      estimateTokensForMessages(input!.history) +
-      estimateTokensForTools(input!.tools);
     const requestPayload = entries.find((entry) => entry.message === 'llm request')?.payload as
       | Record<string, unknown>
       | undefined;
-    expect(requestPayload?.['estimatedInputTokens']).toBe(expectedTokens);
+    expect(requestPayload).not.toHaveProperty('estimatedInputTokens');
   });
 
   it('classifies OAuth resolver failures as auth errors', async () => {
@@ -1333,7 +1570,7 @@ describe('Agent turn flow', () => {
       [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
       [emit] turn.step.completed                 { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
       [wire] usage.record                        { "model": "mock-model", "usage": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 29, "maxContextTokens": 1000000, "contextUsage": 0.000029, "planMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 29, "maxContextTokens": 1000000, "contextUsage": 0.000029, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_message              { "message": { "role": "user", "content": [ { "type": "text", "text": "Also mention the steer." } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] context.append_loop_event           { "event": { "type": "step.begin", "uuid": "<uuid-3>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [emit] turn.step.started                   { "turnId": 0, "step": 2, "stepId": "<uuid-3>" }
@@ -1342,7 +1579,7 @@ describe('Agent turn flow', () => {
       [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 39, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
       [emit] turn.step.completed                 { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 39, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                        { "model": "mock-model", "usage": { "inputOther": 39, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 50, "maxContextTokens": 1000000, "contextUsage": 0.00005, "planMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 46, "output": 33, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 46, "output": 33, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 46, "output": 33, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 50, "maxContextTokens": 1000000, "contextUsage": 0.00005, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 46, "output": 33, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 46, "output": 33, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 46, "output": 33, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                          { "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -1400,6 +1637,37 @@ describe('Agent turn flow', () => {
   });
 });
 
+const abortableGenerate: GenerateFn = async (
+  _chat,
+  _systemPrompt,
+  _tools,
+  _history,
+  _callbacks,
+  options,
+) => {
+  await new Promise<void>((_resolve, reject) => {
+    const rejectAbort = () => {
+      const error = new Error('Aborted');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    if (options?.signal?.aborted === true) {
+      rejectAbort();
+      return;
+    }
+    options?.signal?.addEventListener('abort', rejectAbort, { once: true });
+  });
+  throw new Error('abortableGenerate unexpectedly completed');
+};
+
+function eventIndex(
+  ctx: Pick<ReturnType<typeof testAgent>, 'allEvents'>,
+  type: string,
+  event: string,
+): number {
+  return ctx.allEvents.findIndex((entry) => entry.type === type && entry.event === event);
+}
+
 function bashCall(): ToolCall {
   return bashCallWithId('call_bash', 'printf should-not-run');
 }
@@ -1411,6 +1679,26 @@ function bashCallWithId(id: string, command: string): ToolCall {
     name: 'Bash',
     arguments: JSON.stringify({ command, timeout: 60 }),
   };
+}
+
+function agentSwarmCall(): ToolCall {
+  return {
+    type: 'function',
+    id: 'call_swarm',
+    name: 'AgentSwarm',
+    arguments: JSON.stringify({
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    }),
+  };
+}
+
+function mockSubagentHost<T extends Partial<SessionSubagentHost>>(
+  host: T,
+): T & SessionSubagentHost {
+  return { spawn: vi.fn(), resume: vi.fn(), runQueued: vi.fn(), ...host } as unknown as T &
+    SessionSubagentHost;
 }
 
 interface ApiErrorTelemetryCase {

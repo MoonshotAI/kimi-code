@@ -1,7 +1,5 @@
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
-import type { ColorPalette } from '#/tui/theme/colors';
-
 const UPDATE_PREFERENCE_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'on',
@@ -17,7 +15,6 @@ const UPDATE_PREFERENCE_OPTIONS: readonly ChoiceOption[] = [
 
 export interface UpdatePreferenceSelectorOptions {
   readonly currentValue: boolean;
-  readonly colors: ColorPalette;
   readonly onSelect: (value: boolean) => void;
   readonly onCancel: () => void;
 }
@@ -28,7 +25,6 @@ export class UpdatePreferenceSelectorComponent extends ChoicePickerComponent {
       title: 'Automatic updates',
       options: [...UPDATE_PREFERENCE_OPTIONS],
       currentValue: opts.currentValue ? 'on' : 'off',
-      colors: opts.colors,
       onSelect: (value) => {
         opts.onSelect(value === 'on');
       },

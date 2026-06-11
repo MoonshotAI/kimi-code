@@ -221,6 +221,10 @@ describe('AcpServer.resumeSession', () => {
     const clientConn = new ClientSideConnection((_a) => client, clientStream);
 
     await clientConn.resumeSession({ sessionId, cwd: '/tmp/x', mcpServers: [] });
+    // available_commands_update is emitted via setTimeout(0) AFTER the
+    // resumeSession reply so Zed sees the wire id first; wait one
+    // macrotask before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 25));
 
     // Exactly ONE notification: the available_commands_update. Compare
     // to session-load.test.ts which sees 1 update per history turn

@@ -561,7 +561,9 @@ describe('Agent context', () => {
 
     expect(() => {
       ctx.agent.context.undo(2);
-    }).toThrow('Nothing to undo in the active context.');
+    }).toThrow(
+      'Cannot undo 2 prompts; only 1 prompt can be undone in the active context after the last compaction.',
+    );
 
     expect(ctx.agent.context.history).toEqual([
       expect.objectContaining({

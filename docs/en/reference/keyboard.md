@@ -34,7 +34,6 @@ Press `Shift-Tab` to enable or disable Plan mode. When enabled, the Agent priori
 | `Ctrl-G` | Edit the current input in an external editor |
 | `Ctrl-V` | Paste an image or video from the clipboard (Unix / macOS) |
 | `Alt-V` | Paste an image or video from the clipboard (Windows) |
-| `Ctrl-E` | Expand or collapse the Plan card (moves the cursor to end-of-line when no Plan card is present) |
 | `Ctrl--` | Undo |
 
 Pressing `Ctrl-G` opens an external editor, selected according to the following priority:

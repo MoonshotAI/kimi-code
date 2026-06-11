@@ -62,6 +62,28 @@ In the AI chat panel menu, click **Configure ACP agents** and add the following 
 
 JetBrains is strict about the `command` field — always use an **absolute path**, which you can get by running `which kimi` in a terminal. After saving, `Kimi Code CLI` will appear in the AI chat's agent selector.
 
+## Using Kimi Code CLI in Paseo
+
+[Paseo](https://paseo.sh/) is a self-hosted orchestrator that runs and supervises agent CLIs from your desktop, web, and mobile. It connects to Kimi Code CLI over ACP, the same way an IDE does.
+
+Pick **Kimi Code CLI** from Paseo's built-in ACP provider catalog, or add a custom provider in `~/.paseo/config.json`:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "kimi": {
+        "extends": "acp",
+        "label": "Kimi Code CLI",
+        "command": ["kimi", "acp"]
+      }
+    }
+  }
+}
+```
+
+Paseo's generic ACP adapter does not drive the login flow, so complete the terminal login first (see [Prerequisites](#prerequisites)) — otherwise session creation fails with `Authentication required`.
+
 ## Troubleshooting
 
 - **Session disconnects immediately / IDE shows "agent exited"**: usually a wrong `command` path or a missing login. Run `kimi acp` in a terminal first to verify — if it blocks waiting for stdin, the CLI itself is fine and the problem is in the IDE configuration; if it exits immediately with an error, follow the error message (most commonly you need to run `/login`).

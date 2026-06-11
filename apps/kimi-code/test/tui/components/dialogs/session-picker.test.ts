@@ -2,7 +2,6 @@ import { visibleWidth } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionPickerComponent } from '#/tui/components/dialogs/session-picker';
-import { getColorPalette } from '#/tui/theme/colors';
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\[[0-?]*[ -/]*[@-~]/g, '');
@@ -15,6 +14,26 @@ function renderPlain(component: SessionPickerComponent, width = 120): string {
 describe('SessionPickerComponent', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('forwards Ctrl-C and Ctrl-D to optional host shortcuts', () => {
+    const onCtrlC = vi.fn();
+    const onCtrlD = vi.fn();
+    const component = new SessionPickerComponent({
+      sessions: [],
+      loading: false,
+      currentSessionId: '',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onCtrlC,
+      onCtrlD,
+    });
+
+    component.handleInput('\u0003');
+    component.handleInput('\u0004');
+
+    expect(onCtrlC).toHaveBeenCalledOnce();
+    expect(onCtrlD).toHaveBeenCalledOnce();
   });
 
   it('renders millisecond updated_at timestamps as relative times', () => {
@@ -38,7 +57,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_other',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -66,7 +84,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_other',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -96,7 +113,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_other',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -123,7 +139,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_other',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -157,7 +172,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_current',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -184,7 +198,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_other',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -220,7 +233,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_other',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -249,7 +261,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_cjk_long_session_id_value',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -284,7 +295,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: id,
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });

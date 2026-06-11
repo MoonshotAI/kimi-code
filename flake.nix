@@ -69,6 +69,7 @@
         ./packages/migration-legacy
         ./packages/node-sdk
         ./packages/oauth
+        ./packages/protocol
         ./packages/telemetry
         ./apps/kimi-code
         ./apps/vis
@@ -85,6 +86,7 @@
         "@moonshot-ai/migration-legacy"
         "@moonshot-ai/kimi-code-sdk"
         "@moonshot-ai/kimi-code-oauth"
+        "@moonshot-ai/protocol"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/kimi-code"
         "@moonshot-ai/vis"
@@ -140,13 +142,14 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-/Kgq76JAgi1NygbnYkBNACUl+U9TO5zwF1MaCzk3n9o=";
+              hash = "sha256-XwkLwxWZtOaw1N1GKR9G3z0yhXO/lDB5+O+VKtgxKWo=";
             };
 
             nativeBuildInputs = [
               nodejs
               pnpm
               (pkgs.pnpmConfigHook.override { inherit pnpm; })
+              pkgs.makeWrapper
             ]
             # The SEA inject step (postject) invalidates the macOS code
             # signature on the copied Node executable; build.mjs then re-applies
@@ -190,6 +193,10 @@
               runHook postInstall
             '';
 
+            postInstall = ''
+              wrapProgram $out/bin/kimi --prefix PATH : ${lib.makeBinPath [ pkgs.ripgrep pkgs.fd ]}
+            '';
+
             meta = {
               description = "Kimi Code CLI";
               homepage = "https://github.com/MoonshotAI/kimi-code";
@@ -223,6 +230,8 @@
             packages = [
               nodejs
               pnpm
+              pkgs.ripgrep
+              pkgs.fd
             ];
           };
       });

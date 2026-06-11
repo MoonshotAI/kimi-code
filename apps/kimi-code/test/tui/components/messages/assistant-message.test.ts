@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
-import { darkColors, lightColors } from '#/tui/theme/colors';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 
 import { captureProcessWrite } from '../../../helpers/process';
@@ -19,7 +18,7 @@ describe('AssistantMessageComponent', () => {
   });
 
   it('uses the stable status bullet without stealing content width', () => {
-    const component = new AssistantMessageComponent(createMarkdownTheme(darkColors), darkColors);
+    const component = new AssistantMessageComponent();
 
     component.updateContent('abcdef');
 
@@ -31,7 +30,7 @@ describe('AssistantMessageComponent', () => {
   it('renders unknown markdown fence languages as plain text without stderr noise', () => {
     const stderr = captureProcessWrite('stderr');
     try {
-      const theme = createMarkdownTheme(darkColors);
+      const theme = createMarkdownTheme();
       expect(theme.highlightCode?.('hello\nworld', 'abcxyz')).toEqual(['hello', 'world']);
       expect(stderr.text()).not.toContain('Could not find the language');
     } finally {
@@ -40,7 +39,7 @@ describe('AssistantMessageComponent', () => {
   });
 
   it('preserves literal hook result XML in normal assistant text', () => {
-    const component = new AssistantMessageComponent(createMarkdownTheme(darkColors), darkColors);
+    const component = new AssistantMessageComponent();
 
     component.updateContent('<hook_result hook_event="UserPromptSubmit">\n{}\n</hook_result>');
 
@@ -51,37 +50,36 @@ describe('AssistantMessageComponent', () => {
     expect(text).not.toContain('UserPromptSubmit hook');
   });
 
-  it('re-renders content with new theme after applyTheme', () => {
-    const component = new AssistantMessageComponent(createMarkdownTheme(darkColors), darkColors);
+  it('rebuilds content on invalidate after theme change', () => {
+    const component = new AssistantMessageComponent();
     component.updateContent('hello world');
 
-    const beforeTheme = component.render(40).map(strip).join('\n');
-    expect(beforeTheme).toContain('hello world');
+    const before = component.render(40).map(strip).join('\n');
+    expect(before).toContain('hello world');
 
-    component.applyTheme(createMarkdownTheme(lightColors), lightColors);
+    component.invalidate();
 
-    const afterTheme = component.render(40).map(strip).join('\n');
-    expect(afterTheme).toContain('hello world');
+    const after = component.render(40).map(strip).join('\n');
+    expect(after).toContain('hello world');
   });
 
-  it('does not render content when lastText is empty after applyTheme', () => {
-    const component = new AssistantMessageComponent(createMarkdownTheme(darkColors), darkColors);
+  it('does not render content after invalidate when lastText is empty', () => {
+    const component = new AssistantMessageComponent();
 
-    component.applyTheme(createMarkdownTheme(lightColors), lightColors);
+    component.invalidate();
 
     expect(component.render(40)).toEqual([]);
   });
 
-  it('updates bullet color after applyTheme', () => {
-    const component = new AssistantMessageComponent(createMarkdownTheme(darkColors), darkColors);
-    component.updateContent('test');
+  it('does not render content after invalidate when lastText is whitespace only', () => {
+    const component = new AssistantMessageComponent();
+    component.updateContent('   ');
 
-    const darkRender = component.render(40);
-    expect(darkRender.some((line) => line.length > 0)).toBe(true);
+    const before = component.render(40);
+    expect(before).toEqual([]);
 
-    component.applyTheme(createMarkdownTheme(lightColors), lightColors);
+    component.invalidate();
 
-    const lightRender = component.render(40);
-    expect(lightRender.some((line) => line.length > 0)).toBe(true);
+    expect(component.render(40)).toEqual([]);
   });
 });

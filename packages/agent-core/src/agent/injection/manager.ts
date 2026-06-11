@@ -69,7 +69,6 @@ export class InjectionManager {
   }
 
   private activeGoalInjector(): GoalInjector | null {
-    if (!this.agent.experimentalFlags.enabled('goal_command')) return null;
     return this.goalInjector;
   }
 }

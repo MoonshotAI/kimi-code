@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/agent-core",
-  "version": "0.8.0",
+  "version": "0.12.1",
   "private": true,
   "description": "The unified agent engine for Kimi",
   "license": "MIT",
@@ -58,6 +58,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@moonshot-ai/kaos": "workspace:^",
     "@moonshot-ai/kosong": "workspace:^",
+    "@moonshot-ai/protocol": "workspace:^",
     "@mozilla/readability": "^0.6.0",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
@@ -71,7 +72,9 @@
     "regexp.escape": "^2.0.1",
     "retry": "0.13.1",
     "smol-toml": "^1.6.1",
+    "socks": "^2.8.9",
     "tar": "^7.5.13",
+    "undici": "^7.27.1",
     "yauzl": "^3.3.0",
     "zod": "catalog:"
   },

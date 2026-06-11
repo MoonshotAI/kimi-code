@@ -64,7 +64,6 @@ function makeProps(overrides: Partial<TasksBrowserProps> = {}): TasksBrowserProp
     tailOutput: undefined,
     tailLoading: false,
     flashMessage: undefined,
-    colors: darkColors,
     onSelect: vi.fn(),
     onToggleFilter: vi.fn(),
     onRefresh: vi.fn(),

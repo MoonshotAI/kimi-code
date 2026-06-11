@@ -13,7 +13,9 @@ import {
   type SDKAPI,
   type ToolCallRequest,
   type ToolCallResponse,
+  type SwarmModeTrigger,
 } from '@moonshot-ai/agent-core';
+import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { ApprovalHandler, QuestionHandler } from '#/events';
 import type {
@@ -80,6 +82,10 @@ export interface SetSessionPlanModeRpcInput extends SessionIdRpcInput {
   readonly enabled: boolean;
 }
 
+export type SetSessionSwarmModeRpcInput =
+  | (SessionIdRpcInput & { readonly enabled: true; readonly trigger: SwarmModeTrigger })
+  | (SessionIdRpcInput & { readonly enabled: false });
+
 export interface ActivateSkillRpcInput extends SessionIdRpcInput {
   readonly name: string;
   readonly args?: string | undefined;
@@ -106,9 +112,29 @@ export abstract class SDKRpcClientBase {
     return rpc.createSession(coreInput);
   }
 
+  async createSessionWithKaos(
+    input: CreateSessionOptions,
+    kaos: Kaos,
+    persistenceKaos?: Kaos,
+  ): Promise<SessionSummary> {
+    void kaos;
+    void persistenceKaos;
+    return this.createSession(input);
+  }
+
   async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
     const rpc = await this.getRpc();
     return rpc.resumeSession({ ...input, sessionId: input.id });
+  }
+
+  async resumeSessionWithKaos(
+    input: ResumeSessionInput,
+    kaos: Kaos,
+    persistenceKaos?: Kaos,
+  ): Promise<ResumedSessionSummary> {
+    void kaos;
+    void persistenceKaos;
+    return this.resumeSession(input);
   }
 
   async reloadSession(input: SessionIdRpcInput): Promise<ResumedSessionSummary> {
@@ -260,6 +286,35 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async setSwarmMode(input: SetSessionSwarmModeRpcInput): Promise<void> {
+    if (input.enabled) return this.enterSwarmMode(input);
+    return this.exitSwarmMode(input);
+  }
+
+  async swarm(input: SessionPromptRpcInput): Promise<void> {
+    await this.enterSwarmMode({ sessionId: input.sessionId, trigger: 'task' });
+    return this.prompt(input);
+  }
+
+  private async enterSwarmMode(
+    input: SessionIdRpcInput & { readonly trigger: SwarmModeTrigger },
+  ): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.enterSwarm({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      trigger: input.trigger,
+    });
+  }
+
+  private async exitSwarmMode(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.exitSwarm({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
   async getPlan(input: SessionIdRpcInput): Promise<SessionPlan> {
     const rpc = await this.getRpc();
     return rpc.getPlan({
@@ -337,6 +392,10 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
     });
+    const swarmMode = await rpc.getSwarmMode({
+      sessionId: input.sessionId,
+      agentId,
+    });
     const usage = await rpc.getUsage({
       sessionId: input.sessionId,
       agentId,
@@ -351,6 +410,7 @@ export abstract class SDKRpcClientBase {
       thinkingLevel: config.thinkingLevel,
       permission: permission.mode,
       planMode: plan !== null,
+      swarmMode,
       contextTokens,
       maxContextTokens,
       contextUsage,
@@ -403,31 +463,39 @@ export abstract class SDKRpcClientBase {
     const rpc = await this.getRpc();
     return rpc.createGoal({
       sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
       objective: input.objective,
-      completionCriterion: input.completionCriterion,
-      budgetLimits: input.budgetLimits,
       replace: input.replace,
     });
   }
 
   async getGoal(input: SessionIdRpcInput): Promise<GoalToolResult> {
     const rpc = await this.getRpc();
-    return rpc.getGoal({ sessionId: input.sessionId });
+    return rpc.getGoal({ sessionId: input.sessionId, agentId: this.interactiveAgentId });
   }
 
-  async pauseGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+  async pauseGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const rpc = await this.getRpc();
-    return rpc.pauseGoal({ sessionId: input.sessionId, reason: input.reason });
+    return rpc.pauseGoal({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
   }
 
-  async resumeGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+  async resumeGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const rpc = await this.getRpc();
-    return rpc.resumeGoal({ sessionId: input.sessionId, reason: input.reason });
+    return rpc.resumeGoal({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
   }
 
-  async cancelGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+  async cancelGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const rpc = await this.getRpc();
-    return rpc.cancelGoal({ sessionId: input.sessionId, reason: input.reason });
+    return rpc.cancelGoal({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
   }
 
   async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {

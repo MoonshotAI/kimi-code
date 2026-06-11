@@ -121,7 +121,7 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
 
 ### `kimi login`
 
@@ -139,6 +139,33 @@ Switch Kimi Code CLI to ACP (Agent Client Protocol) mode, communicating with an 
 
 ```sh
 kimi acp
+```
+
+### `kimi doctor`
+
+Validate `config.toml` and `tui.toml` without starting the TUI or modifying either file. By default, the command checks the files under `KIMI_CODE_HOME` (or `~/.kimi-code` when the environment variable is unset). Missing default files are reported as skipped because built-in defaults can apply.
+
+```sh
+kimi doctor
+```
+
+| Command | Description |
+| --- | --- |
+| `kimi doctor` | Validate the default `config.toml` and `tui.toml` |
+| `kimi doctor config [path]` | Validate only `config.toml`, using `path` instead of the default file when provided |
+| `kimi doctor tui [path]` | Validate only `tui.toml`, using `path` instead of the default file when provided |
+
+When an explicit path is passed, the file must exist. The command exits with `0` when all checked files are valid or skipped, and `1` when any requested file is missing or invalid.
+
+```sh
+# Check the default config files
+kimi doctor
+
+# Check only the default runtime config
+kimi doctor config
+
+# Check a candidate TUI config before replacing the live config
+kimi doctor tui ./tui.toml
 ```
 
 ### `kimi export`

@@ -17,19 +17,15 @@ function makeSession() {
 }
 
 describe('Session goal methods', () => {
-  it('createGoal forwards the full payload with sessionId', async () => {
+  it('createGoal forwards the supported payload with sessionId', async () => {
     const { session, rpc } = makeSession();
     await session.createGoal({
       objective: 'Ship feature X',
-      completionCriterion: 'tests pass',
-      budgetLimits: { tokenBudget: 5000 },
       replace: true,
     });
     expect(rpc.createGoal).toHaveBeenCalledWith({
       sessionId: 'ses_goal',
       objective: 'Ship feature X',
-      completionCriterion: 'tests pass',
-      budgetLimits: { tokenBudget: 5000 },
       replace: true,
     });
   });
@@ -40,22 +36,22 @@ describe('Session goal methods', () => {
     expect(rpc.getGoal).toHaveBeenCalledWith({ sessionId: 'ses_goal' });
   });
 
-  it('pauseGoal forwards a reason', async () => {
+  it('pauseGoal forwards sessionId', async () => {
     const { session, rpc } = makeSession();
-    await session.pauseGoal({ reason: 'taking a break' });
-    expect(rpc.pauseGoal).toHaveBeenCalledWith({ sessionId: 'ses_goal', reason: 'taking a break' });
+    await session.pauseGoal();
+    expect(rpc.pauseGoal).toHaveBeenCalledWith({ sessionId: 'ses_goal' });
   });
 
   it('resumeGoal forwards sessionId', async () => {
     const { session, rpc } = makeSession();
     await session.resumeGoal();
-    expect(rpc.resumeGoal).toHaveBeenCalledWith({ sessionId: 'ses_goal', reason: undefined });
+    expect(rpc.resumeGoal).toHaveBeenCalledWith({ sessionId: 'ses_goal' });
   });
 
   it('cancelGoal forwards sessionId', async () => {
     const { session, rpc } = makeSession();
     await session.cancelGoal();
-    expect(rpc.cancelGoal).toHaveBeenCalledWith({ sessionId: 'ses_goal', reason: undefined });
+    expect(rpc.cancelGoal).toHaveBeenCalledWith({ sessionId: 'ses_goal' });
   });
 
   it('does not expose a public clearGoal or updateGoal method', () => {

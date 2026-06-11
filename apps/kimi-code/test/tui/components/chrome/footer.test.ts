@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
-import { darkColors } from '#/tui/theme/colors';
+import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { AppState } from '#/tui/types';
 
 const TRUECOLOR_PATTERN = /\[38;2;(\d+);(\d+);(\d+)m/g;
@@ -47,6 +47,7 @@ const appState: AppState = {
   streamingPhase: 'idle',
   streamingStartTime: 0,
   planMode: false,
+  swarmMode: false,
   theme: 'dark',
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
@@ -70,7 +71,7 @@ describe('FooterComponent', () => {
 
   it('paints the model name in rainbow while colored', () => {
     setDanceView(true, 0);
-    const footer = new FooterComponent(appState, darkColors);
+    const footer = new FooterComponent(appState);
 
     const codes = truecolorCodes(footer.render(120).join('\n'));
 
@@ -81,11 +82,25 @@ describe('FooterComponent', () => {
   });
 
   it('renders the model name in its normal color when not dancing', () => {
-    const footer = new FooterComponent(appState, darkColors);
+    const footer = new FooterComponent(appState);
 
     const codes = truecolorCodes(footer.render(120).join('\n'));
 
     expect(codes.has(RAINBOW_CYAN)).toBe(false);
     expect(codes.has(RAINBOW_GREEN)).toBe(false);
+  });
+
+  it('repaints from the active palette on the next render (no setColors needed)', () => {
+    const footer = new FooterComponent(appState);
+    const before = footer.render(120).join('\n');
+
+    currentTheme.setPalette(lightColors);
+    try {
+      const after = footer.render(120).join('\n');
+      // Reads currentTheme live, so a palette swap changes the emitted colours.
+      expect(after).not.toBe(before);
+    } finally {
+      currentTheme.setPalette(darkColors);
+    }
   });
 });

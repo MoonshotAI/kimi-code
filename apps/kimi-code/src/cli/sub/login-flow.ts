@@ -17,18 +17,17 @@ export async function runLoginFlow(): Promise<never> {
     uiMode: 'cli',
   });
   const controller = new AbortController();
-  process.once('SIGINT', () => controller.abort());
+  process.once('SIGINT', () => {
+    controller.abort();
+  });
   try {
     const result = await harness.auth.login(undefined, {
       signal: controller.signal,
       onDeviceCode: (data) => {
         const url = data.verificationUriComplete || data.verificationUri;
-        // Best-effort: try to open the user's default browser at the
-        // pre-baked URL (which already embeds the user code). Print the
-        // URL + code as a fallback for headless boxes / when openUrl
-        // silently fails (it `execFile`s `open`/`xdg-open`/`cmd start`
-        // with no error handling — see `utils/open-url.ts`).
-        openUrl(url);
+        // Print the manual fallback before attempting to open the user's
+        // browser so headless/browser-opener failures never hide the URL
+        // and code needed to complete login.
         process.stderr.write(
           [
             '',
@@ -43,15 +42,20 @@ export async function runLoginFlow(): Promise<never> {
             .filter((line): line is string => line !== undefined)
             .join('\n'),
         );
+        try {
+          openUrl(url);
+        } catch {
+          // Best effort only: the manual fallback has already been printed.
+        }
       },
     });
     process.stderr.write(`Logged in to ${result.providerName}.\n`);
     process.exit(0);
-  } catch (err) {
+  } catch (error) {
     if (controller.signal.aborted) {
       process.stderr.write('Login cancelled.\n');
     } else {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`Login failed: ${message}\n`);
     }
     process.exit(1);

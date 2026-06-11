@@ -6,9 +6,57 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
-import { loadPluginMarketplace } from '#/utils/plugin-marketplace';
+import { computeUpdateStatus, loadPluginMarketplace } from '#/utils/plugin-marketplace';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+
+describe('computeUpdateStatus', () => {
+  it('reports not-installed when the plugin is absent', () => {
+    expect(computeUpdateStatus('1.0.0', undefined, false)).toEqual({ kind: 'not-installed' });
+  });
+
+  it('reports an update when the marketplace version is newer', () => {
+    expect(computeUpdateStatus('5.1.0', '5.0.0', true)).toEqual({
+      kind: 'update',
+      local: '5.0.0',
+      latest: '5.1.0',
+    });
+  });
+
+  it('reports up-to-date when versions match', () => {
+    expect(computeUpdateStatus('5.1.0', '5.1.0', true)).toEqual({
+      kind: 'up-to-date',
+      version: '5.1.0',
+    });
+  });
+
+  it('does not offer a downgrade when the local version is ahead', () => {
+    expect(computeUpdateStatus('3.1.1', '3.2.0', true)).toEqual({
+      kind: 'up-to-date',
+      version: '3.2.0',
+    });
+  });
+
+  it('never reports an update for non-semver versions', () => {
+    expect(computeUpdateStatus('latest', '5.0.0', true).kind).toBe('up-to-date');
+    expect(computeUpdateStatus('5.1.0', 'dev', true).kind).toBe('up-to-date');
+  });
+
+  it('shows the local version even when the marketplace omits one', () => {
+    expect(computeUpdateStatus(undefined, '5.0.0', true)).toEqual({
+      kind: 'up-to-date',
+      version: '5.0.0',
+    });
+  });
+
+  it('does not claim the marketplace version as installed when the local version is unknown', () => {
+    // No spurious `installed · v<latest>`, and no permanent suppression of updates.
+    expect(computeUpdateStatus('5.1.0', undefined, true)).toEqual({
+      kind: 'up-to-date',
+      version: undefined,
+    });
+  });
+});
 
 describe('loadPluginMarketplace', () => {
   it('loads a local marketplace file and resolves relative plugin sources', async () => {

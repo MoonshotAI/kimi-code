@@ -25,12 +25,11 @@ import {
   visibleWidth,
   type Focusable,
 } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLines } from '#/tui/components/media/diff-preview';
 import type { DiffDisplayBlock, FileContentDisplayBlock } from '#/tui/reverse-rpc/types';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 
 const ELLIPSIS = '…';
@@ -39,7 +38,6 @@ export type ApprovalPreviewBlock = DiffDisplayBlock | FileContentDisplayBlock;
 
 export interface ApprovalPreviewViewerProps {
   readonly block: ApprovalPreviewBlock;
-  readonly colors: ColorPalette;
   readonly onClose: () => void;
 }
 
@@ -62,9 +60,9 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
   private readonly props: ApprovalPreviewViewerProps;
   private readonly terminal: Terminal;
   /** Pre-rendered body lines (ANSI-styled, no border / no gutter). */
-  private readonly bodyLines: string[];
+  private bodyLines: string[];
   /** Title shown in the header (path + diff stats / "Write" label). */
-  private readonly headerTitle: string;
+  private headerTitle: string;
   /** Index of the topmost visible line. */
   private scrollTop = 0;
 
@@ -72,7 +70,7 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
     super();
     this.props = props;
     this.terminal = terminal;
-    const built = buildBody(props.block, props.colors);
+    const built = buildBody(props.block);
     this.bodyLines = built.lines;
     this.headerTitle = built.title;
   }
@@ -98,11 +96,11 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
       this.scrollBy(1);
       return;
     }
-    if (matchesKey(data, Key.pageUp) || k === ' ' || data === '') {
+    if (matchesKey(data, Key.pageUp) || k === ' ' || data === '\x02') {
       this.scrollBy(-Math.max(1, visible - 1));
       return;
     }
-    if (matchesKey(data, Key.pageDown) || data === '') {
+    if (matchesKey(data, Key.pageDown) || data === '\x06') {
       this.scrollBy(Math.max(1, visible - 1));
       return;
     }
@@ -120,9 +118,15 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
     this.scrollTo(this.scrollTop + delta);
   }
 
+  override invalidate(): void {
+    const built = buildBody(this.props.block);
+    this.bodyLines = built.lines;
+    this.headerTitle = built.title;
+  }
+
   private scrollTo(target: number): void {
     this.scrollTop = Math.max(0, Math.min(target, this.maxScroll()));
-    this.invalidate();
+    super.invalidate();
   }
 
   private maxScroll(): number {
@@ -146,14 +150,11 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
   }
 
   private renderHeader(width: number): string {
-    const colors = this.props.colors;
-    const title = chalk.hex(colors.primary).bold(' Preview ');
+    const title = currentTheme.boldFg('primary', ' Preview ');
     return fitExactly(title + this.headerTitle, width);
   }
 
   private renderBody(width: number, bodyHeight: number): string[] {
-    const colors = this.props.colors;
-    const stroke = colors.primary;
     const innerWidth = Math.max(1, width - 4);
 
     const max = this.maxScroll();
@@ -161,23 +162,22 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
     if (this.scrollTop < 0) this.scrollTop = 0;
 
     const viewRows = bodyHeight - 2;
-    const top = chalk.hex(stroke)('┌' + '─'.repeat(Math.max(0, width - 2)) + '┐');
-    const bottom = chalk.hex(stroke)('└' + '─'.repeat(Math.max(0, width - 2)) + '┘');
+    const top = currentTheme.fg('primary', '┌' + '─'.repeat(Math.max(0, width - 2)) + '┐');
+    const bottom = currentTheme.fg('primary', '└' + '─'.repeat(Math.max(0, width - 2)) + '┘');
 
     const out: string[] = [top];
     for (let i = 0; i < viewRows; i++) {
       const lineIndex = this.scrollTop + i;
       const raw = this.bodyLines[lineIndex] ?? '';
-      out.push(chalk.hex(stroke)('│ ') + fitExactly(raw, innerWidth) + chalk.hex(stroke)(' │'));
+      out.push(currentTheme.fg('primary', '│ ') + fitExactly(raw, innerWidth) + currentTheme.fg('primary', ' │'));
     }
     out.push(bottom);
     return out;
   }
 
   private renderFooter(width: number, bodyHeight: number): string {
-    const colors = this.props.colors;
-    const key = (text: string): string => chalk.hex(colors.primary).bold(text);
-    const dim = (text: string): string => chalk.hex(colors.textMuted)(text);
+    const key = (text: string): string => currentTheme.boldFg('primary', text);
+    const dim = (text: string): string => currentTheme.fg('textMuted', text);
 
     const total = this.bodyLines.length;
     const viewRows = Math.max(1, bodyHeight - 2);
@@ -186,7 +186,8 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
     const lineFrom = total === 0 ? 0 : this.scrollTop + 1;
     const lineTo = Math.min(total, this.scrollTop + viewRows);
 
-    const position = chalk.hex(colors.textMuted)(
+    const position = currentTheme.fg(
+      'textMuted',
       ` ${String(lineFrom)}-${String(lineTo)} / ${String(total)} (${String(percent)}%) `,
     );
     const keys =
@@ -209,14 +210,14 @@ interface BuiltBody {
   title: string;
 }
 
-function buildBody(block: ApprovalPreviewBlock, colors: ColorPalette): BuiltBody {
+function buildBody(block: ApprovalPreviewBlock): BuiltBody {
   if (block.type === 'diff') {
-    return buildDiffBody(block, colors);
+    return buildDiffBody(block);
   }
-  return buildFileContentBody(block, colors);
+  return buildFileContentBody(block);
 }
 
-function buildDiffBody(block: DiffDisplayBlock, colors: ColorPalette): BuiltBody {
+function buildDiffBody(block: DiffDisplayBlock): BuiltBody {
   // renderDiffLines emits a `+N -M path` header on its first line followed
   // by every changed line. We pull the header out into the viewer chrome so
   // the body is purely scrollable diff content; this also means we don't
@@ -225,7 +226,6 @@ function buildDiffBody(block: DiffDisplayBlock, colors: ColorPalette): BuiltBody
     block.old_text,
     block.new_text,
     block.path,
-    colors,
     false,
     block.old_start ?? 1,
     block.new_start ?? 1,
@@ -234,14 +234,13 @@ function buildDiffBody(block: DiffDisplayBlock, colors: ColorPalette): BuiltBody
   return { lines: rest, title: stripLeadingSpace(header) };
 }
 
-function buildFileContentBody(block: FileContentDisplayBlock, colors: ColorPalette): BuiltBody {
+function buildFileContentBody(block: FileContentDisplayBlock): BuiltBody {
   const lang = block.language ?? langFromPath(block.path);
   const highlighted = highlightLines(block.content, lang);
-  const gutter = chalk.hex(colors.diffGutter);
   const lines = highlighted.map(
-    (line, i) => gutter(String(i + 1).padStart(4) + '  ') + line,
+    (line, i) => currentTheme.fg('diffGutter', String(i + 1).padStart(4) + '  ') + line,
   );
-  const title = chalk.hex(colors.textStrong)(block.path);
+  const title = currentTheme.fg('textStrong', block.path);
   return { lines, title };
 }
 

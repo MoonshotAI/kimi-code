@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
+import type { Kaos } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -10,6 +11,7 @@ import {
   createRPC,
   ErrorCodes,
   KimiCore,
+  KimiError,
   type ApprovalResponse,
   type CoreAPI,
   type SDKAPI,
@@ -21,6 +23,7 @@ import {
 } from '../../src/logging/logger';
 import { resolveLoggingConfig } from '../../src/logging/resolve-config';
 import type { OAuthTokenProviderResolver } from '../../src/session/provider-manager';
+import { testKaos } from '../fixtures/test-kaos';
 
 function requiredFlagEnv(id: string): string {
   const def = FLAG_DEFINITIONS.find((item) => item.id === id);
@@ -37,6 +40,16 @@ function clearExperimentalEnv(): void {
 
 function experimentalFeatureEnabled(core: KimiCore, id: string): boolean | undefined {
   return core.getExperimentalFeatures().find((feature) => feature.id === id)?.enabled;
+}
+
+function setCoreKaos(core: KimiCore, kaos: Promise<Kaos>): void {
+  (core as unknown as { kaos?: Promise<Kaos> }).kaos = kaos;
+}
+
+function rejectedKaos(error: Error): Promise<Kaos> {
+  const promise = Promise.reject(error) as Promise<Kaos>;
+  promise.catch(() => undefined);
+  return promise;
 }
 
 describe('KimiCore runtime config', () => {
@@ -61,16 +74,14 @@ describe('KimiCore runtime config', () => {
     for (const def of FLAG_DEFINITIONS) {
       vi.stubEnv(def.env, '0');
     }
-    vi.stubEnv(requiredFlagEnv('goal_command'), '1');
-    vi.stubEnv(requiredFlagEnv('background_ask'), '1');
+    vi.stubEnv(requiredFlagEnv('micro_compaction'), '1');
 
     void new KimiCore(async () => ({}) as never, { homeDir });
     await getRootLogger().flushGlobal();
 
     const text = await readFile(resolveGlobalLogPath(homeDir), 'utf-8');
     expect(text).toContain('experimental flags enabled');
-    expect(text).toContain('goal_command');
-    expect(text).toContain('background_ask');
+    expect(text).toContain('micro_compaction');
     expect(text.match(/experimental flags enabled/g)).toHaveLength(1);
   });
 
@@ -84,16 +95,14 @@ describe('KimiCore runtime config', () => {
       join(firstHome, 'config.toml'),
       `
 [experimental]
-goal_command = true
-background_ask = false
+micro_compaction = true
 `,
     );
     await writeFile(
       join(secondHome, 'config.toml'),
       `
 [experimental]
-goal_command = false
-background_ask = true
+micro_compaction = false
 `,
     );
     clearExperimentalEnv();
@@ -101,10 +110,8 @@ background_ask = true
     const first = new KimiCore(async () => ({}) as never, { homeDir: firstHome });
     const second = new KimiCore(async () => ({}) as never, { homeDir: secondHome });
 
-    expect(experimentalFeatureEnabled(first, 'goal_command')).toBe(true);
-    expect(experimentalFeatureEnabled(first, 'background_ask')).toBe(false);
-    expect(experimentalFeatureEnabled(second, 'goal_command')).toBe(false);
-    expect(experimentalFeatureEnabled(second, 'background_ask')).toBe(true);
+    expect(experimentalFeatureEnabled(first, 'micro_compaction')).toBe(true);
+    expect(experimentalFeatureEnabled(second, 'micro_compaction')).toBe(false);
   });
 
   it('updates the scoped experimental resolver after setKimiConfig', async () => {
@@ -115,24 +122,24 @@ background_ask = true
       join(homeDir, 'config.toml'),
       `
 [experimental]
-goal_command = false
+micro_compaction = false
 `,
     );
     clearExperimentalEnv();
 
     const core = new KimiCore(async () => ({}) as never, { homeDir });
-    expect(experimentalFeatureEnabled(core, 'goal_command')).toBe(false);
+    expect(experimentalFeatureEnabled(core, 'micro_compaction')).toBe(false);
 
     await core.setKimiConfig({
       experimental: {
-        'goal_command': true,
+        'micro_compaction': true,
       },
     });
 
-    expect(experimentalFeatureEnabled(core, 'goal_command')).toBe(true);
+    expect(experimentalFeatureEnabled(core, 'micro_compaction')).toBe(true);
   });
 
-  it('updates the shared experimental resolver without hot-refreshing materialized tools', async () => {
+  it('updates the shared experimental resolver while goal tools stay available', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');
     const workDir = join(tmp, 'work');
@@ -142,7 +149,7 @@ goal_command = false
       join(homeDir, 'config.toml'),
       `${baseModelConfig()}
 [experimental]
-goal_command = false
+micro_compaction = false
 `,
     );
     clearExperimentalEnv();
@@ -164,19 +171,19 @@ goal_command = false
     const session = core.sessions.get(created.id);
     const mainAgent = session?.getReadyAgent('main');
 
-    expect(session?.experimentalFlags.enabled('goal_command')).toBe(false);
-    expect(mainAgent?.experimentalFlags.enabled('goal_command')).toBe(false);
-    expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(false);
+    expect(session?.experimentalFlags.enabled('micro_compaction')).toBe(false);
+    expect(mainAgent?.experimentalFlags.enabled('micro_compaction')).toBe(false);
+    expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
 
     await core.setKimiConfig({
       experimental: {
-        'goal_command': true,
+        'micro_compaction': true,
       },
     });
 
-    expect(session?.experimentalFlags.enabled('goal_command')).toBe(true);
-    expect(mainAgent?.experimentalFlags.enabled('goal_command')).toBe(true);
-    expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(false);
+    expect(session?.experimentalFlags.enabled('micro_compaction')).toBe(true);
+    expect(mainAgent?.experimentalFlags.enabled('micro_compaction')).toBe(true);
+    expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
 
     await rpc.reloadSession({ sessionId: created.id });
     const reloadedMainAgent = core.sessions.get(created.id)?.getReadyAgent('main');
@@ -282,6 +289,75 @@ max_context_size = 100000
     const mainAgent = session?.getReadyAgent('main');
 
     expect(mainAgent?.config.modelAlias).toBe('default-mock');
+  });
+
+  it('rejects createSession when shell runtime initialization fails', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    setCoreKaos(
+      core,
+      rejectedKaos(
+        new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, 'Git Bash missing'),
+      ),
+    );
+
+    await expect(
+      rpc.createSession({
+        id: 'ses_runtime_shell_missing_create',
+        workDir,
+        model: 'default-mock',
+      }),
+    ).rejects.toMatchObject({ code: ErrorCodes.SHELL_GIT_BASH_NOT_FOUND });
+    expect(core.sessions.has('ses_runtime_shell_missing_create')).toBe(false);
+  });
+
+  it('rejects resumeSession when shell runtime initialization fails', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    setCoreKaos(core, Promise.resolve(testKaos));
+    const created = await rpc.createSession({
+      id: 'ses_runtime_shell_missing_resume',
+      workDir,
+      model: 'default-mock',
+    });
+    await rpc.closeSession({ sessionId: created.id });
+    setCoreKaos(
+      core,
+      rejectedKaos(
+        new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, 'Git Bash missing'),
+      ),
+    );
+
+    await expect(rpc.resumeSession({ sessionId: created.id })).rejects.toMatchObject({
+      code: ErrorCodes.SHELL_GIT_BASH_NOT_FOUND,
+    });
+    expect(core.sessions.has(created.id)).toBe(false);
   });
 
   it('reloads an active session with fresh runtime services from config.toml', async () => {

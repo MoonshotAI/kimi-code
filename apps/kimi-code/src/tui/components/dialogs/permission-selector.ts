@@ -2,8 +2,6 @@ import type { PermissionMode } from '@moonshot-ai/kimi-code-sdk';
 
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
-import type { ColorPalette } from '#/tui/theme/colors';
-
 const PERMISSION_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'manual',
@@ -31,7 +29,6 @@ function isPermissionModeChoice(value: string): value is PermissionMode {
 
 export interface PermissionSelectorOptions {
   readonly currentValue: PermissionMode;
-  readonly colors: ColorPalette;
   readonly onSelect: (mode: PermissionMode) => void;
   readonly onCancel: () => void;
 }
@@ -42,7 +39,6 @@ export class PermissionSelectorComponent extends ChoicePickerComponent {
       title: 'Select permission mode',
       options: [...PERMISSION_OPTIONS],
       currentValue: opts.currentValue,
-      colors: opts.colors,
       onSelect: (value) => {
         if (isPermissionModeChoice(value)) opts.onSelect(value);
       },

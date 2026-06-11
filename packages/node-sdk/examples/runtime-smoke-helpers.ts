@@ -215,6 +215,8 @@ function logEvent(event: Event): void {
       process.stderr.write(`\nerror: ${event.code}: ${event.message}\n`);
       break;
     case 'agent.status.updated':
+    case 'cron.fired':
+    case 'goal.updated':
     case 'session.meta.updated':
     case 'skill.activated':
     case 'turn.step.started':
@@ -228,14 +230,17 @@ function logEvent(event: Event): void {
     case 'tool.list.updated':
     case 'mcp.server.status':
     case 'subagent.spawned':
+    case 'subagent.started':
     case 'subagent.completed':
     case 'subagent.failed':
+    case 'subagent.suspended':
     case 'compaction.started':
     case 'compaction.blocked':
     case 'compaction.cancelled':
     case 'compaction.completed':
     case 'background.task.started':
     case 'background.task.terminated':
+    case 'warning':
       break;
   }
 }

@@ -17,7 +17,7 @@ export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   triggerRatio: 0.85,
   blockRatio: 0.85, // Same as triggerRatio to disable async compaction
   reservedContextSize: 50_000,
-  maxCompactionPerTurn: 3,
+  maxCompactionPerTurn: Infinity,
   maxRecentMessages: 4,
   maxRecentUserMessages: Infinity,
   maxRecentSizeRatio: 0.2,

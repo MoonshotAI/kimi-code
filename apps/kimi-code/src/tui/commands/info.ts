@@ -87,8 +87,7 @@ interface ManagedUsageResult {
 export async function showUsage(host: SlashCommandHost): Promise<void> {
   const sessionUsage = await loadSessionUsageReport(host);
   const managedUsage = await loadManagedUsageReport(host);
-  const lines = buildUsageReportLines({
-    colors: host.state.theme.colors,
+  const reportArgs = {
     sessionUsage: sessionUsage.usage,
     sessionUsageError: sessionUsage.error,
     contextUsage: host.state.appState.contextUsage,
@@ -96,8 +95,8 @@ export async function showUsage(host: SlashCommandHost): Promise<void> {
     maxContextTokens: host.state.appState.maxContextTokens,
     managedUsage: managedUsage?.usage,
     managedUsageError: managedUsage?.error,
-  });
-  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary);
+  };
+  const panel = new UsagePanelComponent(() => buildUsageReportLines(reportArgs), 'primary');
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
 }
@@ -108,8 +107,7 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     loadManagedUsageReport(host),
   ]);
   const appState = host.state.appState;
-  const lines = buildStatusReportLines({
-    colors: host.state.theme.colors,
+  const reportArgs = {
     version: appState.version,
     model: appState.model,
     workDir: appState.workDir,
@@ -126,8 +124,8 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     statusError: runtimeStatus.error,
     managedUsage: managedUsage?.usage,
     managedUsageError: managedUsage?.error,
-  });
-  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, ' Status ');
+  };
+  const panel = new UsagePanelComponent(() => buildStatusReportLines(reportArgs), 'primary', ' Status ');
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
 }
@@ -141,12 +139,12 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
     return;
   }
 
-  const lines = buildMcpStatusReportLines({
-    colors: host.state.theme.colors,
-    servers,
-  });
   const title = servers.length > 0 ? ` MCP (${servers.length}) ` : ' MCP ';
-  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, title);
+  const panel = new UsagePanelComponent(
+    () => buildMcpStatusReportLines({ servers }),
+    'primary',
+    title,
+  );
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
 }

@@ -20,6 +20,14 @@ function policyContext(toolName: string, args: unknown): PermissionPolicyContext
       name: toolName,
       arguments: JSON.stringify(args),
     } satisfies ToolCall,
+    toolCalls: [
+      {
+        type: 'function',
+        id: `call_${toolName}`,
+        name: toolName,
+        arguments: JSON.stringify(args),
+      },
+    ],
     execution: {
       accesses: ToolAccesses.none(),
       approvalRule: toolName,
@@ -43,5 +51,17 @@ describe('DefaultToolApprovePermissionPolicy', () => {
 
   it('does not approve CronDelete', () => {
     expect(policy.evaluate(policyContext('CronDelete', { id: 'job_1' }))).toBeUndefined();
+  });
+
+  it('does not approve AgentSwarm', () => {
+    expect(
+      policy.evaluate(
+        policyContext('AgentSwarm', {
+          description: 'Check files',
+          prompt_template: 'Check {{item}}',
+          items: ['a.ts', 'b.ts'],
+        }),
+      ),
+    ).toBeUndefined();
   });
 });

@@ -8,22 +8,20 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
 import { isRainbowDancing, renderDanceWelcomeHeader } from '#/tui/easter-eggs/dance';
-import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
+import { currentTheme } from '#/tui/theme';
 
 export class WelcomeComponent implements Component {
   private state: AppState;
-  private colors: ColorPalette;
 
-  constructor(state: AppState, colors: ColorPalette) {
+  constructor(state: AppState) {
     this.state = state;
-    this.colors = colors;
   }
 
   invalidate(): void {}
 
   render(width: number): string[] {
-    const primary = (s: string): string => chalk.hex(this.colors.primary)(s);
+    const primary = (s: string): string => chalk.hex(currentTheme.palette.primary)(s);
     const innerWidth = Math.max(10, width - 4);
     const pad = '  ';
 
@@ -34,13 +32,13 @@ export class WelcomeComponent implements Component {
     const textWidth = Math.max(4, innerWidth - logoWidth - gap.length);
 
     const rightRow0 = truncateToWidth(
-      chalk.bold.hex(this.colors.primary)('Welcome to Kimi Code!'),
+      chalk.bold.hex(currentTheme.palette.primary)('Welcome to Kimi Code!'),
       textWidth,
       '…',
     );
     const isLoggedOut = !this.state.model;
-    const dim = chalk.hex(this.colors.textDim);
-    const labelStyle = chalk.bold.hex(this.colors.textDim);
+    const dim = chalk.hex(currentTheme.palette.textDim);
+    const labelStyle = chalk.bold.hex(currentTheme.palette.textDim);
     const rightRow1 = truncateToWidth(
       dim(isLoggedOut ? 'Run /login or /provider to get started.' : 'Send /help for help information.'),
       textWidth,
@@ -52,12 +50,12 @@ export class WelcomeComponent implements Component {
       primary(logo[1].padEnd(logoWidth)) + gap + rightRow1,
     ];
     if (isRainbowDancing()) {
-      renderedHeaderLines = renderDanceWelcomeHeader(this.colors, logo, textWidth, rightRow1);
+      renderedHeaderLines = renderDanceWelcomeHeader(logo, textWidth, rightRow1);
     }
 
     const activeModel = this.state.availableModels[this.state.model];
     const modelValue = isLoggedOut
-      ? chalk.hex(this.colors.warning)('not set, run /login or /provider')
+      ? chalk.hex(currentTheme.palette.warning)('not set, run /login or /provider')
       : (activeModel?.displayName ?? activeModel?.model ?? this.state.model);
 
     const infoLines = [

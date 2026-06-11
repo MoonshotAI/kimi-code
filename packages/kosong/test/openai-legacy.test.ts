@@ -287,7 +287,7 @@ describe('OpenAILegacyChatProvider', () => {
       ]);
     });
 
-    it('tool call with image result flattens to text to satisfy API constraints', async () => {
+    it('tool call with image result keeps the tool result textual and reattaches images as user input', async () => {
       // OpenAI Chat Completions `tool` messages only accept text content.
       // Even when toolMessageConversion is unset, a tool result containing
       // image_url / audio_url / video_url parts must not be serialized as a
@@ -319,15 +319,151 @@ describe('OpenAILegacyChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      const toolMsg = (body['messages'] as Record<string, unknown>[])[2]!;
+      const messages = body['messages'] as Record<string, unknown>[];
+      const toolMsg = messages[2]!;
       expect(toolMsg['role']).toBe('tool');
       expect(toolMsg['tool_call_id']).toBe('call_abc123');
       // Content must be a plain string, not a content-part array.
       expect(typeof toolMsg['content']).toBe('string');
       // The text segment must survive; the image must not appear as a
-      // structured image_url part anywhere in the serialized content.
+      // structured image_url part inside the tool message.
       expect(toolMsg['content']).toContain('5');
       expect(Array.isArray(toolMsg['content'])).toBe(false);
+      expect(messages[3]).toEqual({
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Attached media from tool result:' },
+          { type: 'image_url', image_url: { url: 'https://example.com/image.png' } },
+        ],
+      });
+    });
+
+    it('tool call with audio result notes the omission inline without reattaching', async () => {
+      // Chat Completions has no url-based audio/video content part (only
+      // base64 input_audio), so unlike images these cannot be reattached as
+      // a user message — a standard OpenAI endpoint would reject the request
+      // with a 400. The tool message notes the omission inline instead.
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Say hi' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'call_tts', name: 'tts', arguments: '{}' }],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'audio_url', audioUrl: { url: 'https://example.com/hi.mp3' } },
+          ] satisfies ContentPart[],
+          toolCallId: 'call_tts',
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const messages = body['messages'] as Record<string, unknown>[];
+      expect(messages[2]).toEqual({
+        role: 'tool',
+        content: '(audio omitted: not supported by this provider)',
+        tool_call_id: 'call_tts',
+      });
+      // No follow-up user message: audio_url is not a standard Chat
+      // Completions content part and must not reach the wire.
+      expect(messages).toHaveLength(3);
+    });
+
+    it('tool call with text and video result appends the omission note to the text', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Record it' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'call_rec', name: 'record', arguments: '{}' }],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'text', text: 'recorded 5s clip' },
+            { type: 'video_url', videoUrl: { url: 'https://example.com/rec.mp4' } },
+          ] satisfies ContentPart[],
+          toolCallId: 'call_rec',
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const messages = body['messages'] as Record<string, unknown>[];
+      expect(messages[2]).toEqual({
+        role: 'tool',
+        content: 'recorded 5s clip\n(video omitted: not supported by this provider)',
+        tool_call_id: 'call_rec',
+      });
+      expect(messages).toHaveLength(3);
+    });
+
+    it('groups consecutive tool result images after all matching tool messages', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Fetch both images' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'ok' }],
+          toolCalls: [
+            { type: 'function', id: 'call_first', name: 'first_image', arguments: '{}' },
+            { type: 'function', id: 'call_second', name: 'second_image', arguments: '{}' },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'image_url', imageUrl: { url: 'https://example.com/first.png' } },
+          ],
+          toolCallId: 'call_first',
+          toolCalls: [],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'text', text: 'second' },
+            { type: 'image_url', imageUrl: { url: 'https://example.com/second.png' } },
+          ],
+          toolCallId: 'call_second',
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        { role: 'user', content: 'Fetch both images' },
+        {
+          role: 'assistant',
+          content: 'ok',
+          tool_calls: [
+            {
+              type: 'function',
+              id: 'call_first',
+              function: { name: 'first_image', arguments: '{}' },
+            },
+            {
+              type: 'function',
+              id: 'call_second',
+              function: { name: 'second_image', arguments: '{}' },
+            },
+          ],
+        },
+        { role: 'tool', content: '(see attached media)', tool_call_id: 'call_first' },
+        { role: 'tool', content: 'second', tool_call_id: 'call_second' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Attached media from tool result:' },
+            { type: 'image_url', image_url: { url: 'https://example.com/first.png' } },
+            { type: 'image_url', image_url: { url: 'https://example.com/second.png' } },
+          ],
+        },
+      ]);
     });
 
     it('parallel tool calls', async () => {
@@ -716,6 +852,49 @@ describe('OpenAILegacyChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       expect(body['reasoning_effort']).toBe('high');
+    });
+
+    it.each(['deepseek/deepseek-v4-flash', 'gpt-5.4-pro', 'some-model'])(
+      '.withThinking("xhigh") passes through reasoning_effort for model %s',
+      async (model) => {
+        const provider = createProvider({ model }).withThinking('xhigh');
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+        ];
+        const body = await captureRequestBody(provider, '', [], history);
+
+        expect(body['reasoning_effort']).toBe('xhigh');
+        expect(provider.thinkingEffort).toBe('xhigh');
+      },
+    );
+
+    it('.withThinking("max") maps to xhigh without model-specific clamping', async () => {
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+
+      const openAIChatModel = await captureRequestBody(
+        createProvider({ model: 'gpt-5.5' }).withThinking('max'),
+        '',
+        [],
+        history,
+      );
+      const openAIProModel = await captureRequestBody(
+        createProvider({ model: 'gpt-5.5-pro' }).withThinking('max'),
+        '',
+        [],
+        history,
+      );
+      const deepSeekModel = await captureRequestBody(
+        createProvider({ model: 'deepseek/deepseek-v4-pro' }).withThinking('max'),
+        '',
+        [],
+        history,
+      );
+
+      expect(openAIChatModel['reasoning_effort']).toBe('xhigh');
+      expect(openAIProModel['reasoning_effort']).toBe('xhigh');
+      expect(deepSeekModel['reasoning_effort']).toBe('xhigh');
     });
   });
 

@@ -35,12 +35,17 @@ function registry(skills: readonly SkillDefinition[] = []): SkillRegistry {
 interface SkillToolMethods {
   readonly recordSkillActivation: (origin: SkillActivationOrigin) => void;
   readonly recordSystemReminder: (content: string, origin: SkillActivationOrigin) => void;
+  readonly recordUserMessage: (
+    content: readonly [{ readonly type: 'text'; readonly text: string }],
+    origin: SkillActivationOrigin,
+  ) => void;
 }
 
 function skillToolMethods() {
   return {
     recordSkillActivation: vi.fn<SkillToolMethods['recordSkillActivation']>(),
     recordSystemReminder: vi.fn<SkillToolMethods['recordSystemReminder']>(),
+    recordUserMessage: vi.fn<SkillToolMethods['recordUserMessage']>(),
   } satisfies SkillToolMethods;
 }
 
@@ -52,6 +57,7 @@ function skillToolAgent(skills: SkillRegistry, methods: SkillToolMethods): Agent
     },
     context: {
       appendSystemReminder: methods.recordSystemReminder,
+      appendUserMessage: methods.recordUserMessage,
     },
   } as unknown as Agent;
 }
@@ -82,7 +88,12 @@ describe('SkillTool dispatch edges', () => {
 
     expect(result.output).toContain('loaded inline');
     expect(result.output).not.toContain('body of prompt-skill');
-    expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain('body of prompt-skill');
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).toContain(
+      'body of prompt-skill',
+    );
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).not.toContain(
+      '<system-reminder>',
+    );
     expect(methods.recordSkillActivation).toHaveBeenCalledTimes(1);
   });
 
@@ -94,7 +105,10 @@ describe('SkillTool dispatch edges', () => {
 
     expect(result.output).toContain('loaded inline');
     expect(result.output).not.toContain('body of legacy');
-    expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain('body of legacy');
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).toContain('body of legacy');
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).not.toContain(
+      '<system-reminder>',
+    );
     expect(methods.recordSkillActivation).toHaveBeenCalledTimes(1);
   });
 

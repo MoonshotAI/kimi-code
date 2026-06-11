@@ -1,7 +1,7 @@
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
-import type { ColorPalette } from '#/tui/theme/colors';
-import type { Theme } from '#/tui/theme/index';
+import { listCustomThemesSync } from '#/tui/theme/custom-theme-loader';
+import type { ThemeName } from '#/tui/theme/index';
 
 const THEME_OPTIONS: readonly ChoiceOption[] = [
   { value: 'auto', label: 'Auto (match terminal)' },
@@ -9,26 +9,25 @@ const THEME_OPTIONS: readonly ChoiceOption[] = [
   { value: 'light', label: 'Light' },
 ];
 
-function isThemeChoice(value: string): value is Theme {
-  return value === 'auto' || value === 'dark' || value === 'light';
-}
-
 export interface ThemeSelectorOptions {
-  readonly currentValue: Theme;
-  readonly colors: ColorPalette;
-  readonly onSelect: (theme: Theme) => void;
+  readonly currentValue: ThemeName;
+  readonly onSelect: (theme: ThemeName) => void;
   readonly onCancel: () => void;
 }
 
 export class ThemeSelectorComponent extends ChoicePickerComponent {
   constructor(opts: ThemeSelectorOptions) {
+    const customThemes = listCustomThemesSync();
+    const options: ChoiceOption[] = [
+      ...THEME_OPTIONS,
+      ...customThemes.map((name) => ({ value: name, label: `Custom: ${name}` })),
+    ];
     super({
       title: 'Select theme',
-      options: [...THEME_OPTIONS],
+      options,
       currentValue: opts.currentValue,
-      colors: opts.colors,
       onSelect: (value) => {
-        if (isThemeChoice(value)) opts.onSelect(value);
+        opts.onSelect(value);
       },
       onCancel: opts.onCancel,
     });

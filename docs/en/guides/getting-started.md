@@ -16,6 +16,10 @@ The CLI is written in TypeScript, distributed via npm, and runs on Node.js.
 
 Two installation options are available: the official install script (recommended, no pre-installed Node.js required) and a global npm install.
 
+::: tip Before you install
+Kimi Code CLI is a fully interactive TUI application. For the best visual experience, run it in a terminal with true-color and ligature support, such as [Kitty](https://sw.kovidgoyal.net/kitty/) or [Ghostty](https://ghostty.org/).
+:::
+
 ### Install script (recommended)
 
 - **macOS / Linux**:
@@ -36,7 +40,7 @@ The script automatically downloads the latest release, verifies the checksum, an
 
 ### npm installation
 
-Requires Node.js 24.15.0 or later:
+Requires Node.js 22.19.0 or later:
 
 ```sh
 node --version

@@ -4,6 +4,7 @@ export const STATUS_BULLET = '● ';
 // Shared transcript markers. Keep widths stable because message wrapping
 // assumes the marker occupies the leading cells.
 export const USER_MESSAGE_BULLET = '✨ ';
+export const SUCCESS_MARK = '✓ ';
 export const FAILURE_MARK = '✗ ';
 
 // Shared selector markers — keep every list picker visually consistent.

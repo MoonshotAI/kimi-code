@@ -18,15 +18,9 @@ import type { McpConnectionManager } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
-import type { SessionGoalStore } from '../session/goal';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import type { SkillRegistry } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
-import {
-  estimateTokens,
-  estimateTokensForMessages,
-  estimateTokensForTools,
-} from '../utils/tokens';
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager, BackgroundTaskPersistence } from './background';
 import {
@@ -38,6 +32,7 @@ import {
 import { CronManager } from './cron';
 import { ConfigState } from './config';
 import { ContextMemory } from './context';
+import { GoalMode } from './goal';
 import { HookEngine } from '../session/hooks';
 import { InjectionManager } from './injection/manager';
 import { PermissionManager, type PermissionManagerOptions } from './permission';
@@ -51,6 +46,7 @@ import {
 } from './records';
 import { ReplayBuilder } from './replay';
 import { SkillManager } from './skill';
+import { SwarmMode } from './swarm';
 import { ToolManager } from './tool/index';
 import { TurnFlow } from './turn';
 import {
@@ -64,8 +60,9 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import type { ToolServices } from '../tools/support/services';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
+export type { SwarmModeTrigger } from './swarm';
 export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './tool';
-export { buildGoalCompletionMessage } from './goal/completion';
+export * from './goal';
 
 export type AgentType = 'main' | 'sub' | 'independent';
 
@@ -84,7 +81,6 @@ export interface AgentOptions {
   readonly subagentHost?: SessionSubagentHost | undefined;
   readonly skills?: SkillRegistry;
   readonly mcp?: McpConnectionManager;
-  readonly goals?: SessionGoalStore | undefined;
   readonly hookEngine?: HookEngine;
   readonly permission?: PermissionManagerOptions | undefined;
   readonly log?: Logger;
@@ -96,7 +92,12 @@ export interface AgentOptions {
 
 export class Agent {
   readonly type: AgentType;
-  readonly kaos: Kaos;
+  private _kaos: Kaos;
+
+  get kaos(): Kaos {
+    return this._kaos;
+  }
+
   readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
@@ -106,7 +107,6 @@ export class Agent {
   readonly modelProvider?: ModelProvider;
   readonly subagentHost?: SessionSubagentHost;
   readonly mcp?: McpConnectionManager;
-  readonly goals?: SessionGoalStore;
   readonly hooks?: HookEngine;
   readonly log: Logger;
   readonly telemetry: TelemetryClient;
@@ -123,18 +123,20 @@ export class Agent {
   readonly injection: InjectionManager;
   readonly permission: PermissionManager;
   readonly planMode: PlanMode;
+  readonly swarmMode: SwarmMode;
   readonly usage: UsageRecorder;
   readonly skills: SkillManager | null;
   readonly tools: ToolManager;
   readonly background: BackgroundManager;
   readonly cron: CronManager | null;
+  readonly goal: GoalMode;
   readonly replayBuilder: ReplayBuilder;
 
   private lastLlmConfigLogSignature?: string;
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
-    this.kaos = options.kaos;
+    this._kaos = options.kaos;
     this.kimiConfig = options.config;
     this.homedir = options.homedir;
     this.rpc = options.rpc;
@@ -144,7 +146,6 @@ export class Agent {
     this.modelProvider = options.modelProvider;
     this.subagentHost = options.subagentHost;
     this.mcp = options.mcp;
-    this.goals = options.goals;
     this.hooks = options.hookEngine;
     this.appVersion = options.appVersion;
     this.log = options.log ?? log;
@@ -174,6 +175,7 @@ export class Agent {
     this.injection = new InjectionManager(this);
     this.permission = new PermissionManager(this, options.permission);
     this.planMode = new PlanMode(this);
+    this.swarmMode = new SwarmMode(this);
     this.usage = new UsageRecorder(this);
     this.skills = options.skills ? new SkillManager(this, options.skills) : null;
     this.tools = new ToolManager(this);
@@ -182,7 +184,12 @@ export class Agent {
       this.homedir === undefined ? undefined : new BackgroundTaskPersistence(this.homedir),
     );
     this.cron = this.type === 'sub' ? null : new CronManager(this);
+    this.goal = new GoalMode(this);
     this.replayBuilder = new ReplayBuilder(this);
+  }
+
+  setKaos(kaos: Kaos) {
+    this._kaos = kaos;
   }
 
   get generate(): typeof generate {
@@ -210,7 +217,9 @@ export class Agent {
 
   get llm(): KosongLLM {
     const model = this.config.model;
-    const provider = this.config.provider.withThinking(this.config.thinkingLevel);
+    // All provider-level request config (thinking, sampling params, thinking.keep)
+    // is applied in ConfigState.provider so compaction shares it. See get provider().
+    const provider = this.config.provider;
     const loopControl = this.kimiConfig?.loopControl;
     const completionBudgetConfig = resolveCompletionBudget({
       maxOutputSize: this.config.maxOutputSize,
@@ -250,12 +259,7 @@ export class Agent {
     for (const message of history) {
       if (message.partial === true) partialMessageCount += 1;
     }
-    const requestMetadata: LlmRequestMetadata = {
-      estimatedInputTokens:
-        estimateTokens(systemPrompt) +
-        estimateTokensForMessages(history) +
-        estimateTokensForTools(tools),
-    };
+    const requestMetadata: LlmRequestMetadata = {};
     if (partialMessageCount > 0) {
       requestMetadata.partialMessageCount = partialMessageCount;
     }
@@ -292,6 +296,7 @@ export class Agent {
 
   async resume(): Promise<{ warning?: string }> {
     const result = await this.records.replay();
+    this.goal.normalizeAfterReplay();
     await this.background.loadFromDisk();
     await this.background.reconcile();
     await this.cron?.loadFromDisk();
@@ -362,6 +367,15 @@ export class Agent {
         this.planMode.cancel(payload.id);
       },
       clearPlan: () => this.planMode.clear(),
+      enterSwarm: (payload) => {
+        this.swarmMode.enter(payload.trigger);
+      },
+      exitSwarm: () => {
+        this.swarmMode.exit();
+      },
+      getSwarmMode: () => {
+        return this.swarmMode.isActive;
+      },
       beginCompaction: (payload) => {
         this.fullCompaction.begin({ source: 'manual', instruction: payload.instruction });
       },
@@ -393,6 +407,11 @@ export class Agent {
         this.skills.activate(payload);
       },
       startBtw: () => this.subagentHost!.startBtw(),
+      createGoal: (payload) => this.goal.createGoal(payload),
+      getGoal: () => this.goal.getGoal(),
+      pauseGoal: () => this.goal.pauseGoal(),
+      resumeGoal: () => this.goal.resumeGoal(),
+      cancelGoal: () => this.goal.cancelGoal(),
       getBackgroundOutput: (payload) => this.background.readOutput(payload.taskId, payload.tail),
       getContext: () => this.context.data(),
       getConfig: () => this.config.data(),
@@ -429,6 +448,7 @@ export class Agent {
       maxContextTokens,
       contextUsage,
       planMode: this.planMode.isActive,
+      swarmMode: this.swarmMode.isActive,
       permission: this.permission.mode,
       usage,
     });
@@ -460,7 +480,6 @@ interface LlmRequestContextFields {
 }
 
 interface LlmRequestMetadata {
-  estimatedInputTokens: number;
   partialMessageCount?: number;
 }
 

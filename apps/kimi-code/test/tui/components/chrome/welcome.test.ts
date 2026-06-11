@@ -24,6 +24,7 @@ const appState: AppState = {
   streamingPhase: 'idle',
   streamingStartTime: 0,
   planMode: false,
+  swarmMode: false,
   theme: 'dark',
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
@@ -70,7 +71,7 @@ describe('WelcomeComponent', () => {
   });
 
   it('renders the banner in a single brand color by default', () => {
-    const codes = truecolorCodes(headerOf(new WelcomeComponent(appState, darkColors).render(80)));
+    const codes = truecolorCodes(headerOf(new WelcomeComponent(appState).render(80)));
 
     // No rainbow by default — just the brand primary (plus the dim tagline).
     expect(codes.size).toBeLessThanOrEqual(2);
@@ -78,15 +79,15 @@ describe('WelcomeComponent', () => {
 
   it('paints the banner in rainbow while colored', () => {
     setDanceView(true, 0);
-    const codes = truecolorCodes(headerOf(new WelcomeComponent(appState, darkColors).render(80)));
+    const codes = truecolorCodes(headerOf(new WelcomeComponent(appState).render(80)));
 
     expect(codes.size).toBeGreaterThanOrEqual(5);
   });
 
   it('renders exactly the default banner when not colored', () => {
-    const base = headerOf(new WelcomeComponent(appState, darkColors).render(80));
+    const base = headerOf(new WelcomeComponent(appState).render(80));
     setDanceView(false, 5);
-    const off = headerOf(new WelcomeComponent(appState, darkColors).render(80));
+    const off = headerOf(new WelcomeComponent(appState).render(80));
 
     expect(off).toBe(base);
   });

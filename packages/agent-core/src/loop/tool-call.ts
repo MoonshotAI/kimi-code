@@ -72,6 +72,10 @@ export interface ToolCallStepContext {
   readonly stepUuid: string;
 }
 
+interface ToolCallBatchContext extends ToolCallStepContext {
+  readonly toolCalls: readonly ToolCall[];
+}
+
 type PreflightedToolCall = RunnableToolCall | RejectedToolCall;
 
 interface RunnableToolCall {
@@ -120,6 +124,7 @@ export async function runToolCallBatch(
   response: LLMChatResponse,
 ): Promise<ToolCallBatchResult> {
   if (response.toolCalls.length === 0) return { stopTurn: false };
+  const batchStep: ToolCallBatchContext = { ...step, toolCalls: response.toolCalls };
   const calls = response.toolCalls.map((toolCall) => preflightToolCall(step.tools, toolCall));
   const scheduler = new ToolScheduler<PendingToolResult>();
   const pendingResults: Array<Promise<PendingToolResult>> = [];
@@ -128,13 +133,13 @@ export async function runToolCallBatch(
   try {
     for (let index = 0; index < calls.length; index += 1) {
       const call = calls[index]!;
-      const prepared = await prepareToolCall(step, call);
+      const prepared = await prepareToolCall(batchStep, call);
       pendingResults.push(scheduler.add(prepared.task));
 
       if (prepared.stopBatchAfterThis === true) {
         stopTurn = true;
         for (const skippedCall of calls.slice(index + 1)) {
-          const skippedTask = await prepareSkippedToolCall(step, skippedCall);
+          const skippedTask = await prepareSkippedToolCall(batchStep, skippedCall);
           pendingResults.push(scheduler.add(skippedTask));
         }
         break;
@@ -145,7 +150,7 @@ export async function runToolCallBatch(
     // provider order. Await all tasks so each recorded `tool.call` gets a
     // paired `tool.result`; the caller checks abort before writing `step.end`.
     for (const pendingResult of pendingResults) {
-      const result = await finalizePendingToolResult(step, await pendingResult);
+      const result = await finalizePendingToolResult(batchStep, await pendingResult);
       if (result.stopTurn === true) stopTurn = true;
       await step.dispatchEvent({
         type: 'tool.result',
@@ -235,7 +240,7 @@ function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string
 }
 
 async function prepareToolCall(
-  step: ToolCallStepContext,
+  step: ToolCallBatchContext,
   call: PreflightedToolCall,
 ): Promise<PreparedToolCallTask> {
   const settleError = async (
@@ -336,7 +341,7 @@ async function prepareToolCall(
 }
 
 async function prepareSkippedToolCall(
-  step: ToolCallStepContext,
+  step: ToolCallBatchContext,
   call: PreflightedToolCall,
 ): Promise<ToolCallTask<PendingToolResult>> {
   const output = 'Tool skipped because a previous tool call stopped the turn.';
@@ -356,7 +361,7 @@ function makeResolvedToolCallTask(result: PendingToolResult): ToolCallTask<Pendi
  * Hook decisions can block a call or replace args before execution starts.
  */
 async function runPrepareToolExecutionHook(
-  step: ToolCallStepContext,
+  step: ToolCallBatchContext,
   call: RunnableToolCall,
 ): Promise<PrepareToolExecutionDecision> {
   const { hooks, signal, turnId, currentStep, llm } = step;
@@ -370,6 +375,7 @@ async function runPrepareToolExecutionHook(
   try {
     hookResult = await hooks.prepareToolExecution({
       toolCall,
+      toolCalls: step.toolCalls,
       tool: call.tool,
       args,
       turnId,
@@ -411,7 +417,7 @@ async function runPrepareToolExecutionHook(
 }
 
 async function runAuthorizeToolExecutionHook(
-  step: ToolCallStepContext,
+  step: ToolCallBatchContext,
   call: RunnableToolCall,
   args: unknown,
   execution: RunnableToolExecution,
@@ -422,6 +428,7 @@ async function runAuthorizeToolExecutionHook(
   try {
     return await hooks.authorizeToolExecution({
       toolCall: call.toolCall,
+      toolCalls: step.toolCalls,
       tool: call.tool,
       args,
       execution,
@@ -493,7 +500,7 @@ async function runRunnableToolCall(
 }
 
 async function finalizePendingToolResult(
-  step: ToolCallStepContext,
+  step: ToolCallBatchContext,
   pendingResult: PendingToolResult,
 ): Promise<PendingToolResult> {
   const { hooks, signal, turnId, currentStep, llm } = step;
@@ -504,6 +511,7 @@ async function finalizePendingToolResult(
   try {
     const finalizedResult = await hooks.finalizeToolResult({
       toolCall: pendingResult.toolCall,
+      toolCalls: step.toolCalls,
       args: pendingResult.args,
       result: pendingResult.result,
       turnId,

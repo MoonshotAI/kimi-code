@@ -14,7 +14,7 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 
 import type { SlashCommandHost } from '../commands/dispatch';
 import type { ParsedSlashInput } from '../commands/types';
-import type { ColorPalette } from '../theme/colors';
+import { currentTheme } from '../theme';
 
 /** Frame interval for the rainbow flow animation. */
 export const DANCE_FRAME_MS = 110;
@@ -44,8 +44,8 @@ const LIGHT_RAINBOW = [
   '#354CB5',
 ] as const;
 
-function getDanceRainbowPalette(colors: ColorPalette): readonly [string, ...string[]] {
-  return colors.text === '#1A1A1A' ? LIGHT_RAINBOW : DARK_RAINBOW;
+function getDanceRainbowPalette(): readonly [string, ...string[]] {
+  return currentTheme.palette.text === '#1A1A1A' ? LIGHT_RAINBOW : DARK_RAINBOW;
 }
 
 /** Paint a string character-by-character through a palette, skipping spaces. */
@@ -110,13 +110,12 @@ export function isRainbowDancing(): boolean {
 }
 
 export function renderDanceWelcomeHeader(
-  colors: ColorPalette,
   logo: readonly [string, string],
   textWidth: number,
   rightRow1: string,
 ): string[] {
   const phase = currentDanceView?.phase ?? 0;
-  const palette = getDanceRainbowPalette(colors);
+  const palette = getDanceRainbowPalette();
   const logoWidth = Math.max(...logo.map((row) => visibleWidth(row)));
   const gap = '  ';
   const rightRow0 = truncateToWidth(
@@ -131,8 +130,8 @@ export function renderDanceWelcomeHeader(
   ];
 }
 
-export function renderDanceFooterModel(modelLabel: string, colors: ColorPalette): string {
-  return rainbowText(modelLabel, getDanceRainbowPalette(colors), currentDanceView?.phase ?? 0);
+export function renderDanceFooterModel(modelLabel: string): string {
+  return rainbowText(modelLabel, getDanceRainbowPalette(), currentDanceView?.phase ?? 0);
 }
 
 /**
@@ -233,7 +232,7 @@ export function tryHandleDanceCommand(host: SlashCommandHost, parsed: ParsedSlas
   // The status line dims the whole message, which buried the command in the
   // hint. Paint just the command in the brand color (bold) so it reads as a
   // command; chalk nesting resumes the dim run right after it.
-  const cmd = (text: string): string => chalk.hex(host.state.theme.colors.primary).bold(text);
+  const cmd = (text: string): string => currentTheme.boldFg('primary', text);
 
   const sub = parsed.args.trim().toLowerCase();
   if (sub === 'off') {

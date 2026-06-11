@@ -1,4 +1,4 @@
-import type { GoalSnapshot } from '../../session/goal';
+import type { GoalSnapshot } from '../goal';
 import { DynamicInjector } from './injector';
 
 /**
@@ -16,8 +16,7 @@ export class GoalInjector extends DynamicInjector {
   protected override readonly injectionVariant = 'goal';
 
   protected override getInjection(): string | undefined {
-    const store = this.agent.goals;
-    if (store === undefined) return undefined;
+    const store = this.agent.goal;
     const goal = store.getGoal().goal;
     if (goal === null) return undefined;
     // Three intensity levels by status:

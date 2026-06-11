@@ -18,6 +18,7 @@ export class MoonLoader extends Text {
   private interval: number;
   private colorFn?: (s: string) => string;
   private label: string;
+  private displayText = '';
 
   constructor(
     ui: TUI,
@@ -59,10 +60,15 @@ export class MoonLoader extends Text {
     this.updateDisplay();
   }
 
+  renderInline(): string {
+    return this.displayText;
+  }
+
   private updateDisplay(): void {
     const frame = this.frames[this.currentFrame]!;
     const coloredFrame = this.colorFn ? this.colorFn(frame) : frame;
-    this.setText(this.label ? `${coloredFrame} ${this.label}` : coloredFrame);
+    this.displayText = this.label ? `${coloredFrame} ${this.label}` : coloredFrame;
+    this.setText(this.displayText);
     this.ui.requestRender();
   }
 }

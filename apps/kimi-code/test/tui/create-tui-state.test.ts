@@ -11,6 +11,7 @@ function fakeInitialAppState(): AppState {
     sessionId: 'sess-1',
     permissionMode: 'manual',
     planMode: false,
+    swarmMode: false,
     thinking: false,
     contextUsage: 0,
     contextTokens: 0,
@@ -55,8 +56,7 @@ describe('createTUIState', () => {
     expect(state.editor).toBeDefined();
     expect(state.footer).toBeDefined();
     expect(state.todoPanel).toBeDefined();
-    expect(state.theme.colors).toBeDefined();
-    expect(state.theme.markdownTheme).toBeDefined();
+    expect(state.theme.palette).toBeDefined();
 
     // App state is cloned from initialAppState, not reused by reference.
     expect(state.appState).not.toBe(opts.initialAppState);

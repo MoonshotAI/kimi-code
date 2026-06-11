@@ -30,6 +30,7 @@ interface StartupDriver {
   init(): Promise<boolean>;
   handleLoginCommand(): Promise<void>;
   handleLogoutCommand(): Promise<void>;
+  stop(exitCode?: number): Promise<void>;
 }
 
 interface RuntimeStateDriver extends StartupDriver {
@@ -63,7 +64,6 @@ const MIGRATION_PLAN: MigrationPlan = {
 function makeStartupInput(
   cliOptions: Partial<KimiTUIStartupInput["cliOptions"]> = {},
   tuiConfig: Partial<KimiTUIStartupInput["tuiConfig"]> = {},
-  resolvedTheme: KimiTUIStartupInput["resolvedTheme"] = "dark",
 ): KimiTUIStartupInput {
   return {
     cliOptions: {
@@ -87,7 +87,6 @@ function makeStartupInput(
     },
     version: "0.0.0-test",
     workDir: "/tmp/proj-a",
-    resolvedTheme,
   };
 }
 
@@ -113,6 +112,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     setPlanMode: vi.fn(async () => {}),
     getGoal: vi.fn(async () => ({ goal: null })),
     onEvent: vi.fn(() => () => {}),
+    getResumeState: vi.fn(() => null),
     listSkills: vi.fn(async () => []),
     close: vi.fn(async () => {}),
     ...overrides,
@@ -124,10 +124,6 @@ function goalSnapshot(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
     goalId: "goal-1",
     objective: "Ship feature X",
     status: "paused",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    startedBy: "user",
-    updatedBy: "user",
     turnsUsed: 2,
     tokensUsed: 100,
     wallClockMs: 1000,
@@ -265,7 +261,7 @@ describe("KimiTUI startup", () => {
     });
     const harness = makeHarness(session, {
       listSessions: vi.fn(async () => [{ id: "ses-latest" }]),
-      getExperimentalFeatures: vi.fn(async () => [{ id: "goal_command", enabled: true }]),
+      getExperimentalFeatures: vi.fn(async () => [{ id: "micro_compaction", enabled: true }]),
     });
     const driver = makeDriver(harness, makeStartupInput({ continue: true }));
 
@@ -275,17 +271,18 @@ describe("KimiTUI startup", () => {
     expect(driver.state.appState.goal).toEqual(goal);
   });
 
-  it("does not sync goal state while the goal flag is disabled", async () => {
+  it("syncs goal state regardless of the goal flag", async () => {
+    const goal = goalSnapshot();
     const session = makeSession({
-      getGoal: vi.fn(async () => ({ goal: goalSnapshot() })),
+      getGoal: vi.fn(async () => ({ goal })),
     });
     const harness = makeHarness(session);
     const driver = makeDriver(harness, makeStartupInput());
 
     await expect(driver.init()).resolves.toBe(false);
 
-    expect(session.getGoal).not.toHaveBeenCalled();
-    expect(driver.state.appState.goal).toBeNull();
+    expect(session.getGoal).toHaveBeenCalledOnce();
+    expect(driver.state.appState.goal).toEqual(goal);
   });
 
   it("clears goal state when closing the current session", async () => {
@@ -294,7 +291,7 @@ describe("KimiTUI startup", () => {
       getGoal: vi.fn(async () => ({ goal })),
     });
     const harness = makeHarness(session, {
-      getExperimentalFeatures: vi.fn(async () => [{ id: "goal_command", enabled: true }]),
+      getExperimentalFeatures: vi.fn(async () => [{ id: "micro_compaction", enabled: true }]),
     });
     const driver = makeDriver(harness, makeStartupInput()) as unknown as RuntimeStateDriver;
 
@@ -361,11 +358,39 @@ describe("KimiTUI startup", () => {
     expect(driver.state.startupState).toBe("picker");
   });
 
+  it("clears startup picker exit confirmation before resuming a selected session", async () => {
+    const session = makeSession({ id: "ses-picked" });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [
+        {
+          id: "ses-picked",
+          title: "Picked session",
+          workDir: "/tmp/proj-a",
+          updatedAt: Date.now(),
+        },
+      ]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: "" }));
+    const stop = vi.spyOn(driver, "stop").mockResolvedValue(undefined);
+
+    await expect((driver as unknown as MigrateExitDriver).initMainTui()).resolves.toBe(false);
+    await (driver as unknown as { bootstrapFromPicker(): Promise<void> }).bootstrapFromPicker();
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput("\u0003");
+    picker.handleInput("\r");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    driver.state.editor.onCtrlC?.();
+
+    expect(stop).not.toHaveBeenCalled();
+  });
+
   it("tracks terminal theme reports while auto theme is active", () => {
     const harness = makeHarness();
     const driver = makeDriver(
       harness,
-      makeStartupInput({}, { theme: "auto" }, "dark"),
+      makeStartupInput({}, { theme: "auto" }),
     ) as unknown as ThemeTrackingDriver;
     const { listeners, write, addInputListener } = captureInputListeners(driver);
 
@@ -381,17 +406,14 @@ describe("KimiTUI startup", () => {
     expect(listeners[0]?.(TERMINAL_THEME_LIGHT)).toEqual({ consume: true });
     expect(write).toHaveBeenCalledWith(OSC11_QUERY);
     expect(driver.state.appState.theme).toBe("auto");
-    expect(driver.state.theme.resolvedTheme).toBe("dark");
     expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
 
     expect(listeners[0]?.(DARK_OSC11_REPORT)).toEqual({ consume: true });
     expect(driver.state.appState.theme).toBe("auto");
-    expect(driver.state.theme.resolvedTheme).toBe("dark");
     expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
 
     expect(listeners[0]?.(LIGHT_OSC11_REPORT)).toEqual({ consume: true });
     expect(driver.state.appState.theme).toBe("auto");
-    expect(driver.state.theme.resolvedTheme).toBe("light");
     expect(driver.state.ui.requestRender).toHaveBeenCalled();
   });
 
@@ -410,7 +432,7 @@ describe("KimiTUI startup", () => {
     const harness = makeHarness();
     const driver = makeDriver(
       harness,
-      makeStartupInput({}, { theme: "auto" }, "dark"),
+      makeStartupInput({}, { theme: "auto" }),
     ) as unknown as ThemeTrackingDriver;
     const { write, removeInputListener } = captureInputListeners(driver);
 
@@ -896,6 +918,31 @@ describe("KimiTUI startup", () => {
     await driver.initMainTui();
 
     expect(uiContainsFooter(driver)).toBe(true);
+  });
+
+  it("resumes a startup session when Windows workdir uses backslashes", async () => {
+    const session = makeSession({ id: "ses-target" });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [
+        { id: "ses-target", workDir: "C:/Users/kimi/project" },
+      ]),
+    });
+    const driver = makeDriver(
+      harness,
+      {
+        ...makeStartupInput({ session: "ses-target" }),
+        workDir: String.raw`C:\Users\kimi\project`,
+      },
+    );
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(harness.listSessions).toHaveBeenCalledWith({
+      sessionId: "ses-target",
+      workDir: String.raw`C:\Users\kimi\project`,
+    });
+    expect(harness.resumeSession).toHaveBeenCalledWith({ id: "ses-target" });
+    expect(driver.state.appState.sessionId).toBe("ses-target");
   });
 });
 

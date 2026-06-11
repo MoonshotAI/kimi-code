@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-oauth
 
+## 0.2.2
+
+### Patch Changes
+
+- [#399](https://github.com/MoonshotAI/kimi-code/pull/399) [`232ed87`](https://github.com/MoonshotAI/kimi-code/commit/232ed874d41de777e6ff9c539ac22d830d0b5c3a) - Keep managed OAuth credentials scoped to their configured authentication and API endpoints.
+
 ## 0.2.1
 
 ### Patch Changes

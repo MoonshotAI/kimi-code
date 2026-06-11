@@ -109,7 +109,6 @@ describe('plugins selector dialogs', () => {
           source: 'local-path',
         },
       ],
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -148,7 +147,6 @@ describe('plugins selector dialogs', () => {
           source: 'local-path',
         },
       ],
-      colors: darkColors,
       onSelect,
       onCancel,
     });
@@ -173,9 +171,8 @@ describe('plugins selector dialogs', () => {
           keywords: ['workflow'],
         },
       ],
-      installedIds: new Set(),
+      installed: new Map(),
       source: '/tmp/marketplace.json',
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -185,7 +182,7 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Marketplace (1)');
     expect(out).toContain('? Superpowers  install v5.1.0');
     expect(out).toContain(
-      `Workflow skills ${MID} id superpowers ${MID} v5.1.0 ${MID} Curated plugin ${MID} workflow`,
+      `Workflow skills ${MID} id superpowers ${MID} Curated plugin ${MID} workflow`,
     );
     expect(out).toContain('Enter install/update');
     expect(out).toContain('Actions');
@@ -212,9 +209,8 @@ describe('plugins selector dialogs', () => {
           keywords: ['workflow'],
         },
       ],
-      installedIds: new Set(),
+      installed: new Map(),
       source: '/tmp/marketplace.json',
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -242,9 +238,8 @@ describe('plugins selector dialogs', () => {
           keywords: ['workflow'],
         },
       ],
-      installedIds: new Set(),
+      installed: new Map(),
       source: '/tmp/marketplace.json',
-      colors: darkColors,
       onSelect: vi.fn(),
       onCancel,
     });
@@ -263,9 +258,8 @@ describe('plugins selector dialogs', () => {
           source: 'https://example.com/superpowers.zip',
         },
       ],
-      installedIds: new Set(['superpowers']),
+      installed: new Map([['superpowers', undefined]]),
       source: '/tmp/marketplace.json',
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -279,6 +273,48 @@ describe('plugins selector dialogs', () => {
       kind: 'install',
       entry: expect.objectContaining({ id: 'superpowers' }),
     });
+  });
+
+  it('shows an update badge when the installed version is older than the marketplace', () => {
+    const picker = new PluginMarketplaceSelectorComponent({
+      entries: [
+        {
+          id: 'superpowers',
+          tier: 'curated',
+          displayName: 'Superpowers',
+          version: '5.1.0',
+          source: 'https://example.com/superpowers.zip',
+        },
+      ],
+      installed: new Map([['superpowers', '5.0.0']]),
+      source: '/tmp/marketplace.json',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const out = picker.render(120).map(strip).join('\n');
+    expect(out).toContain('? Superpowers  update 5.0.0 → 5.1.0');
+  });
+
+  it('shows installed with the version when already up to date', () => {
+    const picker = new PluginMarketplaceSelectorComponent({
+      entries: [
+        {
+          id: 'superpowers',
+          tier: 'curated',
+          displayName: 'Superpowers',
+          version: '5.1.0',
+          source: 'https://example.com/superpowers.zip',
+        },
+      ],
+      installed: new Map([['superpowers', '5.1.0']]),
+      source: '/tmp/marketplace.json',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const out = picker.render(120).map(strip).join('\n');
+    expect(out).toContain(`? Superpowers  installed ${MID} v5.1.0`);
   });
 
   it('toggles an installed plugin from the overview with space', () => {
@@ -298,7 +334,6 @@ describe('plugins selector dialogs', () => {
           source: 'local-path',
         },
       ],
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -329,7 +364,6 @@ describe('plugins selector dialogs', () => {
           source: 'local-path',
         },
       ],
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -356,7 +390,6 @@ describe('plugins selector dialogs', () => {
           source: 'local-path',
         },
       ],
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -396,7 +429,6 @@ describe('plugins selector dialogs', () => {
         ],
         diagnostics: [],
       },
-      colors: darkColors,
       onSelect: (selection) => {
         selections.push(selection);
       },
@@ -434,7 +466,6 @@ describe('plugins selector dialogs', () => {
       ],
       selectedId: 'kimi-datasource',
       pluginHint: { id: 'kimi-datasource', text: 'pending /new' },
-      colors: darkColors,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -449,7 +480,6 @@ describe('plugins selector dialogs', () => {
     const picker = new PluginRemoveConfirmComponent({
       id: 'kimi-datasource',
       displayName: 'Kimi Datasource',
-      colors: darkColors,
       onDone: (result) => {
         results.push(result);
       },
@@ -470,7 +500,6 @@ describe('plugins selector dialogs', () => {
     const picker = new PluginRemoveConfirmComponent({
       id: 'kimi-datasource',
       displayName: 'Kimi Datasource',
-      colors: darkColors,
       onDone: (result) => {
         results.push(result);
       },

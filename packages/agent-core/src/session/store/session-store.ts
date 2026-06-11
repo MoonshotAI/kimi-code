@@ -8,6 +8,7 @@ import type { SessionIndexEntry } from '#/session/store/session-index';
 import { appendSessionIndexEntry, readSessionIndex } from '#/session/store/session-index';
 import { encodeWorkDirKey, normalizeWorkDir } from '#/session/store/workdir-key';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '#/rpc/core-api';
+import { FileSystemAgentRecordPersistence, type AgentRecordOf } from '../../agent/records';
 
 const SessionSummaryStateSchema = z.object({
   customTitle: z.string().optional(),
@@ -16,6 +17,8 @@ const SessionSummaryStateSchema = z.object({
   title: z.string().optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
 });
+
+const FORKED_SESSION_DROPPED_FILES = ['upcoming-goals.json'] as const;
 
 type SessionSummaryState = z.infer<typeof SessionSummaryStateSchema>;
 
@@ -90,7 +93,9 @@ export class SessionStore {
         force: false,
         errorOnExist: true,
       });
-      await this.writeForkedState(input, source.sessionDir, targetDir);
+      await dropForkedSessionFiles(targetDir);
+      const forkedState = await this.writeForkedState(input, source.sessionDir, targetDir);
+      await appendForkedMarkers(forkedState);
       const summary = await this.summaryFromDir(input.targetId, targetDir, source.workDir);
       await appendSessionIndexEntry(this.homeDir, {
         sessionId: input.targetId,
@@ -230,7 +235,7 @@ export class SessionStore {
     input: ForkSessionRecordInput,
     sourceDir: string,
     targetDir: string,
-  ): Promise<void> {
+  ): Promise<Record<string, unknown>> {
     const statePath = join(targetDir, 'state.json');
     let parsed: unknown;
     try {
@@ -261,9 +266,10 @@ export class SessionStore {
       isCustomTitle: input.title === undefined ? parsed['isCustomTitle'] === true : true,
       forkedFrom: input.sourceId,
       agents: rewriteAgentHomedirs(parsed['agents'], sourceDir, targetDir),
-      custom: Object.assign({}, isRecord(parsed['custom']) ? parsed['custom'] : {}, input.metadata),
+      custom: forkCustomMetadata(parsed['custom'], input.metadata),
     };
     await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+    return next;
   }
 
   private async summaryFromDir(
@@ -299,6 +305,50 @@ export class SessionStore {
 function metadataFromState(state: SessionSummaryState | undefined): JsonObject | undefined {
   if (state === undefined || state.custom === undefined) return undefined;
   return state.custom as JsonObject;
+}
+
+function forkCustomMetadata(source: unknown, metadata: JsonObject | undefined): Record<string, unknown> {
+  return {
+    ...customMetadataWithoutGoal(source),
+    ...customMetadataWithoutGoal(metadata),
+  };
+}
+
+async function dropForkedSessionFiles(sessionDir: string): Promise<void> {
+  await Promise.all(
+    FORKED_SESSION_DROPPED_FILES.map((fileName) => rm(join(sessionDir, fileName), { force: true })),
+  );
+}
+
+async function appendForkedMarkers(state: Record<string, unknown>): Promise<void> {
+  const record: AgentRecordOf<'forked'> = { type: 'forked', time: Date.now() };
+
+  const agents = state['agents'];
+  if (!isRecord(agents)) return;
+
+  const paths = new Set<string>();
+  for (const agentMeta of Object.values(agents)) {
+    if (!isRecord(agentMeta)) continue;
+    const homedir = agentMeta['homedir'];
+    if (typeof homedir !== 'string') continue;
+    paths.add(join(homedir, 'wire.jsonl'));
+  }
+
+  await Promise.all([...paths].map(async (path) => {
+    const persistence = new FileSystemAgentRecordPersistence(path);
+    persistence.append(record);
+    await persistence.flush();
+  }));
+}
+
+function customMetadataWithoutGoal(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) return {};
+  const custom: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'goal') continue;
+    custom[key] = entry;
+  }
+  return custom;
 }
 
 async function latestAgentWireMtime(sessionDir: string): Promise<number | undefined> {

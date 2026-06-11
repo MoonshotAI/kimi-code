@@ -1,8 +1,165 @@
+---
+outline: 2
+---
+
 # Changelog
 
 This page documents the changes in each Kimi Code CLI release.
 
-## 0.9.0
+## 0.14.0 (2026-06-10)
+
+### Features
+
+- Add an `Interrupt` hook event that fires when the user interrupts a turn (e.g. pressing Esc), letting hooks observe the turn stopping instead of getting stuck on a working state.
+
+### Bug Fixes
+
+- Preserve image outputs from tools when using OpenAI-compatible chat completions.
+
+## 0.13.1 (2026-06-10)
+
+### Bug Fixes
+
+- Prevent forking sessions during active turns and consolidate wire protocol definitions into a shared internal package.
+- Fix Kimi Datasource to use the matching OAuth credentials and service endpoint for the active Kimi Code environment.
+- Fix goal marker text overflowing terminal width.
+
+### Polish
+
+- Add Claude Fable 5 support to the Anthropic provider.
+- Add an interactive undo selector and clearer undo-limit messages.
+- YOLO mode no longer asks before writing or editing files outside the working directory.
+- Clarify active skill prompts so loaded skills are no longer represented as system reminders.
+- Tighten file tool guidance to route incremental edits through Edit.
+
+## 0.13.0 (2026-06-10)
+
+### Features
+
+- Add custom color themes. Define your own palette as a JSON file in `~/.kimi-code/themes/`, or generate one with the built-in `/custom-theme` skill command.
+- Add `/import-from-cc-codex` to import selected Claude Code and Codex instructions, Skills, and MCP settings.
+- Show available plugin updates in the marketplace.
+
+### Bug Fixes
+
+- Fix Windows builds and development launches that could fail when package binaries resolve to command shims.
+- Fix device login to keep the URL and code visible when the browser cannot be opened.
+
+### Polish
+
+- Clarify grouped subagent progress with active status breakdowns and elapsed time.
+- Truncate queued message display to a single line with ellipsis when it exceeds terminal width.
+
+## 0.12.1 (2026-06-09)
+
+### Bug Fixes
+
+- Allow obsolete experimental config entries to remain without blocking startup.
+- Pass through xhigh reasoning effort for OpenAI-compatible chat completions requests.
+
+## 0.12.0 (2026-06-09)
+
+### Features
+
+- Add the `/swarm` command for running agent swarms with live progress and rate-limit-aware retries.
+- Make goals, background questions, and sub-skill discovery available without experimental opt-ins.
+- Honor the standard `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` environment variables, including SOCKS proxies, for all outbound traffic.
+- Support Homebrew installations.
+- Enable micro compaction by default. Disable via `/experiments`.
+
+### Bug Fixes
+
+- Fix ACP slash skill routing, bootstrap context reads, file and permission edge cases, subagent event handling, and stale-file edit messaging.
+- Fix goal resume behavior by restoring goal state from agent records.
+- Fix thinking text and tool output display for subagents.
+- Fix session workdir mismatch on Windows caused by inconsistent path separators.
+- Fix the `/mcp` status panel border being broken by multi-line MCP server errors, which are now folded onto a single row.
+- Detect Git Bash installed through Scoop and other Git shims on Windows.
+- Show the underlying error when migration fails.
+- Allow the startup session picker to exit with repeated Ctrl-C or Ctrl-D.
+
+### Polish
+
+- Remove the per-turn auto-compaction limit so long conversations can keep compacting instead of failing early.
+- Improve goal mode outcome handling with follow-up messages, safer error pauses, and clearer TUI transcript display.
+- Show full plan cards directly and remove the Plan card keyboard shortcut.
+- Wrap long single-line shell commands in approval prompts so the full command remains visible.
+- Rework file reference completion in the TUI.
+- Load Kimi-specific user Skills and global agent instructions from `KIMI_CODE_HOME` when it is set.
+
+## 0.11.0 (2026-06-05)
+
+### Features
+
+- Add experimental sub-skill discovery gated by the `KIMI_CODE_EXPERIMENTAL_SUB_SKILL` environment variable. Ships the `sub-skill` builtin bundle (`sub-skill.review`, `sub-skill.consolidate`) for inventorying and consolidating skills into hierarchical groups.
+- Add the following environment variables:
+
+  - `KIMI_MODEL_TEMPERATURE`, `KIMI_MODEL_TOP_P` — sampling parameters applied globally to any `kimi` provider (not tied to `KIMI_MODEL_NAME`).
+  - `KIMI_MODEL_THINKING_KEEP` — Moonshot preserved-thinking passthrough (`thinking.keep`), injected only while Thinking is on.
+  - `KIMI_CODE_NO_AUTO_UPDATE` (legacy alias `KIMI_CLI_NO_AUTO_UPDATE`) — fully disables the update preflight (no check, background install, or prompt).
+- Show built-in skills as direct slash commands and group them ahead of external skill commands.
+
+### Bug Fixes
+
+- Fix slash command autocomplete so goal text can be submitted when the cursor is before existing text.
+- Fix queued goals so failed promotion attempts do not lose or duplicate queued work.
+- Fix upcoming-goal queue handling while editing or pasting queued goals.
+- Ask before starting goals in YOLO mode so users can switch to Auto for unattended work.
+- Show concise provider filtering errors when responses are blocked before visible output.
+- Show "unknown command" instead of "too many arguments" when an invalid subcommand is entered.
+- Clamp OpenAI Chat Completions `xhigh` and `max` thinking effort to `high` unless the model supports `xhigh` on `v1/chat/completions`.
+- Preserve thinking effort when compacting long conversations.
+- Refresh provider model metadata when capabilities change without model ID changes.
+
+### Polish
+
+- Show the upcoming-goal confirmation with the same accent treatment as goal lifecycle messages.
+- Start upcoming goals immediately when there is no active goal to wait for.
+  Support multiline edits when managing upcoming goals.
+- Use a fixed 30-minute timeout for subagents and show concise resume instructions when they time out.
+- Highlight goal queue subcommands while typing slash commands.
+
+## 0.10.1 (2026-06-05)
+
+### Bug Fixes
+
+- Fix a crash when starting a goal in the TUI.
+
+## 0.10.0 (2026-06-04)
+
+### Features
+
+- Users now can prepare several goals for the agent to work on sequentially. The agent will pick up the next goal from the queue once the current goal is completed. Use `/goal next <objective>` to queue a goal and `/goal next manage` to review and change the queue interactively.
+- Add the built-in `update-config` skill — you can now have Kimi edit its own config files.
+- Add persistent experimental feature toggles and a TUI panel that applies confirmed changes by reloading the current session.
+- Add `/reload` to reload the current session and apply updated config files, plus `/reload-tui` to reload only TUI preferences.
+- Add a doctor command for validating Kimi Code configuration files.
+
+### Bug Fixes
+
+- Normalize malformed Responses stream rate limit errors as provider rate limit failures.
+- Keep managed OAuth credentials scoped to their configured authentication and API endpoints.
+- Stop carrying active and queued goals into forked sessions.
+- Fail early when Git Bash is missing on Windows before starting CLI sessions.
+- Refresh the update target before showing foreground update prompts so the displayed version matches the install.
+- Point session error diagnostics to the `/export-debug-zip` command.
+- Set terminal tab titles without renaming the running process.
+
+### Polish
+
+- Start automatic background updates as soon as startup's fresh update check finds a newer version.
+- Set the CLI process title to kimi-code during startup.
+- Lowercase the stale file content message in edit tool errors.
+
+### Refactors
+
+- Ensure Nix-packaged CLI builds can find ripgrep and fd.
+
+### Other
+
+- Document the Git Bash prerequisite for Windows installs.
+
+## 0.9.0 (2026-06-03)
 
 ### Features
 
@@ -26,7 +183,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Allow SDK runtime creation to use a separate RPC client while preserving local CLI startup.
 
-## 0.8.0
+## 0.8.0 (2026-06-02)
 
 ### Features
 
@@ -72,7 +229,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Consolidate background task management under the agent background runtime.
 
-## 0.7.0
+## 0.7.0 (2026-06-02)
 
 ### Features
 
@@ -90,7 +247,7 @@ This page documents the changes in each Kimi Code CLI release.
 - Clarify Kimi Platform API key login labels and prompt details.
 - Polish a small TUI visual interaction.
 
-## 0.6.0
+## 0.6.0 (2026-05-29)
 
 ### Features
 
@@ -127,7 +284,7 @@ This page documents the changes in each Kimi Code CLI release.
 - Slim the LLM diagnostic logs with fewer, more compact fields.
 - Relocate shared tool service typing to the tool support layer.
 
-## 0.5.0
+## 0.5.0 (2026-05-28)
 
 ### Features
 
@@ -161,7 +318,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Refactor TUI code structure.
 
-## 0.4.0
+## 0.4.0 (2026-05-27)
 
 ### Features
 
@@ -188,7 +345,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Enhance `kimi export` to include more diagnostic information in the manifest.
 
-## 0.3.0
+## 0.3.0 (2026-05-26)
 
 ### Features
 
@@ -216,7 +373,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Improve the Write tool UX.
 
-## 0.2.0
+## 0.2.0 (2026-05-26)
 
 ### Features
 

@@ -21,11 +21,17 @@
 
 import type { Command } from 'commander';
 
-import { runAcpServer } from '@moonshot-ai/acp-adapter';
-import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
+import {
+  ACP_BUILTIN_SLASH_COMMANDS,
+  runAcpServer,
+  type AvailableCommand,
+  type SlashCommandsSnapshot,
+} from '@moonshot-ai/acp-adapter';
+import { createKimiHarness, type Session, type SkillSummary } from '@moonshot-ai/kimi-code-sdk';
 
 import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { createKimiCodeHostIdentity, getVersion } from '#/cli/version';
+import { buildSkillSlashCommands } from '#/tui/commands/skills';
 
 import { runLoginFlow } from './login-flow';
 
@@ -66,9 +72,46 @@ export function registerAcpCommand(parent: Command): void {
       // client can spawn it with `args:['login']` for the top-level
       // `kimi login` subcommand — matches kimi-cli `acp/server.py:77-96`.
       const legacyCommand = process.argv[1];
+      const builtinCommands: AvailableCommand[] = (ACP_BUILTIN_SLASH_COMMANDS as readonly AvailableCommand[]).map((cmd) => ({
+        name: cmd.name,
+        description: cmd.description,
+        input: cmd.input,
+      }));
+      // Skills are session-scoped (per-cwd config), so we defer the
+      // listSkills() call until the adapter hands us the just-created
+      // Session — mirrors opencode's per-directory snapshot. A
+      // listSkills() failure degrades to builtins-only so a broken
+      // skill source never blanks the palette.
+      const resolveSlashCommands = async (
+        session: Session,
+      ): Promise<SlashCommandsSnapshot> => {
+        let skills: readonly SkillSummary[] = [];
+        try {
+          skills = await session.listSkills();
+        } catch {
+          skills = [];
+        }
+        // `buildSkillSlashCommands` already returns both views — the
+        // palette entries (advertised via `available_commands_update`)
+        // and the `commandName → skillName` map the adapter uses to
+        // intercept `/skill:<name>` inputs and route them to
+        // `Session.activateSkill`. Passing both through keeps the two
+        // surfaces in lockstep (palette ↔ interceptable set) without
+        // a second `listSkills()` round trip.
+        const built = buildSkillSlashCommands(skills);
+        const skillCommands = built.commands.map((cmd) => ({
+          name: cmd.name,
+          description: cmd.description,
+        }));
+        return {
+          commands: [...builtinCommands, ...skillCommands],
+          skillCommandMap: built.commandMap,
+        };
+      };
       try {
         await runAcpServer(harness, {
           agentInfo: { name: 'Kimi Code CLI', version: getVersion() },
+          slashCommands: resolveSlashCommands,
           ...(terminalAuthEnv ? { terminalAuthEnv } : {}),
           ...(legacyCommand !== undefined && legacyCommand.length > 0
             ? { terminalAuthLegacyCommand: legacyCommand }

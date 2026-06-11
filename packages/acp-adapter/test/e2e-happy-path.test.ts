@@ -9,7 +9,7 @@
  * side, and asserts:
  *
  *  1. `initialize` returns the documented capability matrix
- *     (PLAN D4: image=true, audio=false, embeddedContext=false,
+ *     (PLAN D4: image=true, audio=false, embeddedContext=true,
  *      mcp.http=true, mcp.sse=false, loadSession=true,
  *      sessionCapabilities.list={}).
  *  2. `session/new` returns a non-empty sessionId.
@@ -167,7 +167,7 @@ describe('AcpServer end-to-end happy path', () => {
       promptCapabilities: {
         image: true,
         audio: false,
-        embeddedContext: false,
+        embeddedContext: true,
       },
       mcpCapabilities: {
         http: true,
