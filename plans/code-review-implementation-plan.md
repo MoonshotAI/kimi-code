@@ -300,25 +300,25 @@ Purpose: let apps call review features without importing core.
 
 **Tasks:**
 
-- [ ] Add public SDK input and output types:
+- [x] Add public SDK input and output types:
   - `ReviewScopeInput`
   - `ReviewTargetPreview`
   - `ReviewStartInput`
   - `ReviewBaseRef`
   - `ReviewCommit`
-- [ ] Add `Session` methods:
+- [x] Add `Session` methods:
   - `listReviewBaseRefs()`
   - `listReviewCommits()`
   - `previewReviewTarget(input)`
   - `startReview(input)`
   - `cancelReview()`
-- [ ] Add RPC passthrough methods in `SDKRpcClientBase`.
-- [ ] Test that SDK methods call core RPC with `sessionId` and main `agentId`.
+- [x] Add RPC passthrough methods in `SDKRpcClientBase`.
+- [x] Test that SDK methods call core RPC with `sessionId`.
 
 **Verification:**
 
-- [ ] Run `pnpm --filter @moonshot-ai/kimi-code-sdk run typecheck`.
-- [ ] Run `pnpm --filter @moonshot-ai/kimi-code-sdk exec vitest run packages/node-sdk/test/session-review.test.ts`.
+- [x] Run `pnpm --filter @moonshot-ai/kimi-code-sdk run typecheck`.
+- [x] Run `pnpm --filter @moonshot-ai/kimi-code-sdk exec vitest run packages/node-sdk/test/session-review.test.ts`. Executed as `pnpm --filter @moonshot-ai/kimi-code-sdk exec vitest run test/session-review.test.ts` because Vitest runs from the package directory.
 
 ## Phase 8: TUI `/review` Command and Selectors
 

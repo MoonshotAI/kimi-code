@@ -76,6 +76,7 @@ export type {
   ReviewScopeKind,
   ReviewStartInput,
   ReviewTarget,
+  ReviewTarget as ReviewScopeInput,
   ReviewTargetPreview,
   ReviewWorkerRole,
   ResumedAgentState,

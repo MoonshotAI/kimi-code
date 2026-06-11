@@ -23,6 +23,12 @@ import type {
   ReloadSummary,
   ResumedSessionState,
   ResumedSessionSummary,
+  ReviewBaseRef,
+  ReviewCommit,
+  ReviewResult,
+  ReviewStartInput,
+  ReviewTarget,
+  ReviewTargetPreview,
   SessionPlan,
   SessionStatus,
   SessionSummary,
@@ -236,6 +242,31 @@ export class Session {
   async listSkills(): Promise<readonly SkillSummary[]> {
     this.ensureOpen();
     return this.rpc.listSkills({ sessionId: this.id });
+  }
+
+  async listReviewBaseRefs(): Promise<readonly ReviewBaseRef[]> {
+    this.ensureOpen();
+    return this.rpc.listReviewBaseRefs({ sessionId: this.id });
+  }
+
+  async listReviewCommits(): Promise<readonly ReviewCommit[]> {
+    this.ensureOpen();
+    return this.rpc.listReviewCommits({ sessionId: this.id });
+  }
+
+  async previewReviewTarget(target: ReviewTarget): Promise<ReviewTargetPreview> {
+    this.ensureOpen();
+    return this.rpc.previewReviewTarget({ sessionId: this.id, target });
+  }
+
+  async startReview(input: ReviewStartInput): Promise<ReviewResult> {
+    this.ensureOpen();
+    return this.rpc.startReview({ sessionId: this.id, ...input });
+  }
+
+  async cancelReview(): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.cancelReview({ sessionId: this.id });
   }
 
   /**

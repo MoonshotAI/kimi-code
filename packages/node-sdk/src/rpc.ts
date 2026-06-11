@@ -45,6 +45,12 @@ import type {
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
+  ReviewBaseRef,
+  ReviewCommit,
+  ReviewResult,
+  ReviewStartInput,
+  ReviewTarget,
+  ReviewTargetPreview,
   SessionSummary,
   SkillSummary,
   Unsubscribe,
@@ -94,6 +100,12 @@ export interface ActivateSkillRpcInput extends SessionIdRpcInput {
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
   readonly name: string;
 }
+
+export interface PreviewReviewTargetRpcInput extends SessionIdRpcInput {
+  readonly target: ReviewTarget;
+}
+
+export type StartReviewRpcInput = SessionIdRpcInput & ReviewStartInput;
 
 type ResolvedCoreAPI = RPCMethods<CoreAPI>;
 
@@ -421,6 +433,39 @@ export abstract class SDKRpcClientBase {
   async listSkills(input: SessionIdRpcInput): Promise<readonly SkillSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listSkills({ sessionId: input.sessionId });
+  }
+
+  async listReviewBaseRefs(input: SessionIdRpcInput): Promise<readonly ReviewBaseRef[]> {
+    const rpc = await this.getRpc();
+    return rpc.listReviewBaseRefs({ sessionId: input.sessionId });
+  }
+
+  async listReviewCommits(input: SessionIdRpcInput): Promise<readonly ReviewCommit[]> {
+    const rpc = await this.getRpc();
+    return rpc.listReviewCommits({ sessionId: input.sessionId });
+  }
+
+  async previewReviewTarget(input: PreviewReviewTargetRpcInput): Promise<ReviewTargetPreview> {
+    const rpc = await this.getRpc();
+    return rpc.previewReviewTarget({
+      sessionId: input.sessionId,
+      target: input.target,
+    });
+  }
+
+  async startReview(input: StartReviewRpcInput): Promise<ReviewResult> {
+    const rpc = await this.getRpc();
+    return rpc.startReview({
+      sessionId: input.sessionId,
+      target: input.target,
+      intensity: input.intensity,
+      focus: input.focus,
+    });
+  }
+
+  async cancelReview(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.cancelReview({ sessionId: input.sessionId });
   }
 
   async listBackgroundTasks(
