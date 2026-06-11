@@ -37,7 +37,7 @@ import {
   type OAuthTokenProviderResolver
 } from '../session/provider-manager';
 import { SessionAPIImpl } from '../session/rpc';
-import { normalizeWorkDir, SessionStore } from '../session/store';
+import { normalizeWorkDir, SessionStore } from '../session/store/index';
 import { noopTelemetryClient, withTelemetryContext, type TelemetryClient } from '../telemetry';
 import type { CoreRPCClient } from './client';
 import type {

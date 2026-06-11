@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import type {
   AgentReplayRecord,
   BackgroundTaskInfo,
@@ -201,6 +203,7 @@ function makeSession(
 }
 
 function makeHarness(initialSession: Session) {
+  const interactiveAgentScope = new AsyncLocalStorage<string>();
   return {
     getConfig: vi.fn(async () => ({
       models: {
@@ -216,7 +219,12 @@ function makeHarness(initialSession: Session) {
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
-    interactiveAgentId: 'main',
+    get interactiveAgentId() {
+      return interactiveAgentScope.getStore() ?? 'main';
+    },
+    withInteractiveAgent: vi.fn((agentId: string, fn: () => unknown) => {
+      return interactiveAgentScope.run(agentId, fn);
+    }),
     auth: {
       status: vi.fn(),
       login: vi.fn(),
