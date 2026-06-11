@@ -17,6 +17,7 @@ describe('status panel report lines', () => {
       thinking: true,
       permissionMode: 'manual',
       planMode: false,
+      swarmMode: false,
       contextUsage: 0.25,
       contextTokens: 2500,
       maxContextTokens: 10000,
@@ -26,6 +27,33 @@ describe('status panel report lines', () => {
           model: 'kimi-k2',
           maxContextSize: 10000,
           displayName: 'Kimi K2',
+        },
+      },
+      availableProviders: {
+        'managed:kimi-code': {
+          type: 'kimi',
+          apiKey: 'sk-test',
+        },
+      },
+      mcpServersSummary: '2 connected',
+      goal: {
+        goalId: 'goal-1',
+        objective: 'Ship the status card',
+        status: 'active',
+        turnsUsed: 3,
+        tokensUsed: 1200,
+        wallClockMs: 45000,
+        budget: {
+          tokenBudget: null,
+          turnBudget: null,
+          wallClockBudgetMs: null,
+          remainingTokens: null,
+          remainingTurns: null,
+          remainingWallClockMs: null,
+          tokenBudgetReached: false,
+          turnBudgetReached: false,
+          wallClockBudgetReached: false,
+          overBudget: false,
         },
       },
       status: {
@@ -56,8 +84,13 @@ describe('status panel report lines', () => {
     expect(output).toContain('Directory    /tmp/project');
     expect(output).toContain('Permissions  auto');
     expect(output).toContain('Plan mode    on');
+    expect(output).toContain('Swarm        off');
     expect(output).toContain('Session      ses-1');
     expect(output).toContain('Title        Implement status');
+    expect(output).toContain('Goal         Ship the status card · active');
+    expect(output).toContain('Providers    1');
+    expect(output).toContain('Models       1');
+    expect(output).toContain('MCP servers  2 connected');
     expect(output).toContain('Context window');
     expect(output).toContain('25.0%');
     expect(output).toContain('(3.0k / 12.0k)');
@@ -65,7 +98,6 @@ describe('status panel report lines', () => {
     expect(output).toContain('8% used');
     expect(output).not.toContain('Account');
     expect(output).not.toContain('AGENTS.md');
-    expect(output).not.toContain('Runtime');
   });
 
   it('falls back to app state and shows status load errors as warnings', () => {
@@ -78,10 +110,12 @@ describe('status panel report lines', () => {
       thinking: false,
       permissionMode: 'manual',
       planMode: false,
+      swarmMode: false,
       contextUsage: 0,
       contextTokens: 0,
       maxContextTokens: 0,
       availableModels: {},
+      availableProviders: {},
       statusError: 'No active session',
     }).map(strip);
 
