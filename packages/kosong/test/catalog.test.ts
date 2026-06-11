@@ -94,6 +94,25 @@ describe('catalogModelToCapability', () => {
     expect(catalogModelToCapability({ id: 'm', limit: { context: 0 } })).toBeUndefined();
   });
 
+  it('maps always_reasoning to always_thinking and implies thinking', () => {
+    const model = catalogModelToCapability({
+      id: 'm',
+      limit: { context: 1000 },
+      always_reasoning: true,
+    });
+    expect(model?.capability.always_thinking).toBe(true);
+    expect(model?.capability.thinking).toBe(true);
+
+    // Plain reasoning models stay toggleable: no always_thinking field.
+    const reasoning = catalogModelToCapability({
+      id: 'm',
+      limit: { context: 1000 },
+      reasoning: true,
+    });
+    expect(reasoning?.capability.thinking).toBe(true);
+    expect(reasoning?.capability.always_thinking).toBeUndefined();
+  });
+
   it('skips embedding and non-text-output models that cannot serve as chat defaults', () => {
     expect(
       catalogModelToCapability({

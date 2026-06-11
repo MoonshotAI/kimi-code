@@ -75,6 +75,12 @@ export function readConfigFile(filePath: string): KimiConfig {
  * synthesized from `KIMI_MODEL_*` environment variables. Use this everywhere a
  * value is assigned to the live runtime config; use the raw `readConfigFile`
  * for write-back paths so the synthesized model is never persisted.
+ *
+ * Model capabilities are deliberately NOT materialized into
+ * `models.<alias>.capabilities` here — config objects stay pure declarations
+ * so getConfig→setConfig round-trips persist snapshots verbatim. Detection
+ * from kosong's model knowledge is resolved at read time instead, via
+ * `resolveAliasCapabilities`.
  */
 export function loadRuntimeConfig(
   filePath: string,

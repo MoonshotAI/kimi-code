@@ -227,6 +227,7 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
 
   const selector = new TabbedModelSelectorComponent({
     models: mergedModels,
+    providers: host.state.appState.availableProviders,
     currentValue: host.state.appState.model,
     selectedValue: Object.keys(mergedModels).find((a) => a.startsWith(`${providerId}/`)),
     currentThinking: host.state.appState.thinking,
@@ -315,6 +316,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     : addedProviderIds[0];
   const selector = new TabbedModelSelectorComponent({
     models: stateModels,
+    providers: host.state.appState.availableProviders,
     currentValue: host.state.appState.model,
     selectedValue: firstNewAlias,
     currentThinking: host.state.appState.thinking,

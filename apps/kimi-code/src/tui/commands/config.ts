@@ -272,6 +272,7 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
   host.mountEditorReplacement(
     new TabbedModelSelectorComponent({
       models: host.state.appState.availableModels,
+      providers: host.state.appState.availableProviders,
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinking: host.state.appState.thinking,

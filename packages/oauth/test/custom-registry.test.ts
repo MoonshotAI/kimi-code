@@ -180,6 +180,34 @@ describe('fetchCustomRegistry', () => {
       warnSpy.mockRestore();
     }
   });
+
+  it('parses always_reasoning through api.json ingestion', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        makeJsonResponse({
+          reg: {
+            id: 'reg',
+            name: 'Reg',
+            api: 'https://reg.example/v1',
+            type: 'anthropic',
+            models: {
+              'fable-5-preview': {
+                id: 'fable-5-preview',
+                reasoning: true,
+                always_reasoning: true,
+              },
+            },
+          },
+        }),
+    );
+
+    const result = await fetchCustomRegistry(
+      KOKUB_SOURCE,
+      fetchMock as unknown as typeof fetch,
+    );
+
+    expect(result['reg']?.models['fable-5-preview']?.always_reasoning).toBe(true);
+  });
 });
 
 describe('applyCustomRegistryProvider', () => {
@@ -588,5 +616,14 @@ describe('capabilitiesFromCustomEntry', () => {
         reasoning: false,
       }),
     ).toEqual([]);
+  });
+
+  it('maps always_reasoning to always_thinking alongside thinking', () => {
+    expect(capabilitiesFromCustomEntry({ id: 'm', always_reasoning: true })).toEqual([
+      'thinking',
+      'always_thinking',
+    ]);
+    // Plain reasoning models stay toggleable: no always_thinking string.
+    expect(capabilitiesFromCustomEntry({ id: 'm', reasoning: true })).toEqual(['thinking']);
   });
 });

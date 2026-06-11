@@ -1,7 +1,8 @@
 import type { Logger } from '#/logging/types';
 import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
-import { APIStatusError, createProvider, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
-import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig } from '../config';
+import { APIStatusError, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
+import { resolveAliasCapabilities } from '../config';
+import type { KimiConfig, OAuthRef, ProviderConfig } from '../config';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
 
 export interface BearerTokenProvider {
@@ -115,7 +116,7 @@ export class ProviderManager implements ModelProvider {
     return {
       providerName,
       provider,
-      modelCapabilities: resolveModelCapabilities(alias, provider),
+      modelCapabilities: resolveAliasCapabilities(providerConfig.type, alias),
       maxOutputSize: alias.maxOutputSize,
     };
   }
@@ -189,24 +190,6 @@ export class ProviderManager implements ModelProvider {
       }
     };
   }
-}
-
-function resolveModelCapabilities(
-  alias: ModelAlias,
-  provider: KosongProviderConfig,
-): ModelCapability {
-  const declared = new Set((alias.capabilities ?? []).map((c) => c.trim().toLowerCase()));
-  const probe = createProvider(providerForCapabilityProbe(provider));
-  const detected = probe.getCapability?.(provider.model) ?? UNKNOWN_CAPABILITY;
-
-  return {
-    image_in: declared.has('image_in') || detected.image_in,
-    video_in: declared.has('video_in') || detected.video_in,
-    audio_in: declared.has('audio_in') || detected.audio_in,
-    thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
-    tool_use: declared.has('tool_use') || detected.tool_use,
-    max_context_tokens: alias.maxContextSize,
-  };
 }
 
 function toKosongProviderConfig(
@@ -290,14 +273,6 @@ function defaultHeadersField(
 ): { defaultHeaders?: Record<string, string> } {
   if (headers === undefined || Object.keys(headers).length === 0) return {};
   return { defaultHeaders: { ...headers } };
-}
-
-function providerForCapabilityProbe(provider: KosongProviderConfig): KosongProviderConfig {
-  const apiKey = provider.apiKey && provider.apiKey.length > 0 ? provider.apiKey : 'capability-probe';
-  if (provider.type === 'vertexai') {
-    return { ...provider, vertexai: false, project: undefined, location: undefined, apiKey };
-  }
-  return { ...provider, apiKey };
 }
 
 function providerApiKey(provider: ProviderConfig): string | undefined {

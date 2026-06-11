@@ -40,6 +40,12 @@ import type {
 
 import { getAnthropicModelCapability } from './capability-registry';
 import {
+  isFableModel,
+  parseClaudeAliasVersion,
+  parseClaudeVersion,
+  type ClaudeVersion,
+} from './claude-version';
+import {
   mergeRequestHeaders,
   requireProviderApiKey,
   resolveAuthBackedClient,
@@ -164,84 +170,6 @@ const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
 
 const FALLBACK_MAX_TOKENS = 32000;
 
-type ClaudeFamily = 'opus' | 'sonnet' | 'haiku' | 'fable';
-
-interface ClaudeVersion {
-  family: ClaudeFamily;
-  major: number;
-  minor: number | null;
-}
-
-// Family-first form: "opus-4-7", "sonnet-4.6", "haiku-4-5-20251001",
-// "fable-5" (single version component — Fable ids carry no minor).
-// Version numbers are capped at 1–2 digits with a non-digit lookahead so
-// 8-digit date suffixes (e.g. `-20251001`) don't get consumed as version
-// components.
-const FAMILY_FIRST_RE =
-  /(opus|sonnet|haiku|fable)[-._](\d{1,2})(?!\d)(?:[-._](\d{1,2})(?!\d))?/;
-// Legacy version-first form: "3-5-sonnet", "3.7.opus" — used by older
-// Anthropic model ids and Bedrock variants of Claude 3.x.
-const VERSION_FIRST_RE = /(\d{1,2})[-._](\d{1,2})[-._](opus|sonnet|haiku)/;
-// Bare family form for base Claude 3 (no minor): "3-opus", "3.haiku".
-const BARE_FAMILY_RE = /(\d{1,2})[-._](opus|sonnet|haiku)/;
-
-/**
- * Extract Claude family + version from a model id.
- *
- * Designed to survive the naming variants we see across vendors:
- * vendor prefixes (`anthropic.`, `aws/`, `openrouter/`,
- * `online-`), suffixes (date stamps like `-20251001`, build tags
- * like `-construct`, `-v1:0`), and `.` vs `-` separators between
- * the family and version components.
- *
- * Returns `null` when the id contains no Claude marker or no
- * recognizable family/version, in which case the resolver should fall
- * back to the override or {@link FALLBACK_MAX_TOKENS}.
- */
-function parseClaudeVersion(model: string): ClaudeVersion | null {
-  return parseClaudeFamilyVersion(model, true);
-}
-
-function parseClaudeAliasVersion(model: string): ClaudeVersion | null {
-  return parseClaudeFamilyVersion(model, false);
-}
-
-function parseClaudeFamilyVersion(model: string, requireClaudeMarker: boolean): ClaudeVersion | null {
-  const normalized = model.toLowerCase();
-  // Guard against false positives on non-Claude models that happen to
-  // contain an `opus-4-7`-like substring (e.g. fine-tunes named after a
-  // checkpoint). The Anthropic provider might still be configured for
-  // non-Claude endpoints, so without this guard we'd quietly apply
-  // Claude ceilings to unrelated models.
-  if (requireClaudeMarker && !normalized.includes('claude')) return null;
-
-  const familyFirst = FAMILY_FIRST_RE.exec(normalized);
-  if (familyFirst !== null) {
-    return {
-      family: familyFirst[1] as ClaudeFamily,
-      major: Number.parseInt(familyFirst[2]!, 10),
-      minor: familyFirst[3] !== undefined ? Number.parseInt(familyFirst[3], 10) : null,
-    };
-  }
-  const versionFirst = VERSION_FIRST_RE.exec(normalized);
-  if (versionFirst !== null) {
-    return {
-      major: Number.parseInt(versionFirst[1]!, 10),
-      minor: Number.parseInt(versionFirst[2]!, 10),
-      family: versionFirst[3] as ClaudeFamily,
-    };
-  }
-  const bare = BARE_FAMILY_RE.exec(normalized);
-  if (bare !== null) {
-    return {
-      major: Number.parseInt(bare[1]!, 10),
-      minor: null,
-      family: bare[2] as ClaudeFamily,
-    };
-  }
-  return null;
-}
-
 function lookupClaudeCeiling(version: ClaudeVersion): number | undefined {
   const { family, major, minor } = version;
   if (minor !== null) {
@@ -313,10 +241,6 @@ function isOpus47(model: string): boolean {
   }
   const version = parseVersion(match);
   return version.major === 4 && version.minor === 7;
-}
-
-function isFableModel(model: string): boolean {
-  return parseClaudeAliasVersion(model)?.family === 'fable';
 }
 
 function supportsEffortParam(model: string, adaptive: boolean): boolean {

@@ -33,6 +33,12 @@ export interface CustomRegistryModelEntry {
   readonly limit?: { context?: number; output?: number };
   readonly tool_call?: boolean;
   readonly reasoning?: boolean;
+  /**
+   * Same extension as kosong's `CatalogModelEntry.always_reasoning`: the
+   * model always reasons and cannot run with thinking turned off. Implies
+   * `reasoning`. Absent means `false`.
+   */
+  readonly always_reasoning?: boolean;
   readonly modalities?: {
     input?: readonly string[];
     output?: readonly string[];
@@ -99,6 +105,7 @@ function toModelEntry(value: unknown): CustomRegistryModelEntry | undefined {
     limit?: { context?: number; output?: number };
     tool_call?: boolean;
     reasoning?: boolean;
+    always_reasoning?: boolean;
     modalities?: { input?: readonly string[]; output?: readonly string[] };
   } = { id };
 
@@ -123,6 +130,9 @@ function toModelEntry(value: unknown): CustomRegistryModelEntry | undefined {
 
   if (typeof value['tool_call'] === 'boolean') entry.tool_call = value['tool_call'];
   if (typeof value['reasoning'] === 'boolean') entry.reasoning = value['reasoning'];
+  if (typeof value['always_reasoning'] === 'boolean') {
+    entry.always_reasoning = value['always_reasoning'];
+  }
 
   const modalities = value['modalities'];
   if (isRecord(modalities)) {
@@ -236,7 +246,10 @@ export async function fetchCustomRegistry(
 export function capabilitiesFromCustomEntry(model: CustomRegistryModelEntry): string[] {
   const caps = new Set<string>();
   if (model.tool_call === true) caps.add('tool_use');
-  if (model.reasoning === true) caps.add('thinking');
+  if (model.reasoning === true || model.always_reasoning === true) caps.add('thinking');
+  // Spelled out alongside 'thinking' so consumers checking plain membership
+  // keep working (same contract as node-sdk's capabilityToStrings).
+  if (model.always_reasoning === true) caps.add('always_thinking');
   if (model.modalities?.input?.includes('image') === true) caps.add('image_in');
   if (model.modalities?.input?.includes('video') === true) caps.add('video_in');
   if (model.modalities?.output?.includes('image') === true) caps.add('image_out');
@@ -248,6 +261,7 @@ function hasRichCapabilityHints(model: CustomRegistryModelEntry): boolean {
   return (
     typeof model.tool_call === 'boolean' ||
     typeof model.reasoning === 'boolean' ||
+    typeof model.always_reasoning === 'boolean' ||
     model.modalities !== undefined
   );
 }

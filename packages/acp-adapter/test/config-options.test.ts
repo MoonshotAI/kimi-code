@@ -25,6 +25,8 @@ function makeHarnessWithModels(
       ...(entry.capabilities !== undefined ? { capabilities: entry.capabilities } : {}),
     };
   }
+  // Deliberately omits `providers`: a partial stub exercises the RPC-boundary
+  // fallback in listModelsFromHarness.
   const getConfig = vi.fn(async () => ({ models }));
   return { harness: { getConfig } as unknown as KimiHarness, getConfig };
 }
@@ -156,6 +158,19 @@ describe('buildSessionConfigOptions', () => {
     ]);
 
     const result = await buildSessionConfigOptions(harness, 'kimi-plain', false, 'default');
+
+    expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
+  });
+
+  it('omits the thinking toggle for always-thinking models — off would be a no-op', async () => {
+    // Same dynamic-visibility rule as non-thinking models: ACP's select arm
+    // has no read-only entry, and showing Off/On for a model whose thinking
+    // cannot be turned off would misreport what actually runs.
+    const { harness } = makeHarnessWithModels([
+      { id: 'fable', model: 'claude-fable-5', capabilities: ['always_thinking'] },
+    ]);
+
+    const result = await buildSessionConfigOptions(harness, 'fable', false, 'default');
 
     expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
   });

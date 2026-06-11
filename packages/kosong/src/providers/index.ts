@@ -1,5 +1,13 @@
+import type { ModelCapability } from '../capability';
+import { UNKNOWN_CAPABILITY } from '../capability';
 import type { ChatProvider } from '../provider';
 import { AnthropicChatProvider, type AnthropicOptions } from './anthropic';
+import {
+  getAnthropicModelCapability,
+  getGoogleGenAIModelCapability,
+  getOpenAILegacyModelCapability,
+  getOpenAIResponsesModelCapability,
+} from './capability-registry';
 import { GoogleGenAIChatProvider, type GoogleGenAIOptions } from './google-genai';
 import { KimiChatProvider, type KimiOptions } from './kimi';
 import { OpenAILegacyChatProvider, type OpenAILegacyOptions } from './openai-legacy';
@@ -31,6 +39,34 @@ export function createProvider(config: ProviderConfig): ChatProvider {
       return new GoogleGenAIChatProvider(config);
     default: {
       const exhaustive: never = config;
+      throw new Error(`Unknown provider type: ${String(exhaustive)}`);
+    }
+  }
+}
+
+/**
+ * Pure lookup of a provider's catalogued model capability — the same mapping
+ * each `ChatProvider.getCapability` exposes, without constructing a provider.
+ * Providers with no built-in model knowledge (kimi) yield UNKNOWN_CAPABILITY.
+ */
+export function getProviderModelCapability(
+  type: ProviderType,
+  modelName: string,
+): ModelCapability {
+  switch (type) {
+    case 'anthropic':
+      return getAnthropicModelCapability(modelName);
+    case 'openai':
+      return getOpenAILegacyModelCapability(modelName);
+    case 'openai_responses':
+      return getOpenAIResponsesModelCapability(modelName);
+    case 'google-genai':
+    case 'vertexai':
+      return getGoogleGenAIModelCapability(modelName);
+    case 'kimi':
+      return UNKNOWN_CAPABILITY;
+    default: {
+      const exhaustive: never = type;
       throw new Error(`Unknown provider type: ${String(exhaustive)}`);
     }
   }

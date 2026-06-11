@@ -46,6 +46,9 @@ function capabilityToStrings(capability: ModelCapability): string[] | undefined 
   if (capability.video_in) caps.push('video_in');
   if (capability.audio_in) caps.push('audio_in');
   if (capability.thinking) caps.push('thinking');
+  // Spelled out alongside `thinking` so consumers checking for plain
+  // 'thinking' membership keep working.
+  if (capability.always_thinking) caps.push('always_thinking');
   if (capability.tool_use) caps.push('tool_use');
   return caps.length > 0 ? caps : undefined;
 }

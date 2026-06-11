@@ -104,6 +104,34 @@ describe('ModelSelectorComponent', () => {
     expect(onSelect).toHaveBeenLastCalledWith({ alias: 'plain', thinking: false });
   });
 
+  it('renders detected always-thinking models as always-on without a declaration', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        fable: {
+          provider: 'anthropic',
+          model: 'claude-fable-5',
+          maxContextSize: 1_000_000,
+          displayName: 'Claude Fable 5',
+        },
+      },
+      providers: {
+        // The component only needs the wire type — not credentials.
+        anthropic: { type: 'anthropic' },
+      },
+      currentValue: 'fable',
+      currentThinking: false,
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    expect(text(picker)).toContain('[ Always on ]');
+    // ←/→ cannot toggle always-on thinking off.
+    picker.handleInput(RIGHT);
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'fable', thinking: true });
+  });
+
   it('keeps the thinking draft when moving across models', () => {
     const onSelect = vi.fn();
     const picker = new ModelSelectorComponent({

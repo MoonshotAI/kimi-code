@@ -18,6 +18,7 @@ import { GoogleGenAIChatProvider } from '#/providers/google-genai';
 import { KimiChatProvider } from '#/providers/kimi';
 import { OpenAILegacyChatProvider } from '#/providers/openai-legacy';
 import { OpenAIResponsesChatProvider } from '#/providers/openai-responses';
+import { createProvider, getProviderModelCapability, type ProviderConfig } from '#/providers/index';
 import { describe, expect, it } from 'vitest';
 describe('KimiChatProvider.getCapability', () => {
   function make(model: string): KimiChatProvider {
@@ -80,6 +81,17 @@ describe('GoogleGenAIChatProvider.getCapability', () => {
     expect(cap).toEqual(UNKNOWN_CAPABILITY);
   });
 
+  it('gemini-2.5-pro cannot disable thinking → always_thinking; 2.5-flash stays toggleable', () => {
+    // 2.5 Pro enforces a minimum thinking budget (128) and rejects
+    // thinking_budget: 0; 2.5 Flash accepts budget 0.
+    const pro = make('gemini-2.5-pro').getCapability();
+    expect(pro.thinking).toBe(true);
+    expect(pro.always_thinking).toBe(true);
+    const flash = make('gemini-2.5-flash').getCapability();
+    expect(flash.thinking).toBe(true);
+    expect(flash.always_thinking).toBeUndefined();
+  });
+
   it('non-gemini model name → UNKNOWN_CAPABILITY', () => {
     const cap = make('claude-3-5-sonnet').getCapability();
     expect(cap).toEqual(UNKNOWN_CAPABILITY);
@@ -121,6 +133,34 @@ describe('AnthropicChatProvider.getCapability', () => {
     expect(cap.tool_use).toBe(true);
   });
 
+  it('claude-fable-5 → always_thinking; toggleable Claude 4 models are not', () => {
+    // Fable cannot run with thinking turned off; Opus 4 can.
+    expect(make('claude-fable-5').getCapability().always_thinking).toBe(true);
+    expect(make('claude-opus-4').getCapability().always_thinking).toBeUndefined();
+  });
+
+  it('vendor-prefixed Fable ids detect always_thinking like the wire layer', () => {
+    // The capability row is driven by the same isFableModel predicate
+    // generate() uses to omit `thinking: disabled`, so every id that runs
+    // always-on also advertises it.
+    for (const id of [
+      'anthropic.claude-fable-5-v1:0',
+      'us.anthropic.claude-fable-5-20251101-v1:0',
+      'openrouter/anthropic/claude-fable-5',
+      'fable-5',
+      'claude-fable-latest', // version-less: covered by the prefix branch
+    ]) {
+      const cap = make(id).getCapability();
+      expect(cap.always_thinking, id).toBe(true);
+      expect(cap.thinking, id).toBe(true);
+    }
+  });
+
+  it('ids merely containing the fable substring do not classify as Fable', () => {
+    // The isFableModel prefix branch is separator-anchored.
+    expect(make('claude-fabled-2').getCapability()).toEqual(UNKNOWN_CAPABILITY);
+  });
+
   it('no Anthropic model supports audio_in', () => {
     // Sanity: Anthropic has no audio-input models today. If one ships later
     // and this fails, update the table — but make it a conscious decision.
@@ -157,6 +197,13 @@ describe('OpenAILegacyChatProvider.getCapability', () => {
     expect(cap.tool_use).toBe(true);
   });
 
+  it('o-series reasoning cannot be turned off → always_thinking', () => {
+    // 'off' omits reasoning_effort and pre-gpt-5.1 reasoning models do not
+    // support 'none' — the server still reasons at its default effort.
+    expect(make('o3').getCapability().always_thinking).toBe(true);
+    expect(make('gpt-4o').getCapability().always_thinking).toBeUndefined();
+  });
+
   it('unknown OpenAI-legacy model → UNKNOWN_CAPABILITY', () => {
     const cap = make('gpt-mystery').getCapability();
     expect(cap).toEqual(UNKNOWN_CAPABILITY);
@@ -182,10 +229,55 @@ describe('OpenAIResponsesChatProvider.getCapability', () => {
   it('o3-mini → thinking=true', () => {
     const cap = make('o3-mini').getCapability();
     expect(cap.thinking).toBe(true);
+    expect(cap.always_thinking).toBe(true);
   });
 
   it('unknown Responses model → UNKNOWN_CAPABILITY', () => {
     const cap = make('gpt-mystery').getCapability();
     expect(cap).toEqual(UNKNOWN_CAPABILITY);
+  });
+});
+describe('getProviderModelCapability (pure lookup)', () => {
+  // Cross-check against the instance path: the pure lookup's switch in
+  // providers/index.ts and each ChatProvider class's getCapability are two
+  // copies of the same type→registry mapping. If a provider's getCapability
+  // implementation ever changes (e.g. kimi gains catalog knowledge), this
+  // fails instead of the two silently drifting apart.
+  const CASES: ReadonlyArray<{ config: ProviderConfig; models: readonly string[] }> = [
+    {
+      config: { type: 'anthropic', model: 'claude-fable-5', apiKey: 'test-key' },
+      models: ['claude-fable-5', 'claude-opus-4', 'claude-3-5-sonnet', 'claude-not-real'],
+    },
+    {
+      config: { type: 'openai', model: 'o3', apiKey: 'test-key' },
+      models: ['o3', 'gpt-4o', 'gpt-mystery'],
+    },
+    {
+      config: { type: 'openai_responses', model: 'o3-mini', apiKey: 'test-key' },
+      models: ['o3-mini', 'gpt-4.1', 'gpt-mystery'],
+    },
+    {
+      config: { type: 'google-genai', model: 'gemini-2.5-pro', apiKey: 'test-key' },
+      models: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-not-real'],
+    },
+    {
+      config: { type: 'vertexai', model: 'gemini-2.5-pro', apiKey: 'test-key' },
+      models: ['gemini-2.5-pro', 'gemini-not-real'],
+    },
+    {
+      config: { type: 'kimi', model: 'kimi-for-coding', apiKey: 'test-key' },
+      models: ['kimi-for-coding', 'kimi-thinking-preview'],
+    },
+  ];
+
+  it('agrees with ChatProvider.getCapability for every provider type', () => {
+    for (const { config, models } of CASES) {
+      const provider = createProvider(config);
+      for (const model of models) {
+        expect(getProviderModelCapability(config.type, model), `${config.type}/${model}`).toEqual(
+          provider.getCapability?.(model),
+        );
+      }
+    }
   });
 });

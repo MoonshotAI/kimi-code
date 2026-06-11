@@ -1,6 +1,7 @@
 import {
   catalogModelToAlias,
   inferWireType,
+  resolveAliasCapabilities,
   type Catalog,
   type CatalogModel,
   type ModelAlias,
@@ -162,8 +163,11 @@ export function runModelSelector(
 ): Promise<{ alias: string; thinking: boolean } | undefined> {
   return new Promise((resolve) => {
     const firstAlias = Object.keys(modelDict)[0] ?? '';
-    const caps = modelDict[firstAlias]?.capabilities ?? [];
-    const initialThinking = caps.includes('always_thinking') || caps.includes('thinking');
+    const first = modelDict[firstAlias];
+    // Pre-add flow: the provider isn't in config yet, so capability
+    // resolution runs on the catalog-declared strings alone.
+    const initialThinking =
+      first !== undefined && resolveAliasCapabilities(undefined, first).thinking;
     const selector = new ModelSelectorComponent({
       models: modelDict,
       currentValue: firstAlias,

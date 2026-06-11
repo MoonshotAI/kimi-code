@@ -13,6 +13,11 @@ export interface CatalogModelEntry {
   readonly limit?: { readonly context?: number; readonly output?: number };
   readonly tool_call?: boolean;
   readonly reasoning?: boolean;
+  /**
+   * Catalog extension over models.dev: the model always reasons and cannot
+   * run with thinking turned off. Implies `reasoning`. Absent means `false`.
+   */
+  readonly always_reasoning?: boolean;
   readonly interleaved?: boolean | { readonly field?: string };
   readonly modalities?: {
     readonly input?: readonly string[];
@@ -133,7 +138,8 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
       image_in: inputs.includes('image'),
       video_in: inputs.includes('video'),
       audio_in: inputs.includes('audio'),
-      thinking: Boolean(model.reasoning),
+      thinking: Boolean(model.reasoning) || model.always_reasoning === true,
+      always_thinking: model.always_reasoning === true ? true : undefined,
       tool_use: model.tool_call ?? true,
       max_context_tokens: context,
     },

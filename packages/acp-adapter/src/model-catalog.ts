@@ -15,14 +15,28 @@
  * `for model_key, model in models.items()`.
  *
  * `thinkingSupported` is true if any of:
- *   1. the alias's declared `capabilities` array contains `'thinking'`, or
+ *   1. the alias resolves to thinking via `resolveAliasCapabilities` —
+ *      declared `capabilities` (`'thinking'` or `'always_thinking'`,
+ *      case-insensitive) or kosong's built-in detection for the provider
+ *      wire type (e.g. `claude-fable-5`), or
  *   2. the underlying model name matches `/thinking|reason/i`
  *      (always-thinking variants), or
  *   3. the underlying model name is on the {@link TOGGLEABLE_THINKING_MODELS}
  *      allow-list (mirrors `kimi-cli/src/kimi_cli/llm.py:derive_model_capabilities`).
+ *
+ * `alwaysThinking` is set only by route 1 (capability resolution): the
+ * name-regex route cannot tell an always-on variant from a toggleable one,
+ * so it stays a plain `thinkingSupported`. Consumers use it to suppress
+ * thinking-off controls — offering "off" on such a model would silently
+ * run (and bill) thinking anyway.
  */
 
-import type { KimiHarness, ModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import {
+  resolveAliasCapabilities,
+  type KimiHarness,
+  type ModelAlias,
+  type ProviderConfig,
+} from '@moonshot-ai/kimi-code-sdk';
 
 /**
  * One catalog row per configured model alias, suitable for an ACP
@@ -35,6 +49,13 @@ export interface AcpModelEntry {
   readonly name: string;
   readonly description?: string | undefined;
   readonly thinkingSupported: boolean;
+  /**
+   * The model always reasons and cannot run with thinking turned off
+   * (kosong's `always_thinking`, e.g. `claude-fable-5`). Implies
+   * `thinkingSupported`. Consumers must not offer a thinking-off control
+   * when this is set.
+   */
+  readonly alwaysThinking?: true;
 }
 
 /**
@@ -45,13 +66,17 @@ export interface AcpModelEntry {
  */
 const TOGGLEABLE_THINKING_MODELS = new Set(['kimi-for-coding', 'kimi-code']);
 
-export function deriveThinkingSupported(alias: ModelAlias): boolean {
-  const declared = alias.capabilities ?? [];
-  if (declared.includes('thinking')) return true;
+export function deriveThinking(
+  alias: ModelAlias,
+  providerType?: ProviderConfig['type'],
+): Pick<AcpModelEntry, 'thinkingSupported' | 'alwaysThinking'> {
+  const resolved = resolveAliasCapabilities(providerType, alias);
+  if (resolved.always_thinking) return { thinkingSupported: true, alwaysThinking: true };
+  if (resolved.thinking) return { thinkingSupported: true };
   const lower = alias.model.toLowerCase();
-  if (lower.includes('thinking') || lower.includes('reason')) return true;
-  if (TOGGLEABLE_THINKING_MODELS.has(alias.model)) return true;
-  return false;
+  if (lower.includes('thinking') || lower.includes('reason')) return { thinkingSupported: true };
+  if (TOGGLEABLE_THINKING_MODELS.has(alias.model)) return { thinkingSupported: true };
+  return { thinkingSupported: false };
 }
 
 /**
@@ -67,9 +92,14 @@ export async function listModelsFromHarness(
 ): Promise<readonly AcpModelEntry[]> {
   if (typeof harness.getConfig !== 'function') return [];
   let models: Record<string, ModelAlias> | undefined;
+  let providers: Record<string, ProviderConfig>;
   try {
     const config = await harness.getConfig();
     models = config.models;
+    // `KimiConfig` types `providers` as required (zod default), but getConfig
+    // crosses an RPC/stub boundary — a partial harness can omit it, and this
+    // dereference sits outside the try.
+    providers = config.providers ?? {};
   } catch {
     return [];
   }
@@ -79,7 +109,7 @@ export async function listModelsFromHarness(
     out.push({
       id,
       name: alias.displayName ?? alias.model ?? id,
-      thinkingSupported: deriveThinkingSupported(alias),
+      ...deriveThinking(alias, providers[alias.provider]?.type),
     });
   }
   return out;

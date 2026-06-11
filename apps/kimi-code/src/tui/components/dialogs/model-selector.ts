@@ -1,4 +1,5 @@
-import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import { resolveAliasCapabilities } from '@moonshot-ai/kimi-code-sdk';
+import type { ModelAlias, ProviderConfig } from '@moonshot-ai/kimi-code-sdk';
 import {
   Container,
   Key,
@@ -54,6 +55,14 @@ export function createModelChoiceOptions(
 
 export interface ModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
+  /**
+   * Provider wire types keyed by provider id, used to resolve detected
+   * capabilities (e.g. claude-fable-5 → always-on thinking) for aliases that
+   * don't declare them. Only `type` is read — callers can pass their full
+   * `ProviderConfig` map as-is. Omitted in pre-add flows where aliases carry
+   * catalog-declared capability strings instead.
+   */
+  readonly providers?: Record<string, Pick<ProviderConfig, 'type'>>;
   readonly currentValue: string;
   readonly selectedValue?: string;
   readonly currentThinking: boolean;
@@ -76,15 +85,20 @@ function createModelChoices(models: Record<string, ModelAlias>): readonly ModelC
   });
 }
 
-function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
-  const caps = model.capabilities ?? [];
-  if (caps.includes('always_thinking')) return 'always-on';
-  if (caps.includes('thinking') || model.adaptiveThinking === true) return 'toggle';
+function thinkingAvailability(
+  model: ModelAlias,
+  providers: Record<string, Pick<ProviderConfig, 'type'>> | undefined,
+): ThinkingAvailability {
+  const resolved = resolveAliasCapabilities(providers?.[model.provider]?.type, model);
+  if (resolved.always_thinking) return 'always-on';
+  if (resolved.thinking || model.adaptiveThinking === true) return 'toggle';
   return 'unsupported';
 }
 
-function effectiveThinking(model: ModelAlias, thinkingDraft: boolean): boolean {
-  const availability = thinkingAvailability(model);
+function effectiveThinking(
+  availability: ThinkingAvailability,
+  thinkingDraft: boolean,
+): boolean {
   if (availability === 'always-on') return true;
   if (availability === 'unsupported') return false;
   return thinkingDraft;
@@ -120,6 +134,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
     });
   }
 
+  private availabilityFor(model: ModelAlias): ThinkingAvailability {
+    return thinkingAvailability(model, this.opts.providers);
+  }
+
   /**
    * Thinking draft for a model: an explicit ←/→ override when set, otherwise
    * the live thinking state for the active model, otherwise On for any other
@@ -129,7 +147,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
     const override = this.thinkingOverrides.get(choice.alias);
     if (override !== undefined) return override;
     if (choice.alias === this.opts.currentValue) return this.opts.currentThinking;
-    return thinkingAvailability(choice.model) !== 'unsupported';
+    return this.availabilityFor(choice.model) !== 'unsupported';
   }
 
   handleInput(data: string): void {
@@ -147,7 +165,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
     // Left/Right toggle the thinking draft for models that support it.
     if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
       const selected = this.selectedChoice();
-      if (selected !== undefined && thinkingAvailability(selected.model) === 'toggle') {
+      if (selected !== undefined && this.availabilityFor(selected.model) === 'toggle') {
         this.thinkingOverrides.set(selected.alias, !this.draftFor(selected));
       }
       return;
@@ -158,7 +176,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (selected === undefined) return;
       this.opts.onSelect({
         alias: selected.alias,
-        thinking: effectiveThinking(selected.model, this.draftFor(selected)),
+        thinking: effectiveThinking(this.availabilityFor(selected.model), this.draftFor(selected)),
       });
     }
   }
@@ -240,7 +258,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
     lines.push('');
     const selected = this.selectedChoice();
     if (selected !== undefined) {
-      const availability = thinkingAvailability(selected.model);
+      const availability = this.availabilityFor(selected.model);
       const thinkingHeader = availability === 'toggle' ? ' Thinking  (←→ to switch)' : ' Thinking';
       lines.push(currentTheme.fg('textMuted', thinkingHeader));
       lines.push(this.renderThinkingControl(selected));
@@ -260,7 +278,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
         ? currentTheme.boldFg('primary', `[ ${label} ]`)
         : currentTheme.fg('text', `  ${label}  `);
 
-    const availability = thinkingAvailability(choice.model);
+    const availability = this.availabilityFor(choice.model);
     if (availability === 'always-on') {
       return `  ${segment('Always on', true)}`;
     }

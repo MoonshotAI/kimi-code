@@ -13,6 +13,14 @@ export interface ModelCapability {
   readonly video_in: boolean;
   readonly audio_in: boolean;
   readonly thinking: boolean;
+  /**
+   * The model always reasons and cannot run with thinking turned off — e.g.
+   * Claude Fable 5, where a request without a `thinking` field still runs
+   * adaptive thinking. UIs should not offer a thinking-off toggle for these
+   * models. Typed `true` (never `false`): absent means toggleable, and
+   * present implies `thinking` is also `true`.
+   */
+  readonly always_thinking?: true;
   readonly tool_use: boolean;
   readonly max_context_tokens: number;
 }

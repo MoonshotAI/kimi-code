@@ -1,4 +1,5 @@
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/capability';
+import { isFableModel } from './claude-version';
 
 type CapabilityMatcher = (normalizedModelName: string) => boolean;
 
@@ -29,8 +30,8 @@ const OPENAI_VISION_TOOL_PREFIXES = [
 ] as const;
 
 // Claude prefixes are grouped by capability set, not by version family:
-// a new model joins the group whose capability it matches (e.g. Fable sits
-// with Opus/Sonnet/Haiku 4), rather than getting a per-version group.
+// a new model joins the group whose capability it matches, rather than
+// getting a per-version group.
 
 // Vision + tool use, no thinking (-> ANTHROPIC_VISION_TOOL_CAPABILITY).
 const CLAUDE_VISION_TOOL_PREFIXES = ['claude-3-', 'claude-3.5-', 'claude-3.7-'] as const;
@@ -40,7 +41,6 @@ const CLAUDE_THINKING_VISION_TOOL_PREFIXES = [
   'claude-opus-4',
   'claude-sonnet-4',
   'claude-haiku-4',
-  'claude-fable',
 ] as const;
 
 const GEMINI_CATALOGUED_PREFIXES = [
@@ -52,11 +52,16 @@ const GEMINI_CATALOGUED_PREFIXES = [
   'gemini-2.5-flash',
 ] as const;
 
+// OpenAI o-series reasoning cannot be turned off: `withThinking('off')` omits
+// `reasoning_effort`, and pre-gpt-5.1 reasoning models do not support `none` —
+// the server still reasons at its default effort. Surface that as
+// always_thinking so UIs don't offer a no-op off toggle.
 const OPENAI_REASONING_CAPABILITY: ModelCapability = Object.freeze({
   image_in: false,
   video_in: false,
   audio_in: false,
   thinking: true,
+  always_thinking: true,
   tool_use: true,
   max_context_tokens: 0,
 });
@@ -97,6 +102,12 @@ const ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze
   max_context_tokens: 0,
 });
 
+// Fable: same vision/tool set, but thinking cannot be turned off.
+const ANTHROPIC_ALWAYS_THINKING_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze({
+  ...ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY,
+  always_thinking: true,
+});
+
 const GEMINI_MULTIMODAL_TOOL_CAPABILITY: ModelCapability = Object.freeze({
   image_in: true,
   video_in: true,
@@ -113,6 +124,15 @@ const GEMINI_THINKING_MULTIMODAL_TOOL_CAPABILITY: ModelCapability = Object.freez
   thinking: true,
   tool_use: true,
   max_context_tokens: 0,
+});
+
+// Gemini 2.5 Pro cannot disable thinking: the API enforces a minimum thinking
+// budget (128), so the provider's `withThinking('off')` → `thinking_budget: 0`
+// is rejected with a 400. 2.5 Flash / Flash-Lite accept budget 0 and stay in
+// the toggleable group.
+const GEMINI_ALWAYS_THINKING_MULTIMODAL_TOOL_CAPABILITY: ModelCapability = Object.freeze({
+  ...GEMINI_THINKING_MULTIMODAL_TOOL_CAPABILITY,
+  always_thinking: true,
 });
 
 const OPENAI_LEGACY_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
@@ -149,6 +169,15 @@ const ANTHROPIC_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
   {
     matches: (name) => hasPrefix(name, CLAUDE_THINKING_VISION_TOOL_PREFIXES),
     capability: ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY,
+  },
+  {
+    // isFableModel is the same predicate the anthropic wire layer uses to
+    // omit `thinking: disabled`, so the advertised capability and the
+    // request-building behavior cannot drift — vendor-prefixed
+    // ("us.anthropic.claude-fable-5-v1:0"), bare ("fable-5"), and
+    // version-less ("claude-fable-latest") ids all classify identically.
+    matches: isFableModel,
+    capability: ANTHROPIC_ALWAYS_THINKING_VISION_TOOL_CAPABILITY,
   },
 ];
 
@@ -194,6 +223,9 @@ export function getGoogleGenAIModelCapability(modelName: string): ModelCapabilit
   if (!normalized.startsWith('gemini-')) return UNKNOWN_CAPABILITY;
   if (!hasPrefix(normalized, GEMINI_CATALOGUED_PREFIXES)) return UNKNOWN_CAPABILITY;
 
+  if (normalized.startsWith('gemini-2.5-pro')) {
+    return GEMINI_ALWAYS_THINKING_MULTIMODAL_TOOL_CAPABILITY;
+  }
   if (normalized.startsWith('gemini-2.5-') || normalized.includes('thinking')) {
     return GEMINI_THINKING_MULTIMODAL_TOOL_CAPABILITY;
   }
