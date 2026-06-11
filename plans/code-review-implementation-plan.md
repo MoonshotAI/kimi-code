@@ -186,7 +186,7 @@ Purpose: make reviewer and reconciliator workers safe by default.
 
 **Tasks:**
 
-- [ ] Add `reviewer` profile with tools:
+- [x] Add `reviewer` profile with tools:
   - `GetAssignment`
   - `GetChangedFiles`
   - `ReadPatch`
@@ -195,7 +195,7 @@ Purpose: make reviewer and reconciliator workers safe by default.
   - `AddComment`
   - `Grep`
   - `Glob`
-- [ ] Add `reconciliator` profile with tools:
+- [x] Add `reconciliator` profile with tools:
   - `GetComments`
   - `GetCommentEvidence`
   - `MergeComments`
@@ -203,9 +203,9 @@ Purpose: make reviewer and reconciliator workers safe by default.
   - `UpdateProgress`
   - `ReadPatch`
   - `ReadFileVersion`
-- [ ] Register both as subagent profiles in `agent.yaml`.
-- [ ] Add both YAML sources to `packages/agent-core/src/profile/default.ts`.
-- [ ] Add `ReviewModeGuardDenyPermissionPolicy` before auto/yolo approval policies. It should deny:
+- [x] Register both as subagent profiles in `agent.yaml`.
+- [x] Add both YAML sources to `packages/agent-core/src/profile/default.ts`.
+- [x] Add `ReviewModeGuardDenyPermissionPolicy` before auto/yolo approval policies. It should deny:
   - `Write`
   - `Edit`
   - `Bash`
@@ -214,12 +214,12 @@ Purpose: make reviewer and reconciliator workers safe by default.
   - `AskUserQuestion`
   - task and cron mutation tools
   - unknown non-review tools while a review assignment is active
-- [ ] Test that review workers cannot mutate files even when parent permission mode is `auto` or `yolo`.
+- [x] Test that review workers cannot mutate files even when parent permission mode is `auto` or `yolo`.
 
 **Verification:**
 
-- [ ] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/profile/default-agent-profiles.test.ts`.
-- [ ] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/tools/review-mode-hard-block.test.ts`.
+- [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/profile/default-agent-profiles.test.ts`. Executed as `pnpm --filter @moonshot-ai/agent-core exec vitest run test/profile/default-agent-profiles.test.ts` because Vitest runs from the package directory.
+- [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/tools/review-mode-hard-block.test.ts`. Executed as `pnpm --filter @moonshot-ai/agent-core exec vitest run test/tools/review-mode-hard-block.test.ts` because Vitest runs from the package directory.
 
 ## Phase 5: Background Injection and Worker Driving
 

@@ -14,6 +14,7 @@ import { GitCwdWriteApprovePermissionPolicy } from './git-cwd-write-approve';
 import { PlanModeGuardDenyPermissionPolicy } from './plan-mode-guard-deny';
 import { PlanModeToolApprovePermissionPolicy } from './plan-mode-tool-approve';
 import { PreToolCallHookPermissionPolicy } from './pre-tool-call-hook';
+import { ReviewModeGuardDenyPermissionPolicy } from './review-mode-guard-deny';
 import { SessionApprovalHistoryPermissionPolicy } from './session-approval-history';
 import { SwarmModeAgentSwarmApprovePermissionPolicy } from './swarm-mode-agent-swarm-approve';
 import {
@@ -28,6 +29,8 @@ export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy
   return [
     // PreToolUse hook returned a block → deny.
     new PreToolCallHookPermissionPolicy(agent),
+    // review workers are read-only and may only use review-scoped tools plus search.
+    new ReviewModeGuardDenyPermissionPolicy(agent),
     // AgentSwarm is batch-exclusive and must run alone, regardless of permission mode.
     new AgentSwarmExclusiveDenyPermissionPolicy(),
     // auto mode + AskUserQuestion → deny.
