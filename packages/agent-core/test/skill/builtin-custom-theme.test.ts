@@ -14,11 +14,11 @@ describe('builtin skill: custom-theme', () => {
     expect(CUSTOM_THEME_SKILL.metadata.disableModelInvocation).toBe(true);
   });
 
-  it('pins the docs token reference and points users at ~/.kimi-code/themes and /theme', () => {
+  it('pins the docs token reference and points users at KIMI_CODE_HOME/themes and /theme', () => {
     const content = CUSTOM_THEME_SKILL.content;
     expect(content).toContain('customization/themes.html');
     expect(content).toContain('FetchURL');
-    expect(content).toContain('~/.kimi-code/themes');
+    expect(content).toContain('<KIMI_CODE_HOME>/themes');
     expect(content).toContain('/theme');
     // every documented token should be named so the model knows the full set
     for (const token of [
