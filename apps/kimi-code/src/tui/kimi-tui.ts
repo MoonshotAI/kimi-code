@@ -116,7 +116,7 @@ import {
   type TUIStartupState,
 } from './types';
 import { createTUIState, type TUIState } from './tui-state';
-import { isExpandable } from './utils/component-capabilities';
+import { hasDispose, isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
@@ -212,6 +212,7 @@ export class KimiTUI {
   aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
+  private editorReplacement: (Component & Focusable) | undefined;
   private uninstallRainbowDance: () => void;
   private signalCleanupHandlers: Array<() => void> = [];
   private isShuttingDown = false;
@@ -591,6 +592,7 @@ export class KimiTUI {
     }
     this.reverseRpcDisposers.length = 0;
     this.disposeTerminalTracking();
+    this.disposeEditorReplacement();
     await this.closeSession('shutting down');
     await this.harness.close();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
@@ -1723,17 +1725,27 @@ export class KimiTUI {
   // =========================================================================
 
   mountEditorReplacement(panel: Component & Focusable): void {
+    this.disposeEditorReplacement();
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
+    this.editorReplacement = panel;
     this.state.ui.setFocus(panel);
     this.state.ui.requestRender();
   }
 
   restoreEditor(): void {
+    this.disposeEditorReplacement();
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
     this.state.ui.requestRender();
+  }
+
+  private disposeEditorReplacement(): void {
+    if (this.editorReplacement !== undefined && hasDispose(this.editorReplacement)) {
+      this.editorReplacement.dispose();
+    }
+    this.editorReplacement = undefined;
   }
 
   restoreInputText(text: string): void {

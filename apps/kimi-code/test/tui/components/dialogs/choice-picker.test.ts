@@ -105,6 +105,40 @@ describe('ChoicePickerComponent', () => {
     expect(out[descriptionIndex + 2]).toBe('    Beta');
   });
 
+  it('animates wave labels and stops requesting renders after dispose', () => {
+    vi.useFakeTimers();
+    try {
+      const requestRender = vi.fn();
+      const picker = new ChoicePickerComponent({
+        title: 'Pick one',
+        requestRender,
+        options: [
+          { value: 'deep', label: 'Deep Review', labelAnimation: 'wave' },
+        ],
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+      });
+
+      const firstFrame = picker.render(120).join('\n');
+      vi.advanceTimersByTime(180);
+      expect(requestRender).toHaveBeenCalled();
+      const secondFrame = picker.render(120).join('\n');
+
+      expect(strip(firstFrame)).toContain('Deep Review');
+      expect(strip(secondFrame)).toContain('Deep Review');
+      if (firstFrame.includes('\u001B[') && secondFrame.includes('\u001B[')) {
+        expect(secondFrame).not.toBe(firstFrame);
+      }
+
+      requestRender.mockClear();
+      picker.dispose();
+      vi.advanceTimersByTime(360);
+      expect(requestRender).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('renders domain selector wrappers with their configured options', () => {
     const onSelect = vi.fn();
     const onCancel = vi.fn();

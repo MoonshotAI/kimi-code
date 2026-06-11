@@ -137,6 +137,11 @@ function makeHost(input: {
   };
   const spinnerStop = vi.fn();
   const transientStatusClear = vi.fn();
+  const mountEditorReplacement = vi.fn();
+  const restoreEditor = vi.fn(() => {
+    const panel = mountEditorReplacement.mock.calls.at(-1)?.[0] as { dispose?: () => void } | undefined;
+    panel?.dispose?.();
+  });
   const host = {
     state: {
       appState: {
@@ -153,8 +158,8 @@ function makeHost(input: {
     showTransientStatus: vi.fn(() => ({ clear: transientStatusClear })),
     showNotice: vi.fn(),
     appendTranscriptEntry: vi.fn(),
-    mountEditorReplacement: vi.fn(),
-    restoreEditor: vi.fn(),
+    mountEditorReplacement,
+    restoreEditor,
     showProgressSpinner: vi.fn(() => ({ stop: spinnerStop })),
   } as unknown as SlashCommandHost;
   return { host, session, spinnerStop, transientStatusClear, workingTreePreview };
@@ -254,6 +259,28 @@ describe('handleReviewCommand', () => {
     expect(intensityLines[standardDescription + 2]).toBe('    Thorough');
     expect(intensityLines).toContain('    Deep Review');
     expect(intensityLines).toContain('    Uses AgentSwarm for risky or large changes.');
+
+    mountedPicker(host, 1).handleInput(ESC);
+    await task;
+  });
+
+  it('marks only Deep Review with the wave label animation', async () => {
+    const { host } = makeHost();
+    const task = handleReviewCommand(host, '');
+
+    await waitForPicker(host, 1);
+    mountedPicker(host, 0).handleInput(ENTER);
+    await waitForPicker(host, 2);
+    const options = ((mountedPicker(host, 1) as any).opts.options ?? []) as Array<{
+      value: string;
+      labelAnimation?: string;
+    }>;
+
+    expect(options.find((option) => option.value === 'deep')?.labelAnimation).toBe('wave');
+    expect(options.filter((option) => option.value !== 'deep').map((option) => option.labelAnimation)).toEqual([
+      undefined,
+      undefined,
+    ]);
 
     mountedPicker(host, 1).handleInput(ESC);
     await task;

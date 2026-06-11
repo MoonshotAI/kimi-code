@@ -17,7 +17,7 @@ import {
   type Focusable,
 } from '@earendil-works/pi-tui';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
-import { currentTheme } from '#/tui/theme';
+import { currentTheme, type ColorToken } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
@@ -28,6 +28,7 @@ export interface ChoiceOption {
   readonly label: string;
   /** Optional semantic tone for labels that need stronger visual treatment. */
   readonly tone?: 'danger';
+  readonly labelAnimation?: 'wave';
   /** Optional explanatory text shown below the label. */
   readonly description?: string | undefined;
 }
@@ -44,9 +45,13 @@ export interface ChoicePickerOptions {
   /** Items per page. Lists longer than this paginate. */
   readonly pageSize?: number;
   readonly optionSpacing?: 'compact' | 'relaxed';
+  readonly requestRender?: () => void;
   readonly onSelect: (value: string) => void;
   readonly onCancel: () => void;
 }
+
+const WAVE_LABEL_TOKENS: readonly ColorToken[] = ['primary', 'accent', 'success'];
+const WAVE_LABEL_INTERVAL_MS = 120;
 
 function wrapDescription(text: string, width: number): string[] {
   const maxWidth = Math.max(1, width);
@@ -75,6 +80,8 @@ export class ChoicePickerComponent extends Container implements Focusable {
   focused = false;
   private readonly opts: ChoicePickerOptions;
   private readonly list: SearchableList<ChoiceOption>;
+  private animationPhase = 0;
+  private animationTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(opts: ChoicePickerOptions) {
     super();
@@ -87,6 +94,20 @@ export class ChoicePickerComponent extends Container implements Focusable {
       initialIndex: Math.max(currentIdx, 0),
       searchable: opts.searchable === true,
     });
+    if (opts.requestRender !== undefined && opts.options.some((option) => option.labelAnimation === 'wave')) {
+      this.animationTimer = setInterval(() => {
+        this.animationPhase = (this.animationPhase + 1) % WAVE_LABEL_TOKENS.length;
+        opts.requestRender?.();
+      }, WAVE_LABEL_INTERVAL_MS);
+      (this.animationTimer as { unref?: () => void }).unref?.();
+    }
+  }
+
+  dispose(): void {
+    if (this.animationTimer !== undefined) {
+      clearInterval(this.animationTimer);
+      this.animationTimer = undefined;
+    }
   }
 
   handleInput(data: string): void {
@@ -153,7 +174,7 @@ export class ChoicePickerComponent extends Container implements Focusable {
       const isSelected = i === view.selectedIndex;
       const isCurrent = opt.value === this.opts.currentValue;
       const pointer = isSelected ? SELECT_POINTER : ' ';
-      const labelStyle = optionLabelStyle(opt, isSelected);
+      const labelStyle = optionLabelStyle(opt, isSelected, this.animationPhase);
       let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
       line += labelStyle(opt.label);
       if (isCurrent) {
@@ -187,7 +208,11 @@ export class ChoicePickerComponent extends Container implements Focusable {
 function optionLabelStyle(
   option: ChoiceOption,
   selected: boolean,
+  animationPhase: number,
 ): (text: string) => string {
+  if (option.labelAnimation === 'wave') {
+    return (text) => waveLabel(text, animationPhase, selected);
+  }
   if (option.tone === 'danger') {
     return selected
       ? (text) => currentTheme.boldFg('error', text)
@@ -196,4 +221,19 @@ function optionLabelStyle(
   return selected
     ? (text) => currentTheme.boldFg('primary', text)
     : (text) => currentTheme.fg('text', text);
+}
+
+function waveLabel(text: string, phase: number, selected: boolean): string {
+  let visibleIndex = 0;
+  let rendered = '';
+  for (const char of Array.from(text)) {
+    if (char === ' ') {
+      rendered += char;
+      continue;
+    }
+    const token = WAVE_LABEL_TOKENS[(visibleIndex + phase) % WAVE_LABEL_TOKENS.length]!;
+    rendered += currentTheme.fg(token, char);
+    visibleIndex += 1;
+  }
+  return selected ? currentTheme.bold(rendered) : rendered;
 }
