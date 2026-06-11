@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>调研存档：手动终止提示能否进入信息流（abort → chat turns）</title>
+<style>
+  :root {
+    --ink: #1f2328; --muted: #57606a; --faint: #8b949e;
+    --bg: #ffffff; --panel: #f6f8fa; --line: #d0d7de;
+    --green: #1a7f37; --green-bg: #dafbe1;
+    --amber: #9a6700; --amber-bg: #fff8c5;
+    --red: #cf222e; --red-bg: #ffebe9;
+    --blue: #0969da; --blue-bg: #ddf4ff;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--ink); background: var(--bg);
+    font: 15px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  main { max-width: 880px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 24px; line-height: 1.4; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 44px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 24px 0 8px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  code, .path {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 4px; padding: 1px 5px; word-break: break-all;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--panel); font-weight: 600; }
+  .chip { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 10px; padding: 1px 9px; white-space: nowrap; }
+  .ok   { color: var(--green); background: var(--green-bg); }
+  .part { color: var(--amber); background: var(--amber-bg); }
+  .bad  { color: var(--red);   background: var(--red-bg); }
+  .info { color: var(--blue);  background: var(--blue-bg); }
+  .callout { border: 1px solid var(--line); border-left: 4px solid var(--blue); background: var(--panel); border-radius: 6px; padding: 12px 16px; margin: 16px 0; }
+  .callout.warn { border-left-color: var(--amber); }
+  .callout.bad  { border-left-color: var(--red); }
+  .callout p:first-child { margin-top: 0; } .callout p:last-child { margin-bottom: 0; }
+  details { border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; margin: 8px 0; background: var(--bg); }
+  details > summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+  details[open] > summary { margin-bottom: 8px; }
+  /* 事件链 flow */
+  .flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin: 14px 0; }
+  .flow .step {
+    flex: 1 1 150px; min-width: 140px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--panel); padding: 8px 10px; font-size: 12.5px; line-height: 1.55; position: relative;
+  }
+  .flow .step b { display: block; font-size: 13px; }
+  .flow .step .loc { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
+  .flow .arrow { align-self: center; color: var(--faint); flex: none; font-size: 16px; }
+  .lost { border-style: dashed !important; }
+  .lost b::after { content: " ⚠ 此处丢失"; color: var(--red); font-size: 11px; }
+  /* 浮层目录 */
+  #toc {
+    position: fixed; right: 16px; top: 16px; z-index: 10;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08); font-size: 13px; max-width: 240px;
+  }
+  #toc summary { padding: 8px 14px; cursor: pointer; font-weight: 600; list-style: none; }
+  #toc ol { margin: 0; padding: 0 14px 10px 30px; }
+  #toc a { color: var(--blue); text-decoration: none; }
+  #toc a:hover { text-decoration: underline; }
+  @media (max-width: 1240px) { #toc { display: none; } }
+  @media (max-width: 640px) {
+    main { padding: 20px 12px 60px; }
+    table { display: block; overflow-x: auto; white-space: normal; }
+    .flow { flex-direction: column; }
+    .flow .arrow { transform: rotate(90deg); align-self: flex-start; margin-left: 16px; }
+  }
+</style>
+</head>
+<body>
+<details id="toc" open>
+  <summary>目录</summary>
+  <ol>
+    <li><a href="#conclusion">核心结论</a></li>
+    <li><a href="#question">原始问题与报告判定总览</a></li>
+    <li><a href="#chain">abort 实时事件链</a></li>
+    <li><a href="#persistence">持久化：存了但取不回</a></li>
+    <li><a href="#ux">当前 UI 现状</a></li>
+    <li><a href="#trap">时序陷阱</a></li>
+    <li><a href="#plan">改造方案（修正版）</a></li>
+  </ol>
+</details>
+<main>
+
+<h1>调研存档：「手动终止」提示能否进入信息流</h1>
+<div class="meta">
+  2026-06-11 · 仓库 kimi-code-web @ feat/web · 由 4 个并行核查代理对原调研报告逐条验证（事件链 / 持久化 / UI 现状 / 方案可行性），所有 file:line 均已核实
+</div>
+
+<h2 id="conclusion">1. 核心结论</h2>
+<div class="callout">
+  <p><b>① daemon 存了，但取不回。</b>abort 产生的 <code>turn.ended(reason='cancelled')</code> 和 <code>prompt.aborted</code> 都会持久化进事件日志（<span class="path">&lt;kimiHome&gt;/daemon/events/&lt;sid&gt;.jsonl</span>），但该日志只服务于断线重连补发；<b>刷新后走 snapshot 加载，没有任何 API 能拿到历史 turn 的结束原因</b>。</p>
+  <p><b>② 实时路径上，取消信号只活到 session 状态层。</b>到消息流（AppMessage → ChatTurn）的转换中信息全部丢失——这部分原报告诊断正确。</p>
+  <p><b>③ 原报告的两条改造方案都有事实错误</b>：注入点选错了层（eventReducer 收不到 turn.ended），且最常见的中途打断路径上 <code>messageUpdated</code> 根本不会发出（见 <a href="#trap">时序陷阱</a>）。</p>
+</div>
+
+<h2 id="question">2. 原始问题与报告判定总览</h2>
+<p>原始问题：能否把"手动终止"的提示直接显示在信息流（chat turns）中而不是 toast？daemon 是否会存储这个中断事件？</p>
+
+<h3>2.1 原报告说对的</h3>
+<table>
+  <tr><th>论断</th><th>判定</th><th>证据</th></tr>
+  <tr>
+    <td><code>TurnEndReason = 'completed' | 'cancelled' | 'failed'</code>，abort 后发 <code>turn.ended(reason='cancelled')</code></td>
+    <td><span class="chip ok">正确</span></td>
+    <td><span class="path">packages/protocol/src/events.ts:292</span>，整条链路已验证（见第 3 节）</td>
+  </tr>
+  <tr>
+    <td><code>messageUpdated</code> 的 status 只有 <code>'pending'|'completed'|'error'</code>，无 <code>'cancelled'</code></td>
+    <td><span class="chip ok">正确</span></td>
+    <td><span class="path">apps/kimi-web/src/api/types.ts:296</span></td>
+  </tr>
+  <tr>
+    <td>eventReducer 处理 messageUpdated 时只更新 content、丢弃 status；AppMessage 无 status 字段</td>
+    <td><span class="chip ok">正确</span></td>
+    <td><span class="path">apps/kimi-web/src/api/daemon/eventReducer.ts:276-284</span>；<span class="path">types.ts:134-143</span></td>
+  </tr>
+  <tr>
+    <td>ChatTurn 无 cancelled 字段；messagesToTurns 不感知取消</td>
+    <td><span class="chip ok">正确</span></td>
+    <td><span class="path">apps/kimi-web/src/types.ts:128-143</span>；<span class="path">messagesToTurns.ts</span> 仅把残留 running 工具规整为 'ok'（:308-321）</td>
+  </tr>
+  <tr>
+    <td>改 ChatTurn + messagesToTurns + ChatPane 渲染，技术上可行</td>
+    <td><span class="chip ok">正确</span></td>
+    <td>Group/flushGroup 是普通内部结构；同组按 promptId 合并，任一消息带标记即可标整组；seenSigs 去重只看 content，metadata 不影响</td>
+  </tr>
+</table>
+
+<h3>2.2 原报告错了 / 漏了的</h3>
+<table>
+  <tr><th>论断</th><th>判定</th><th>实际情况</th></tr>
+  <tr>
+    <td>（未回答）daemon 是否存储中断事件</td>
+    <td><span class="chip bad">关键遗漏</span></td>
+    <td>journal 持久化了，但无 API 取回（见第 4 节）</td>
+  </tr>
+  <tr>
+    <td>方案 B：「eventReducer 收到 turn.ended 时注入 metadata」</td>
+    <td><span class="chip bad">事实错误</span></td>
+    <td>AppEvent 联合类型没有 turn.* 档位，turn.ended 在 projector 层已被消化成 messageUpdated / sessionStatusChanged / sessionUsageUpdated。注入点只能在 <b>agentEventProjector</b></td>
+  </tr>
+  <tr>
+    <td>方案 A：「给 messageUpdated 的 status 加 'cancelled'」</td>
+    <td><span class="chip bad">主路径空转</span></td>
+    <td>中途打断时 <code>turn.ended</code> 分支拿不到消息 id，messageUpdated 根本不发（见第 6 节时序陷阱）</td>
+  </tr>
+  <tr>
+    <td>「目前用 toast 的方案（已实现）」</td>
+    <td><span class="chip part">只对一半</span></td>
+    <td>toast「您已手动终止」只在 <b>Escape 键</b>路径弹出（<span class="path">ConversationPane.vue:478-498</span>，commit fca2abe4）；<b>点停止按钮终止时没有任何提示</b>；且 toast 是按键时乐观弹出，不等 daemon 确认</td>
+  </tr>
+  <tr>
+    <td>「reason==='cancelled' 时 session status 推为 'aborted'」</td>
+    <td><span class="chip part">不完整</span></td>
+    <td><code>reason='failed'</code> 同样映射为 'aborted'（<span class="path">agentEventProjector.ts:657</span>）；且 'aborted' 没有任何 UI 组件消费——<code>toUiSessionStatus</code> 把它折叠成 'idle'（<span class="path">useKimiWebClient.ts:694-699</span>）</td>
+  </tr>
+</table>
+
+<h2 id="chain">3. abort 实时事件链（已验证）</h2>
+<div class="flow">
+  <div class="step"><b>web 发起</b>abortPrompt() REST<div class="loc">api/daemon/client.ts:423<br/>POST …/prompts/{pid}:abort</div></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>daemon 路由</b>service.abort()<div class="loc">daemon/routes/prompts.ts:192-247</div></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>promptService.abort</b>内存置 aborted=true；合成 prompt.aborted 事件<div class="loc">services/prompt/promptService.ts:436-476</div></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>agent-core 取消</b>controller.abort → stopReason 'aborted'<div class="loc">agent/turn/index.ts:205-260<br/>loop/run-turn.ts:119-121</div></div>
+</div>
+<div class="flow">
+  <div class="step"><b>turn.step.interrupted</b>reason='aborted'（仅当 abort 落在步骤中途）<div class="loc">loop/run-turn.ts:118-125<br/>turn/index.ts:945 无 activeStep 则不发</div></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>turn.ended</b>reason='cancelled'<div class="loc">turn/index.ts:449-453, :504</div></div>
+  <div class="arrow">→</div>
+  <div class="step"><b>WS 广播 + journal 落盘</b><div class="loc">gateway/wsBroadcastService.ts:104-120</div></div>
+  <div class="arrow">→</div>
+  <div class="step lost"><b>web projector</b>仅产出 sessionStatusChanged('aborted')<div class="loc">agentEventProjector.ts:657-663<br/>prompt.aborted 无分支，被忽略</div></div>
+</div>
+<p>取消信号到 <code>sessionStatusChanged(status='aborted')</code> 为止；消息级、turn 级均无标记，转写成信息流后丢失。</p>
+
+<h2 id="persistence">4. 持久化：存了但取不回</h2>
+<table>
+  <tr><th>数据源</th><th>abort 留下了什么</th><th>刷新后能否取回</th></tr>
+  <tr>
+    <td>事件日志 journal<br/><span class="path">&lt;kimiHome&gt;/daemon/events/&lt;sid&gt;.jsonl</span></td>
+    <td><code>turn.ended(cancelled)</code>、<code>prompt.aborted</code> 都是 durable 事件，确实落盘（<span class="path">wsBroadcastService.ts:104-111</span>）</td>
+    <td><span class="chip bad">否</span> 重放仅限同生命周期断线重连（旧 cursor + epoch 匹配 + gap ≤ 1000）；刷新后订阅 cursor = snapshot 的 as_of_seq，历史事件永不重放</td>
+  </tr>
+  <tr>
+    <td>消息持久化<br/><span class="path">services/message/message.ts:259-272</span></td>
+    <td>什么都没存。metadata 只可能带 <code>origin</code>；message schema 无 finish_reason（<span class="path">protocol/src/message.ts:73-82</span>）</td>
+    <td><span class="chip bad">否</span></td>
+  </tr>
+  <tr>
+    <td>snapshot<br/><span class="path">protocol/src/rest/snapshot.ts:60-75</span></td>
+    <td>session.status 写死 'idle'（<span class="path">services/session/session.ts:105</span>）；in_flight_turn 在 turn.ended 时即清空（<span class="path">inFlightTurnTracker.ts:64-65</span>）</td>
+    <td><span class="chip bad">否</span></td>
+  </tr>
+  <tr>
+    <td>agent-core records</td>
+    <td>有一条 <code>turn.cancel</code> 持久记录（<span class="path">agent/turn/index.ts:206</span>），但 resume 语义仅恢复状态机，不进客户端可见的回放；<code>turn.interrupted</code> 是 LiveOnly 事件不入 transcript，被中断 step 连 step.end/content.part 都不写——<b>已流出的部分文本也会丢</b></td>
+    <td><span class="chip bad">否</span></td>
+  </tr>
+  <tr>
+    <td>唯一间接痕迹</td>
+    <td>abort 时若有工具在执行，落一条 is_error 的 tool_result，文本 "The user manually interrupted …"（<span class="path">loop/tool-call.ts:56-60</span>）</td>
+    <td><span class="chip part">可见但非结构化</span> 纯文本生成阶段被打断则毫无痕迹</td>
+  </tr>
+</table>
+<p>TUI 同样没有重放标记：AgentReplayRecord 只有 6 种变体，无 interrupted/cancelled；"Interrupted by user" 只在 live 事件时显示。唯一例外是 goal 驱动的 turn（goal_updated 重放可显示 "Goal paused due to user's interruption"）。</p>
+
+<h2 id="ux">5. 当前 UI 现状（2026-06-11）</h2>
+<ul>
+  <li><b>Esc 终止</b>：乐观弹 3 秒 toast「您已手动终止」（<span class="path">ConversationPane.vue:478-498, :784-794</span>；i18n <span class="path">conversation.manuallyAborted</span>）。</li>
+  <li><b>点停止按钮终止</b>：<code>emit('interrupt')</code> 直接转发（<span class="path">Composer.vue:740</span> → <span class="path">ConversationPane.vue:588/772</span>），<b>无任何提示</b>。</li>
+  <li><b>abort 失败</b>：另出一条警告 toast（<span class="path">useKimiWebClient.ts:2018</span> → WarningToasts）。</li>
+  <li><b>'aborted' 状态</b>：被 <code>toUiSessionStatus</code> 折叠为 'idle'，无组件消费；abort 还会触发 onSessionIdle 的副作用——<b>自动 flush 该会话排队中的下一条 prompt</b>（<span class="path">useKimiWebClient.ts:1299-1315</span>）。</li>
+</ul>
+
+<h2 id="trap">6. 时序陷阱（改造前必须知道）</h2>
+<div class="callout bad">
+  <p>手动 abort 落在步骤中途时（最常见场景），事件顺序是：<code>turn.step.interrupted</code> <b>先到</b>，projector 在该分支把 <code>s.currentAssistantMsgId</code> 清空（<span class="path">agentEventProjector.ts:678-683</span>）；随后 <code>turn.ended</code> 分支 <code>if (msgId)</code> 为假——<b>被中止的 assistant 消息不会收到任何 messageUpdated</b>。即使 abort 落在两步之间，tool.result 也已把 msgId 清空（:586）。</p>
+  <p>因此「给 messageUpdated 加 cancelled status」或「在 turn.ended 时注入 metadata」在主路径上都拿不到目标消息。正确做法：在 projector 处理 <code>turn.step.interrupted</code>（带 <code>reason==='aborted'</code>，可区分手动中断 / max_steps / error）时、清空 msgId <b>之前</b>记录或打标。</p>
+</div>
+
+<h2 id="plan">7. 改造方案（修正版）</h2>
+<table>
+  <tr><th></th><th>方案一：仅实时显示（纯前端）</th><th>方案二：刷新后仍可见（动 daemon）</th></tr>
+  <tr>
+    <th>效果</th>
+    <td>本次会话内，被终止的 turn 末尾渲染「已手动终止」行；刷新后消失</td>
+    <td>终止标记进入持久数据，任何时候加载都显示</td>
+  </tr>
+  <tr>
+    <th>注入点</th>
+    <td>projector 的 <code>turn.step.interrupted(reason='aborted')</code> + <code>turn.ended(cancelled)</code> 两处（不是 eventReducer）</td>
+    <td>daemon/services 把结束原因写进消息 metadata（如 <code>finish_reason</code>），或 snapshot 暴露 journal 中已有的 turn.ended；数据源现成</td>
+  </tr>
+  <tr>
+    <th>涉及文件</th>
+    <td>agentEventProjector.ts、types.ts（AppEvent/AppMessage）、eventReducer.ts、src/types.ts（ChatTurn）、messagesToTurns.ts、ChatPane.vue（桌面 + 移动两套模板）；删 toast 动 ConversationPane.vue</td>
+    <td>左列全部 + protocol message schema、services/message/message.ts、agent-core history 写入点</td>
+  </tr>
+  <tr>
+    <th>额外收益</th>
+    <td>挂到状态事件而非按键上，可统一 Esc 和停止按钮两个入口的提示</td>
+    <td>同左，且 TUI 将来也可复用同一标记</td>
+  </tr>
+  <tr>
+    <th>边界</th>
+    <td colspan="2">「空转 turn」：取消时尚无任何 assistant 输出，turn 级标记无处可挂，需考虑渲染独立的系统行</td>
+  </tr>
+</table>
+
+<details>
+  <summary>附：核查方法说明</summary>
+  <p>由 4 个并行核查代理完成（Workflow run wf_d7ecdeac-2fb，2026-06-11）：① live-event-chain 验证协议与投影层每条论断；② persistence 追查 promptService / message 持久化 / snapshot / journal 四条线；③ web-current-ux 核对 toast 与 'aborted' 状态消费现状；④ fix-path-soundness 评估两条改造方案的注入点与刷新丢失问题。每条结论均给出 file:line 证据并人工汇总。</p>
+</details>
+
+</main>
+</body>
+</html>
