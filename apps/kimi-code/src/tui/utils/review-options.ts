@@ -6,7 +6,7 @@ import type {
   ReviewResult,
 } from '@moonshot-ai/kimi-code-sdk';
 
-export type ReviewScopeChoice = 'working_tree' | 'current_branch' | 'single_commit';
+export type ReviewScopeChoice = 'working_tree' | 'current_branch' | 'ahead_of_upstream' | 'single_commit';
 
 export interface ReviewChoice {
   readonly value: string;
@@ -24,6 +24,11 @@ export const REVIEW_SCOPE_CHOICES: readonly ReviewChoice[] = [
     value: 'current_branch',
     label: 'Current branch',
     description: 'Review the current HEAD against a selected branch, tag, or commit.',
+  },
+  {
+    value: 'ahead_of_upstream',
+    label: 'Ahead of upstream',
+    description: 'Review all commits on this branch that are ahead of its upstream branch.',
   },
   {
     value: 'single_commit',
@@ -97,7 +102,10 @@ export function isReviewIntensity(value: string): value is ReviewIntensity {
 }
 
 export function isReviewScopeChoice(value: string): value is ReviewScopeChoice {
-  return value === 'working_tree' || value === 'current_branch' || value === 'single_commit';
+  return value === 'working_tree'
+    || value === 'current_branch'
+    || value === 'ahead_of_upstream'
+    || value === 'single_commit';
 }
 
 function formatCount(count: number, singular: string): string {

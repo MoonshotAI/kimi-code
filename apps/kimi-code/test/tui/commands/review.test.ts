@@ -264,6 +264,39 @@ describe('handleReviewCommand', () => {
     );
   });
 
+  it('selects the upstream-ahead review target without a base selector', async () => {
+    const { host, session } = makeHost();
+    const task = handleReviewCommand(host, '');
+
+    await waitForPicker(host, 1);
+    mountedPicker(host, 0).handleInput(DOWN);
+    mountedPicker(host, 0).handleInput(DOWN);
+    mountedPicker(host, 0).handleInput(ENTER);
+    await waitForPicker(host, 2);
+
+    const secondPickerLines = strippedPickerLines(host, 1).join('\n');
+    if (!secondPickerLines.includes('Review intensity')) {
+      mountedPicker(host, 1).handleInput(ESC);
+      await task;
+    } else {
+      mountedPicker(host, 1).handleInput(ENTER);
+      await task;
+    }
+
+    expect(session.listReviewBaseRefs).not.toHaveBeenCalled();
+    expect(session.listReviewCommits).not.toHaveBeenCalled();
+    expect(session.previewReviewTarget).toHaveBeenCalledWith({
+      scope: 'current_branch',
+      baseRef: '@{upstream}',
+    });
+    expect(session.startReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({ scope: 'current_branch', baseRef: '@{upstream}' }),
+        intensity: 'standard',
+      }),
+    );
+  });
+
   it('starts a Thorough review after showing the focused reviewers', async () => {
     const { host, session, workingTreePreview } = makeHost();
     const task = handleReviewCommand(host, '');
@@ -318,6 +351,7 @@ describe('handleReviewCommand', () => {
     const task = handleReviewCommand(host, '');
 
     await waitForPicker(host, 1);
+    mountedPicker(host, 0).handleInput(DOWN);
     mountedPicker(host, 0).handleInput(DOWN);
     mountedPicker(host, 0).handleInput(DOWN);
     mountedPicker(host, 0).handleInput(ENTER);

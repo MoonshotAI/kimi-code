@@ -99,6 +99,9 @@ async function resolveReviewTargetFromScope(
       return baseRef === undefined ? undefined : { scope: 'current_branch', baseRef };
     }
 
+    case 'ahead_of_upstream':
+      return { scope: 'current_branch', baseRef: '@{upstream}' };
+
     case 'single_commit': {
       const commits = await session.listReviewCommits();
       if (commits.length === 0) {
