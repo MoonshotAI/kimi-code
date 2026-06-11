@@ -264,7 +264,7 @@ export class Session {
       env: process.env,
       envKey: BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV,
       configValue: this.options.background?.keepAliveOnExit,
-      defaultValue: true,
+      defaultValue: false,
       parseEnv: parseBooleanEnv,
     });
     if (keepAliveOnExit) return;
