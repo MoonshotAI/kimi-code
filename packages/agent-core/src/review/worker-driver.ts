@@ -36,6 +36,7 @@ interface ReviewWorkerAudit {
   readonly summary?: string;
   readonly blocker?: string;
   readonly missingCoverage: readonly string[];
+  readonly unreconciledComments: readonly string[];
   readonly signature: string;
 }
 
@@ -102,10 +103,12 @@ export class ReviewWorkerDriver {
     const missingCoverage = this.options.runtime
       .missingCoverage(this.options.assignment.id)
       .map((item) => `${item.path} (${item.required})`);
+    const unreconciledComments = this.options.runtime.missingReconciliation(this.options.assignment.id);
     const status = progress?.status ?? 'active';
     const signature = JSON.stringify({
       status,
       missingCoverage,
+      unreconciledComments,
       comments: this.options.runtime.getComments().length,
       merged: this.options.runtime.getMergedComments().length,
       dismissed: this.options.runtime.getDismissedComments().length,
@@ -115,6 +118,7 @@ export class ReviewWorkerDriver {
       summary: progress?.summary,
       blocker: progress?.blocker,
       missingCoverage,
+      unreconciledComments,
       signature,
     };
   }
@@ -129,6 +133,8 @@ function continuationPrompt(audit: ReviewWorkerAudit): string {
   if (audit.blocker !== undefined) lines.push(`Current blocker: ${audit.blocker}`);
   if (audit.missingCoverage.length > 0) {
     lines.push(`Missing required coverage: ${audit.missingCoverage.join(', ')}.`);
+  } else if (audit.unreconciledComments.length > 0) {
+    lines.push(`Unreconciled source comments: ${audit.unreconciledComments.join(', ')}.`);
   } else {
     lines.push('Required coverage is satisfied, but progress is not marked complete.');
   }

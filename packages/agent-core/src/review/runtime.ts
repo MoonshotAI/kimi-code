@@ -205,6 +205,14 @@ export class SessionReviewRuntime {
     return this.coverage.missingCoverage(this.requireAssignment(assignmentId));
   }
 
+  missingReconciliation(assignmentId: string): readonly string[] {
+    const assignment = this.requireAssignment(assignmentId);
+    if (assignment.role !== 'reconciliator') return [];
+    const sourceCommentIds = assignment.sourceCommentIds ?? [];
+    if (sourceCommentIds.length === 0) return [];
+    return sourceCommentIds.filter((commentId) => this.requireComment(commentId).state === 'candidate');
+  }
+
   getComments(filter: ReviewCommentFilter = {}): readonly ReviewComment[] {
     const paths = filter.paths === undefined ? undefined : new Set(filter.paths);
     const sourceCommentIds =
@@ -235,6 +243,10 @@ export class SessionReviewRuntime {
       const missing = this.coverage.missingCoverage(assignment);
       if (missing.length > 0) {
         throw new ReviewRuntimeError(formatMissingCoverage(missing));
+      }
+      const unreconciled = this.missingReconciliation(assignmentId);
+      if (unreconciled.length > 0) {
+        throw new ReviewRuntimeError(formatMissingReconciliation(unreconciled));
       }
     }
     const progress: ReviewProgress = {
@@ -275,12 +287,15 @@ export class SessionReviewRuntime {
   }
 
   mergeComments(assignmentId: string, input: ReviewMergeCommentDraft): ReviewMergedComment {
-    this.requireReconciliator(assignmentId);
+    const assignment = this.requireReconciliator(assignmentId);
     if (input.sourceCommentIds.length === 0) {
       throw new ReviewRuntimeError('MergeComments requires at least one source comment');
     }
     if (new Set(input.sourceCommentIds).size !== input.sourceCommentIds.length) {
       throw new ReviewRuntimeError('MergeComments source comment ids must be unique');
+    }
+    for (const commentId of input.sourceCommentIds) {
+      this.requireReconciliatorSource(assignment, commentId);
     }
 
     const sources = input.sourceCommentIds.map((commentId) => this.requireComment(commentId));
@@ -308,7 +323,8 @@ export class SessionReviewRuntime {
   }
 
   dismissComment(assignmentId: string, input: ReviewDismissCommentInput): ReviewDismissedComment {
-    this.requireReconciliator(assignmentId);
+    const assignment = this.requireReconciliator(assignmentId);
+    this.requireReconciliatorSource(assignment, input.commentId);
     const comment = this.requireComment(input.commentId);
     if (comment.state !== 'candidate') {
       throw new ReviewRuntimeError('Only candidate comments can be dismissed');
@@ -375,9 +391,19 @@ export class SessionReviewRuntime {
     }
     return assignment;
   }
+
+  private requireReconciliatorSource(assignment: ReviewAssignment, commentId: string): void {
+    if (assignment.sourceCommentIds !== undefined && !assignment.sourceCommentIds.includes(commentId)) {
+      throw new ReviewRuntimeError(`Comment is not assigned to this reconciliator: ${commentId}`);
+    }
+  }
 }
 
 function formatMissingCoverage(missing: readonly ReviewCoverageMissingItem[]): string {
   const summary = missing.map((item) => `${item.path} (${item.required})`).join(', ');
   return `Review assignment coverage is incomplete: ${summary}`;
+}
+
+function formatMissingReconciliation(commentIds: readonly string[]): string {
+  return `Review reconciliation is incomplete: ${commentIds.join(', ')}`;
 }

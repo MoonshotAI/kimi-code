@@ -4,10 +4,17 @@ import type {
   ReviewComment,
   ReviewDiffStats,
   ReviewFinalComment,
+  ReviewMergedComment,
   ReviewResult,
   ReviewStartInput,
   ReviewTarget,
 } from './types';
+
+export const THOROUGH_REVIEW_PERSPECTIVES = [
+  'Correctness and regressions',
+  'Security and data safety',
+  'Maintainability and tests',
+] as const;
 
 export interface BuildReviewBackgroundInput {
   readonly target: ReviewTarget;
@@ -30,9 +37,29 @@ export function buildStandardReviewerPrompt(input: {
   readonly background: ReviewBackground;
   readonly assignment: ReviewAssignment;
 }): string {
+  return buildReviewerPrompt('Review the assigned changes as the single Standard reviewer.', input);
+}
+
+export function buildThoroughReviewerPrompt(input: {
+  readonly background: ReviewBackground;
+  readonly assignment: ReviewAssignment;
+}): string {
+  return buildReviewerPrompt(
+    `Review the assigned changes from this perspective: ${input.assignment.perspective ?? 'focused review'}.`,
+    input,
+  );
+}
+
+function buildReviewerPrompt(
+  lead: string,
+  input: {
+    readonly background: ReviewBackground;
+    readonly assignment: ReviewAssignment;
+  },
+): string {
   const { background, assignment } = input;
   const lines = [
-    'Review the assigned changes as the single Standard reviewer.',
+    lead,
     '',
     'Focus on actionable correctness, reliability, security, data-loss, and maintainability issues introduced by the changed code.',
     'Do not report style preferences, pre-existing issues, or speculative risks without concrete evidence in the reviewed changes.',
@@ -56,10 +83,52 @@ export function buildStandardReviewerPrompt(input: {
   return lines.join('\n');
 }
 
+export function buildReconciliatorPrompt(input: {
+  readonly background: ReviewBackground;
+  readonly assignment: ReviewAssignment;
+  readonly sourceCommentCount: number;
+}): string {
+  return [
+    'Reconcile the candidate review comments into the final review.',
+    '',
+    '<review-background>',
+    JSON.stringify(input.background, null, 2),
+    '</review-background>',
+    '',
+    '<review-assignment>',
+    JSON.stringify(input.assignment, null, 2),
+    '</review-assignment>',
+    '',
+    `Source comments to reconcile: ${String(input.sourceCommentCount)}.`,
+    '',
+    'Required workflow:',
+    '1. Call GetComments with include_sources true to inspect all candidate source comments.',
+    '2. Call ReadPatch for every assigned file before completing the assignment.',
+    '3. Merge each actionable finding with MergeComments, preserving every supporting source_comment_id.',
+    '4. Dismiss non-actionable, duplicate, unsupported, or out-of-scope comments with DismissComment.',
+    '5. Call UpdateProgress with status `complete` only after every source comment is merged or dismissed.',
+    '6. Call UpdateProgress with status `blocked` only if reconciliation cannot be completed.',
+  ].join('\n');
+}
+
 export function candidateToFinalComment(comment: ReviewComment): ReviewFinalComment {
   return {
     id: comment.id,
     sourceCommentIds: [comment.id],
+    severity: comment.severity,
+    path: comment.path,
+    line: comment.line,
+    title: comment.title,
+    body: comment.body,
+    evidence: comment.evidence,
+    suggestedFix: comment.suggestedFix,
+  };
+}
+
+export function mergedToFinalComment(comment: ReviewMergedComment): ReviewFinalComment {
+  return {
+    id: comment.id,
+    sourceCommentIds: comment.sourceCommentIds,
     severity: comment.severity,
     path: comment.path,
     line: comment.line,

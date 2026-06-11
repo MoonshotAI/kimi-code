@@ -13,6 +13,7 @@ import {
   isReviewScopeChoice,
   REVIEW_INTENSITY_CHOICES,
   REVIEW_SCOPE_CHOICES,
+  THOROUGH_REVIEW_PERSPECTIVE_LABELS,
   reviewBaseRefChoice,
   reviewCommitChoice,
   type ReviewChoice,
@@ -49,9 +50,15 @@ export async function handleReviewCommand(host: SlashCommandHost, args: string):
 
   const intensity = await promptReviewIntensity(host);
   if (intensity === undefined) return;
-  if (intensity !== 'standard') {
+  if (intensity === 'deep') {
     host.showNotice(`${intensityLabel(intensity)} review coming soon`, 'Use Standard review for now.');
     return;
+  }
+  if (intensity === 'thorough') {
+    host.showNotice(
+      'Thorough review',
+      `Focused reviewers: ${THOROUGH_REVIEW_PERSPECTIVE_LABELS.join('; ')}.`,
+    );
   }
 
   await startReview(host, {

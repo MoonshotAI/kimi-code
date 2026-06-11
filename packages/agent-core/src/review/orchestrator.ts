@@ -10,21 +10,32 @@ import {
   resolveReviewTarget,
 } from './git-target';
 import {
+  buildReconciliatorPrompt,
   buildReviewBackground,
   buildStandardReviewerPrompt,
+  buildThoroughReviewerPrompt,
   candidateToFinalComment,
+  mergedToFinalComment,
   summarizeReviewResult,
+  THOROUGH_REVIEW_PERSPECTIVES,
 } from './prompts';
 import type {
+  ReviewAssignment,
   ReviewBaseRef,
   ReviewCommit,
   ReviewDiffStats,
+  ReviewFinalComment,
+  ReviewProgressStatus,
   ReviewResult,
   ReviewStartInput,
   ReviewTarget,
   ReviewTargetPreview,
 } from './types';
-import { ReviewWorkerDriver, type ReviewWorkerLauncher } from './worker-driver';
+import {
+  ReviewWorkerDriver,
+  type ReviewWorkerDriverResult,
+  type ReviewWorkerLauncher,
+} from './worker-driver';
 import { ReviewRuntimeError, type SessionReviewRuntime } from './runtime';
 
 type ReviewOrchestratorEvent = Extract<
@@ -34,6 +45,12 @@ type ReviewOrchestratorEvent = Extract<
   | { readonly type: 'review.cancelled' }
   | { readonly type: 'review.failed' }
 >;
+
+interface ReviewRunContext {
+  readonly input: ReviewStartInput;
+  readonly stats: ReviewDiffStats;
+  readonly background: ReturnType<typeof buildReviewBackground>;
+}
 
 export interface ReviewOrchestratorOptions {
   readonly kaos: Kaos;
@@ -77,7 +94,7 @@ export class ReviewOrchestrator {
   }
 
   async start(input: ReviewStartInput): Promise<ReviewResult> {
-    if (input.intensity !== 'standard') {
+    if (input.intensity === 'deep') {
       throw new ReviewRuntimeError(
         `Review intensity "${input.intensity}" is not implemented yet`,
       );
@@ -93,14 +110,19 @@ export class ReviewOrchestrator {
       const preview = await this.previewTarget(input.target);
       const repoInstructions = await this.loadRepoInstructions();
       this.signal.throwIfAborted();
+      const resolvedInput: ReviewStartInput = {
+        target: preview.target,
+        intensity: input.intensity,
+        focus: input.focus,
+      };
       const background = buildReviewBackground({
         target: preview.target,
-        input: { ...input, target: preview.target },
+        input: resolvedInput,
         stats: preview.stats,
         repoInstructions,
       });
       this.options.runtime.startReview(
-        { ...input, target: preview.target },
+        resolvedInput,
         preview.stats,
         background,
       );
@@ -113,42 +135,14 @@ export class ReviewOrchestrator {
         stats: preview.stats,
       });
 
-      const assignment = this.options.runtime.createAssignment({
-        role: 'reviewer',
-        perspective: 'standard',
-        assignedFiles: preview.stats.files.map((file) => file.path),
-        requiredCoverage: 'patch',
-      });
-      const driver = new ReviewWorkerDriver({
-        runtime: this.options.runtime,
-        launcher: this.options.launcher,
-        assignment,
-        profileName: 'reviewer',
-        prompt: buildStandardReviewerPrompt({ background, assignment }),
-        description: 'Review changes',
-        parentToolCallId: this.options.parentToolCallId ?? 'review',
-        parentToolCallUuid: this.options.parentToolCallUuid,
-        runInBackground: false,
-        signal: this.signal,
-      });
-      const worker = await driver.run();
-      const comments = this.options.runtime
-        .getComments({ state: 'candidate' })
-        .map(candidateToFinalComment);
-      const resultWithoutSummary = {
-        target: preview.target,
-        intensity: input.intensity,
-        status: worker.status,
+      const context: ReviewRunContext = {
+        input: resolvedInput,
         stats: preview.stats,
-        comments,
+        background,
       };
-      const summary = summarizeReviewResult(resultWithoutSummary);
-      const result = {
-        ...resultWithoutSummary,
-        summary: worker.status === 'blocked' && worker.summary !== undefined
-          ? `${summary}\n${worker.summary}`
-          : summary,
-      };
+      const result = input.intensity === 'thorough'
+        ? await this.runThoroughReview(context)
+        : await this.runStandardReview(context);
       this.emitEvent({
         type: 'review.completed',
         status: result.status === 'blocked' ? 'blocked' : 'complete',
@@ -181,6 +175,125 @@ export class ReviewOrchestrator {
 
   private get signal(): AbortSignal {
     return this.controller.signal;
+  }
+
+  private async runStandardReview(context: ReviewRunContext): Promise<ReviewResult> {
+    const assignment = this.options.runtime.createAssignment({
+      role: 'reviewer',
+      perspective: 'standard',
+      assignedFiles: context.stats.files.map((file) => file.path),
+      requiredCoverage: 'patch',
+    });
+    const worker = await this.runWorker({
+      assignment,
+      profileName: 'reviewer',
+      prompt: buildStandardReviewerPrompt({
+        background: context.background,
+        assignment,
+      }),
+      description: 'Review changes',
+    });
+    const comments = this.options.runtime
+      .getComments({ state: 'candidate' })
+      .map(candidateToFinalComment);
+    return this.buildResult(context, worker.status, comments, worker.summary);
+  }
+
+  private async runThoroughReview(context: ReviewRunContext): Promise<ReviewResult> {
+    const assignedFiles = context.stats.files.map((file) => file.path);
+    const reviewerAssignments = THOROUGH_REVIEW_PERSPECTIVES.map((perspective) =>
+      this.options.runtime.createAssignment({
+        role: 'reviewer',
+        perspective,
+        assignedFiles,
+        requiredCoverage: 'patch',
+        group: 'thorough',
+      }),
+    );
+    const reviewers = await Promise.all(
+      reviewerAssignments.map((assignment) =>
+        this.runWorker({
+          assignment,
+          profileName: 'reviewer',
+          prompt: buildThoroughReviewerPrompt({
+            background: context.background,
+            assignment,
+          }),
+          description: `Review changes: ${assignment.perspective ?? 'focused review'}`,
+        }),
+      ),
+    );
+    const blockedReviewer = reviewers.find((worker) => worker.status === 'blocked');
+    if (blockedReviewer !== undefined) {
+      const comments = this.options.runtime
+        .getComments({ state: 'candidate' })
+        .map(candidateToFinalComment);
+      return this.buildResult(context, 'blocked', comments, blockedReviewer.summary);
+    }
+
+    const sourceComments = this.options.runtime.getComments({ state: 'candidate' });
+    const reconciliator = this.options.runtime.createAssignment({
+      role: 'reconciliator',
+      perspective: 'thorough reconciliation',
+      assignedFiles,
+      requiredCoverage: 'patch',
+      sourceCommentIds: sourceComments.map((comment) => comment.id),
+      group: 'thorough',
+    });
+    const worker = await this.runWorker({
+      assignment: reconciliator,
+      profileName: 'reconciliator',
+      prompt: buildReconciliatorPrompt({
+        background: context.background,
+        assignment: reconciliator,
+        sourceCommentCount: sourceComments.length,
+      }),
+      description: 'Reconcile review comments',
+    });
+    const comments = this.options.runtime.getMergedComments().map(mergedToFinalComment);
+    return this.buildResult(context, worker.status, comments, worker.summary);
+  }
+
+  private runWorker(input: {
+    readonly assignment: ReviewAssignment;
+    readonly profileName: 'reviewer' | 'reconciliator';
+    readonly prompt: string;
+    readonly description: string;
+  }): Promise<ReviewWorkerDriverResult> {
+    return new ReviewWorkerDriver({
+      runtime: this.options.runtime,
+      launcher: this.options.launcher,
+      assignment: input.assignment,
+      profileName: input.profileName,
+      prompt: input.prompt,
+      description: input.description,
+      parentToolCallId: this.options.parentToolCallId ?? 'review',
+      parentToolCallUuid: this.options.parentToolCallUuid,
+      runInBackground: false,
+      signal: this.signal,
+    }).run();
+  }
+
+  private buildResult(
+    context: ReviewRunContext,
+    status: ReviewProgressStatus,
+    comments: readonly ReviewFinalComment[],
+    workerSummary: string | undefined,
+  ): ReviewResult {
+    const resultWithoutSummary: Omit<ReviewResult, 'summary'> = {
+      target: context.input.target,
+      intensity: context.input.intensity,
+      status,
+      stats: context.stats,
+      comments,
+    };
+    const summary = summarizeReviewResult(resultWithoutSummary);
+    return {
+      ...resultWithoutSummary,
+      summary: status === 'blocked' && workerSummary !== undefined
+        ? `${summary}\n${workerSummary}`
+        : summary,
+    };
   }
 
   private async loadRepoInstructions(): Promise<string> {

@@ -1,6 +1,7 @@
 import type {
   ReviewBaseRef,
   ReviewCommit,
+  ReviewIntensity,
   ReviewResult,
   ReviewTargetPreview,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -30,10 +31,13 @@ function preview(target: ReviewTargetPreview['target']): ReviewTargetPreview {
   };
 }
 
-function result(target: ReviewResult['target']): ReviewResult {
+function result(
+  target: ReviewResult['target'],
+  intensity: ReviewIntensity = 'standard',
+): ReviewResult {
   return {
     target,
-    intensity: 'standard',
+    intensity,
     status: 'complete',
     stats: preview(target).stats,
     summary: 'Review completed with 1 finding.',
@@ -60,7 +64,7 @@ function makeHost(input: {
     listReviewBaseRefs: vi.fn(async () => input.refs ?? [{ name: 'main', kind: 'branch' }]),
     listReviewCommits: vi.fn(async () => input.commits ?? [{ sha: 'abc123', title: 'change' }]),
     previewReviewTarget: vi.fn(async (target) => preview(target)),
-    startReview: vi.fn(async (reviewInput) => result(reviewInput.target)),
+    startReview: vi.fn(async (reviewInput) => result(reviewInput.target, reviewInput.intensity)),
   };
   const spinnerStop = vi.fn();
   const host = {
@@ -148,6 +152,28 @@ describe('handleReviewCommand', () => {
         intensity: 'standard',
       }),
     );
+  });
+
+  it('starts a Thorough review after showing the focused reviewers', async () => {
+    const { host, session, workingTreePreview } = makeHost();
+    const task = handleReviewCommand(host, '');
+
+    await waitForPicker(host, 1);
+    mountedPicker(host, 0).handleInput(ENTER);
+    await waitForPicker(host, 2);
+    mountedPicker(host, 1).handleInput(DOWN);
+    mountedPicker(host, 1).handleInput(ENTER);
+    await task;
+
+    expect(host.showNotice).toHaveBeenCalledWith(
+      'Thorough review',
+      expect.stringContaining('Correctness and regressions'),
+    );
+    expect(session.startReview).toHaveBeenCalledWith({
+      target: workingTreePreview.target,
+      intensity: 'thorough',
+      focus: undefined,
+    });
   });
 
   it('selects a single commit and keeps Deep disabled for now', async () => {

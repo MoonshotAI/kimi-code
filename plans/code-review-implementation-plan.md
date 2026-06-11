@@ -412,20 +412,20 @@ Purpose: add multi-perspective review with exactly one reconciliator.
 
 **Tasks:**
 
-- [ ] Implement perspective generation for `Thorough`.
-- [ ] Show generated perspectives in the TUI before launch.
-- [ ] Launch one `reviewer` worker per perspective.
-- [ ] Require each reviewer to review all changed file patches.
-- [ ] Launch exactly one `reconciliator` after all focused reviewers complete.
-- [ ] The reconciliator should inspect all candidate comments from all focused reviewers.
-- [ ] Require every source comment to be merged or dismissed.
-- [ ] Emit final review from merged comments.
-- [ ] Enable `Thorough` in the intensity selector.
+- [x] Implement perspective generation for `Thorough`.
+- [x] Show generated perspectives in the TUI before launch.
+- [x] Launch one `reviewer` worker per perspective.
+- [x] Require each reviewer to review all changed file patches.
+- [x] Launch exactly one `reconciliator` after all focused reviewers complete.
+- [x] The reconciliator should inspect all candidate comments from all focused reviewers.
+- [x] Require every source comment to be merged or dismissed.
+- [x] Emit final review from merged comments.
+- [x] Enable `Thorough` in the intensity selector.
 
 **Verification:**
 
-- [ ] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/orchestrator-thorough.test.ts`.
-- [ ] Run `pnpm --filter @moonshot-ai/kimi-code exec vitest run apps/kimi-code/test/tui/commands/review.test.ts`.
+- [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/orchestrator-thorough.test.ts`. Executed with `test/review/orchestrator-thorough.test.ts test/review/runtime.test.ts` because Vitest runs from the package directory.
+- [x] Run `pnpm --filter @moonshot-ai/kimi-code exec vitest run apps/kimi-code/test/tui/commands/review.test.ts`. Executed as `pnpm --filter @moonshot-ai/kimi-code exec vitest run test/tui/commands/review.test.ts` because Vitest runs from the package directory.
 
 ## Phase 11: Deep Review and Grouped Reconciliators
 

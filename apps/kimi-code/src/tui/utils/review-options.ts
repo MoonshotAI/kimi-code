@@ -50,6 +50,12 @@ export const REVIEW_INTENSITY_CHOICES: readonly ReviewChoice[] = [
   },
 ];
 
+export const THOROUGH_REVIEW_PERSPECTIVE_LABELS: readonly string[] = [
+  'Correctness and regressions',
+  'Security and data safety',
+  'Maintainability and tests',
+];
+
 export function formatReviewStats(stats: ReviewDiffStats): string {
   return `${formatCount(stats.fileCount, 'file')}: +${String(stats.additions)} -${String(stats.deletions)}`;
 }

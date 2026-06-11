@@ -191,6 +191,63 @@ describe('SessionReviewRuntime', () => {
     ]);
   });
 
+  it('limits reconciliators to their assigned source comments', () => {
+    const runtime = createRuntime();
+    runtime.startReview(
+      { target: { scope: 'working_tree' }, intensity: 'thorough' },
+      statsFor(['src/a.ts']),
+    );
+    const reviewer = runtime.createAgentFacade(
+      runtime.createAssignment({
+        role: 'reviewer',
+        assignedFiles: ['src/a.ts'],
+        requiredCoverage: 'patch',
+      }).id,
+    );
+
+    reviewer.recordPatchRead({ path: 'src/a.ts', ranges: [{ start: 1, end: 3 }] });
+    const assigned = reviewer.addComment({
+      severity: 'important',
+      path: 'src/a.ts',
+      line: 2,
+      title: 'Assigned comment',
+      body: 'This comment is assigned to the reconciliator.',
+    });
+    const unassigned = reviewer.addComment({
+      severity: 'minor',
+      path: 'src/a.ts',
+      line: 3,
+      title: 'Unassigned comment',
+      body: 'This comment belongs to another reconciliation batch.',
+    });
+    const reconciliator = runtime.createAgentFacade(
+      runtime.createAssignment({
+        role: 'reconciliator',
+        assignedFiles: ['src/a.ts'],
+        requiredCoverage: 'patch',
+        sourceCommentIds: [assigned.id],
+      }).id,
+    );
+
+    expect(() =>
+      reconciliator.mergeComments({
+        sourceCommentIds: [unassigned.id],
+        severity: 'minor',
+        path: 'src/a.ts',
+        line: 3,
+        title: 'Unassigned comment',
+        body: 'This should not be allowed.',
+      }),
+    ).toThrow('Comment is not assigned to this reconciliator');
+    expect(() =>
+      reconciliator.dismissComment({
+        commentId: unassigned.id,
+        reason: 'out_of_scope',
+        summary: 'Not part of this reconciliation batch.',
+      }),
+    ).toThrow('Comment is not assigned to this reconciliator');
+  });
+
   it('keeps review access optional for standalone agents', () => {
     const agent = new Agent({ kaos: createFakeKaos() });
     expect(agent.review).toBeUndefined();
