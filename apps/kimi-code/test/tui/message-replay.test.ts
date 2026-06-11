@@ -990,7 +990,7 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('hook response 2');
   });
 
-  it('renders plan permission and approval replay notices', async () => {
+  it('renders permission and approval replay notices without plan toggle notices', async () => {
     const driver = await replayIntoDriver([
       { time: REPLAY_TIME, type: 'plan_updated', enabled: true },
       { time: REPLAY_TIME, type: 'permission_updated', mode: 'auto' },
@@ -1016,12 +1016,12 @@ describe('KimiTUI resume message replay', () => {
 
     const transcript = driver.state.transcriptContainer.render(120).join('\n');
 
-    expect(transcript).toContain('Plan mode: ON');
     expect(transcript).toContain('Permission mode: auto');
     expect(transcript).toContain('YOLO mode: ON');
     expect(transcript).toContain('YOLO mode: OFF');
     expect(transcript).toContain('Approved for session: run command');
-    expect(transcript).toContain('Plan mode: OFF');
+    expect(transcript).not.toContain('Plan mode: ON');
+    expect(transcript).not.toContain('Plan mode: OFF');
   });
 
   it('keeps only the final approved plan card after rejected plan reviews', async () => {
