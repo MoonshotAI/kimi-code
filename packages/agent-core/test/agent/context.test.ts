@@ -776,6 +776,84 @@ describe('Agent context notification projection', () => {
     expect(textOf(messages[1]!)).toBe('No origin prompt');
     expect(textOf(messages[2]!)).toBe('Third real prompt');
   });
+
+  it('project() trims trailing assistant message with unanswered tool_calls', () => {
+    const history: ContextMessage[] = [
+      userMessage('hello'),
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'I will run a tool' }],
+        toolCalls: [{ id: 'call_1', name: 'Bash', arguments: '{}' }],
+      },
+      // No tool result for call_1 — session was killed.
+    ];
+    const messages = project(history);
+    // The assistant message with open tool_calls should be trimmed.
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.role).toBe('user');
+  });
+
+  it('project() keeps assistant message when all tool_calls are answered', () => {
+    const history: ContextMessage[] = [
+      userMessage('hello'),
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'I will run a tool' }],
+        toolCalls: [{ id: 'call_1', name: 'Bash', arguments: '{}' }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'tool output' }],
+        toolCalls: [],
+        toolCallId: 'call_1',
+      },
+    ];
+    const messages = project(history);
+    // All three messages should be present.
+    expect(messages).toHaveLength(3);
+    expect(messages[1]!.role).toBe('assistant');
+    expect(messages[2]!.role).toBe('tool');
+  });
+
+  it('cleanupOrphanedToolCalls clears stale pendingToolResultIds after resume', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    // Simulate a tool.call event that never got a tool.result (session killed).
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 'step-orphan', turnId: '', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        parentUuid: 'step-orphan',
+        stepUuid: 'step-orphan',
+        toolCallId: 'orphan_call',
+        name: 'Bash',
+        arguments: '{}',
+      },
+    });
+
+    // The orphaned tool call should block new messages.
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'follow up' }]);
+    // The message should be deferred, not in history.
+    const historyBefore = ctx.agent.context.history.filter(
+      (m) => m.role === 'user' && m.content.some((p) => p.type === 'text' && 'text' in p && p.text === 'follow up'),
+    );
+    expect(historyBefore).toHaveLength(0);
+
+    // Now cleanup the orphaned tool calls.
+    ctx.agent.context.cleanupOrphanedToolCalls();
+
+    // After cleanup, new messages should go through.
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'after cleanup' }]);
+    const historyAfter = ctx.agent.context.history.filter(
+      (m) => m.role === 'user' && m.content.some((p) => p.type === 'text' && 'text' in p && p.text === 'after cleanup'),
+    );
+    expect(historyAfter).toHaveLength(1);
+  });
 });
 
 function userMessage(text: string, origin?: ContextMessage['origin']): ContextMessage {

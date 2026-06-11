@@ -298,6 +298,28 @@ export class ContextMemory {
     return this.pendingToolResultIds.size > 0;
   }
 
+  /**
+   * Remove stale entries from `pendingToolResultIds` that have no matching
+   * tool result in the history.  This happens when a session is killed
+   * mid-tool-call and later resumed — the tool.call events are replayed
+   * but the tool.result events never arrived.  Without this cleanup,
+   * `hasOpenToolExchange()` would remain true, silently deferring all
+   * new user messages.
+   */
+  cleanupOrphanedToolCalls(): void {
+    const answeredIds = new Set<string>();
+    for (const message of this._history) {
+      if (message.role === 'tool' && typeof message.toolCallId === 'string') {
+        answeredIds.add(message.toolCallId);
+      }
+    }
+    for (const id of this.pendingToolResultIds) {
+      if (!answeredIds.has(id)) {
+        this.pendingToolResultIds.delete(id);
+      }
+    }
+  }
+
   private pushHistory(...messages: ContextMessage[]): void {
     this._history.push(...messages);
     for (const message of messages) {

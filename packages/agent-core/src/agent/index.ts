@@ -300,6 +300,10 @@ export class Agent {
     await this.background.loadFromDisk();
     await this.background.reconcile();
     await this.cron?.loadFromDisk();
+    // Clean up any tool_call IDs that were never answered (session killed
+    // mid-tool-call).  Without this, new user messages would be silently
+    // deferred because `hasOpenToolExchange()` would remain true.
+    this.context.cleanupOrphanedToolCalls();
     this.turn.finishResume();
     return result;
   }
