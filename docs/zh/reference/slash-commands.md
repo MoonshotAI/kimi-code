@@ -48,7 +48,7 @@
 | `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。 | 是 |
 | `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到 `auto` 或 `yolo`。 | 否 |
 | `/goal [...]` | — | 开始或管理目标模式 | 见下文 |
-| `/review [<focus>]` | — | 审查 Git 变更；可选 focus 文本用于说明审查重点。需要启用 `code_review` 实验功能 | 否 |
+| `/review [<focus>]` | — | 审查选定的代码变更；可选 focus 文本用于说明审查重点。需要启用 `code_review` 实验功能 | 否 |
 
 ::: warning 注意
 `/yolo` 会跳过普通工具调用的审批确认，使用前请确保了解可能的风险。Plan 模式的退出审批不会被 `/yolo` 跳过；Plan 模式下的 `Bash` 也按 `/yolo` 的普通放行规则处理。

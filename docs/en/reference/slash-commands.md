@@ -50,7 +50,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/swarm on\|off` | — | Turn swarm mode on or off without sending a prompt. | Yes |
 | `/swarm <task>` | — | Turn swarm mode on, then send `<task>` as a normal prompt. If the turn completes normally, swarm mode turns off automatically. In `manual` permission mode, Kimi Code asks whether to switch to `auto` or `yolo` before starting. | No |
 | `/goal [...]` | — | Start or manage an autonomous goal | See below |
-| `/review [<focus>]` | — | Review Git changes; optional focus text tells reviewers what to emphasize. Requires the `code_review` experimental feature | No |
+| `/review [<focus>]` | — | Review selected code changes; optional focus text tells reviewers what to emphasize. Requires the `code_review` experimental feature | No |
 
 ::: warning
 `/yolo` skips approval for regular tool calls. Please make sure you understand the potential risks before enabling it. Plan mode exit approval is not bypassed by `/yolo`; `Bash` inside Plan mode is still subject to the regular `/yolo` allow rules.
