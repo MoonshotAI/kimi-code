@@ -460,9 +460,9 @@ describe('EditTool', () => {
     );
   });
 
-  it('recovers when old_string has double-escaped backslashes from LLM JSON encoding', async () => {
+  it('recovers when old_string has real newlines but file has literal backslash-n', async () => {
     const writeText = vi.fn().mockResolvedValue(0);
-    // File has a literal backslash followed by 'n' (two chars).
+    // File has backslash + n (two chars): the literal string \n
     const fileContent = 'path = "C:\\nUsers\\nadmin";';
     const tool = new EditTool(
       createFakeKaos({
@@ -472,17 +472,18 @@ describe('EditTool', () => {
       PERMISSIVE_WORKSPACE,
     );
 
-    // LLM sent double-escaped: in JS string this is "\\n" (backslash + n)
-    // but it was meant to match the literal "\n" in the file.
+    // LLM sent real newlines (\n as one char) instead of backslash + n (two chars).
+    // The unescape fallback should convert \n → backslash + n to match the file.
     const result = await executeTool(tool,
       context({
         path: '/tmp/config.txt',
-        old_string: 'path = "C:\\nUsers\\nadmin";',
-        new_string: 'path = "D:\\nUsers\\nadmin";',
+        old_string: 'path = "C:\nUsers\nadmin";',
+        new_string: 'path = "D:\nUsers\nadmin";',
       }),
     );
 
     expect(result.output).toContain('Replaced 1 occurrence');
+    expect(result.output).toContain('escape adjustment');
     expect(writeText).toHaveBeenCalledWith(
       '/tmp/config.txt',
       'path = "D:\\nUsers\\nadmin";',

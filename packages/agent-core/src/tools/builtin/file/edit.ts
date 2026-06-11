@@ -56,41 +56,40 @@ function replaceOnceLiteral(content: string, oldString: string, newString: strin
 }
 
 /**
- * Attempt to fix common LLM backslash-encoding mistakes in `old_string`.
- *
- * Models sometimes double-escape backslashes when encoding old_string in
- * JSON (e.g. sending `\\\\n` when the file contains `\\n`).  This helper
- * tries progressively less-escaped variants and returns the first one
- * that matches in `content`, or `undefined` if none match.
+ * Attempt to fix common LLM backslash-encoding mistakes in a string.
+ * Used for both old_string (matched against content) and new_string
+ * (applied as replacement).
  */
+function applyBackslashFix(
+  input: string,
+  variant: 'unescape' | 'escape',
+): string {
+  if (variant === 'unescape') {
+    return input
+      .replaceAll('\\n', '\n')
+      .replaceAll('\\t', '\t')
+      .replaceAll('\\r', '\r')
+      .replaceAll('\\\\', '\\');
+  }
+  return input
+    .replaceAll('\n', '\\n')
+    .replaceAll('\t', '\\t')
+    .replaceAll('\r', '\\r');
+}
 function findBackslashAdjustedMatch(
   content: string,
   oldString: string,
-): { adjusted: string; variant: string } | undefined {
-  const variants: Array<{ adjusted: string; variant: string }> = [];
+): { adjusted: string; variant: 'unescape' | 'escape' } | undefined {
+  const variants: Array<{ adjusted: string; variant: 'unescape' | 'escape' }> = [];
 
-  // Variant 1: the LLM double-escaped — unescape one level.
-  // Collapse doubled backslashes first, then translate escape sequences.
-  // Order matters: "\\\\" must collapse before "\\n" is processed,
-  // otherwise the second backslash pairs with 'n' into a real newline.
-  const unescaped = oldString
-    .replaceAll('\\\\', '\\')
-    .replaceAll('\\n', '\n')
-    .replaceAll('\\t', '\t')
-    .replaceAll('\\r', '\r');
+  const unescaped = applyBackslashFix(oldString, 'unescape');
   if (unescaped !== oldString) {
-    variants.push({ adjusted: unescaped, variant: 'unescape-sequences' });
+    variants.push({ adjusted: unescaped, variant: 'unescape' });
   }
 
-  // Variant 2: the LLM under-escaped — the file has literal double-backslash
-  // but old_string has single.  Re-escape common escape sequences.
-  const overEscaped = oldString
-    .replaceAll('\\n', '\\\\n')
-    .replaceAll('\\t', '\\\\t')
-    .replaceAll('\\r', '\\\\r');
-  // Only try this if it actually changed something and differs from variant 1.
+  const overEscaped = applyBackslashFix(oldString, 'escape');
   if (overEscaped !== oldString && overEscaped !== unescaped) {
-    variants.push({ adjusted: overEscaped, variant: 'escape-sequences' });
+    variants.push({ adjusted: overEscaped, variant: 'escape' });
   }
 
   for (const v of variants) {
@@ -176,11 +175,13 @@ export class EditTool implements BuiltinTool<EditInput> {
       // Try the original old_string first; if not found, attempt backslash
       // encoding fixes that cover common LLM mis-encodings.
       let oldString = args.old_string;
+      let newString = args.new_string;
       let backslashHint: string | undefined;
       if (!content.includes(oldString)) {
         const adjusted = findBackslashAdjustedMatch(content, oldString);
         if (adjusted !== undefined) {
           oldString = adjusted.adjusted;
+          newString = applyBackslashFix(newString, adjusted.variant);
           backslashHint = ` (matched after ${adjusted.variant} adjustment)`;
         }
       }
@@ -209,7 +210,7 @@ export class EditTool implements BuiltinTool<EditInput> {
           };
         }
 
-        const newContent = replaceOnceLiteral(content, oldString, args.new_string);
+        const newContent = replaceOnceLiteral(content, oldString, newString);
         await this.kaos.writeText(
           safePath,
           materializeModelText(newContent, modelView.lineEndingStyle),
@@ -225,7 +226,7 @@ export class EditTool implements BuiltinTool<EditInput> {
 ` };
       }
 
-      const newContent = parts.join(args.new_string);
+      const newContent = parts.join(newString);
       await this.kaos.writeText(
         safePath,
         materializeModelText(newContent, modelView.lineEndingStyle),
