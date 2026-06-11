@@ -6,6 +6,7 @@ import type { ToolExecution } from '../../../loop';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ReviewAgentFacade } from '#/review';
 import DESCRIPTION from './read-file-version.md';
+import { joinReviewDetails, lineRangeLabel, reviewDisplay } from './display';
 import { jsonError, jsonResult, readFileVersionForTarget, requireAssignedPath } from './support';
 
 export const ReadFileVersionInputSchema = z
@@ -30,9 +31,15 @@ export class ReadFileVersionTool implements BuiltinTool<ReadFileVersionInput> {
   ) {}
 
   resolveExecution(args: ReadFileVersionInput): ToolExecution {
+    const sourceLabel = args.ref === undefined ? args.version ?? 'current' : `ref ${args.ref}`;
+    const detail = joinReviewDetails([
+      sourceLabel,
+      lineRangeLabel(args.line_offset, args.n_lines),
+    ]);
     return {
       approvalRule: this.name,
       description: `Reading review file version for ${args.path}`,
+      display: reviewDisplay(`file version: ${args.path}`, detail),
       execute: async () => {
         try {
           requireAssignedPath(this.review, args.path);

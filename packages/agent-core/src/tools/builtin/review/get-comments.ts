@@ -5,6 +5,7 @@ import type { ToolExecution } from '../../../loop';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ReviewAgentFacade } from '#/review';
 import DESCRIPTION from './get-comments.md';
+import { joinReviewDetails, reviewDisplay } from './display';
 import { jsonError, jsonResult } from './support';
 
 const StateSchema = z.enum(['candidate', 'merged', 'dismissed']);
@@ -27,14 +28,21 @@ export class GetCommentsTool implements BuiltinTool<GetCommentsInput> {
   constructor(private readonly review: ReviewAgentFacade) {}
 
   resolveExecution(args: GetCommentsInput): ToolExecution {
+    const scope = args.scope ?? 'all';
+    const detail = joinReviewDetails([
+      args.status,
+      scope === 'assigned' ? 'assigned scope' : 'all scope',
+      args.paths === undefined ? undefined : args.paths.join(', '),
+      args.include_sources === true ? 'include sources' : undefined,
+    ]);
     return {
       approvalRule: this.name,
       description: 'Getting review comments',
+      display: reviewDisplay('review comments', detail),
       execute: async () => {
         try {
           const pathFilter = args.paths === undefined ? undefined : new Set(args.paths);
           const assigned = new Set(this.review.getAssignment().assignedFiles);
-          const scope = args.scope ?? 'all';
           const includeSources = args.include_sources ?? false;
           const includePath = (path: string): boolean => {
             if (scope === 'assigned' && !assigned.has(path)) return false;

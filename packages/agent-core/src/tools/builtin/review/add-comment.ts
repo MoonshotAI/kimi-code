@@ -5,6 +5,7 @@ import type { ToolExecution } from '../../../loop';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ReviewAgentFacade } from '#/review';
 import DESCRIPTION from './add-comment.md';
+import { joinReviewDetails, reviewDisplay } from './display';
 import { jsonError, jsonResult } from './support';
 
 const SeveritySchema = z.enum(['critical', 'important', 'minor']);
@@ -33,6 +34,10 @@ export class AddCommentTool implements BuiltinTool<AddCommentInput> {
     return {
       approvalRule: this.name,
       description: `Adding review comment for ${args.path}:${String(args.line)}`,
+      display: reviewDisplay(
+        `review comment: ${args.path}:${String(args.line)}`,
+        joinReviewDetails([args.severity, args.title]),
+      ),
       execute: async () => {
         try {
           return jsonResult(

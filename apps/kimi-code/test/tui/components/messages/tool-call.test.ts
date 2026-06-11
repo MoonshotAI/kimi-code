@@ -712,6 +712,29 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('lines');
   });
 
+  it('renders review tool display metadata instead of raw argument previews', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_review_patch',
+        name: 'ReadPatch',
+        args: { path: 'src/a.ts', hunk_id: 'hunk-2', context_lines: 5 },
+        display: {
+          kind: 'generic',
+          summary: 'Read patch: src/a.ts',
+          detail: 'hunk hunk-2 · 5 context lines',
+        },
+      },
+      undefined,
+    );
+
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out).toContain('Using review patch: src/a.ts (hunk hunk-2 · 5 context lines)');
+    expect(out).not.toContain('Using ReadPatch');
+    expect(out).not.toContain('hunk_id');
+    expect(out).not.toContain('context_lines');
+  });
+
   it('renders a single foreground subagent without the generic Agent tool header', () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
@@ -772,6 +795,123 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('Used Agent');
     expect(out).not.toContain('parent duplicate result');
     expect(out).not.toContain('summary fallback');
+  });
+
+  it('renders nested review tool display metadata in single-subagent activity', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_review_tools',
+        name: 'Agent',
+        args: { description: 'review patch' },
+      },
+      undefined,
+    );
+
+    component.onSubagentSpawned({
+      agentId: 'sub_review',
+      agentName: 'reviewer',
+      runInBackground: false,
+    });
+    component.appendSubToolCall({
+      id: 'sub_review:read-patch',
+      name: 'ReadPatch',
+      args: { path: 'src/a.ts', hunk_id: 'hunk-2', context_lines: 5 },
+      display: {
+        kind: 'generic',
+        summary: 'Read patch: src/a.ts',
+        detail: 'hunk hunk-2 · 5 context lines',
+      },
+    });
+
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out).toContain('Using review patch: src/a.ts (hunk hunk-2 · 5 context lines)');
+    expect(out).not.toContain('Using ReadPatch');
+    expect(out).not.toContain('hunk_id');
+  });
+
+  it('renders the same nested review label before and after display metadata arrives', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_review_fallback',
+        name: 'Agent',
+        args: { description: 'review patch' },
+      },
+      undefined,
+    );
+
+    component.onSubagentSpawned({
+      agentId: 'sub_review_fallback',
+      agentName: 'reviewer',
+      runInBackground: false,
+    });
+    component.appendSubToolCall({
+      id: 'sub_review_fallback:read-patch',
+      name: 'ReadPatch',
+      args: { path: 'src/a.ts', hunk_id: 'hunk-2', context_lines: 5 },
+    });
+
+    let out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Using review patch: src/a.ts (hunk hunk-2 · 5 context lines)');
+    expect(out).not.toContain('Using ReadPatch');
+
+    component.finishSubToolCall({
+      tool_call_id: 'sub_review_fallback:read-patch',
+      output: JSON.stringify({ path: 'src/a.ts' }),
+      is_error: false,
+    });
+
+    out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Used review patch: src/a.ts (hunk hunk-2 · 5 context lines)');
+    expect(out).not.toContain('Used ReadPatch');
+  });
+
+  it('does not preview successful nested review tool JSON output', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_review_json',
+        name: 'Agent',
+        args: { description: 'review patch' },
+      },
+      undefined,
+    );
+
+    component.onSubagentSpawned({
+      agentId: 'sub_review_json',
+      agentName: 'reviewer',
+      runInBackground: false,
+    });
+    component.appendSubToolCall({
+      id: 'sub_review_json:get-assignment',
+      name: 'GetAssignment',
+      args: {},
+      display: {
+        kind: 'generic',
+        summary: 'review assignment',
+      },
+    });
+    component.finishSubToolCall({
+      tool_call_id: 'sub_review_json:get-assignment',
+      output: JSON.stringify({
+        id: 'review-assignment-1',
+        role: 'reviewer',
+        assignedFiles: ['src/a.ts'],
+      }, null, 2),
+      is_error: false,
+    });
+
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out).toContain('Used review assignment');
+    expect(out).not.toContain('"id"');
+    expect(out).not.toContain('"role"');
+    expect(out).not.toContain('review-assignment-1');
   });
 
   it('keeps the single subagent tool area to the latest four activities', () => {

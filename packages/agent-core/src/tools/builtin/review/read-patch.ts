@@ -6,6 +6,7 @@ import type { ToolExecution } from '../../../loop';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ReviewAgentFacade } from '#/review';
 import DESCRIPTION from './read-patch.md';
+import { countLabel, joinReviewDetails, reviewDisplay } from './display';
 import { jsonError, jsonResult, readPatchForTarget, requireAssignedPath } from './support';
 
 export const ReadPatchInputSchema = z
@@ -28,13 +29,18 @@ export class ReadPatchTool implements BuiltinTool<ReadPatchInput> {
   ) {}
 
   resolveExecution(args: ReadPatchInput): ToolExecution {
+    const contextLines = args.context_lines ?? 3;
+    const detail = joinReviewDetails([
+      args.hunk_id === undefined ? 'all hunks' : `hunk ${args.hunk_id}`,
+      countLabel(contextLines, 'context line', 'context lines'),
+    ]);
     return {
       approvalRule: this.name,
       description: `Reading review patch for ${args.path}`,
+      display: reviewDisplay(`review patch: ${args.path}`, detail),
       execute: async () => {
         try {
           requireAssignedPath(this.review, args.path);
-          const contextLines = args.context_lines ?? 3;
           const result = await readPatchForTarget(
             this.kaos,
             this.review.getActiveRun(),

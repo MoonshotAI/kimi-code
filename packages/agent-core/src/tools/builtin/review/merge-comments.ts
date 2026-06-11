@@ -5,6 +5,7 @@ import type { ToolExecution } from '../../../loop';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ReviewAgentFacade } from '#/review';
 import DESCRIPTION from './merge-comments.md';
+import { countLabel, joinReviewDetails, reviewDisplay } from './display';
 import { jsonError, jsonResult } from './support';
 
 const SeveritySchema = z.enum(['critical', 'important', 'minor']);
@@ -34,6 +35,14 @@ export class MergeCommentsTool implements BuiltinTool<MergeCommentsInput> {
     return {
       approvalRule: this.name,
       description: 'Merging review comments',
+      display: reviewDisplay(
+        `comment merge: ${args.path}:${String(args.line)}`,
+        joinReviewDetails([
+          countLabel(args.source_comment_ids.length, 'source comment', 'source comments'),
+          args.severity,
+          args.title,
+        ]),
+      ),
       execute: async () => {
         try {
           return jsonResult(

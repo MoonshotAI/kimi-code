@@ -3,11 +3,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { SessionReviewRuntime, type ReviewAgentFacade } from '../../src/review';
 import { AddCommentInputSchema, AddCommentTool } from '../../src/tools/builtin/review/add-comment';
 import { DismissCommentTool } from '../../src/tools/builtin/review/dismiss-comment';
+import { GetAssignmentTool } from '../../src/tools/builtin/review/get-assignment';
+import { GetChangedFilesTool } from '../../src/tools/builtin/review/get-changed-files';
+import { GetCommentEvidenceTool } from '../../src/tools/builtin/review/get-comment-evidence';
 import { GetCommentsTool } from '../../src/tools/builtin/review/get-comments';
 import { MergeCommentsTool } from '../../src/tools/builtin/review/merge-comments';
 import { ReadFileVersionTool } from '../../src/tools/builtin/review/read-file-version';
 import { ReadPatchTool } from '../../src/tools/builtin/review/read-patch';
 import { UpdateProgressTool } from '../../src/tools/builtin/review/update-progress';
+import type { ToolExecution } from '../../src/loop';
 import { createFakeKaos } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 import { testAgent } from '../agent/harness/agent';
@@ -30,6 +34,103 @@ describe('review tools', () => {
     ctx.configure();
 
     expect(ctx.agent.tools.data().map((tool) => tool.name)).not.toContain('GetAssignment');
+  });
+
+  it('exposes readable display metadata for review tool calls', () => {
+    const review = createReviewer({
+      assignedFiles: ['src/a.ts'],
+      requiredCoverage: 'patch',
+    });
+    const kaos = createFakeKaos();
+
+    expect(displayOf(new GetAssignmentTool(review).resolveExecution())).toEqual({
+      kind: 'generic',
+      summary: 'review assignment',
+    });
+    expect(displayOf(new GetChangedFilesTool(review).resolveExecution({
+      include: 'all',
+      statuses: ['modified', 'added'],
+    }))).toEqual({
+      kind: 'generic',
+      summary: 'changed files',
+      detail: 'all files · statuses: modified, added',
+    });
+    expect(displayOf(new ReadPatchTool(kaos, review).resolveExecution({
+      path: 'src/a.ts',
+      hunk_id: 'hunk-2',
+      context_lines: 5,
+    }))).toEqual({
+      kind: 'generic',
+      summary: 'review patch: src/a.ts',
+      detail: 'hunk hunk-2 · 5 context lines',
+    });
+    expect(displayOf(new ReadFileVersionTool(kaos, review).resolveExecution({
+      path: 'src/a.ts',
+      version: 'base',
+      line_offset: 10,
+      n_lines: 3,
+    }))).toEqual({
+      kind: 'generic',
+      summary: 'file version: src/a.ts',
+      detail: 'base · lines 10-12',
+    });
+    expect(displayOf(new UpdateProgressTool(review).resolveExecution({
+      status: 'blocked',
+      blocker: 'needs generated sources',
+    }))).toEqual({
+      kind: 'generic',
+      summary: 'review progress update: blocked',
+      detail: 'blocker: needs generated sources',
+    });
+    expect(displayOf(new AddCommentTool(review).resolveExecution({
+      severity: 'important',
+      path: 'src/a.ts',
+      line: 7,
+      title: 'Missing auth',
+      body: 'The endpoint has no authorization check.',
+    }))).toEqual({
+      kind: 'generic',
+      summary: 'review comment: src/a.ts:7',
+      detail: 'important · Missing auth',
+    });
+    expect(displayOf(new GetCommentsTool(review).resolveExecution({
+      status: 'merged',
+      scope: 'assigned',
+      paths: ['src/a.ts'],
+      include_sources: true,
+    }))).toEqual({
+      kind: 'generic',
+      summary: 'review comments',
+      detail: 'merged · assigned scope · src/a.ts · include sources',
+    });
+    expect(displayOf(new GetCommentEvidenceTool(review).resolveExecution({
+      comment_id: 'comment-1',
+    }))).toEqual({
+      kind: 'generic',
+      summary: 'comment evidence: comment-1',
+    });
+    expect(displayOf(new MergeCommentsTool(review).resolveExecution({
+      source_comment_ids: ['comment-1', 'comment-2'],
+      severity: 'critical',
+      path: 'src/a.ts',
+      line: 7,
+      title: 'Missing auth',
+      body: 'Add an authorization check.',
+    }))).toEqual({
+      kind: 'generic',
+      summary: 'comment merge: src/a.ts:7',
+      detail: '2 source comments · critical · Missing auth',
+    });
+    expect(displayOf(new DismissCommentTool(review).resolveExecution({
+      comment_id: 'comment-3',
+      reason: 'duplicate',
+      summary: 'Covered by the merged auth comment.',
+      merged_comment_id: 'merged-1',
+    }))).toEqual({
+      kind: 'generic',
+      summary: 'comment dismissal: comment-3',
+      detail: 'duplicate · Covered by the merged auth comment. · merged into merged-1',
+    });
   });
 
   it('rejects comments for lines the reviewer has not read', async () => {
@@ -198,6 +299,11 @@ function context<Input>(args: Input) {
 function json(result: { readonly output: unknown }): any {
   if (typeof result.output !== 'string') throw new Error('expected string output');
   return JSON.parse(result.output);
+}
+
+function displayOf(execution: ToolExecution) {
+  if (!('execute' in execution)) throw new Error('expected runnable tool execution');
+  return execution.display;
 }
 
 function createReviewer(input: {

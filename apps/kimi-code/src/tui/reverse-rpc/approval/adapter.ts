@@ -178,9 +178,11 @@ function describeApproval(display: ToolInputDisplay, action: string): string {
       return '';
     case 'generic':
       if (typeof display.detail === 'string' && display.detail.length > 0) {
-        return display.detail;
+        return display.summary.length > 0
+          ? `${display.summary} (${display.detail})`
+          : display.detail;
       }
-      return display.summary ?? action;
+      return display.summary.length > 0 ? display.summary : action;
     case 'command':
       return display.description ?? display.command ?? action;
     case 'diff':

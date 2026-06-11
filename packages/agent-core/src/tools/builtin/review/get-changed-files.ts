@@ -5,6 +5,7 @@ import type { ToolExecution } from '../../../loop';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ReviewAgentFacade } from '#/review';
 import DESCRIPTION from './get-changed-files.md';
+import { joinReviewDetails, reviewDisplay } from './display';
 import { jsonError, jsonResult } from './support';
 
 const ReviewFileStatusSchema = z.enum(['added', 'modified', 'deleted', 'renamed', 'untracked']);
@@ -25,15 +26,20 @@ export class GetChangedFilesTool implements BuiltinTool<GetChangedFilesInput> {
   constructor(private readonly review: ReviewAgentFacade) {}
 
   resolveExecution(args: GetChangedFilesInput): ToolExecution {
+    const include = args.include ?? 'assigned';
+    const detail = joinReviewDetails([
+      include === 'all' ? 'all files' : 'assigned files',
+      args.statuses === undefined ? undefined : `statuses: ${args.statuses.join(', ')}`,
+    ]);
     return {
       approvalRule: this.name,
       description: 'Getting changed files',
+      display: reviewDisplay('changed files', detail),
       execute: async () => {
         try {
           const assignment = this.review.getAssignment();
           const assigned = new Set(assignment.assignedFiles);
           const statuses = args.statuses === undefined ? undefined : new Set(args.statuses);
-          const include = args.include ?? 'assigned';
           const files = this.review.getChangedFiles().filter((file) => {
             if (include !== 'all' && !assigned.has(file.path)) return false;
             if (statuses !== undefined && !statuses.has(file.status)) return false;

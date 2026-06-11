@@ -100,6 +100,7 @@ export class SubAgentEventHandler {
         id: `${childAgentId}:${event.toolCallId}`,
         name: event.name,
         args: argsRecord(event.args),
+        display: event.display,
       });
     } else if (event.type === 'tool.call.delta') {
       toolCall.appendSubToolCallDelta({

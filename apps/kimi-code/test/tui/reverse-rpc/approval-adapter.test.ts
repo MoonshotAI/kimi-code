@@ -157,6 +157,22 @@ describe('approval adapter', () => {
     ]);
   });
 
+  it('uses generic review display summary and detail as the approval description', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-review-patch',
+      toolName: 'ReadPatch',
+      action: 'Reading review patch for src/foo.ts',
+      display: {
+        kind: 'generic',
+        summary: 'review patch: src/foo.ts',
+        detail: 'hunk hunk-2 · 5 context lines',
+      },
+    });
+
+    expect(adapted.description).toBe('review patch: src/foo.ts (hunk hunk-2 · 5 context lines)');
+    expect(adapted.display).toEqual([]);
+  });
+
   it('omits plan review content from the approval panel while keeping Python-style choices', () => {
     const adapted = adaptApprovalRequest({
       toolCallId: 'tc-plan',

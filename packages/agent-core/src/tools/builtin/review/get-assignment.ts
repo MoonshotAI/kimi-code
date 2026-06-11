@@ -5,6 +5,7 @@ import type { ToolExecution } from '../../../loop';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ReviewAgentFacade } from '#/review';
 import DESCRIPTION from './get-assignment.md';
+import { reviewDisplay } from './display';
 import { jsonError, jsonResult } from './support';
 
 export const GetAssignmentInputSchema = z.object({}).strict();
@@ -21,6 +22,7 @@ export class GetAssignmentTool implements BuiltinTool<GetAssignmentInput> {
     return {
       approvalRule: this.name,
       description: 'Getting review assignment',
+      display: reviewDisplay('review assignment'),
       execute: async () => {
         try {
           return jsonResult(this.review.getAssignment());

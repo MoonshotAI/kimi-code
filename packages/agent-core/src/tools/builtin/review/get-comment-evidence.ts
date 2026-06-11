@@ -5,6 +5,7 @@ import type { ToolExecution } from '../../../loop';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ReviewAgentFacade } from '#/review';
 import DESCRIPTION from './get-comment-evidence.md';
+import { reviewDisplay } from './display';
 import { jsonError, jsonResult } from './support';
 
 export const GetCommentEvidenceInputSchema = z
@@ -25,6 +26,7 @@ export class GetCommentEvidenceTool implements BuiltinTool<GetCommentEvidenceInp
     return {
       approvalRule: this.name,
       description: 'Getting review comment evidence',
+      display: reviewDisplay(`comment evidence: ${args.comment_id}`),
       execute: async () => {
         try {
           return jsonResult({

@@ -22,7 +22,7 @@ import { FAILURE_MARK, STATUS_BULLET, SUCCESS_MARK } from '#/tui/constant/symbol
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
-import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
+import type { TokenUsage, ToolInputDisplay } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 
@@ -31,6 +31,7 @@ import { PlanBoxComponent } from './plan-box';
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader } from './tool-renderers/goal';
+import { formatReviewToolLabel } from './tool-renderers/review';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
 import { TruncatedOutputComponent } from './tool-renderers/truncated';
 
@@ -51,6 +52,7 @@ type SubagentPhase = 'queued' | 'spawning' | 'running' | 'done' | 'failed' | 'ba
 interface FinishedSubCall {
   readonly name: string;
   readonly args: Record<string, unknown>;
+  readonly display?: ToolInputDisplay | undefined;
   readonly output: string;
   readonly isError: boolean;
 }
@@ -58,6 +60,7 @@ interface FinishedSubCall {
 interface OngoingSubCall {
   readonly name: string;
   readonly args: Record<string, unknown>;
+  readonly display?: ToolInputDisplay | undefined;
   readonly streamingArguments?: string | undefined;
 }
 
@@ -65,6 +68,7 @@ interface SubToolActivity {
   readonly id: string;
   name: string;
   args: Record<string, unknown>;
+  display?: ToolInputDisplay | undefined;
   phase: 'ongoing' | 'done' | 'failed';
   output?: string;
   readonly orderSeq: number;
@@ -434,6 +438,28 @@ function extractKeyArgument(
     }
   }
   return null;
+}
+
+function plainReviewActivity(
+  toolName: string,
+  args: Record<string, unknown>,
+  display: ToolInputDisplay | undefined,
+): string | undefined {
+  const parts = formatReviewToolLabel(toolName, args, display);
+  if (parts === undefined) return undefined;
+  return parts.detail === undefined ? parts.summary : `${parts.summary} (${parts.detail})`;
+}
+
+function styledReviewActivity(
+  toolName: string,
+  args: Record<string, unknown>,
+  display: ToolInputDisplay | undefined,
+): string | undefined {
+  const parts = formatReviewToolLabel(toolName, args, display);
+  if (parts === undefined) return undefined;
+  const summary = currentTheme.boldFg('primary', parts.summary);
+  const detail = parts.detail === undefined ? '' : currentTheme.dim(` (${parts.detail})`);
+  return `${summary}${detail}`;
 }
 
 function formatSubagentLabel(agentName: string | undefined): string {
@@ -829,6 +855,7 @@ export class ToolCallComponent extends Container {
     args: Record<string, unknown>,
     phase: SubToolActivity['phase'],
     output?: string,
+    display?: ToolInputDisplay | undefined,
   ): void {
     const existing = this.subToolActivities.get(id);
     if (existing !== undefined) {
@@ -836,16 +863,19 @@ export class ToolCallComponent extends Container {
       existing.args = args;
       existing.phase = phase;
       if (output !== undefined) existing.output = output;
+      if (display !== undefined) existing.display = display;
       return;
     }
-    this.subToolActivities.set(id, {
+    const activity: SubToolActivity = {
       id,
       name,
       args,
       phase,
-      ...(output !== undefined ? { output } : {}),
       orderSeq: ++this.subToolOrderSeq,
-    });
+    };
+    if (output !== undefined) activity.output = output;
+    if (display !== undefined) activity.display = display;
+    this.subToolActivities.set(id, activity);
   }
 
   private getCombinedSubagentText(): string {
@@ -1126,16 +1156,24 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  appendSubToolCall(call: { id: string; name: string; args: Record<string, unknown> }): void {
+  appendSubToolCall(call: {
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+    display?: ToolInputDisplay | undefined;
+  }): void {
     const existing = this.ongoingSubCalls.get(call.id);
-    this.ongoingSubCalls.set(call.id, {
-      name: call.name,
-      args: call.args,
-      ...(existing?.streamingArguments !== undefined
-        ? { streamingArguments: existing.streamingArguments }
-        : {}),
-    });
-    this.upsertSubToolActivity(call.id, call.name, call.args, 'ongoing');
+    const ongoing: OngoingSubCall =
+      existing?.streamingArguments === undefined
+        ? { name: call.name, args: call.args, display: call.display }
+        : {
+            name: call.name,
+            args: call.args,
+            display: call.display,
+            streamingArguments: existing.streamingArguments,
+          };
+    this.ongoingSubCalls.set(call.id, ongoing);
+    this.upsertSubToolActivity(call.id, call.name, call.args, 'ongoing', undefined, call.display);
     if (
       this.subagentPhase === undefined ||
       this.subagentPhase === 'queued' ||
@@ -1163,9 +1201,17 @@ export class ToolCallComponent extends Container {
     this.ongoingSubCalls.set(delta.id, {
       name: delta.name ?? existing?.name ?? 'Tool',
       args: parsed,
+      display: existing?.display,
       streamingArguments: nextArgsText,
     });
-    this.upsertSubToolActivity(delta.id, delta.name ?? existing?.name ?? 'Tool', parsed, 'ongoing');
+    this.upsertSubToolActivity(
+      delta.id,
+      delta.name ?? existing?.name ?? 'Tool',
+      parsed,
+      'ongoing',
+      undefined,
+      existing?.display,
+    );
     if (
       this.subagentPhase === undefined ||
       this.subagentPhase === 'queued' ||
@@ -1190,6 +1236,7 @@ export class ToolCallComponent extends Container {
     this.finishedSubCalls.push({
       name: ongoing.name,
       args: ongoing.args,
+      display: ongoing.display,
       output: result.output,
       isError: result.is_error ?? false,
     });
@@ -1199,6 +1246,7 @@ export class ToolCallComponent extends Container {
       ongoing.args,
       result.is_error === true ? 'failed' : 'done',
       result.output,
+      ongoing.display,
     );
     while (this.finishedSubCalls.length > MAX_SUB_TOOL_CALLS_SHOWN) {
       this.finishedSubCalls.shift();
@@ -1271,18 +1319,23 @@ export class ToolCallComponent extends Container {
     }
 
     const verb = isFinished ? 'Used' : isTruncated ? 'Truncated' : 'Using';
-    const keyArg = extractKeyArgument(toolCall.name, toolCall.args, this.workspaceDir);
-    const decoded = decodeMcpToolName(toolCall.name);
     const verbStyled = isTruncated
       ? currentTheme.fg('error', verb)
       : verb;
+    let chipStr = '';
+    if (isFinished && result) chipStr = this.buildHeaderChip(result);
+    const reviewActivity = styledReviewActivity(toolCall.name, toolCall.args, toolCall.display);
+    if (reviewActivity !== undefined) {
+      return `${bullet}${verbStyled} ${reviewActivity}${chipStr}`;
+    }
+
+    const keyArg = extractKeyArgument(toolCall.name, toolCall.args, this.workspaceDir);
+    const decoded = decodeMcpToolName(toolCall.name);
     const toolLabel =
       decoded !== null
         ? `${currentTheme.boldFg('primary', decoded.toolName)}${currentTheme.dim(` · MCP/${decoded.serverName}`)}`
         : currentTheme.boldFg('primary', toolCall.name);
     const argStr = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
-    let chipStr = '';
-    if (isFinished && result) chipStr = this.buildHeaderChip(result);
     return `${bullet}${verbStyled} ${toolLabel}${argStr}${chipStr}`;
   }
 
@@ -1384,18 +1437,28 @@ export class ToolCallComponent extends Container {
       const mark = sub.isError
         ? currentTheme.fg('error', '✗')
         : currentTheme.fg('success', '•');
-      const keyArg = extractKeyArgument(sub.name, sub.args, this.workspaceDir);
-      const nameCol = currentTheme.fg('primary', sub.name);
-      const argCol = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
-      this.addChild(new Text(`    ${mark} Used ${nameCol}${argCol}`, 0, 0));
+      const reviewActivity = styledReviewActivity(sub.name, sub.args, sub.display);
+      if (reviewActivity !== undefined) {
+        this.addChild(new Text(`    ${mark} Used ${reviewActivity}`, 0, 0));
+      } else {
+        const keyArg = extractKeyArgument(sub.name, sub.args, this.workspaceDir);
+        const nameCol = currentTheme.fg('primary', sub.name);
+        const argCol = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
+        this.addChild(new Text(`    ${mark} Used ${nameCol}${argCol}`, 0, 0));
+      }
     }
 
     for (const [id, call] of this.ongoingSubCalls) {
-      const keyArg = extractKeyArgument(call.name, call.args, this.workspaceDir);
-      const nameCol = currentTheme.fg('primary', call.name);
-      const argCol = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
+      const reviewActivity = styledReviewActivity(call.name, call.args, call.display);
       void id;
-      this.addChild(new Text(`    ${currentTheme.dim('…')} Using ${nameCol}${argCol}`, 0, 0));
+      if (reviewActivity !== undefined) {
+        this.addChild(new Text(`    ${currentTheme.dim('…')} Using ${reviewActivity}`, 0, 0));
+      } else {
+        const keyArg = extractKeyArgument(call.name, call.args, this.workspaceDir);
+        const nameCol = currentTheme.fg('primary', call.name);
+        const argCol = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
+        this.addChild(new Text(`    ${currentTheme.dim('…')} Using ${nameCol}${argCol}`, 0, 0));
+      }
     }
 
     if (this.subagentText.length > 0) {
@@ -1639,6 +1702,9 @@ export class ToolCallComponent extends Container {
   }
 
   private formatSubToolActivity(verb: string, activity: SubToolActivity): string {
+    const reviewActivity = styledReviewActivity(activity.name, activity.args, activity.display);
+    if (reviewActivity !== undefined) return `${verb} ${reviewActivity}`;
+
     const keyArg = extractKeyArgument(activity.name, activity.args, this.workspaceDir);
     const nameCol = currentTheme.fg('primary', activity.name);
     const argCol = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
@@ -1978,13 +2044,19 @@ function computeLatestActivity(
   if (ongoing.size > 0) {
     const lastOngoing = [...ongoing.values()].at(-1);
     if (lastOngoing !== undefined) {
-      return formatActivityLine('Using', lastOngoing.name, lastOngoing.args, workspaceDir);
+      return formatActivityLine(
+        'Using',
+        lastOngoing.name,
+        lastOngoing.args,
+        workspaceDir,
+        lastOngoing.display,
+      );
     }
   }
   if (finished.length > 0) {
     const last = finished.at(-1);
     if (last !== undefined) {
-      return formatActivityLine('Used', last.name, last.args, workspaceDir);
+      return formatActivityLine('Used', last.name, last.args, workspaceDir, last.display);
     }
   }
   if (text.length > 0) {
@@ -2008,7 +2080,11 @@ function formatActivityLine(
   toolName: string,
   args: Record<string, unknown>,
   workspaceDir?: string,
+  display?: ToolInputDisplay | undefined,
 ): string {
+  const reviewActivity = plainReviewActivity(toolName, args, display);
+  if (reviewActivity !== undefined) return `${verb} ${reviewActivity}`;
+
   const keyArg = extractKeyArgument(toolName, args, workspaceDir);
   return keyArg ? `${verb} ${toolName} (${keyArg})` : `${verb} ${toolName}`;
 }

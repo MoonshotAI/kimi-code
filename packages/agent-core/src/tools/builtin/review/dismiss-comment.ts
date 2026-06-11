@@ -5,6 +5,7 @@ import type { ToolExecution } from '../../../loop';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ReviewAgentFacade } from '#/review';
 import DESCRIPTION from './dismiss-comment.md';
+import { joinReviewDetails, reviewDisplay } from './display';
 import { jsonError, jsonResult } from './support';
 
 const DismissalReasonSchema = z.enum([
@@ -38,6 +39,14 @@ export class DismissCommentTool implements BuiltinTool<DismissCommentInput> {
     return {
       approvalRule: this.name,
       description: 'Dismissing review comment',
+      display: reviewDisplay(
+        `comment dismissal: ${args.comment_id}`,
+        joinReviewDetails([
+          args.reason,
+          args.summary,
+          args.merged_comment_id === undefined ? undefined : `merged into ${args.merged_comment_id}`,
+        ]),
+      ),
       execute: async () => {
         try {
           return jsonResult(

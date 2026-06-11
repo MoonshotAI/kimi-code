@@ -13,6 +13,7 @@
 import { readMediaSummary } from './media';
 import { shellExecutionResultRenderer } from '../shell-execution';
 import { goalSummary } from './goal';
+import { reviewSummary } from './review';
 import {
   editSummary,
   fetchSummary,
@@ -63,6 +64,17 @@ export function pickResultRenderer(toolName: string): ResultRenderer {
     case 'SetGoalBudget':
     case 'UpdateGoal':
       return goalSummary;
+    case 'GetAssignment':
+    case 'GetChangedFiles':
+    case 'ReadPatch':
+    case 'ReadFileVersion':
+    case 'UpdateProgress':
+    case 'AddComment':
+    case 'GetComments':
+    case 'GetCommentEvidence':
+    case 'MergeComments':
+    case 'DismissComment':
+      return reviewSummary;
     default:
       return renderTruncated;
   }
