@@ -31,7 +31,7 @@ export interface ReviewWorkerDriverResult {
   readonly summary?: string;
 }
 
-interface ReviewWorkerAudit {
+export interface ReviewWorkerAudit {
   readonly status: ReviewProgressStatus;
   readonly summary?: string;
   readonly blocker?: string;
@@ -90,7 +90,7 @@ export class ReviewWorkerDriver {
       handle = await this.options.launcher.resume(handle.agentId, {
         parentToolCallId: this.options.parentToolCallId,
         parentToolCallUuid: this.options.parentToolCallUuid,
-        prompt: continuationPrompt(audit),
+        prompt: buildReviewWorkerContinuationPrompt(audit),
         description: this.options.description,
         runInBackground: this.options.runInBackground ?? false,
         signal: this.options.signal,
@@ -124,7 +124,7 @@ export class ReviewWorkerDriver {
   }
 }
 
-function continuationPrompt(audit: ReviewWorkerAudit): string {
+export function buildReviewWorkerContinuationPrompt(audit: ReviewWorkerAudit): string {
   const lines = [
     'Continue the review assignment. It is not finished yet.',
     `Current status: ${audit.status}.`,

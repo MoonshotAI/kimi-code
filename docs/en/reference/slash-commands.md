@@ -102,7 +102,7 @@ The command first asks what to review: uncommitted working-tree changes, the cur
 
 - **Standard**: one reviewer for everyday changes.
 - **Thorough**: multiple focused reviewers, followed by one reconciliation step that combines or dismisses their candidate comments.
-- **Deep**: swarm-backed review that splits files into overlapping focused reviewer groups and reconciles comments by perspective group.
+- **Deep**: uses `AgentSwarm` to split files into overlapping focused reviewer groups and reconcile comments by perspective group.
 
 Use the optional focus text for priorities such as `/review focus on security` or `/review check API compatibility`. During an active review, `Esc` asks for confirmation before cancelling instead of stopping the review immediately. Final comments keep links back to the source review comments that produced them.
 

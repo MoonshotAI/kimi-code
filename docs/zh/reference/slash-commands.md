@@ -100,7 +100,7 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 
 - **Standard**：一个 reviewer，适合日常变更。
 - **Thorough**：多个有不同重点的 reviewer，然后通过一个协调步骤合并或驳回候选评论。
-- **Deep**：swarm-backed 审查，把文件拆成有重叠的重点 reviewer 分组，并按审查视角分组协调评论。
+- **Deep**：基于 `AgentSwarm` 的审查，把文件拆成有重叠的重点 reviewer 分组，并按审查视角分组协调评论。
 
 可选 focus 文本用于说明优先级，例如 `/review focus on security` 或 `/review check API compatibility`。审查进行中按 `Esc` 时，会先要求确认取消，而不是立刻停止审查。最终评论会保留指向来源审查评论的链接。
 

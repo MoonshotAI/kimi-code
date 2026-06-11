@@ -351,7 +351,7 @@ Purpose: expose Standard review through the Codex-style command flow.
 - [x] Add intensity selector with labels:
   - `Standard   Single reviewer for everyday changes.`
   - `Thorough   Multiple focused reviewers before opening a PR.`
-  - `Deep       AgentSwarm-backed review for risky or large changes.`
+  - `Deep       Uses AgentSwarm for risky or large changes.`
 - [x] For this phase, allow only `Standard` to start. Show “coming soon” notice for `Thorough` and `Deep` until later phases land.
 - [x] Start review through `session.startReview()`.
 - [x] Use `ChoicePickerComponent` and follow `.agents/skills/write-tui/DESIGN.md`.
@@ -452,25 +452,25 @@ Purpose: add `AgentSwarm`-backed reviewer execution with overlapping coverage an
 - [x] Implement coverage matrix creation for changed files.
 - [x] Partition work by file group and perspective.
 - [x] Ensure every changed file is assigned to at least two workers.
-- [ ] Replace direct Deep reviewer launching with an `AgentSwarm` reviewer phase.
-- [ ] Convert each coverage-matrix review assignment into one `AgentSwarm` item.
-- [ ] Call `AgentSwarm` with `subagent_type: 'reviewer'`, a review-assignment `prompt_template`, and one item per assignment.
-- [ ] Ensure each `AgentSwarm` child receives the active review facade, review background injection, and its assignment before it can use review tools.
-- [ ] Preserve the `AgentSwarm` parent tool call id so child progress renders in the existing `AgentSwarm` UI.
-- [ ] Require Deep workers to read assigned changed files in full through `ReadFileVersion`.
-- [ ] Audit `AgentSwarm` child outcomes after the reviewer phase. Failed, cancelled, or incomplete children should either be resumed through `AgentSwarm` or make the review fail clearly.
-- [ ] Launch multiple reconciliators grouped by perspective or subsystem after the `AgentSwarm` reviewer phase completes.
-- [ ] Perspective reconciliator rule: combine comments from all subagents with the same perspective across all assigned file groups.
+- [x] Replace direct Deep reviewer launching with an `AgentSwarm` reviewer phase.
+- [x] Convert each coverage-matrix review assignment into one `AgentSwarm` item.
+- [x] Run reviewer tasks with the `reviewer` profile and expose `AgentSwarm` args with a review-assignment `prompt_template` and one item per assignment.
+- [x] Ensure each `AgentSwarm` child receives the active review facade, review background injection, and its assignment before it can use review tools.
+- [x] Preserve the `AgentSwarm` parent tool call id so child progress renders in the existing `AgentSwarm` UI.
+- [x] Require Deep workers to read assigned changed files in full through `ReadFileVersion`.
+- [x] Audit `AgentSwarm` child outcomes after the reviewer phase. Failed, cancelled, or incomplete children should either be resumed through `AgentSwarm` or make the review fail clearly.
+- [x] Launch multiple reconciliators grouped by perspective or subsystem after the `AgentSwarm` reviewer phase completes.
+- [x] Perspective reconciliator rule: combine comments from all subagents with the same perspective across all assigned file groups.
 - [ ] Subsystem reconciliator rule: combine comments from all subagents that reviewed that subsystem across all perspectives assigned to that subsystem.
-- [ ] Coordinator emits final review from merged comments.
-- [ ] Enable `Deep` in the intensity selector only after the reviewer phase uses the `AgentSwarm` path.
+- [x] Coordinator emits final review from merged comments.
+- [x] Enable `Deep` in the intensity selector only after the reviewer phase uses the `AgentSwarm` path.
 
 **Verification:**
 
 - [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/coverage-matrix.test.ts`. Executed with `test/review/coverage-matrix.test.ts test/review/orchestrator-deep.test.ts` because Vitest runs from the package directory.
-- [ ] Add and run an orchestrator test proving Deep launches reviewers through `AgentSwarm`, not direct worker launching.
-- [ ] Add and run a TUI/controller test proving Deep reviewer progress is handled as `AgentSwarm` progress.
-- [ ] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run test/review/orchestrator-deep.test.ts` after the `AgentSwarm` correction lands.
+- [x] Add and run an orchestrator test proving Deep launches reviewers through `AgentSwarm`, not direct worker launching.
+- [x] Add and run a TUI/controller test proving Deep reviewer progress is handled as `AgentSwarm` progress.
+- [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run test/review/orchestrator-deep.test.ts` after the `AgentSwarm` correction lands.
 
 ## Phase 12: Final Docs, Changeset, and Full Verification
 
@@ -515,7 +515,7 @@ Purpose: prepare the feature for review.
 - [x] Reviewer workers cannot mutate files or launch more agents.
 - [x] Background is injected at reviewer start and after compaction.
 - [x] `Thorough` uses exactly one reconciliator.
-- [ ] `Deep` reviewer execution uses the `AgentSwarm` tool/runtime/UI path.
+- [x] `Deep` reviewer execution uses the `AgentSwarm` tool/runtime/UI path.
 - [x] `Deep` uses grouped reconciliators by perspective or subsystem.
 - [x] Every final multi-agent comment has source comment provenance.
 - [x] `apps/kimi-code` calls only the SDK, never `@moonshot-ai/agent-core` directly.

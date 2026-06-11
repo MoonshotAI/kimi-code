@@ -69,7 +69,7 @@ Use these option labels and descriptions:
 ```text
 Standard   Single reviewer for everyday changes.
 Thorough   Multiple focused reviewers before opening a PR.
-Deep       AgentSwarm-backed review for risky or large changes.
+Deep       Uses AgentSwarm for risky or large changes.
 ```
 
 Detailed behavior:

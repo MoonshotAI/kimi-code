@@ -377,6 +377,12 @@ export interface ReviewStartedEvent {
   readonly intensity: 'standard' | 'thorough' | 'deep';
   readonly focus?: string;
   readonly stats: ReviewEventDiffStats;
+  readonly agentSwarm?: ReviewEventAgentSwarm;
+}
+
+export interface ReviewEventAgentSwarm {
+  readonly toolCallId: string;
+  readonly args: Record<string, unknown>;
 }
 
 export interface ReviewAssignmentStartedEvent {

@@ -145,6 +145,7 @@ export class SessionEventHandler {
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
+  private reviewAgentSwarmToolCallId: string | undefined;
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
   private currentTurnHasAssistantText = false;
@@ -160,6 +161,7 @@ export class SessionEventHandler {
     this.renderedSkillActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
+    this.reviewAgentSwarmToolCallId = undefined;
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
     this.currentTurnHasAssistantText = false;
@@ -342,6 +344,13 @@ export class SessionEventHandler {
 
   private handleReviewStarted(event: ReviewStartedEvent): void {
     this.host.state.reviewActive = true;
+    if (event.agentSwarm !== undefined) {
+      this.reviewAgentSwarmToolCallId = event.agentSwarm.toolCallId;
+      this.subAgentEventHandler.handleAgentSwarmToolCallStarted(
+        event.agentSwarm.toolCallId,
+        argsRecord(event.agentSwarm.args),
+      );
+    }
     this.appendReviewProgress({
       state: 'started',
       title: 'Review started',
@@ -392,6 +401,7 @@ export class SessionEventHandler {
 
   private handleReviewCompleted(event: ReviewCompletedEvent): void {
     this.host.state.reviewActive = false;
+    this.finishReviewAgentSwarm('', false);
     this.appendReviewProgress({
       state: 'completed',
       title: event.status === 'complete' ? 'Review completed' : 'Review blocked',
@@ -401,6 +411,8 @@ export class SessionEventHandler {
 
   private handleReviewCancelled(_event: ReviewCancelledEvent): void {
     this.host.state.reviewActive = false;
+    this.markActiveAgentSwarmsCancelled();
+    this.reviewAgentSwarmToolCallId = undefined;
     this.appendReviewProgress({
       state: 'cancelled',
       title: 'Review cancelled',
@@ -409,6 +421,7 @@ export class SessionEventHandler {
 
   private handleReviewFailed(event: ReviewFailedEvent): void {
     this.host.state.reviewActive = false;
+    this.finishReviewAgentSwarm(event.message, true);
     this.appendReviewProgress({
       state: 'failed',
       title: 'Review failed',
@@ -424,6 +437,22 @@ export class SessionEventHandler {
       content: data.title,
       reviewData: data,
     });
+  }
+
+  private finishReviewAgentSwarm(output: string, isError: boolean): void {
+    const toolCallId = this.reviewAgentSwarmToolCallId;
+    if (toolCallId === undefined) return;
+    this.subAgentEventHandler.handleAgentSwarmToolResult(
+      toolCallId,
+      {
+        tool_call_id: toolCallId,
+        output,
+        is_error: isError,
+        synthetic: true,
+      },
+      isError,
+    );
+    this.reviewAgentSwarmToolCallId = undefined;
   }
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {

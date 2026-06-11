@@ -6,6 +6,7 @@ import type {
   SpawnSubagentOptions,
   SubagentHandle,
 } from './subagent-host';
+import type { ReviewAgentFacade } from '../review';
 import { isUserCancellation } from '../utils/abort';
 
 /*
@@ -46,6 +47,7 @@ type BaseQueuedSubagentTask<T> = {
   readonly description: string;
   readonly swarmIndex?: number;
   readonly swarmItem?: string;
+  readonly review?: ReviewAgentFacade;
   readonly runInBackground: boolean;
   readonly timeout?: number;
   readonly signal?: AbortSignal;
@@ -303,6 +305,7 @@ export class SubagentBatch<T> {
         const spawnOptions: SpawnSubagentOptions = {
           profileName: task.profileName,
           swarmItem: task.swarmItem,
+          review: task.review,
           ...runOptions,
         };
         handle = await this.launcher.spawn(spawnOptions);

@@ -2,6 +2,10 @@ import type { Kaos } from '@moonshot-ai/kaos';
 
 import { loadAgentsMd } from '../profile';
 import type { AgentEvent } from '../rpc/events';
+import type {
+  QueuedSubagentRunResult,
+  QueuedSubagentTask,
+} from '../session/subagent-host';
 import { linkAbortSignal, userCancellationReason } from '../utils/abort';
 import { createDeepCoverageMatrix } from './coverage-matrix';
 import {
@@ -34,6 +38,7 @@ import type {
   ReviewTargetPreview,
 } from './types';
 import {
+  buildReviewWorkerContinuationPrompt,
   ReviewWorkerDriver,
   type ReviewWorkerDriverResult,
   type ReviewWorkerLauncher,
@@ -53,6 +58,47 @@ interface ReviewRunContext {
   readonly stats: ReviewDiffStats;
   readonly background: ReturnType<typeof buildReviewBackground>;
 }
+
+interface DeepReviewerAssignment {
+  readonly spec: ReturnType<typeof createDeepCoverageMatrix>['reviewerAssignments'][number];
+  readonly assignment: ReviewAssignment;
+  readonly swarmIndex: number;
+  readonly swarmItem: string;
+}
+
+interface DeepReviewerSwarmState extends DeepReviewerAssignment {
+  agentId?: string;
+  previousSignature?: string;
+  nonProgressContinuations: number;
+}
+
+interface ReviewWorkerAudit {
+  readonly status: ReviewProgressStatus;
+  readonly summary?: string;
+  readonly blocker?: string;
+  readonly missingCoverage: readonly string[];
+  readonly unreconciledComments: readonly string[];
+  readonly signature: string;
+}
+
+interface ReviewSwarmLauncher extends ReviewWorkerLauncher {
+  runQueued<T>(
+    tasks: readonly QueuedSubagentTask<T>[],
+  ): Promise<Array<QueuedSubagentRunResult<T>>>;
+}
+
+interface DeepReviewerSwarmTaskData {
+  readonly assignmentId: string;
+}
+
+type ReviewAgentSwarmEvent = NonNullable<
+  Extract<AgentEvent, { readonly type: 'review.started' }>['agentSwarm']
+>;
+
+const DEEP_REVIEW_AGENT_SWARM_TOOL_CALL_ID = 'review:deep-agent-swarm';
+const DEEP_REVIEW_AGENT_SWARM_DESCRIPTION = 'Deep review reviewers';
+const DEEP_REVIEW_AGENT_SWARM_PROMPT_TEMPLATE = 'Run this review assignment:\n{{item}}';
+const DEFAULT_MAX_NON_PROGRESS_SWARM_CONTINUATIONS = 3;
 
 export interface ReviewOrchestratorOptions {
   readonly kaos: Kaos;
@@ -129,6 +175,9 @@ export class ReviewOrchestrator {
         intensity: input.intensity,
         focus: input.focus,
         stats: preview.stats,
+        agentSwarm: input.intensity === 'deep'
+          ? buildDeepReviewAgentSwarmEvent(preview.stats)
+          : undefined,
       });
 
       const context: ReviewRunContext = {
@@ -271,21 +320,14 @@ export class ReviewOrchestrator {
         group: spec.fileGroupId,
       });
       assignmentIdsByKey.set(spec.key, assignment.id);
-      return { spec, assignment };
+      return {
+        spec,
+        assignment,
+        swarmIndex: assignmentIdsByKey.size,
+        swarmItem: deepReviewSwarmItem(spec),
+      };
     });
-    const reviewers = await Promise.all(
-      reviewerAssignments.map(({ spec, assignment }) =>
-        this.runWorker({
-          assignment,
-          profileName: 'reviewer',
-          prompt: buildDeepReviewerPrompt({
-            background: context.background,
-            assignment,
-          }),
-          description: `Deep review: ${spec.fileGroupName} / ${spec.perspective}`,
-        }),
-      ),
-    );
+    const reviewers = await this.runDeepReviewerSwarm(context, reviewerAssignments);
     const blockedReviewer = reviewers.find((worker) => worker.status === 'blocked');
     if (blockedReviewer !== undefined) {
       const comments = this.options.runtime
@@ -358,6 +400,126 @@ export class ReviewOrchestrator {
     }).run();
   }
 
+  private async runDeepReviewerSwarm(
+    context: ReviewRunContext,
+    assignments: readonly DeepReviewerAssignment[],
+  ): Promise<readonly ReviewWorkerDriverResult[]> {
+    const launcher = this.requireSwarmLauncher();
+    const states = assignments.map((assignment): DeepReviewerSwarmState => ({
+      ...assignment,
+      nonProgressContinuations: 0,
+    }));
+    const terminal = new Map<string, ReviewWorkerDriverResult>();
+
+    while (terminal.size < states.length) {
+      const pending = states.filter((state) => !terminal.has(state.assignment.id));
+      const tasks = pending.map((state) => this.deepReviewerSwarmTask(context, state));
+      const results = await launcher.runQueued(tasks);
+
+      for (const result of results) {
+        const state = pending.find((item) => item.assignment.id === result.task.data.assignmentId);
+        if (state === undefined) continue;
+        if (result.status !== 'completed') {
+          const message = result.error ?? `Deep review worker ${state.assignment.id} ${result.status}`;
+          throw new Error(message);
+        }
+        if (result.agentId === undefined) {
+          throw new Error(`Deep review worker ${state.assignment.id} completed without an agent id.`);
+        }
+        state.agentId = result.agentId;
+
+        const audit = this.auditAssignment(state.assignment);
+        if (audit.status === 'complete' || audit.status === 'blocked') {
+          terminal.set(state.assignment.id, {
+            agentId: result.agentId,
+            status: audit.status,
+            summary: audit.summary ?? audit.blocker,
+          });
+          continue;
+        }
+
+        if (audit.signature === state.previousSignature) {
+          state.nonProgressContinuations += 1;
+        } else {
+          state.previousSignature = audit.signature;
+          state.nonProgressContinuations = 0;
+        }
+
+        if (state.nonProgressContinuations >= DEFAULT_MAX_NON_PROGRESS_SWARM_CONTINUATIONS) {
+          throw new Error(
+            `Review worker ${state.assignment.id} made no progress after ${String(state.nonProgressContinuations)} continuations.`,
+          );
+        }
+      }
+    }
+
+    return states.map((state) => terminal.get(state.assignment.id)!);
+  }
+
+  private deepReviewerSwarmTask(
+    context: ReviewRunContext,
+    state: DeepReviewerSwarmState,
+  ): QueuedSubagentTask<DeepReviewerSwarmTaskData> {
+    const common = {
+      data: { assignmentId: state.assignment.id },
+      profileName: 'reviewer',
+      parentToolCallId: DEEP_REVIEW_AGENT_SWARM_TOOL_CALL_ID,
+      parentToolCallUuid: this.options.parentToolCallUuid,
+      description: `Deep review: ${state.spec.fileGroupName} / ${state.spec.perspective}`,
+      swarmIndex: state.swarmIndex,
+      swarmItem: state.swarmItem,
+      runInBackground: false,
+      signal: this.signal,
+    };
+    if (state.agentId !== undefined) {
+      return {
+        ...common,
+        kind: 'resume',
+        resumeAgentId: state.agentId,
+        prompt: buildReviewWorkerContinuationPrompt(this.auditAssignment(state.assignment)),
+      };
+    }
+    return {
+      ...common,
+      kind: 'spawn',
+      prompt: buildDeepReviewerPrompt({
+        background: context.background,
+        assignment: state.assignment,
+      }),
+      review: this.options.runtime.createAgentFacade(state.assignment.id),
+    };
+  }
+
+  private requireSwarmLauncher(): ReviewSwarmLauncher {
+    if (hasRunQueued(this.options.launcher)) return this.options.launcher;
+    throw new Error('Deep review requires an AgentSwarm-capable subagent launcher.');
+  }
+
+  private auditAssignment(assignment: ReviewAssignment): ReviewWorkerAudit {
+    const progress = this.options.runtime.getProgress(assignment.id);
+    const missingCoverage = this.options.runtime
+      .missingCoverage(assignment.id)
+      .map((item) => `${item.path} (${item.required})`);
+    const unreconciledComments = this.options.runtime.missingReconciliation(assignment.id);
+    const status = progress?.status ?? 'active';
+    const signature = JSON.stringify({
+      status,
+      missingCoverage,
+      unreconciledComments,
+      comments: this.options.runtime.getComments().length,
+      merged: this.options.runtime.getMergedComments().length,
+      dismissed: this.options.runtime.getDismissedComments().length,
+    });
+    return {
+      status,
+      summary: progress?.summary,
+      blocker: progress?.blocker,
+      missingCoverage,
+      unreconciledComments,
+      signature,
+    };
+  }
+
   private buildResult(
     context: ReviewRunContext,
     status: ReviewProgressStatus,
@@ -391,6 +553,29 @@ export class ReviewOrchestrator {
   private emitEvent(event: ReviewOrchestratorEvent): void {
     this.options.emitEvent?.(event);
   }
+}
+
+function hasRunQueued(launcher: ReviewWorkerLauncher): launcher is ReviewSwarmLauncher {
+  return typeof (launcher as { runQueued?: unknown }).runQueued === 'function';
+}
+
+function buildDeepReviewAgentSwarmEvent(stats: ReviewDiffStats): ReviewAgentSwarmEvent {
+  const matrix = createDeepCoverageMatrix({ files: stats.files });
+  return {
+    toolCallId: DEEP_REVIEW_AGENT_SWARM_TOOL_CALL_ID,
+    args: {
+      description: DEEP_REVIEW_AGENT_SWARM_DESCRIPTION,
+      subagent_type: 'reviewer',
+      prompt_template: DEEP_REVIEW_AGENT_SWARM_PROMPT_TEMPLATE,
+      items: matrix.reviewerAssignments.map(deepReviewSwarmItem),
+    },
+  };
+}
+
+function deepReviewSwarmItem(
+  spec: ReturnType<typeof createDeepCoverageMatrix>['reviewerAssignments'][number],
+): string {
+  return `${spec.fileGroupName} / ${spec.perspective}: ${spec.assignedFiles.join(', ')}`;
 }
 
 export async function previewReviewOrchestratorTarget(

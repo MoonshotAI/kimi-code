@@ -15,6 +15,8 @@ import {
   type ReviewWorkerLauncher,
 } from '../../src/review';
 import type {
+  QueuedSubagentRunResult,
+  QueuedSubagentTask,
   RunSubagentOptions,
   SpawnSubagentOptions,
   SubagentHandle,
@@ -101,6 +103,19 @@ describe('ReviewOrchestrator deep review', () => {
         'review-comment-1',
         'review-comment-5',
       ]);
+      expect(launcher.runQueued).toHaveBeenCalled();
+      const queuedTasks = launcher.runQueued.mock.calls[0]?.[0] ?? [];
+      expect(queuedTasks).toHaveLength(8);
+      expect(queuedTasks.map((task) => task.profileName)).toEqual(
+        queuedTasks.map(() => 'reviewer'),
+      );
+      expect(queuedTasks.map((task) => task.parentToolCallId)).toEqual(
+        queuedTasks.map(() => 'review:deep-agent-swarm'),
+      );
+      expect(queuedTasks.map((task) => task.swarmIndex)).toEqual(
+        Array.from({ length: queuedTasks.length }, (_item, index) => index + 1),
+      );
+      expect(queuedTasks.every((task) => task.review !== undefined)).toBe(true);
     });
   });
 
@@ -168,10 +183,13 @@ function createLauncher(input: {
 }): ReviewWorkerLauncher & {
   readonly spawn: ReturnType<typeof vi.fn<ReviewWorkerLauncher['spawn']>>;
   readonly resume: ReturnType<typeof vi.fn<ReviewWorkerLauncher['resume']>>;
+  readonly runQueued: ReturnType<typeof vi.fn<
+    <T>(tasks: readonly QueuedSubagentTask<T>[]) => Promise<Array<QueuedSubagentRunResult<T>>>
+  >>;
 } {
   const reviews = new Map<string, ReviewAgentFacade>();
   let nextAgent = 0;
-  return {
+  const launcher = {
     spawn: vi.fn(async (options: SpawnSubagentOptions) => {
       if (options.review === undefined) throw new Error('missing review facade');
       nextAgent += 1;
@@ -186,7 +204,42 @@ function createLauncher(input: {
       input.onResume?.(review, options);
       return handle(agentId, review.getAssignment().role);
     }),
+    runQueued: vi.fn(async <T,>(tasks: readonly QueuedSubagentTask<T>[]) => {
+      const results: Array<QueuedSubagentRunResult<T>> = [];
+      for (const task of tasks) {
+        if (task.kind === 'resume') {
+          const handle = await launcher.resume(task.resumeAgentId, {
+            parentToolCallId: task.parentToolCallId,
+            parentToolCallUuid: task.parentToolCallUuid,
+            prompt: task.prompt,
+            description: task.description,
+            swarmIndex: task.swarmIndex,
+            runInBackground: task.runInBackground,
+            signal: task.signal ?? new AbortController().signal,
+          });
+          await handle.completion;
+          results.push({ task, agentId: handle.agentId, status: 'completed', result: 'done' });
+          continue;
+        }
+        const handle = await launcher.spawn({
+          profileName: task.profileName,
+          parentToolCallId: task.parentToolCallId,
+          parentToolCallUuid: task.parentToolCallUuid,
+          prompt: task.prompt,
+          description: task.description,
+          swarmIndex: task.swarmIndex,
+          runInBackground: task.runInBackground,
+          signal: task.signal ?? new AbortController().signal,
+          review: task.review,
+          swarmItem: task.swarmItem,
+        });
+        await handle.completion;
+        results.push({ task, agentId: handle.agentId, status: 'completed', result: 'done' });
+      }
+      return results;
+    }),
   };
+  return launcher;
 }
 
 function handle(agentId: string, profileName: string): SubagentHandle {

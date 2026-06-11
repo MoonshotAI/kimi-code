@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { AgentSwarmProgressComponent } from '#/tui/components/messages/agent-swarm-progress';
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
 import { getBuiltInPalette } from '#/tui/theme';
 import type { TranscriptEntry } from '#/tui/types';
@@ -28,6 +29,7 @@ function makeHost() {
       finalizeTurn: vi.fn(),
       hasThinkingDraft: vi.fn(() => false),
       flushThinkingToTranscript: vi.fn(),
+      finalizeLiveTextBuffers: vi.fn(),
       appendAssistantDelta: vi.fn(),
       scheduleFlush: vi.fn(),
     },
@@ -148,5 +150,29 @@ describe('SessionEventHandler review events', () => {
     host.state.reviewActive = true;
     handler.resetRuntimeState();
     expect(host.state.reviewActive).toBe(false);
+  });
+
+  it('starts AgentSwarm progress for Deep review reviewer phase', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent({
+      ...reviewStartedEvent(),
+      intensity: 'deep',
+      agentSwarm: {
+        toolCallId: 'review:deep-agent-swarm',
+        args: {
+          description: 'Deep review reviewers',
+          subagent_type: 'reviewer',
+          prompt_template: 'Run this review assignment:\n{{item}}',
+          items: ['Correctness / src/a.ts', 'Tests / src/a.ts'],
+        },
+      },
+    } as any, vi.fn());
+
+    expect(host.state.transcriptContainer.addChild).toHaveBeenCalledWith(
+      expect.any(AgentSwarmProgressComponent),
+    );
+    expect(handler.hasActiveAgentSwarmToolCall()).toBe(true);
   });
 });

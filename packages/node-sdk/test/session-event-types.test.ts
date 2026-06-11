@@ -45,6 +45,9 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'review.started'>['intensity']>().toEqualTypeOf<
       'standard' | 'thorough' | 'deep'
     >();
+    expectTypeOf<EventByType<'review.started'>['agentSwarm']>().toEqualTypeOf<
+      { readonly toolCallId: string; readonly args: Record<string, unknown> } | undefined
+    >();
     expectTypeOf<EventByType<'review.assignment.progress'>['progress']['status']>()
       .toEqualTypeOf<'active' | 'complete' | 'blocked'>();
     expectTypeOf<EventByType<'review.completed'>['comments'][number]['title']>()
