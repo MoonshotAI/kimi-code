@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import {
   KimiConfigSchema,
+  KimiConfigStrictSchema,
   ensureConfigFile,
   loadRuntimeConfig,
   loadRuntimeConfigSafe,
@@ -452,6 +453,183 @@ hooks = [{ type = "pre-tool-call", command = "echo hi" }]
         ),
       ErrorCodes.CONFIG_INVALID,
     );
+  });
+
+  it('allows unknown top-level keys in non-strict mode', () => {
+    const config = parseConfigString('unknown_key = "value"\n', 'config.toml');
+    expect(config.providers).toEqual({});
+    expect(config.raw?.['unknown_key']).toBe('value');
+  });
+});
+
+describe('strict config parsing', () => {
+  it('accepts a valid config in strict mode', () => {
+    const config = parseConfigString(
+      `
+default_model = "kimi-code/kimi-for-coding"
+
+[permission]
+
+[[permission.rules]]
+decision = "allow"
+pattern = "Read(src/**)"
+
+[thinking]
+mode = "auto"
+`,
+      'config.toml',
+      { strict: true },
+    );
+    expect(config.defaultModel).toBe('kimi-code/kimi-for-coding');
+    expect(config.permission).toEqual({ rules: [{ decision: 'allow', scope: 'user', pattern: 'Read(src/**)', reason: undefined }] });
+    expect(config.thinking).toEqual({ mode: 'auto' });
+  });
+
+  it('rejects unknown top-level keys in strict mode', () => {
+    expectKimiErrorCode(
+      () => parseConfigString('unknown_key = "value"\n', 'config.toml', { strict: true }),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
+  it('rejects unknown keys in strict permission section', () => {
+    expectKimiErrorCode(
+      () =>
+        parseConfigString(
+          `
+[permission]
+mode = "manual"
+unknown = "value"
+`,
+          'config.toml',
+          { strict: true },
+        ),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
+  it('rejects unknown keys in strict thinking section', () => {
+    expectKimiErrorCode(
+      () =>
+        parseConfigString(
+          `
+[thinking]
+mode = "auto"
+unknown = "value"
+`,
+          'config.toml',
+          { strict: true },
+        ),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
+  it('rejects unknown keys in strict loop_control section', () => {
+    expectKimiErrorCode(
+      () =>
+        parseConfigString(
+          `
+[loop_control]
+max_steps_per_turn = 10
+unknown = "value"
+`,
+          'config.toml',
+          { strict: true },
+        ),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
+  it('rejects unknown keys in strict background section', () => {
+    expectKimiErrorCode(
+      () =>
+        parseConfigString(
+          `
+[background]
+max_running_tasks = 2
+unknown = "value"
+`,
+          'config.toml',
+          { strict: true },
+        ),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
+  it('rejects unknown keys in strict services section', () => {
+    expectKimiErrorCode(
+      () =>
+        parseConfigString(
+          `
+[services.moonshot_search]
+base_url = "https://api.kimi.com/coding/v1/search"
+unknown = "value"
+`,
+          'config.toml',
+          { strict: true },
+        ),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
+  it('allows custom provider fields in strict mode', () => {
+    const config = parseConfigString(
+      `
+[providers.custom]
+type = "openai"
+base_url = "https://custom.example/v1"
+api_key = "sk-test"
+custom_field = "value"
+`,
+      'config.toml',
+      { strict: true },
+    );
+    // Provider schemas remain open: unknown keys are not rejected. They are
+    // stripped from the typed object but preserved in raw for round-trips.
+    expect(config.providers['custom']).toMatchObject({
+      type: 'openai',
+      baseUrl: 'https://custom.example/v1',
+      apiKey: 'sk-test',
+    });
+    expect(config.raw?.['providers']).toMatchObject({
+      custom: { custom_field: 'value' },
+    });
+  });
+
+  it('allows custom model alias fields in strict mode', () => {
+    const config = parseConfigString(
+      `
+[providers.local]
+type = "openai"
+
+[models."local.custom"]
+provider = "local"
+model = "custom-model"
+max_context_size = 128000
+custom_field = "value"
+`,
+      'config.toml',
+      { strict: true },
+    );
+    // Model alias schemas remain open: unknown keys are not rejected. They are
+    // stripped from the typed object but preserved in raw for round-trips.
+    expect(config.models?.['local.custom']).toMatchObject({
+      provider: 'local',
+      model: 'custom-model',
+      maxContextSize: 128000,
+    });
+    expect(config.raw?.['models']).toMatchObject({
+      'local.custom': { custom_field: 'value' },
+    });
+  });
+
+  it('exposes the strict schema', () => {
+    expect(() =>
+      KimiConfigStrictSchema.parse({
+        providers: {},
+        permission: { unknown: true },
+      }),
+    ).toThrow();
   });
 });
 

@@ -6,6 +6,7 @@ import { ErrorCodes, KimiError } from '#/errors';
 import { applyEnvModelConfig, stripEnvModelConfig } from './env-model';
 import {
   KimiConfigSchema,
+  KimiConfigStrictSchema,
   formatConfigValidationError,
   getDefaultConfig,
   type BackgroundConfig,
@@ -62,12 +63,19 @@ export async function ensureConfigFile(filePath: string): Promise<void> {
   }
 }
 
-export function readConfigFile(filePath: string): KimiConfig {
+export interface ReadConfigOptions {
+  readonly strict?: boolean;
+}
+
+export function readConfigFile(
+  filePath: string,
+  options: ReadConfigOptions = {},
+): KimiConfig {
   if (!existsSync(filePath)) {
     return getDefaultConfig();
   }
   const text = readFileSync(filePath, 'utf-8');
-  return parseConfigString(text, filePath);
+  return parseConfigString(text, filePath, options);
 }
 
 /**
@@ -76,9 +84,12 @@ export function readConfigFile(filePath: string): KimiConfig {
  * sections). Re-throws validation failures with a short actionable message —
  * UIs surface it directly — instead of the raw validation details.
  */
-export function readConfigFileForUpdate(filePath: string): KimiConfig {
+export function readConfigFileForUpdate(
+  filePath: string,
+  options: ReadConfigOptions = {},
+): KimiConfig {
   try {
-    return readConfigFile(filePath);
+    return readConfigFile(filePath, options);
   } catch (error) {
     if (error instanceof KimiError && error.code === ErrorCodes.CONFIG_INVALID) {
       throw new KimiError(
@@ -100,8 +111,9 @@ export function readConfigFileForUpdate(filePath: string): KimiConfig {
 export function loadRuntimeConfig(
   filePath: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
+  options: ReadConfigOptions = {},
 ): KimiConfig {
-  return applyEnvModelConfig(readConfigFile(filePath), env);
+  return applyEnvModelConfig(readConfigFile(filePath, options), env);
 }
 
 export interface RuntimeConfigLoadResult {
@@ -262,7 +274,11 @@ function describeTomlSyntaxError(error: unknown): string {
   return firstLine;
 }
 
-export function parseConfigString(tomlText: string, filePath = 'config.toml'): KimiConfig {
+export function parseConfigString(
+  tomlText: string,
+  filePath = 'config.toml',
+  options: ReadConfigOptions = {},
+): KimiConfig {
   if (tomlText.trim().length === 0) {
     return getDefaultConfig();
   }
@@ -276,16 +292,21 @@ export function parseConfigString(tomlText: string, filePath = 'config.toml'): K
     });
   }
 
-  return parseConfigData(data, filePath);
+  return parseConfigData(data, filePath, options);
 }
 
-function parseConfigData(data: Record<string, unknown>, filePath: string): KimiConfig {
+function parseConfigData(
+  data: Record<string, unknown>,
+  filePath: string,
+  options: ReadConfigOptions = {},
+): KimiConfig {
   const raw = cloneRecord(data);
   const transformed = transformTomlData(data);
   transformed['raw'] = raw;
 
+  const schema = options.strict ? KimiConfigStrictSchema : KimiConfigSchema;
   try {
-    return KimiConfigSchema.parse(transformed);
+    return schema.parse(transformed);
   } catch (error) {
     throw new KimiError(ErrorCodes.CONFIG_INVALID, `Invalid configuration in ${filePath}: ${formatConfigValidationError(error)}`, {
       cause: error,
@@ -364,7 +385,7 @@ function transformModelData(data: Record<string, unknown>): Record<string, unkno
 
 function transformPermissionData(data: Record<string, unknown>): Record<string, unknown> {
   const raw = transformPlainObject(data);
-  const out: Record<string, unknown> = {};
+  const out: Record<string, unknown> = { ...raw };
 
   const rules: unknown[] = [];
   appendPermissionRules(rules, raw['rules']);

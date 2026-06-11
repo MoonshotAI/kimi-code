@@ -167,6 +167,16 @@ describe('CLI options parsing', () => {
     });
   });
 
+  describe('--strict-config', () => {
+    it('defaults to false', () => {
+      expect(parse([]).strictConfig).toBe(false);
+    });
+
+    it('sets strict config flag', () => {
+      expect(parse(['--strict-config']).strictConfig).toBe(true);
+    });
+  });
+
   describe('--auto / --yolo / --plan with --session / --continue', () => {
     it('allows --auto with --continue', () => {
       const opts = parse(['--auto', '--continue']);
