@@ -1,6 +1,5 @@
 import type { Component } from '@earendil-works/pi-tui';
 import { visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { currentTheme } from '#/tui/theme';
 import type { BannerState } from '#/tui/types';
@@ -14,8 +13,8 @@ export class BannerComponent implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
-    const bold = chalk.bold;
-    const dim = chalk.hex(currentTheme.palette.textDim);
+    const main = (s: string): string => currentTheme.boldFg('textStrong', s);
+    const dim = (s: string): string => currentTheme.fg('textDim', s);
 
     // Render nothing but the trailing blank if the terminal cannot hold a
     // single visible column.
@@ -27,7 +26,7 @@ export class BannerComponent implements Component {
     // Do not add a colon/tag suffix here; the caller-provided tag includes its
     // own punctuation/separator.
     const tagLabel = tagText.length > 0 ? `${PREFIX_STAR} ${tagText}` : '';
-    const tagStyled = tagLabel.length > 0 ? chalk.bold.hex(currentTheme.palette.primary)(tagLabel) : '';
+    const tagStyled = tagLabel.length > 0 ? currentTheme.boldFg('primary', tagLabel) : '';
     const tagDisplay = tagStyled.length > 0 ? tagStyled + PADDING : '';
     const tagWidth = visibleWidth(tagDisplay);
     const showTag = tagWidth > 0 && tagWidth < width;
@@ -51,7 +50,7 @@ export class BannerComponent implements Component {
     for (let i = 0; i < mainSegments.length; i++) {
       const wrapped = wrapTextWithAnsi(mainSegments[i]!, bodyContentWidth);
       for (let j = 0; j < wrapped.length; j++) {
-        const boldLine = bold(wrapped[j]!);
+        const boldLine = main(wrapped[j]!);
         if (i === 0 && j === 0 && showTag) {
           result.push(tagDisplay + boldLine);
         } else {

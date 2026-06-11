@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 
 import { BannerComponent } from '#/tui/components/chrome/banner';
+import { currentTheme } from '#/tui/theme';
 import type { BannerState } from '#/tui/types';
 
 const banner: BannerState = {
@@ -155,9 +156,19 @@ describe('BannerComponent', () => {
     expect(lines[2]).toBe('');
   });
 
-  it('renders subtext in dim color', () => {
+  it('styles tag, main text, and subtext with theme colors', () => {
+    const lines = new BannerComponent(banner).render(80);
+    expect(lines[0]).toContain(currentTheme.boldFg('primary', "✦ What's new:"));
+    expect(lines[0]).toContain(
+      currentTheme.boldFg('textStrong', 'This is the main banner message for testing purposes.'),
+    );
+    expect(lines[1]).toContain(currentTheme.fg('textDim', 'This is a short subtext line.'));
+  });
+
+  it('does not stack the dim modifier on top of the textDim color', () => {
     const lines = new BannerComponent(banner).render(80);
     expect(lines[1]).toContain('This is a short subtext');
+    expect(lines[1]).not.toContain('[2m');
     expect(lines[2]).toBe('');
   });
 
