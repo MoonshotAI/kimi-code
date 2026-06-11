@@ -71,7 +71,7 @@ describe('catalogModelToAlias', () => {
       ...model,
       capability: { ...model.capability, always_thinking: true },
     };
-    expect(catalogModelToAlias('kimi', alwaysThinking).capabilities).toEqual([
+    expect(catalogModelToAlias('custom', alwaysThinking).capabilities).toEqual([
       'image_in',
       'thinking',
       'always_thinking',

@@ -17,8 +17,8 @@ describe('deriveThinking', () => {
     // so a hand-written declaration without the plain string still counts.
     expect(
       deriveThinking({
-        provider: 'kimi',
-        model: 'kimi-x2',
+        provider: 'custom',
+        model: 'custom-model',
         maxContextSize: 262144,
         capabilities: ['always_thinking'],
       }),
@@ -44,7 +44,7 @@ describe('deriveThinking', () => {
     // The regex cannot tell an always-on variant from a toggleable one, so
     // these models keep their thinking toggle.
     expect(
-      deriveThinking({ provider: 'kimi', model: 'kimi-thinking-pro', maxContextSize: 262144 }),
+      deriveThinking({ provider: 'kimi', model: 'kimi-thinking-preview', maxContextSize: 262144 }),
     ).toEqual({ thinkingSupported: true });
     expect(
       deriveThinking({ provider: 'kimi', model: 'kimi-for-coding', maxContextSize: 262144 }),

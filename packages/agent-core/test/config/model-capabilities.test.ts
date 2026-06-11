@@ -31,9 +31,11 @@ describe('resolveAliasCapabilities', () => {
   });
 
   it('honors declared strings case-insensitively when detection knows nothing', () => {
-    const resolved = resolveAliasCapabilities('kimi', {
-      provider: 'kimi',
-      model: 'kimi-next',
+    // An uncatalogued model name resolves to UNKNOWN_CAPABILITY, so only the
+    // declared strings can produce capabilities here.
+    const resolved = resolveAliasCapabilities('anthropic', {
+      provider: 'custom',
+      model: 'uncatalogued-model',
       maxContextSize: 262144,
       capabilities: [' Always_Thinking '],
     });
