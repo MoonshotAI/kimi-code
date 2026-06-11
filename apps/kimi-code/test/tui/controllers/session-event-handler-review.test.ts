@@ -177,6 +177,81 @@ describe('SessionEventHandler review events', () => {
     expect(appendedEntries(host).at(-1)?.reviewData?.detail).toContain('[provider.rate_limit]');
   });
 
+  it('renders Thorough reviewer assignments as one parallel summary', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent({
+      ...reviewStartedEvent(),
+      intensity: 'thorough',
+    }, vi.fn());
+    for (const [index, perspective] of [
+      'Correctness and regressions',
+      'Security and data safety',
+      'Maintainability and tests',
+    ].entries()) {
+      handler.handleEvent({
+        type: 'review.assignment.started',
+        sessionId: 's1',
+        agentId: 'main',
+        assignment: {
+          id: `review-assignment-${String(index + 1)}`,
+          role: 'reviewer',
+          perspective,
+          assignedFiles: ['src/a.ts'],
+          requiredCoverage: 'patch',
+          group: 'thorough',
+        },
+      } as any, vi.fn());
+    }
+
+    const reviewData = appendedEntries(host).map((entry) => entry.reviewData);
+    expect(reviewData.map((entry) => entry?.title)).toEqual(['Thorough review']);
+    expect(reviewData[0]?.detail).toContain('3 reviewer agents running in parallel');
+    expect(reviewData[0]?.detail).toContain('Correctness and regressions');
+    expect(reviewData[0]?.detail).toContain('1 file: +2 -1');
+  });
+
+  it('labels Thorough reconciliation separately from reviewer progress', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent({
+      ...reviewStartedEvent(),
+      intensity: 'thorough',
+    }, vi.fn());
+    handler.handleEvent({
+      type: 'review.assignment.started',
+      sessionId: 's1',
+      agentId: 'main',
+      assignment: {
+        id: 'review-assignment-reconcile',
+        role: 'reconciliator',
+        perspective: 'Thorough review',
+        assignedFiles: ['src/a.ts'],
+        requiredCoverage: 'patch',
+        sourceCommentIds: ['review-comment-1'],
+        group: 'thorough',
+      },
+    } as any, vi.fn());
+    handler.handleEvent({
+      type: 'review.assignment.progress',
+      sessionId: 's1',
+      agentId: 'main',
+      progress: {
+        assignmentId: 'review-assignment-reconcile',
+        status: 'complete',
+        summary: 'Reconciled candidates.',
+      },
+    } as any, vi.fn());
+
+    expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
+      'Thorough review',
+      'Reconciliation running',
+      'Reconciliator complete',
+    ]);
+  });
+
   it('starts AgentSwarm progress for Deep Review reviewer phase', () => {
     const host = makeHost();
     const handler = new SessionEventHandler(host);

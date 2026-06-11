@@ -51,7 +51,10 @@ import {
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
 import { buildGoalCompletionMessage } from '../utils/goal-completion';
-import { formatReviewStats } from '../utils/review-options';
+import {
+  formatReviewStats,
+  THOROUGH_REVIEW_PERSPECTIVE_LABELS,
+} from '../utils/review-options';
 import {
   argsRecord,
   formatErrorPayload,
@@ -147,6 +150,8 @@ export class SessionEventHandler {
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
   private reviewAgentSwarmToolCallId: string | undefined;
   private readonly reviewAgentSwarmReviewerAssignmentIds = new Set<string>();
+  private activeReviewIntensity: ReviewStartedEvent['intensity'] | undefined;
+  private readonly reviewAssignmentRoles = new Map<string, ReviewAssignmentStartedEvent['assignment']['role']>();
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
   private currentTurnHasAssistantText = false;
@@ -164,6 +169,8 @@ export class SessionEventHandler {
     this.mcpServers.clear();
     this.reviewAgentSwarmToolCallId = undefined;
     this.reviewAgentSwarmReviewerAssignmentIds.clear();
+    this.activeReviewIntensity = undefined;
+    this.reviewAssignmentRoles.clear();
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
     this.currentTurnHasAssistantText = false;
@@ -346,12 +353,21 @@ export class SessionEventHandler {
 
   private handleReviewStarted(event: ReviewStartedEvent): void {
     this.host.state.reviewActive = true;
+    this.activeReviewIntensity = event.intensity;
     if (event.agentSwarm !== undefined) {
       this.reviewAgentSwarmToolCallId = event.agentSwarm.toolCallId;
       this.subAgentEventHandler.handleAgentSwarmToolCallStarted(
         event.agentSwarm.toolCallId,
         argsRecord(event.agentSwarm.args),
       );
+    }
+    if (event.intensity === 'thorough') {
+      this.appendReviewProgress({
+        state: 'started',
+        title: 'Thorough review',
+        detail: thoroughReviewDetail(event.stats),
+      });
+      return;
     }
     this.appendReviewProgress({
       state: 'started',
@@ -361,6 +377,7 @@ export class SessionEventHandler {
   }
 
   private handleReviewAssignmentStarted(event: ReviewAssignmentStartedEvent): void {
+    this.reviewAssignmentRoles.set(event.assignment.id, event.assignment.role);
     if (
       this.reviewAgentSwarmToolCallId !== undefined &&
       event.assignment.role === 'reviewer'
@@ -368,9 +385,21 @@ export class SessionEventHandler {
       this.reviewAgentSwarmReviewerAssignmentIds.add(event.assignment.id);
       return;
     }
+    if (this.activeReviewIntensity === 'thorough' && event.assignment.group === 'thorough') {
+      if (event.assignment.role === 'reviewer') return;
+      this.appendReviewProgress({
+        state: 'assignment',
+        title: 'Reconciliation running',
+        detail: assignmentDetail(
+          event.assignment.assignedFiles.length,
+          event.assignment.perspective,
+        ),
+      });
+      return;
+    }
     this.appendReviewProgress({
       state: 'assignment',
-      title: 'Reviewer started',
+      title: `${reviewWorkerRoleLabel(event.assignment.role)} started`,
       detail: assignmentDetail(event.assignment.assignedFiles.length, event.assignment.perspective),
     });
   }
@@ -378,9 +407,11 @@ export class SessionEventHandler {
   private handleReviewAssignmentProgress(event: ReviewAssignmentProgressEvent): void {
     if (event.progress.status === 'active') return;
     if (this.reviewAgentSwarmReviewerAssignmentIds.has(event.progress.assignmentId)) return;
+    const role = this.reviewAssignmentRoles.get(event.progress.assignmentId) ?? 'reviewer';
+    if (this.activeReviewIntensity === 'thorough' && role === 'reviewer') return;
     this.appendReviewProgress({
       state: 'progress',
-      title: `Reviewer ${event.progress.status}`,
+      title: `${reviewWorkerRoleLabel(role)} ${event.progress.status}`,
       detail: event.progress.summary ?? event.progress.blocker,
     });
   }
@@ -413,6 +444,8 @@ export class SessionEventHandler {
     this.host.state.reviewActive = false;
     this.finishReviewAgentSwarm('', false);
     this.reviewAgentSwarmReviewerAssignmentIds.clear();
+    this.activeReviewIntensity = undefined;
+    this.reviewAssignmentRoles.clear();
     this.appendReviewProgress({
       state: 'completed',
       title: event.status === 'complete' ? 'Review completed' : 'Review blocked',
@@ -425,6 +458,8 @@ export class SessionEventHandler {
     this.markActiveAgentSwarmsCancelled();
     this.reviewAgentSwarmToolCallId = undefined;
     this.reviewAgentSwarmReviewerAssignmentIds.clear();
+    this.activeReviewIntensity = undefined;
+    this.reviewAssignmentRoles.clear();
     this.appendReviewProgress({
       state: 'cancelled',
       title: 'Review cancelled',
@@ -435,6 +470,8 @@ export class SessionEventHandler {
     this.host.state.reviewActive = false;
     this.finishReviewAgentSwarm(event.message, true);
     this.reviewAgentSwarmReviewerAssignmentIds.clear();
+    this.activeReviewIntensity = undefined;
+    this.reviewAssignmentRoles.clear();
     this.appendReviewProgress({
       state: 'failed',
       title: reviewFailureTitle(event),
@@ -1232,4 +1269,16 @@ function reviewFailureDetail(event: ReviewFailedEvent): string {
 function assignmentDetail(fileCount: number, perspective: string | undefined): string {
   const files = `${String(fileCount)} ${fileCount === 1 ? 'file' : 'files'}`;
   return perspective === undefined ? files : `${perspective} · ${files}`;
+}
+
+function thoroughReviewDetail(stats: ReviewStartedEvent['stats']): string {
+  return [
+    `${String(THOROUGH_REVIEW_PERSPECTIVE_LABELS.length)} reviewer agents running in parallel`,
+    `Perspectives: ${THOROUGH_REVIEW_PERSPECTIVE_LABELS.join(', ')}`,
+    formatReviewStats(stats),
+  ].join(' · ');
+}
+
+function reviewWorkerRoleLabel(role: ReviewAssignmentStartedEvent['assignment']['role']): string {
+  return role === 'reconciliator' ? 'Reconciliator' : 'Reviewer';
 }
