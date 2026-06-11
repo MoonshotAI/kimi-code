@@ -1,9 +1,10 @@
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { Readable, type Writable } from 'node:stream';
 import { join } from 'pathe';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
 import {
   APIConnectionError,
   APIEmptyResponseError,
@@ -25,6 +26,10 @@ import type {
   SessionSubagentHost,
 } from '../../src/session/subagent-host';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
+import {
+  telemetryToolErrorType,
+  telemetryToolOutcome,
+} from '../../src/agent/turn/tool-telemetry';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { createCommandKaos, testAgent, type TestAgentOptions } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
@@ -52,6 +57,63 @@ function captureLogs(): { logger: Logger; entries: CapturedLogEntry[] } {
   };
   return { logger, entries };
 }
+
+describe('telemetryToolOutcome', () => {
+  it('returns cancelled when cancelledByUser is set', () => {
+    expect(
+      telemetryToolOutcome({
+        output: 'Interrupted by user',
+        isError: true,
+        cancelledByUser: true,
+      }),
+    ).toBe('cancelled');
+  });
+
+  it('returns error when output contains cancelled/aborted without user flag', () => {
+    expect(
+      telemetryToolOutcome({
+        output: 'Upstream request was cancelled by the server',
+        isError: true,
+      }),
+    ).toBe('error');
+    expect(
+      telemetryToolErrorType({
+        output: 'Upstream request was cancelled by the server',
+        isError: true,
+      }),
+    ).toBe('ToolError');
+  });
+
+  it('returns error for non-user abort output', () => {
+    expect(
+      telemetryToolOutcome({
+        output: 'Tool "Lookup" was aborted',
+        isError: true,
+      }),
+    ).toBe('error');
+    expect(
+      telemetryToolErrorType({
+        output: 'Tool "Lookup" was aborted',
+        isError: true,
+      }),
+    ).toBe('ToolError');
+  });
+
+  it('returns error for grace timeout output', () => {
+    expect(
+      telemetryToolOutcome({
+        output: 'Tool "Bash" aborted by grace timeout (2000ms)',
+        isError: true,
+      }),
+    ).toBe('error');
+    expect(
+      telemetryToolErrorType({
+        output: 'Tool "Bash" aborted by grace timeout (2000ms)',
+        isError: true,
+      }),
+    ).toBe('ToolError');
+  });
+});
 
 describe('Agent turn flow', () => {
   it('tracks turn_started and turn_interrupted telemetry', async () => {
@@ -222,6 +284,79 @@ describe('Agent turn flow', () => {
         outcome: 'error',
         dup_type: 'normal',
         error_type: 'ToolNotFound',
+        duration_ms: expect.any(Number),
+      }),
+    });
+  });
+
+  it('tracks cancelled telemetry when Bash is interrupted by the user during execution', async () => {
+    const records: TelemetryRecord[] = [];
+    const kaos = createSlowCommandKaos();
+    const ctx = testAgent({ kaos, telemetry: recordingTelemetry(records) });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    records.length = 0;
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'Running a long command.' },
+      bashCallWithId('call_bash', 'sleep 60'),
+    );
+
+    const turnEnd = ctx.untilTurnEnd();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run sleep' }] });
+    await vi.waitFor(() => {
+      expect(kaos.execWithEnv).toHaveBeenCalled();
+    });
+    await ctx.rpc.cancel({ turnId: 0 });
+    await turnEnd;
+
+    expect(records).toContainEqual({
+      event: 'tool_call',
+      properties: expect.objectContaining({
+        tool_name: 'Bash',
+        outcome: 'cancelled',
+        dup_type: 'normal',
+        duration_ms: expect.any(Number),
+      }),
+    });
+    expect(
+      records.some(
+        (record) =>
+          record.event === 'tool_call' &&
+          'error_type' in (record.properties as Record<string, unknown>),
+      ),
+    ).toBe(false);
+  });
+
+  it('tracks Bash timeout as error telemetry', async () => {
+    const records: TelemetryRecord[] = [];
+    const kaos = createSlowCommandKaos();
+    const ctx = testAgent({ kaos, telemetry: recordingTelemetry(records) });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    records.length = 0;
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'Running a timed command.' },
+      {
+        type: 'function',
+        id: 'call_bash_timeout',
+        name: 'Bash',
+        arguments: JSON.stringify({ command: 'sleep 60', timeout: 1 }),
+      },
+    );
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run with timeout' }] });
+    await ctx.untilTurnEnd();
+
+    expect(records).toContainEqual({
+      event: 'tool_call',
+      properties: expect.objectContaining({
+        tool_name: 'Bash',
+        outcome: 'error',
+        error_type: 'ToolError',
+        dup_type: 'normal',
         duration_ms: expect.any(Number),
       }),
     });
@@ -841,6 +976,7 @@ describe('Agent turn flow', () => {
   });
 
   it('does not fire Interrupt for a non-user (programmatic) abort', async () => {
+    const records: TelemetryRecord[] = [];
     const triggered: Array<[string, string, number]> = [];
     const hookEngine = new HookEngine(
       [
@@ -858,12 +994,14 @@ describe('Agent turn flow', () => {
     const ctx = testAgent({
       hookEngine,
       kaos: createCommandKaos('should-not-run'),
+      telemetry: recordingTelemetry(records),
     });
     ctx.configure({ tools: ['Bash'] });
 
     ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command' }] });
     await ctx.untilApprovalRequest();
+    records.length = 0;
 
     // A programmatic abort (e.g. a subagent deadline timeout) carries a plain
     // AbortError as its reason, not a UserCancellationError, so it must not be
@@ -872,6 +1010,16 @@ describe('Agent turn flow', () => {
     await ctx.untilTurnEnd();
 
     expect(triggered).toEqual([]);
+    expect(records).toContainEqual({
+      event: 'tool_call',
+      properties: expect.objectContaining({
+        tool_name: 'Bash',
+        outcome: 'error',
+        error_type: 'ToolError',
+        dup_type: 'normal',
+        duration_ms: expect.any(Number),
+      }),
+    });
   });
 
   it('resolves the latest request-scoped OAuth auth before each generation', async () => {
@@ -1499,7 +1647,7 @@ describe('Agent turn flow', () => {
       [wire] turn.cancel                 { "turnId": 0, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }
-      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true } }, "time": "<time>" }
+      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true, "cancelledByUser": true } }, "time": "<time>" }
       [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true }
       [emit] turn.step.interrupted       { "turnId": 0, "step": 1, "reason": "aborted" }
       [emit] turn.ended                  { "turnId": 0, "reason": "cancelled" }
@@ -1628,7 +1776,7 @@ describe('Agent turn flow', () => {
       [wire] turn.cancel                 { "turnId": 0, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }
-      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true } }, "time": "<time>" }
+      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true, "cancelledByUser": true } }, "time": "<time>" }
       [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true }
       [emit] turn.step.interrupted       { "turnId": 0, "step": 1, "reason": "aborted" }
       [emit] turn.ended                  { "turnId": 0, "reason": "cancelled" }
@@ -1679,6 +1827,32 @@ function bashCallWithId(id: string, command: string): ToolCall {
     name: 'Bash',
     arguments: JSON.stringify({ command, timeout: 60 }),
   };
+}
+
+function createSlowCommandKaos(): Kaos & { execWithEnv: ReturnType<typeof vi.fn> } {
+  let resolveWait: (code: number) => void = () => {};
+  const waitPromise = new Promise<number>((resolve) => {
+    resolveWait = resolve;
+  });
+  const execWithEnv = vi.fn().mockImplementation(async () => {
+    const proc: KaosProcess = {
+      stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+      stdout: Readable.from([]),
+      stderr: Readable.from([]),
+      pid: 501,
+      exitCode: null,
+      wait: vi.fn(async () => waitPromise),
+      kill: vi.fn(async () => {
+        resolveWait(143);
+      }),
+    };
+    return proc;
+  });
+  return createFakeKaos({
+    execWithEnv,
+    mkdir: vi.fn().mockResolvedValue(undefined),
+    writeText: vi.fn(async (_path: string, content: string) => content.length),
+  }) as Kaos & { execWithEnv: ReturnType<typeof vi.fn> };
 }
 
 function agentSwarmCall(): ToolCall {

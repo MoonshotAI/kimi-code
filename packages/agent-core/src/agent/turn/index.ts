@@ -40,6 +40,7 @@ import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
+import { telemetryToolErrorType, telemetryToolOutcome } from './tool-telemetry';
 
 interface ActiveTurn {
   readonly turnId: number;
@@ -1100,30 +1101,4 @@ function isApiEmptyResponseError(error: unknown, summary: KimiErrorPayload): boo
 function currentTurnInputTokens(usage: TokenUsage | undefined): number | undefined {
   if (usage === undefined) return undefined;
   return inputTotal(usage);
-}
-
-type ToolTelemetryResult = Extract<LoopEvent, { type: 'tool.result' }>['result'];
-
-function telemetryToolOutcome(result: ToolTelemetryResult): 'success' | 'error' | 'cancelled' {
-  if (result.isError !== true) return 'success';
-  const text = toolResultText(result).toLowerCase();
-  return text.includes('aborted') ||
-    text.includes('cancelled') ||
-    text.includes('manually interrupted')
-    ? 'cancelled'
-    : 'error';
-}
-
-function telemetryToolErrorType(result: ToolTelemetryResult): string {
-  const text = toolResultText(result);
-  if (text.startsWith('Tool "') && text.includes('" not found')) return 'ToolNotFound';
-  if (text.startsWith('Invalid args for tool "')) return 'ToolInputError';
-  if (text.includes('prepareToolExecution hook failed')) return 'HookError';
-  if (text.includes('finalizeToolResult hook failed')) return 'HookError';
-  if (text.includes('blocked')) return 'ToolBlocked';
-  return 'ToolError';
-}
-
-function toolResultText(result: ToolTelemetryResult): string {
-  return toolOutputText(result.output);
 }

@@ -33,6 +33,7 @@ import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
 import type {
   AuthorizeToolExecutionResult,
   ExecutableTool,
+  ExecutableToolErrorResult,
   LoopHooks,
   ToolCall,
   PrepareToolExecutionResult,
@@ -247,9 +248,12 @@ async function prepareToolCall(
     args: unknown,
     output: string,
     displayFields?: ToolCallDisplayFields,
+    cancelledByUser?: true,
   ): Promise<PreparedToolCallTask> => {
     await dispatchToolCall(step, call, args, displayFields);
-    return { task: makeResolvedToolCallTask(makeErrorToolResult(call, args, output)) };
+    return {
+      task: makeResolvedToolCallTask(makeErrorToolResult(call, args, output, cancelledByUser)),
+    };
   };
 
   const settleSynthetic = async (
@@ -304,7 +308,12 @@ async function prepareToolCall(
 
   const displayFields = toolCallDisplayFieldsFromExecution(execution);
   const settleAborted = (): Promise<PreparedToolCallTask> =>
-    settleError(effectiveArgs, abortedToolOutput(call.toolName, step.signal), displayFields);
+    settleError(
+      effectiveArgs,
+      abortedToolOutput(call.toolName, step.signal),
+      displayFields,
+      isUserCancellation(step.signal.reason) ? true : undefined,
+    );
 
   if (step.signal.aborted) return settleAborted();
 
@@ -474,7 +483,12 @@ async function runRunnableToolCall(
   const { toolCall, toolName } = call;
 
   if (signal.aborted) {
-    return makeErrorToolResult(call, effectiveArgs, abortedToolOutput(toolName, signal));
+    return makeErrorToolResult(
+      call,
+      effectiveArgs,
+      abortedToolOutput(toolName, signal),
+      isUserCancellation(signal.reason) ? true : undefined,
+    );
   }
 
   let toolResult: ExecutableToolResult;
@@ -493,7 +507,12 @@ async function runRunnableToolCall(
     const output = aborted
       ? abortedToolOutput(toolName, signal)
       : `Tool "${toolName}" failed: ${errorMessage(error)}`;
-    return makeErrorToolResult(call, effectiveArgs, output);
+    return makeErrorToolResult(
+      call,
+      effectiveArgs,
+      output,
+      aborted && isUserCancellation(signal.reason) ? true : undefined,
+    );
   }
 
   return makeToolResult(call, effectiveArgs, toolResult);
@@ -671,7 +690,14 @@ function normalizeToolResult(r: ExecutableToolResult): ExecutableToolResult {
       output = textJoined.length > 0 ? textJoined : TOOL_OUTPUT_EMPTY;
     }
   }
-  return r.isError === true ? { output, isError: true } : { output };
+  if (r.isError === true) {
+    const errorResult: ExecutableToolErrorResult =
+      r.cancelledByUser === true
+        ? { output, isError: true, cancelledByUser: true }
+        : { output, isError: true };
+    return errorResult;
+  }
+  return { output };
 }
 
 function makeToolResult(
@@ -696,8 +722,9 @@ function makeErrorToolResult(
   call: PreflightedToolCall,
   args: unknown,
   output: string,
+  cancelledByUser?: true,
 ): PendingToolResult {
-  return makeToolResult(call, args, { output, isError: true });
+  return makeToolResult(call, args, { output, isError: true, cancelledByUser });
 }
 
 /**
