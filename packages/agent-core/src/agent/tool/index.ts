@@ -161,14 +161,21 @@ export class ToolManager {
       if (existingEntry !== undefined) {
         // Cross-server collision: disambiguate by appending a numeric suffix
         // so both tools remain accessible.
-        const count = (this.mcpCollisionCount.get(qualified) ?? 1) + 1;
+        let count = (this.mcpCollisionCount.get(qualified) ?? 1) + 1;
+        // Probe for uniqueness: if truncation causes the disambiguated name
+        // to collide with an existing tool, keep incrementing the suffix.
+        let disambiguated: string;
+        do {
+          const suffix = `__${String(count)}`;
+          const maxBase = 64 - suffix.length;
+          disambiguated = qualified.length > maxBase
+            ? `${qualified.slice(0, maxBase)}${suffix}`
+            : `${qualified}${suffix}`;
+          count++;
+        } while (this.mcpTools.has(disambiguated));
+        count--;
         this.mcpCollisionCount.set(qualified, count);
-        // Truncate the base name if the suffix would exceed the max length.
-        const suffix = `__${String(count)}`;
-        const maxBase = 64 - suffix.length;
-        qualified = qualified.length > maxBase
-          ? `${qualified.slice(0, maxBase)}${suffix}`
-          : `${qualified}${suffix}`;
+        qualified = disambiguated;
         collisions.push({
           qualified,
           toolName: tool.name,
