@@ -8,10 +8,13 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), cssInjectedByJsPlugin()],
   publicDir: "public",
   resolve: {
-    alias: {
-      "@": resolve(__dirname, "./src"),
-      shared: resolve(__dirname, "../shared"),
-    },
+    alias: [
+      { find: "@", replacement: resolve(__dirname, "./src") },
+      { find: "shared", replacement: resolve(__dirname, "../shared") },
+      { find: /^@moonshot-ai\/kimi-code-vscode-agent-sdk$/, replacement: resolve(__dirname, "../agent-sdk/index.ts") },
+      { find: "@moonshot-ai/kimi-code-vscode-agent-sdk/errors", replacement: resolve(__dirname, "../agent-sdk/errors.ts") },
+      { find: "@moonshot-ai/kimi-code-vscode-agent-sdk/schema", replacement: resolve(__dirname, "../agent-sdk/schema.ts") },
+    ],
   },
   define: {
     "process.env.NODE_ENV": '"production"',
