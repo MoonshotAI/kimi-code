@@ -70,24 +70,24 @@ function findBackslashAdjustedMatch(
   const variants: Array<{ adjusted: string; variant: string }> = [];
 
   // Variant 1: the LLM double-escaped — unescape one level.
-  // "\\\\n" in JS string → "\\n" (backslash + n), but the file has "\n" (backslash + n).
-  // If old_string contains sequences like "\\n" that the file doesn't have,
-  // try replacing "\\n" → "\n" etc.
+  // Collapse doubled backslashes first, then translate escape sequences.
+  // Order matters: "\\\\" must collapse before "\\n" is processed,
+  // otherwise the second backslash pairs with 'n' into a real newline.
   const unescaped = oldString
+    .replaceAll('\\\\', '\\')
     .replaceAll('\\n', '\n')
     .replaceAll('\\t', '\t')
-    .replaceAll('\\r', '\r')
-    .replaceAll('\\\\', '\\');
+    .replaceAll('\\r', '\r');
   if (unescaped !== oldString) {
     variants.push({ adjusted: unescaped, variant: 'unescape-sequences' });
   }
 
   // Variant 2: the LLM under-escaped — the file has literal double-backslash
-  // but old_string has single.  Try the reverse.
+  // but old_string has single.  Re-escape common escape sequences.
   const overEscaped = oldString
-    .replaceAll(/\\n/g, '\\n')
-    .replaceAll(/\\t/g, '\\t')
-    .replaceAll(/\\r/g, '\\r');
+    .replaceAll('\\n', '\\\\n')
+    .replaceAll('\\t', '\\\\t')
+    .replaceAll('\\r', '\\\\r');
   // Only try this if it actually changed something and differs from variant 1.
   if (overEscaped !== oldString && overEscaped !== unescaped) {
     variants.push({ adjusted: overEscaped, variant: 'escape-sequences' });
