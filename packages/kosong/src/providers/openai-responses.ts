@@ -1040,13 +1040,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     options?: GenerateOptions,
   ): Promise<StreamedMessage> {
     const input: unknown[] = [];
-    if (systemPrompt) {
-      const sysItem: Record<string, unknown> = { role: 'system', content: systemPrompt };
-      if (usesOpenAIResponsesDeveloperRole(this._model)) {
-        sysItem['role'] = 'developer';
-      }
-      input.push(sysItem);
-    }
 
     const normalizedHistory = normalizeToolCallIdsForProvider(
       history,
@@ -1086,6 +1079,9 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
         stream: this._stream,
         ...kwargs,
       };
+      if (systemPrompt) {
+        createParams['instructions'] = systemPrompt;
+      }
 
       if (
         !('responses' in client) ||

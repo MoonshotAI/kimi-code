@@ -640,6 +640,35 @@ describe('LocalKaos', () => {
       expect(exitCode).not.toBe(0);
     });
   });
+
+  describe('withEnv', () => {
+    it('overlays every spawned process and can be updated in place', async () => {
+      const env = {
+        KAOS_BASE_ENV: 'initial',
+        KAOS_COLLISION_ENV: 'configured',
+      };
+      const envKaos = kaos.withEnv(env);
+      const printEnv =
+        'process.stdout.write(`${process.env.KAOS_BASE_ENV}|${process.env.KAOS_COLLISION_ENV}|${process.env.KAOS_CALL_ENV}`)';
+
+      const first = await envKaos.exec('node', '-e', printEnv);
+      expect(await first.wait()).toBe(0);
+      expect((await streamToBuffer(first.stdout)).toString('utf-8')).toBe('initial|configured|undefined');
+
+      const second = await envKaos.execWithEnv(['node', '-e', printEnv], {
+        ...(process.env as Record<string, string>),
+        KAOS_COLLISION_ENV: 'host',
+        KAOS_CALL_ENV: 'call',
+      });
+      expect(await second.wait()).toBe(0);
+      expect((await streamToBuffer(second.stdout)).toString('utf-8')).toBe('initial|configured|call');
+
+      env.KAOS_BASE_ENV = 'updated';
+      const third = await envKaos.exec('node', '-e', printEnv);
+      expect(await third.wait()).toBe(0);
+      expect((await streamToBuffer(third.stdout)).toString('utf-8')).toBe('updated|configured|undefined');
+    });
+  });
 });
 
 describe('LocalKaos instance isolation', () => {

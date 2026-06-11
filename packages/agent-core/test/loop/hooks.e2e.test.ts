@@ -161,6 +161,32 @@ describe('runTurn — afterStep hook', () => {
 });
 
 describe('runTurn — prepareToolExecution hook', () => {
+  it('receives all tool calls from the same provider response', async () => {
+    const observedBatches: string[][] = [];
+    const hooks: LoopHooks = {
+      prepareToolExecution: async (ctx) => {
+        observedBatches.push(ctx.toolCalls?.map((toolCall) => toolCall.id) ?? []);
+      },
+    };
+
+    await runTurn({
+      hooks,
+      tools: [new EchoTool()],
+      responses: [
+        makeToolUseResponse([
+          makeToolCall('echo', { text: 'a' }, 'tc-a'),
+          makeToolCall('echo', { text: 'b' }, 'tc-b'),
+        ]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    expect(observedBatches).toEqual([
+      ['tc-a', 'tc-b'],
+      ['tc-a', 'tc-b'],
+    ]);
+  });
+
   it('block:true records an error result without invoking execute', async () => {
     const echo = new EchoTool();
     const hooks: LoopHooks = {
@@ -242,6 +268,34 @@ describe('runTurn — prepareToolExecution hook', () => {
     expect(expectTextOutput(tr?.result.output).toLowerCase()).toContain('preparetoolexecution');
     // The turn still converges
     expect(result.stopReason).toBe('end_turn');
+  });
+});
+
+describe('runTurn — authorizeToolExecution hook', () => {
+  it('receives all tool calls from the same provider response', async () => {
+    const observedBatches: string[][] = [];
+    const hooks: LoopHooks = {
+      authorizeToolExecution: async (ctx) => {
+        observedBatches.push(ctx.toolCalls?.map((toolCall) => toolCall.id) ?? []);
+      },
+    };
+
+    await runTurn({
+      hooks,
+      tools: [new EchoTool()],
+      responses: [
+        makeToolUseResponse([
+          makeToolCall('echo', { text: 'a' }, 'tc-a'),
+          makeToolCall('echo', { text: 'b' }, 'tc-b'),
+        ]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    expect(observedBatches).toEqual([
+      ['tc-a', 'tc-b'],
+      ['tc-a', 'tc-b'],
+    ]);
   });
 });
 

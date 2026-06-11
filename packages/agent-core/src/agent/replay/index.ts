@@ -1,15 +1,19 @@
 import type { Agent } from '..';
-import type { AgentReplayRecord } from '../..';
+import type { AgentReplayRecord, AgentReplayRecordPayload } from '../..';
 import type { ContextMessage } from '../context';
 
 export class ReplayBuilder {
+  captureLiveRecords = false;
   protected readonly records: AgentReplayRecord[] = [];
 
   constructor(public readonly agent: Agent) {}
 
-  push(record: AgentReplayRecord): void {
-    if (this.agent.records.restoring) {
-      this.records.push(record);
+  push(record: AgentReplayRecordPayload): void {
+    if (this.captureLiveRecords || this.agent.records.restoring) {
+      this.records.push({
+        ...record,
+        time: this.agent.records.restoring?.time ?? Date.now(),
+      });
     }
   }
 

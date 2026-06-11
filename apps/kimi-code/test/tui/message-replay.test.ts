@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import type {
   AgentReplayRecord,
   BackgroundTaskInfo,
@@ -20,6 +22,8 @@ import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 type GoalReplayRecord = Extract<AgentReplayRecord, { type: 'goal_updated' }>;
+
+const REPLAY_TIME = 1_700_000_000_000;
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -68,6 +72,7 @@ function message(
   } = {},
 ): AgentReplayRecord {
   return {
+    time: REPLAY_TIME,
     type: 'message',
     message: {
       role,
@@ -120,6 +125,7 @@ function goalReplay(
   change: GoalReplayRecord['change'],
 ): GoalReplayRecord {
   return {
+    time: REPLAY_TIME,
     type: 'goal_updated',
     snapshot,
     change,
@@ -197,6 +203,7 @@ function makeSession(
 }
 
 function makeHarness(initialSession: Session) {
+  const interactiveAgentScope = new AsyncLocalStorage<string>();
   return {
     getConfig: vi.fn(async () => ({
       models: {
@@ -212,7 +219,12 @@ function makeHarness(initialSession: Session) {
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
-    interactiveAgentId: 'main',
+    get interactiveAgentId() {
+      return interactiveAgentScope.getStore() ?? 'main';
+    },
+    withInteractiveAgent: vi.fn((agentId: string, fn: () => unknown) => {
+      return interactiveAgentScope.run(agentId, fn);
+    }),
     auth: {
       status: vi.fn(),
       login: vi.fn(),
@@ -980,11 +992,12 @@ describe('KimiTUI resume message replay', () => {
 
   it('renders plan permission and approval replay notices', async () => {
     const driver = await replayIntoDriver([
-      { type: 'plan_updated', enabled: true },
-      { type: 'permission_updated', mode: 'auto' },
-      { type: 'permission_updated', mode: 'yolo' },
-      { type: 'permission_updated', mode: 'manual' },
+      { time: REPLAY_TIME, type: 'plan_updated', enabled: true },
+      { time: REPLAY_TIME, type: 'permission_updated', mode: 'auto' },
+      { time: REPLAY_TIME, type: 'permission_updated', mode: 'yolo' },
+      { time: REPLAY_TIME, type: 'permission_updated', mode: 'manual' },
       {
+        time: REPLAY_TIME,
         type: 'approval_result',
         record: {
           turnId: 0,
@@ -998,7 +1011,7 @@ describe('KimiTUI resume message replay', () => {
           },
         },
       },
-      { type: 'plan_updated', enabled: false },
+      { time: REPLAY_TIME, type: 'plan_updated', enabled: false },
     ]);
 
     const transcript = driver.state.transcriptContainer.render(120).join('\n');
@@ -1017,6 +1030,7 @@ describe('KimiTUI resume message replay', () => {
         toolCalls: [toolCall('call_exit_reject', 'ExitPlanMode', {})],
       }),
       {
+        time: REPLAY_TIME,
         type: 'approval_result',
         record: {
           turnId: 0,
@@ -1034,6 +1048,7 @@ describe('KimiTUI resume message replay', () => {
         toolCalls: [toolCall('call_exit_final', 'ExitPlanMode', {})],
       }),
       {
+        time: REPLAY_TIME,
         type: 'approval_result',
         record: {
           turnId: 1,
@@ -1056,7 +1071,7 @@ describe('KimiTUI resume message replay', () => {
         ],
         { toolCallId: 'call_exit_final' },
       ),
-      { type: 'plan_updated', enabled: false },
+      { time: REPLAY_TIME, type: 'plan_updated', enabled: false },
     ]);
 
     const transcript = driver.state.transcriptContainer.render(120).join('\n');

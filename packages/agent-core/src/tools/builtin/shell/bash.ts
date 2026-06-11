@@ -405,7 +405,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     }
 
     if (timeoutMs !== undefined) {
-      setTimeout(() => {
+      const timeoutHandle = setTimeout(() => {
         void (async (): Promise<void> => {
           if (proc.exitCode !== null) return;
           const info = backgroundManager.getTask(taskId);
@@ -414,6 +414,7 @@ export class BashTool implements BuiltinTool<BashInput> {
           }
         })();
       }, timeoutMs);
+      timeoutHandle.unref?.();
     }
 
     // registerTask() synchronously inserts taskId into the manager's Map, so

@@ -214,7 +214,7 @@ describe('handleSwarmCommand', () => {
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(host).render(80).join('\n'));
     expect(text).toContain('Manual mode can block swarm work');
-    expect(text).not.toContain('Switch to YOLO and start');
+    expect(text).toContain('Switch to YOLO and start');
     expect(text).not.toContain('Do not start');
   });
 
@@ -242,6 +242,7 @@ describe('handleSwarmCommand', () => {
     await handleSwarmCommand(host, 'Ship feature X');
     const picker = mountedPicker(host);
     picker.handleInput(DOWN);
+    picker.handleInput(DOWN);
     picker.handleInput(ENTER);
 
     await vi.waitFor(() => {
@@ -250,6 +251,26 @@ describe('handleSwarmCommand', () => {
     expect(session.setPermission).not.toHaveBeenCalled();
     expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'task');
     expect(session.setSwarmMode).toHaveBeenCalledTimes(1);
+    expect(host.state.swarmModeEntry).toBe('task');
+    expectSwarmMarker(host, 'Swarm activated');
+  });
+
+  it('can start a Manual-mode swarm task after switching to YOLO', async () => {
+    const { host, session } = makeHost({ permissionMode: 'manual' });
+
+    await handleSwarmCommand(host, 'Ship feature X');
+    const picker = mountedPicker(host);
+    picker.handleInput(DOWN);
+    picker.handleInput(ENTER);
+
+    await vi.waitFor(() => {
+      expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
+    });
+    expect(session.setPermission).toHaveBeenCalledWith('yolo');
+    expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'task');
+    expect(session.setSwarmMode).toHaveBeenCalledTimes(1);
+    expect(host.setAppState).toHaveBeenCalledWith({ permissionMode: 'yolo' });
+    expect(host.setAppState).toHaveBeenCalledWith({ swarmMode: true });
     expect(host.state.swarmModeEntry).toBe('task');
     expectSwarmMarker(host, 'Swarm activated');
   });

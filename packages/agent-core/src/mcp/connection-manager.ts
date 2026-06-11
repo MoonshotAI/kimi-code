@@ -155,6 +155,38 @@ export class McpConnectionManager {
     return initialLoad;
   }
 
+  async connect(name: string, config: McpServerConfig): Promise<void> {
+    const previous = this.entries.get(name);
+    if (previous !== undefined) {
+      await this.closeClient(previous);
+    }
+    const disabled = config.enabled === false;
+    const entry: InternalEntry = {
+      name,
+      config,
+      attemptId: 0,
+      status: disabled ? 'disabled' : 'pending',
+    };
+    this.entries.set(name, entry);
+    this.emit(entry);
+    if (!disabled) {
+      await this.connectOne(entry, this.beginConnectAttempt(entry));
+    }
+  }
+
+  async remove(name: string): Promise<boolean> {
+    const entry = this.entries.get(name);
+    if (entry === undefined) return false;
+    await this.closeClient(entry);
+    entry.status = 'disabled';
+    entry.tools = undefined;
+    entry.enabledNames = undefined;
+    entry.error = undefined;
+    this.emit(entry);
+    this.entries.delete(name);
+    return true;
+  }
+
   waitForInitialLoad(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     if (signal === undefined) return this.initialLoad;

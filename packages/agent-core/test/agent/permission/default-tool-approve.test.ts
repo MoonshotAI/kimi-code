@@ -20,6 +20,14 @@ function policyContext(toolName: string, args: unknown): PermissionPolicyContext
       name: toolName,
       arguments: JSON.stringify(args),
     } satisfies ToolCall,
+    toolCalls: [
+      {
+        type: 'function',
+        id: `call_${toolName}`,
+        name: toolName,
+        arguments: JSON.stringify(args),
+      },
+    ],
     execution: {
       accesses: ToolAccesses.none(),
       approvalRule: toolName,

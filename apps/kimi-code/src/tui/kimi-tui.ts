@@ -874,10 +874,11 @@ export class KimiTUI {
   }
 
   sendQueuedMessage(session: Session, item: QueuedMessage): void {
-    this.harness.interactiveAgentId = item.agentId ?? MAIN_AGENT_ID;
-    this.sendMessageInternal(session, item.text, {
-      parts: item.parts,
-      imageAttachmentIds: item.imageAttachmentIds,
+    this.harness.withInteractiveAgent(item.agentId ?? MAIN_AGENT_ID, () => {
+      this.sendMessageInternal(session, item.text, {
+        parts: item.parts,
+        imageAttachmentIds: item.imageAttachmentIds,
+      });
     });
   }
 
@@ -1167,7 +1168,6 @@ export class KimiTUI {
     this.streamingUI.discardPending();
     this.state.queuedMessages = [];
     this.state.swarmModeEntry = undefined;
-    this.harness.interactiveAgentId = MAIN_AGENT_ID;
     this.streamingUI.resetToolCallState();
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.resetRuntimeState();

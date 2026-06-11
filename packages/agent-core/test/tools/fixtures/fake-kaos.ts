@@ -28,7 +28,10 @@ export const FAKE_OS_ENV: Environment = {
   shellPath: '/bin/bash',
 };
 
-export function createFakeKaos(overrides?: Partial<Kaos>): Kaos {
+export function createFakeKaos(
+  overrides?: Partial<Kaos>,
+  envLayers: readonly Record<string, string>[] = [],
+): Kaos {
   // Hold cwd in a closure so `chdir` (which `config.update({cwd})` now
   // routes through) can mutate it and later `getcwd()` calls see the
   // update — mirroring real-kaos semantics without needing a backing fs.
@@ -40,7 +43,9 @@ export function createFakeKaos(overrides?: Partial<Kaos>): Kaos {
     normpath: (p: string) => p,
     gethome: () => '/home/test',
     getcwd: () => cwd,
-    withCwd: (next: string) => createFakeKaos({ ...overrides, getcwd: () => next }),
+    withCwd: (next: string) => createFakeKaos({ ...overrides, getcwd: () => next }, envLayers),
+    withEnv: (env: Record<string, string>) =>
+      createFakeKaos({ ...overrides, getcwd: () => cwd }, [...envLayers, env]),
     chdir: async (next: string) => {
       cwd = next;
     },
@@ -54,9 +59,31 @@ export function createFakeKaos(overrides?: Partial<Kaos>): Kaos {
     writeText: () => notImplemented('writeText'),
     mkdir: () => notImplemented('mkdir'),
     exec: () => notImplemented('exec'),
-    execWithEnv: () => notImplemented('execWithEnv'),
+    execWithEnv: (args, invocationEnv) => {
+      const mergedEnv = mergeEnvLayers(invocationEnv, envLayers);
+      if (overrides?.execWithEnv) return overrides.execWithEnv(args, mergedEnv);
+      return notImplemented('execWithEnv');
+    },
   };
-  return { ...base, ...overrides } as Kaos;
+  return {
+    ...base,
+    ...overrides,
+    execWithEnv: base.execWithEnv,
+    withCwd: base.withCwd,
+    withEnv: base.withEnv,
+  } as Kaos;
+}
+
+function mergeEnvLayers(
+  invocationEnv: Record<string, string> | undefined,
+  envLayers: readonly Record<string, string>[],
+): Record<string, string> | undefined {
+  if (envLayers.length === 0) return invocationEnv;
+  const merged: Record<string, string> = { ...invocationEnv };
+  for (const layer of envLayers) {
+    Object.assign(merged, layer);
+  }
+  return merged;
 }
 
 export const PERMISSIVE_WORKSPACE: WorkspaceConfig = {

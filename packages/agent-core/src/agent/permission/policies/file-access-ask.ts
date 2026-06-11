@@ -14,8 +14,6 @@ import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult 
 export class SensitiveFileAccessAskPermissionPolicy implements PermissionPolicy {
   readonly name = 'sensitive-file-access-ask';
 
-  constructor(private readonly agent: Agent) {}
-
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
     const access = fileAccesses(context).find((fileAccess) =>
       isSensitiveFile(fileAccess.path),

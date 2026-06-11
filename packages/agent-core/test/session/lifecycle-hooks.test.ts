@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
-import { ProcessBackgroundTask } from '../../src/agent/background';
+import { AgentBackgroundTask, ProcessBackgroundTask } from '../../src/agent/background';
 
 
 const tempDirs: string[] = [];
@@ -153,6 +153,46 @@ describe('Session lifecycle hooks', () => {
     expect(agent.background.getTask(taskId)?.status).toBe('running');
   });
 
+  it('keeps background agent turns alive on close when keepAliveOnExit is true', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-bg-agent-keepalive',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: true },
+    });
+    const main = await session.createMain();
+    const { id: childId, agent: child } = await session.createAgent(
+      { type: 'sub' },
+      { parentAgentId: 'main' },
+    );
+    const turnSettled = createDeferred<void>();
+    const waitSpy = vi
+      .spyOn(child.turn, 'waitForCurrentTurn')
+      .mockImplementation(() => turnSettled.promise as never);
+    const cancelSpy = vi.spyOn(child.turn, 'cancel').mockImplementation(() => {
+      turnSettled.resolve();
+    });
+    vi.spyOn(child.turn, 'hasActiveTurn', 'get').mockReturnValue(true);
+    const abort = vi.fn();
+    const taskId = main.background.registerTask(
+      new AgentBackgroundTask(new Promise(() => {}), 'keep background agent alive', {
+        abort,
+        agentId: childId,
+        subagentType: 'coder',
+      }),
+    );
+
+    await session.close();
+
+    expect(cancelSpy).not.toHaveBeenCalled();
+    expect(waitSpy).not.toHaveBeenCalled();
+    expect(abort).not.toHaveBeenCalled();
+    expect(main.background.getTask(taskId)?.status).toBe('running');
+  });
+
   it('lets the environment override config when deciding background task cleanup', async () => {
     vi.stubEnv('KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT', '0');
     const { sessionDir, workDir } = await hookFixture();
@@ -174,6 +214,81 @@ describe('Session lifecycle hooks', () => {
 
     expect(killSpy).toHaveBeenCalledWith('SIGTERM');
     expect(agent.background.getTask(taskId)?.status).toBe('killed');
+  });
+
+  it('cancels an active foreground turn before closing', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-active-turn-cleanup',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+    const agent = await session.createMain();
+    const turnSettled = createDeferred<void>();
+    const waitSpy = vi
+      .spyOn(agent.turn, 'waitForCurrentTurn')
+      .mockImplementation(() => turnSettled.promise as never);
+    const cancelSpy = vi.spyOn(agent.turn, 'cancel').mockImplementation(() => {
+      turnSettled.resolve();
+    });
+    vi.spyOn(agent.turn, 'hasActiveTurn', 'get').mockReturnValue(true);
+
+    await session.close();
+
+    expect(cancelSpy).toHaveBeenCalledWith(undefined, expect.any(Error));
+    expect(waitSpy).toHaveBeenCalledOnce();
+  });
+
+  it('records session-close cancellation during UserPromptSubmit hooks as cancelled', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const hookStartedPath = join(workDir, 'hook-started');
+    const hookScriptPath = join(workDir, 'blocking-user-prompt-hook.cjs');
+    await writeFile(
+      hookScriptPath,
+      [
+        "const { writeFileSync } = require('node:fs');",
+        "writeFileSync(process.argv[2], 'started');",
+        'setInterval(() => {}, 1000);',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const emitEvent = vi.fn<SDKSessionRPC['emitEvent']>(async () => {});
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-close-during-user-hook',
+      homedir: sessionDir,
+      rpc: createSessionRpc({ emitEvent }),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      hooks: [
+        {
+          event: 'UserPromptSubmit',
+          command: `node ${JSON.stringify(hookScriptPath)} ${JSON.stringify(hookStartedPath)}`,
+          timeout: 30,
+        },
+      ],
+    });
+    const agent = await session.createMain();
+
+    agent.turn.prompt([{ type: 'text', text: 'run the hook' }]);
+    await waitForFile(hookStartedPath);
+    await session.close();
+
+    const events = emitEvent.mock.calls.map(([event]) => event);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'turn.ended',
+        reason: 'cancelled',
+      }),
+    );
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: 'turn.ended',
+        reason: 'failed',
+      }),
+    );
   });
 
   it('keeps background tasks alive and skips SessionEnd hooks when closing for reload', async () => {
@@ -260,7 +375,7 @@ async function readHookPayloads(path: string): Promise<readonly Record<string, u
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
-function createSessionRpc(): SDKSessionRPC {
+function createSessionRpc(overrides: Partial<SDKSessionRPC> = {}): SDKSessionRPC {
   return {
     emitEvent: vi.fn(async () => {}),
     requestApproval: vi.fn(async () => ({ decision: 'cancelled' })),
@@ -269,7 +384,38 @@ function createSessionRpc(): SDKSessionRPC {
       output: 'custom tools are not supported in this test',
       isError: true,
     })),
+    ...overrides,
   } as SDKSessionRPC;
+}
+
+async function waitForFile(path: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      await readFile(path, 'utf-8');
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw lastError;
+}
+
+function createDeferred<T>(): {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+} {
+  let resolveValue: (value: T) => void = () => {
+    /* replaced below */
+  };
+  const promise = new Promise<T>((resolve) => {
+    resolveValue = resolve;
+  });
+  return {
+    promise,
+    resolve: resolveValue,
+  };
 }
 
 function pendingProcess(exitOnKill = 143): {

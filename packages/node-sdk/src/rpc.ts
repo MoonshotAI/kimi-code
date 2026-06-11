@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import {
   ErrorCodes,
   makeErrorPayload,
@@ -98,10 +100,18 @@ export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
 type ResolvedCoreAPI = RPCMethods<CoreAPI>;
 
 export abstract class SDKRpcClientBase {
-  interactiveAgentId = MAIN_AGENT_ID;
+  private readonly interactiveAgentScope = new AsyncLocalStorage<string>();
   private readonly eventListeners = new Set<(event: Event) => void>();
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
   private readonly questionHandlers = new Map<string, QuestionHandler>();
+
+  get interactiveAgentId(): string {
+    return this.interactiveAgentScope.getStore() ?? MAIN_AGENT_ID;
+  }
+
+  withInteractiveAgent<T>(agentId: string, fn: () => T): T {
+    return this.interactiveAgentScope.run(agentId, fn);
+  }
 
   protected abstract getRpc(): Promise<ResolvedCoreAPI>;
 
