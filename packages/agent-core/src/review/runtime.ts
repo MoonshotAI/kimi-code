@@ -180,6 +180,10 @@ export class SessionReviewRuntime {
     return this.progress.get(assignmentId);
   }
 
+  missingCoverage(assignmentId: string): readonly ReviewCoverageMissingItem[] {
+    return this.coverage.missingCoverage(this.requireAssignment(assignmentId));
+  }
+
   getComments(filter: ReviewCommentFilter = {}): readonly ReviewComment[] {
     const paths = filter.paths === undefined ? undefined : new Set(filter.paths);
     const sourceCommentIds =

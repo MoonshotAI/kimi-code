@@ -15,6 +15,7 @@ import {
   prepareSystemPromptContext,
   type ResolvedAgentProfile,
 } from '../profile';
+import type { ReviewAgentFacade } from '../review';
 import {
   linkAbortSignal,
   userCancellationReason,
@@ -82,6 +83,7 @@ export interface RunSubagentOptions {
 export interface SpawnSubagentOptions extends RunSubagentOptions {
   readonly profileName: string;
   readonly swarmItem?: string;
+  readonly review?: ReviewAgentFacade;
 }
 
 type SubagentCompletion = {
@@ -116,7 +118,7 @@ export class SessionSubagentHost {
     const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
     const profile = this.resolveProfile(parent, options.profileName);
     const { id, agent } = await this.session.createAgent(
-      { type: 'sub', generate: parent.rawGenerate },
+      { type: 'sub', generate: parent.rawGenerate, review: options.review },
       { parentAgentId: this.ownerAgentId, swarmItem: options.swarmItem },
     );
     const completion = this.runWithActiveChild(id, options, async (runOptions) => {

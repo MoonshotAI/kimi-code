@@ -236,22 +236,22 @@ Purpose: make review workers recover after compaction and keep running until req
 
 **Tasks:**
 
-- [ ] Implement `ReviewInjector` that injects shared review background and the active assignment for reviewer and reconciliator workers.
-- [ ] Re-inject background after context clear and compaction.
-- [ ] Add a review-specific worker driver that:
+- [x] Implement `ReviewInjector` that injects shared review background and the active assignment for reviewer and reconciliator workers.
+- [x] Re-inject background after context clear and compaction.
+- [x] Add a review-specific worker driver that:
   - starts a subagent with a review assignment
   - waits for a turn to complete
   - audits progress and coverage
   - continues the same subagent with missing requirements
   - stops when status is `complete` or `blocked`
   - fails after a bounded number of non-progress continuations
-- [ ] Keep the driver internal to review runtime. Do not route reviewer orchestration through the generic model-facing `Agent` tool.
-- [ ] Test compaction re-injection and missing-coverage continuation.
+- [x] Keep the driver internal to review runtime. Do not route reviewer orchestration through the generic model-facing `Agent` tool.
+- [x] Test compaction re-injection and missing-coverage continuation.
 
 **Verification:**
 
-- [ ] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/agent/injection/review.test.ts`.
-- [ ] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/worker-driver.test.ts`.
+- [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/agent/injection/review.test.ts`. Executed as `pnpm --filter @moonshot-ai/agent-core exec vitest run test/agent/injection/review.test.ts` because Vitest runs from the package directory.
+- [x] Run `pnpm --filter @moonshot-ai/agent-core exec vitest run packages/agent-core/test/review/worker-driver.test.ts`. Executed as `pnpm --filter @moonshot-ai/agent-core exec vitest run test/review/worker-driver.test.ts` because Vitest runs from the package directory.
 
 ## Phase 6: Standard Review Runtime
 
