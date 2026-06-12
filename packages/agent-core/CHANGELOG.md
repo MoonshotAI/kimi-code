@@ -1,5 +1,17 @@
 # @moonshot-ai/agent-core
 
+## 0.12.3
+
+### Patch Changes
+
+- [#651](https://github.com/MoonshotAI/kimi-code/pull/651) [`c39c625`](https://github.com/MoonshotAI/kimi-code/commit/c39c62590db708fc81bd8627ea661c38f3fff9af) - Qualify sub-skill names with their parent prefix and expose sub-skills as dotted slash commands in the TUI.
+
+- [#617](https://github.com/MoonshotAI/kimi-code/pull/617) [`911e7c3`](https://github.com/MoonshotAI/kimi-code/commit/911e7c3fcfc8a005b1b8d90388260d1a4032f76f) - Show completed and cancelled compaction records correctly when resuming a session.
+
+- [#676](https://github.com/MoonshotAI/kimi-code/pull/676) [`dcf3075`](https://github.com/MoonshotAI/kimi-code/commit/dcf30754d09c7560101bc410387792194c3fe2b4) - Stream foreground Bash stdout and stderr while commands are still running.
+
+- [#689](https://github.com/MoonshotAI/kimi-code/pull/689) [`8d251f8`](https://github.com/MoonshotAI/kimi-code/commit/8d251f8ab44ead65f6c1bb264980ee7d075142ad) - Drop invalid config.toml sections with a warning instead of failing to start.
+
 ## 0.12.2
 
 ### Patch Changes

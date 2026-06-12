@@ -1,5 +1,25 @@
 # @moonshot-ai/kimi-code
 
+## 0.14.2
+
+### Patch Changes
+
+- [#683](https://github.com/MoonshotAI/kimi-code/pull/683) [`ad239cb`](https://github.com/MoonshotAI/kimi-code/commit/ad239cb1c08266a442c9ca0382fefed87bcb1fd4) - Allow `--auto`, `--yolo`, and `--plan` to be combined with `--session` or `--continue` by applying the requested mode to the resumed session.
+
+- [#690](https://github.com/MoonshotAI/kimi-code/pull/690) [`7f0dde2`](https://github.com/MoonshotAI/kimi-code/commit/7f0dde2ece3f9a004e934d69258dfd47c954043c) - Fix endless desktop notifications in iTerm2 by only sending terminal progress sequences to terminals that support them.
+
+- [#651](https://github.com/MoonshotAI/kimi-code/pull/651) [`c39c625`](https://github.com/MoonshotAI/kimi-code/commit/c39c62590db708fc81bd8627ea661c38f3fff9af) - Qualify sub-skill names with their parent prefix and expose sub-skills as dotted slash commands in the TUI.
+
+- [#617](https://github.com/MoonshotAI/kimi-code/pull/617) [`911e7c3`](https://github.com/MoonshotAI/kimi-code/commit/911e7c3fcfc8a005b1b8d90388260d1a4032f76f) - Show completed and cancelled compaction records correctly when resuming a session.
+
+- [#676](https://github.com/MoonshotAI/kimi-code/pull/676) [`dcf3075`](https://github.com/MoonshotAI/kimi-code/commit/dcf30754d09c7560101bc410387792194c3fe2b4) - Stream foreground Bash stdout and stderr while commands are still running.
+
+- [#692](https://github.com/MoonshotAI/kimi-code/pull/692) [`7ca9bdf`](https://github.com/MoonshotAI/kimi-code/commit/7ca9bdfed516d148b063229a9686a28f9e29aaef) - Skip re-entering plan mode when resuming a session that is already in plan mode (previously failed with "Already in plan mode"), and stop re-applying `--auto`/`--yolo`/`--plan` startup flags when switching sessions through the `/sessions` picker.
+
+- [#675](https://github.com/MoonshotAI/kimi-code/pull/675) [`d1ba145`](https://github.com/MoonshotAI/kimi-code/commit/d1ba14562bafdb6b93c3eec1b5c453186507ed56) - Sync custom registry provider additions, removals, and rotated registry keys during startup refresh.
+
+- [#689](https://github.com/MoonshotAI/kimi-code/pull/689) [`8d251f8`](https://github.com/MoonshotAI/kimi-code/commit/8d251f8ab44ead65f6c1bb264980ee7d075142ad) - Drop invalid config.toml sections with a warning instead of failing to start.
+
 ## 0.14.1
 
 ### Patch Changes
