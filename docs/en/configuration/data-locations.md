@@ -30,6 +30,7 @@ $KIMI_CODE_HOME  (default: ~/.kimi-code)
 ├── config.toml             # User configuration
 ├── tui.toml                # Terminal UI preferences (including auto-update toggle)
 ├── AGENTS.md               # Global Kimi-specific agent instructions (optional)
+├── sysprompt.md            # Global system prompt override (optional)
 ├── mcp.json                # User-level MCP server declarations (optional)
 ├── skills/                 # Kimi-specific user-level Skills (optional)
 ├── plugins/
@@ -62,6 +63,7 @@ Each top-level file under the data root serves a specific purpose; most are mana
 - **`config.toml`**: the main runtime configuration file, storing user-level settings such as providers, models, and loop control. See [Configuration files](./config-files.md).
 - **`tui.toml`**: terminal UI client preferences, including `[upgrade].auto_install` (auto-update, on by default). You can disable it in `/settings` or by manually setting `auto_install = false`.
 - **`AGENTS.md`**: global Kimi-specific agent instructions. This file moves with `KIMI_CODE_HOME`; generic cross-tool instructions can still live under `~/.agents/AGENTS.md`.
+- **`sysprompt.md`**: global system prompt override. When present, its contents replace the built-in profile system prompt for every session. Project-level `.kimi-code/sysprompt.md` takes precedence over this global file. See [Agents and Sub-Agents](../customization/agents.md#system-prompt-override).
 - **`mcp.json`**: user-level MCP server declarations, merged with the project-local `.kimi-code/mcp.json` on startup. See [MCP](../customization/mcp.md).
 - **`skills/`**: Kimi-specific user-level Skills. This directory moves with `KIMI_CODE_HOME`; generic cross-tool Skills can still live under `~/.agents/skills/`. See [Agent Skills](../customization/skills.md).
 - **`plugins/installed.json`**: records installed plugins, each plugin's enabled state, and MCP server capability state changes made via `/plugins` or `/plugins mcp disable|enable`. Files installed from local paths or zip URLs are copied to `plugins/managed/<id>/`. See [Plugins](../customization/plugins.md).

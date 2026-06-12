@@ -30,6 +30,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 ├── config.toml             # 用户配置
 ├── tui.toml                # 终端界面偏好（含自动更新开关）
 ├── AGENTS.md               # 全局 Kimi 专属 Agent 指令（可选）
+├── sysprompt.md            # 全局系统提示词覆盖（可选）
 ├── mcp.json                # 用户级 MCP server 声明（可选）
 ├── skills/                 # Kimi 专属用户级 Skills（可选）
 ├── plugins/
@@ -62,6 +63,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 - **`config.toml`**：主运行时配置，存放供应商、模型、循环控制等用户级设置。详见[配置文件](./config-files.md)。
 - **`tui.toml`**：终端界面客户端偏好，包括 `[upgrade].auto_install`（自动更新，默认开启）。可在 `/settings` 关闭，或手动设为 `auto_install = false`。
 - **`AGENTS.md`**：全局 Kimi 专属 Agent 指令。该文件会随 `KIMI_CODE_HOME` 移动；跨工具通用指令仍可放在 `~/.agents/AGENTS.md`。
+- **`sysprompt.md`**：全局系统提示词覆盖。存在时，其内容会替换每次会话的内置 profile 系统提示词。项目级 `.kimi-code/sysprompt.md` 优先于此全局文件。详见 [Agent 与子 Agent](../customization/agents.md#系统提示词覆盖)。
 - **`mcp.json`**：用户级 MCP server 声明，启动时与项目内的 `.kimi-code/mcp.json` 合并加载。详见 [MCP](../customization/mcp.md)。
 - **`skills/`**：Kimi 专属用户级 Skills。该目录会随 `KIMI_CODE_HOME` 移动；跨工具通用 Skills 仍可放在 `~/.agents/skills/`。详见 [Agent Skills](../customization/skills.md)。
 - **`plugins/installed.json`**：记录已安装的 plugin、每个 plugin 的启用状态，以及通过 `/plugins` 或 `/plugins mcp disable|enable` 修改的 MCP server 能力状态。本地路径和 zip URL 安装的文件会复制到 `plugins/managed/<id>/`。详见 [Plugins](../customization/plugins.md)。

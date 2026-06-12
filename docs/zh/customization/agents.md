@@ -41,6 +41,21 @@ Kimi Code CLI 内置三种子 Agent，开箱即用，分别面向不同任务形
 
 全局 Kimi 专属指令可放在 `$KIMI_CODE_HOME/AGENTS.md`（默认：`~/.kimi-code/AGENTS.md`）。当你用 `KIMI_CODE_HOME` 移动数据根时，这份全局指令文件也会一起移动。跨工具通用指令仍可放在真实 OS home 下的 `~/.agents/AGENTS.md`，项目级指令仍放在项目目录中，例如 `.kimi-code/AGENTS.md` 或 `AGENTS.md`。
 
+## 系统提示词覆盖
+
+你可以用自己的文本替换默认的系统提示词（每轮开始时发送给模型的高层行为画像）。当你希望所有会话都保持一致的人格、编码风格或基本规则时，这会很有用。
+
+支持两类覆盖文件：
+
+- **全局**：`$KIMI_CODE_HOME/sysprompt.md`（默认：`~/.kimi-code/sysprompt.md`）
+- **项目级**：当前工作目录下的 `.kimi-code/sysprompt.md`
+
+如果项目级文件存在，它会优先于全局文件；如果都不存在，CLI 会回退到内置的 profile 系统提示词。文件内容会原样使用，因此直接以普通 Markdown 文本书写即可。
+
+::: tip 提示
+`AGENTS.md` 是作为补充上下文追加的；`sysprompt.md` 会替换整个系统提示词。两者可以一起使用——例如，把基础人格放在 `sysprompt.md` 里，把项目专属约定放在 `AGENTS.md` 里。
+:::
+
 ## 会话目录中的存储位置
 
 子 Agent 的运行状态持久化到当前会话目录的 `agents/` 子目录下，每个子 Agent 实例对应一个独立目录，其中包含按时间顺序记录提示词、消息历史与最终状态的 `wire.jsonl` 文件。后台子 Agent 还会通过 `tasks/` 子目录暴露生命周期状态。

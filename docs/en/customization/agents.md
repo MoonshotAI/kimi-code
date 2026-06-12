@@ -41,6 +41,21 @@ If you need a particular type of tool to be permanently unavailable inside sub-a
 
 Global Kimi-specific instructions can live at `$KIMI_CODE_HOME/AGENTS.md` (default: `~/.kimi-code/AGENTS.md`). When you relocate the data root with `KIMI_CODE_HOME`, this global instruction file moves with it. Generic cross-tool instructions can still live under `~/.agents/AGENTS.md` in the real OS home, and project-level instructions remain under the project tree, for example `.kimi-code/AGENTS.md` or `AGENTS.md`.
 
+## System Prompt Override
+
+You can replace the default system prompt (the high-level behavior profile sent to the model at the start of every turn) with your own text. This is useful when you want a consistent persona, coding style, or set of ground rules across all sessions.
+
+Two override files are supported:
+
+- **Global**: `$KIMI_CODE_HOME/sysprompt.md` (default: `~/.kimi-code/sysprompt.md`)
+- **Project-level**: `.kimi-code/sysprompt.md` in the current working directory
+
+If a project-level file exists, it takes precedence over the global file. If neither exists, the CLI falls back to its built-in profile system prompt. The file content is used verbatim, so write it as plain Markdown text.
+
+::: tip Note
+`AGENTS.md` is appended as supplementary context; `sysprompt.md` replaces the entire system prompt. You can use both together — for example, put your base persona in `sysprompt.md` and project-specific conventions in `AGENTS.md`.
+:::
+
 ## Storage Location in the Session Directory
 
 Sub-agent runtime state is persisted to the `agents/` subdirectory of the current session directory. Each sub-agent instance has its own directory, which contains a `wire.jsonl` file that records prompts, message history, and final state in chronological order. Background sub-agents also expose their lifecycle status through a `tasks/` subdirectory.
