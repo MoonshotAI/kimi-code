@@ -1,21 +1,21 @@
 import { readFileSync } from 'node:fs';
 
 /**
- * Bundler plugin that lets `.md` / `.yaml` files be imported as raw strings:
+ * Bundler plugin that lets files be imported as raw strings:
  *
- *   import description from './grep.md';
+ *   import description from './grep.md?raw';
  *
  * The file content is inlined into the bundle at build time, so prompt
- * source files never ship separately in `dist`. Shared by tsdown (build)
- * and vitest (test) so both resolve these imports identically.
+ * source files never ship separately in `dist`. Vitest handles the same
+ * `?raw` imports through Vite's built-in asset loader.
  */
 export function rawTextPlugin() {
   return {
     name: 'raw-text',
     enforce: 'pre',
     load(id) {
-      const path = id.split('?', 1)[0] ?? id;
-      if (!path.endsWith('.md') && !path.endsWith('.yaml')) return null;
+      const [path, query = ''] = id.split('?', 2);
+      if (!query.split('&').includes('raw')) return null;
       const text = readFileSync(path, 'utf-8');
       return { code: `export default ${JSON.stringify(text)};`, map: null };
     },
