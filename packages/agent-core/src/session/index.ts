@@ -457,7 +457,7 @@ export class Session {
   cancelReview(): void {
     this.assertCodeReviewEnabled();
     if (this.activeReviewOrchestrator === undefined) {
-      this.review.clear();
+      if (this.review.getActiveRun() !== null) this.review.clear();
       return;
     }
     this.activeReviewOrchestrator.cancel();
