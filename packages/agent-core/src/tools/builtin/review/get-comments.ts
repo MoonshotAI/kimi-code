@@ -56,7 +56,10 @@ export class GetCommentsTool implements BuiltinTool<GetCommentsInput> {
             ? this.review.getMergedComments().filter((comment) => includePath(comment.path))
             : [];
           const dismissedComments = args.status === undefined || args.status === 'dismissed'
-            ? this.review.getDismissedComments()
+            ? this.review.getDismissedComments().filter((dismissal) => {
+                const source = this.review.getComments({ sourceCommentIds: [dismissal.commentId] })[0];
+                return source !== undefined && includePath(source.path);
+              })
             : [];
           const sourceComments = includeSources
             ? this.review.getComments({

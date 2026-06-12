@@ -388,6 +388,56 @@ describe('review tools', () => {
       ],
     });
   });
+
+  it('filters dismissed comments by assigned scope', async () => {
+    const runtime = createRuntime();
+    runtime.startReview(
+      { target: { scope: 'working_tree' }, intensity: 'thorough' },
+      statsFor([
+        { path: 'src/a.ts', status: 'modified', additions: 1, deletions: 0 },
+        { path: 'src/b.ts', status: 'modified', additions: 1, deletions: 0 },
+      ]),
+    );
+    const reviewer = reviewerFacade(runtime, ['src/a.ts', 'src/b.ts']);
+    reviewer.recordPatchRead({ path: 'src/a.ts', ranges: [{ start: 1, end: 3 }] });
+    reviewer.recordPatchRead({ path: 'src/b.ts', ranges: [{ start: 1, end: 3 }] });
+    const assigned = reviewer.addComment({
+      severity: 'important',
+      path: 'src/a.ts',
+      line: 1,
+      title: 'Assigned path',
+      body: 'This comment belongs to the reconciliator path.',
+    });
+    const unassigned = reviewer.addComment({
+      severity: 'minor',
+      path: 'src/b.ts',
+      line: 1,
+      title: 'Unassigned path',
+      body: 'This comment is outside the reconciliator path.',
+    });
+    const reconciliator = runtime.createAgentFacade(
+      runtime.createAssignment({
+        role: 'reconciliator',
+        assignedFiles: ['src/a.ts'],
+        requiredCoverage: 'patch',
+        sourceCommentIds: [assigned.id, unassigned.id],
+      }).id,
+    );
+    reconciliator.dismissComment({
+      commentId: unassigned.id,
+      reason: 'out_of_scope',
+      summary: 'Outside this reconciliation batch.',
+    });
+
+    const commentsResult = await executeTool(new GetCommentsTool(reconciliator), context({
+      status: 'dismissed',
+      scope: 'assigned',
+    }));
+
+    expect(json(commentsResult)).toMatchObject({
+      dismissed_comments: [],
+    });
+  });
 });
 
 function context<Input>(args: Input) {
