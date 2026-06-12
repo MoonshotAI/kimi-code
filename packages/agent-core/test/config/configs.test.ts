@@ -757,6 +757,22 @@ type = "not-a-provider"
     expect(result.fileWarnings[0]).toContain('providers.bad');
   });
 
+  it('keeps other providers when one entry has multiple validation issues', async () => {
+    // Two issues on the same entry: the second must not escalate to
+    // deleting the whole providers section after the first dropped the entry.
+    const configPath = await writeTempConfig(`${VALID_TOML}
+[providers.bad]
+type = "not-a-provider"
+api_key = 123
+`);
+    const result = loadRuntimeConfigSafe(configPath, {});
+    expect(result.config.providers['bad']).toBeUndefined();
+    expect(result.config.providers['kimi']).toMatchObject({ type: 'kimi' });
+    expect(result.fileWarnings).toHaveLength(1);
+    expect(result.fileWarnings[0]).toContain('providers.bad');
+    expect(result.fileWarnings[0]).not.toMatch(/providers[,.]? /);
+  });
+
   it('drops only the broken model entry', async () => {
     const configPath = await writeTempConfig(`${VALID_TOML}
 [models.broken]

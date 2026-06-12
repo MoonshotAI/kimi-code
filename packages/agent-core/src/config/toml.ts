@@ -224,15 +224,20 @@ function salvageConfigData(transformed: Record<string, unknown>): SalvageResult 
       if (
         ENTRY_KEYED_SECTIONS.has(section) &&
         typeof entry === 'string' &&
-        isPlainObject(sectionValue) &&
-        entry in sectionValue
+        isPlainObject(sectionValue)
       ) {
-        delete sectionValue[entry];
-        dropped.push(`${camelToSnake(section)}.${entry}`);
-      } else {
-        delete transformed[section];
-        dropped.push(camelToSnake(section));
+        // Issues on entry-keyed sections only ever drop that entry. An entry
+        // with several issues is deleted by the first one; later issues are
+        // no-ops and must not escalate to deleting the whole section.
+        if (entry in sectionValue) {
+          delete sectionValue[entry];
+          dropped.push(`${camelToSnake(section)}.${entry}`);
+          deletedAny = true;
+        }
+        continue;
       }
+      delete transformed[section];
+      dropped.push(camelToSnake(section));
       deletedAny = true;
     }
     if (!deletedAny) {
