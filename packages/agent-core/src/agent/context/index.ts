@@ -299,12 +299,13 @@ export class ContextMemory {
   }
 
   /**
-   * Remove stale entries from `pendingToolResultIds` that have no matching
-   * tool result in the history.  This happens when a session is killed
-   * mid-tool-call and later resumed — the tool.call events are replayed
-   * but the tool.result events never arrived.  Without this cleanup,
-   * `hasOpenToolExchange()` would remain true, silently deferring all
-   * new user messages.
+   * Remove stale entries from `pendingToolResultIds` and trim orphaned
+   * assistant messages from `_history`.  This happens when a session is
+   * killed mid-tool-call and later resumed — the tool.call events are
+   * replayed but the tool.result events never arrived.  Without this
+   * cleanup, `hasOpenToolExchange()` would remain true (deferring new
+   * messages) and the orphaned assistant would still be sent to the
+   * provider on the next turn, causing a 400 error.
    */
   cleanupOrphanedToolCalls(): void {
     const answeredIds = new Set<string>();
@@ -313,11 +314,30 @@ export class ContextMemory {
         answeredIds.add(message.toolCallId);
       }
     }
+    // Find tool_call_ids that have no matching tool result.
+    const orphanedIds = new Set<string>();
     for (const id of this.pendingToolResultIds) {
       if (!answeredIds.has(id)) {
-        this.pendingToolResultIds.delete(id);
+        orphanedIds.add(id);
       }
     }
+    this.pendingToolResultIds.clear();
+    if (orphanedIds.size === 0) return;
+
+    // Remove assistant messages with unanswered tool_calls, and any
+    // trailing tool messages whose IDs are orphaned.
+    this._history = this._history.filter((message) => {
+      if (
+        message.role === 'assistant' &&
+        message.toolCalls.some((tc) => orphanedIds.has(tc.id))
+      ) {
+        return false;
+      }
+      if (message.role === 'tool' && typeof message.toolCallId === 'string' && orphanedIds.has(message.toolCallId)) {
+        return false;
+      }
+      return true;
+    });
   }
 
   private pushHistory(...messages: ContextMessage[]): void {

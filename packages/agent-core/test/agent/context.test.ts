@@ -815,7 +815,7 @@ describe('Agent context notification projection', () => {
     expect(messages[2]!.role).toBe('tool');
   });
 
-  it('cleanupOrphanedToolCalls clears stale pendingToolResultIds after resume', () => {
+  it('cleanupOrphanedToolCalls clears stale pendingToolResultIds and removes orphaned assistant from history', () => {
     const ctx = testAgent();
     ctx.configure();
 
@@ -840,13 +840,16 @@ describe('Agent context notification projection', () => {
 
     // The orphaned tool call should block new messages.
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'follow up' }]);
-    // The message should be deferred, not in history.
     const historyBefore = ctx.agent.context.history.filter(
       (m) => m.role === 'user' && m.content.some((p) => p.type === 'text' && 'text' in p && p.text === 'follow up'),
     );
     expect(historyBefore).toHaveLength(0);
 
-    // Now cleanup the orphaned tool calls.
+    // The orphaned assistant should be in history before cleanup.
+    const assistantBefore = ctx.agent.context.history.filter((m) => m.role === 'assistant');
+    expect(assistantBefore.length).toBeGreaterThanOrEqual(1);
+
+    // Cleanup should clear pendingToolResultIds AND remove orphaned assistant.
     ctx.agent.context.cleanupOrphanedToolCalls();
 
     // After cleanup, new messages should go through.
@@ -855,6 +858,12 @@ describe('Agent context notification projection', () => {
       (m) => m.role === 'user' && m.content.some((p) => p.type === 'text' && 'text' in p && p.text === 'after cleanup'),
     );
     expect(historyAfter).toHaveLength(1);
+
+    // The orphaned assistant should no longer be in history.
+    const assistantAfter = ctx.agent.context.history.filter(
+      (m) => m.role === 'assistant' && m.toolCalls.some((tc) => tc.id === 'orphan_call'),
+    );
+    expect(assistantAfter).toHaveLength(0);
   });
 });
 
