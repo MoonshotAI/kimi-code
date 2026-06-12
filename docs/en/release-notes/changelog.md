@@ -6,6 +6,21 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.14.2 (2026-06-12)
+
+### Bug Fixes
+
+- Fix endless desktop notifications in iTerm2 by only sending terminal progress sequences to terminals that support them.
+- Show completed and cancelled compaction records correctly when resuming a session.
+- Drop invalid config.toml sections with a warning instead of failing to start.
+
+### Polish
+
+- Stream foreground Bash stdout and stderr while commands are still running.
+- Allow `--auto`, `--yolo`, and `--plan` to be combined with `--session` or `--continue` by applying the requested mode to the resumed session.
+- Qualify sub-skill names with their parent prefix and expose sub-skills as dotted slash commands in the TUI.
+- Sync custom registry provider additions, removals, and rotated registry keys during startup refresh.
+
 ## 0.14.1 (2026-06-12)
 
 ### Bug Fixes
