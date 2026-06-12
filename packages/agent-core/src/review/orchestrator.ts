@@ -583,6 +583,17 @@ function buildDeepReviewAgentSwarmEvent(stats: ReviewDiffStats): ReviewAgentSwar
       subagent_type: 'reviewer',
       prompt_template: DEEP_REVIEW_AGENT_SWARM_PROMPT_TEMPLATE,
       items: matrix.reviewerAssignments.map(deepReviewSwarmItem),
+      review_swarm: {
+        perspectives: matrix.perspectives,
+        fileGroups: matrix.fileGroups,
+        items: matrix.reviewerAssignments.map((spec, index) => ({
+          index: index + 1,
+          perspective: spec.perspective,
+          fileGroupId: spec.fileGroupId,
+          fileGroupName: spec.fileGroupName,
+          assignedFiles: spec.assignedFiles,
+        })),
+      },
     },
   };
 }

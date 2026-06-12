@@ -1,6 +1,9 @@
 import type {
   BackgroundTaskInfo,
   Event,
+  ReviewEventAssignment,
+  ReviewEventComment,
+  ReviewEventProgress,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { Component } from '@earendil-works/pi-tui';
 
@@ -9,6 +12,7 @@ import {
   agentSwarmDescriptionFromArgs,
   agentSwarmGridHeightForTerminalRows,
 } from '../components/messages/agent-swarm-progress';
+import { ReviewSwarmProgressComponent } from '../components/messages/review-swarm-progress';
 import { MAIN_AGENT_ID } from '../constant/kimi-tui';
 import type {
   BackgroundAgentMetadata,
@@ -32,6 +36,7 @@ export interface SubagentInfo {
 export type SubagentLifecycleEvent = Event & { type: `subagent.${string}` };
 type SubagentLifecycleEventOf<Type extends SubagentLifecycleEvent['type']> =
   SubagentLifecycleEvent & { type: Type };
+type SwarmProgressComponentLike = AgentSwarmProgressComponent | ReviewSwarmProgressComponent;
 
 export interface SubAgentEventHandlerDependencies {
   readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
@@ -53,7 +58,7 @@ function renderedRowsAfterChild(
 
 export class SubAgentEventHandler {
   readonly subagentInfo: Map<string, SubagentInfo> = new Map();
-  private readonly agentSwarmProgress: Map<string, AgentSwarmProgressComponent> = new Map();
+  private readonly swarmProgress: Map<string, SwarmProgressComponentLike> = new Map();
   backgroundAgentMetadata: Map<string, BackgroundAgentMetadata> = new Map();
 
   constructor(
@@ -78,7 +83,7 @@ export class SubAgentEventHandler {
     if (info === undefined || info.parentToolCallId.length === 0) return true;
 
     const { parentToolCallId } = info;
-    const swarmProgress = this.agentSwarmProgress.get(parentToolCallId);
+    const swarmProgress = this.swarmProgress.get(parentToolCallId);
     if (swarmProgress !== undefined) {
       this.applySubagentEventToSwarmProgress(swarmProgress, event, childAgentId);
       this.requestRender();
@@ -146,19 +151,19 @@ export class SubAgentEventHandler {
   }
 
   clearAgentSwarmProgress(): void {
-    for (const progress of this.agentSwarmProgress.values()) {
+    for (const progress of this.swarmProgress.values()) {
       progress.dispose();
     }
-    this.agentSwarmProgress.clear();
+    this.swarmProgress.clear();
     this.host.updateActivityPane();
   }
 
   hasAgentSwarmProgress(toolCallId: string): boolean {
-    return this.agentSwarmProgress.has(toolCallId);
+    return this.swarmProgress.has(toolCallId);
   }
 
   hasActiveAgentSwarmToolCall(): boolean {
-    return Array.from(this.agentSwarmProgress.values()).some((progress) =>
+    return Array.from(this.swarmProgress.values()).some((progress) =>
       progress.isToolCallActive()
     );
   }
@@ -166,7 +171,7 @@ export class SubAgentEventHandler {
   syncAgentSwarmActivitySpinner(
     spinner: { renderInline(): string } | undefined,
   ): void {
-    for (const progress of this.agentSwarmProgress.values()) {
+    for (const progress of this.swarmProgress.values()) {
       progress.setActivitySpinnerText(
         spinner === undefined ? undefined : () => spinner.renderInline(),
       );
@@ -180,6 +185,63 @@ export class SubAgentEventHandler {
     const progress = this.ensureAgentSwarmProgress(toolCallId, args);
     progress.markInputComplete();
     this.requestRender();
+  }
+
+  handleReviewSwarmToolCallStarted(
+    toolCallId: string,
+    args: Record<string, unknown>,
+  ): void {
+    const existing = this.swarmProgress.get(toolCallId);
+    if (existing instanceof ReviewSwarmProgressComponent) {
+      existing.updateArgs(args);
+      return;
+    }
+    const progress = new ReviewSwarmProgressComponent({
+      description: agentSwarmDescriptionFromArgs(args),
+      args,
+      availableGridHeight: () => this.agentSwarmGridHeight(),
+      requestRender: () => {
+        this.requestRender();
+      },
+    });
+    this.swarmProgress.set(toolCallId, progress);
+    this.host.streamingUI.finalizeLiveTextBuffers('tool');
+    this.host.state.transcriptContainer.addChild(progress);
+    this.host.updateActivityPane();
+    this.requestRender();
+  }
+
+  handleReviewSwarmAssignmentStarted(
+    toolCallId: string,
+    assignment: ReviewEventAssignment,
+  ): boolean {
+    const progress = this.swarmProgress.get(toolCallId);
+    if (!(progress instanceof ReviewSwarmProgressComponent)) return false;
+    progress.handleAssignmentStarted(assignment);
+    this.requestRender();
+    return true;
+  }
+
+  handleReviewSwarmAssignmentProgress(
+    toolCallId: string,
+    progressEvent: ReviewEventProgress,
+  ): boolean {
+    const progress = this.swarmProgress.get(toolCallId);
+    if (!(progress instanceof ReviewSwarmProgressComponent)) return false;
+    progress.handleAssignmentProgress(progressEvent);
+    this.requestRender();
+    return true;
+  }
+
+  handleReviewSwarmCommentAdded(
+    toolCallId: string,
+    comment: ReviewEventComment,
+  ): boolean {
+    const progress = this.swarmProgress.get(toolCallId);
+    if (!(progress instanceof ReviewSwarmProgressComponent)) return false;
+    progress.handleCommentAdded(comment);
+    this.requestRender();
+    return true;
   }
 
   handleAgentSwarmToolCallDelta(
@@ -196,7 +258,7 @@ export class SubAgentEventHandler {
     resultData: ToolResultBlockData,
     isError: boolean,
   ): void {
-    const progress = this.agentSwarmProgress.get(toolCallId);
+    const progress = this.swarmProgress.get(toolCallId);
     if (progress === undefined) return;
 
     if (isError && isUserCancelledSubagentError(resultData.output)) {
@@ -221,7 +283,7 @@ export class SubAgentEventHandler {
 
   markActiveAgentSwarmsCancelled(): void {
     let updated = false;
-    for (const [toolCallId, progress] of this.agentSwarmProgress) {
+    for (const [toolCallId, progress] of this.swarmProgress) {
       if (progress.isRequestStreaming()) {
         this.removeAgentSwarmProgress(toolCallId, progress);
         updated = true;
@@ -489,7 +551,7 @@ export class SubAgentEventHandler {
   }
 
   private applySubagentEventToSwarmProgress(
-    progress: AgentSwarmProgressComponent,
+    progress: SwarmProgressComponentLike,
     event: Event,
     subagentId: string,
   ): void {
@@ -502,9 +564,9 @@ export class SubAgentEventHandler {
 
   private updateAgentSwarmProgress(
     parentToolCallId: string,
-    update: (progress: AgentSwarmProgressComponent) => void,
+    update: (progress: SwarmProgressComponentLike) => void,
   ): boolean {
-    const progress = this.agentSwarmProgress.get(parentToolCallId);
+    const progress = this.swarmProgress.get(parentToolCallId);
     if (progress === undefined) return false;
     update(progress);
     this.requestRender();
@@ -516,8 +578,8 @@ export class SubAgentEventHandler {
     args: Record<string, unknown>,
     options: { readonly streamingArguments?: string | undefined } = {},
   ): AgentSwarmProgressComponent {
-    const existing = this.agentSwarmProgress.get(toolCallId);
-    if (existing !== undefined) {
+    const existing = this.swarmProgress.get(toolCallId);
+    if (existing instanceof AgentSwarmProgressComponent) {
       existing.updateArgs(args, options);
       return existing;
     }
@@ -530,7 +592,7 @@ export class SubAgentEventHandler {
       },
     });
     progress.updateArgs(args, options);
-    this.agentSwarmProgress.set(toolCallId, progress);
+    this.swarmProgress.set(toolCallId, progress);
     this.host.streamingUI.finalizeLiveTextBuffers('tool');
     this.host.state.transcriptContainer.addChild(progress);
     this.host.updateActivityPane();
@@ -540,9 +602,9 @@ export class SubAgentEventHandler {
 
   private removeAgentSwarmProgress(
     toolCallId: string,
-    progress: AgentSwarmProgressComponent,
+    progress: SwarmProgressComponentLike,
   ): void {
-    this.agentSwarmProgress.delete(toolCallId);
+    this.swarmProgress.delete(toolCallId);
     progress.dispose();
     const children = this.host.state.transcriptContainer.children;
     const index = children.indexOf(progress);
@@ -555,8 +617,10 @@ export class SubAgentEventHandler {
 
   private agentSwarmGridHeight(): number | undefined {
     const { state } = this.host;
-    const terminalRows = state.ui.terminal.rows;
-    const terminalColumns = state.ui.terminal.columns;
+    const terminal = state.ui.terminal;
+    if (terminal === undefined) return undefined;
+    const terminalRows = terminal.rows;
+    const terminalColumns = terminal.columns;
     if (!Number.isFinite(terminalColumns) || terminalColumns <= 0) {
       return agentSwarmGridHeightForTerminalRows(terminalRows);
     }
@@ -571,7 +635,7 @@ export class SubAgentEventHandler {
   }
 
   private markAgentSwarmFailedOrCancelled(
-    progress: AgentSwarmProgressComponent,
+    progress: SwarmProgressComponentLike,
     subagentId: string,
     error: string,
   ): void {

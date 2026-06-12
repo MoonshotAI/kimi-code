@@ -359,7 +359,7 @@ export class SessionEventHandler {
     this.activeReviewIntensity = event.intensity;
     if (event.agentSwarm !== undefined) {
       this.reviewAgentSwarmToolCallId = event.agentSwarm.toolCallId;
-      this.subAgentEventHandler.handleAgentSwarmToolCallStarted(
+      this.subAgentEventHandler.handleReviewSwarmToolCallStarted(
         event.agentSwarm.toolCallId,
         argsRecord(event.agentSwarm.args),
       );
@@ -381,6 +381,12 @@ export class SessionEventHandler {
 
   private handleReviewAssignmentStarted(event: ReviewAssignmentStartedEvent): void {
     this.reviewAssignmentRoles.set(event.assignment.id, event.assignment.role);
+    if (this.reviewAgentSwarmToolCallId !== undefined) {
+      this.subAgentEventHandler.handleReviewSwarmAssignmentStarted(
+        this.reviewAgentSwarmToolCallId,
+        event.assignment,
+      );
+    }
     const pendingProgress = this.pendingReviewAssignmentProgress.get(event.assignment.id);
     this.pendingReviewAssignmentProgress.delete(event.assignment.id);
     if (
@@ -416,6 +422,12 @@ export class SessionEventHandler {
   }
 
   private handleReviewAssignmentProgress(event: ReviewAssignmentProgressEvent): void {
+    if (this.reviewAgentSwarmToolCallId !== undefined) {
+      this.subAgentEventHandler.handleReviewSwarmAssignmentProgress(
+        this.reviewAgentSwarmToolCallId,
+        event.progress,
+      );
+    }
     if (event.progress.status === 'active') return;
     if (this.reviewAgentSwarmReviewerAssignmentIds.has(event.progress.assignmentId)) return;
     const role = this.reviewAssignmentRoles.get(event.progress.assignmentId);
@@ -439,6 +451,12 @@ export class SessionEventHandler {
   }
 
   private handleReviewCommentAdded(event: ReviewCommentAddedEvent): void {
+    if (this.reviewAgentSwarmToolCallId !== undefined) {
+      this.subAgentEventHandler.handleReviewSwarmCommentAdded(
+        this.reviewAgentSwarmToolCallId,
+        event.comment,
+      );
+    }
     if (this.activeReviewIntensity === 'thorough' || this.activeReviewIntensity === 'deep') {
       return;
     }

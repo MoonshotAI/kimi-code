@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { AgentSwarmProgressComponent } from '#/tui/components/messages/agent-swarm-progress';
+import { ReviewSwarmProgressComponent } from '#/tui/components/messages/review-swarm-progress';
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
 import { getBuiltInPalette } from '#/tui/theme';
 import type { TranscriptEntry } from '#/tui/types';
@@ -322,7 +322,7 @@ describe('SessionEventHandler review events', () => {
     ]);
   });
 
-  it('starts AgentSwarm progress for Deep Review reviewer phase', () => {
+  it('starts review swarm progress for Deep Review reviewer phase', () => {
     const host = makeHost();
     const handler = new SessionEventHandler(host);
 
@@ -336,14 +336,122 @@ describe('SessionEventHandler review events', () => {
           subagent_type: 'reviewer',
           prompt_template: 'Run this review assignment:\n{{item}}',
           items: ['Correctness / src/a.ts', 'Tests / src/a.ts'],
+          review_swarm: {
+            perspectives: ['Correctness and regressions', 'Security and data safety'],
+            fileGroups: [{ id: 'group-1', name: 'Files 1-1', files: ['src/a.ts'] }],
+            items: [
+              {
+                index: 1,
+                perspective: 'Correctness and regressions',
+                fileGroupId: 'group-1',
+                fileGroupName: 'Files 1-1',
+                assignedFiles: ['src/a.ts'],
+              },
+              {
+                index: 2,
+                perspective: 'Security and data safety',
+                fileGroupId: 'group-1',
+                fileGroupName: 'Files 1-1',
+                assignedFiles: ['src/a.ts'],
+              },
+            ],
+          },
         },
       },
     } as any, vi.fn());
 
     expect(host.state.transcriptContainer.addChild).toHaveBeenCalledWith(
-      expect.any(AgentSwarmProgressComponent),
+      expect.any(ReviewSwarmProgressComponent),
     );
     expect(handler.hasActiveAgentSwarmToolCall()).toBe(true);
+  });
+
+  it('updates Deep Review swarm cells from review assignment comments and progress', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent({
+      ...reviewStartedEvent(),
+      intensity: 'deep',
+      agentSwarm: {
+        toolCallId: 'review:deep-agent-swarm',
+        args: {
+          description: 'Deep Review reviewers',
+          subagent_type: 'reviewer',
+          prompt_template: 'Run this review assignment:\n{{item}}',
+          items: ['Correctness / src/a.ts', 'Security / src/a.ts'],
+          review_swarm: {
+            perspectives: ['Correctness and regressions', 'Security and data safety'],
+            fileGroups: [{ id: 'group-1', name: 'Files 1-1', files: ['src/a.ts'] }],
+            items: [
+              {
+                index: 1,
+                perspective: 'Correctness and regressions',
+                fileGroupId: 'group-1',
+                fileGroupName: 'Files 1-1',
+                assignedFiles: ['src/a.ts'],
+              },
+              {
+                index: 2,
+                perspective: 'Security and data safety',
+                fileGroupId: 'group-1',
+                fileGroupName: 'Files 1-1',
+                assignedFiles: ['src/a.ts'],
+              },
+            ],
+          },
+        },
+      },
+    } as any, vi.fn());
+    const progress = host.state.transcriptContainer.addChild.mock.calls[0]?.[0] as ReviewSwarmProgressComponent;
+
+    handler.handleEvent({
+      type: 'review.assignment.started',
+      sessionId: 's1',
+      agentId: 'main',
+      assignment: {
+        id: 'review-assignment-1',
+        role: 'reviewer',
+        perspective: 'Correctness and regressions',
+        assignedFiles: ['src/a.ts'],
+        requiredCoverage: 'full_file',
+        group: 'group-1',
+      },
+    } as any, vi.fn());
+    handler.handleEvent({
+      type: 'review.comment.added',
+      sessionId: 's1',
+      agentId: 'main',
+      comment: {
+        id: 'review-comment-1',
+        assignmentId: 'review-assignment-1',
+        state: 'candidate',
+        severity: 'important',
+        path: 'src/a.ts',
+        line: 7,
+        title: 'Validate request',
+        body: 'Validate request data.',
+      },
+    } as any, vi.fn());
+    handler.handleEvent({
+      type: 'review.assignment.progress',
+      sessionId: 's1',
+      agentId: 'main',
+      progress: {
+        assignmentId: 'review-assignment-1',
+        status: 'complete',
+        summary: 'Correctness reviewed.',
+      },
+    } as any, vi.fn());
+
+    const output = progress.render(112).join('\n').replaceAll(/\u001B\[[0-9;]*m/g, '');
+
+    expect(output).toContain('A-01');
+    expect(output).toContain('important: src/a.ts:7 Validate request');
+    expect(output).toContain('Reviewing...');
+    expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
+      'Review started',
+    ]);
   });
 
   it('suppresses Deep Review reviewer assignment rows while AgentSwarm is active', () => {
