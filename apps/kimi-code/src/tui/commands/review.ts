@@ -188,6 +188,7 @@ async function startReview(
 ): Promise<void> {
   const spinner = host.showProgressSpinner('Reviewing changes…');
   host.state.reviewActive = true;
+  host.state.reviewResultPending = true;
   try {
     const result = await host.requireSession().startReview(input);
     host.state.reviewActive = false;
@@ -216,6 +217,8 @@ async function startReview(
     }
     spinner.stop({ ok: false, label: `Review stopped: ${message}` });
     host.showError(`Review stopped: ${message}`);
+  } finally {
+    host.state.reviewResultPending = false;
   }
 }
 

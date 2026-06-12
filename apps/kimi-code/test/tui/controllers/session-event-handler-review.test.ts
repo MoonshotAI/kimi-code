@@ -13,6 +13,7 @@ function makeHost() {
         streamingPhase: 'idle',
       },
       reviewActive: false,
+      reviewResultPending: false,
       theme: { palette: getBuiltInPalette('dark') },
       toolOutputExpanded: false,
       todoPanel: { getTodos: vi.fn(() => []) },
@@ -133,6 +134,18 @@ describe('SessionEventHandler review events', () => {
     expect(appendedEntries(host)[0]!.reviewData!.detail).toContain('1 file: +2 -1');
   });
 
+  it('skips the completion progress row while the slash command owns final review rendering', () => {
+    const host = makeHost();
+    host.state.reviewActive = true;
+    host.state.reviewResultPending = true;
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(reviewCompletedEvent(), vi.fn());
+
+    expect(host.state.reviewActive).toBe(false);
+    expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([]);
+  });
+
   it('clears active review state on failure and reset', () => {
     const host = makeHost();
     const handler = new SessionEventHandler(host);
@@ -148,8 +161,10 @@ describe('SessionEventHandler review events', () => {
     });
 
     host.state.reviewActive = true;
+    host.state.reviewResultPending = true;
     handler.resetRuntimeState();
     expect(host.state.reviewActive).toBe(false);
+    expect(host.state.reviewResultPending).toBe(false);
   });
 
   it('renders provider review failures as a stopped review', () => {

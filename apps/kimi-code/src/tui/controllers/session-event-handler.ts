@@ -178,6 +178,7 @@ export class SessionEventHandler {
     this.queuedGoalPromotionPending = false;
     this.queuedGoalPromotionInFlight = false;
     this.host.state.reviewActive = false;
+    this.host.state.reviewResultPending = false;
     this.clearQueuedGoalPromotionTimer();
     this.stopAllMcpServerStatusSpinners();
   }
@@ -444,11 +445,13 @@ export class SessionEventHandler {
   }
 
   private handleReviewCompleted(event: ReviewCompletedEvent): void {
+    const commandOwnsFinalReviewResult = this.host.state.reviewResultPending;
     this.host.state.reviewActive = false;
     this.finishReviewAgentSwarm('', false);
     this.reviewAgentSwarmReviewerAssignmentIds.clear();
     this.activeReviewIntensity = undefined;
     this.reviewAssignmentRoles.clear();
+    if (commandOwnsFinalReviewResult) return;
     this.appendReviewProgress({
       state: 'completed',
       title: event.status === 'complete' ? 'Review completed' : 'Review blocked',

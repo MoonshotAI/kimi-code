@@ -79,5 +79,6 @@ describe('createTUIState', () => {
     expect(state.externalEditorRunning).toBe(false);
     expect(state.loadingSessions).toBe(false);
     expect(state.activitySpinner).toBeNull();
+    expect(state.reviewResultPending).toBe(false);
   });
 });

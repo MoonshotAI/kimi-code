@@ -148,6 +148,7 @@ function makeHost(input: {
         model: 'kimi-model',
       },
       reviewActive: false,
+      reviewResultPending: false,
       theme: currentTheme,
       ui: { requestRender: vi.fn() },
     },
@@ -205,6 +206,26 @@ describe('handleReviewCommand', () => {
         content: expect.stringContaining('Missing validation'),
       }),
     );
+  });
+
+  it('marks the command review result as pending while the review is running', async () => {
+    const { host, session } = makeHost();
+    let pendingDuringStart: boolean | undefined;
+    session.startReview.mockImplementationOnce(async (reviewInput) => {
+      pendingDuringStart = host.state.reviewResultPending;
+      return result(reviewInput.target, reviewInput.intensity);
+    });
+    const task = handleReviewCommand(host, '');
+
+    await waitForPicker(host, 1);
+    mountedPicker(host, 0).handleInput(ENTER);
+    await waitForPicker(host, 2);
+    mountedPicker(host, 1).handleInput(ENTER);
+    await task;
+
+    expect(pendingDuringStart).toBe(true);
+    expect(host.state.reviewResultPending).toBe(false);
+    expect(host.appendTranscriptEntry).toHaveBeenCalledTimes(1);
   });
 
   it('removes the preview status when intensity selection is cancelled', async () => {

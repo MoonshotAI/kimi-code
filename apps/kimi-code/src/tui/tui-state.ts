@@ -52,6 +52,7 @@ export interface TUIState {
   queuedMessages: QueuedMessage[];
   swarmModeEntry: 'manual' | 'task' | undefined;
   reviewActive: boolean;
+  reviewResultPending: boolean;
 }
 
 export function createTUIState(options: KimiTUIOptions): TUIState {
@@ -101,5 +102,6 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     queuedMessages: [],
     swarmModeEntry: undefined,
     reviewActive: false,
+    reviewResultPending: false,
   };
 }
