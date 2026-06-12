@@ -41,6 +41,7 @@ import {
   showModelPicker,
   showPermissionPicker,
   showSettingsSelector,
+  showSpiceupPicker,
 } from './config';
 import { handleGoalCommand } from './goal';
 import { handleProviderCommand } from './provider';
@@ -274,6 +275,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'model':
       handleModelCommand(host, args);
+      return;
+    case 'spiceup':
+      showSpiceupPicker(host);
       return;
     case 'provider':
       await handleProviderCommand(host);

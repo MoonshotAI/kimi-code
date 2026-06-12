@@ -164,6 +164,9 @@ export interface SetModelResult {
   readonly model: string;
   readonly providerName?: string | undefined;
 }
+export interface SetGenerationKwargsPayload {
+  readonly kwargs: Record<string, number>;
+}
 export interface CancelPlanPayload {
   readonly id?: string;
 }
@@ -313,6 +316,7 @@ export interface AgentAPI {
   setThinking: (payload: SetThinkingPayload) => void;
   setPermission: (payload: SetPermissionPayload) => void;
   setModel: (payload: SetModelPayload) => SetModelResult;
+  setGenerationKwargs: (payload: SetGenerationKwargsPayload) => void;
   getModel: (payload: EmptyPayload) => string;
   enterPlan: (payload: EmptyPayload) => void;
   cancelPlan: (payload: CancelPlanPayload) => void;

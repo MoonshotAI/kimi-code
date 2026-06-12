@@ -93,6 +93,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'spiceup',
+    aliases: [],
+    description: 'Adjust session-level model sampling parameters',
+    priority: 95,
+    availability: 'always',
+  },
+  {
     name: 'provider',
     aliases: ['providers'],
     description: 'Manage AI providers (add / delete / refresh)',

@@ -140,6 +140,7 @@ describe('built-in slash command registry', () => {
         'model',
         'new',
         'permission',
+        'spiceup',
         'plan',
         'reload',
         'reload-tui',

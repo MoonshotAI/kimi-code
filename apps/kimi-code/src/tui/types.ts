@@ -10,6 +10,7 @@ import type {
 
 import type { NotificationsConfig, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
+import type { SpiceupSelection } from './components/dialogs/spiceup-selector';
 import type { ColorToken, ThemeName } from './theme';
 
 export interface BannerState {
@@ -40,6 +41,7 @@ export interface AppState {
   upgrade: UpgradePreferences;
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
+  generationKwargs: SpiceupSelection | null;
   sessionTitle: string | null;
   /** Current goal snapshot for the footer badge; null/undefined when no active goal. */
   goal?: GoalSnapshot | null;

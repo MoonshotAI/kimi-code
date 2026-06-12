@@ -214,6 +214,17 @@ describe('Agent config', () => {
     `);
     await ctx.expectResumeMatches();
   });
+
+  it('setGenerationKwargs stores overrides in config and exposes them via getConfig', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    await ctx.rpc.setGenerationKwargs({ kwargs: { temperature: 0.7, top_p: 0.9 } });
+
+    await expect(ctx.rpc.getConfig({})).resolves.toMatchObject({
+      generationKwargs: { temperature: 0.7, top_p: 0.9 },
+    });
+  });
 });
 
 function toolNames(value: unknown): string[] {

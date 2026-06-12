@@ -316,6 +316,42 @@ describe('SessionSubagentHost', () => {
     ]);
   });
 
+  it('inherits parent generation kwargs when spawning a subagent', async () => {
+    const parent = testAgent();
+    parent.configure();
+    await parent.rpc.setGenerationKwargs({ kwargs: { temperature: 0.5, top_p: 0.95 } });
+    parent.newEvents();
+
+    const summary =
+      'Investigated the delegated task thoroughly and returned a detailed summary that lets the parent agent continue without repeating the work. '.repeat(
+        3,
+      );
+    const child = testAgent({ type: 'sub' });
+    child.mockNextResponse({
+      type: 'text',
+      text: summary,
+    });
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.spawn({
+      profileName: 'explore',
+      parentToolCallId: 'call_agent',
+      prompt: 'Find the cause',
+      description: 'Find cause',
+      runInBackground: false,
+      signal,
+    });
+
+    await expect(handle.completion).resolves.toMatchObject({
+      result: summary.trim(),
+    });
+    expect(child.agent.config.data().generationKwargs).toEqual({
+      temperature: 0.5,
+      top_p: 0.95,
+    });
+  });
+
   it('inherits active parent user tools when spawning a subagent', async () => {
     const parent = testAgent();
     parent.configure();
