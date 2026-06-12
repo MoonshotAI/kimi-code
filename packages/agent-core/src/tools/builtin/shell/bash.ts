@@ -31,7 +31,7 @@ import { z } from 'zod';
 
 import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/background';
 import type { BuiltinTool } from '../../../agent/tool';
-import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
+import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
@@ -181,7 +181,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       },
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
-      execute: ({ signal }) => this.execution(args, signal),
+      execute: ({ signal, onUpdate }) => this.execution(args, signal, onUpdate),
     };
   }
 
@@ -212,7 +212,11 @@ export class BashTool implements BuiltinTool<BashInput> {
     return this.kaos.execWithEnv(shellArgs, mergedEnv);
   }
 
-  private async execution(args: BashInput, signal: AbortSignal): Promise<ExecutableToolResult> {
+  private async execution(
+    args: BashInput,
+    signal: AbortSignal,
+    onUpdate?: ((update: ToolUpdate) => void) | undefined,
+  ): Promise<ExecutableToolResult> {
     if (signal.aborted) {
       return { isError: true, output: 'Aborted before command started' };
     }
@@ -312,8 +316,8 @@ export class BashTool implements BuiltinTool<BashInput> {
       const isTerminating = (): boolean => timedOut || aborted || killed;
       const [, exitCode] = await Promise.all([
         Promise.all([
-          readStreamIntoBuilder(proc.stdout, builder, isTerminating),
-          readStreamIntoBuilder(proc.stderr, builder, isTerminating),
+          readStreamIntoBuilder(proc.stdout, builder, 'stdout', onUpdate, isTerminating),
+          readStreamIntoBuilder(proc.stderr, builder, 'stderr', onUpdate, isTerminating),
         ]),
         proc.wait(),
       ]);
@@ -438,6 +442,8 @@ export class BashTool implements BuiltinTool<BashInput> {
 async function readStreamIntoBuilder(
   stream: Readable,
   builder: ToolResultBuilder,
+  kind: 'stdout' | 'stderr',
+  onUpdate?: ((update: ToolUpdate) => void) | undefined,
   suppressPrematureClose?: () => boolean,
 ): Promise<void> {
   const decoder = new StringDecoder('utf8');
@@ -445,14 +451,18 @@ async function readStreamIntoBuilder(
     for await (const chunk of stream) {
       const buf: Buffer =
         typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : (chunk as Buffer);
-      builder.write(decoder.write(buf));
+      const text = decoder.write(buf);
+      if (text.length > 0) onUpdate?.({ kind, text });
+      builder.write(text);
     }
   } catch (error) {
     if (!isPrematureCloseError(error) || suppressPrematureClose?.() !== true) {
       throw error;
     }
   }
-  builder.write(decoder.end());
+  const trailing = decoder.end();
+  if (trailing.length > 0) onUpdate?.({ kind, text: trailing });
+  builder.write(trailing);
 }
 
 function isPrematureCloseError(error: unknown): boolean {

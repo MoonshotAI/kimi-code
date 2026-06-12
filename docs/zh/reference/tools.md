@@ -44,7 +44,7 @@
 - `description`：后台任务描述，`run_in_background=true` 时必填
 - `disable_timeout`：后台任务是否取消超时限制
 
-前台模式会阻塞当前轮次，直到命令结束或超时；后台模式立即返回任务 ID，任务结束时自动通知 Agent。stdin 始终被关闭，交互式命令会立即收到 EOF。两阶段终止策略（SIGTERM → 5 秒宽限期 → SIGKILL）确保超时后进程可靠结束。Windows 平台默认使用 Git Bash。
+前台模式会阻塞当前轮次，直到命令结束或超时；命令运行期间，TUI 会把 stdout 和 stderr 流式显示在正在运行的 `Bash` 工具卡片中。后台模式立即返回任务 ID，任务结束时自动通知 Agent。stdin 始终被关闭，交互式命令会立即收到 EOF。两阶段终止策略（SIGTERM → 5 秒宽限期 → SIGKILL）确保超时后进程可靠结束。Windows 平台默认使用 Git Bash。
 
 ## 网络类
 
