@@ -4,7 +4,7 @@ Date: 2026-06-12
 
 ## Goal
 
-Build a local platform for testing and inspecting long-running Kimi TUI workflows without opening visible terminal windows.
+Build a local platform for testing and inspecting long-running TUI apps, such as Claude Code, without opening visible terminal windows.
 
 The platform should let a developer:
 
@@ -168,21 +168,18 @@ Each run is created from a YAML file. Multiple runs may be active at the same ti
 Example:
 
 ```yaml
-name: review-current-branch
+name: claude-code-review-current-branch
 
-command: pnpm
-args:
-  - --filter
-  - kimi-code
-  - dev:cli-only
+command: claude
+args: []
 
-cwd: /Users/moonshot/Developer/kimi-code-worktrees/feat-code-review
+cwd: /Users/example/work/project
 
 cols: 120
 rows: 36
 
 env:
-  KIMI_CODE_EXPERIMENTAL_CODE_REVIEW: "1"
+  TERM: xterm-256color
 
 steps:
   - waitForText: "How can I help?"
@@ -190,17 +187,7 @@ steps:
 
   - mark: "start review"
 
-  - send: "/review\n"
-
-  - waitForText: "What to review"
-    timeoutMs: 10000
-
-  - key: "Enter"
-
-  - waitForText: "Review intensity"
-    timeoutMs: 10000
-
-  - key: "Enter"
+  - send: "Review the current branch against main.\n"
 
   - mark: "review running"
 
@@ -224,9 +211,9 @@ A scenario may also be launched as part of a suite. A suite is only a convenienc
 
 ```yaml
 runs:
-  - scenario: ./scenarios/review-current-branch.yaml
-  - scenario: ./scenarios/review-working-tree.yaml
-  - scenario: ./scenarios/review-single-commit.yaml
+  - scenario: ./scenarios/claude-code-review-current-branch.yaml
+  - scenario: ./scenarios/claude-code-review-working-tree.yaml
+  - scenario: ./scenarios/custom-tui-smoke.yaml
 ```
 
 ## YAML Step Types
@@ -315,7 +302,7 @@ Required event types:
 Example:
 
 ```json
-{"t":0,"type":"process_start","command":"pnpm","args":["--filter","kimi-code","dev:cli-only"],"cwd":"/repo","cols":120,"rows":36}
+{"t":0,"type":"process_start","command":"claude","args":[],"cwd":"/repo","cols":120,"rows":36}
 {"t":812,"type":"pty_output","data":"base64-encoded-bytes"}
 {"t":4520,"type":"user_input","label":"send","data":"base64-encoded-bytes"}
 {"t":4521,"type":"marker","label":"start review"}
@@ -487,12 +474,12 @@ The web app needs server support for these capabilities. The exact route shape i
 7. Add live event streaming support for running sessions.
 8. Add server support for launch, list, detail, stop, rerun, suites, stored replay, and raw event inspection.
 9. Add new web app launcher, dashboard, terminal wall, run detail, live/replay player, failure inspector, suite detail, and run history.
-10. Add one sample code-review scenario and one sample suite.
+10. Add one sample scenario for a long-running TUI app, such as Claude Code, and one sample suite.
 
 ## Acceptance Criteria
 
-- A developer can start one hidden Kimi TUI session from a YAML scenario.
-- A developer can start many hidden Kimi TUI sessions concurrently from individual scenarios or a suite file.
+- A developer can start one hidden TUI session from a YAML scenario.
+- A developer can start many hidden TUI sessions concurrently from individual scenarios or a suite file.
 - A developer can monitor all active sessions from a dashboard.
 - A developer can open any running session and watch the terminal live.
 - A developer can pause the live view without pausing the process, then return to live.
