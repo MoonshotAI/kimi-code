@@ -4,7 +4,7 @@
  * Layout:
  *   Line 1: [yolo] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
  *   Line 2: context: XX.X% (tokens/max)
- *   Line 3+: aligned quota rows: "label (used%/100%)" under context parens
+ *   Line 3+: right-aligned quota rows: "label:   XX%   (reset in ...)"
  */
 
 import type { Component } from '@earendil-works/pi-tui';
@@ -220,36 +220,52 @@ function hslToHex(h: number, s: number, l: number): string {
   return `#${f(0)}${f(8)}${f(4)}`;
 }
 
+function formatResetHint(hint: string | undefined): string {
+  if (hint === undefined) return '';
+  if (hint === 'reset') return '(reset)';
+  if (hint.startsWith('resets in ')) {
+    const duration = hint.slice('resets in '.length).replace(/ /g, ', ');
+    return `(${duration})`;
+  }
+  return `(${hint})`;
+}
+
 function formatQuotaLines(
   quotas: readonly QuotaInfo[] | undefined,
-  contextText: string,
-  contextWidth: number,
   width: number,
   colors: ColorPalette,
 ): string[] {
   if (quotas === undefined || quotas.length === 0) return [];
 
-  const parenIndex = contextText.indexOf('(');
-  const parenCol =
-    parenIndex >= 0 ? Math.max(0, width - contextWidth + parenIndex) : width;
+  const rows = quotas
+    .filter((quota) => quota.limit > 0)
+    .map((quota) => {
+      const usedRatio = Math.max(0, Math.min(quota.used / quota.limit, 1));
+      return {
+        label: `${quota.label.toLowerCase()}:`,
+        percent: `${Math.round(usedRatio * 100)}%`,
+        reset: formatResetHint(quota.resetHint),
+        ratio: usedRatio,
+      };
+    });
+  if (rows.length === 0) return [];
+
+  const labelColWidth = Math.max(...rows.map((r) => visibleWidth(r.label)));
+  const percentColWidth = Math.max(...rows.map((r) => visibleWidth(r.percent)));
+  const resetColWidth = Math.max(...rows.map((r) => visibleWidth(r.reset)));
+  const gap = 3;
+  const blockWidth = labelColWidth + gap + percentColWidth + gap + resetColWidth;
 
   const lines: string[] = [];
-  for (const quota of quotas) {
-    if (quota.limit <= 0) continue;
-    const usedRatio = Math.max(0, Math.min(quota.used / quota.limit, 1));
-    const usedPct = Math.round(usedRatio * 100);
-    // Gradient from dark green (0%) to red (100%).
-    const numberColor = chalk.hex(hslToHex(Math.round((1 - usedRatio) * 120), 80, 40));
-    const prefix = `${quota.label.toLowerCase()} `;
-    const prefixWidth = visibleWidth(prefix);
-    const pad = Math.max(0, parenCol - prefixWidth);
-    const line =
-      ' '.repeat(pad) +
-      chalk.hex(colors.text)(prefix) +
-      chalk.hex(colors.text)('(') +
-      numberColor(String(usedPct)) +
-      chalk.hex(colors.text)('/100%)');
-    lines.push(truncateToWidth(line, width));
+  for (const row of rows) {
+    const numberColor = chalk.hex(hslToHex(Math.round((1 - row.ratio) * 120), 80, 40));
+    const content =
+      row.label.padEnd(labelColWidth + gap) +
+      numberColor(row.percent.padStart(percentColWidth)) +
+      ' '.repeat(gap) +
+      chalk.hex(colors.text)(row.reset.padStart(resetColWidth));
+    const leftPad = Math.max(0, width - blockWidth);
+    lines.push(truncateToWidth(' '.repeat(leftPad) + content, width));
   }
   return lines;
 }
@@ -424,13 +440,7 @@ export class FooterComponent implements Component {
       line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
     }
 
-    const quotaLines = formatQuotaLines(
-      state.quotas,
-      contextText,
-      contextWidth,
-      width,
-      colors,
-    );
+    const quotaLines = formatQuotaLines(state.quotas, width, colors);
     if (quotaLines.length > 0) {
       return [
         truncateToWidth(line1, width),

@@ -113,23 +113,34 @@ describe('FooterComponent', () => {
     expect(footer.render(80).length).toBe(2);
   });
 
-  it('renders managed quota rows aligned under the context parentheses', () => {
+  it('renders managed quota rows in aligned columns with reset hint', () => {
     const state: AppState = {
       ...appState,
       contextUsage: 0.5,
       contextTokens: 1_000,
       maxContextTokens: 2_000,
-      quotas: [{ label: 'Weekly limit', used: 25, limit: 100 }],
+      quotas: [
+        { label: 'Weekly limit', used: 41, limit: 100, resetHint: 'resets in 5d 3h' },
+        { label: '5H LIMIT', used: 65, limit: 100, resetHint: 'resets in 1h 3m' },
+      ],
     };
     const footer = new FooterComponent(state);
     const lines = footer.render(200);
 
-    expect(lines.length).toBe(3);
-    const contextLine = stripAnsi(lines[1]!);
-    const quotaLine = stripAnsi(lines[2]!);
-    expect(quotaLine).toContain('weekly limit');
-    expect(quotaLine).toContain('(25/100%)');
-    expect(quotaLine.indexOf('(')).toBe(contextLine.indexOf('('));
+    expect(lines.length).toBe(4);
+    const weekLine = stripAnsi(lines[2]!);
+    const hourLine = stripAnsi(lines[3]!);
+
+    expect(weekLine).toContain('weekly limit:');
+    expect(weekLine).toContain('41%');
+    expect(weekLine).toContain('(5d, 3h)');
+
+    expect(hourLine).toContain('5h limit:');
+    expect(hourLine).toContain('65%');
+    expect(hourLine).toContain('(1h, 3m)');
+
+    // Both rows should end at the same column (right-aligned block).
+    expect(weekLine.trimEnd().length).toBe(hourLine.trimEnd().length);
   });
 
   it('lowercases quota labels and colors the percentage', () => {
@@ -138,14 +149,15 @@ describe('FooterComponent', () => {
       contextUsage: 0,
       contextTokens: 1_000_000,
       maxContextTokens: 2_000_000,
-      quotas: [{ label: '5H LIMIT', used: 50, limit: 100 }],
+      quotas: [{ label: '5H LIMIT', used: 50, limit: 100, resetHint: 'reset' }],
     };
     const footer = new FooterComponent(state);
     const lines = footer.render(120);
     const quotaLine = lines[2]!;
 
-    expect(stripAnsi(quotaLine)).toContain('5h limit');
-    expect(stripAnsi(quotaLine)).toContain('(50/100%)');
+    expect(stripAnsi(quotaLine)).toContain('5h limit:');
+    expect(stripAnsi(quotaLine)).toContain('50%');
+    expect(stripAnsi(quotaLine)).toContain('(reset)');
     expect(truecolorCodes(quotaLine).size).toBeGreaterThan(0);
   });
 });
