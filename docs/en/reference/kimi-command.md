@@ -37,12 +37,10 @@ The following combinations are rejected at startup:
 
 - `--continue` and `--session` are mutually exclusive — both mean "resume a previous session"
 - `--yolo` and `--auto` are mutually exclusive — the two permission modes cannot be combined
-- `--yolo` and `--auto` cannot be used together with `--continue` or `--session` — resumed sessions inherit the approval settings of the original session
-- `--plan` cannot be used with `--continue` or `--session` — Plan mode only takes effect for new sessions
 - `--prompt` cannot be used with `--yolo`, `--auto`, or `--plan` — non-interactive mode uses `auto` permission by default
 - `--output-format` can only be used together with `--prompt`
 
-To force YOLO or Plan mode when resuming a session, switch via slash commands inside the interactive session instead.
+When resuming a session, you can override its saved permission or plan mode by adding `--auto`, `--yolo`, or `--plan`. For example, `kimi --continue --auto` resumes the latest session and switches it to auto permission mode.
 
 ## Common Usage
 

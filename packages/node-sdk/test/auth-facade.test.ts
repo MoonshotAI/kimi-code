@@ -87,8 +87,8 @@ max_steps_per_turn = "abc"
 
   it('resolves cached access tokens from the configured scoped OAuth ref', async () => {
     const oauthKey = resolveKimiCodeOAuthKey({
-      oauthHost: 'https://auth.dev.kimi.team',
-      baseUrl: 'https://coding.deva.msh.team/coding/v1',
+      oauthHost: 'https://auth.dev.example.test',
+      baseUrl: 'https://api.dev.example.test/coding/v1',
     });
     const storageName = resolveKimiTokenStorageName({ oauthKey });
     const storage = new FileTokenStorage(join(homeDir, 'credentials'));
@@ -99,9 +99,9 @@ max_steps_per_turn = "abc"
       `
 [providers."managed:kimi-code"]
 type = "kimi"
-base_url = "https://coding.deva.msh.team/coding/v1"
+base_url = "https://api.dev.example.test/coding/v1"
 api_key = ""
-oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.kimi.team" }
+oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.example.test" }
 `,
     );
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
@@ -111,8 +111,8 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.
 
   it('reports auth status from the configured scoped OAuth ref', async () => {
     const oauthKey = resolveKimiCodeOAuthKey({
-      oauthHost: 'https://auth.dev.kimi.team',
-      baseUrl: 'https://coding.deva.msh.team/coding/v1',
+      oauthHost: 'https://auth.dev.example.test',
+      baseUrl: 'https://api.dev.example.test/coding/v1',
     });
     await new FileTokenStorage(join(homeDir, 'credentials')).save(
       resolveKimiTokenStorageName({ oauthKey }),
@@ -123,9 +123,9 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.
       `
 [providers."managed:kimi-code"]
 type = "kimi"
-base_url = "https://coding.deva.msh.team/coding/v1"
+base_url = "https://api.dev.example.test/coding/v1"
 api_key = ""
-oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.kimi.team" }
+oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.example.test" }
 `,
     );
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
@@ -197,8 +197,8 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.
   });
 
   it('logs in against the configured scoped OAuth host and base URL when env is absent', async () => {
-    const baseUrl = 'https://coding.deva.msh.team/coding/v1';
-    const oauthHost = 'https://auth.dev.kimi.team';
+    const baseUrl = 'https://api.dev.example.test/coding/v1';
+    const oauthHost = 'https://auth.dev.example.test';
     const oauthKey = resolveKimiCodeOAuthKey({ oauthHost, baseUrl });
     const storageName = resolveKimiTokenStorageName({ oauthKey });
     const storage = new FileTokenStorage(join(homeDir, 'credentials'));
@@ -502,8 +502,8 @@ oauth = { storage = "file", key = "oauth/kimi-code" }
 
   it('removes the configured scoped OAuth token on logout without touching the production token', async () => {
     const oauthKey = resolveKimiCodeOAuthKey({
-      oauthHost: 'https://auth.dev.kimi.team',
-      baseUrl: 'https://coding.deva.msh.team/coding/v1',
+      oauthHost: 'https://auth.dev.example.test',
+      baseUrl: 'https://api.dev.example.test/coding/v1',
     });
     const storageName = resolveKimiTokenStorageName({ oauthKey });
     const storage = new FileTokenStorage(join(homeDir, 'credentials'));
@@ -516,9 +516,9 @@ default_model = "kimi-code/kimi-for-coding"
 
 [providers."managed:kimi-code"]
 type = "kimi"
-base_url = "https://coding.deva.msh.team/coding/v1"
+base_url = "https://api.dev.example.test/coding/v1"
 api_key = ""
-oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.kimi.team" }
+oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.example.test" }
 
 [models."kimi-code/kimi-for-coding"]
 provider = "managed:kimi-code"
@@ -608,9 +608,9 @@ max_context_size = 262144
   });
 
   it('uses configured scoped OAuth refs and base URLs for managed usage and feedback', async () => {
-    const baseUrl = 'https://coding.deva.msh.team/coding/v1';
+    const baseUrl = 'https://api.dev.example.test/coding/v1';
     const oauthKey = resolveKimiCodeOAuthKey({
-      oauthHost: 'https://auth.dev.kimi.team',
+      oauthHost: 'https://auth.dev.example.test',
       baseUrl,
     });
     const storageName = resolveKimiTokenStorageName({ oauthKey });
@@ -625,7 +625,7 @@ max_context_size = 262144
 type = "kimi"
 base_url = "${baseUrl}"
 api_key = ""
-oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.kimi.team" }
+oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.example.test" }
 `,
     );
     const fetchMock = vi.fn<FetchMock>(async (input) => {

@@ -156,7 +156,7 @@ describe('kimi-datasource MCP server', () => {
       }
 
       const baseUrl = `http://127.0.0.1:${address.port}/coding/v1`;
-      const oauthHost = 'https://auth.dev.kimi.team';
+      const oauthHost = 'https://auth.dev.example.test';
       const scopedCredential = kimiCodeEnvCredentialName({ oauthHost, baseUrl });
 
       await mkdir(join(kimiHome, 'credentials'), { recursive: true });

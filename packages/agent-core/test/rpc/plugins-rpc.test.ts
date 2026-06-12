@@ -99,9 +99,9 @@ describe('KimiCore plugin RPCs', () => {
         `
 [providers."managed:kimi-code"]
 type = "kimi"
-base_url = "https://coding.deva.msh.team/coding/v1"
+base_url = "https://api.dev.example.test/coding/v1"
 api_key = ""
-oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "https://auth.dev.kimi.team" }
+oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "https://auth.dev.example.test" }
 `,
         'utf8',
       );
@@ -130,8 +130,8 @@ oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "http
 
       expect(mcpConfig.servers['plugin-kimi-datasource:data']?.env).toEqual(
         expect.objectContaining({
-          KIMI_CODE_BASE_URL: 'https://coding.deva.msh.team/coding/v1',
-          KIMI_CODE_OAUTH_HOST: 'https://auth.dev.kimi.team',
+          KIMI_CODE_BASE_URL: 'https://api.dev.example.test/coding/v1',
+          KIMI_CODE_OAUTH_HOST: 'https://auth.dev.example.test',
         }),
       );
     } finally {
