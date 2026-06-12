@@ -230,6 +230,12 @@ function formatResetHint(hint: string | undefined): string {
   return `(${hint})`;
 }
 
+function shortenQuotaLabel(label: string): string {
+  const normalized = label.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (normalized.includes('week')) return 'week';
+  return normalized.replace(/(\s*limit)$/, '');
+}
+
 function formatQuotaLines(
   quotas: readonly QuotaInfo[] | undefined,
   width: number,
@@ -242,7 +248,7 @@ function formatQuotaLines(
     .map((quota) => {
       const usedRatio = Math.max(0, Math.min(quota.used / quota.limit, 1));
       return {
-        labelName: quota.label.toLowerCase(),
+        labelName: shortenQuotaLabel(quota.label),
         percent: `${Math.round(usedRatio * 100)}%`,
         reset: formatResetHint(quota.resetHint),
         ratio: usedRatio,
@@ -258,12 +264,13 @@ function formatQuotaLines(
 
   const lines: string[] = [];
   for (const row of rows) {
-    // Subtle gradient: fully green at 0 %, fully red at 100 %, desaturated.
-    const numberColor = chalk.hex(hslToHex(Math.round((1 - row.ratio) * 120), 55, 50));
+    // Subtle gradient: green-ish at 0 % to amber at 100 %. Never red.
+    const numberColor = chalk.hex(hslToHex(Math.round(120 - row.ratio * 75), 40, 55));
+    const labelGap = gap + (labelNameWidth - visibleWidth(row.labelName));
     const content =
-      row.labelName.padEnd(labelNameWidth) +
+      row.labelName +
       ':' +
-      ' '.repeat(gap) +
+      ' '.repeat(labelGap) +
       numberColor(row.percent.padStart(percentColWidth)) +
       ' '.repeat(gap) +
       chalk.hex(colors.text)(row.reset.padEnd(resetColWidth));

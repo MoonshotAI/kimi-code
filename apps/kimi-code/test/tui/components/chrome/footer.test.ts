@@ -131,8 +131,14 @@ describe('FooterComponent', () => {
     const weekLine = stripAnsi(lines[2]!);
     const hourLine = stripAnsi(lines[3]!);
 
-    expect(weekLine).toMatch(/weekly limit\s*:\s+41%\s+\(5d, 3h\)/);
-    expect(hourLine).toMatch(/5h limit\s*:\s+65%\s+\(1h, 3m\)/);
+    expect(weekLine.trimStart().startsWith('week:')).toBe(true);
+    expect(hourLine.trimStart().startsWith('5h:')).toBe(true);
+    expect(weekLine).toMatch(/week:\s+41%\s+\(5d, 3h\)/);
+    expect(hourLine).toMatch(/5h:\s+65%\s+\(1h, 3m\)/);
+
+    // Percentages and reset hints share the same columns.
+    expect(weekLine.indexOf('41%')).toBe(hourLine.indexOf('65%'));
+    expect(weekLine.indexOf('(5d, 3h)')).toBe(hourLine.indexOf('(1h, 3m)'));
 
     // Both rows should end at the same column (right-aligned block).
     expect(weekLine.trimEnd().length).toBe(hourLine.trimEnd().length);
@@ -150,7 +156,8 @@ describe('FooterComponent', () => {
     const lines = footer.render(120);
     const quotaLine = lines[2]!;
 
-    expect(stripAnsi(quotaLine)).toMatch(/5h limit\s*:\s+50%\s+\(reset\)/);
+    expect(stripAnsi(quotaLine).trimStart().startsWith('5h:')).toBe(true);
+    expect(stripAnsi(quotaLine)).toMatch(/5h:\s+50%\s+\(reset\)/);
     expect(truecolorCodes(quotaLine).size).toBeGreaterThan(0);
   });
 });
