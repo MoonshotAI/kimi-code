@@ -587,6 +587,7 @@ export class SessionEventHandler {
     if (event.model !== undefined) patch.model = event.model;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
     if (event.usage !== undefined) this.applyLiveUsage(event.usage);
+    if (event.model !== undefined) this.scheduleQuotaRefresh();
     if (event.swarmMode === false) {
       this.host.state.swarmModeEntry = undefined;
       if (shouldRenderSwarmEnded) {

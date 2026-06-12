@@ -16,6 +16,10 @@ function makeHost(options: { quotas?: QuotaInfo[]; fetchError?: boolean } = {}) 
         model: 'kimi-k2',
         provider: DEFAULT_OAUTH_PROVIDER_NAME,
       } as any,
+      openai: {
+        model: 'openai',
+        provider: 'openai',
+      } as any,
     },
     quotas: undefined,
   };
@@ -141,5 +145,25 @@ describe('SessionEventHandler quotas', () => {
 
     (handler as any).applyLiveUsage({ currentTurn: undefined });
     expect(host.state.appState.quotas[0].used).toBe(10);
+  });
+
+  it('starts polling when the active model switches to a managed provider', async () => {
+    const quotas: QuotaInfo[] = [{ label: 'Weekly limit', used: 10, limit: 100 }];
+    const { host } = makeHost({ quotas });
+    host.state.appState.model = 'openai';
+    const handler = new SessionEventHandler(host);
+
+    (handler as any).scheduleQuotaRefresh();
+    await vi.runOnlyPendingTimersAsync();
+    expect(host.fetchManagedQuotas).not.toHaveBeenCalled();
+
+    handler.handleEvent(
+      { type: 'agent.status.updated', agentId: 'main', model: 'kimi-k2' } as any,
+      () => {},
+    );
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(host.fetchManagedQuotas).toHaveBeenCalled();
+    expect(host.state.appState.quotas).toEqual(quotas);
   });
 });
