@@ -586,6 +586,47 @@ describe('KimiTUI startup', () => {
     expect(driver.state.startupState).toBe('picker');
   });
 
+  it('applies --auto after picking a session from bare --session', async () => {
+    let permission = 'manual';
+    const session = makeSession({
+      id: 'ses-picked',
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingLevel: 'off',
+        permission,
+        planMode: false,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
+      })),
+      setPermission: vi.fn(async (mode: string) => {
+        permission = mode;
+      }),
+    });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [
+        {
+          id: 'ses-picked',
+          title: 'Picked session',
+          workDir: '/tmp/proj-a',
+          updatedAt: Date.now(),
+        },
+      ]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: '', auto: true }));
+
+    await (driver as unknown as { initMainTui(): Promise<boolean> }).initMainTui();
+    expect(driver.state.startupState).toBe('picker');
+    await (driver as unknown as { bootstrapFromPicker(): Promise<void> }).bootstrapFromPicker();
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\r');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(session.setPermission).toHaveBeenCalledWith('auto');
+    expect(driver.state.appState.permissionMode).toBe('auto');
+  });
+
   it('clears startup picker exit confirmation before resuming a selected session', async () => {
     const session = makeSession({ id: 'ses-picked' });
     const harness = makeHarness(session, {

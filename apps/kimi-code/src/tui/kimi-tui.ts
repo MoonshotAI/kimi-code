@@ -1856,10 +1856,21 @@ export class KimiTUI {
         loading: this.state.loadingSessions,
         currentSessionId: this.state.appState.sessionId,
         onSelect: (sessionId: string) => {
-          void this.resumeSession(sessionId).then((switched) => {
-            if (switched) {
-              this.hideSessionPicker();
+          void this.resumeSession(sessionId).then(async (switched) => {
+            if (!switched) {
+              return;
             }
+            const session = this.requireSession();
+            if (this.options.startup.auto) {
+              await session.setPermission('auto');
+            } else if (this.options.startup.yolo) {
+              await session.setPermission('yolo');
+            }
+            if (this.options.startup.plan) {
+              await session.setPlanMode(true);
+            }
+            this.applyStartupPermissionAndPlanToAppState();
+            this.hideSessionPicker();
           });
         },
         onCancel,
