@@ -113,8 +113,8 @@ describe('e2e: openai-responses adapter', () => {
         model: 'gpt-4.1',
         stream: false,
         store: false,
+        instructions: 'You are helpful.',
         input: [
-          { role: 'developer', content: 'You are helpful.' },
           {
             role: 'user',
             type: 'message',

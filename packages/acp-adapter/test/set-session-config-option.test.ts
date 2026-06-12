@@ -226,6 +226,43 @@ describe('AcpServer session/set_config_option', () => {
     expect(respToggle.currentValue).toBe('off');
   });
 
+  it('configId="thinking" + "off" on an always-thinking model → no SDK call, toggle stays locked on', async () => {
+    const handle = makeFakeSession('sess-thinking-locked');
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => handle.session,
+      getConfig: async () => ({
+        providers: {},
+        defaultModel: 'kimi-deep',
+        models: makeModelsMap([
+          { id: 'kimi-deep', name: 'Kimi Deep', thinkingSupported: true, alwaysThinking: true },
+        ]),
+      }),
+    } as unknown as KimiHarness;
+    const { client, capturing, sessionId } = await openSession(harness);
+    capturing.notifications.length = 0;
+
+    const response = await client.setSessionConfigOption({
+      sessionId,
+      configId: 'thinking',
+      value: 'off',
+    });
+
+    // The off request is silently ignored — the runtime cannot disable
+    // thinking on this model, so no SDK call is forwarded.
+    expect(handle.setThinkingCalls).toEqual([]);
+    const respToggle = response.configOptions.find((o) => o.id === 'thinking');
+    if (!respToggle || respToggle.type !== 'select') throw new Error('expected select toggle');
+    expect(respToggle.currentValue).toBe('on');
+    expect(respToggle.options.map((o) => ('value' in o ? o.value : ''))).toEqual(['on']);
+
+    // A snapshot refresh is still emitted so a stale client toggle snaps back.
+    const updates = capturing.notifications.filter(
+      (n) => n.sessionId === sessionId && n.update.sessionUpdate === 'config_option_update',
+    );
+    expect(updates).toHaveLength(1);
+  });
+
   const MODE_CASES: ReadonlyArray<{
     modeId: 'default' | 'plan' | 'auto' | 'yolo';
     expectedPlan: boolean;

@@ -37,6 +37,13 @@ export interface Kaos {
   chdir(path: string): Promise<void>;
   /** Return a new Kaos with the given `cwd`. */
   withCwd(cwd: string): Kaos;
+  /**
+   * Return a new Kaos that overlays `env` onto every spawned process.
+   *
+   * The provided record is read when a process is spawned, so callers may
+   * mutate a stable record to update future executions.
+   */
+  withEnv(env: Record<string, string>): Kaos;
   /** Return stat metadata for `path`. */
   stat(path: string, options?: { followSymlinks?: boolean }): Promise<StatResult>;
   /** Yield entry names in the directory at `path`. */

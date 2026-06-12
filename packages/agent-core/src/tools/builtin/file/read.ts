@@ -11,7 +11,7 @@ import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
 import { makeCarriageReturnsVisible, type LineEndingStyle } from './line-endings';
-import readDescriptionTemplate from './read.md';
+import readDescriptionTemplate from './read.md?raw';
 
 export const MAX_LINES: number = 1000;
 export const MAX_LINE_LENGTH: number = 2000;

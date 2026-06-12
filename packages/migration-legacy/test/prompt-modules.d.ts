@@ -1,14 +1,8 @@
 // `resume.integration.test.ts` imports real kimi-core, which transitively
-// imports `.md` / `.yaml` prompt sources as raw strings (resolved by the
-// shared `raw-text-plugin`). This ambient declaration lets `tsc` type-check
-// the migration package without pulling in kimi-core's own `.d.ts`.
+// imports prompt sources with `?raw`. This ambient declaration lets `tsc`
+// type-check the migration package without pulling in kimi-core's own `.d.ts`.
 
-declare module '*.md' {
-  const content: string;
-  export default content;
-}
-
-declare module '*.yaml' {
+declare module '*?raw' {
   const content: string;
   export default content;
 }

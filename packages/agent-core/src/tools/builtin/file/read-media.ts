@@ -33,7 +33,7 @@ import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '../../s
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
-import readMediaDescriptionHead from './read-media.md';
+import readMediaDescriptionHead from './read-media.md?raw';
 
 // ── Constants ────────────────────────────────────────────────────────
 

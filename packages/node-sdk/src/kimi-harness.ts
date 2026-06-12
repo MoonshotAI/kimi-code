@@ -72,8 +72,8 @@ export class KimiHarness {
     return this.rpc.interactiveAgentId;
   }
 
-  set interactiveAgentId(agentId: string) {
-    this.rpc.interactiveAgentId = agentId;
+  withInteractiveAgent<T>(agentId: string, fn: () => T): T {
+    return this.rpc.withInteractiveAgent(agentId, fn);
   }
 
   track(event: string, properties?: TelemetryProperties): void {

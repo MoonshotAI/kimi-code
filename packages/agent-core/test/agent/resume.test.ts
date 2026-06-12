@@ -224,6 +224,89 @@ describe('Agent resume', () => {
     }
   });
 
+  it('projects restored compactions into replay records', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Historical prompt before compaction' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'full_compaction.begin',
+        source: 'manual',
+        instruction: 'preserve implementation notes',
+      },
+      {
+        type: 'full_compaction.complete',
+      },
+      {
+        type: 'context.apply_compaction',
+        summary: 'Compacted implementation notes.',
+        compactedCount: 1,
+        tokensBefore: 120,
+        tokensAfter: 24,
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Compacted implementation notes.' }],
+        origin: { kind: 'compaction_summary' },
+      }),
+    ]);
+    expect(ctx.agent.replayBuilder.buildResult()).toEqual([
+      expect.objectContaining({
+        type: 'message',
+        message: expect.objectContaining({
+          role: 'user',
+          content: [{ type: 'text', text: 'Historical prompt before compaction' }],
+        }),
+      }),
+      expect.objectContaining({
+        type: 'compaction',
+        result: {
+          summary: 'Compacted implementation notes.',
+          compactedCount: 1,
+          tokensBefore: 120,
+          tokensAfter: 24,
+        },
+        instruction: 'preserve implementation notes',
+      }),
+    ]);
+  });
+
+  it('projects restored cancelled compactions into replay records', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'full_compaction.begin',
+        source: 'manual',
+        instruction: 'preserve implementation notes',
+      },
+      {
+        type: 'full_compaction.cancel',
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.replayBuilder.buildResult()).toEqual([
+      expect.objectContaining({
+        type: 'compaction',
+        result: 'cancelled',
+        instruction: 'preserve implementation notes',
+      }),
+    ]);
+  });
+
   it('persists undelivered restored background notifications during resume', async () => {
     const persistence = new RecordingAgentPersistence([
       {
@@ -313,14 +396,16 @@ describe('Agent resume', () => {
 
     await ctx.agent.resume();
 
-    expect(ctx.agent.replayBuilder.buildResult()).toContainEqual({
-      type: 'message',
-      message: expect.objectContaining({
-        role: 'tool',
-        toolCallId: 'call_failed_bash',
-        isError: true,
+    expect(ctx.agent.replayBuilder.buildResult()).toContainEqual(
+      expect.objectContaining({
+        type: 'message',
+        message: expect.objectContaining({
+          role: 'tool',
+          toolCallId: 'call_failed_bash',
+          isError: true,
+        }),
       }),
-    });
+    );
   });
 
   it('rebuilds goal completion replay cards without adding model-visible context', async () => {

@@ -1,6 +1,6 @@
 import { parseSkillText } from '../parser';
 import type { SkillDefinition } from '../types';
-import CUSTOM_THEME_BODY from './custom-theme.md';
+import CUSTOM_THEME_BODY from './custom-theme.md?raw';
 
 const PSEUDO_PATH = 'builtin://custom-theme';
 

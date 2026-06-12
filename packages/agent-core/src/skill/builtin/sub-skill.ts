@@ -1,8 +1,8 @@
 import { parseSkillText } from '../parser';
 import type { SkillDefinition } from '../types';
-import CONSOLIDATE_BODY from './sub-skill/consolidate/SKILL.md';
-import REVIEW_BODY from './sub-skill/review/SKILL.md';
-import PARENT_BODY from './sub-skill/SKILL.md';
+import CONSOLIDATE_BODY from './sub-skill/consolidate/SKILL.md?raw';
+import REVIEW_BODY from './sub-skill/review/SKILL.md?raw';
+import PARENT_BODY from './sub-skill/SKILL.md?raw';
 
 function makeBuiltin(
   body: string,
@@ -18,6 +18,7 @@ function makeBuiltin(
   });
   return {
     ...parsed,
+    name: dirName,
     path: pseudoPath,
     dir: pseudoPath,
     metadata: {
@@ -39,12 +40,12 @@ export const SUB_SKILL_REVIEW = makeBuiltin(
   REVIEW_BODY,
   'sub-skill.review',
   'builtin://sub-skill/review',
-  { disableModelInvocation: true },
+  { disableModelInvocation: true, isSubSkill: true },
 );
 
 export const SUB_SKILL_CONSOLIDATE = makeBuiltin(
   CONSOLIDATE_BODY,
   'sub-skill.consolidate',
   'builtin://sub-skill/consolidate',
-  { disableModelInvocation: true },
+  { disableModelInvocation: true, isSubSkill: true },
 );

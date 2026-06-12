@@ -6,6 +6,29 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.14.1 (2026-06-12)
+
+### Bug Fixes
+
+- Cancel active turns during session shutdown so foreground shell commands do not outlive prompt-mode exits.
+- Stop background tasks by default when sessions close.
+- Prevent overlapping interactive agent requests from using the wrong active agent.
+- Fix premature stream close errors when shell processes time out or are killed.
+- Degrade unsupported audio/video to placeholder text and reattach tool result media instead of silently dropping them.
+- Send OpenAI Responses system prompts as request instructions.
+- Propagate configured execution environment overrides across spawned processes.
+- Fix ACP file reads and edits for Windows workspaces opened through IDE clients.
+- Require AgentSwarm tool calls to run alone in a model response.
+
+### Polish
+
+- Add runtime support for dynamic MCP server updates, reference skills, replay timestamps, and Node file uploads.
+- Add a YOLO choice when starting swarm tasks from Manual mode.
+- Polish builtin skills.
+- Find slash commands by their aliases in autocomplete — typing `/clear` now suggests `new (clear)`.
+- Wrap long command and skill descriptions in the autocomplete menu onto a second line instead of cutting them off.
+- Display a tips banner below the welcome panel on startup.
+
 ## 0.14.0 (2026-06-10)
 
 ### Features

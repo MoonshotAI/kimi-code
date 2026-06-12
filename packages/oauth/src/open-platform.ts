@@ -1,5 +1,6 @@
 import { readApiErrorMessage } from './api-error';
 import { isRecord } from './utils';
+import { parseSupportsThinkingType } from './managed-kimi-code';
 import type {
   ManagedKimiCodeModelInfo,
   ManagedKimiConfigShape,
@@ -61,13 +62,29 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
     supportsImageIn: Boolean(item['supports_image_in']),
     supportsVideoIn: Boolean(item['supports_video_in']),
     supportsToolUse,
+    supportsThinkingType: parseSupportsThinkingType(item['supports_thinking_type']),
     displayName: normalizedDisplayName,
   };
 }
 
 export function capabilitiesForModel(model: ManagedKimiCodeModelInfo): string[] | undefined {
   const caps = new Set<string>();
-  if (model.supportsReasoning) caps.add('thinking');
+  // supports_thinking_type is the full three-state declaration and wins over
+  // the legacy supports_reasoning boolean; absent (older servers) falls back.
+  switch (model.supportsThinkingType) {
+    case 'only':
+      caps.add('thinking');
+      caps.add('always_thinking');
+      break;
+    case 'both':
+      caps.add('thinking');
+      break;
+    case 'no':
+      break;
+    case undefined:
+      if (model.supportsReasoning) caps.add('thinking');
+      break;
+  }
   if (model.supportsImageIn) caps.add('image_in');
   if (model.supportsVideoIn) caps.add('video_in');
   if (model.supportsToolUse ?? true) caps.add('tool_use');

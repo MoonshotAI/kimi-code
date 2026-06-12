@@ -35,6 +35,8 @@ export interface AcpModelEntry {
   readonly name: string;
   readonly description?: string | undefined;
   readonly thinkingSupported: boolean;
+  /** Declared 'always_thinking' capability — thinking cannot be turned off. */
+  readonly alwaysThinking?: boolean;
 }
 
 /**
@@ -47,11 +49,22 @@ const TOGGLEABLE_THINKING_MODELS = new Set(['kimi-for-coding', 'kimi-code']);
 
 export function deriveThinkingSupported(alias: ModelAlias): boolean {
   const declared = alias.capabilities ?? [];
-  if (declared.includes('thinking')) return true;
+  if (declared.includes('thinking') || declared.includes('always_thinking')) return true;
   const lower = alias.model.toLowerCase();
   if (lower.includes('thinking') || lower.includes('reason')) return true;
   if (TOGGLEABLE_THINKING_MODELS.has(alias.model)) return true;
   return false;
+}
+
+/**
+ * Whether the alias declares the 'always_thinking' capability — the model
+ * cannot run with thinking disabled, so the ACP toggle must lock to on.
+ * Deliberately capability-only: the name heuristics above keep feeding
+ * `thinkingSupported`, but only an explicit (server-derived) declaration
+ * may remove the off option from the client.
+ */
+export function deriveAlwaysThinking(alias: ModelAlias): boolean {
+  return (alias.capabilities ?? []).includes('always_thinking');
 }
 
 /**
@@ -80,6 +93,7 @@ export async function listModelsFromHarness(
       id,
       name: alias.displayName ?? alias.model ?? id,
       thinkingSupported: deriveThinkingSupported(alias),
+      alwaysThinking: deriveAlwaysThinking(alias),
     });
   }
   return out;

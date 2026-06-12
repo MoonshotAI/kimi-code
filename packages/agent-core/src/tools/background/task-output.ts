@@ -26,7 +26,7 @@ import type { ExecutableToolResult, ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import { matchesGlobRuleSubject } from '../support/rule-match';
 import { formatPlainObject } from './format';
-import TASK_OUTPUT_DESCRIPTION from './task-output.md';
+import TASK_OUTPUT_DESCRIPTION from './task-output.md?raw';
 
 /**
  * Maximum bytes of output included inline as a preview. Output larger

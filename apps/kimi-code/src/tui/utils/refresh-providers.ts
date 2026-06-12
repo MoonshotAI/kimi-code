@@ -182,7 +182,10 @@ function restoreDefaultSelection(
 ): void {
   if (defaultModel === undefined || config.models?.[defaultModel] === undefined) return;
   config.defaultModel = defaultModel;
-  config.defaultThinking = defaultThinking;
+  // A refresh may have just learned that the default model cannot disable
+  // thinking — never restore a stale thinking-off selection onto it.
+  const capabilities = config.models[defaultModel]?.capabilities ?? [];
+  config.defaultThinking = capabilities.includes('always_thinking') ? true : defaultThinking;
 }
 
 // `apply*` may leave `defaultModel` pointing at an alias that no longer exists

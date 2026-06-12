@@ -838,3 +838,233 @@ describe('provisionManagedKimiCodeConfig', () => {
     });
   });
 });
+
+describe('supports_thinking_type', () => {
+  function makeThinkingTypeModelsResponse(): Response {
+    return new Response(
+      JSON.stringify({
+        data: [
+          {
+            id: 'kimi-for-coding',
+            context_length: 262144,
+            supports_reasoning: true,
+            supports_image_in: true,
+            supports_video_in: true,
+            supports_thinking_type: 'only',
+            display_name: 'Kimi For Coding',
+          },
+          {
+            // 'no' is the authoritative declaration and overrides the legacy
+            // supports_reasoning boolean.
+            id: 'kimi-plain',
+            context_length: 128000,
+            supports_reasoning: true,
+            supports_thinking_type: 'no',
+          },
+          {
+            id: 'kimi-toggle',
+            context_length: 128000,
+            supports_reasoning: true,
+            supports_thinking_type: 'both',
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  it('parses supports_thinking_type from the models endpoint', async () => {
+    const models = await fetchManagedKimiCodeModels({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
+    });
+
+    expect(models[0]?.supportsThinkingType).toBe('only');
+    expect(models[1]?.supportsThinkingType).toBe('no');
+    expect(models[2]?.supportsThinkingType).toBe('both');
+  });
+
+  it('leaves supportsThinkingType undefined when the field is absent or invalid', async () => {
+    const absent = await fetchManagedKimiCodeModels({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeModelsResponse()) as unknown as typeof fetch,
+    });
+    expect(absent[0]?.supportsThinkingType).toBeUndefined();
+
+    const invalid = await fetchManagedKimiCodeModels({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'kimi-for-coding',
+                  context_length: 262144,
+                  supports_reasoning: true,
+                  supports_thinking_type: 'maybe',
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      ) as unknown as typeof fetch,
+    });
+    expect(invalid[0]?.supportsThinkingType).toBeUndefined();
+  });
+
+  it('maps the three states onto capabilities, overriding supports_reasoning', async () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+
+    await provisionManagedKimiCodeConfig({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
+      adapter: {
+        read: () => config,
+        write: vi.fn(),
+        apply: applyManagedKimiCodeConfig,
+      },
+    });
+
+    // 'only' → thinking locked on.
+    expect(config.models?.['kimi-code/kimi-for-coding']?.capabilities).toEqual([
+      'thinking',
+      'always_thinking',
+      'image_in',
+      'video_in',
+      'tool_use',
+    ]);
+    // 'no' → no thinking capability despite supports_reasoning=true.
+    expect(config.models?.['kimi-code/kimi-plain']?.capabilities).toEqual(['tool_use']);
+    // 'both' → plain toggleable thinking.
+    expect(config.models?.['kimi-code/kimi-toggle']?.capabilities).toEqual([
+      'thinking',
+      'tool_use',
+    ]);
+  });
+
+  it('forces default thinking on when the selected default model is thinking-only', async () => {
+    const config: ManagedKimiConfigShape = { providers: {}, defaultThinking: false };
+
+    const result = await provisionManagedKimiCodeConfig({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
+      adapter: {
+        read: () => config,
+        write: vi.fn(),
+        apply: applyManagedKimiCodeConfig,
+      },
+    });
+
+    expect(result.defaultModel).toBe('kimi-code/kimi-for-coding');
+    expect(result.defaultThinking).toBe(true);
+    expect(config.defaultThinking).toBe(true);
+  });
+
+  it('forces default thinking on when preserving a thinking-only managed default', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        [KIMI_CODE_PROVIDER_NAME]: {
+          type: 'kimi',
+          apiKey: '',
+        },
+      },
+      defaultModel: 'kimi-code/kimi-for-coding',
+      defaultThinking: false,
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-for-coding',
+          maxContextSize: 262144,
+          capabilities: ['thinking'],
+        },
+      },
+    };
+
+    const result = await provisionManagedKimiCodeConfig({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
+      preserveDefaultModel: true,
+      adapter: {
+        read: () => config,
+        write: vi.fn(),
+        apply: applyManagedKimiCodeConfig,
+      },
+    });
+
+    expect(result.defaultModel).toBe('kimi-code/kimi-for-coding');
+    expect(result.defaultThinking).toBe(true);
+    expect(config.defaultThinking).toBe(true);
+  });
+
+  it('forces default thinking off when preserving a no-thinking managed default', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        [KIMI_CODE_PROVIDER_NAME]: {
+          type: 'kimi',
+          apiKey: '',
+        },
+      },
+      defaultModel: 'kimi-code/kimi-plain',
+      defaultThinking: true,
+      models: {
+        'kimi-code/kimi-plain': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-plain',
+          maxContextSize: 128000,
+          capabilities: ['thinking'],
+        },
+      },
+    };
+
+    const result = await provisionManagedKimiCodeConfig({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
+      preserveDefaultModel: true,
+      adapter: {
+        read: () => config,
+        write: vi.fn(),
+        apply: applyManagedKimiCodeConfig,
+      },
+    });
+
+    expect(result.defaultModel).toBe('kimi-code/kimi-plain');
+    expect(result.defaultThinking).toBe(false);
+    expect(config.defaultThinking).toBe(false);
+  });
+
+  it('keeps a preserved non-managed default thinking selection untouched', async () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        custom: {
+          type: 'kimi',
+          apiKey: 'sk-existing',
+        },
+      },
+      defaultModel: 'custom-default',
+      defaultThinking: false,
+      models: {
+        'custom-default': {
+          provider: 'custom',
+          model: 'custom-model',
+          maxContextSize: 1000,
+        },
+      },
+    };
+
+    const result = await provisionManagedKimiCodeConfig({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeThinkingTypeModelsResponse()) as unknown as typeof fetch,
+      preserveDefaultModel: true,
+      adapter: {
+        read: () => config,
+        write: vi.fn(),
+        apply: applyManagedKimiCodeConfig,
+      },
+    });
+
+    expect(result.defaultModel).toBe('custom-default');
+    expect(result.defaultThinking).toBe(false);
+    expect(config.defaultThinking).toBe(false);
+  });
+});

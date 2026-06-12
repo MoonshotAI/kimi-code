@@ -145,6 +145,7 @@ export async function discoverSkills(
     root: SkillRoot,
     isTopLevel: boolean,
     depth: number,
+    subSkillParentName?: string,
   ): Promise<void> {
     if (depth > MAX_SKILL_SCAN_DEPTH) return;
 
@@ -171,7 +172,7 @@ export async function discoverSkills(
       if (await isDir(entryPath)) subdirs.push(entry);
     }
 
-    const allowedSubSkillBundles = new Set<string>();
+    const allowedSubSkillBundles = new Map<string, string>();
     for (const entry of directorySkills) {
       const skill = await parseAndRegister({
         parse,
@@ -182,9 +183,10 @@ export async function discoverSkills(
         onDiscoveredSkill: options.onDiscoveredSkill,
         warn,
         skip,
+        subSkillParentName,
       });
       if (skill !== undefined && hasSubSkillEnabled(skill)) {
-        allowedSubSkillBundles.add(entry);
+        allowedSubSkillBundles.set(entry, skill.name);
       }
     }
 
@@ -237,7 +239,14 @@ export async function discoverSkills(
 
     for (const entry of subdirs) {
       if (directorySkills.has(entry) && !allowedSubSkillBundles.has(entry)) continue;
-      await walkSkillDir(path.join(dirPath, entry), root, false, depth + 1);
+      const allowedSubSkillParentName = allowedSubSkillBundles.get(entry);
+      await walkSkillDir(
+        path.join(dirPath, entry),
+        root,
+        false,
+        depth + 1,
+        allowedSubSkillParentName ?? subSkillParentName,
+      );
     }
   }
 
@@ -359,13 +368,26 @@ async function parseAndRegister(input: {
   readonly onDiscoveredSkill?: (skill: SkillDefinition) => void;
   readonly warn: (message: string, cause?: unknown) => void;
   readonly skip: (skill: SkippedSkill) => void;
+  readonly subSkillParentName?: string;
 }): Promise<SkillDefinition | undefined> {
   try {
-    const skill = await input.parse({
+    const parsed = await input.parse({
       skillMdPath: input.skillMdPath,
       skillDirName: input.skillDirName,
       source: input.root.source,
     });
+    const subSkillParentName = input.subSkillParentName;
+    const skill =
+      subSkillParentName !== undefined
+        ? {
+            ...parsed,
+            name: qualifySubSkillName(subSkillParentName, parsed.name),
+            metadata: {
+              ...parsed.metadata,
+              isSubSkill: true,
+            },
+          }
+        : parsed;
     const discovered = input.root.plugin === undefined ? skill : {
       ...skill,
       plugin: input.root.plugin,
@@ -375,7 +397,7 @@ async function parseAndRegister(input: {
     if (!input.byName.has(key)) {
       input.byName.set(key, discovered);
     }
-    return skill;
+    return discovered;
   } catch (error) {
     if (error instanceof UnsupportedSkillTypeError) {
       input.skip({
@@ -390,6 +412,11 @@ async function parseAndRegister(input: {
     }
     return undefined;
   }
+}
+
+function qualifySubSkillName(parentName: string, skillName: string): string {
+  if (skillName === parentName || skillName.startsWith(`${parentName}.`)) return skillName;
+  return `${parentName}.${skillName}`;
 }
 
 function hasSubSkillEnabled(skill: SkillDefinition): boolean {

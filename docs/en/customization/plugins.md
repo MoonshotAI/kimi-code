@@ -59,11 +59,13 @@ Kimi Datasource is the official Kimi Code data plugin. It lets you query financi
 
 ### Installation
 
-You must first complete OAuth login with a Kimi Code account via `/login`. The plugin relies on local credentials to access data services. When you run Kimi Code with `KIMI_CODE_OAUTH_HOST` or `KIMI_CODE_BASE_URL`, log in under the same environment so the datasource plugin uses the matching credentials and service endpoint.
+You must first complete OAuth login with a Kimi Code account via `/login`. The plugin relies on local credentials to access data services.
 
 1. Run `/plugins` and select **Marketplace**
 2. Find **Kimi Datasource** and press `Space` to install
 3. After installation completes, run `/reload` to activate the plugin
+
+The current latest version is v3.2.0. The plugin does not update automatically — to upgrade to a newer version, repeat the installation steps above.
 
 ### How to Use
 

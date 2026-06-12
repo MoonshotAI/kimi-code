@@ -1280,10 +1280,16 @@ describe('SSHKaos mock success paths', () => {
       },
     };
     const instance = Object.create(SSHKaos.prototype) as SSHKaos;
-    const internal = instance as unknown as { _client: unknown; _cwd: string; _home: string };
+    const internal = instance as unknown as {
+      _client: unknown;
+      _cwd: string;
+      _home: string;
+      _envLayers: readonly Record<string, string>[];
+    };
     internal._client = fakeClient;
     internal._cwd = '/home/tester';
     internal._home = '/home/tester';
+    internal._envLayers = [];
 
     await expect(instance.execWithEnv(['echo', 'hi'], { FOO: 'bar' })).rejects.toThrow('stop');
 
@@ -1442,10 +1448,12 @@ describe('SSHKaos.close lifecycle', () => {
       _cwd: string;
       _home: string;
       _sftp: { end(): void };
+      _envLayers: readonly Record<string, string>[];
     };
     internals._client = new FakeClient();
     internals._cwd = '/tmp';
     internals._home = '/tmp';
+    internals._envLayers = [];
     internals._sftp = {
       end(): void {
         // no-op

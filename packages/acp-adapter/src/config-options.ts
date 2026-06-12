@@ -96,8 +96,28 @@ export function buildModelOption(
  * currently-selected model has `thinkingSupported === false`, the
  * snapshot omits it entirely (dynamic visibility), so the client never
  * shows a toggle that wouldn't do anything.
+ *
+ * `alwaysThinking` models (declared `always_thinking` capability — the
+ * runtime cannot disable thinking) collapse the select to a single
+ * locked `on` entry: the state stays visible to the client, but there
+ * is no off option to pick. ACP has no "disabled entry" concept, so
+ * omitting `off` is the wire-level equivalent of the TUI's greyed-out
+ * `Off (Unsupported)` segment.
  */
-export function buildThinkingOption(enabled: boolean): SessionConfigOption {
+export function buildThinkingOption(
+  enabled: boolean,
+  alwaysThinking = false,
+): SessionConfigOption {
+  if (alwaysThinking) {
+    return {
+      type: 'select',
+      id: 'thinking',
+      name: 'Thinking',
+      category: 'thought_level',
+      currentValue: 'on',
+      options: [{ value: 'on', name: 'Thinking On' }],
+    };
+  }
   return {
     type: 'select',
     id: 'thinking',
@@ -171,9 +191,12 @@ export async function buildSessionConfigOptions(
   const models = await listModelsFromHarness(harness);
   const currentModelEntry = models.find((m) => m.id === currentBaseModelId);
   const showThinking = currentModelEntry?.thinkingSupported === true;
+  const alwaysThinking = currentModelEntry?.alwaysThinking === true;
   const out: SessionConfigOption[] = [buildModelOption(models, currentBaseModelId)];
   if (showThinking) {
-    out.push(buildThinkingOption(currentThinkingEnabled));
+    // Always-thinking models render locked-on regardless of the session's
+    // recorded toggle state — agent-core clamps the runtime the same way.
+    out.push(buildThinkingOption(alwaysThinking || currentThinkingEnabled, alwaysThinking));
   }
   out.push(buildModeOption(currentModeId));
   return out;

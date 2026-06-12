@@ -1,6 +1,6 @@
 import { parseSkillText } from '../parser';
 import type { SkillDefinition } from '../types';
-import IMPORT_FROM_CC_CODEX_BODY from './import-from-cc-codex.md';
+import IMPORT_FROM_CC_CODEX_BODY from './import-from-cc-codex.md?raw';
 
 const PSEUDO_PATH = 'builtin://import-from-cc-codex';
 

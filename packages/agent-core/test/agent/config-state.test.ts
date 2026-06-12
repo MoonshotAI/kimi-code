@@ -159,6 +159,66 @@ describe('ConfigState model capabilities', () => {
   });
 });
 
+describe('ConfigState thinking clamp for always-thinking models', () => {
+  function alwaysThinkingAgent() {
+    return testAgent({
+      providerManager: new ProviderManager({
+        config: {
+          providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
+          models: {
+            'kimi-code/deep': {
+              provider: 'kimi',
+              model: 'kimi-deep-coder',
+              maxContextSize: 128_000,
+              capabilities: ['thinking', 'always_thinking', 'tool_use'],
+            },
+            'kimi-code/toggle': {
+              provider: 'kimi',
+              model: 'kimi-for-coding',
+              maxContextSize: 128_000,
+              capabilities: ['thinking'],
+            },
+          },
+        },
+      }),
+    });
+  }
+
+  it('clamps thinkingLevel off to the configured effort', () => {
+    const ctx = alwaysThinkingAgent();
+    ctx.agent.config.update({ modelAlias: 'kimi-code/deep', thinkingLevel: 'off' });
+
+    expect(ctx.agent.config.thinkingLevel).toBe('high');
+  });
+
+  it('builds the provider with thinking enabled even after thinking was set off', () => {
+    const ctx = alwaysThinkingAgent();
+    ctx.agent.config.update({ modelAlias: 'kimi-code/deep', thinkingLevel: 'off' });
+
+    const provider = ctx.agent.config.provider;
+    const gen = Reflect.get(provider as object, '_generationKwargs') as {
+      extra_body?: { thinking?: { type?: unknown } };
+    };
+    expect(gen.extra_body?.thinking?.type).toBe('enabled');
+  });
+
+  it('keeps thinking off working for toggleable models', () => {
+    const ctx = alwaysThinkingAgent();
+    ctx.agent.config.update({ modelAlias: 'kimi-code/toggle', thinkingLevel: 'off' });
+
+    expect(ctx.agent.config.thinkingLevel).toBe('off');
+  });
+
+  it('re-clamps when switching to an always-on model after thinking was off', () => {
+    const ctx = alwaysThinkingAgent();
+    ctx.agent.config.update({ modelAlias: 'kimi-code/toggle', thinkingLevel: 'off' });
+    expect(ctx.agent.config.thinkingLevel).toBe('off');
+
+    ctx.agent.config.update({ modelAlias: 'kimi-code/deep' });
+    expect(ctx.agent.config.thinkingLevel).toBe('high');
+  });
+});
+
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
   function kimiAgent() {
     return testAgent({

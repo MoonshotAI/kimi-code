@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.9.2
+
+### Patch Changes
+
+- [#648](https://github.com/MoonshotAI/kimi-code/pull/648) [`54302ad`](https://github.com/MoonshotAI/kimi-code/commit/54302ad612294056a47ada74b76737f2284861b5) - Prevent overlapping interactive agent requests from using the wrong active agent.
+
 ## 0.9.1
 
 ### Patch Changes

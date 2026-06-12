@@ -27,7 +27,7 @@ import {
   type SubagentSuspendedEvent,
   type QueuedSubagentTask,
 } from './subagent-batch';
-import SUMMARY_CONTINUATION_PROMPT from './summary-continuation.md';
+import SUMMARY_CONTINUATION_PROMPT from './summary-continuation.md?raw';
 
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
 export const DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION = '30 minutes';
