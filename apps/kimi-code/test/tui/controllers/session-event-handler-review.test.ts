@@ -212,6 +212,21 @@ describe('SessionEventHandler review events', () => {
     expect(reviewData[0]?.detail).toContain('1 file: +2 -1');
   });
 
+  it('suppresses intermediate candidate finding rows during Thorough review', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent({
+      ...reviewStartedEvent(),
+      intensity: 'thorough',
+    }, vi.fn());
+    handler.handleEvent(reviewCommentEvent(), vi.fn());
+
+    expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
+      'Thorough review',
+    ]);
+  });
+
   it('labels Thorough reconciliation separately from reviewer progress', () => {
     const host = makeHost();
     const handler = new SessionEventHandler(host);
@@ -316,6 +331,21 @@ describe('SessionEventHandler review events', () => {
         summary: 'Done.',
       },
     } as any, vi.fn());
+
+    expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
+      'Review started',
+    ]);
+  });
+
+  it('suppresses intermediate candidate finding rows during Deep Review', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent({
+      ...reviewStartedEvent(),
+      intensity: 'deep',
+    }, vi.fn());
+    handler.handleEvent(reviewCommentEvent(), vi.fn());
 
     expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
       'Review started',

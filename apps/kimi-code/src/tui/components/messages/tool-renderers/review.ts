@@ -64,10 +64,7 @@ export function formatReviewToolLabel(
       const status = stringArg(args, 'status');
       return label(
         status === undefined ? 'review progress update' : `review progress update: ${status}`,
-        joinDetails([
-          stringArg(args, 'summary'),
-          prefixed('blocker', stringArg(args, 'blocker')),
-        ]) ?? displayDetail(display),
+        progressUpdateDetail(args, display),
       );
     }
     case 'AddComment':
@@ -188,6 +185,15 @@ function mergeDetail(
     stringArg(args, 'severity'),
     stringArg(args, 'title'),
   ]) ?? displayDetail(display);
+}
+
+function progressUpdateDetail(
+  args: Record<string, unknown>,
+  display: ToolInputDisplay | undefined,
+): string | undefined {
+  if (stringArg(args, 'blocker') !== undefined) return 'blocker recorded';
+  if (stringArg(args, 'summary') !== undefined) return 'summary recorded';
+  return displayDetail(display);
 }
 
 function displayDetail(display: ToolInputDisplay | undefined): string | undefined {

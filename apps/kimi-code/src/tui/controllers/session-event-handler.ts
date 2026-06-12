@@ -417,6 +417,9 @@ export class SessionEventHandler {
   }
 
   private handleReviewCommentAdded(event: ReviewCommentAddedEvent): void {
+    if (this.activeReviewIntensity === 'thorough' || this.activeReviewIntensity === 'deep') {
+      return;
+    }
     this.appendReviewProgress({
       state: 'comment',
       title: 'Review finding added',
