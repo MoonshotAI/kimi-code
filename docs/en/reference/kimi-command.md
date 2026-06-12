@@ -226,7 +226,7 @@ Five actions are available:
 
 #### `kimi provider add <url>`
 
-Bulk-import all providers from a custom registry (`api.json`). The command fetches the registry, creates a `[providers.<id>]` and `[models.<alias>]` entry for each item, and writes `source` metadata so the TUI refreshes the model list automatically on next startup.
+Bulk-import all providers from a custom registry (`api.json`). The command fetches the registry, creates a `[providers.<id>]` and `[models.<alias>]` entry for each item, and writes `source` metadata so the TUI refreshes providers and models from the same registry URL automatically on next startup.
 
 | Parameter / Option | Description |
 | --- | --- |

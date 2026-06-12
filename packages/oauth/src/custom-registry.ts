@@ -6,9 +6,10 @@ export type { ManagedKimiConfigShape };
 
 /**
  * Identifies where a custom-registry-managed provider came from. The same
- * `{url, apiKey}` pair may produce multiple providers (one per top-level entry
- * in the api.json document) — the refresh dispatcher groups by these fields to
- * issue a single HTTP GET per source.
+ * URL may produce multiple providers (one per top-level entry in the api.json
+ * document). Refresh treats the URL as the stable registry identity and may try
+ * more than one API key when existing provider records drift during key
+ * rotation.
  */
 export interface CustomRegistrySource {
   readonly kind: 'apiJson';

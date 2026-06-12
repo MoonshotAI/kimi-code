@@ -7,8 +7,9 @@
  *
  * `add` writes the same `source = { kind: 'apiJson', url, apiKey }` blob the
  * TUI does; the next launch's `refreshAllProviderModels`
- * (apps/kimi-code/src/tui/utils/refresh-providers.ts) groups by `{url, apiKey}`
- * and re-fetches the model list, so periodic refresh is automatic.
+ * (apps/kimi-code/src/tui/utils/refresh-providers.ts) groups by URL, retries
+ * available API-key candidates, and re-fetches the model list, so periodic
+ * refresh is automatic.
  */
 
 import {
