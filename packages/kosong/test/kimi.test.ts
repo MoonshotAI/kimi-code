@@ -667,6 +667,7 @@ describe('KimiChatProvider', () => {
           thinking: { type: 'enabled' },
         },
         max_tokens: 512,
+        temperature: 1.0,
       });
     });
 
@@ -736,15 +737,29 @@ describe('KimiChatProvider', () => {
       expect(withLow.thinkingEffort).toBe('low');
     });
 
-    it('replaces the previous thinking effort when called again', () => {
-      const provider = createProvider().withThinking('high').withThinking('off');
+    it('sets temperature=1.0 when thinking is on and temperature=0.6 when off', async () => {
+      const onProvider = createProvider().withThinking('high');
+      const offProvider = createProvider().withThinking('off');
 
-      expect(getGenerationState(provider)).toEqual({
-        reasoning_effort: undefined,
-        extra_body: {
-          thinking: { type: 'disabled' },
-        },
-      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+
+      const onBody = await captureRequestBody(onProvider, '', [], history);
+      expect(onBody['temperature']).toBe(1.0);
+
+      const offBody = await captureRequestBody(offProvider, '', [], history);
+      expect(offBody['temperature']).toBe(0.6);
+    });
+
+    it('preserves explicit temperature via env var override after withThinking', () => {
+      // Simulates applyKimiEnvSamplingParams overriding the default:
+      // withThinking('off') sets 0.6, then env param sets 0.8.
+      const provider = createProvider()
+        .withThinking('off')
+        .withGenerationKwargs({ temperature: 0.8 });
+
+      expect(getGenerationState(provider).temperature).toBe(0.8);
     });
   });
 
