@@ -12,7 +12,7 @@ import {
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import { matchesGlobRuleSubject } from '../support/rule-match';
-import TASK_STOP_DESCRIPTION from './task-stop.md';
+import TASK_STOP_DESCRIPTION from './task-stop.md?raw';
 
 // ── Input schema ─────────────────────────────────────────────────────
 

@@ -342,4 +342,61 @@ describe('refreshAllProviderModels', () => {
     expect(host.current().defaultModel).toBe(userAlias);
     expect(host.current().defaultThinking).toBe(false);
   });
+
+  it('forces default thinking on when the refreshed default model cannot disable thinking', async () => {
+    const host = makeRefreshHost({
+      providers: {
+        [KIMI_CODE_PROVIDER_NAME]: {
+          type: 'kimi',
+          apiKey: '',
+          oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        },
+      },
+      models: {
+        'kimi-code/kimi-deep-coder': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-deep-coder',
+          maxContextSize: 262144,
+          capabilities: ['thinking', 'tool_use'],
+        },
+      },
+      defaultModel: 'kimi-code/kimi-deep-coder',
+      defaultThinking: false,
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-deep-coder',
+                context_length: 262144,
+                supports_reasoning: true,
+                supports_thinking_type: 'only',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(async () => 'oauth-access-token'),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(host.current().models?.['kimi-code/kimi-deep-coder']?.capabilities).toEqual([
+      'thinking',
+      'always_thinking',
+      'tool_use',
+    ]);
+    expect(host.current().defaultModel).toBe('kimi-code/kimi-deep-coder');
+    expect(host.current().defaultThinking).toBe(true);
+  });
 });

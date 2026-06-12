@@ -37,6 +37,7 @@ import {
   type AcpBuiltinSlashCommandName,
 } from './builtin-commands';
 import { buildSessionConfigOptions } from './config-options';
+import { listModelsFromHarness } from './model-catalog';
 import { acpBlocksToPromptParts } from './convert';
 import {
   acpToolCallId,
@@ -365,11 +366,31 @@ export class AcpSession {
    * carries a fresh snapshot.
    */
   async setThinking(enabled: boolean): Promise<void> {
+    if (!enabled && (await this.currentModelAlwaysThinking())) {
+      // The current model cannot disable thinking (declared
+      // 'always_thinking'); silently ignore the off request — agent-core
+      // clamps the runtime the same way — but still refresh the snapshot
+      // so a stale client toggle snaps back to on.
+      this.currentThinkingEnabledInternal = true;
+      await this.emitConfigOptionUpdate();
+      return;
+    }
     if (typeof this.session.setThinking === 'function') {
       await this.session.setThinking(enabled ? THINKING_ON_LEVEL : THINKING_OFF_LEVEL);
     }
     this.currentThinkingEnabledInternal = enabled;
     await this.emitConfigOptionUpdate();
+  }
+
+  /**
+   * Whether the currently-selected model declares 'always_thinking'.
+   * Harness-less adapter unit tests resolve to false — the agent-core
+   * runtime clamp still protects the actual request in that case.
+   */
+  private async currentModelAlwaysThinking(): Promise<boolean> {
+    if (!this.harness) return false;
+    const models = await listModelsFromHarness(this.harness);
+    return models.find((m) => m.id === this.currentModelIdInternal)?.alwaysThinking === true;
   }
 
   /**

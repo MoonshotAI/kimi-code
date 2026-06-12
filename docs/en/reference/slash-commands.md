@@ -128,13 +128,21 @@ All built-in Skill commands are only available in the idle state.
 
 ## Skill Dynamic Commands
 
-Activated external Skills are automatically registered as slash commands with the `skill:` namespace prefix:
+Activated external Skills are automatically registered as slash commands. Ordinary external Skills use the `skill:` namespace prefix:
 
 ```
 /skill:<name> [extra text]
 ```
 
 For example, `/skill:code-style` loads the Skill named `code-style` and sends it to the Agent; any text appended after the command is concatenated to the Skill prompt.
+
+External sub-skills appear directly in the slash command panel with dotted names:
+
+```
+/<parent-skill>.<sub-skill> [extra text]
+```
+
+For example, a child Skill named `review` inside a parent Skill named `code-style` is shown as `/code-style.review`. The dotted command name is derived from the hierarchy; the child `SKILL.md` can keep its local `name`.
 
 For convenience, external Skill commands also support a shorthand form that omits the `skill:` prefix — `/<name>` — as long as the name is not taken by a system slash command. That is, `/code-style` falls back to matching `/skill:code-style`.
 

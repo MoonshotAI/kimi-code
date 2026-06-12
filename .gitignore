@@ -13,6 +13,7 @@ coverage/
 .kimi-stash-dir
 plugins/cdn/
 superpowers
+.worktrees/
 
 Dockerfile
 !packages/daemon-e2e/Dockerfile

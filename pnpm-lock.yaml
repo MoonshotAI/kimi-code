@@ -4,12 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-catalogs:
-  default:
-    zod:
-      specifier: ^4.3.6
-      version: 4.3.6
-
 overrides:
   ssh2@1.17.0>cpu-features: '-'
   ssh2@1.17.0>nan: '-'
@@ -357,7 +351,7 @@ importers:
         specifier: ^3.3.0
         version: 3.3.0
       zod:
-        specifier: 'catalog:'
+        specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
       '@types/js-yaml':
@@ -426,7 +420,7 @@ importers:
         specifier: ^6.34.0
         version: 6.34.0(ws@8.20.0)(zod@4.3.6)
       zod:
-        specifier: 'catalog:'
+        specifier: ^4.3.6
         version: 4.3.6
       zod-to-json-schema:
         specifier: ^3.25.2
@@ -448,7 +442,7 @@ importers:
         specifier: ^1.6.1
         version: 1.6.1
       zod:
-        specifier: 'catalog:'
+        specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
       '@moonshot-ai/kaos':
@@ -467,7 +461,7 @@ importers:
         specifier: ^3.3.1
         version: 3.3.1
       zod:
-        specifier: 'catalog:'
+        specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
       '@moonshot-ai/agent-core':
@@ -502,7 +496,7 @@ importers:
         specifier: ^3.0.1
         version: 3.0.2
       zod:
-        specifier: 'catalog:'
+        specifier: ^4.3.6
         version: 4.3.6
 
   packages/server:

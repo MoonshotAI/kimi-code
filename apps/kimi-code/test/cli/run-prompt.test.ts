@@ -656,6 +656,47 @@ describe('runPrompt', () => {
     expect(mocks.harnessClose).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['SIGTERM' as NodeJS.Signals, 143],
+    ['SIGHUP' as NodeJS.Signals, 129],
+  ])('cleans up prompt mode before exiting on %s', async (signal, exitCode) => {
+    let releasePrompt!: () => void;
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(
+          mocks.mainEvent({ type: 'turn.started', turnId: 7, origin: { kind: 'user' } }),
+        );
+      }
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
+    });
+    const processMock = fakeProcess();
+    const run = runPrompt(opts(), '1.2.3-test', {
+      stdout: { write: vi.fn(() => true) },
+      stderr: { write: vi.fn(() => true) },
+      process: processMock,
+    } as Parameters<typeof runPrompt>[2] & { process: ReturnType<typeof fakeProcess> });
+
+    await waitForAssertion(() => {
+      expect(processMock.listener(signal)).toBeDefined();
+    });
+
+    await processMock.listener(signal)?.();
+
+    expect(mocks.shutdownTelemetry).toHaveBeenCalled();
+    expect(mocks.harnessClose).toHaveBeenCalled();
+    expect(processMock.exit).toHaveBeenCalledWith(exitCode);
+
+    for (const handler of mocks.eventHandlers) {
+      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 7, reason: 'completed' }));
+    }
+    releasePrompt();
+    await run;
+
+    expect(mocks.harnessClose).toHaveBeenCalledTimes(1);
+  });
+
   it('waits for the pending auto permission write before signal restore', async () => {
     let releaseAutoPermission!: () => void;
     let releasePrompt!: () => void;

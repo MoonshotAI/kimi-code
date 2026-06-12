@@ -27,7 +27,7 @@ import type {
 } from '../../../rpc';
 import type { TelemetryPropertyValue } from '../../../telemetry';
 import { toInputJsonSchema } from '../../support/input-schema';
-import DESCRIPTION from './ask-user.md';
+import DESCRIPTION from './ask-user.md?raw';
 
 // ── Input schema ─────────────────────────────────────────────────────
 

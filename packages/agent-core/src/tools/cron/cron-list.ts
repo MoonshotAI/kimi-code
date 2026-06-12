@@ -52,7 +52,7 @@ import {
 } from './cron-expr';
 import { formatLocalIsoWithOffset } from './time-format';
 import type { CronTask } from './types';
-import CRON_LIST_DESCRIPTION from './cron-list.md';
+import CRON_LIST_DESCRIPTION from './cron-list.md?raw';
 
 // ── Input schema ─────────────────────────────────────────────────────
 

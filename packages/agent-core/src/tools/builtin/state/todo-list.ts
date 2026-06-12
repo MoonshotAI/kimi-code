@@ -19,7 +19,7 @@ import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ToolStore } from '../../store';
-import DESCRIPTION from './todo-list.md';
+import DESCRIPTION from './todo-list.md?raw';
 
 // ── TODO state shape ─────────────────────────────────────────────────
 

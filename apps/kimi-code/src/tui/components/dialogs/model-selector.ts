@@ -259,13 +259,19 @@ export class ModelSelectorComponent extends Container implements Focusable {
       active
         ? currentTheme.boldFg('primary', `[ ${label} ]`)
         : currentTheme.fg('text', `  ${label}  `);
+    // The whole segment is muted, suffix included, so the disabled side reads
+    // as a single greyed-out control rather than a selectable option.
+    const unavailable = (label: string): string =>
+      currentTheme.fg('textMuted', `  ${label} (Unsupported)  `);
 
+    // On stays left and Off right in all three states so the control never
+    // shifts while the cursor moves across models.
     const availability = thinkingAvailability(choice.model);
     if (availability === 'always-on') {
-      return `  ${segment('Always on', true)}`;
+      return `  ${segment('On', true)} ${unavailable('Off')}`;
     }
     if (availability === 'unsupported') {
-      return `  ${segment('Off', true)} ${currentTheme.fg('textMuted', 'unsupported')}`;
+      return `  ${unavailable('On')} ${segment('Off', true)}`;
     }
     const draft = this.draftFor(choice);
     return `  ${segment('On', draft)}  ${segment('Off', !draft)}`;

@@ -1,5 +1,39 @@
 # @moonshot-ai/kimi-code
 
+## 0.14.1
+
+### Patch Changes
+
+- [#643](https://github.com/MoonshotAI/kimi-code/pull/643) [`4e5043b`](https://github.com/MoonshotAI/kimi-code/commit/4e5043b03b2fb03374550dc65d04871bc83e932a) - Require AgentSwarm tool calls to run alone in a model response.
+
+- [#631](https://github.com/MoonshotAI/kimi-code/pull/631) [`2961425`](https://github.com/MoonshotAI/kimi-code/commit/296142544ec64e93c9083a51d3a53a83496d10cb) - Wrap long command and skill descriptions in the autocomplete menu onto a second line instead of cutting them off.
+
+- [#661](https://github.com/MoonshotAI/kimi-code/pull/661) [`0927f79`](https://github.com/MoonshotAI/kimi-code/commit/0927f79883e036d0127d4384f60f8e486afb3b8c) - Cancel active turns during session shutdown so foreground shell commands do not outlive prompt-mode exits.
+
+- [#604](https://github.com/MoonshotAI/kimi-code/pull/604) [`7ec738c`](https://github.com/MoonshotAI/kimi-code/commit/7ec738c4a1de41b3a042cfb48700dfaf51e9de94) - Fix premature stream close errors when shell processes time out or are killed.
+
+- [#632](https://github.com/MoonshotAI/kimi-code/pull/632) [`d8cdebf`](https://github.com/MoonshotAI/kimi-code/commit/d8cdebf3c03efa3a3dfa4f1deb3186a8f8f7f5ef) - Degrade unsupported audio/video to placeholder text and reattach tool result media instead of silently dropping them.
+
+- [#628](https://github.com/MoonshotAI/kimi-code/pull/628) [`0ee9106`](https://github.com/MoonshotAI/kimi-code/commit/0ee91066eaa8ec794c8337faefc14d1b1200ce82) - Fix ACP file reads and edits for Windows workspaces opened through IDE clients.
+
+- [#658](https://github.com/MoonshotAI/kimi-code/pull/658) [`0381329`](https://github.com/MoonshotAI/kimi-code/commit/0381329570d3dca9fd861761c843968cc1c5e927) - Send OpenAI Responses system prompts as request instructions.
+
+- [#654](https://github.com/MoonshotAI/kimi-code/pull/654) [`ff80327`](https://github.com/MoonshotAI/kimi-code/commit/ff803273440f3a2ff53d2c529c6fc892fde1d93f) - Propagate configured execution environment overrides across spawned processes.
+
+- [#644](https://github.com/MoonshotAI/kimi-code/pull/644) [`a58b5b2`](https://github.com/MoonshotAI/kimi-code/commit/a58b5b20bb42228c72277daba9fa07bb1cd539a6) - Polish builtin skills.
+
+- [#649](https://github.com/MoonshotAI/kimi-code/pull/649) [`a2c5e1b`](https://github.com/MoonshotAI/kimi-code/commit/a2c5e1be25484f7c52f729e333196c485f83b84c) - Add runtime support for dynamic MCP server updates, reference skills, replay timestamps, and Node file uploads.
+
+- [#631](https://github.com/MoonshotAI/kimi-code/pull/631) [`2961425`](https://github.com/MoonshotAI/kimi-code/commit/296142544ec64e93c9083a51d3a53a83496d10cb) - Find slash commands by their aliases in autocomplete — typing `/clear` now suggests `new (clear)`.
+
+- [#648](https://github.com/MoonshotAI/kimi-code/pull/648) [`54302ad`](https://github.com/MoonshotAI/kimi-code/commit/54302ad612294056a47ada74b76737f2284861b5) - Prevent overlapping interactive agent requests from using the wrong active agent.
+
+- [#641](https://github.com/MoonshotAI/kimi-code/pull/641) [`30459af`](https://github.com/MoonshotAI/kimi-code/commit/30459af6abc8308e7f13822d9dbef3a5be80dd4a) - Stop background tasks by default when sessions close.
+
+- [#645](https://github.com/MoonshotAI/kimi-code/pull/645) [`1b58aa8`](https://github.com/MoonshotAI/kimi-code/commit/1b58aa8cdf675e6f4c02cd083feb55debbe9b3f1) - Add a YOLO choice when starting swarm tasks from Manual mode.
+
+- [#655](https://github.com/MoonshotAI/kimi-code/pull/655) [`1e2e679`](https://github.com/MoonshotAI/kimi-code/commit/1e2e679693af2fc97826078aa671555a3a900349) - Display a tips banner below the welcome panel on startup.
+
 ## 0.14.0
 
 ### Minor Changes

@@ -120,7 +120,18 @@ export class ConfigState {
   }
 
   get thinkingLevel(): ThinkingEffort {
+    // Always-thinking models cannot run with thinking disabled. Clamping in
+    // the getter (rather than in update()) keeps the request builder, status
+    // events, and subagent inheritance consistent, and re-applies after a
+    // later model switch onto an always-thinking alias.
+    if (this._thinkingLevel === 'off' && this.alwaysThinkingModel) {
+      return resolveThinkingEffort('on', this.agent.kimiConfig?.thinking);
+    }
     return this._thinkingLevel;
+  }
+
+  private get alwaysThinkingModel(): boolean {
+    return this.tryResolvedProviderConfig()?.alwaysThinking === true;
   }
 
   get profileName(): string | undefined {

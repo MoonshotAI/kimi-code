@@ -990,6 +990,63 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('hook response 2');
   });
 
+  it('renders replayed compaction records as completed compaction blocks', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'prompt before compaction' }]),
+      {
+        time: REPLAY_TIME,
+        type: 'compaction',
+        result: {
+          summary: 'Compacted transcript summary.',
+          compactedCount: 4,
+          tokensBefore: 120,
+          tokensAfter: 24,
+        },
+        instruction: 'preserve implementation notes',
+      },
+      message('user', [{ type: 'text', text: 'prompt after compaction' }]),
+    ]);
+
+    const compactionEntry = driver.state.transcriptEntries.find(
+      (entry) => entry.compactionData !== undefined,
+    );
+    expect(compactionEntry?.compactionData).toEqual({
+      tokensBefore: 120,
+      tokensAfter: 24,
+      instruction: 'preserve implementation notes',
+    });
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('Compaction complete');
+    expect(transcript).toContain('120 → 24 tokens');
+    expect(transcript).toContain('preserve implementation notes');
+    expect(transcript).not.toContain('Compacted transcript summary.');
+  });
+
+  it('renders replayed cancelled compaction records as cancelled compaction blocks', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'prompt before cancellation' }]),
+      {
+        time: REPLAY_TIME,
+        type: 'compaction',
+        result: 'cancelled',
+        instruction: 'preserve implementation notes',
+      },
+      message('user', [{ type: 'text', text: 'prompt after cancellation' }]),
+    ]);
+
+    const compactionEntry = driver.state.transcriptEntries.find(
+      (entry) => entry.compactionData !== undefined,
+    );
+    expect(compactionEntry?.compactionData).toEqual({
+      result: 'cancelled',
+      instruction: 'preserve implementation notes',
+    });
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('Compaction cancelled');
+    expect(transcript).toContain('preserve implementation notes');
+    expect(transcript).not.toContain('Compaction complete');
+  });
+
   it('renders plan permission and approval replay notices', async () => {
     const driver = await replayIntoDriver([
       { time: REPLAY_TIME, type: 'plan_updated', enabled: true },

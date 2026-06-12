@@ -149,14 +149,20 @@ export class LocalKaos implements Kaos {
   readonly name: string = 'local';
   readonly osEnv: Environment;
   private _cwd: string;
+  private readonly _envLayers: readonly Record<string, string>[];
 
-  private constructor(osEnv: Environment, cwd?: string) {
+  private constructor(
+    osEnv: Environment,
+    cwd?: string,
+    envLayers: readonly Record<string, string>[] = [],
+  ) {
     // After construction we never touch `process.cwd()` / `process.chdir()`
     // — all path resolution goes through `this._cwd`. The default seeds
     // from `process.cwd()` but callers can pin to anything via `withCwd`
     // (or supplying `cwd` directly).
     this._cwd = normalize(cwd ?? process.cwd());
     this.osEnv = osEnv;
+    this._envLayers = envLayers;
   }
 
   /**
@@ -172,7 +178,11 @@ export class LocalKaos implements Kaos {
   }
 
   withCwd(cwd: string): LocalKaos {
-    return new LocalKaos(this.osEnv, cwd);
+    return new LocalKaos(this.osEnv, cwd, this._envLayers);
+  }
+
+  withEnv(env: Record<string, string>): LocalKaos {
+    return new LocalKaos(this.osEnv, this._cwd, [...this._envLayers, env]);
   }
 
   private _resolvePath(path: string): string {
@@ -533,6 +543,7 @@ export class LocalKaos implements Kaos {
       // (`taskkill /T` handles the tree there). We do not call `child.unref()`
       // because the parent still waits on the child's exit through `wait()`.
       detached: !isWindows,
+      env: this._buildExecEnv(),
     });
     await waitForSpawn(child);
     return new LocalProcess(child);
@@ -550,10 +561,22 @@ export class LocalKaos implements Kaos {
       cwd: this._cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: !isWindows,
-      env,
+      env: this._buildExecEnv(env),
     });
     await waitForSpawn(child);
     return new LocalProcess(child);
+  }
+
+  private _buildExecEnv(invocationEnv?: Record<string, string>): Record<string, string> | undefined {
+    if (this._envLayers.length === 0) return invocationEnv;
+    const merged: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      ...invocationEnv,
+    };
+    for (const layer of this._envLayers) {
+      Object.assign(merged, layer);
+    }
+    return merged;
   }
 }
 
