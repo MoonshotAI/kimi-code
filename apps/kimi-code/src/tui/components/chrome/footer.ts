@@ -4,6 +4,7 @@
  * Layout:
  *   Line 1: [yolo] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
  *   Line 2: context: XX.X% (tokens/max)
+ *   Line 3+: aligned quota rows: "label (used%/100%)" under context parens
  */
 
 import type { Component } from '@earendil-works/pi-tui';
@@ -13,7 +14,7 @@ import chalk from 'chalk';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
-import type { AppState } from '#/tui/types';
+import type { AppState, QuotaInfo } from '#/tui/types';
 import {
   createGitStatusCache,
   formatGitBadgeBase,
@@ -206,6 +207,53 @@ function formatContextStatus(usage: number, tokens?: number, maxTokens?: number)
   return `context: ${pct}`;
 }
 
+function hslToHex(h: number, s: number, l: number): string {
+  const normalizedH = h / 360;
+  const a = (s * Math.min(l, 100 - l)) / 100;
+  const f = (n: number): string => {
+    const k = (n + normalizedH * 12) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round((color / 100) * 255)
+      .toString(16)
+      .padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+function formatQuotaLines(
+  quotas: readonly QuotaInfo[] | undefined,
+  contextText: string,
+  contextWidth: number,
+  width: number,
+  colors: ColorPalette,
+): string[] {
+  if (quotas === undefined || quotas.length === 0) return [];
+
+  const parenIndex = contextText.indexOf('(');
+  const parenCol =
+    parenIndex >= 0 ? Math.max(0, width - contextWidth + parenIndex) : width;
+
+  const lines: string[] = [];
+  for (const quota of quotas) {
+    if (quota.limit <= 0) continue;
+    const usedRatio = Math.max(0, Math.min(quota.used / quota.limit, 1));
+    const usedPct = Math.round(usedRatio * 100);
+    // Gradient from dark green (0%) to red (100%).
+    const numberColor = chalk.hex(hslToHex(Math.round((1 - usedRatio) * 120), 80, 40));
+    const prefix = `${quota.label.toLowerCase()} `;
+    const prefixWidth = visibleWidth(prefix);
+    const pad = Math.max(0, parenCol - prefixWidth);
+    const line =
+      ' '.repeat(pad) +
+      chalk.hex(colors.text)(prefix) +
+      chalk.hex(colors.text)('(') +
+      numberColor(String(usedPct)) +
+      chalk.hex(colors.text)('/100%)');
+    lines.push(truncateToWidth(line, width));
+  }
+  return lines;
+}
+
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {
   const base = chalk.hex(colors.textDim)(formatGitBadgeBase(status));
   if (status.pullRequest === null) return base;
@@ -351,7 +399,7 @@ export class FooterComponent implements Component {
       line1 = truncateToWidth(leftLine, width, '…');
     }
 
-    // ── Line 2: transient hint (bottom-left) + context (right) ──
+    // ── Line 2: transient hint (mid) + context (right) ──
     const contextText = formatContextStatus(
       state.contextUsage,
       state.contextTokens,
@@ -374,6 +422,21 @@ export class FooterComponent implements Component {
     } else {
       const leftPad = Math.max(0, width - contextWidth);
       line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
+    }
+
+    const quotaLines = formatQuotaLines(
+      state.quotas,
+      contextText,
+      contextWidth,
+      width,
+      colors,
+    );
+    if (quotaLines.length > 0) {
+      return [
+        truncateToWidth(line1, width),
+        truncateToWidth(line2, width),
+        ...quotaLines,
+      ];
     }
 
     return [truncateToWidth(line1, width), truncateToWidth(line2, width)];

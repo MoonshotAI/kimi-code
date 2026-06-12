@@ -16,6 +16,10 @@ function truecolorCodes(text: string): Set<string> {
   return codes;
 }
 
+function stripAnsi(text: string): string {
+  return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
+}
+
 // Dark dance colors the footer never uses outside of /dance.
 const RAINBOW_CYAN = '91,192,190';
 const RAINBOW_GREEN = '78,200,126';
@@ -102,5 +106,46 @@ describe('FooterComponent', () => {
     } finally {
       currentTheme.setPalette(darkColors);
     }
+  });
+
+  it('renders no quota rows when quotas are unset', () => {
+    const footer = new FooterComponent(appState);
+    expect(footer.render(80).length).toBe(2);
+  });
+
+  it('renders managed quota rows aligned under the context parentheses', () => {
+    const state: AppState = {
+      ...appState,
+      contextUsage: 0.5,
+      contextTokens: 1_000,
+      maxContextTokens: 2_000,
+      quotas: [{ label: 'Weekly limit', used: 25, limit: 100 }],
+    };
+    const footer = new FooterComponent(state);
+    const lines = footer.render(200);
+
+    expect(lines.length).toBe(3);
+    const contextLine = stripAnsi(lines[1]!);
+    const quotaLine = stripAnsi(lines[2]!);
+    expect(quotaLine).toContain('weekly limit');
+    expect(quotaLine).toContain('(25/100%)');
+    expect(quotaLine.indexOf('(')).toBe(contextLine.indexOf('('));
+  });
+
+  it('lowercases quota labels and colors the percentage', () => {
+    const state: AppState = {
+      ...appState,
+      contextUsage: 0,
+      contextTokens: 1_000_000,
+      maxContextTokens: 2_000_000,
+      quotas: [{ label: '5H LIMIT', used: 50, limit: 100 }],
+    };
+    const footer = new FooterComponent(state);
+    const lines = footer.render(120);
+    const quotaLine = lines[2]!;
+
+    expect(stripAnsi(quotaLine)).toContain('5h limit');
+    expect(stripAnsi(quotaLine)).toContain('(50/100%)');
+    expect(truecolorCodes(quotaLine).size).toBeGreaterThan(0);
   });
 });

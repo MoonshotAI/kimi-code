@@ -1,0 +1,145 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
+import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
+import { getBuiltInPalette } from '#/tui/theme';
+import type { AppState, QuotaInfo } from '#/tui/types';
+
+function makeHost(options: { quotas?: QuotaInfo[]; fetchError?: boolean } = {}) {
+  const appState: Partial<AppState> = {
+    sessionId: 's1',
+    streamingPhase: 'idle',
+    model: 'kimi-k2',
+    permissionMode: 'manual',
+    availableModels: {
+      'kimi-k2': {
+        model: 'kimi-k2',
+        provider: DEFAULT_OAUTH_PROVIDER_NAME,
+      } as any,
+    },
+    quotas: undefined,
+  };
+
+  const host = {
+    state: {
+      appState,
+      queuedMessages: [],
+      theme: { palette: getBuiltInPalette('dark') },
+      toolOutputExpanded: false,
+      todoPanel: { getTodos: vi.fn(() => []) },
+      transcriptContainer: { addChild: vi.fn() },
+      ui: { requestRender: vi.fn() },
+    },
+    session: undefined,
+    aborted: false,
+    sessionEventUnsubscribe: undefined,
+    streamingUI: {
+      setTurnId: vi.fn(),
+      flushNow: vi.fn(),
+      resetToolUi: vi.fn(),
+      finalizeTurn: vi.fn(),
+      hasThinkingDraft: vi.fn(() => false),
+      flushThinkingToTranscript: vi.fn(),
+      appendAssistantDelta: vi.fn(),
+      scheduleFlush: vi.fn(),
+    },
+    requireSession: vi.fn(),
+    setAppState: vi.fn(),
+    fetchManagedQuotas: vi.fn(async () =>
+      options.fetchError === true ? undefined : options.quotas,
+    ),
+    patchLivePane: vi.fn(),
+    resetLivePane: vi.fn(),
+    showError: vi.fn(),
+    showStatus: vi.fn(),
+    showNotice: vi.fn(),
+    track: vi.fn(),
+    mountEditorReplacement: vi.fn(),
+    restoreEditor: vi.fn(),
+    restoreInputText: vi.fn(),
+    appendTranscriptEntry: vi.fn(),
+    sendNormalUserInput: vi.fn(),
+    sendQueuedMessage: vi.fn(),
+    shiftQueuedMessage: vi.fn(),
+    btwPanelController: { routeEvent: vi.fn(() => false) },
+    tasksBrowserController: {},
+  };
+
+  host.setAppState.mockImplementation((patch: Record<string, unknown>) => {
+    Object.assign(host.state.appState, patch);
+  });
+
+  return { host: host as any };
+}
+
+describe('SessionEventHandler quotas', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  it('fetches managed quotas on session start', async () => {
+    const quotas: QuotaInfo[] = [{ label: 'Weekly limit', used: 10, limit: 100 }];
+    const { host } = makeHost({ quotas });
+    const handler = new SessionEventHandler(host);
+
+    (handler as any).scheduleQuotaRefresh();
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(host.fetchManagedQuotas).toHaveBeenCalled();
+    expect(host.state.appState.quotas).toEqual(quotas);
+  });
+
+  it('keeps last known quotas when the fetch fails', async () => {
+    const quotas: QuotaInfo[] = [{ label: 'Weekly limit', used: 10, limit: 100 }];
+    const { host } = makeHost({ quotas });
+    const handler = new SessionEventHandler(host);
+
+    (handler as any).scheduleQuotaRefresh();
+    await vi.runOnlyPendingTimersAsync();
+    expect(host.state.appState.quotas).toEqual(quotas);
+
+    host.fetchManagedQuotas = vi.fn(async () => undefined);
+    await (handler as any).refreshQuota();
+
+    expect(host.state.appState.quotas).toEqual(quotas);
+  });
+
+  it('adds current-turn usage to the last server quotas live', async () => {
+    const quotas: QuotaInfo[] = [{ label: 'Weekly limit', used: 10, limit: 100 }];
+    const { host } = makeHost({ quotas });
+    const handler = new SessionEventHandler(host);
+
+    (handler as any).scheduleQuotaRefresh();
+    await vi.runOnlyPendingTimersAsync();
+
+    (handler as any).applyLiveUsage({
+      currentTurn: {
+        inputOther: 5,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+        output: 3,
+      },
+    });
+
+    expect(host.state.appState.quotas).toEqual([
+      { label: 'Weekly limit', used: 18, limit: 100 },
+    ]);
+  });
+
+  it('resets live delta to zero when the current turn resets', async () => {
+    const quotas: QuotaInfo[] = [{ label: 'Weekly limit', used: 10, limit: 100 }];
+    const { host } = makeHost({ quotas });
+    const handler = new SessionEventHandler(host);
+
+    (handler as any).scheduleQuotaRefresh();
+    await vi.runOnlyPendingTimersAsync();
+
+    (handler as any).applyLiveUsage({
+      currentTurn: { inputOther: 5, inputCacheRead: 0, inputCacheCreation: 0, output: 3 },
+    });
+    expect(host.state.appState.quotas[0].used).toBe(18);
+
+    (handler as any).applyLiveUsage({ currentTurn: undefined });
+    expect(host.state.appState.quotas[0].used).toBe(10);
+  });
+});
