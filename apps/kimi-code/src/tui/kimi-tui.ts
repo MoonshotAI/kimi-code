@@ -1298,6 +1298,19 @@ export class KimiTUI {
     this.sessionEventHandler.startSubscription();
     this.clearTranscriptAndRedraw();
     this.showStatus(`Started a new session (${session.id}).`);
+    void this.showConfigWarningsIfAny();
+  }
+
+  /** Surface config.toml load warnings (degraded or kept-previous config) in the status bar. */
+  private async showConfigWarningsIfAny(): Promise<void> {
+    try {
+      const { warnings } = await this.harness.getConfigDiagnostics();
+      for (const warning of warnings) {
+        this.showStatus(warning, 'warning');
+      }
+    } catch {
+      /* diagnostics are best-effort */
+    }
   }
 
   // =========================================================================
