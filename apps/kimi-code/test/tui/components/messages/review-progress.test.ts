@@ -1,3 +1,4 @@
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { ReviewProgressComponent } from '#/tui/components/messages/review-progress';
@@ -40,5 +41,21 @@ describe('ReviewProgressComponent', () => {
     expect(completed).toContain('No actionable findings.');
     expect(failed).toContain('Review failed');
     expect(failed).toContain('worker failed');
+  });
+
+  it('keeps every rendered line within the requested width', () => {
+    const component = new ReviewProgressComponent({
+      state: 'started',
+      title: 'Thorough review',
+      detail: [
+        '3 reviewer agents running in parallel',
+        'Perspectives: Correctness and regressions, Security and data safety, Maintainability and tests',
+        '115 files: +10586 -42',
+      ].join(' · '),
+    });
+
+    const lines = component.render(80);
+
+    expect(lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
   });
 });

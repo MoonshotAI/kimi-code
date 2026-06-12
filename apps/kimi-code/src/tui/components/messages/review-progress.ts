@@ -1,4 +1,4 @@
-import type { Component } from '@earendil-works/pi-tui';
+import { truncateToWidth, type Component } from '@earendil-works/pi-tui';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme, type ColorToken } from '#/tui/theme';
@@ -23,7 +23,7 @@ export class ReviewProgressComponent implements Component {
 
   invalidate(): void {}
 
-  render(_width: number): string[] {
+  render(width: number): string[] {
     const token = tokenForState(this.data.state);
     const marker = currentTheme.boldFg(token, STATUS_BULLET);
     const title = currentTheme.boldFg(token, this.data.title);
@@ -31,7 +31,7 @@ export class ReviewProgressComponent implements Component {
     if (this.data.detail !== undefined && this.data.detail.length > 0) {
       lines.push(`  ${currentTheme.fg('textDim', this.data.detail)}`);
     }
-    return lines;
+    return lines.map((line) => truncateToWidth(line, width));
   }
 }
 
