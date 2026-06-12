@@ -270,7 +270,7 @@ describe('Agent resume', () => {
           content: [{ type: 'text', text: 'Historical prompt before compaction' }],
         }),
       }),
-      {
+      expect.objectContaining({
         type: 'compaction',
         result: {
           summary: 'Compacted implementation notes.',
@@ -279,7 +279,7 @@ describe('Agent resume', () => {
           tokensAfter: 24,
         },
         instruction: 'preserve implementation notes',
-      },
+      }),
     ]);
   });
 
@@ -299,11 +299,11 @@ describe('Agent resume', () => {
     await ctx.agent.resume();
 
     expect(ctx.agent.replayBuilder.buildResult()).toEqual([
-      {
+      expect.objectContaining({
         type: 'compaction',
         result: 'cancelled',
         instruction: 'preserve implementation notes',
-      },
+      }),
     ]);
   });
 

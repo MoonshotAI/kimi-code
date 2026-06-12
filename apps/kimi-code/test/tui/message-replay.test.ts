@@ -994,6 +994,7 @@ describe('KimiTUI resume message replay', () => {
     const driver = await replayIntoDriver([
       message('user', [{ type: 'text', text: 'prompt before compaction' }]),
       {
+        time: REPLAY_TIME,
         type: 'compaction',
         result: {
           summary: 'Compacted transcript summary.',
@@ -1025,6 +1026,7 @@ describe('KimiTUI resume message replay', () => {
     const driver = await replayIntoDriver([
       message('user', [{ type: 'text', text: 'prompt before cancellation' }]),
       {
+        time: REPLAY_TIME,
         type: 'compaction',
         result: 'cancelled',
         instruction: 'preserve implementation notes',
