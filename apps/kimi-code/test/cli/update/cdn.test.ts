@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchLatestVersionFromCdn } from '#/cli/update/cdn';
-import { KIMI_CODE_CDN_LATEST_URL } from '#/constant/app';
+import { fetchLatestFromCdn, fetchLatestVersionFromCdn } from '#/cli/update/cdn';
+import {
+  KIMI_CODE_CDN_LATEST_JSON_URL,
+  KIMI_CODE_CDN_LATEST_URL,
+  KIMI_CODE_UPDATE_CDN_BASE_ENV,
+} from '#/constant/app';
 
 function mockFetchOk(body: string): typeof fetch {
   return vi.fn(async () => ({
@@ -18,6 +22,36 @@ function mockFetchStatus(status: number): typeof fetch {
     text: async () => '',
   })) as unknown as typeof fetch;
 }
+
+type Route = { readonly status?: number; readonly body?: string } | Error;
+
+/** URL-routed fetch mock: unrouted URLs return 404. */
+function mockRoutedFetch(routes: Record<string, Route>): typeof fetch {
+  return vi.fn(async (input: string | URL) => {
+    const route = routes[String(input)];
+    if (route === undefined) {
+      return { ok: false, status: 404, text: async () => '' };
+    }
+    if (route instanceof Error) throw route;
+    const status = route.status ?? 200;
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      text: async () => route.body ?? '',
+    };
+  }) as unknown as typeof fetch;
+}
+
+const MANIFEST_BODY = JSON.stringify({
+  schemaVersion: 1,
+  version: '2.0.0',
+  publishedAt: '2026-06-12T00:00:00.000Z',
+  rollout: [
+    { percent: 30, delaySeconds: 0 },
+    { percent: 30, delaySeconds: 43_200 },
+    { percent: 40, delaySeconds: 86_400 },
+  ],
+});
 
 describe('fetchLatestVersionFromCdn', () => {
   it('returns the trimmed semver returned by CDN /latest', async () => {
@@ -45,5 +79,138 @@ describe('fetchLatestVersionFromCdn', () => {
       throw new Error('network down');
     }) as unknown as typeof fetch;
     await expect(fetchLatestVersionFromCdn(f)).rejects.toThrow(/network down/);
+  });
+});
+
+describe('fetchLatestFromCdn', () => {
+  it('parses latest.json and returns the manifest', async () => {
+    const f = mockRoutedFetch({ [KIMI_CODE_CDN_LATEST_JSON_URL]: { body: MANIFEST_BODY } });
+    await expect(fetchLatestFromCdn(f)).resolves.toEqual({
+      latest: '2.0.0',
+      manifest: {
+        version: '2.0.0',
+        publishedAt: '2026-06-12T00:00:00.000Z',
+        rollout: [
+          { percent: 30, delaySeconds: 0 },
+          { percent: 30, delaySeconds: 43_200 },
+          { percent: 40, delaySeconds: 86_400 },
+        ],
+      },
+    });
+    expect(f).toHaveBeenCalledWith(KIMI_CODE_CDN_LATEST_JSON_URL);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores unknown manifest fields (lenient parsing)', async () => {
+    const body = JSON.stringify({
+      schemaVersion: 99,
+      version: '2.0.0',
+      publishedAt: '2026-06-12T00:00:00.000Z',
+      rollout: [],
+      futureField: { nested: true },
+    });
+    const f = mockRoutedFetch({ [KIMI_CODE_CDN_LATEST_JSON_URL]: { body } });
+    const result = await fetchLatestFromCdn(f);
+    expect(result.manifest).toEqual({
+      version: '2.0.0',
+      publishedAt: '2026-06-12T00:00:00.000Z',
+      rollout: [],
+    });
+  });
+
+  it('defaults a missing rollout to an empty plan (fully rolled out)', async () => {
+    const body = JSON.stringify({
+      version: '2.0.0',
+      publishedAt: '2026-06-12T00:00:00.000Z',
+    });
+    const f = mockRoutedFetch({ [KIMI_CODE_CDN_LATEST_JSON_URL]: { body } });
+    const result = await fetchLatestFromCdn(f);
+    expect(result.manifest?.rollout).toEqual([]);
+  });
+
+  const fallbackCases: ReadonlyArray<readonly [string, Route]> = [
+    ['latest.json is missing (HTTP 404)', { status: 404 }],
+    ['latest.json fetch throws', new Error('network down')],
+    ['body is not valid JSON', { body: 'not json {' }],
+    ['version is not semver', { body: JSON.stringify({ version: 'nope', publishedAt: '2026-06-12T00:00:00.000Z' }) }],
+    ['publishedAt is unparseable', { body: JSON.stringify({ version: '2.0.0', publishedAt: 'garbage' }) }],
+    ['a batch percent is out of range', {
+      body: JSON.stringify({
+        version: '2.0.0',
+        publishedAt: '2026-06-12T00:00:00.000Z',
+        rollout: [{ percent: 150, delaySeconds: 0 }],
+      }),
+    }],
+    ['a batch delay is negative', {
+      body: JSON.stringify({
+        version: '2.0.0',
+        publishedAt: '2026-06-12T00:00:00.000Z',
+        rollout: [{ percent: 100, delaySeconds: -1 }],
+      }),
+    }],
+  ];
+
+  for (const [name, route] of fallbackCases) {
+    it(`falls back to plain /latest when ${name}`, async () => {
+      const f = mockRoutedFetch({
+        [KIMI_CODE_CDN_LATEST_JSON_URL]: route,
+        [KIMI_CODE_CDN_LATEST_URL]: { body: '1.9.0\n' },
+      });
+      await expect(fetchLatestFromCdn(f)).resolves.toEqual({
+        latest: '1.9.0',
+        manifest: null,
+      });
+    });
+  }
+
+  it('throws when both latest.json and plain /latest fail', async () => {
+    const f = mockRoutedFetch({
+      [KIMI_CODE_CDN_LATEST_JSON_URL]: { status: 500 },
+      [KIMI_CODE_CDN_LATEST_URL]: { status: 500 },
+    });
+    await expect(fetchLatestFromCdn(f)).rejects.toThrow(/HTTP 500/);
+  });
+
+  it('propagates the plain /latest error when the fallback also breaks', async () => {
+    const f = mockRoutedFetch({
+      [KIMI_CODE_CDN_LATEST_JSON_URL]: new Error('json down'),
+      [KIMI_CODE_CDN_LATEST_URL]: { body: 'not-a-version' },
+    });
+    await expect(fetchLatestFromCdn(f)).rejects.toThrow(/invalid semver/);
+  });
+
+  describe('KIMI_CODE_UPDATE_CDN_BASE override', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('reads latest.json from the overridden base', async () => {
+      vi.stubEnv(KIMI_CODE_UPDATE_CDN_BASE_ENV, 'http://127.0.0.1:8787/mock');
+      const f = mockRoutedFetch({
+        'http://127.0.0.1:8787/mock/latest.json': { body: MANIFEST_BODY },
+      });
+      const result = await fetchLatestFromCdn(f);
+      expect(result.latest).toBe('2.0.0');
+      expect(f).toHaveBeenCalledWith('http://127.0.0.1:8787/mock/latest.json');
+    });
+
+    it('falls back to the overridden plain latest', async () => {
+      vi.stubEnv(KIMI_CODE_UPDATE_CDN_BASE_ENV, 'http://127.0.0.1:8787/mock');
+      const f = mockRoutedFetch({
+        'http://127.0.0.1:8787/mock/latest': { body: '1.9.0\n' },
+      });
+      await expect(fetchLatestFromCdn(f)).resolves.toEqual({
+        latest: '1.9.0',
+        manifest: null,
+      });
+    });
+
+    it('ignores a blank override and keeps the default CDN base', async () => {
+      vi.stubEnv(KIMI_CODE_UPDATE_CDN_BASE_ENV, '   ');
+      const f = mockRoutedFetch({
+        [KIMI_CODE_CDN_LATEST_JSON_URL]: { body: MANIFEST_BODY },
+      });
+      await expect(fetchLatestFromCdn(f)).resolves.toMatchObject({ latest: '2.0.0' });
+    });
   });
 });

@@ -3,13 +3,17 @@ import { z } from 'zod';
 import { getUpdateStateFile } from '#/utils/paths';
 import { readJsonFile, writeJsonFile } from '#/utils/persistence';
 
+import { UpdateManifestSchema } from './cdn';
 import { emptyUpdateCache, type UpdateCache } from './types';
 
-const UpdateCacheSchema: z.ZodType<UpdateCache> = z
+// Stays `.strict()` (we own this file), but `manifest` defaults to null so
+// cache files written by pre-rollout versions keep parsing.
+const UpdateCacheSchema = z
   .object({
     source: z.literal('cdn'),
     checkedAt: z.string().min(1).nullable(),
     latest: z.string().min(1).nullable(),
+    manifest: UpdateManifestSchema.nullable().default(null),
   })
   .strict();
 

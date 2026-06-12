@@ -23,6 +23,7 @@ export const KIMI_CODE_BIN_DIR_NAME = 'bin';
 export const KIMI_CODE_UPDATE_STATE_FILE_NAME = 'latest.json';
 export const KIMI_CODE_UPDATE_INSTALL_STATE_FILE_NAME = 'install.json';
 export const KIMI_CODE_UPDATE_INSTALL_LOCK_FILE_NAME = 'install.lock';
+export const KIMI_CODE_UPDATE_ROLLOUT_LOG_FILE_NAME = 'rollout.log';
 export const KIMI_CODE_INPUT_HISTORY_DIR_NAME = 'user-history';
 
 // Managed Kimi auth provider key shared with OAuth/SDK config.
@@ -45,6 +46,13 @@ export const FEEDBACK_TELEMETRY_EVENT = 'feedback_submitted';
 // CDN source of truth: all version checks and native install scripts pull from here.
 export const KIMI_CODE_CDN_BASE = 'https://code.kimi.com/kimi-code';
 export const KIMI_CODE_CDN_LATEST_URL = `${KIMI_CODE_CDN_BASE}/latest`;
+// Rollout manifest consumed by update checks; the plain-text `/latest` above
+// stays unchanged forever — already-shipped clients hard-fail on non-semver
+// bodies, and the CDN install scripts read it for fresh installs.
+export const KIMI_CODE_CDN_LATEST_JSON_URL = `${KIMI_CODE_CDN_BASE}/latest.json`;
+// Overrides the base for update checks only (latest / latest.json), so a
+// local mock CDN can exercise the rollout flow end-to-end.
+export const KIMI_CODE_UPDATE_CDN_BASE_ENV = 'KIMI_CODE_UPDATE_CDN_BASE';
 export const KIMI_CODE_TIPS_BANNER_URL = 'https://cdn.kimi.com/kimi-code-tips/tips.json';
 export const KIMI_CODE_PLUGIN_MARKETPLACE_URL = `${KIMI_CODE_CDN_BASE}/plugins/marketplace.json`;
 export const KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV = 'KIMI_CODE_PLUGIN_MARKETPLACE_URL';

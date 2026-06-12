@@ -19,13 +19,22 @@ import {
   type InstallPromptOptions,
 } from './prompt';
 import { refreshUpdateCache } from './refresh';
-import { selectUpdateTarget } from './select';
+import {
+  appendRolloutDecisionLog,
+  decidePassiveUpdateTarget,
+  isRolloutBypassedByExperimentalEnv,
+  resolveUpdateDeviceId,
+  rolloutBucket,
+  rolloutDelayForBucket,
+  type PassiveUpdateDecision,
+} from './rollout';
 import { detectInstallSource } from './source';
 import {
   NPM_PACKAGE_NAME,
   type InstallSource,
   type UpdateDecision,
   type UpdateInstallState,
+  type UpdateManifest,
   type UpdatePreflightResult,
   type UpdateTarget,
 } from './types';
@@ -177,8 +186,59 @@ function refreshInBackground(): void {
   void refreshUpdateCache().catch(() => {});
 }
 
+/** Telemetry properties describing where this device sits in the rollout. */
+interface RolloutTelemetry {
+  readonly rollout_bucket: number;
+  readonly rollout_delay_seconds: number;
+  readonly rollout_from_manifest: boolean;
+  readonly rollout_bypassed: boolean;
+}
+
+function rolloutTelemetryFor(
+  deviceId: string,
+  targetVersion: string,
+  manifest: UpdateManifest | null,
+  bypassRollout: boolean,
+): RolloutTelemetry {
+  const bucket = rolloutBucket(deviceId, targetVersion);
+  return {
+    rollout_bucket: bucket,
+    rollout_delay_seconds:
+      manifest === null || bypassRollout ? 0 : rolloutDelayForBucket(manifest.rollout, bucket),
+    rollout_from_manifest: manifest !== null,
+    rollout_bypassed: bypassRollout,
+  };
+}
+
+type RolloutCheckPhase = 'startup-cache' | 'background-refresh' | 'prompt-refresh';
+
+/** Record which case a passive version check hit in `updates/rollout.log`. */
+function logRolloutDecision(
+  phase: RolloutCheckPhase,
+  currentVersion: string,
+  latest: string | null,
+  manifest: UpdateManifest | null,
+  decision: PassiveUpdateDecision,
+): void {
+  void appendRolloutDecisionLog({
+    ts: nowIso(),
+    phase,
+    reason: decision.reason,
+    current: currentVersion,
+    latest,
+    target: decision.target?.version ?? null,
+    manifestPresent: manifest !== null,
+    publishedAt: manifest?.publishedAt ?? null,
+    bucket: decision.bucket,
+    delaySeconds: decision.delaySeconds,
+    eligibleAt: decision.eligibleAt,
+  });
+}
+
 function refreshAndMaybeInstallInBackground(
   currentVersion: string,
+  deviceId: string,
+  bypassRollout: boolean,
   isInteractive: boolean,
   installState: UpdateInstallState,
   platform: NodeJS.Platform,
@@ -188,7 +248,16 @@ function refreshAndMaybeInstallInBackground(
   void (async () => {
     const refreshed = await refreshUpdateCache();
     if (!isInteractive) return;
-    const target = selectUpdateTarget(currentVersion, refreshed.latest);
+    const decision = decidePassiveUpdateTarget(
+      currentVersion,
+      refreshed.latest,
+      refreshed.manifest,
+      deviceId,
+      new Date(),
+      bypassRollout,
+    );
+    logRolloutDecision('background-refresh', currentVersion, refreshed.latest, refreshed.manifest, decision);
+    const target = decision.target;
     if (target === null) return;
     const source = await detectInstallSource().catch(() => 'unsupported' as const);
     await tryStartAutomaticBackgroundInstall(
@@ -199,18 +268,32 @@ function refreshAndMaybeInstallInBackground(
       platform,
       track,
       logger,
+      rolloutTelemetryFor(deviceId, target.version, refreshed.manifest, bypassRollout),
     );
   })().catch(() => {});
 }
 
 async function refreshUserVisibleUpdateTarget(
   currentVersion: string,
+  deviceId: string,
+  bypassRollout: boolean,
   fallbackTarget: UpdateTarget,
 ): Promise<UpdateTarget | null> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const refresh = refreshUpdateCache()
-      .then((refreshed) => selectUpdateTarget(currentVersion, refreshed.latest))
+      .then((refreshed) => {
+        const decision = decidePassiveUpdateTarget(
+          currentVersion,
+          refreshed.latest,
+          refreshed.manifest,
+          deviceId,
+          new Date(),
+          bypassRollout,
+        );
+        logRolloutDecision('prompt-refresh', currentVersion, refreshed.latest, refreshed.manifest, decision);
+        return decision.target;
+      })
       .catch(() => fallbackTarget);
     const fallback = new Promise<UpdateTarget>((resolve) => {
       timeout = setTimeout(() => {
@@ -331,6 +414,7 @@ function trackUpdatePrompted(
   target: UpdateTarget,
   source: InstallSource,
   decision: UpdateDecision,
+  rolloutTelemetry: RolloutTelemetry,
 ): void {
   trackUpdateEvent(track, 'update_prompted', {
     current: currentVersion,
@@ -339,6 +423,7 @@ function trackUpdatePrompted(
     target_version: target.version,
     source,
     decision,
+    ...rolloutTelemetry,
   });
 }
 
@@ -413,6 +498,7 @@ async function startBackgroundInstall(
   platform: NodeJS.Platform,
   track: RunUpdatePreflightOptions['track'],
   logger: UpdateLogger,
+  rolloutTelemetry: RolloutTelemetry,
 ): Promise<void> {
   const lock = await tryAcquireUpdateInstallLock({ version: target.version });
   if (lock === null) return;
@@ -439,6 +525,7 @@ async function startBackgroundInstall(
       current_version: currentVersion,
       target_version: target.version,
       source,
+      ...rolloutTelemetry,
     });
     logUpdateInfo(logger, 'background update install started', {
       currentVersion,
@@ -515,6 +602,7 @@ async function tryStartAutomaticBackgroundInstall(
   platform: NodeJS.Platform,
   track: RunUpdatePreflightOptions['track'],
   logger: UpdateLogger,
+  rolloutTelemetry: RolloutTelemetry,
 ): Promise<boolean> {
   const sourceCanAutoInstall = canAutoInstall(source, platform);
   const autoInstallUpdates = sourceCanAutoInstall ? await shouldAutoInstallUpdates() : false;
@@ -531,6 +619,7 @@ async function tryStartAutomaticBackgroundInstall(
       platform,
       track,
       logger,
+      rolloutTelemetry,
     ).catch(() => {});
   }
   return true;
@@ -562,6 +651,8 @@ export async function runUpdatePreflight(
   try {
     const isInteractive =
       options.isTTY ?? (process.stdin.isTTY && process.stdout.isTTY);
+    const deviceId = resolveUpdateDeviceId();
+    const bypassRollout = isRolloutBypassedByExperimentalEnv();
     let installState = await readUpdateInstallState().catch(() => emptyUpdateInstallState());
     if (isInteractive) {
       installState = await showPendingBackgroundInstallNotice(
@@ -574,11 +665,22 @@ export async function runUpdatePreflight(
     }
 
     const cache = await readUpdateCache().catch(() => null);
-    const latest = cache?.latest ?? null;
-    const target = selectUpdateTarget(currentVersion, latest);
+    const cachedManifest = cache?.manifest ?? null;
+    const cachedDecision = decidePassiveUpdateTarget(
+      currentVersion,
+      cache?.latest ?? null,
+      cachedManifest,
+      deviceId,
+      new Date(),
+      bypassRollout,
+    );
+    logRolloutDecision('startup-cache', currentVersion, cache?.latest ?? null, cachedManifest, cachedDecision);
+    const target = cachedDecision.target;
     if (target === null) {
       refreshAndMaybeInstallInBackground(
         currentVersion,
+        deviceId,
+        bypassRollout,
         isInteractive,
         installState,
         platform,
@@ -608,14 +710,26 @@ export async function runUpdatePreflight(
         platform,
         options.track,
         logger,
+        rolloutTelemetryFor(deviceId, target.version, cachedManifest, bypassRollout),
       )
     ) {
       refreshInBackground();
       return 'continue';
     }
 
-    const userVisibleTarget = await refreshUserVisibleUpdateTarget(currentVersion, target);
+    const userVisibleTarget = await refreshUserVisibleUpdateTarget(
+      currentVersion,
+      deviceId,
+      bypassRollout,
+      target,
+    );
     if (userVisibleTarget === null) return 'continue';
+    const userVisibleRollout = rolloutTelemetryFor(
+      deviceId,
+      userVisibleTarget.version,
+      cachedManifest,
+      bypassRollout,
+    );
     if (
       await tryStartAutomaticBackgroundInstall(
         installState,
@@ -625,13 +739,14 @@ export async function runUpdatePreflight(
         platform,
         options.track,
         logger,
+        userVisibleRollout,
       )
     ) {
       return 'continue';
     }
 
     const installCommand = installCommandFor(source, userVisibleTarget.version, platform);
-    trackUpdatePrompted(options.track, currentVersion, userVisibleTarget, source, decision);
+    trackUpdatePrompted(options.track, currentVersion, userVisibleTarget, source, decision, userVisibleRollout);
 
     if (decision === 'manual-command') {
       stdout.write(renderManualUpdateMessage(
