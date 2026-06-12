@@ -152,6 +152,7 @@ export class SessionEventHandler {
   private readonly reviewAgentSwarmReviewerAssignmentIds = new Set<string>();
   private activeReviewIntensity: ReviewStartedEvent['intensity'] | undefined;
   private readonly reviewAssignmentRoles = new Map<string, ReviewAssignmentStartedEvent['assignment']['role']>();
+  private readonly pendingReviewAssignmentProgress = new Map<string, ReviewAssignmentProgressEvent['progress']>();
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
   private currentTurnHasAssistantText = false;
@@ -171,6 +172,7 @@ export class SessionEventHandler {
     this.reviewAgentSwarmReviewerAssignmentIds.clear();
     this.activeReviewIntensity = undefined;
     this.reviewAssignmentRoles.clear();
+    this.pendingReviewAssignmentProgress.clear();
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
     this.currentTurnHasAssistantText = false;
@@ -379,6 +381,8 @@ export class SessionEventHandler {
 
   private handleReviewAssignmentStarted(event: ReviewAssignmentStartedEvent): void {
     this.reviewAssignmentRoles.set(event.assignment.id, event.assignment.role);
+    const pendingProgress = this.pendingReviewAssignmentProgress.get(event.assignment.id);
+    this.pendingReviewAssignmentProgress.delete(event.assignment.id);
     if (
       this.reviewAgentSwarmToolCallId !== undefined &&
       event.assignment.role === 'reviewer'
@@ -396,6 +400,9 @@ export class SessionEventHandler {
           event.assignment.perspective,
         ),
       });
+      if (pendingProgress !== undefined) {
+        this.appendReviewAssignmentProgress(pendingProgress, event.assignment.role);
+      }
       return;
     }
     this.appendReviewProgress({
@@ -403,17 +410,31 @@ export class SessionEventHandler {
       title: `${reviewWorkerRoleLabel(event.assignment.role)} started`,
       detail: assignmentDetail(event.assignment.assignedFiles.length, event.assignment.perspective),
     });
+    if (pendingProgress !== undefined) {
+      this.appendReviewAssignmentProgress(pendingProgress, event.assignment.role);
+    }
   }
 
   private handleReviewAssignmentProgress(event: ReviewAssignmentProgressEvent): void {
     if (event.progress.status === 'active') return;
     if (this.reviewAgentSwarmReviewerAssignmentIds.has(event.progress.assignmentId)) return;
-    const role = this.reviewAssignmentRoles.get(event.progress.assignmentId) ?? 'reviewer';
+    const role = this.reviewAssignmentRoles.get(event.progress.assignmentId);
+    if (role === undefined) {
+      this.pendingReviewAssignmentProgress.set(event.progress.assignmentId, event.progress);
+      return;
+    }
     if (this.activeReviewIntensity === 'thorough' && role === 'reviewer') return;
+    this.appendReviewAssignmentProgress(event.progress, role);
+  }
+
+  private appendReviewAssignmentProgress(
+    progress: ReviewAssignmentProgressEvent['progress'],
+    role: ReviewAssignmentStartedEvent['assignment']['role'],
+  ): void {
     this.appendReviewProgress({
       state: 'progress',
-      title: `${reviewWorkerRoleLabel(role)} ${event.progress.status}`,
-      detail: event.progress.summary ?? event.progress.blocker,
+      title: `${reviewWorkerRoleLabel(role)} ${progress.status}`,
+      detail: progress.summary ?? progress.blocker,
     });
   }
 
@@ -451,6 +472,7 @@ export class SessionEventHandler {
     this.reviewAgentSwarmReviewerAssignmentIds.clear();
     this.activeReviewIntensity = undefined;
     this.reviewAssignmentRoles.clear();
+    this.pendingReviewAssignmentProgress.clear();
     if (commandOwnsFinalReviewResult) return;
     this.appendReviewProgress({
       state: 'completed',
@@ -466,6 +488,7 @@ export class SessionEventHandler {
     this.reviewAgentSwarmReviewerAssignmentIds.clear();
     this.activeReviewIntensity = undefined;
     this.reviewAssignmentRoles.clear();
+    this.pendingReviewAssignmentProgress.clear();
     this.appendReviewProgress({
       state: 'cancelled',
       title: 'Review cancelled',
@@ -478,6 +501,7 @@ export class SessionEventHandler {
     this.reviewAgentSwarmReviewerAssignmentIds.clear();
     this.activeReviewIntensity = undefined;
     this.reviewAssignmentRoles.clear();
+    this.pendingReviewAssignmentProgress.clear();
     this.appendReviewProgress({
       state: 'failed',
       title: reviewFailureTitle(event),

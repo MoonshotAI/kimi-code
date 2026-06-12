@@ -282,6 +282,46 @@ describe('SessionEventHandler review events', () => {
     ]);
   });
 
+  it('renders reordered Thorough reconciliator progress after the role arrives', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent({
+      ...reviewStartedEvent(),
+      intensity: 'thorough',
+    }, vi.fn());
+    handler.handleEvent({
+      type: 'review.assignment.progress',
+      sessionId: 's1',
+      agentId: 'main',
+      progress: {
+        assignmentId: 'review-assignment-reconcile',
+        status: 'complete',
+        summary: 'Reconciled candidates.',
+      },
+    } as any, vi.fn());
+    handler.handleEvent({
+      type: 'review.assignment.started',
+      sessionId: 's1',
+      agentId: 'main',
+      assignment: {
+        id: 'review-assignment-reconcile',
+        role: 'reconciliator',
+        perspective: 'Thorough review',
+        assignedFiles: ['src/a.ts'],
+        requiredCoverage: 'patch',
+        sourceCommentIds: ['review-comment-1'],
+        group: 'thorough',
+      },
+    } as any, vi.fn());
+
+    expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
+      'Thorough review',
+      'Reconciliation running',
+      'Reconciliator complete',
+    ]);
+  });
+
   it('starts AgentSwarm progress for Deep Review reviewer phase', () => {
     const host = makeHost();
     const handler = new SessionEventHandler(host);
