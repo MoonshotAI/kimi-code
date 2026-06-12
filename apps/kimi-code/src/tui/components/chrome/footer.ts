@@ -242,7 +242,7 @@ function formatQuotaLines(
     .map((quota) => {
       const usedRatio = Math.max(0, Math.min(quota.used / quota.limit, 1));
       return {
-        label: `${quota.label.toLowerCase()}:`,
+        labelName: quota.label.toLowerCase(),
         percent: `${Math.round(usedRatio * 100)}%`,
         reset: formatResetHint(quota.resetHint),
         ratio: usedRatio,
@@ -250,20 +250,23 @@ function formatQuotaLines(
     });
   if (rows.length === 0) return [];
 
-  const labelColWidth = Math.max(...rows.map((r) => visibleWidth(r.label)));
+  const labelNameWidth = Math.max(...rows.map((r) => visibleWidth(r.labelName)));
   const percentColWidth = Math.max(...rows.map((r) => visibleWidth(r.percent)));
   const resetColWidth = Math.max(...rows.map((r) => visibleWidth(r.reset)));
   const gap = 3;
-  const blockWidth = labelColWidth + gap + percentColWidth + gap + resetColWidth;
+  const blockWidth = labelNameWidth + 1 + gap + percentColWidth + gap + resetColWidth;
 
   const lines: string[] = [];
   for (const row of rows) {
-    const numberColor = chalk.hex(hslToHex(Math.round((1 - row.ratio) * 120), 80, 40));
+    // Subtle gradient: fully green at 0 %, fully red at 100 %, desaturated.
+    const numberColor = chalk.hex(hslToHex(Math.round((1 - row.ratio) * 120), 55, 50));
     const content =
-      row.label.padEnd(labelColWidth + gap) +
+      row.labelName.padEnd(labelNameWidth) +
+      ':' +
+      ' '.repeat(gap) +
       numberColor(row.percent.padStart(percentColWidth)) +
       ' '.repeat(gap) +
-      chalk.hex(colors.text)(row.reset.padStart(resetColWidth));
+      chalk.hex(colors.text)(row.reset.padEnd(resetColWidth));
     const leftPad = Math.max(0, width - blockWidth);
     lines.push(truncateToWidth(' '.repeat(leftPad) + content, width));
   }

@@ -131,13 +131,8 @@ describe('FooterComponent', () => {
     const weekLine = stripAnsi(lines[2]!);
     const hourLine = stripAnsi(lines[3]!);
 
-    expect(weekLine).toContain('weekly limit:');
-    expect(weekLine).toContain('41%');
-    expect(weekLine).toContain('(5d, 3h)');
-
-    expect(hourLine).toContain('5h limit:');
-    expect(hourLine).toContain('65%');
-    expect(hourLine).toContain('(1h, 3m)');
+    expect(weekLine).toMatch(/weekly limit\s*:\s+41%\s+\(5d, 3h\)/);
+    expect(hourLine).toMatch(/5h limit\s*:\s+65%\s+\(1h, 3m\)/);
 
     // Both rows should end at the same column (right-aligned block).
     expect(weekLine.trimEnd().length).toBe(hourLine.trimEnd().length);
@@ -155,9 +150,7 @@ describe('FooterComponent', () => {
     const lines = footer.render(120);
     const quotaLine = lines[2]!;
 
-    expect(stripAnsi(quotaLine)).toContain('5h limit:');
-    expect(stripAnsi(quotaLine)).toContain('50%');
-    expect(stripAnsi(quotaLine)).toContain('(reset)');
+    expect(stripAnsi(quotaLine)).toMatch(/5h limit\s*:\s+50%\s+\(reset\)/);
     expect(truecolorCodes(quotaLine).size).toBeGreaterThan(0);
   });
 });
