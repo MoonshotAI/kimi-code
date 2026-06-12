@@ -8,48 +8,50 @@ Build a local platform for testing and inspecting long-running Kimi TUI workflow
 
 The platform should let a developer:
 
-- Start many hidden PTY sessions in the background.
+- Start and monitor many hidden PTY sessions in the background.
 - Drive each session with a declarative YAML workflow.
 - Configure each session's command, arguments, working directory, environment, terminal columns, and terminal rows.
 - Record what the PTY produced and what scripted user input was sent.
 - Replay each run in a web interface, including real-time timing.
 - Mark user actions and checkpoints on the replay progress bar.
-- Validate simple visible text states in the TUI.
+- Validate visible text and ANSI terminal attributes, such as foreground color, background color, and text style.
 
 ## Scope Lock
 
 This design intentionally follows these constraints:
 
-- Use hidden PTY sessions. Do not create real Ghostty or other desktop terminal windows.
-- Do not test real terminal rendering, fonts, pixels, screenshots, or terminal-app-specific behavior.
-- Do not validate color in the first version. Validation is text-only.
+- Use hidden PTY sessions. Do not create or automate visible terminal windows.
+- Do not test visible terminal rendering, fonts, pixels, screenshots, palette mapping, or app-specific rendering behavior.
+- Validate terminal model state from the ANSI stream: visible text, rectangular regions, foreground/background attributes, and text style attributes.
 - Record events only. Do not record periodic screen snapshots in the first version.
-- Do not add Kimi home isolation in the first version. Conflicts are acceptable, like running multiple manual terminal windows.
 - Do not add security hardening in the first version.
-- Do not add automatic resource scheduling or rate-limit management in the first version.
+- Do not add automatic throttling, queueing, resource scheduling, or rate-limit management in the first version.
 - If a run crashes or is killed, stop recording, preserve the event log, and show the final reconstructed state. Do not repair or resume broken runs.
 
 ## Architecture
 
-The platform has four pieces:
+The platform has five pieces:
 
-1. **Runner**
-   Starts hidden PTY processes and executes YAML scenarios.
+1. **Run Manager**
+   Starts, tracks, lists, and stops many hidden PTY sessions concurrently. It does not schedule or throttle runs; it runs what the user starts.
 
-2. **Recorder**
+2. **Scenario Executor**
+   Executes declarative YAML workflows against individual sessions.
+
+3. **Recorder**
    Writes a timestamped event log for each run.
 
-3. **Validator**
-   Replays events into a terminal model and checks visible text.
+4. **Validator**
+   Replays events into a terminal model and checks visible text and ANSI cell attributes.
 
-4. **Web Inspector**
-   Lists runs and replays event logs in a browser terminal player.
+5. **Web App**
+   Lists runs and replays event logs in a browser-based terminal player.
 
-The existing `apps/vis` app is the preferred host for the web inspector because it already provides a Hono server and React interface for inspecting Kimi sessions.
+This is a new web app. It should not be designed as an enhancement to the existing session visualizer. Shared utilities are fine as an implementation detail, but the product surface is a separate run inspection app for TTY workflows.
 
 ## Run Configuration
 
-Each run is created from a YAML file.
+Each run is created from a YAML file. Multiple runs may be active at the same time, and each active run has its own run ID, PTY process, event log, validator state, and web replay state.
 
 Example:
 
@@ -95,7 +97,24 @@ steps:
 
   - assertText: "Review completed"
 
+  - assertRegion:
+      row: 1
+      col: 1
+      width: 80
+      height: 1
+      text: "Review completed"
+      fg: ansi.green
+
   - mark: "done"
+```
+
+A scenario may also be launched as part of a suite. A suite is only a convenience wrapper for starting many runs; it does not impose scheduling or hidden environment policy.
+
+```yaml
+runs:
+  - scenario: ./scenarios/review-current-branch.yaml
+  - scenario: ./scenarios/review-working-tree.yaml
+  - scenario: ./scenarios/review-single-commit.yaml
 ```
 
 ## YAML Step Types
@@ -140,6 +159,26 @@ Replays output into a terminal model until the visible screen contains the text,
 ```
 
 Checks that the current visible screen contains the text.
+
+```yaml
+- assertRegion:
+    row: 1
+    col: 1
+    width: 80
+    height: 1
+    text: "Review completed"
+    fg: ansi.green
+    bg: default
+    attrs:
+      - bold
+```
+
+Checks a rectangular terminal region. Coordinates are 1-based terminal cell coordinates. The text match uses the visible characters in that rectangle. Attribute matches inspect terminal model cell attributes from the ANSI stream, not rendered pixels or a visible terminal theme.
+
+Supported attribute values in the first version:
+
+- Foreground/background: `default`, `ansi.black`, `ansi.red`, `ansi.green`, `ansi.yellow`, `ansi.blue`, `ansi.magenta`, `ansi.cyan`, `ansi.white`, bright ANSI variants, `index.N`, and `rgb.#rrggbb`.
+- Text style attributes: `bold`, `dim`, `italic`, `underline`, `inverse`, and `strikethrough`.
 
 ```yaml
 - mark: "review running"
@@ -200,6 +239,7 @@ tty-runs/
 - End time.
 - Exit code or signal.
 - Final status: `running`, `passed`, `failed`, `killed`, or `crashed`.
+- Parent suite ID, if the run was launched by a suite.
 
 `events.jsonl` is written while the process is active. After the run ends, it may be compressed to `events.jsonl.gz` in the background. The uncompressed file can be removed after compression succeeds.
 
@@ -211,7 +251,7 @@ The web player replays events in timestamp order.
 
 Replay behavior:
 
-- PTY output events are written into a browser terminal emulator.
+- PTY output events are written into the browser terminal player.
 - User input events are shown as progress-bar markers and optional inline annotations.
 - Marker events are shown on the progress bar.
 - Assertion events are shown on the progress bar with pass or fail status.
@@ -232,9 +272,9 @@ The first version does not need fast arbitrary seeking. If a user jumps to a lat
 
 ## Validation
 
-Validation is text-only in the first version.
+Validation uses the terminal model reconstructed from recorded events.
 
-The validator should maintain a terminal model while the scenario runs. `waitForText` and `assertText` inspect the model's current visible text.
+The validator should maintain a terminal model while the scenario runs. `waitForText` and `assertText` inspect the model's current visible text. `assertRegion` inspects visible text and ANSI cell attributes in a rectangular region.
 
 Validation should not inspect raw output directly because raw PTY bytes include cursor movement, redraws, alternate screen control, and other ANSI sequences.
 
@@ -242,14 +282,18 @@ Validation output:
 
 - Step index.
 - Expected text.
+- Expected region and attributes, if applicable.
 - Pass or fail.
 - Timestamp.
 - Timeout, if applicable.
 - Current visible screen text on failure.
+- Current region cell attributes on failure, if applicable.
 
 ## Process Handling
 
-The runner starts each command under a PTY. The process runs hidden in the background.
+The run manager starts each command under a PTY. Each process runs hidden in the background. Many runs may be active concurrently.
+
+The runner uses the command, arguments, working directory, environment overrides, and terminal size specified by the scenario. It should not add hidden environment behavior beyond what is needed to start the process and record the run.
 
 If the scenario completes and the process is still alive, the run may either leave it running or terminate it based on a scenario option:
 
@@ -274,26 +318,31 @@ No repair or resume flow is included.
 
 ## Web API
 
-Add TTY run routes to the Vis server.
+Add routes to the new web app server.
 
 Suggested routes:
 
-- `GET /api/tty-runs`
-- `POST /api/tty-runs`
-- `GET /api/tty-runs/:id`
-- `GET /api/tty-runs/:id/events`
-- `POST /api/tty-runs/:id/stop`
+- `GET /api/runs`
+- `POST /api/runs`
+- `GET /api/runs/:id`
+- `GET /api/runs/:id/events`
+- `POST /api/runs/:id/stop`
+- `GET /api/suites`
+- `POST /api/suites`
+- `GET /api/suites/:id`
 
-`POST /api/tty-runs` accepts a scenario file path or inline YAML. The first version can support file paths only if that is simpler.
+`POST /api/runs` accepts a scenario file path or inline YAML. The first version can support file paths only if that is simpler.
+
+`POST /api/suites` accepts a suite YAML file and starts the listed scenarios concurrently.
 
 ## Web UI
 
-Add a TTY Runs area to the Vis web app.
+Build a new web app for run inspection.
 
 Views:
 
 1. **Run List**
-   Shows run ID, scenario name, status, command, cwd, start time, duration, exit code, and assertion summary.
+   Shows run ID, scenario name, status, command, cwd, start time, duration, exit code, suite ID, and assertion summary.
 
 2. **Run Detail**
    Shows metadata, event counts, assertion results, and replay player.
@@ -301,40 +350,45 @@ Views:
 3. **Replay Player**
    Shows a terminal replay with timeline markers for user input, explicit marks, assertions, resize events, and process exit.
 
+4. **Suite Detail**
+   Shows all runs launched together, their current status, assertion summaries, and quick links into each replay.
+
 ## Implementation Phases
 
 1. Add scenario schema and YAML parser.
-2. Add PTY runner that can start one hidden process.
+2. Add run manager that can start, track, list, and stop many hidden PTY processes.
 3. Add event recorder with `process_start`, `pty_output`, `user_input`, `resize`, `marker`, `assertion`, and `process_exit`.
-4. Add YAML step executor for `send`, `key`, `sleepMs`, `resize`, `waitForText`, `assertText`, and `mark`.
-5. Add text-only validation against a terminal model.
+4. Add YAML step executor for `send`, `key`, `sleepMs`, `resize`, `waitForText`, `assertText`, `assertRegion`, and `mark`.
+5. Add validation against a terminal model, including visible text and ANSI cell attributes.
 6. Add run storage and background gzip compression after completion.
-7. Add Vis API routes for listing runs, reading run metadata, reading event logs, and stopping runs.
-8. Add Vis web run list and run detail pages.
+7. Add API routes for listing runs, reading run metadata, reading event logs, stopping runs, creating suites, and listing suite runs.
+8. Add new web app run list, suite detail, and run detail pages.
 9. Add browser terminal replay with progress markers.
 10. Add one sample code-review scenario.
 
 ## Acceptance Criteria
 
-- A developer can start a hidden Kimi TUI session from a YAML scenario.
+- A developer can start one hidden Kimi TUI session from a YAML scenario.
+- A developer can start many hidden Kimi TUI sessions concurrently from individual scenarios or a suite file.
 - The scenario can type commands and press keys without manual interaction.
 - The run records timestamped PTY output and scripted user input.
 - The web UI can replay the run in timing order.
 - User input, explicit marks, assertions, resize events, and process exit are visible on the replay timeline.
 - `waitForText` can wait for text on the visible terminal screen.
 - `assertText` can validate text on the visible terminal screen.
+- `assertRegion` can validate visible text and ANSI attributes in a rectangular terminal region.
 - Failed assertions preserve the final visible text for inspection.
+- Failed region assertions preserve the inspected region text and cell attributes.
 - A crashed or killed run preserves its event log and final reconstructed screen.
 
 ## Explicit Non-Goals
 
-- No real Ghostty automation.
+- No visible terminal window automation.
 - No pixel validation.
-- No color validation.
+- No rendered color validation.
 - No screenshot recording.
 - No periodic screen snapshots.
-- No Kimi home isolation.
 - No security hardening.
-- No automatic concurrency or rate-limit management.
+- No automatic throttling, queueing, or rate-limit management.
 - No crashed-session repair.
 - No session resume for broken TTY runs.
