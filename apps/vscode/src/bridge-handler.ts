@@ -104,6 +104,7 @@ export class BridgeHandler {
         const session = this.sessions.get(webviewId);
         this.sessions.delete(webviewId);
         this.turns.delete(webviewId);
+        this.prewarmSessions.delete(webviewId);
         if (session) {
           GitManager.clearBaseline(session.workDir, session.sessionId);
           void session.close().catch((err) => {

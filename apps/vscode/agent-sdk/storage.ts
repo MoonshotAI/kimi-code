@@ -9,6 +9,10 @@ import { cleanSystemTags } from "./utils";
 // Constants
 const SESSION_ID_REGEX = /^(?:session_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function firstExistingFile(...files: string[]): string | null {
+  return files.find((file) => fs.existsSync(file)) ?? null;
+}
+
 // List Sessions (Async)
 export async function listSessions(workDir: string): Promise<SessionInfo[]> {
   const sessionsDir = KimiPaths.sessionsDir(workDir);
@@ -36,11 +40,11 @@ export async function listSessions(workDir: string): Promise<SessionInfo[]> {
 
     const sessionId = entry.name;
     const sessionDir = path.join(sessionsDir, sessionId);
-    const wireFile = path.join(sessionDir, "wire.jsonl");
+    const wireFile = firstExistingFile(path.join(sessionDir, "agents", "main", "wire.jsonl"), path.join(sessionDir, "wire.jsonl"));
     const contextFile = path.join(sessionDir, "context.jsonl");
     const stateFile = path.join(sessionDir, "state.json");
 
-    const targetFile = fs.existsSync(wireFile) ? wireFile : fs.existsSync(contextFile) ? contextFile : stateFile;
+    const targetFile = wireFile ?? (fs.existsSync(contextFile) ? contextFile : stateFile);
     if (!fs.existsSync(targetFile)) {
       continue;
     }
@@ -86,6 +90,7 @@ export async function deleteSession(workDir: string, sessionId: string): Promise
 // Get First User Message (Stream-based, early exit)
 async function getFirstUserMessage(sessionDir: string): Promise<string> {
   const wireFile = path.join(sessionDir, "wire.jsonl");
+  const mainWireFile = path.join(sessionDir, "agents", "main", "wire.jsonl");
   const contextFile = path.join(sessionDir, "context.jsonl");
   const stateFile = path.join(sessionDir, "state.json");
 
@@ -99,7 +104,7 @@ async function getFirstUserMessage(sessionDir: string): Promise<string> {
   }
 
   // Try wire.jsonl first, fallback to context.jsonl
-  const targetFile = fs.existsSync(wireFile) ? wireFile : fs.existsSync(contextFile) ? contextFile : null;
+  const targetFile = firstExistingFile(mainWireFile, wireFile, contextFile);
   if (!targetFile) {
     return "";
   }
@@ -115,11 +120,7 @@ async function getFirstUserMessage(sessionDir: string): Promise<string> {
 
       try {
         const record = JSON.parse(line);
-        if (record.message?.type !== "TurnBegin") {
-          continue;
-        }
-
-        const userInput = record.message.payload?.user_input;
+        const userInput = getUserInputFromRecord(record);
         const text = extractUserText(userInput);
         if (text) {
           rl.close();
@@ -135,6 +136,33 @@ async function getFirstUserMessage(sessionDir: string): Promise<string> {
   }
 
   return "";
+}
+
+function getUserInputFromRecord(record: unknown): unknown {
+  if (!record || typeof record !== "object") {
+    return null;
+  }
+
+  const rec = record as Record<string, unknown>;
+  if ((rec.message as { type?: string } | undefined)?.type === "TurnBegin") {
+    return (rec.message as { payload?: { user_input?: unknown } }).payload?.user_input;
+  }
+
+  if (rec.type !== "context.append_message" || !rec.message || typeof rec.message !== "object") {
+    return null;
+  }
+
+  const message = rec.message as Record<string, unknown>;
+  if (message.role !== "user") {
+    return null;
+  }
+
+  const origin = message.origin;
+  if (origin && typeof origin === "object" && (origin as Record<string, unknown>).kind !== "user") {
+    return null;
+  }
+
+  return message.content;
 }
 
 // Text Extraction Helpers

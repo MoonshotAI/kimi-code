@@ -74,6 +74,7 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
 
   const existingSession = ctx.getSession();
   const isNewConversation = !existingSession && !params.sessionId;
+  const isResumingConversation = !existingSession && !!params.sessionId;
 
   try {
     const mode = normalizeMode(params.mode, params.yoloMode);
@@ -105,6 +106,8 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
           phase: "runtime",
         });
       });
+    } else if (isResumingConversation) {
+      await GitManager.initBaseline(ctx.workDir, session.sessionId);
     } else {
       await GitManager.commit(ctx.workDir, session.sessionId);
     }

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useRequest } from "ahooks";
-import { IconSearch, IconDots, IconTrash, IconCheck } from "@tabler/icons-react";
+import { IconSearch, IconDots, IconTrash, IconCheck, IconLoader2 } from "@tabler/icons-react";
 import { useShallow } from "zustand/react/shallow";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -38,16 +38,17 @@ function formatRelativeDate(timestamp: number): string {
 interface SessionItemProps {
   session: SessionInfo;
   isSelected: boolean;
+  isLoading: boolean;
   onSelect: () => void;
   onDelete: () => void;
 }
 
-function SessionItem({ session, isSelected, onSelect, onDelete }: SessionItemProps) {
+function SessionItem({ session, isSelected, isLoading, onSelect, onDelete }: SessionItemProps) {
   const [isHovered, setIsHovered] = useState(false);
 
   return (
     <div
-      className={cn("group relative px-2 py-1 rounded-md cursor-pointer transition-colors", isSelected ? "bg-accent" : "hover:bg-accent/50")}
+      className={cn("group relative px-2 py-1 rounded-md cursor-pointer transition-colors", isSelected || isLoading ? "bg-accent" : "hover:bg-accent/50")}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onClick={onSelect}
@@ -55,7 +56,7 @@ function SessionItem({ session, isSelected, onSelect, onDelete }: SessionItemPro
       <p className="text-xs leading-relaxed line-clamp-3 text-foreground">{session.brief || "Untitled"}</p>
       <div className="flex items-center justify-between mt-0.5">
         <div className="flex items-center gap-1.5">
-          {isSelected && <IconCheck className="size-3 text-blue-500" />}
+          {isLoading ? <IconLoader2 className="size-3 animate-spin text-blue-500" /> : isSelected ? <IconCheck className="size-3 text-blue-500" /> : null}
           <span className="text-[10px] text-muted-foreground">{formatRelativeDate(session.updatedAt)}</span>
         </div>
         <div className={cn("transition-opacity", isHovered ? "opacity-100" : "opacity-0")}>
@@ -95,6 +96,7 @@ export function SessionList({ onClose }: SessionListProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<SessionInfo | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
 
   const { data: kimiSessions = [], loading, mutate } = useRequest(() => bridge.getKimiSessions());
 
@@ -109,12 +111,15 @@ export function SessionList({ onClose }: SessionListProps) {
 
   const handleSelect = async (session: SessionInfo) => {
     console.log("[SessionList] Loading session:", session.id);
+    setLoadingSessionId(session.id);
     try {
       const events = await bridge.loadSessionHistory(session.id);
       loadSession(session.id, events);
       onClose();
     } catch (error) {
       console.error("[SessionList] Failed to load session:", error);
+    } finally {
+      setLoadingSessionId(null);
     }
   };
 
@@ -159,6 +164,7 @@ export function SessionList({ onClose }: SessionListProps) {
                   key={session.id}
                   session={session}
                   isSelected={sessionId === session.id}
+                  isLoading={loadingSessionId === session.id}
                   onSelect={() => handleSelect(session)}
                   onDelete={() => setDeleteTarget(session)}
                 />
