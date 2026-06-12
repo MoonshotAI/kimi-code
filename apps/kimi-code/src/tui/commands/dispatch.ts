@@ -177,6 +177,7 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
     skillCommandMap: host.skillCommandMap,
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
+    isReviewing: host.state.reviewActive,
   });
 
   switch (intent.kind) {

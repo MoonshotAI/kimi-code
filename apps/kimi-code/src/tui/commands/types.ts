@@ -25,6 +25,6 @@ export interface ParsedSlashInput {
   readonly args: string;
 }
 
-export type SlashCommandBusyReason = 'streaming' | 'compacting';
+export type SlashCommandBusyReason = 'streaming' | 'compacting' | 'reviewing';
 
 export type SlashCommandInvalidReason = 'unknown';

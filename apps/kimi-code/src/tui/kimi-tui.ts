@@ -887,7 +887,8 @@ export class KimiTUI {
     if (
       this.deferUserMessages ||
       this.state.appState.streamingPhase !== 'idle' ||
-      this.state.appState.isCompacting
+      this.state.appState.isCompacting ||
+      this.state.reviewActive
     ) {
       this.enqueueMessage(input, options);
       return;

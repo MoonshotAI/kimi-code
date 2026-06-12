@@ -1170,6 +1170,19 @@ command = "vim"
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
   });
 
+  it('queues editor input instead of prompting while a review is active', async () => {
+    const { driver, session, harness } = await makeDriver();
+    driver.state.reviewActive = true;
+    harness.track.mockClear();
+
+    driver.handleUserInput('queued during review');
+
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([{ text: 'queued during review', agentId: 'main' }]);
+    expect(driver.state.queueContainer.children.length).toBeGreaterThan(0);
+    expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
+  });
+
   it('cancels active streaming from Escape and Ctrl-C editor shortcuts', async () => {
     const { driver, session } = await makeDriver();
 
