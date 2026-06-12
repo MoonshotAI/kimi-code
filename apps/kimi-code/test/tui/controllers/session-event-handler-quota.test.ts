@@ -108,7 +108,7 @@ describe('SessionEventHandler quotas', () => {
     expect(host.state.appState.quotas).toEqual(quotas);
   });
 
-  it('adds current-turn usage to the last server quotas live', async () => {
+  it('does not add current-turn usage to server quotas', async () => {
     const quotas: QuotaInfo[] = [{ label: 'Weekly limit', used: 10, limit: 100 }];
     const { host } = makeHost({ quotas });
     const handler = new SessionEventHandler(host);
@@ -116,35 +116,18 @@ describe('SessionEventHandler quotas', () => {
     (handler as any).scheduleQuotaRefresh();
     await vi.runOnlyPendingTimersAsync();
 
-    (handler as any).applyLiveUsage({
-      currentTurn: {
-        inputOther: 5,
-        inputCacheRead: 0,
-        inputCacheCreation: 0,
-        output: 3,
-      },
-    });
+    handler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        usage: {
+          currentTurn: { inputOther: 5, inputCacheRead: 0, inputCacheCreation: 0, output: 3 },
+        },
+      } as any,
+      () => {},
+    );
 
-    expect(host.state.appState.quotas).toEqual([
-      { label: 'Weekly limit', used: 18, limit: 100 },
-    ]);
-  });
-
-  it('resets live delta to zero when the current turn resets', async () => {
-    const quotas: QuotaInfo[] = [{ label: 'Weekly limit', used: 10, limit: 100 }];
-    const { host } = makeHost({ quotas });
-    const handler = new SessionEventHandler(host);
-
-    (handler as any).scheduleQuotaRefresh();
-    await vi.runOnlyPendingTimersAsync();
-
-    (handler as any).applyLiveUsage({
-      currentTurn: { inputOther: 5, inputCacheRead: 0, inputCacheCreation: 0, output: 3 },
-    });
-    expect(host.state.appState.quotas[0].used).toBe(18);
-
-    (handler as any).applyLiveUsage({ currentTurn: undefined });
-    expect(host.state.appState.quotas[0].used).toBe(10);
+    expect(host.state.appState.quotas).toEqual(quotas);
   });
 
   it('starts polling when the active model switches to a managed provider', async () => {

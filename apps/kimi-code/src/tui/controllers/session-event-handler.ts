@@ -18,7 +18,6 @@ import type {
   SessionMetaUpdatedEvent,
   SkillActivatedEvent,
   ThinkingDeltaEvent,
-  TokenUsage,
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
   ToolProgressEvent,
@@ -28,7 +27,6 @@ import type {
   TurnStepCompletedEvent,
   TurnStepInterruptedEvent,
   TurnStepStartedEvent,
-  UsageStatus,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -150,7 +148,6 @@ export class SessionEventHandler {
   private quotaRefreshTimer: ReturnType<typeof setInterval> | undefined;
   private quotaRefreshInFlight = false;
   private lastServerQuotas: readonly QuotaInfo[] | undefined;
-  private lastLiveTurnUsage = 0;
 
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
@@ -168,7 +165,6 @@ export class SessionEventHandler {
     this.clearQueuedGoalPromotionTimer();
     this.clearQuotaRefreshTimer();
     this.lastServerQuotas = undefined;
-    this.lastLiveTurnUsage = 0;
     this.stopAllMcpServerStatusSpinners();
   }
 
@@ -586,7 +582,6 @@ export class SessionEventHandler {
     }
     if (event.model !== undefined) patch.model = event.model;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
-    if (event.usage !== undefined) this.applyLiveUsage(event.usage);
     if (event.model !== undefined) this.scheduleQuotaRefresh();
     if (event.swarmMode === false) {
       this.host.state.swarmModeEntry = undefined;
@@ -733,49 +728,26 @@ export class SessionEventHandler {
       if (quotas !== undefined) {
         this.lastServerQuotas = quotas;
       }
-      this.recomputeLiveQuotas();
+      const server = this.lastServerQuotas;
+      if (server === undefined) return;
+      const current = this.host.state.appState.quotas;
+      if (
+        current !== undefined &&
+        current.length === server.length &&
+        server.every(
+          (q, i) =>
+            q.label === current[i]?.label &&
+            q.used === current[i]?.used &&
+            q.limit === current[i]?.limit &&
+            q.resetHint === current[i]?.resetHint,
+        )
+      ) {
+        return;
+      }
+      this.host.setAppState({ quotas: server });
     } finally {
       this.quotaRefreshInFlight = false;
     }
-  }
-
-  private applyLiveUsage(usage: UsageStatus): void {
-    const turn = usage.currentTurn;
-    const turnTotal = turn === undefined ? 0 : this.tokenUsageTotal(turn);
-    if (turnTotal === this.lastLiveTurnUsage) return;
-    this.lastLiveTurnUsage = turnTotal;
-    this.recomputeLiveQuotas();
-  }
-
-  private recomputeLiveQuotas(): void {
-    const server = this.lastServerQuotas;
-    if (server === undefined) return;
-    const delta = this.lastLiveTurnUsage;
-    const live: QuotaInfo[] = server.map((q) => ({
-      ...q,
-      used: q.used + delta,
-    }));
-    const current = this.host.state.appState.quotas;
-    if (
-      current !== undefined &&
-      current.length === live.length &&
-      live.every(
-        (q, i) =>
-          q.label === current[i]?.label &&
-          q.used === current[i]?.used &&
-          q.limit === current[i]?.limit &&
-          q.resetHint === current[i]?.resetHint,
-      )
-    ) {
-      return;
-    }
-    this.host.setAppState({ quotas: live });
-  }
-
-  private tokenUsageTotal(usage: TokenUsage): number {
-    return (
-      usage.inputOther + usage.inputCacheRead + usage.inputCacheCreation + usage.output
-    );
   }
 
   requestQueuedGoalPromotion(): void {
