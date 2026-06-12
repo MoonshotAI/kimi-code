@@ -136,6 +136,7 @@ export class Session {
   readonly hookEngine: HookEngine;
   readonly experimentalFlags: ExperimentalFlagResolver;
   readonly review = new SessionReviewRuntime();
+  private reviewStartInFlight = false;
   private activeReviewOrchestrator: ReviewOrchestrator | undefined;
   private toolKaos: Kaos;
   private persistenceKaos: Kaos;
@@ -426,31 +427,41 @@ export class Session {
 
   async startReview(input: ReviewStartInput): Promise<ReviewResult> {
     this.assertCodeReviewEnabled();
-    if (this.hasActiveTurn) {
+    if (
+      this.reviewStartInFlight
+      || this.activeReviewOrchestrator !== undefined
+      || this.review.getActiveRun() !== null
+      || this.hasActiveTurn
+    ) {
       throw new KimiError(
         ErrorCodes.TURN_AGENT_BUSY,
         'Cannot start a review while another turn is running',
       );
     }
-    const mainAgent = await this.ensureAgentResumed('main');
-    const orchestrator = new ReviewOrchestrator({
-      kaos: mainAgent.kaos,
-      systemKaos: this.systemContextKaos(mainAgent.kaos.getcwd()),
-      kimiHomeDir: this.options.kimiHomeDir,
-      runtime: this.review,
-      launcher: mainAgent.subagentHost!,
-      parentToolCallId: 'review',
-      emitEvent: (event) => {
-        this.emitReviewEvent(event);
-      },
-    });
-    this.activeReviewOrchestrator = orchestrator;
+    this.reviewStartInFlight = true;
     try {
-      return await orchestrator.start(input);
-    } finally {
-      if (this.activeReviewOrchestrator === orchestrator) {
-        this.activeReviewOrchestrator = undefined;
+      const mainAgent = await this.ensureAgentResumed('main');
+      const orchestrator = new ReviewOrchestrator({
+        kaos: mainAgent.kaos,
+        systemKaos: this.systemContextKaos(mainAgent.kaos.getcwd()),
+        kimiHomeDir: this.options.kimiHomeDir,
+        runtime: this.review,
+        launcher: mainAgent.subagentHost!,
+        parentToolCallId: 'review',
+        emitEvent: (event) => {
+          this.emitReviewEvent(event);
+        },
+      });
+      this.activeReviewOrchestrator = orchestrator;
+      try {
+        return await orchestrator.start(input);
+      } finally {
+        if (this.activeReviewOrchestrator === orchestrator) {
+          this.activeReviewOrchestrator = undefined;
+        }
       }
+    } finally {
+      this.reviewStartInFlight = false;
     }
   }
 
