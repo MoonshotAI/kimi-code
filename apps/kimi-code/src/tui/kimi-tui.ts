@@ -475,10 +475,10 @@ export class KimiTUI {
     try {
       const result = await this.authFlow.refreshProviderModels();
       for (const c of result.changed) {
-        const parts: string[] = [c.providerName];
-        if (c.added > 0) parts.push(`+${String(c.added)} model${c.added > 1 ? 's' : ''}`);
-        if (c.removed > 0) parts.push(`-${String(c.removed)} model${c.removed > 1 ? 's' : ''}`);
-        this.showStatus(parts.join(' · ') + '.');
+        if (c.added <= 0) continue;
+        this.showStatus(
+          `${c.providerName} · +${String(c.added)} model${c.added > 1 ? 's' : ''}.`,
+        );
       }
       for (const f of result.failed) {
         this.showStatus(`Skipped refreshing ${f.provider}: ${f.reason}`, 'warning');
