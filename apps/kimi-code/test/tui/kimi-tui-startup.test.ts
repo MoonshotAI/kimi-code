@@ -363,6 +363,33 @@ describe('KimiTUI startup', () => {
     expect(driver.state.appState.planMode).toBe(true);
   });
 
+  it('skips setPlanMode when the resumed session is already in plan mode', async () => {
+    const session = makeSession({
+      id: 'ses-latest',
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingLevel: 'off',
+        permission: 'manual',
+        planMode: true,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
+      })),
+      setPlanMode: vi.fn(async () => {
+        throw new Error('Already in plan mode');
+      }),
+    });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-latest' }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ continue: true, plan: true }));
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(session.setPlanMode).not.toHaveBeenCalled();
+    expect(driver.state.appState.planMode).toBe(true);
+  });
+
   it('forces footer state to reflect --auto even if getStatus lags behind', async () => {
     const session = makeSession({
       id: 'ses-latest',
@@ -625,6 +652,81 @@ describe('KimiTUI startup', () => {
 
     expect(session.setPermission).toHaveBeenCalledWith('auto');
     expect(driver.state.appState.permissionMode).toBe('auto');
+  });
+
+  it('skips setPlanMode after picking a session already in plan mode', async () => {
+    const session = makeSession({
+      id: 'ses-picked',
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingLevel: 'off',
+        permission: 'manual',
+        planMode: true,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
+      })),
+      setPlanMode: vi.fn(async () => {
+        throw new Error('Already in plan mode');
+      }),
+    });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [
+        {
+          id: 'ses-picked',
+          title: 'Picked session',
+          workDir: '/tmp/proj-a',
+          updatedAt: Date.now(),
+        },
+      ]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: '', plan: true }));
+
+    await (driver as unknown as { initMainTui(): Promise<boolean> }).initMainTui();
+    expect(driver.state.startupState).toBe('picker');
+    await (driver as unknown as { bootstrapFromPicker(): Promise<void> }).bootstrapFromPicker();
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\r');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(session.setPlanMode).not.toHaveBeenCalled();
+    expect(driver.state.appState.planMode).toBe(true);
+  });
+
+  it('does not apply startup flags when switching sessions via the /sessions picker', async () => {
+    const initial = makeSession({ id: 'ses-1' });
+    const picked = makeSession({
+      id: 'ses-2',
+      setPermission: vi.fn(async () => {}),
+      setPlanMode: vi.fn(async () => {
+        throw new Error('Already in plan mode');
+      }),
+    });
+    const harness = makeHarness(initial, {
+      resumeSession: vi.fn(async () => picked),
+      listSessions: vi.fn(async () => [
+        {
+          id: 'ses-2',
+          title: 'Other session',
+          workDir: '/tmp/proj-a',
+          updatedAt: Date.now(),
+        },
+      ]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ auto: true, plan: true }));
+    await expect(driver.init()).resolves.toBe(false);
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\r');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(driver.state.appState.sessionId).toBe('ses-2');
+    expect(picked.setPermission).not.toHaveBeenCalled();
+    expect(picked.setPlanMode).not.toHaveBeenCalled();
+    expect(driver.state.appState.permissionMode).toBe('manual');
+    expect(driver.state.appState.planMode).toBe(false);
   });
 
   it('clears startup picker exit confirmation before resuming a selected session', async () => {
