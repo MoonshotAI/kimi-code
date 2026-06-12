@@ -199,14 +199,6 @@ function safeUsage(usage: number): number {
   return safeUsageRatio(usage);
 }
 
-function formatContextStatus(usage: number, tokens?: number, maxTokens?: number): string {
-  const pct = `${(safeUsage(usage) * 100).toFixed(1)}%`;
-  if (maxTokens && maxTokens > 0 && tokens !== undefined) {
-    return `context: ${pct} (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
-  }
-  return `context: ${pct}`;
-}
-
 function hslToHex(h: number, s: number, l: number): string {
   const normalizedH = h / 360;
   const a = (s * Math.min(l, 100 - l)) / 100;
@@ -236,46 +228,89 @@ function shortenQuotaLabel(label: string): string {
   return normalized.replace(/(\s*limit)$/, '');
 }
 
-function formatQuotaLines(
-  quotas: readonly QuotaInfo[] | undefined,
+interface StatusRow {
+  readonly labelName: string;
+  readonly percent: string;
+  readonly suffix: string;
+  readonly ratio: number;
+  readonly colored: boolean;
+}
+
+function buildStatusRows(state: AppState): StatusRow[] {
+  const contextSuffix =
+    state.maxContextTokens && state.maxContextTokens > 0 && state.contextTokens !== undefined
+      ? `(${formatTokenCount(state.contextTokens)}/${formatTokenCount(state.maxContextTokens)})`
+      : '';
+  const rows: StatusRow[] = [
+    {
+      labelName: 'context',
+      percent: `${(safeUsage(state.contextUsage) * 100).toFixed(1)}%`,
+      suffix: contextSuffix,
+      ratio: state.contextUsage,
+      colored: false,
+    },
+  ];
+
+  for (const quota of state.quotas ?? []) {
+    if (quota.limit <= 0) continue;
+    const ratio = Math.max(0, Math.min(quota.used / quota.limit, 1));
+    rows.push({
+      labelName: shortenQuotaLabel(quota.label),
+      percent: `${(ratio * 100).toFixed(1)}%`,
+      suffix: formatResetHint(quota.resetHint),
+      ratio,
+      colored: true,
+    });
+  }
+
+  return rows;
+}
+
+function formatStatusLines(
+  state: AppState,
   width: number,
   colors: ColorPalette,
+  transientHint: string | null,
 ): string[] {
-  if (quotas === undefined || quotas.length === 0) return [];
-
-  const rows = quotas
-    .filter((quota) => quota.limit > 0)
-    .map((quota) => {
-      const usedRatio = Math.max(0, Math.min(quota.used / quota.limit, 1));
-      return {
-        labelName: shortenQuotaLabel(quota.label),
-        percent: `${Math.round(usedRatio * 100)}%`,
-        reset: formatResetHint(quota.resetHint),
-        ratio: usedRatio,
-      };
-    });
+  const rows = buildStatusRows(state);
   if (rows.length === 0) return [];
 
   const labelNameWidth = Math.max(...rows.map((r) => visibleWidth(r.labelName)));
   const percentColWidth = Math.max(...rows.map((r) => visibleWidth(r.percent)));
-  const resetColWidth = Math.max(...rows.map((r) => visibleWidth(r.reset)));
+  const suffixColWidth = Math.max(...rows.map((r) => visibleWidth(r.suffix)));
   const gap = 3;
-  const blockWidth = labelNameWidth + 1 + gap + percentColWidth + gap + resetColWidth;
+  const blockWidth = labelNameWidth + 1 + gap + percentColWidth + gap + suffixColWidth;
+  const leftPad = Math.max(0, width - blockWidth);
 
   const lines: string[] = [];
-  for (const row of rows) {
-    // Subtle gradient: green-ish at 0 % to amber at 100 %. Never red.
-    const numberColor = chalk.hex(hslToHex(Math.round(120 - row.ratio * 75), 40, 55));
-    const labelGap = gap + (labelNameWidth - visibleWidth(row.labelName));
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    const numberColor = row.colored
+      ? chalk.hex(hslToHex(Math.round(120 - row.ratio * 75), 40, 55))
+      : chalk.hex(colors.text);
     const content =
-      row.labelName +
+      row.labelName.padEnd(labelNameWidth) +
       ':' +
-      ' '.repeat(labelGap) +
+      ' '.repeat(gap) +
       numberColor(row.percent.padStart(percentColWidth)) +
       ' '.repeat(gap) +
-      chalk.hex(colors.text)(row.reset.padEnd(resetColWidth));
-    const leftPad = Math.max(0, width - blockWidth);
-    lines.push(truncateToWidth(' '.repeat(leftPad) + content, width));
+      chalk.hex(colors.text)(row.suffix.padEnd(suffixColWidth));
+
+    let line: string;
+    if (i === 0 && transientHint) {
+      const maxHintWidth = Math.max(0, width - blockWidth - 1);
+      const shownHint =
+        visibleWidth(transientHint) <= maxHintWidth
+          ? transientHint
+          : truncateToWidth(transientHint, maxHintWidth, '…');
+      const hintWidth = visibleWidth(shownHint);
+      const pad = Math.max(0, leftPad - hintWidth);
+      line =
+        chalk.hex(colors.warning).bold(shownHint) + ' '.repeat(pad) + content;
+    } else {
+      line = ' '.repeat(leftPad) + content;
+    }
+    lines.push(truncateToWidth(line, width));
   }
   return lines;
 }
@@ -425,41 +460,14 @@ export class FooterComponent implements Component {
       line1 = truncateToWidth(leftLine, width, '…');
     }
 
-    // ── Line 2: transient hint (mid) + context (right) ──
-    const contextText = formatContextStatus(
-      state.contextUsage,
-      state.contextTokens,
-      state.maxContextTokens,
-    );
-    const contextWidth = visibleWidth(contextText);
-    let line2: string;
-    if (this.transientHint) {
-      const maxHintWidth = Math.max(0, width - contextWidth - 1);
-      const shownHint =
-        visibleWidth(this.transientHint) <= maxHintWidth
-          ? this.transientHint
-          : truncateToWidth(this.transientHint, maxHintWidth, '…');
-      const hintWidth = visibleWidth(shownHint);
-      const pad = Math.max(0, width - hintWidth - contextWidth);
-      line2 =
-        chalk.hex(colors.warning).bold(shownHint) +
-        ' '.repeat(pad) +
-        chalk.hex(colors.text)(contextText);
-    } else {
-      const leftPad = Math.max(0, width - contextWidth);
-      line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
+    // ── Lines 2+: unified context + quota status block. Colons, percentages
+    // and suffixes share columns; the block is right-aligned.
+    const statusLines = formatStatusLines(state, width, colors, this.transientHint);
+    if (statusLines.length > 0) {
+      return [truncateToWidth(line1, width), ...statusLines];
     }
 
-    const quotaLines = formatQuotaLines(state.quotas, width, colors);
-    if (quotaLines.length > 0) {
-      return [
-        truncateToWidth(line1, width),
-        truncateToWidth(line2, width),
-        ...quotaLines,
-      ];
-    }
-
-    return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
+    return [truncateToWidth(line1, width)];
   }
 
   private syncGoalClock(goal: AppState['goal']): void {
