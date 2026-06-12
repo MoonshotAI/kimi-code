@@ -212,11 +212,18 @@ function hslToHex(h: number, s: number, l: number): string {
   return `#${f(0)}${f(8)}${f(4)}`;
 }
 
-function formatResetHint(hint: string | undefined): string {
+function formatResetHint(hint: string | undefined, labelName?: string): string {
   if (hint === undefined) return '';
   if (hint === 'reset') return '(reset)';
   if (hint.startsWith('resets in ')) {
-    const duration = hint.slice('resets in '.length).replace(/ /g, ', ');
+    let parts = hint.slice('resets in '.length).split(' ');
+    // For weekly quotas, drop minutes when days are still present so the
+    // countdown column does not jitter. When less than a day remains, hours
+    // shift left and minutes take the hours slot.
+    if ((labelName ?? '').includes('week') && parts.some((p) => p.endsWith('d')) && parts.length > 2) {
+      parts = parts.slice(0, 2);
+    }
+    const duration = parts.join(', ');
     return `(${duration})`;
   }
   return `(${hint})`;
@@ -257,7 +264,7 @@ function buildStatusRows(state: AppState): StatusRow[] {
     rows.push({
       labelName: shortenQuotaLabel(quota.label),
       percent: `${(ratio * 100).toFixed(1)}%`,
-      suffix: formatResetHint(quota.resetHint),
+      suffix: formatResetHint(quota.resetHint, shortenQuotaLabel(quota.label)),
       ratio,
       colored: true,
     });
@@ -276,7 +283,9 @@ function formatStatusLines(
   if (rows.length === 0) return [];
 
   const labelNameWidth = Math.max(...rows.map((r) => visibleWidth(r.labelName)));
-  const percentColWidth = Math.max(...rows.map((r) => visibleWidth(r.percent)));
+  // Reserve space for 100.0 % so the percentage column never shifts when a
+  // quota fills up.
+  const percentColWidth = Math.max(visibleWidth('100.0%'), ...rows.map((r) => visibleWidth(r.percent)));
   const suffixColWidth = Math.max(...rows.map((r) => visibleWidth(r.suffix)));
   const gap = 3;
   const blockWidth = labelNameWidth + 1 + gap + percentColWidth + gap + suffixColWidth;
@@ -285,11 +294,13 @@ function formatStatusLines(
   const lines: string[] = [];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
+    // Smooth green -> yellow -> red gradient. Hue interpolates linearly from
+    // green (120) at 0 % to red (0) at 100 % with moderate saturation.
     const numberColor = row.colored
-      ? chalk.hex(hslToHex(Math.round(120 - row.ratio * 75), 40, 55))
+      ? chalk.hex(hslToHex(Math.round((1 - row.ratio) * 120), 70, 45))
       : chalk.hex(colors.text);
     const content =
-      row.labelName.padEnd(labelNameWidth) +
+      row.labelName.padStart(labelNameWidth) +
       ':' +
       ' '.repeat(gap) +
       numberColor(row.percent.padStart(percentColWidth)) +

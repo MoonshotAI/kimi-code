@@ -134,8 +134,8 @@ describe('FooterComponent', () => {
     const hourLine = stripAnsi(lines[3]!);
 
     expect(contextLine.trimStart().startsWith('context:')).toBe(true);
-    expect(weekLine.trimStart().startsWith('week')).toBe(true);
-    expect(hourLine.trimStart().startsWith('5h')).toBe(true);
+    expect(weekLine.trimStart().startsWith('week:')).toBe(true);
+    expect(hourLine.trimStart().startsWith('5h:')).toBe(true);
     expect(contextLine).toMatch(/context:\s+50\.0%\s+\(1\.0k\/2\.0k\)/);
     expect(weekLine).toMatch(/week\s*:\s+41\.0%\s+\(5d, 3h\)/);
     expect(hourLine).toMatch(/5h\s*:\s+65\.0%\s+\(1h, 3m\)/);
@@ -164,8 +164,28 @@ describe('FooterComponent', () => {
     const lines = footer.render(120);
     const quotaLine = lines[2]!;
 
-    expect(stripAnsi(quotaLine).trimStart().startsWith('5h')).toBe(true);
+    expect(stripAnsi(quotaLine).trimStart().startsWith('5h:')).toBe(true);
     expect(stripAnsi(quotaLine)).toMatch(/5h\s*:\s+50\.0%\s+\(reset\)/);
     expect(truecolorCodes(quotaLine).size).toBeGreaterThan(0);
+  });
+
+  it('reserves column width for 100.0 % so the block does not shift', () => {
+    const state: AppState = {
+      ...appState,
+      contextUsage: 0,
+      quotas: [
+        { label: 'week', used: 44.6, limit: 100, resetHint: 'resets in 5d 3h' },
+        { label: '5h', used: 100, limit: 100, resetHint: 'resets in 2h 13m' },
+      ],
+    };
+    const footer = new FooterComponent(state);
+    const lines = footer.render(200);
+    const weekLine = stripAnsi(lines[2]!);
+    const fullLine = stripAnsi(lines[3]!);
+
+    expect(weekLine).toMatch(/week\s*:\s+44\.6%\s+\(5d, 3h\)/);
+    expect(fullLine).toMatch(/5h\s*:\s+100\.0%\s+\(2h, 13m\)/);
+    // The right edge of the percentage column should align.
+    expect(weekLine.indexOf('%')).toBe(fullLine.indexOf('%'));
   });
 });
