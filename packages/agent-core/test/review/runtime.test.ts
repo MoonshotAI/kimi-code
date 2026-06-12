@@ -249,6 +249,27 @@ describe('SessionReviewRuntime', () => {
     ).toThrow('Comment is not assigned to this reconciliator');
   });
 
+  it('reports unknown reconciliator source comments as unreconciled', () => {
+    const runtime = createRuntime();
+    runtime.startReview(
+      { target: { scope: 'working_tree' }, intensity: 'thorough' },
+      statsFor(['src/a.ts']),
+    );
+    const reconciliator = runtime.createAgentFacade(
+      runtime.createAssignment({
+        role: 'reconciliator',
+        assignedFiles: ['src/a.ts'],
+        requiredCoverage: 'patch',
+        sourceCommentIds: ['missing-comment'],
+      }).id,
+    );
+    reconciliator.recordPatchRead({ path: 'src/a.ts', ranges: [{ start: 1, end: 3 }] });
+
+    expect(() =>
+      reconciliator.updateProgress({ status: 'complete', summary: 'done' }),
+    ).toThrow('Review reconciliation is incomplete: missing-comment');
+  });
+
   it('keeps review access optional for standalone agents', () => {
     const agent = new Agent({ kaos: createFakeKaos() });
     expect(agent.review).toBeUndefined();

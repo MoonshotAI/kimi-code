@@ -210,7 +210,10 @@ export class SessionReviewRuntime {
     if (assignment.role !== 'reconciliator') return [];
     const sourceCommentIds = assignment.sourceCommentIds ?? [];
     if (sourceCommentIds.length === 0) return [];
-    return sourceCommentIds.filter((commentId) => this.requireComment(commentId).state === 'candidate');
+    return sourceCommentIds.filter((commentId) => {
+      const comment = this.comments.get(commentId);
+      return comment === undefined || comment.state === 'candidate';
+    });
   }
 
   getComments(filter: ReviewCommentFilter = {}): readonly ReviewComment[] {
