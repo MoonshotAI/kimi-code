@@ -55,6 +55,8 @@ export const ErrorCode = {
   MODEL_NOT_FOUND: 40413,
   /** terminal_id 不存在 */
   TERMINAL_NOT_FOUND: 40414,
+  /** skill_name 不存在 */
+  SKILL_NOT_FOUND: 40415,
 
   /** session 有正在进行的 prompt，拒绝新请求 */
   SESSION_BUSY: 40901,
@@ -78,6 +80,8 @@ export const ErrorCode = {
   COMPACTION_UNABLE: 40910,
   /** 当前历史没有足够的用户提示词可撤回 */
   SESSION_UNDO_UNAVAILABLE: 40911,
+  /** skill 存在但类型不支持用户激活（如 reference 类型） */
+  SKILL_NOT_ACTIVATABLE: 40912,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,
@@ -150,6 +154,7 @@ export const ErrorCodeReason: Readonly<Record<ErrorCode, string>> = {
   [ErrorCode.PROVIDER_NOT_FOUND]: 'provider.not_found',
   [ErrorCode.MODEL_NOT_FOUND]: 'model.not_found',
   [ErrorCode.TERMINAL_NOT_FOUND]: 'terminal.not_found',
+  [ErrorCode.SKILL_NOT_FOUND]: 'skill.not_found',
 
   [ErrorCode.SESSION_BUSY]: 'session.busy',
   [ErrorCode.APPROVAL_ALREADY_RESOLVED]: 'approval.already_resolved',
@@ -162,6 +167,7 @@ export const ErrorCodeReason: Readonly<Record<ErrorCode, string>> = {
   [ErrorCode.QUESTION_DISMISSED]: 'question.dismissed',
   [ErrorCode.COMPACTION_UNABLE]: 'compaction.unable',
   [ErrorCode.SESSION_UNDO_UNAVAILABLE]: 'session.undo_unavailable',
+  [ErrorCode.SKILL_NOT_ACTIVATABLE]: 'skill.not_activatable',
 
   [ErrorCode.APPROVAL_EXPIRED]: 'approval.expired',
   [ErrorCode.QUESTION_EXPIRED]: 'question.expired',

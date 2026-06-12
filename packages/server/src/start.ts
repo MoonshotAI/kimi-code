@@ -24,6 +24,7 @@ import {
   IPromptService,
   IQuestionService,
   ISessionService,
+  ISkillService,
   ITaskService,
   ITerminalService,
   IToolService,
@@ -291,6 +292,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
       a.get(IToolService);
       a.get(IMcpService);
+      a.get(ISkillService);
 
       a.get(ITaskService);
 

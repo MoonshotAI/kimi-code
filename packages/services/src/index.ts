@@ -174,6 +174,14 @@ export {
 export { McpService } from './mcp/mcpService';
 
 export {
+  ISkillService,
+  SkillNotActivatableError,
+  SkillNotFoundError,
+  toProtocolSkill,
+} from './skill/skill';
+export { SkillService } from './skill/skillService';
+
+export {
   ITaskService,
   TaskAlreadyFinishedError,
   TaskNotFoundError,
