@@ -1,11 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { fetchLatestFromCdn, fetchLatestVersionFromCdn } from '#/cli/update/cdn';
-import {
-  KIMI_CODE_CDN_LATEST_JSON_URL,
-  KIMI_CODE_CDN_LATEST_URL,
-  KIMI_CODE_UPDATE_CDN_BASE_ENV,
-} from '#/constant/app';
+import { KIMI_CODE_CDN_LATEST_JSON_URL, KIMI_CODE_CDN_LATEST_URL } from '#/constant/app';
 
 function mockFetchOk(body: string): typeof fetch {
   return vi.fn(async () => ({
@@ -177,40 +173,5 @@ describe('fetchLatestFromCdn', () => {
       [KIMI_CODE_CDN_LATEST_URL]: { body: 'not-a-version' },
     });
     await expect(fetchLatestFromCdn(f)).rejects.toThrow(/invalid semver/);
-  });
-
-  describe('KIMI_CODE_UPDATE_CDN_BASE override', () => {
-    afterEach(() => {
-      vi.unstubAllEnvs();
-    });
-
-    it('reads latest.json from the overridden base', async () => {
-      vi.stubEnv(KIMI_CODE_UPDATE_CDN_BASE_ENV, 'http://127.0.0.1:8787/mock');
-      const f = mockRoutedFetch({
-        'http://127.0.0.1:8787/mock/latest.json': { body: MANIFEST_BODY },
-      });
-      const result = await fetchLatestFromCdn(f);
-      expect(result.latest).toBe('2.0.0');
-      expect(f).toHaveBeenCalledWith('http://127.0.0.1:8787/mock/latest.json');
-    });
-
-    it('falls back to the overridden plain latest', async () => {
-      vi.stubEnv(KIMI_CODE_UPDATE_CDN_BASE_ENV, 'http://127.0.0.1:8787/mock');
-      const f = mockRoutedFetch({
-        'http://127.0.0.1:8787/mock/latest': { body: '1.9.0\n' },
-      });
-      await expect(fetchLatestFromCdn(f)).resolves.toEqual({
-        latest: '1.9.0',
-        manifest: null,
-      });
-    });
-
-    it('ignores a blank override and keeps the default CDN base', async () => {
-      vi.stubEnv(KIMI_CODE_UPDATE_CDN_BASE_ENV, '   ');
-      const f = mockRoutedFetch({
-        [KIMI_CODE_CDN_LATEST_JSON_URL]: { body: MANIFEST_BODY },
-      });
-      await expect(fetchLatestFromCdn(f)).resolves.toMatchObject({ latest: '2.0.0' });
-    });
   });
 });
