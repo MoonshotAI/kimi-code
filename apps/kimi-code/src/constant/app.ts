@@ -45,11 +45,15 @@ export const FEEDBACK_TELEMETRY_EVENT = 'feedback_submitted';
 
 // CDN source of truth: all version checks and native install scripts pull from here.
 export const KIMI_CODE_CDN_BASE = 'https://code.kimi.com/kimi-code';
-export const KIMI_CODE_CDN_LATEST_URL = `${KIMI_CODE_CDN_BASE}/latest`;
+// CDN object names, kept separate from the full URLs because update checks
+// re-resolve the base per call (see KIMI_CODE_UPDATE_CDN_BASE_ENV).
+export const KIMI_CODE_CDN_LATEST_FILE_NAME = 'latest';
+export const KIMI_CODE_CDN_LATEST_JSON_FILE_NAME = 'latest.json';
+export const KIMI_CODE_CDN_LATEST_URL = `${KIMI_CODE_CDN_BASE}/${KIMI_CODE_CDN_LATEST_FILE_NAME}`;
 // Rollout manifest consumed by update checks; the plain-text `/latest` above
 // stays unchanged forever — already-shipped clients hard-fail on non-semver
 // bodies, and the CDN install scripts read it for fresh installs.
-export const KIMI_CODE_CDN_LATEST_JSON_URL = `${KIMI_CODE_CDN_BASE}/latest.json`;
+export const KIMI_CODE_CDN_LATEST_JSON_URL = `${KIMI_CODE_CDN_BASE}/${KIMI_CODE_CDN_LATEST_JSON_FILE_NAME}`;
 // Overrides the base for update checks only (latest / latest.json), so a
 // local mock CDN can exercise the rollout flow end-to-end.
 export const KIMI_CODE_UPDATE_CDN_BASE_ENV = 'KIMI_CODE_UPDATE_CDN_BASE';

@@ -1,7 +1,12 @@
 import { valid } from 'semver';
 import { z } from 'zod';
 
-import { KIMI_CODE_CDN_BASE, KIMI_CODE_UPDATE_CDN_BASE_ENV } from '#/constant/app';
+import {
+  KIMI_CODE_CDN_BASE,
+  KIMI_CODE_CDN_LATEST_FILE_NAME,
+  KIMI_CODE_CDN_LATEST_JSON_FILE_NAME,
+  KIMI_CODE_UPDATE_CDN_BASE_ENV,
+} from '#/constant/app';
 
 import type { UpdateManifest } from './types';
 
@@ -50,7 +55,7 @@ export interface FetchLatestResult {
 export async function fetchLatestVersionFromCdn(
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
-  const response = await fetchImpl(`${updateCdnBase()}/latest`);
+  const response = await fetchImpl(`${updateCdnBase()}/${KIMI_CODE_CDN_LATEST_FILE_NAME}`);
   if (!response.ok) {
     throw new Error(`CDN /latest returned HTTP ${response.status}`);
   }
@@ -62,7 +67,7 @@ export async function fetchLatestVersionFromCdn(
 }
 
 async function fetchUpdateManifestFromCdn(fetchImpl: typeof fetch): Promise<UpdateManifest> {
-  const response = await fetchImpl(`${updateCdnBase()}/latest.json`);
+  const response = await fetchImpl(`${updateCdnBase()}/${KIMI_CODE_CDN_LATEST_JSON_FILE_NAME}`);
   if (!response.ok) {
     throw new Error(`CDN /latest.json returned HTTP ${response.status}`);
   }
