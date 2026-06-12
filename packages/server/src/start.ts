@@ -38,7 +38,7 @@ import {
   resolveSafePath,
   type CoreProcessServiceOptions,
 } from '@moonshot-ai/services';
-import { ErrorCode } from '@moonshot-ai/protocol';
+import { ErrorCode, createAsyncApiDocument } from '@moonshot-ai/protocol';
 import Fastify from 'fastify';
 import { promises as fspPromises } from 'node:fs';
 import {
@@ -133,7 +133,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const serverVersion = getServerVersion();
   const swaggerEnabled = opts.swagger === true;
 
-  async function registerSwagger(): Promise<void> {
+  async function registerOpenApi(): Promise<void> {
     const { default: swagger } = await import('@fastify/swagger');
     await app.register(swagger, {
       openapi: {
@@ -191,9 +191,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     });
   }
 
-  if (swaggerEnabled) {
-    await registerSwagger();
-  }
+  await registerOpenApi();
 
   const envService: IEnvironmentService = {
     _serviceBrand: undefined,
@@ -215,6 +213,20 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   await registerApiV1Routes(app, ix, {
     serverVersion,
     debugEndpoints: opts.debugEndpoints,
+  });
+
+  app.get('/asyncapi.json', async (req, reply) => {
+    const host = typeof req.headers.host === 'string' ? req.headers.host : undefined;
+    return reply.type('application/json').send(
+      createAsyncApiDocument({
+        version: serverVersion,
+        serverHost: host,
+      }),
+    );
+  });
+  app.get('/openapi.json', async (_req, reply) => {
+    const openApiDocument = (app as unknown as { swagger(): unknown }).swagger();
+    return reply.type('application/json').send(openApiDocument);
   });
 
   if (swaggerEnabled) {

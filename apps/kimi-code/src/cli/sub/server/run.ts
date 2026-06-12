@@ -73,6 +73,11 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
       false,
     )
     .option(
+      '--swagger',
+      'Mount the Swagger UI at /documentation. OpenAPI JSON remains available at /openapi.json.',
+      false,
+    )
+    .option(
       options.defaultOpen ? '--no-open' : '--open',
       options.defaultOpen
         ? 'Do not open the web UI in the default browser.'
@@ -122,6 +127,7 @@ export async function startServerForeground(
     port: options.port,
     logLevel: options.logLevel,
     debugEndpoints: options.debugEndpoints,
+    swagger: options.swagger,
     webAssetsDir: serverWebAssetsDir(),
     coreProcessOptions: {
       identity: createKimiCodeHostIdentity(version),

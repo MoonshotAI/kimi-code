@@ -157,6 +157,40 @@ describe('startServer — web assets', () => {
 
     const health = await fetch(`${r.address}/api/v1/healthz`);
     await expect(health.json()).resolves.toMatchObject({ code: 0 });
+
+    const openApi = await fetch(`${r.address}/openapi.json`);
+    expect(openApi.status).toBe(200);
+    expect(openApi.headers.get('content-type')).toContain('application/json');
+    await expect(openApi.json()).resolves.toMatchObject({
+      info: {
+        title: 'Kimi Code Server API',
+      },
+      paths: {
+        '/api/v1/healthz': {},
+        '/api/v1/sessions': {},
+      },
+    });
+
+    const asyncApi = await fetch(`${r.address}/asyncapi.json`);
+    expect(asyncApi.status).toBe(200);
+    expect(asyncApi.headers.get('content-type')).toContain('application/json');
+    await expect(asyncApi.json()).resolves.toMatchObject({
+      asyncapi: '3.1.0',
+      defaultContentType: 'application/json',
+      channels: {
+        kimiCodeWebSocket: {
+          address: '/api/v1/ws',
+        },
+      },
+      operations: {
+        receiveClientMessages: {
+          action: 'receive',
+        },
+        sendServerMessages: {
+          action: 'send',
+        },
+      },
+    });
   });
 
   it('does not expose Swagger documentation by default', async () => {
@@ -168,6 +202,9 @@ describe('startServer — web assets', () => {
       coreProcessOptions: { homeDir: bridgeHome },
     });
     running.push(r);
+
+    const openApi = await fetch(`${r.address}/openapi.json`);
+    expect(openApi.status).toBe(200);
 
     const res = await fetch(`${r.address}/documentation`);
     expect(res.status).toBe(404);

@@ -115,9 +115,9 @@ function schemaWithProperties(schema: Record<string, unknown>): Record<string, u
 }
 
 describe('Swagger / OpenAPI', () => {
-  it('/documentation/json returns a valid OpenAPI document', async () => {
+  it('/openapi.json returns a valid OpenAPI document', async () => {
     const r = await bootDaemon();
-    const res = await appOf(r).inject({ method: 'GET', url: '/documentation/json' });
+    const res = await appOf(r).inject({ method: 'GET', url: '/openapi.json' });
     expect(res.statusCode).toBe(200);
 
     const doc = res.json() as Record<string, unknown>;

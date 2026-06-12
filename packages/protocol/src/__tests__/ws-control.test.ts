@@ -40,6 +40,7 @@ import {
   wsErrorMessageSchema,
   wsEventEnvelopeSchema,
 } from '../ws-control';
+import { createAsyncApiDocument } from '../asyncapi';
 import { z } from 'zod';
 
 const TS = '2026-06-04T10:30:00.000Z';
@@ -86,6 +87,70 @@ describe('ws-control — generic envelopes', () => {
       schema.safeParse({ type: 'not_ack', id: 'c1', code: 0, msg: 'success', payload: {} }).success,
     ).toBe(false);
     expect(schema.safeParse({ type: 'ack', code: 0, msg: 'x', payload: {} }).success).toBe(false);
+  });
+});
+
+describe('ws-control — AsyncAPI document', () => {
+  it('generates an AsyncAPI document for the daemon WebSocket protocol', () => {
+    const doc = createAsyncApiDocument({
+      version: '1.2.3',
+      serverHost: '127.0.0.1:14567',
+      wsPath: '/api/v1/ws',
+    });
+
+    expect(doc['asyncapi']).toBe('3.1.0');
+    expect(doc['defaultContentType']).toBe('application/json');
+    expect(doc['info']).toMatchObject({
+      title: 'Kimi Code WebSocket API',
+      version: '1.2.3',
+    });
+
+    const servers = doc['servers'] as Record<string, unknown>;
+    expect(servers['local']).toMatchObject({
+      host: '127.0.0.1:14567',
+      protocol: 'ws',
+      pathname: '/api/v1/ws',
+    });
+
+    const channels = doc['channels'] as Record<string, unknown>;
+    const wsChannel = channels['kimiCodeWebSocket'] as {
+      address: string;
+      messages: Record<string, { $ref: string }>;
+    };
+    expect(wsChannel.address).toBe('/api/v1/ws');
+    expect(wsChannel.messages['client_hello']).toEqual({
+      $ref: '#/components/messages/client_hello',
+    });
+    expect(wsChannel.messages['session_event']).toEqual({
+      $ref: '#/components/messages/session_event',
+    });
+    expect(wsChannel.messages['subscribe_ack']).toEqual({
+      $ref: '#/components/messages/subscribe_ack',
+    });
+
+    const operations = doc['operations'] as Record<string, unknown>;
+    expect(operations['receiveClientMessages']).toMatchObject({
+      action: 'receive',
+      channel: { $ref: '#/channels/kimiCodeWebSocket' },
+    });
+    expect(operations['sendServerMessages']).toMatchObject({
+      action: 'send',
+      channel: { $ref: '#/channels/kimiCodeWebSocket' },
+    });
+
+    const components = doc['components'] as { messages: Record<string, unknown> };
+    expect(components.messages['client_hello']).toMatchObject({
+      name: 'client_hello',
+      payload: expect.objectContaining({
+        type: 'object',
+      }),
+    });
+    expect(components.messages['session_event']).toMatchObject({
+      name: 'session_event',
+      payload: expect.objectContaining({
+        type: 'object',
+      }),
+    });
   });
 });
 

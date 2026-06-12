@@ -40,7 +40,7 @@ describe('kimi server', () => {
     expect(subs).toEqual(['install', 'restart', 'run', 'start', 'status', 'stop', 'uninstall']);
   });
 
-  it('`server run` exposes --host, --port, --log-level, --debug-endpoints, --open', () => {
+  it('`server run` exposes --host, --port, --log-level, --debug-endpoints, --swagger, --open', () => {
     const program = makeProgram();
     const run = program.commands
       .find((c) => c.name() === 'server')
@@ -51,6 +51,7 @@ describe('kimi server', () => {
     expect(longs).toContain('--port');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
+    expect(longs).toContain('--swagger');
     // run defaults to NOT opening the browser → option is the positive --open
     expect(longs).toContain('--open');
   });
@@ -267,6 +268,35 @@ describe('`kimi server` lifecycle output', () => {
 });
 
 describe('`kimi server run` already-running handling', () => {
+  it('passes --swagger through to foreground startup options', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let parsed: unknown;
+
+    await handleRunCommand(
+      { port: '7878', swagger: true },
+      {
+        startServerForeground: async (options) => {
+          parsed = options;
+          return { origin: 'http://127.0.0.1:7878' };
+        },
+        getServiceStatus: async () => undefined,
+        openUrl: vi.fn(),
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      },
+    );
+
+    expect(parsed).toMatchObject({ swagger: true });
+  });
+
   it('reports a background service conflict, suggests server stop, and opens the existing URL', async () => {
     const { ServerLockedError } = await import('@moonshot-ai/server');
     const { handleRunCommand } = await import('#/cli/sub/server/run');
