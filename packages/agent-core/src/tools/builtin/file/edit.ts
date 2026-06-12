@@ -56,9 +56,9 @@ function replaceOnceLiteral(content: string, oldString: string, newString: strin
 }
 
 /**
- * Attempt to fix common LLM backslash-encoding mistakes in a string.
- * Used for both old_string (matched against content) and new_string
- * (applied as replacement).
+ * Apply a backslash encoding transformation to detect whether a
+ * different encoding would match the file content. Used for detection
+ * only — the actual replacement uses the original args.
  */
 function applyBackslashFix(
   input: string,
@@ -181,18 +181,21 @@ export class EditTool implements BuiltinTool<EditInput> {
       const content = modelView.text;
       const replaceAll = args.replace_all ?? false;
 
-      // Apply backslash fallback after auth — adjust both old_string and
-      // new_string with the same transformation so the replacement is correct.
-      let oldString = args.old_string;
-      let newString = args.new_string;
-      if (!content.includes(oldString)) {
-        const adjusted = findBackslashAdjustedMatch(content, oldString);
+      // If old_string is not found, check if a backslash encoding mismatch
+      // is the cause. Instead of silently adjusting (which would mismatch
+      // the approval display), return a diagnostic error so the LLM can
+      // resend with the correct encoding.
+      if (!content.includes(args.old_string)) {
+        const adjusted = findBackslashAdjustedMatch(content, args.old_string);
         if (adjusted !== undefined) {
-          oldString = adjusted.adjusted;
-          newString = applyBackslashFix(
-            newString,
-            adjusted.variant as 'escape' | 'collapse-only' | 'unescape-seq-first',
-          );
+          const hint = buildNotFoundHint(content, args.old_string, args.path);
+          return {
+            isError: true,
+            output:
+              `old_string not found in ${args.path}. ${hint}\n` +
+              `The file content differs in backslash encoding (detected: ${adjusted.variant}). ` +
+              `Use the Read Tool to view the exact file content and resend old_string matching the literal characters shown.`,
+          };
         }
       }
 
@@ -200,14 +203,14 @@ export class EditTool implements BuiltinTool<EditInput> {
         let count = 0;
         let pos = 0;
         while (pos < content.length) {
-          const idx = content.indexOf(oldString, pos);
+          const idx = content.indexOf(args.old_string, pos);
           if (idx === -1) break;
           count++;
-          pos = idx + oldString.length;
+          pos = idx + args.old_string.length;
         }
 
         if (count === 0) {
-          const hint = buildNotFoundHint(content, oldString, args.path);
+          const hint = buildNotFoundHint(content, args.old_string, args.path);
           return { isError: true, output: `old_string not found in ${args.path}. ${hint}\nThe file contents may be out of date. Please use the Read Tool to reload the content.
 ` };
         }
@@ -220,7 +223,7 @@ export class EditTool implements BuiltinTool<EditInput> {
           };
         }
 
-        const newContent = replaceOnceLiteral(content, oldString, newString);
+        const newContent = replaceOnceLiteral(content, args.old_string, args.new_string);
         await this.kaos.writeText(
           safePath,
           materializeModelText(newContent, modelView.lineEndingStyle),
@@ -228,15 +231,15 @@ export class EditTool implements BuiltinTool<EditInput> {
         return { output: `Replaced 1 occurrence in ${args.path}` };
       }
 
-      const parts = content.split(oldString);
+      const parts = content.split(args.old_string);
       const replacementCount = parts.length - 1;
       if (replacementCount === 0) {
-        const hint = buildNotFoundHint(content, oldString, args.path);
+        const hint = buildNotFoundHint(content, args.old_string, args.path);
         return { isError: true, output: `old_string not found in ${args.path}. ${hint}\nThe file contents may be out of date. Please use the Read Tool to reload the content.
 ` };
       }
 
-      const newContent = parts.join(newString);
+      const newContent = parts.join(args.new_string);
       await this.kaos.writeText(
         safePath,
         materializeModelText(newContent, modelView.lineEndingStyle),

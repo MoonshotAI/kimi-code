@@ -460,7 +460,7 @@ describe('EditTool', () => {
     );
   });
 
-  it('recovers when old_string has real newlines but file has literal backslash-n', async () => {
+  it('returns encoding mismatch diagnostic when old_string has real newlines but file has literal backslash-n', async () => {
     const writeText = vi.fn().mockResolvedValue(0);
     // File has backslash + n (two chars): the literal string \n
     const fileContent = 'path = "C:\\nUsers\\nadmin";';
@@ -473,7 +473,7 @@ describe('EditTool', () => {
     );
 
     // LLM sent real newlines (\n as one char) instead of backslash + n (two chars).
-    // The unescape fallback should convert \n → backslash + n to match the file.
+    // The tool should return a diagnostic error instead of silently adjusting.
     const result = await executeTool(tool,
       context({
         path: '/tmp/config.txt',
@@ -482,11 +482,10 @@ describe('EditTool', () => {
       }),
     );
 
-    expect(result.output).toContain('Replaced 1 occurrence');
-    expect(writeText).toHaveBeenCalledWith(
-      '/tmp/config.txt',
-      'path = "D:\\nUsers\\nadmin";',
-    );
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('backslash encoding');
+    expect(result.output).toContain('Read Tool');
+    expect(writeText).not.toHaveBeenCalled();
   });
 
   it('provides a diagnostic hint when old_string with backslashes is not found', async () => {
