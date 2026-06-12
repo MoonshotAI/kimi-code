@@ -10,7 +10,7 @@
  * choose, so adding a new tool means appending one case.
  */
 
-import { readMediaSummary } from './media';
+import { readMediaSummary, readOrMediaSummary } from './media';
 import { shellExecutionResultRenderer } from '../shell-execution';
 import { goalSummary } from './goal';
 import {
@@ -18,7 +18,6 @@ import {
   fetchSummary,
   globSummary,
   grepSummary,
-  readSummary,
   thinkSummary,
   webSearchSummary,
   writeSummary,
@@ -39,7 +38,8 @@ export function isGenericToolResult(toolName: string): boolean {
 export function pickResultRenderer(toolName: string): ResultRenderer {
   switch (toolName) {
     case 'Read':
-      return readSummary;
+      return readOrMediaSummary;
+    // Pre-merge media tool — kept so recorded sessions still render.
     case 'ReadMediaFile':
       return readMediaSummary;
     case 'Grep':

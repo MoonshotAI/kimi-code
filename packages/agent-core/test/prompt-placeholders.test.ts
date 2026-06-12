@@ -25,7 +25,6 @@ const TEMPLATED = new Set([
   'profile/default/system.md',
   'agent/compaction/compaction-instruction.md',
   'tools/builtin/file/read.md',
-  'tools/builtin/file/read-media.md',
   'tools/builtin/shell/bash.md',
   'tools/builtin/collaboration/skill-tool.md',
 ]);

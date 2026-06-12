@@ -10,14 +10,13 @@ File tools handle reading, writing, and searching the local filesystem — the f
 
 | Tool | Default Approval | Description |
 | --- | --- | --- |
-| `Read` | Auto-allow | Read a text file's contents |
+| `Read` | Auto-allow | Read a text, image, or video file |
 | `Write` | Requires approval | Create or overwrite a file |
 | `Edit` | Requires approval | Precise string replacement |
 | `Grep` | Auto-allow | Full-text search powered by ripgrep |
 | `Glob` | Auto-allow | Find files by glob pattern |
-| `ReadMediaFile` | Auto-allow | Read an image or video file |
 
-**`Read`** accepts a file path (`path`) plus optional `line_offset` (starting line number; negative values count from the end) and `n_lines` (maximum number of lines to read). Returns at most 1000 lines or 100 KB per call; content beyond that limit is accompanied by a truncation notice. If the file is an image or video, the tool suggests using `ReadMediaFile` instead.
+**`Read`** accepts a file path (`path`) plus optional `line_offset` (starting line number; negative values count from the end) and `n_lines` (maximum number of lines to read). The file kind is detected by extension and magic bytes: text files return at most 1000 lines or 100 KB per call, with a truncation notice beyond that limit; images and videos are sent to the model as multimodal content (`line_offset` / `n_lines` are ignored for them) with a 100 MB size limit, subject to the current model's vision capabilities (`image_in` / `video_in`).
 
 **`Write`** accepts `path`, `content`, and an optional `mode` (`overwrite` or `append`; defaults to overwrite). The parent directory must already exist; `append` mode appends content to the end of the file without automatically adding a newline.
 
@@ -26,8 +25,6 @@ File tools handle reading, writing, and searching the local filesystem — the f
 **`Grep`** invokes ripgrep to search file contents, supporting regular expressions (`pattern`), a search path (`path`), file type filtering (`type`, e.g., `ts`, `py`), glob filtering (`glob`), and output mode (`output_mode`: `files_with_matches` / `content` / `count_matches`; defaults to `files_with_matches`). `content` mode supports context lines (`-A`, `-B`, `-C`), case-insensitive matching (`-i`), line numbers (`-n`, default true), and multiline matching (`multiline`). All modes support `offset` + `head_limit` pagination; `head_limit` defaults to 250 and `0` means unlimited. Sensitive files such as `.env` files and private keys are automatically filtered out; set `include_ignored=true` to search files ignored by `.gitignore`, though sensitive files remain filtered.
 
 **`Glob`** matches files in a specified directory (`path`; defaults to the working directory) by glob pattern (`pattern`). Results are sorted by modification time in descending order, with a maximum of 1000 entries. Pure wildcard patterns (e.g., `**`) and patterns containing brace expansion (`{a,b,c}`) are rejected.
-
-**`ReadMediaFile`** sends an image or video to the model as multimodal content. Accepts only `path`; the file size limit is 100 MB. Availability depends on the current model's vision capabilities (`image_in` / `video_in`).
 
 ## Shell
 

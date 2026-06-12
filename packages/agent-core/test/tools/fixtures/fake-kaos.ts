@@ -12,6 +12,7 @@
  */
 
 import type { Environment, Kaos } from '@moonshot-ai/kaos';
+import type { ModelCapability } from '@moonshot-ai/kosong';
 import type { ExecutableToolResult } from '#/loop';
 
 import type { WorkspaceConfig } from '../../../src/tools/support/workspace';
@@ -89,6 +90,20 @@ function mergeEnvLayers(
 export const PERMISSIVE_WORKSPACE: WorkspaceConfig = {
   workspaceDir: '/',
   additionalDirs: [],
+};
+
+/**
+ * Full-modality capability set for ReadTool construction — most Read
+ * tests exercise text or media behaviour without caring about the
+ * capability gate; tests that do care build their own.
+ */
+export const FULL_MEDIA_CAPABILITIES: ModelCapability = {
+  image_in: true,
+  video_in: true,
+  audio_in: false,
+  thinking: false,
+  tool_use: true,
+  max_context_tokens: 0,
 };
 
 /**

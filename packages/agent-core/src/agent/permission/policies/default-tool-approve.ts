@@ -4,7 +4,6 @@ const DEFAULT_APPROVE_TOOLS = new Set([
   'Read',
   'Grep',
   'Glob',
-  'ReadMediaFile',
   'SetTodoList',
   'TodoList',
   'TaskList',

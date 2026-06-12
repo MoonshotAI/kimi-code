@@ -7,7 +7,7 @@
  *     (dropping unsupported shapes).
  *  2. Wrap media-only outputs in `<mcp_tool_result name="…">` tags so the
  *     model can attribute binary output when several tools return media.
- *     Mirrors the in-tree `ReadMediaFile` convention.
+ *     Mirrors the in-tree `Read` media convention.
  *  3. Apply size limits: text/think share a 100K character budget; binary
  *     parts (image/audio/video URLs) each carry an independent 10 MB cap and
  *     collapse to a notice when oversize, so a single screenshot cannot

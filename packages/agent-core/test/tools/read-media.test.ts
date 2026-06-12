@@ -1,5 +1,7 @@
 /**
- * ReadMediaFileTool tests for the current output/capability contract.
+ * ReadTool media-path tests — image/video output envelope, capability
+ * gating, size limits, the video upload hook, and the capability-driven
+ * tool description.
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
@@ -8,10 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ToolAccesses } from '../../src/loop';
 import type { ExecutableToolResult } from '../../src/loop';
-import {
-  ReadMediaFileInputSchema,
-  ReadMediaFileTool,
-} from '../../src/tools/builtin/file/read-media';
+import { ReadInputSchema, ReadTool } from '../../src/tools/builtin/file/read';
 import { MEDIA_SNIFF_BYTES } from '../../src/tools/support/file-type';
 import { createFakeKaos, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
@@ -56,18 +55,16 @@ function makeReadMediaTool(
   input: {
     readonly stat?: Kaos['stat'] | undefined;
     readonly readBytes?: Kaos['readBytes'] | undefined;
+    readonly readLines?: Kaos['readLines'] | undefined;
     readonly modelCapabilities?: ModelCapability | undefined;
   } = {},
-): ReadMediaFileTool {
+): ReadTool {
   const kaos = createFakeKaos({
     stat: input.stat ?? vi.fn<Kaos['stat']>().mockResolvedValue(DEFAULT_STAT),
     readBytes: input.readBytes ?? vi.fn<Kaos['readBytes']>().mockResolvedValue(PNG_HEADER),
+    readLines: input.readLines,
   });
-  return new ReadMediaFileTool(
-    kaos,
-    PERMISSIVE_WORKSPACE,
-    input.modelCapabilities ?? capabilities(),
-  );
+  return new ReadTool(kaos, PERMISSIVE_WORKSPACE, input.modelCapabilities ?? capabilities());
 }
 
 function outputParts(result: ExecutableToolResult): ContentPart[] {
@@ -76,14 +73,12 @@ function outputParts(result: ExecutableToolResult): ContentPart[] {
   return result.output as ContentPart[];
 }
 
-describe('ReadMediaFileTool', () => {
+describe('ReadTool media path', () => {
   it('has name, parameters, and path-scoped resource accesses', () => {
     const tool = makeReadMediaTool();
 
-    expect(tool.name).toBe('ReadMediaFile');
-    expect(ReadMediaFileInputSchema.safeParse({ path: '/workspace/sample.png' }).success).toBe(
-      true,
-    );
+    expect(tool.name).toBe('Read');
+    expect(ReadInputSchema.safeParse({ path: '/workspace/sample.png' }).success).toBe(true);
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
@@ -107,19 +102,8 @@ describe('ReadMediaFileTool', () => {
     // working directory — not the misleading "Absolute path" wording.
     expect(description).toMatch(/working directory/i);
     expect(description).not.toMatch(/^Absolute path/);
-    // The useful "directories and text files are not supported" note stays.
-    expect(description).toMatch(/text file/i);
-  });
-
-  it('throws when constructed without image or video capability', () => {
-    expect(
-      () =>
-        new ReadMediaFileTool(
-          createFakeKaos(),
-          PERMISSIVE_WORKSPACE,
-          capabilities({ image_in: false, video_in: false }),
-        ),
-    ).toThrow(/image_in or video_in/);
+    // The useful "directories are not supported" note stays.
+    expect(description).toMatch(/directories are not supported/i);
   });
 
   it('returns a system/text/image/text wrap for PNG files', async () => {
@@ -146,6 +130,52 @@ describe('ReadMediaFileTool', () => {
       `data:image/png;base64,${data.toString('base64')}`,
     );
     expect(parts[3]).toEqual({ type: 'text', text: '</image>' });
+  });
+
+  it('sniffs media from raw bytes before ACP text preview', async () => {
+    const data = Buffer.concat([PNG_HEADER, Buffer.from('pngdata')]);
+    const readTextPreview = vi.fn(async () => {
+      throw new Error('ACP text preview must not be used for media sniffing');
+    });
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+        readTextPreview,
+      } as unknown as Partial<Kaos>),
+      PERMISSIVE_WORKSPACE,
+      capabilities(),
+    );
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_acp_media',
+      args: { path: '/workspace/sample.png' },
+      signal,
+    });
+
+    const parts = outputParts(result);
+    expect(parts[2]).toMatchObject({ type: 'image_url' });
+    expect(readTextPreview).not.toHaveBeenCalled();
+  });
+
+  it('ignores pagination parameters for media files', async () => {
+    const data = Buffer.concat([PNG_HEADER, Buffer.from('pngdata')]);
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_page',
+      args: { path: '/workspace/sample.png', line_offset: 10, n_lines: 5 },
+      signal,
+    });
+
+    const parts = outputParts(result);
+    expect(parts).toHaveLength(4);
+    expect(parts[2]).toMatchObject({ type: 'image_url' });
   });
 
   it('emits a <system> summary with mime type and byte size for images', async () => {
@@ -323,7 +353,7 @@ describe('ReadMediaFileTool', () => {
       type: 'video_url',
       videoUrl: { url: 'ms://file-123', id: 'file-123' },
     });
-    const tool = new ReadMediaFileTool(
+    const tool = new ReadTool(
       createFakeKaos({
         stat: vi.fn<Kaos['stat']>().mockResolvedValue({
           ...DEFAULT_STAT,
@@ -355,11 +385,44 @@ describe('ReadMediaFileTool', () => {
     });
   });
 
-  it('rejects text files with a Read hint', async () => {
-    const text = Buffer.from('hello');
+  it('reports the file path when the video upload fails', async () => {
+    // A bare provider error ("404 route not found") tells the model and
+    // the user nothing about which file or which step failed; the media
+    // path must wrap it with read context.
+    const videoUploader = vi.fn().mockRejectedValue(new Error('404 route not found'));
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({
+          ...DEFAULT_STAT,
+          stSize: MP4_HEADER.length,
+        }),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(MP4_HEADER),
+      }),
+      PERMISSIVE_WORKSPACE,
+      capabilities(),
+      videoUploader,
+    );
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_upload_fail',
+      args: { path: '/workspace/clip.mov' },
+      signal,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('Failed to read /workspace/clip.mov');
+    expect(result.output).toContain('404 route not found');
+  });
+
+  it('reads text files as numbered lines through the same tool', async () => {
+    const text = 'hello\n';
     const tool = makeReadMediaTool({
       stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: text.length }),
-      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(text),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(Buffer.from(text)),
+      readLines: vi.fn<Kaos['readLines']>().mockImplementation(async function* readLines() {
+        yield 'hello\n';
+      }),
     });
 
     const result = await executeTool(tool, {
@@ -369,11 +432,8 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toBe(
-      '"/workspace/sample.txt" is a text file. Use Read to read text files.',
-    );
-    expect(result.output).not.toContain('ReadFile');
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('1\thello');
   });
 
   it('rejects unknown binary files without legacy Python-tool wording', async () => {
@@ -392,9 +452,26 @@ describe('ReadMediaFileTool', () => {
 
     expect(result.isError).toBe(true);
     expect(result.output).toBe(
-      '"/workspace/blob.bin" is not a supported image or video file. Use Read for text files, or Bash or an MCP tool for other binary formats.',
+      '"/workspace/blob.bin" is not readable as UTF-8 text. ' +
+        'For binary formats, use Bash or an MCP tool if available.',
     );
     expect(result.output).not.toContain('Python tools');
+  });
+
+  it('errors when the current model lacks image input capability', async () => {
+    const tool = makeReadMediaTool({
+      modelCapabilities: capabilities({ image_in: false, video_in: true }),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_noimg',
+      args: { path: '/workspace/sample.png' },
+      signal,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toMatch(/image input/i);
   });
 
   it('errors when the current model lacks video input capability', async () => {
@@ -419,28 +496,34 @@ describe('ReadMediaFileTool', () => {
   });
 
   it('rejects empty files and files exceeding the media size limit', async () => {
-    const empty = await executeTool(makeReadMediaTool({
-      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: 0 }),
-    }), {
-      turnId: 't1',
-      toolCallId: 'c_empty',
-      args: { path: '/workspace/empty.png' },
-      signal,
-    });
+    const empty = await executeTool(
+      makeReadMediaTool({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: 0 }),
+      }),
+      {
+        turnId: 't1',
+        toolCallId: 'c_empty',
+        args: { path: '/workspace/empty.png' },
+        signal,
+      },
+    );
     expect(empty).toMatchObject({ isError: true });
     expect(empty.output).toMatch(/empty/i);
 
-    const huge = await executeTool(makeReadMediaTool({
-      stat: vi.fn<Kaos['stat']>().mockResolvedValue({
-        ...DEFAULT_STAT,
-        stSize: 200 * 1024 * 1024,
+    const huge = await executeTool(
+      makeReadMediaTool({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({
+          ...DEFAULT_STAT,
+          stSize: 200 * 1024 * 1024,
+        }),
       }),
-    }), {
-      turnId: 't1',
-      toolCallId: 'c_huge',
-      args: { path: '/workspace/huge.png' },
-      signal,
-    });
+      {
+        turnId: 't1',
+        toolCallId: 'c_huge',
+        args: { path: '/workspace/huge.png' },
+        signal,
+      },
+    );
     expect(huge).toMatchObject({ isError: true });
     expect(huge.output).toMatch(/exceeds|100/i);
   });
@@ -464,7 +547,7 @@ describe('ReadMediaFileTool', () => {
       readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(png),
     });
 
-    const result = await executeTool(tool,{
+    const result = await executeTool(tool, {
       turnId: 't1',
       toolCallId: 'c_size',
       args: { path: '/workspace/valid.png' },
@@ -488,7 +571,7 @@ describe('ReadMediaFileTool', () => {
       readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
     });
 
-    const result = await executeTool(tool,{
+    const result = await executeTool(tool, {
       turnId: 't1',
       toolCallId: 'c_extless_msg',
       args: { path: '/workspace/sample' },
@@ -502,39 +585,9 @@ describe('ReadMediaFileTool', () => {
     expect(systemText).toContain(`${String(data.length)} bytes`);
   });
 
-  it('description by capabilities lockdown — image + video points at Read for text fallback', () => {
-    const tool = new ReadMediaFileTool(createFakeKaos(), PERMISSIVE_WORKSPACE, capabilities());
-    // Long-form description contract from sibling docs: 100MB ceiling and
-    // pointer to the text-file tool for non-media content. TS renames the
-    // sibling tool to `Read` (py was `ReadFile`).
-    expect(tool.description).toContain('100MB');
-    expect(tool.description).toContain('Read tool');
-    expect(tool.description).toContain('supports image and video files for the current model');
-  });
-
-  it('omits the tool from the toolset when the model has neither image_in nor video_in', () => {
-    // Strict skip semantics: construction returns a sentinel the loader can
-    // use to drop the tool entirely, instead of registering a tool that
-    // always errors. Currently TS throws a regular Error — fail-unimplemented
-    // surfaces the gap.
-    let caught: unknown = null;
-    const construct = (): ReadMediaFileTool =>
-      new ReadMediaFileTool(
-        createFakeKaos(),
-        PERMISSIVE_WORKSPACE,
-        capabilities({ image_in: false, video_in: false }),
-      );
-    try {
-      construct();
-    } catch (error) {
-      caught = error;
-    }
-    expect((caught as { name?: string } | null)?.name).toBe('SkipThisTool');
-  });
-
   it('allows absolute media paths outside workspace but rejects relative escapes', async () => {
     const readBytes = vi.fn<Kaos['readBytes']>().mockResolvedValue(PNG_HEADER);
-    const tool = new ReadMediaFileTool(
+    const tool = new ReadTool(
       createFakeKaos({
         stat: vi.fn<Kaos['stat']>().mockResolvedValue(DEFAULT_STAT),
         readBytes,
@@ -560,5 +613,40 @@ describe('ReadMediaFileTool', () => {
     });
     expect(relative.isError).toBe(true);
     expect(readBytes).not.toHaveBeenCalled();
+  });
+});
+
+describe('ReadTool description by capabilities', () => {
+  function makeTool(caps: Partial<ModelCapability>): ReadTool {
+    return new ReadTool(createFakeKaos(), PERMISSIVE_WORKSPACE, capabilities(caps));
+  }
+
+  it('mentions image and video when both capabilities are present', () => {
+    const tool = makeTool({ image_in: true, video_in: true });
+    expect(tool.description).toContain('supports image and video');
+  });
+
+  it('mentions image but flags video unsupported when only image_in is present', () => {
+    const tool = makeTool({ image_in: true, video_in: false });
+    expect(tool.description).toContain('supports image files for the current model');
+    expect(tool.description).toContain('Video files are not supported');
+  });
+
+  it('mentions video but flags image unsupported when only video_in is present', () => {
+    const tool = makeTool({ image_in: false, video_in: true });
+    expect(tool.description).toContain('supports video files for the current model');
+    expect(tool.description).toContain('Image files are not supported');
+  });
+
+  it('declares media unsupported when neither capability is present', () => {
+    const tool = makeTool({ image_in: false, video_in: false });
+    expect(tool.description).toContain('does not support image or video input');
+  });
+
+  it('description pins the stable contract phrases: image+video, 100MB, parallel reads', () => {
+    const tool = makeTool({ image_in: true, video_in: true });
+    expect(tool.description).toContain('image and video');
+    expect(tool.description).toContain('100MB');
+    expect(tool.description).toContain('parallel');
   });
 });

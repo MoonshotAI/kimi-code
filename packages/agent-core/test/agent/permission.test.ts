@@ -473,7 +473,6 @@ describe('Permission auto mode', () => {
     (['manual', 'yolo'] as const).flatMap((mode) =>
       [
         [mode, 'Read', { path: '/tmp/notes.md' }],
-        [mode, 'ReadMediaFile', { path: '/tmp/image.png' }],
         [mode, 'Grep', { pattern: 'TODO', path: '/tmp' }],
       ] as const,
     ),
@@ -495,7 +494,6 @@ describe('Permission auto mode', () => {
 
   it.each([
     ['Read', { path: '/tmp/notes.md' }],
-    ['ReadMediaFile', { path: '/tmp/image.png' }],
     ['Write', { path: '/tmp/notes.md', content: 'x' }],
     ['Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }],
   ] as const)('approves %s outside the cwd in auto mode', async (toolName, args) => {
@@ -522,7 +520,6 @@ describe('Permission auto mode', () => {
 
   it.each([
     ['Read', { path: '/workspace/notes.md' }],
-    ['ReadMediaFile', { path: '/workspace/image.png' }],
     ['Write', { path: '/workspace/notes.md', content: 'x' }],
     ['Edit', { path: '/workspace/notes.md', old_string: 'a', new_string: 'b' }],
     ['Grep', { pattern: 'TODO', path: '/workspace' }],
@@ -1046,7 +1043,6 @@ describe('Default tool approve policy', () => {
     ['Read', { path: '/workspace/notes.md' }],
     ['Grep', { pattern: 'TODO', path: '/workspace' }],
     ['Glob', { pattern: '**/*.ts', path: '/workspace' }],
-    ['ReadMediaFile', { path: '/workspace/image.png' }],
     ['SetTodoList', { items: [] }],
     ['TodoList', {}],
     ['TaskList', {}],
@@ -3886,7 +3882,6 @@ function testRuleSubject(toolName: string, args: Record<string, unknown>): strin
     case 'Bash':
       return stringArg(args, 'command');
     case 'Read':
-    case 'ReadMediaFile':
     case 'Write':
     case 'Edit':
       return canonicalTestPath(stringArg(args, 'path', '/workspace/file.txt'));
@@ -3905,7 +3900,6 @@ function testMatchesRuleSubject(
 ): boolean {
   switch (toolName) {
     case 'Read':
-    case 'ReadMediaFile':
     case 'Write':
     case 'Edit':
       return matchesPathRuleSubject(ruleArgs, ruleSubject);
@@ -3922,8 +3916,6 @@ function testDescription(toolName: string, args: Record<string, unknown>): strin
       return 'review plan';
     case 'Read':
       return 'read file';
-    case 'ReadMediaFile':
-      return 'read media file';
     case 'Write':
       return 'write file';
     case 'Edit':
@@ -3951,7 +3943,6 @@ function testDisplay(toolName: string, args: Record<string, unknown>): ToolInput
         command: typeof args['command'] === 'string' ? args['command'] : '',
       };
     case 'Read':
-    case 'ReadMediaFile':
       return { kind: 'file_io', operation: 'read', path };
     case 'Write':
       return { kind: 'file_io', operation: 'write', path };
@@ -3969,7 +3960,6 @@ function testDisplay(toolName: string, args: Record<string, unknown>): ToolInput
 function testAccesses(toolName: string, args: Record<string, unknown>) {
   const path = typeof args['path'] === 'string' ? canonicalTestPath(args['path']) : undefined;
   if (toolName === 'Read' && path !== undefined) return ToolAccesses.readFile(path);
-  if (toolName === 'ReadMediaFile' && path !== undefined) return ToolAccesses.readFile(path);
   if (toolName === 'Write' && path !== undefined) return ToolAccesses.writeFile(path);
   if (toolName === 'Edit' && path !== undefined) return ToolAccesses.readWriteFile(path);
   if ((toolName === 'Grep' || toolName === 'Glob') && path !== undefined) {

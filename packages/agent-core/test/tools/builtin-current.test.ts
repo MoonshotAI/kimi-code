@@ -36,7 +36,7 @@ import { ReadInputSchema, ReadTool } from '../../src/tools/builtin/file/read';
 import { WriteInputSchema, WriteTool } from '../../src/tools/builtin/file/write';
 import { BashInputSchema, BashTool } from '../../src/tools/builtin/shell/bash';
 import type { WorkspaceConfig } from '../../src/tools/support/workspace';
-import { createFakeKaos } from './fixtures/fake-kaos';
+import { createFakeKaos, FULL_MEDIA_CAPABILITIES } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 import { createBackgroundManager } from '../agent/background/helpers';
 import {
@@ -111,6 +111,7 @@ describe('current builtin file and shell tools', () => {
         }),
       }),
       workspace,
+      FULL_MEDIA_CAPABILITIES,
     );
 
     expect(ReadInputSchema.safeParse({ path: '/workspace/a.txt' }).success).toBe(true);

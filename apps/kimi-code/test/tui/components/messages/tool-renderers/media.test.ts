@@ -5,7 +5,9 @@ import {
   parseReadMediaOutput,
   readMediaChip,
   readMediaSummary,
+  readOrMediaSummary,
 } from '#/tui/components/messages/tool-renderers/media';
+import { pickChip } from '#/tui/components/messages/tool-renderers/chip';
 import { darkColors } from '#/tui/theme/colors';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
@@ -35,10 +37,17 @@ const PNG_DATA_URL = `data:image/png;base64,${PNG_B64}`;
 
 function imageOutput(path: string, b64 = PNG_B64, mime = 'image/png'): string {
   return JSON.stringify([
+    {
+      type: 'text',
+      text:
+        `<system>Read image file. Mime type: ${mime}. Size: 70 bytes. ` +
+        'Original dimensions: 1x1 pixels. If you need to output coordinates, ' +
+        'output relative coordinates first and compute absolute coordinates using the original image size. ' +
+        'If you generate or edit images or videos via commands or scripts, read the result back immediately before continuing.</system>',
+    },
     { type: 'text', text: `<image path="${path}">` },
     { type: 'image_url', imageUrl: { url: `data:${mime};base64,${b64}` } },
     { type: 'text', text: '</image>' },
-    { type: 'text', text: `Loaded image file "${path}" (${mime}, 70 bytes, original size 1x1px).` },
   ]);
 }
 
@@ -121,6 +130,7 @@ describe('readMediaSummary renderer', () => {
     );
     expect(out).toContain('/tmp/a.png');
     expect(out).toContain('image/png');
+    expect(out).toContain('1x1px');
     // Crucially: the base64 must never reach the screen.
     expect(out).not.toContain(PNG_B64);
     expect(out).not.toContain(PNG_DATA_URL);
@@ -146,5 +156,38 @@ describe('readMediaSummary renderer', () => {
       ),
     );
     expect(out).toContain('some plain string output');
+  });
+});
+
+describe('Read content dispatch', () => {
+  it('routes a media envelope to the media summary', () => {
+    const out = strip(
+      joinRender(readOrMediaSummary(call('Read'), result(imageOutput('/tmp/a.png')), expandedCtx)),
+    );
+    expect(out).toContain('/tmp/a.png');
+    expect(out).toContain('image/png');
+    expect(out).not.toContain(PNG_B64);
+  });
+
+  it('routes numbered text lines to the regular read summary (empty collapsed body)', () => {
+    const out = joinRender(readOrMediaSummary(call('Read'), result('1\thello\n2\tworld'), ctx));
+    expect(out.trim()).toBe('');
+  });
+
+  it('Read chip shows media meta for media reads and line counts for text reads', () => {
+    const chip = pickChip('Read');
+    expect(chip).toBeDefined();
+    const mediaText = strip(chip!(call('Read'), result(imageOutput('/tmp/a.png'))));
+    expect(mediaText).toMatch(/image/);
+    expect(mediaText).toContain('image/png');
+    const textText = strip(chip!(call('Read'), result('1\thello\n2\tworld')));
+    expect(textText).toBe('2 lines');
+  });
+
+  it('keeps the legacy ReadMediaFile chip entry for recorded sessions', () => {
+    const chip = pickChip('ReadMediaFile');
+    expect(chip).toBeDefined();
+    const text = strip(chip!(call('ReadMediaFile'), result(imageOutput('/tmp/a.png'))));
+    expect(text).toMatch(/image/);
   });
 });

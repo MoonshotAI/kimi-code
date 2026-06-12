@@ -1,12 +1,16 @@
 /**
- * ReadMediaFile renderer.
+ * Media result renderer.
  *
- * The ReadMediaFile tool `output` is the JSON-serialized array of
- * content parts the tool returned — which includes the full base64 of
- * the image/video. Dumping that string into the transcript blasts a
- * multi-screen blob of base64. This renderer parses the envelope and
- * surfaces just the human-readable bits (kind, path, mime, size) via
- * a header chip + a tiny expanded body. It never emits the base64.
+ * When Read hits an image or video, the tool `output` is the
+ * JSON-serialized array of content parts it returned — which includes
+ * the full base64 of the media. Dumping that string into the transcript
+ * blasts a multi-screen blob of base64. This renderer parses the
+ * envelope and surfaces just the human-readable bits (kind, path, mime,
+ * size) via a header chip + a tiny expanded body. It never emits the
+ * base64. Text reads fall through to the regular read summary.
+ *
+ * `ReadMediaFile` (the pre-merge media tool) keeps its registry entry so
+ * sessions recorded before the merge still render.
  *
  * On error, or when the output isn't the expected media envelope, we
  * fall back to the truncated renderer so the user still sees the raw
@@ -18,6 +22,7 @@ import { Text } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
 import type { ChipProvider } from './chip';
+import { readSummary } from './summary';
 import { renderTruncated } from './truncated';
 import type { ResultRenderer } from './types';
 
@@ -31,7 +36,8 @@ export interface ReadMediaSummary {
 }
 
 const PATH_TAG_RE = /^<(image|video)\s+path="([^"]+)">$/;
-const ORIGINAL_SIZE_RE = /original size\s+(\d+x\d+px)/;
+const ORIGINAL_SIZE_RE =
+  /original size\s+(\d+x\d+px)|original dimensions:\s+(\d+)x(\d+)\s+pixels?/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
 
 function bytesFromBase64(b64: string): number {
@@ -72,7 +78,13 @@ export function parseReadMediaOutput(output: string): ReadMediaSummary | null {
         continue;
       }
       const size = ORIGINAL_SIZE_RE.exec(text);
-      if (size) originalSize = size[1];
+      if (size) {
+        if (size[1] !== undefined) {
+          originalSize = size[1];
+        } else if (size[2] !== undefined && size[3] !== undefined) {
+          originalSize = `${size[2]}x${size[3]}px`;
+        }
+      }
       continue;
     }
 
@@ -149,4 +161,15 @@ export const readMediaSummary: ResultRenderer = (toolCall, result, ctx) => {
   if (summary.url !== undefined) tail.push(summary.url);
   out.push(new Text(`  ${dim(tail.join(' · '))}`, 0, 0));
   return out;
+};
+
+/**
+ * Read renders by content: a media envelope gets the media summary,
+ * anything else (numbered text lines, errors) the regular read summary.
+ */
+export const readOrMediaSummary: ResultRenderer = (toolCall, result, ctx) => {
+  if (!result.is_error && parseReadMediaOutput(result.output) !== null) {
+    return readMediaSummary(toolCall, result, ctx);
+  }
+  return readSummary(toolCall, result, ctx);
 };

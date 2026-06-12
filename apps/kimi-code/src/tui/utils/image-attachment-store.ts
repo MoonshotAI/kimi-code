@@ -6,7 +6,7 @@
  * (640×480)]` / `[video #2 sample.mov]`). The placeholder is what the
  * user sees in the input field; on submit, `extractMediaAttachments`
  * walks the text and expands image placeholders to image content parts
- * and video placeholders to file-path tags for `ReadMediaFile`.
+ * and video placeholders to file-path tags for `Read`.
  *
  * Scope is per-`KimiTUI` instance. Reloads (`/new`, `/clear`,
  * session switch) call `clear()` so ids restart from 1 and stale

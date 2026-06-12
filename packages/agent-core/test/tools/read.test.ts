@@ -11,7 +11,7 @@ import {
 } from '../../src/tools/builtin/file/read';
 import { MEDIA_SNIFF_BYTES } from '../../src/tools/support/file-type';
 import type { WorkspaceConfig } from '../../src/tools/support/workspace';
-import { createFakeKaos, PERMISSIVE_WORKSPACE, toolContentString } from './fixtures/fake-kaos';
+import { createFakeKaos, FULL_MEDIA_CAPABILITIES, PERMISSIVE_WORKSPACE, toolContentString } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
 const signal = new AbortController().signal;
@@ -76,6 +76,7 @@ function toolWithContent(content: string, workspace: WorkspaceConfig = PERMISSIV
       readText: vi.fn<Kaos['readText']>().mockResolvedValue(content),
     }),
     workspace,
+    FULL_MEDIA_CAPABILITIES,
   );
 }
 
@@ -220,7 +221,7 @@ describe('ReadTool', () => {
     const tool = new ReadTool(createFakeKaos({ readText }), {
       workspaceDir: '/workspace/project',
       additionalDirs: [],
-    });
+    }, FULL_MEDIA_CAPABILITIES);
 
     const result = await executeTool(tool, context({ path: '../../outside.txt' }));
 
@@ -246,6 +247,7 @@ describe('ReadTool', () => {
         workspaceDir: '/workspace',
         additionalDirs: [],
       },
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool, context({ path: '/tmp/external.txt' }));
@@ -276,6 +278,7 @@ describe('ReadTool', () => {
         workspaceDir: '/workspace',
         additionalDirs: [],
       },
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool, context({ path: '/workspace/missing.txt' }));
@@ -303,6 +306,7 @@ describe('ReadTool', () => {
         workspaceDir: '/workspace',
         additionalDirs: [],
       },
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool, context({ path: '/workspace/src' }));
@@ -333,6 +337,7 @@ describe('ReadTool', () => {
         workspaceDir: '/workspace',
         additionalDirs: [],
       },
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool, context({ path: '~/notes/today.txt' }));
@@ -352,7 +357,7 @@ describe('ReadTool', () => {
     const tool = new ReadTool(createFakeKaos({ readText }), {
       workspaceDir: '/workspace',
       additionalDirs: [],
-    });
+    }, FULL_MEDIA_CAPABILITIES);
 
     const result = await executeTool(tool, context({ path: '/workspace/.env' }));
 
@@ -361,52 +366,59 @@ describe('ReadTool', () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('rejects image files before text decoding and points to ReadMediaFile', async () => {
+  it('reads image files as media content without text decoding', async () => {
     const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const readText = vi
       .fn<Kaos['readText']>()
       .mockRejectedValue(new Error('readText should not be called for images'));
     const tool = new ReadTool(
       createFakeKaos({
-        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        stat: vi
+          .fn<Kaos['stat']>()
+          .mockResolvedValue({ ...REGULAR_FILE_STAT, stSize: pngHeader.length }),
         readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(pngHeader),
         readText,
       }),
       PERMISSIVE_WORKSPACE,
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool, context({ path: '/tmp/sample.png' }));
-    const output = toolContentString(result);
 
-    expect(result.isError).toBe(true);
-    expect(output).toMatch(/image file/i);
-    expect(output).toMatch(/ReadMediaFile|media/i);
+    expect(result.isError).toBeFalsy();
+    expect(Array.isArray(result.output)).toBe(true);
+    const parts = result.output as { type: string }[];
+    expect(parts.some((part) => part.type === 'image_url')).toBe(true);
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('rejects extensionless image files using magic-byte sniffing', async () => {
+  it('reads extensionless image files using magic-byte sniffing', async () => {
     const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const readText = vi
       .fn<Kaos['readText']>()
       .mockRejectedValue(new Error('readText should not be called for extensionless images'));
     const tool = new ReadTool(
       createFakeKaos({
-        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        stat: vi
+          .fn<Kaos['stat']>()
+          .mockResolvedValue({ ...REGULAR_FILE_STAT, stSize: pngHeader.length }),
         readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(pngHeader),
         readText,
       }),
       PERMISSIVE_WORKSPACE,
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool, context({ path: '/tmp/sample' }));
-    const output = toolContentString(result);
 
-    expect(result.isError).toBe(true);
-    expect(output).toMatch(/image file/i);
+    expect(result.isError).toBeFalsy();
+    expect(Array.isArray(result.output)).toBe(true);
+    const parts = result.output as { type: string }[];
+    expect(parts.some((part) => part.type === 'image_url')).toBe(true);
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('rejects video files before text decoding', async () => {
+  it('reads video files as media content without text decoding', async () => {
     const mp4Header = Buffer.concat([
       Buffer.from([0x00, 0x00, 0x00, 0x18]),
       Buffer.from('ftyp'),
@@ -419,19 +431,22 @@ describe('ReadTool', () => {
       .mockRejectedValue(new Error('readText should not be called for videos'));
     const tool = new ReadTool(
       createFakeKaos({
-        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        stat: vi
+          .fn<Kaos['stat']>()
+          .mockResolvedValue({ ...REGULAR_FILE_STAT, stSize: mp4Header.length }),
         readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(mp4Header),
         readText,
       }),
       PERMISSIVE_WORKSPACE,
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool, context({ path: '/tmp/sample.mp4' }));
-    const output = toolContentString(result);
 
-    expect(result.isError).toBe(true);
-    expect(output).toMatch(/video file/i);
-    expect(output).toMatch(/ReadMediaFile|media/i);
+    expect(result.isError).toBeFalsy();
+    expect(Array.isArray(result.output)).toBe(true);
+    const parts = result.output as { type: string }[];
+    expect(parts.some((part) => part.type === 'video_url')).toBe(true);
     expect(readText).not.toHaveBeenCalled();
   });
 
@@ -447,6 +462,7 @@ describe('ReadTool', () => {
         readText,
       }),
       PERMISSIVE_WORKSPACE,
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool, context({ path: '/tmp/blob.bin' }));
@@ -454,7 +470,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/blob.bin" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+      '"/tmp/blob.bin" is not readable as UTF-8 text. For binary formats, use Bash or an MCP tool if available.',
     );
     expect(output).not.toContain('Python tools');
     expect(readText).not.toHaveBeenCalled();
@@ -473,6 +489,7 @@ describe('ReadTool', () => {
         readLines,
       }),
       PERMISSIVE_WORKSPACE,
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool, context({ path: '/tmp/blob-with-late-nul' }));
@@ -480,7 +497,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/blob-with-late-nul" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+      '"/tmp/blob-with-late-nul" is not readable as UTF-8 text. For binary formats, use Bash or an MCP tool if available.',
     );
     expect(output).not.toContain('Python tools');
   });
@@ -503,6 +520,7 @@ describe('ReadTool', () => {
         readLines,
       }),
       PERMISSIVE_WORKSPACE,
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool, context({ path: '/tmp/not-utf8.txt' }));
@@ -510,7 +528,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBe(true);
     expect(output).toBe(
-      '"/tmp/not-utf8.txt" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+      '"/tmp/not-utf8.txt" is not readable as UTF-8 text. For binary formats, use Bash or an MCP tool if available.',
     );
     expect(output).not.toContain('Python tools');
     expect(output).not.toContain(replacement);
@@ -556,6 +574,7 @@ describe('ReadTool', () => {
         readText: vi.fn<Kaos['readText']>().mockRejectedValue(new Error('full readText should not be called')),
       } as unknown as Partial<Kaos>),
       PERMISSIVE_WORKSPACE,
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool, context({ path: '/tmp/acp.txt' }));
@@ -594,6 +613,7 @@ describe('ReadTool', () => {
         readText,
       }),
       PERMISSIVE_WORKSPACE,
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool, context({ path: '/tmp/large.txt' }));
@@ -679,6 +699,7 @@ describe('ReadTool', () => {
         readLines: vi.fn<Kaos['readLines']>().mockImplementation(readLinesFromContent(content)),
       }),
       { workspaceDir: '/workspace', additionalDirs: ['/extra'] },
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool,context({ path: '/extra/notes.txt' }));
@@ -694,6 +715,7 @@ describe('ReadTool', () => {
         stat: vi.fn<Kaos['stat']>().mockRejectedValue(statError),
       }),
       { workspaceDir: '/workspace', additionalDirs: [] },
+      FULL_MEDIA_CAPABILITIES,
     );
 
     const result = await executeTool(tool,context({ path: '/workspace/ghost.txt' }));

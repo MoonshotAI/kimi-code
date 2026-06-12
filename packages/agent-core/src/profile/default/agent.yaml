@@ -18,7 +18,6 @@ tools:
   - CronCreate
   - CronList
   - CronDelete
-  - ReadMediaFile
   - TodoList
   - Skill
   - WebSearch

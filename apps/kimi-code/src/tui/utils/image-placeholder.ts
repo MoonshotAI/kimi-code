@@ -9,7 +9,7 @@
  *   - Order is preserved for text/image/video segments. Image placeholders
  *     expand to image content parts so the prompt reaches the provider
  *     without relying on a model tool call. Video placeholders still expand
- *     to file-path tags so `ReadMediaFile` can own video upload behavior.
+ *     to file-path tags so `Read` can own video upload behavior.
  *   - Adjacent text segments are flattened — empty / whitespace-only
  *     segments drop out so we never emit `{type:'text', text:' '}`
  *     noise between two media parts.

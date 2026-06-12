@@ -83,8 +83,13 @@ const editChip: ChipProvider = (toolCall) => {
 
 const writeChip: ChipProvider = (toolCall) => formatWriteChip(computeWriteStats(toolCall.args));
 
-const readChip: ChipProvider = (_toolCall, result) =>
-  pluralize(countNonEmptyLines(result.output), 'line');
+const readChip: ChipProvider = (toolCall, result) => {
+  // Media reads carry a content-part envelope; readMediaChip returns ''
+  // for anything else, falling back to the text line count.
+  const media = readMediaChip(toolCall, result);
+  if (media !== '') return media;
+  return pluralize(countNonEmptyLines(result.output), 'line');
+};
 
 const grepChip: ChipProvider = (_toolCall, result) => {
   const matches = countNonEmptyLines(result.output);
@@ -118,6 +123,7 @@ const REGISTRY: Record<string, ChipProvider> = {
   Edit: editChip,
   Write: writeChip,
   Read: readChip,
+  // Pre-merge media tool — kept so recorded sessions still render.
   ReadMediaFile: readMediaChip,
   Grep: grepChip,
   Glob: globChip,

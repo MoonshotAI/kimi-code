@@ -10,14 +10,13 @@
 
 | 工具 | 默认审批 | 说明 |
 | --- | --- | --- |
-| `Read` | 自动放行 | 读取文本文件内容 |
+| `Read` | 自动放行 | 读取文本、图片或视频文件 |
 | `Write` | 需审批 | 创建或覆盖文件 |
 | `Edit` | 需审批 | 精确字符串替换 |
 | `Grep` | 自动放行 | 基于 ripgrep 的全文搜索 |
 | `Glob` | 自动放行 | 按 glob 模式查找文件 |
-| `ReadMediaFile` | 自动放行 | 读取图片或视频文件 |
 
-**`Read`** 接受文件路径（`path`）以及可选的 `line_offset`（起始行号，支持负数从末尾倒数）和 `n_lines`（读取行数上限）。单次最多返回 1000 行或 100 KB，超出部分会附带截断提示。如果文件是图片或视频，工具会提示改用 `ReadMediaFile`。
+**`Read`** 接受文件路径（`path`）以及可选的 `line_offset`（起始行号，支持负数从末尾倒数）和 `n_lines`（读取行数上限）。文件类型由扩展名和魔数自动识别：文本文件单次最多返回 1000 行或 100 KB，超出部分会附带截断提示；图片和视频以多模态内容发送给模型（`line_offset` / `n_lines` 对其无效），文件大小上限 100 MB，是否支持取决于当前模型的视觉能力（`image_in` / `video_in`）。
 
 **`Write`** 接受 `path`、`content` 和可选的 `mode`（`overwrite` 或 `append`，默认覆盖）。父目录必须已存在；`append` 模式将内容追加到文件末尾，不自动添加换行。
 
@@ -26,8 +25,6 @@
 **`Grep`** 调用 ripgrep 搜索文件内容，支持正则表达式（`pattern`）、搜索路径（`path`）、文件类型过滤（`type`，如 `ts`、`py`）、glob 过滤（`glob`）和输出模式（`output_mode`：`files_with_matches` / `content` / `count_matches`，默认 `files_with_matches`）。`content` 模式支持上下文行（`-A`、`-B`、`-C`）、忽略大小写（`-i`）、行号（`-n`，默认 true）、跨行匹配（`multiline`）。所有模式支持 `offset` + `head_limit` 分页，`head_limit` 默认 250、传 0 表示不限。`.env`、私钥等敏感文件会被自动过滤；`include_ignored=true` 可搜索被 `.gitignore` 忽略的文件，但敏感文件仍保持过滤。
 
 **`Glob`** 按 glob 模式（`pattern`）在指定目录（`path`，默认工作目录）中匹配文件，结果按修改时间倒序排列，最多返回 1000 条。纯通配符模式（如 `**`）和含花括号扩展（`{a,b,c}`）的模式会被拒绝。
-
-**`ReadMediaFile`** 将图片或视频以多模态内容发送给模型，仅接受 `path`，文件大小上限 100 MB。是否可用取决于当前模型的视觉能力（`image_in` / `video_in`）。
 
 ## Shell
 

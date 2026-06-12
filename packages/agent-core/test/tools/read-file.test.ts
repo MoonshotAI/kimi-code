@@ -2,7 +2,7 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ReadTool } from '../../src/tools/builtin/file/read';
-import { createFakeKaos, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
+import { createFakeKaos, FULL_MEDIA_CAPABILITIES, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
 const signal = new AbortController().signal;
@@ -47,6 +47,7 @@ function toolWithContent(content: string): ReadTool {
       readLines: vi.fn<Kaos['readLines']>().mockImplementation(readLinesFromContent(content)),
     }),
     PERMISSIVE_WORKSPACE,
+    FULL_MEDIA_CAPABILITIES,
   );
 }
 

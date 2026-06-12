@@ -378,7 +378,7 @@ export class ToolManager {
     const goalToolsEnabled = this.agent.type === 'main';
     this.builtinTools = new Map(
       [
-        new b.ReadTool(kaos, workspace),
+        new b.ReadTool(kaos, workspace, modelCapabilities, videoUploader),
         new b.WriteTool(kaos, workspace),
         new b.EditTool(kaos, workspace),
         new b.GrepTool(kaos, workspace),
@@ -386,8 +386,6 @@ export class ToolManager {
         new b.BashTool(kaos, cwd, background, {
           allowBackground,
         }),
-        (modelCapabilities.image_in || modelCapabilities.video_in) &&
-          new b.ReadMediaFileTool(kaos, workspace, modelCapabilities, videoUploader),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),
         // Goal tools are main-agent-only.

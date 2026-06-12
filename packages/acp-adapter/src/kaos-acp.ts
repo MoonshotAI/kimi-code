@@ -138,7 +138,7 @@ export class AcpKaos implements Kaos {
   /**
    * Binary reads bypass the ACP text RPC by design: `fs/readTextFile`
    * returns a decoded string and would corrupt or reject non-UTF-8
-   * payloads (images, video, archives — anything `ReadMediaFile` may
+   * payloads (images, video, archives — anything the media read path may
    * touch). The ACP bridge only owns the *text* surface; raw bytes
    * stay on the local filesystem via `inner`.
    */
@@ -149,7 +149,7 @@ export class AcpKaos implements Kaos {
   /**
    * Return a small UTF-8 header derived from the same ACP text source as
    * `readText` / `readLines`, used only by text-read callers for sniffing.
-   * Keep `readBytes` local so binary callers such as ReadMediaFile stay safe.
+   * Keep `readBytes` local so binary callers such as Read's media path stay safe.
    */
   async readTextPreview(path: string, n: number): Promise<Buffer> {
     const text = await this.readText(path);

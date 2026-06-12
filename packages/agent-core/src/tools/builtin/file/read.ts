@@ -1,4 +1,27 @@
+/**
+ * ReadTool — read a file from the local filesystem.
+ *
+ * Text files return numbered lines plus a trailing `<system>` status
+ * block. Image and video files return a 4-part multi-modal wrap:
+ * `[TextPart('<system>…</system>'), TextPart('<image|video path="…">'),
+ *   ImageContent|VideoContent, TextPart('</image|video>')]`
+ * gated on the model's `image_in` / `video_in` capability. The file kind
+ * is decided by extension + magic-byte sniffing, so the model never has
+ * to guess the kind before calling.
+ *
+ * The leading media `<system>` block summarizes mime type, byte size and
+ * (for images) original pixel dimensions, guides the model to derive
+ * absolute coordinates from that original size, and reminds it to
+ * re-read any media it generates or edits.
+ */
+
 import type { Kaos, StatResult } from '@moonshot-ai/kaos';
+import type {
+  ContentPart,
+  ModelCapability,
+  VideoURLPart,
+  VideoUploadInput as ProviderVideoUploadInput,
+} from '@moonshot-ai/kosong';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
@@ -6,7 +29,7 @@ import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { resolvePathAccessPath } from '../../policies/path-access';
-import { MEDIA_SNIFF_BYTES, detectFileType } from '../../support/file-type';
+import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '../../support/file-type';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
@@ -16,8 +39,14 @@ import readDescriptionTemplate from './read.md';
 export const MAX_LINES: number = 1000;
 export const MAX_LINE_LENGTH: number = 2000;
 export const MAX_BYTES: number = 100 * 1024;
+export const MAX_MEDIA_MEGABYTES: number = 100;
+const MAX_MEDIA_BYTES = MAX_MEDIA_MEGABYTES * 1024 * 1024;
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
+
+export type VideoUploadInput = ProviderVideoUploadInput;
+
+export type VideoUploader = (input: VideoUploadInput) => Promise<VideoURLPart>;
 
 const PositiveLineOffsetSchema = z.number().int().min(1);
 const TailLineOffsetSchema = z.number().int().min(-MAX_LINES).max(-1);
@@ -26,13 +55,13 @@ export const ReadInputSchema = z.object({
   path: z
     .string()
     .describe(
-      'Path to a text file. Relative paths resolve against the working directory; a path outside the working directory must be absolute. Directories are not supported; use `ls` via Bash for a known directory, or Glob for pattern search.',
+      'Path to a file. Relative paths resolve against the working directory; a path outside the working directory must be absolute. Directories are not supported; use `ls` via Bash for a known directory, or Glob for pattern search.',
     ),
   line_offset: z
     .union([PositiveLineOffsetSchema, TailLineOffsetSchema])
     .optional()
     .describe(
-      `The line number to start reading from. Omit to start at line 1. Negative values read from the end of the file; the absolute value cannot exceed ${String(MAX_LINES)}.`,
+      `The line number to start reading from. Omit to start at line 1. Negative values read from the end of the file; the absolute value cannot exceed ${String(MAX_LINES)}. Ignored for image and video files.`,
     ),
   n_lines: z
     .number()
@@ -40,7 +69,7 @@ export const ReadInputSchema = z.object({
     .positive()
     .optional()
     .describe(
-      `The number of lines to read; the tool also applies its internal cap. Omit to read up to the internal cap of ${String(MAX_LINES)} lines.`,
+      `The number of lines to read; the tool also applies its internal cap. Omit to read up to the internal cap of ${String(MAX_LINES)} lines. Ignored for image and video files.`,
     ),
 });
 
@@ -80,11 +109,19 @@ interface FinishReadResultInput {
 }
 
 type TextPreviewKaos = Kaos & {
-  readTextPreview?: (path: string, n: number) => Promise<Buffer>;
+  readTextPreview: (path: string, n: number) => Promise<Buffer>;
 };
 
-async function readTextHeader(kaos: TextPreviewKaos, path: string, n: number): Promise<Buffer> {
-  if (kaos.readTextPreview !== undefined) {
+function isMediaFileType(kind: 'text' | 'image' | 'video' | 'unknown'): kind is 'image' | 'video' {
+  return kind === 'image' || kind === 'video';
+}
+
+function hasTextPreview(kaos: Kaos): kaos is TextPreviewKaos {
+  return typeof (kaos as { readTextPreview?: unknown }).readTextPreview === 'function';
+}
+
+async function readTextHeader(kaos: Kaos, path: string, n: number): Promise<Buffer> {
+  if (hasTextPreview(kaos)) {
     return kaos.readTextPreview(path, n);
   }
   return kaos.readBytes(path, n);
@@ -166,25 +203,88 @@ function containsNulByte(text: string): boolean {
 function notReadableFileOutput(path: string): string {
   return (
     `"${path}" is not readable as UTF-8 text. ` +
-    'If it is an image or video, use ReadMediaFile. ' +
-    'For other binary formats, use Bash or an MCP tool if available.'
+    'For binary formats, use Bash or an MCP tool if available.'
   );
 }
 
-const READ_DESCRIPTION = renderPrompt(readDescriptionTemplate, {
-  MAX_LINES,
-  MAX_BYTES_KB: MAX_BYTES / 1024,
-  MAX_LINE_LENGTH,
-});
+function buildDescription(capabilities: ModelCapability): string {
+  const head = renderPrompt(readDescriptionTemplate, {
+    MAX_LINES,
+    MAX_BYTES_KB: MAX_BYTES / 1024,
+    MAX_LINE_LENGTH,
+    MAX_MEDIA_MEGABYTES,
+  });
+  const lines: string[] = [head];
+  const hasImage = capabilities.image_in;
+  const hasVideo = capabilities.video_in;
+  if (hasImage && hasVideo) {
+    lines.push('- This tool supports image and video files for the current model.');
+  } else if (hasImage) {
+    lines.push(
+      '- This tool supports image files for the current model.',
+      '- Video files are not supported by the current model.',
+    );
+  } else if (hasVideo) {
+    lines.push(
+      '- This tool supports video files for the current model.',
+      '- Image files are not supported by the current model.',
+    );
+  } else {
+    lines.push(
+      '- The current model does not support image or video input; reading an image or video file returns an error.',
+    );
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Build the `<system>` summary that precedes the media content.
+ *
+ * Carries mime type, byte size and (for images) the original pixel
+ * dimensions. When the dimensions are known it also guides the model to
+ * derive absolute coordinates from that original size; it always reminds
+ * the model to re-read any media it generates or edits.
+ */
+function buildSystemSummary(input: {
+  readonly kind: 'image' | 'video';
+  readonly mimeType: string;
+  readonly byteSize: number;
+  readonly dimensions: { readonly width: number; readonly height: number } | null;
+}): string {
+  const parts: string[] = [
+    `Read ${input.kind} file.`,
+    `Mime type: ${input.mimeType}.`,
+    `Size: ${String(input.byteSize)} bytes.`,
+  ];
+  // Coordinate guidance is only emitted when the original size is actually
+  // known — sniffing fails for some image formats (TIFF/ICO/HEIC/…), and
+  // telling the model to use a size that is not in the block would mislead it.
+  if (input.kind === 'image' && input.dimensions) {
+    parts.push(
+      `Original dimensions: ${String(input.dimensions.width)}x${String(input.dimensions.height)} pixels.`,
+      'If you need to output coordinates, output relative coordinates first ' +
+        'and compute absolute coordinates using the original image size.',
+    );
+  }
+  parts.push(
+    'If you generate or edit images or videos via commands or scripts, ' +
+      'read the result back immediately before continuing.',
+  );
+  return `<system>${parts.join(' ')}</system>`;
+}
 
 export class ReadTool implements BuiltinTool<ReadInput> {
   readonly name = 'Read' as const;
-  readonly description = READ_DESCRIPTION;
+  readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
     private readonly kaos: Kaos,
     private readonly workspace: WorkspaceConfig,
-  ) {}
+    private readonly capabilities: ModelCapability,
+    private readonly videoUploader?: VideoUploader | undefined,
+  ) {
+    this.description = buildDescription(capabilities);
+  }
 
   resolveExecution(args: ReadInput): ToolExecution {
     const path = resolvePathAccessPath(args.path, {
@@ -222,13 +322,18 @@ export class ReadTool implements BuiltinTool<ReadInput> {
         return { isError: true, output: `"${args.path}" is not a file.` };
       }
 
-      const header = await readTextHeader(this.kaos, safePath, MEDIA_SNIFF_BYTES);
-      const fileType = detectFileType(safePath, header);
-      if (fileType.kind === 'image' || fileType.kind === 'video') {
-        return {
-          isError: true,
-          output: `"${args.path}" is a ${fileType.kind} file. Use ReadMediaFile to read image or video files.`,
-        };
+      const fileType = await this.detectFileTypeForRead(safePath);
+      if (isMediaFileType(fileType.kind)) {
+        try {
+          return await this.readMedia(args, safePath, fileType.kind, fileType.mimeType, stat);
+        } catch (error) {
+          // Media failures surface provider errors (e.g. a failed video
+          // upload); a bare message loses which file and step failed.
+          return {
+            isError: true,
+            output: `Failed to read ${args.path}: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
       }
       if (fileType.kind === 'unknown') {
         return {
@@ -266,6 +371,103 @@ export class ReadTool implements BuiltinTool<ReadInput> {
         output: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  private async detectFileTypeForRead(
+    safePath: string,
+  ): Promise<ReturnType<typeof detectFileType>> {
+    const extensionHint = detectFileType(safePath);
+    if (isMediaFileType(extensionHint.kind)) {
+      const rawHeader = await this.kaos.readBytes(safePath, MEDIA_SNIFF_BYTES);
+      return detectFileType(safePath, rawHeader);
+    }
+
+    try {
+      const header = await readTextHeader(this.kaos, safePath, MEDIA_SNIFF_BYTES);
+      return detectFileType(safePath, header);
+    } catch (error) {
+      if (!hasTextPreview(this.kaos)) throw error;
+      const rawHeader = await this.kaos.readBytes(safePath, MEDIA_SNIFF_BYTES);
+      return detectFileType(safePath, rawHeader);
+    }
+  }
+
+  private async readMedia(
+    args: ReadInput,
+    safePath: string,
+    kind: 'image' | 'video',
+    mimeType: string,
+    stat: StatResult,
+  ): Promise<ExecutableToolResult> {
+    if (kind === 'image' && !this.capabilities.image_in) {
+      return {
+        isError: true,
+        output:
+          'The current model does not support image input. ' +
+          'Tell the user to use a model with image input capability.',
+      };
+    }
+    if (kind === 'video' && !this.capabilities.video_in) {
+      return {
+        isError: true,
+        output:
+          'The current model does not support video input. ' +
+          'Tell the user to use a model with video input capability.',
+      };
+    }
+
+    if (stat.stSize === 0) {
+      return { isError: true, output: `"${args.path}" is empty.` };
+    }
+    if (stat.stSize > MAX_MEDIA_BYTES) {
+      return {
+        isError: true,
+        output:
+          `"${args.path}" is ${String(stat.stSize)} bytes, which exceeds the ` +
+          `maximum ${String(MAX_MEDIA_MEGABYTES)}MB for media files.`,
+      };
+    }
+
+    const data = await this.kaos.readBytes(safePath);
+    const base64 = data.toString('base64');
+    let mediaPart: ContentPart;
+    if (kind === 'image') {
+      mediaPart = {
+        type: 'image_url',
+        imageUrl: { url: `data:${mimeType};base64,${base64}` },
+      };
+    } else if (this.videoUploader !== undefined) {
+      mediaPart = await this.videoUploader({
+        data,
+        mimeType,
+        filename: safePath.split(/[\\/]/).at(-1),
+      });
+    } else {
+      mediaPart = {
+        type: 'video_url',
+        videoUrl: { url: `data:${mimeType};base64,${base64}` },
+      };
+    }
+
+    const openText = `<${kind} path="${safePath}">`;
+    const closeText = `</${kind}>`;
+
+    const dimensions = kind === 'image' ? sniffImageDimensions(data) : null;
+    const systemText = buildSystemSummary({
+      kind,
+      mimeType,
+      byteSize: stat.stSize,
+      dimensions,
+    });
+
+    const output: ContentPart[] = [
+      { type: 'text', text: systemText },
+      { type: 'text', text: openText },
+      mediaPart,
+      { type: 'text', text: closeText },
+    ];
+
+    return { output, isError: false };
   }
 
   private async readForward(

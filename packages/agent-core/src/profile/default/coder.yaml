@@ -8,7 +8,6 @@ whenToUse: |
 tools:
   - Bash
   - Read
-  - ReadMediaFile
   - Glob
   - Grep
   - Write

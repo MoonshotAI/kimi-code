@@ -1442,10 +1442,10 @@ describe('Agent turn flow', () => {
       get: () => provider,
     });
     ctx.agent.tools.initializeBuiltinTools();
-    ctx.agent.tools.setActiveTools(['ReadMediaFile']);
+    ctx.agent.tools.setActiveTools(['Read']);
 
-    const tool = ctx.agent.tools.loopTools.find((candidate) => candidate.name === 'ReadMediaFile');
-    if (tool === undefined) throw new Error('ReadMediaFile tool was not initialized');
+    const tool = ctx.agent.tools.loopTools.find((candidate) => candidate.name === 'Read');
+    if (tool === undefined) throw new Error('Read tool was not initialized');
     const result = await executeTool(tool, {
       turnId: 't1',
       toolCallId: 'call_media',

@@ -29,7 +29,6 @@ whenToUse: |
 tools:
   - Bash
   - Read
-  - ReadMediaFile
   - Glob
   - Grep
   - WebSearch
