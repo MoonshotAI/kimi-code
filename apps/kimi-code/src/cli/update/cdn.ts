@@ -3,17 +3,21 @@ import { z } from 'zod';
 
 import {
   KIMI_CODE_CDN_BASE,
-  KIMI_CODE_CDN_LATEST_FILE_NAME,
-  KIMI_CODE_CDN_LATEST_JSON_FILE_NAME,
+  KIMI_CODE_CDN_LATEST_JSON_URL,
+  KIMI_CODE_CDN_LATEST_URL,
   KIMI_CODE_UPDATE_CDN_BASE_ENV,
 } from '#/constant/app';
 
 import type { UpdateManifest } from './types';
 
-/** Resolved per call so tests and local mock CDNs can override via env. */
-function updateCdnBase(): string {
+/**
+ * Resolved per call so tests and local mock CDNs can swap the base via env;
+ * without the override the canonical URL constant is used as-is.
+ */
+function updateCdnUrl(defaultUrl: string): string {
   const override = process.env[KIMI_CODE_UPDATE_CDN_BASE_ENV]?.trim();
-  return override !== undefined && override.length > 0 ? override : KIMI_CODE_CDN_BASE;
+  if (override === undefined || override.length === 0) return defaultUrl;
+  return `${override}${defaultUrl.slice(KIMI_CODE_CDN_BASE.length)}`;
 }
 
 const RolloutBatchSchema = z.object({
@@ -55,7 +59,7 @@ export interface FetchLatestResult {
 export async function fetchLatestVersionFromCdn(
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
-  const response = await fetchImpl(`${updateCdnBase()}/${KIMI_CODE_CDN_LATEST_FILE_NAME}`);
+  const response = await fetchImpl(updateCdnUrl(KIMI_CODE_CDN_LATEST_URL));
   if (!response.ok) {
     throw new Error(`CDN /latest returned HTTP ${response.status}`);
   }
@@ -67,7 +71,7 @@ export async function fetchLatestVersionFromCdn(
 }
 
 async function fetchUpdateManifestFromCdn(fetchImpl: typeof fetch): Promise<UpdateManifest> {
-  const response = await fetchImpl(`${updateCdnBase()}/${KIMI_CODE_CDN_LATEST_JSON_FILE_NAME}`);
+  const response = await fetchImpl(updateCdnUrl(KIMI_CODE_CDN_LATEST_JSON_URL));
   if (!response.ok) {
     throw new Error(`CDN /latest.json returned HTTP ${response.status}`);
   }
