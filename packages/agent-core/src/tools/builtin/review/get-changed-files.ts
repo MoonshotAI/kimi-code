@@ -4,7 +4,7 @@ import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ReviewAgentFacade } from '#/review';
-import DESCRIPTION from './get-changed-files.md';
+import DESCRIPTION from './get-changed-files.md?raw';
 import { joinReviewDetails, reviewDisplay } from './display';
 import { jsonError, jsonResult } from './support';
 

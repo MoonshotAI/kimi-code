@@ -1,5 +1,5 @@
-export function abortError(): Error {
-  const error = new Error('Aborted');
+export function abortError(message = 'Aborted'): Error {
+  const error = new Error(message);
   error.name = 'AbortError';
   return error;
 }

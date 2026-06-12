@@ -1,5 +1,17 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.9.3
+
+### Patch Changes
+
+- [#689](https://github.com/MoonshotAI/kimi-code/pull/689) [`8d251f8`](https://github.com/MoonshotAI/kimi-code/commit/8d251f8ab44ead65f6c1bb264980ee7d075142ad) - Drop invalid config.toml sections with a warning instead of failing to start.
+
+## 0.9.2
+
+### Patch Changes
+
+- [#648](https://github.com/MoonshotAI/kimi-code/pull/648) [`54302ad`](https://github.com/MoonshotAI/kimi-code/commit/54302ad612294056a47ada74b76737f2284861b5) - Prevent overlapping interactive agent requests from using the wrong active agent.
+
 ## 0.9.1
 
 ### Patch Changes

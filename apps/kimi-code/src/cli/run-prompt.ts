@@ -112,6 +112,9 @@ export async function runPrompt(
   try {
     await harness.ensureConfigFile();
     const config = await harness.getConfig();
+    for (const warning of (await harness.getConfigDiagnostics()).warnings) {
+      stderr.write(`Warning: ${warning}\n`);
+    }
     const { session, resumed, restorePermission, telemetryModel, goalModel } =
       await resolvePromptSession(
         harness,
@@ -353,16 +356,21 @@ function installPromptTerminationCleanup(
   };
   const onSigint = () => exitAfterCleanup('SIGINT');
   const onSigterm = () => exitAfterCleanup('SIGTERM');
+  const onSighup = () => exitAfterCleanup('SIGHUP');
   promptProcess.once('SIGINT', onSigint);
   promptProcess.once('SIGTERM', onSigterm);
+  promptProcess.once('SIGHUP', onSighup);
   return () => {
     promptProcess.off('SIGINT', onSigint);
     promptProcess.off('SIGTERM', onSigterm);
+    promptProcess.off('SIGHUP', onSighup);
   };
 }
 
 function signalExitCode(signal: NodeJS.Signals): number {
-  return signal === 'SIGINT' ? 130 : 143;
+  if (signal === 'SIGINT') return 130;
+  if (signal === 'SIGHUP') return 129;
+  return 143;
 }
 
 function runPromptTurn(

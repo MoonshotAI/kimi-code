@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import {
   ErrorCodes,
   makeErrorPayload,
@@ -20,6 +22,7 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import type { ApprovalHandler, QuestionHandler } from '#/events';
 import type {
   BackgroundTaskInfo,
+  ConfigDiagnostics,
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
@@ -114,10 +117,18 @@ export type StartReviewRpcInput = SessionIdRpcInput & ReviewStartInput;
 type ResolvedCoreAPI = RPCMethods<CoreAPI>;
 
 export abstract class SDKRpcClientBase {
-  interactiveAgentId = MAIN_AGENT_ID;
+  private readonly interactiveAgentScope = new AsyncLocalStorage<string>();
   private readonly eventListeners = new Set<(event: Event) => void>();
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
   private readonly questionHandlers = new Map<string, QuestionHandler>();
+
+  get interactiveAgentId(): string {
+    return this.interactiveAgentScope.getStore() ?? MAIN_AGENT_ID;
+  }
+
+  withInteractiveAgent<T>(agentId: string, fn: () => T): T {
+    return this.interactiveAgentScope.run(agentId, fn);
+  }
 
   protected abstract getRpc(): Promise<ResolvedCoreAPI>;
 
@@ -201,6 +212,11 @@ export abstract class SDKRpcClientBase {
   async getConfig(input?: GetConfigOptions): Promise<KimiConfig> {
     const rpc = await this.getRpc();
     return rpc.getKimiConfig(input ?? {});
+  }
+
+  async getConfigDiagnostics(): Promise<ConfigDiagnostics> {
+    const rpc = await this.getRpc();
+    return rpc.getConfigDiagnostics({});
   }
 
   async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {

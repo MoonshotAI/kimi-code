@@ -45,6 +45,7 @@ const STREAMING_PROGRESS_INTERVAL_MS = 1000;
 const SUBAGENT_ELAPSED_INTERVAL_MS = 1000;
 const PROGRESS_URL_RE = /https?:\/\/\S+/g;
 const ABORTED_MARK = '⊘';
+const MAX_LIVE_OUTPUT_CHARS = 50_000;
 
 type SubagentTextKind = 'thinking' | 'text';
 type SubagentPhase = 'queued' | 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded';
@@ -583,6 +584,7 @@ export class ToolCallComponent extends Container {
   // authoritative final state.
   private progressLines: string[] = [];
   private static readonly MAX_PROGRESS_LINES = 24;
+  private liveOutput = '';
 
   /**
    * Registered by a group container (`AgentGroupComponent` or
@@ -612,6 +614,7 @@ export class ToolCallComponent extends Container {
     this.buildCallPreview();
     this.callPreviewEndIndex = this.children.length;
     this.buildProgressBlock();
+    this.buildLiveOutputBlock();
     this.buildContent();
     this.buildSubagentBlock();
     this.syncStreamingProgressTimer();
@@ -641,6 +644,7 @@ export class ToolCallComponent extends Container {
     // authoritative final state. Without this clear, a finished tool would
     // show both the streamed status lines and the final output stacked.
     this.progressLines = [];
+    this.liveOutput = '';
     this.finalizeSubagentElapsedIfNeeded();
     this.syncStreamingProgressTimer();
     this.syncSubagentElapsedTimer();
@@ -679,6 +683,19 @@ export class ToolCallComponent extends Container {
       this.progressLines.shift();
     }
     this.rebuildBody();
+    this.notifySnapshotChange();
+    this.ui?.requestRender();
+  }
+
+  appendLiveOutput(text: string): void {
+    if (this.result !== undefined || text.length === 0) return;
+    this.liveOutput += text;
+    if (this.liveOutput.length > MAX_LIVE_OUTPUT_CHARS) {
+      this.liveOutput = `[...truncated]\n${this.liveOutput.slice(
+        this.liveOutput.length - MAX_LIVE_OUTPUT_CHARS,
+      )}`;
+    }
+    this.rebuildContent();
     this.notifySnapshotChange();
     this.ui?.requestRender();
   }
@@ -1225,6 +1242,24 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
+  appendSubToolLiveOutput(id: string, text: string): void {
+    if (text.length === 0) return;
+    const activity = this.subToolActivities.get(id);
+    const ongoing = this.ongoingSubCalls.get(id);
+    if (activity === undefined && ongoing === undefined) return;
+    const name = activity?.name ?? ongoing?.name ?? 'Tool';
+    const args = activity?.args ?? ongoing?.args ?? {};
+    const existingOutput = activity?.output ?? '';
+    let output = existingOutput + text;
+    if (output.length > MAX_LIVE_OUTPUT_CHARS) {
+      output = `[...truncated]\n${output.slice(output.length - MAX_LIVE_OUTPUT_CHARS)}`;
+    }
+    this.upsertSubToolActivity(id, name, args, activity?.phase ?? 'ongoing', output);
+    this.rebuildContent();
+    this.notifySnapshotChange();
+    this.ui?.requestRender();
+  }
+
   finishSubToolCall(result: {
     tool_call_id: string;
     output: string;
@@ -1353,6 +1388,7 @@ export class ToolCallComponent extends Container {
       this.children.pop();
     }
     this.buildProgressBlock();
+    this.buildLiveOutputBlock();
     this.buildContent();
     this.buildSubagentBlock();
   }
@@ -1364,6 +1400,7 @@ export class ToolCallComponent extends Container {
     this.buildCallPreview();
     this.callPreviewEndIndex = this.children.length;
     this.buildProgressBlock();
+    this.buildLiveOutputBlock();
     this.buildContent();
     this.buildSubagentBlock();
   }
@@ -1396,6 +1433,24 @@ export class ToolCallComponent extends Container {
       PROGRESS_URL_RE.lastIndex = 0;
       this.addChild(new Text(styled, 2, 0));
     }
+  }
+
+  private buildLiveOutputBlock(): void {
+    if (this.result !== undefined) return;
+    if (this.liveOutput.length === 0) return;
+    this.addChild(
+      new ShellExecutionComponent({
+        result: {
+          tool_call_id: this.toolCall.id,
+          output: this.liveOutput,
+          is_error: false,
+        },
+        expanded: this.expanded,
+        resultPreviewLines: RESULT_PREVIEW_LINES,
+        tailOutput: true,
+        expandHint: false,
+      }),
+    );
   }
 
   private buildSubagentBlock(): void {
@@ -1675,7 +1730,6 @@ export class ToolCallComponent extends Container {
   }
 
   private addSubToolOutputPreview(activity: SubToolActivity): void {
-    if (activity.phase === 'ongoing') return;
     const output = activity.output;
     if (output === undefined || output.trim().length === 0) return;
     // Mirror the main agent: Bash and any tool without a dedicated renderer
@@ -1691,6 +1745,7 @@ export class ToolCallComponent extends Container {
         isError: activity.phase === 'failed',
         maxLines: RESULT_PREVIEW_LINES,
         indent: SUBAGENT_SUBTOOL_OUTPUT_INDENT,
+        tail: activity.phase === 'ongoing',
       }),
     );
   }

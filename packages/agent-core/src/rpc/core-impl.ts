@@ -13,9 +13,9 @@ import { resolveThinkingLevel } from '../agent/config/thinking';
 import { Agent } from '../agent';
 import {
   ensureKimiHome,
-  loadRuntimeConfig,
+  loadRuntimeConfigSafe,
   mergeConfigPatch,
-  readConfigFile,
+  readConfigFileForUpdate,
   resolveConfigPath,
   resolveKimiHome,
   writeConfigFile,
@@ -37,7 +37,7 @@ import {
   type OAuthTokenProviderResolver
 } from '../session/provider-manager';
 import { SessionAPIImpl } from '../session/rpc';
-import { normalizeWorkDir, SessionStore } from '../session/store';
+import { normalizeWorkDir, SessionStore } from '../session/store/index';
 import { noopTelemetryClient, withTelemetryContext, type TelemetryClient } from '../telemetry';
 import type { CoreRPCClient } from './client';
 import type {
@@ -46,6 +46,7 @@ import type {
   CancelPayload,
   CancelPlanPayload,
   CloseSessionPayload,
+  ConfigDiagnostics,
   CoreAPI,
   CoreInfo,
   CreateGoalPayload,
@@ -132,6 +133,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private kaos: Promise<Kaos> | undefined;
   private runtime: ToolServices | undefined;
   private config: KimiConfig;
+  private configWarnings: readonly string[] = [];
   private readonly runtimeOverride: ToolServices | undefined;
   private readonly userHomeDir: string;
   private readonly kimiRequestHeaders: Record<string, string> | undefined;
@@ -162,7 +164,19 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.appVersion = options.appVersion;
     ensureKimiHome(this.homeDir);
-    this.config = loadRuntimeConfig(this.configPath);
+    // Schema errors degrade (invalid sections are dropped with warnings) so a
+    // typo cannot prevent startup, but a file that cannot be used at all —
+    // TOML syntax error, unreadable — fails fast: defaults-only would start
+    // the app looking logged out, which is worse than the parse error.
+    const loaded = loadRuntimeConfigSafe(this.configPath);
+    if (loaded.fileError !== undefined) {
+      throw loaded.fileError;
+    }
+    this.config = loaded.config;
+    this.configWarnings = [...loaded.fileWarnings, ...loaded.envWarnings];
+    if (this.configWarnings.length > 0) {
+      log.warn('config load degraded', { warnings: this.configWarnings });
+    }
     this.experimentalFlags = new FlagResolver(
       process.env,
       FLAG_DEFINITIONS,
@@ -450,19 +464,23 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async getKimiConfig(input?: GetKimiConfigPayload): Promise<KimiConfig> {
     if (input?.reload) {
-      this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
+      this.reloadRuntimeConfig();
     }
     return this.config;
   }
 
+  async getConfigDiagnostics(_input?: EmptyPayload): Promise<ConfigDiagnostics> {
+    return { warnings: this.configWarnings };
+  }
+
   async setKimiConfig(input: SetKimiConfigPayload): Promise<KimiConfig> {
-    const config = mergeConfigPatch(readConfigFile(this.configPath), input);
+    const config = mergeConfigPatch(this.readConfigForWrite(), input);
     await writeConfigFile(this.configPath, config);
-    return this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
+    return this.reloadRuntimeConfig();
   }
 
   async removeKimiProvider(input: RemoveKimiProviderPayload): Promise<KimiConfig> {
-    const config = readConfigFile(this.configPath);
+    const config = this.readConfigForWrite();
     delete config.providers[input.providerId];
 
     let removedDefault = false;
@@ -489,7 +507,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
 
     await writeConfigFile(this.configPath, config);
-    return this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
+    return this.reloadRuntimeConfig();
   }
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
@@ -894,7 +912,30 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   private reloadProviderManager(): KimiConfig {
-    return this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
+    return this.reloadRuntimeConfig();
+  }
+
+  private readConfigForWrite(): KimiConfig {
+    return readConfigFileForUpdate(this.configPath);
+  }
+
+  private reloadRuntimeConfig(): KimiConfig {
+    const loaded = loadRuntimeConfigSafe(this.configPath);
+    if (loaded.fileWarnings.length > 0) {
+      // Keep the last good config: adopting a salvaged config mid-run could
+      // silently drop providers or models a live session depends on.
+      this.configWarnings = [
+        ...loaded.fileWarnings,
+        ...loaded.envWarnings,
+        'config.toml has errors; keeping the previously loaded configuration.',
+      ];
+      log.warn('config reload degraded; keeping previous config', {
+        warnings: loaded.fileWarnings,
+      });
+      return this.config;
+    }
+    this.configWarnings = loaded.envWarnings;
+    return this.setRuntimeConfig(loaded.config);
   }
 
   private setRuntimeConfig(config: KimiConfig): KimiConfig {

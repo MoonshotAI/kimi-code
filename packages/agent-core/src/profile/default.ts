@@ -1,11 +1,11 @@
-import agentYaml from './default/agent.yaml';
-import coderYaml from './default/coder.yaml';
-import exploreYaml from './default/explore.yaml';
-import initMd from './default/init.md';
-import planYaml from './default/plan.yaml';
-import reconciliatorYaml from './default/reconciliator.yaml';
-import reviewerYaml from './default/reviewer.yaml';
-import systemMd from './default/system.md';
+import agentYaml from './default/agent.yaml?raw';
+import coderYaml from './default/coder.yaml?raw';
+import exploreYaml from './default/explore.yaml?raw';
+import initMd from './default/init.md?raw';
+import planYaml from './default/plan.yaml?raw';
+import reconciliatorYaml from './default/reconciliator.yaml?raw';
+import reviewerYaml from './default/reviewer.yaml?raw';
+import systemMd from './default/system.md?raw';
 import { loadAgentProfilesFromSources } from './load';
 
 // Keyed by the source path the profile loader expects: profile YAML files

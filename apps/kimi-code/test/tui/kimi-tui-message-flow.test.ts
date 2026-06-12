@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -199,6 +200,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
 }
 
 function makeHarness(session = makeSession(), overrides: Record<string, unknown> = {}) {
+  const interactiveAgentScope = new AsyncLocalStorage<string>();
   return {
     getConfig: vi.fn(async () => ({
       models: {
@@ -213,7 +215,12 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
-    interactiveAgentId: 'main',
+    get interactiveAgentId() {
+      return interactiveAgentScope.getStore() ?? 'main';
+    },
+    withInteractiveAgent: vi.fn((agentId: string, fn: () => unknown) => {
+      return interactiveAgentScope.run(agentId, fn);
+    }),
     getExperimentalFeatures: vi.fn(async () => []),
     auth: {
       status: vi.fn(),

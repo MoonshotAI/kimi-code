@@ -96,16 +96,15 @@ const MUL_TOOL: Tool = {
 
 describe('OpenAIResponsesChatProvider', () => {
   describe('message conversion', () => {
-    it('simple user message with system prompt', async () => {
+    it('sends system prompt as top-level instructions', async () => {
       const provider = createProvider();
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Hello!' }], toolCalls: [] },
       ];
       const body = await captureRequestBody(provider, 'You are helpful.', [], history);
 
+      expect(body['instructions']).toBe('You are helpful.');
       expect(body['input']).toEqual([
-        // gpt-4.1 is an OpenAI model -> developer role
-        { role: 'developer', content: 'You are helpful.' },
         {
           content: [{ type: 'input_text', text: 'Hello!' }],
           role: 'user',
@@ -124,6 +123,7 @@ describe('OpenAIResponsesChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
+      expect(body).not.toHaveProperty('instructions');
       expect(body['input']).toEqual([
         {
           content: [{ type: 'input_text', text: 'What is 2+2?' }],
@@ -152,8 +152,8 @@ describe('OpenAIResponsesChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, 'You are a math tutor.', [], history);
 
+      expect(body['instructions']).toBe('You are a math tutor.');
       expect(body['input']).toEqual([
-        { role: 'developer', content: 'You are a math tutor.' },
         {
           content: [{ type: 'input_text', text: 'What is 2+2?' }],
           role: 'user',
@@ -202,19 +202,24 @@ describe('OpenAIResponsesChatProvider', () => {
       ]);
     });
 
-    it('OpenAI model name with date suffix matches the partial-prefix branch', async () => {
-      // gpt-4.1-2025-04-14 should be recognized as gpt-4.1, mapping system → developer.
+    it('OpenAI model name with date suffix maps history system message to developer', async () => {
+      // gpt-4.1-2025-04-14 should be recognized as gpt-4.1 for history messages.
       const provider = new OpenAIResponsesChatProvider({
         model: 'gpt-4.1-2025-04-14',
         apiKey: 'test-key',
       });
       const history: Message[] = [
+        { role: 'system', content: [{ type: 'text', text: 'Remember this.' }], toolCalls: [] },
         { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
       ];
-      const body = await captureRequestBody(provider, 'You are helpful.', [], history);
+      const body = await captureRequestBody(provider, '', [], history);
 
       expect(body['input']).toEqual([
-        { role: 'developer', content: 'You are helpful.' },
+        {
+          content: [{ type: 'input_text', text: 'Remember this.' }],
+          role: 'developer',
+          type: 'message',
+        },
         {
           content: [{ type: 'input_text', text: 'hi' }],
           role: 'user',
@@ -223,18 +228,23 @@ describe('OpenAIResponsesChatProvider', () => {
       ]);
     });
 
-    it('non-OpenAI model name keeps system role unchanged', async () => {
+    it('non-OpenAI model name keeps history system role unchanged', async () => {
       const provider = new OpenAIResponsesChatProvider({
         model: 'some-other-model',
         apiKey: 'test-key',
       });
       const history: Message[] = [
+        { role: 'system', content: [{ type: 'text', text: 'Remember this.' }], toolCalls: [] },
         { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
       ];
-      const body = await captureRequestBody(provider, 'You are helpful.', [], history);
+      const body = await captureRequestBody(provider, '', [], history);
 
       const input = body['input'] as Array<Record<string, unknown>>;
-      expect(input[0]).toEqual({ role: 'system', content: 'You are helpful.' });
+      expect(input[0]).toEqual({
+        content: [{ type: 'input_text', text: 'Remember this.' }],
+        role: 'system',
+        type: 'message',
+      });
     });
 
     it('user message with audio_url data URL (mp3) is encoded as input_file with base64', async () => {

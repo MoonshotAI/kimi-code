@@ -223,6 +223,7 @@ export interface SkillSummary {
   readonly source: 'builtin' | 'user' | 'extra' | 'project';
   readonly type?: string | undefined;
   readonly disableModelInvocation?: boolean | undefined;
+  readonly isSubSkill?: boolean | undefined;
 }
 
 export interface ActivateSkillPayload {
@@ -311,6 +312,11 @@ export interface GetKimiConfigPayload {
   readonly reload?: boolean;
 }
 
+export interface ConfigDiagnostics {
+  /** Warnings from the most recent config.toml load attempt; empty when the config is fully valid. */
+  readonly warnings: readonly string[];
+}
+
 export type SetKimiConfigPayload = KimiConfigPatch;
 
 export interface RemoveKimiProviderPayload {
@@ -382,6 +388,7 @@ export interface CoreAPI extends SessionAPIWithId {
   getCoreInfo: (payload: EmptyPayload) => CoreInfo;
   getExperimentalFeatures: (payload: EmptyPayload) => readonly ExperimentalFeatureState[];
   getKimiConfig: (payload: GetKimiConfigPayload) => KimiConfig;
+  getConfigDiagnostics: (payload: EmptyPayload) => ConfigDiagnostics;
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
   createSession: (payload: CreateSessionPayload) => SessionSummary;

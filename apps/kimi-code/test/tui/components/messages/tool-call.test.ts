@@ -78,6 +78,48 @@ describe('ToolCallComponent', () => {
     expect(expanded).not.toContain('ctrl+o to expand');
   });
 
+  it('renders live Bash output while the command is running', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_live',
+        name: 'Bash',
+        args: { command: 'printf output' },
+      },
+      undefined,
+    );
+
+    component.appendLiveOutput('line1\n');
+    component.appendLiveOutput('line2\n');
+
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('Using Bash');
+    expect(out).toContain('line1');
+    expect(out).toContain('line2');
+  });
+
+  it('clears live Bash output when the final result arrives', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_live_done',
+        name: 'Bash',
+        args: { command: 'printf output' },
+      },
+      undefined,
+    );
+
+    component.appendLiveOutput('streamed-only\n');
+    component.setResult({
+      tool_call_id: 'call_shell_live_done',
+      output: 'final-only\n',
+      is_error: false,
+    });
+
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('Used Bash');
+    expect(out).toContain('final-only');
+    expect(out).not.toContain('streamed-only');
+  });
+
   it('hides tool output bodies that start with a <system tag', () => {
     const reminderOutput =
       '<system-reminder>\nThe task tools have not been used recently.\n</system-reminder>';

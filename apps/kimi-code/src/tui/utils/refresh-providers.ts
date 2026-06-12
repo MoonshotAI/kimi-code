@@ -10,6 +10,7 @@ import {
   filterModelsByPrefix,
   getOpenPlatformById,
   isOpenPlatformId,
+  removeCustomRegistryProvider,
   resolveKimiCodeRuntimeAuth,
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
@@ -42,13 +43,43 @@ export interface RefreshResult {
 function readCustomRegistrySource(provider: ProviderConfig): CustomRegistrySource | undefined {
   const source = provider.source;
   if (typeof source !== 'object' || source === null) return undefined;
-  const candidate = source as Record<string, unknown>;
+  const candidate = source;
   if (candidate['kind'] !== 'apiJson') return undefined;
   const url = candidate['url'];
   const apiKey = candidate['apiKey'];
   if (typeof url !== 'string' || url.length === 0) return undefined;
   if (typeof apiKey !== 'string') return undefined;
   return { kind: 'apiJson', url, apiKey };
+}
+
+function customRegistrySourceKey(source: CustomRegistrySource): string {
+  return JSON.stringify([source.url]);
+}
+
+function customRegistrySourceCredentialKey(source: CustomRegistrySource): string {
+  return JSON.stringify([source.url, source.apiKey]);
+}
+
+async function fetchCustomRegistryFromSources(
+  sources: readonly CustomRegistrySource[],
+): Promise<{
+  readonly entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
+  readonly source: CustomRegistrySource;
+}> {
+  let lastError: unknown;
+  for (const source of sources) {
+    try {
+      return {
+        entries: await fetchCustomRegistry(source),
+        source,
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError instanceof Error) throw lastError;
+  if (typeof lastError === 'string') throw new Error(lastError);
+  throw new Error('No custom registry sources configured.');
 }
 
 function asManaged(config: KimiConfig): ManagedKimiConfigShape {
@@ -143,6 +174,14 @@ function providerModelsEqual(
   );
 }
 
+function providerConfigSnapshot(config: KimiConfig, providerId: string): string {
+  return JSON.stringify(config.providers[providerId] ?? null);
+}
+
+function providerConfigEqual(config: KimiConfig, nextConfig: KimiConfig, providerId: string): boolean {
+  return providerConfigSnapshot(config, providerId) === providerConfigSnapshot(nextConfig, providerId);
+}
+
 function providerRefreshAliasKeys(
   config: KimiConfig,
   nextConfig: KimiConfig,
@@ -182,7 +221,10 @@ function restoreDefaultSelection(
 ): void {
   if (defaultModel === undefined || config.models?.[defaultModel] === undefined) return;
   config.defaultModel = defaultModel;
-  config.defaultThinking = defaultThinking;
+  // A refresh may have just learned that the default model cannot disable
+  // thinking — never restore a stale thinking-off selection onto it.
+  const capabilities = config.models[defaultModel]?.capabilities ?? [];
+  config.defaultThinking = capabilities.includes('always_thinking') ? true : defaultThinking;
 }
 
 // `apply*` may leave `defaultModel` pointing at an alias that no longer exists
@@ -192,6 +234,15 @@ function restoreDefaultSelection(
 function clampDanglingDefault(config: KimiConfig): void {
   if (config.defaultModel !== undefined && config.models?.[config.defaultModel] === undefined) {
     config.defaultModel = undefined;
+    config.defaultThinking = undefined;
+  }
+}
+
+function clearDefaultThinkingWhenDefaultRemoved(
+  config: KimiConfig,
+  previousDefaultModel: string | undefined,
+): void {
+  if (previousDefaultModel !== undefined && config.defaultModel === undefined) {
     config.defaultThinking = undefined;
   }
 }
@@ -260,6 +311,7 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
         );
         restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
         clampDanglingDefault(next);
+        clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
 
         if (providerModelsEqual(config, next, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys)) {
           unchanged.push(KIMI_CODE_PROVIDER_NAME);
@@ -329,6 +381,7 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
       restoreProviderAliases(next, preserveUserProviderAliases(config, providerId, refreshedAliasKeys));
       restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
       clampDanglingDefault(next);
+      clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
 
       if (providerModelsEqual(config, next, providerId, refreshedAliasKeys)) {
         unchanged.push(providerId);
@@ -360,26 +413,42 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
   }
 
   // -------------------------------------------------------------------------
-  // 3. Custom Registry providers (grouped by {url, apiKey})
+  // 3. Custom Registry providers (grouped by URL, with API-key candidates)
   // -------------------------------------------------------------------------
-  const customSources = new Map<string, { source: CustomRegistrySource; providerIds: string[] }>();
+  const customSources = new Map<
+    string,
+    {
+      readonly sources: CustomRegistrySource[];
+      readonly sourceKeys: Set<string>;
+      readonly providerIds: string[];
+    }
+  >();
   for (const [providerId, providerConfig] of Object.entries(config.providers)) {
     if (providerId === KIMI_CODE_PROVIDER_NAME) continue;
     if (isOpenPlatformId(providerId)) continue;
     const source = readCustomRegistrySource(providerConfig);
     if (source === undefined) continue;
-    const key = `${source.url}${source.apiKey}`;
+    const key = customRegistrySourceKey(source);
+    const sourceKey = customRegistrySourceCredentialKey(source);
     const entry = customSources.get(key);
     if (entry !== undefined) {
+      if (!entry.sourceKeys.has(sourceKey)) {
+        entry.sources.push(source);
+        entry.sourceKeys.add(sourceKey);
+      }
       entry.providerIds.push(providerId);
     } else {
-      customSources.set(key, { source, providerIds: [providerId] });
+      customSources.set(key, {
+        sources: [source],
+        sourceKeys: new Set([sourceKey]),
+        providerIds: [providerId],
+      });
     }
   }
 
-  for (const { source, providerIds } of customSources.values()) {
+  for (const { sources, providerIds } of customSources.values()) {
     try {
-      const entries = await fetchCustomRegistry(source);
+      const { entries, source } = await fetchCustomRegistryFromSources(sources);
       // Build the whole batch on one clone so that several changed providers
       // from the same source do not overwrite each other's aliases, and so the
       // config we compare is exactly the config we persist.
@@ -390,17 +459,47 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
         readonly added: number;
         readonly removed: number;
       }> = [];
+      const providersToRemoveBeforeSet = new Set<string>();
+      let hasUnreportedConfigChange = false;
+      const remoteEntries = Object.values(entries);
+      const remoteEntriesByProviderId = new Map(
+        remoteEntries.map((entry) => [entry.id, entry]),
+      );
+      const providerIdsToSync = new Set(providerIds);
+      for (const entry of remoteEntries) providerIdsToSync.add(entry.id);
 
-      for (const providerId of providerIds) {
-        const entry = entries[providerId];
-        if (entry === undefined) continue;
+      for (const providerId of providerIdsToSync) {
+        const entry = remoteEntriesByProviderId.get(providerId);
+        if (entry === undefined) {
+          const oldIds = collectModelIdsForAliases(config, providerAliasKeys(config, providerId));
+          removeCustomRegistryProvider(asManaged(next), providerId);
+          changedProviders.push({
+            providerId,
+            providerName: providerId,
+            added: 0,
+            removed: oldIds.size,
+          });
+          providersToRemoveBeforeSet.add(providerId);
+          continue;
+        }
 
+        const existed = config.providers[providerId] !== undefined;
         applyCustomRegistryProvider(asManaged(next), entry, source);
         const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, `${providerId}/`);
-        restoreProviderAliases(next, preserveUserProviderAliases(config, providerId, refreshedAliasKeys));
+        if (existed) {
+          restoreProviderAliases(next, preserveUserProviderAliases(config, providerId, refreshedAliasKeys));
+        }
 
-        if (providerModelsEqual(config, next, providerId, refreshedAliasKeys)) {
+        if (
+          existed &&
+          providerModelsEqual(config, next, providerId, refreshedAliasKeys) &&
+          providerConfigEqual(config, next, providerId)
+        ) {
           unchanged.push(providerId);
+        } else if (existed && providerModelsEqual(config, next, providerId, refreshedAliasKeys)) {
+          unchanged.push(providerId);
+          providersToRemoveBeforeSet.add(providerId);
+          hasUnreportedConfigChange = true;
         } else {
           const { added, removed } = computeChanges(
             collectModelIdsForAliases(config, refreshedAliasKeys),
@@ -412,13 +511,15 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
             added,
             removed,
           });
+          if (existed) providersToRemoveBeforeSet.add(providerId);
         }
       }
 
-      if (changedProviders.length > 0) {
+      if (changedProviders.length > 0 || hasUnreportedConfigChange) {
         restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
         clampDanglingDefault(next);
-        for (const { providerId } of changedProviders) {
+        clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
+        for (const providerId of providersToRemoveBeforeSet) {
           await host.removeProvider(providerId);
         }
         config = await host.setConfig({
@@ -428,7 +529,12 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
           defaultThinking: next.defaultThinking,
         });
         for (const change of changedProviders) {
-          changed.push(change);
+          changed.push({
+            providerId: change.providerId,
+            providerName: change.providerName,
+            added: change.added,
+            removed: change.removed,
+          });
         }
       }
     } catch (error) {

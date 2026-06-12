@@ -232,6 +232,17 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
+  it('resolves unprefixed sub-skill commands with dotted names', () => {
+    const skillCommandMap = new Map([['outer.inner', 'outer.inner']]);
+
+    expect(resolve('/outer.inner src/app.ts', { skillCommandMap })).toEqual({
+      kind: 'skill',
+      commandName: 'outer.inner',
+      skillName: 'outer.inner',
+      args: 'src/app.ts',
+    });
+  });
+
   it('returns message for unknown slash input', () => {
     expect(resolve('/does-not-exist arg')).toEqual({
       kind: 'message',

@@ -1,5 +1,5 @@
 ---
-name: sub-skill.review
+name: review
 description: Analyze the available skill set and recommend candidate groups that could be consolidated into sub-skill bundles. Read-only — proposes a plan, does not move files.
 disable-model-invocation: true
 ---
@@ -23,6 +23,7 @@ Analyze the current skill inventory and identify candidate groups that could be 
 5. **Propose sub-skill structures.** For each candidate group, list:
    - The parent skill name and a one-line description.
    - The children that should move under it.
+   - Any documentation, reference, example, asset, or template directories that must move with each child so the final directory layout stays aligned.
    - Whether the parent needs `has-sub-skill: true` (it does, if children should be discovered).
 6. **Output a summary report.** Present findings as a concise grouped list with rationale, and stop. Do **not** edit any file — that's `sub-skill.consolidate`'s job.
 
@@ -41,5 +42,6 @@ Proposed sub-skill: web-research
   - Children:
     - web-search    → move under web-research/search
     - fetch-url     → move under web-research/fetch
+  - Documentation alignment: move each child's references/examples/assets with that child.
   - Rationale: Both deal with online information retrieval and are often chained together.
 ```

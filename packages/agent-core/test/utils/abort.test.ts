@@ -25,6 +25,13 @@ describe('userCancellationReason', () => {
     expect(isUserCancellation(new Error('boom'))).toBe(false);
     expect(isUserCancellation(undefined)).toBe(false);
   });
+
+  it('keeps custom system abort messages classified as AbortError', () => {
+    expect(abortError('Session closed')).toMatchObject({
+      name: 'AbortError',
+      message: 'Session closed',
+    });
+  });
 });
 
 describe('abortable', () => {

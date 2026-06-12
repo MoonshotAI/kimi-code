@@ -546,6 +546,30 @@ describe('registerProviderCommand', () => {
     expect(Object.keys(current().providers).toSorted()).toEqual(['kohub', 'kohub-responses']);
     expect(stdout.join('')).toContain('Imported 2 providers');
   });
+
+  it('reports write failures on stderr and exits 1 instead of crashing', async () => {
+    const { harness } = makeHarness({
+      providers: { kimi: { type: 'kimi' } },
+    } as unknown as KimiConfig);
+    // Simulate the strict write path rejecting because config.toml is invalid.
+    harness.removeProvider = async () => {
+      throw new Error(
+        'Cannot change settings while config.toml is invalid — fix it first (run `kimi doctor` for details).',
+      );
+    };
+    const { deps, stderr, exitCodes } = makeDeps(harness);
+
+    const program = new Command('kimi');
+    registerProviderCommand(program, deps);
+
+    await tryRun(() =>
+      program.parseAsync(['node', 'kimi', 'provider', 'remove', 'kimi'], { from: 'node' }),
+    );
+
+    expect(exitCodes).toEqual([1]);
+    expect(stderr.join('')).toContain('Cannot change settings');
+    expect(stderr.join('')).not.toContain('    at '); // no stack trace dump
+  });
 });
 
 describe('kimi provider catalog list', () => {

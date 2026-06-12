@@ -5,7 +5,7 @@ import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ReviewAgentFacade } from '#/review';
-import DESCRIPTION from './read-patch.md';
+import DESCRIPTION from './read-patch.md?raw';
 import { countLabel, joinReviewDetails, reviewDisplay } from './display';
 import { jsonError, jsonResult, readPatchForTarget, requireAssignedPath } from './support';
 

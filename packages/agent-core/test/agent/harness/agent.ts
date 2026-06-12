@@ -979,6 +979,7 @@ function createResumeNoSideEffectKaos(initialCwd: string): Kaos {
     gethome: () => '/home/test',
     getcwd: () => cwd,
     withCwd: (next: string) => createResumeNoSideEffectKaos(next),
+    withEnv: () => createResumeNoSideEffectKaos(cwd),
     chdir: async (next: string) => {
       cwd = next;
     },

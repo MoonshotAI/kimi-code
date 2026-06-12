@@ -53,7 +53,7 @@ export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy
     // EnterPlanMode, Write/Edit on the plan file, or ExitPlanMode with no actionable plan_review → approve.
     new PlanModeToolApprovePermissionPolicy(agent),
     // Access touches a sensitive file (.env, SSH key, credentials) → ask.
-    new SensitiveFileAccessAskPermissionPolicy(agent),
+    new SensitiveFileAccessAskPermissionPolicy(),
     // Access touches .git or a git control-dir path → ask.
     new GitControlPathAccessAskPermissionPolicy(agent),
     // yolo mode → approve.

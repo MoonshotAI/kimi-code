@@ -19,7 +19,7 @@ import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
 import { materializeModelText, toModelTextView } from './line-endings';
-import EDIT_DESCRIPTION from './edit.md';
+import EDIT_DESCRIPTION from './edit.md?raw';
 
 // `old_string` must be non-empty: the non-replace_all branch walks
 // occurrences with `content.indexOf("", pos)`, which would loop forever

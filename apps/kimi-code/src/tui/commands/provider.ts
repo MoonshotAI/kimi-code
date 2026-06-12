@@ -50,10 +50,14 @@ function buildProviderManagerOptions(host: SlashCommandHost): ProviderManagerOpt
     providers: host.state.appState.availableProviders,
     activeProviderId,
     onAdd: () => {
-      void handleProviderAdd(host);
+      void handleProviderAdd(host).catch((error: unknown) => {
+        host.showError(`Add provider failed: ${formatErrorMessage(error)}`);
+      });
     },
     onDeleteSource: (providerIds) => {
-      void handleProviderManagerDeleteSource(host, providerIds);
+      void handleProviderManagerDeleteSource(host, providerIds).catch((error: unknown) => {
+        host.showError(`Remove provider failed: ${formatErrorMessage(error)}`);
+      });
     },
     onClose: () => {
       host.restoreEditor();
@@ -233,7 +237,9 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     initialTabId: providerId,
     onSelect: ({ alias, thinking }) => {
       host.restoreEditor();
-      void setDefaultModel(host, alias, thinking);
+      void setDefaultModel(host, alias, thinking).catch((error: unknown) => {
+        host.showError(`Set default model failed: ${formatErrorMessage(error)}`);
+      });
     },
     onCancel: () => {
       host.restoreEditor();
@@ -269,8 +275,8 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
   let entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
   try {
     entries = await fetchCustomRegistry(source);
-  } catch (err) {
-    host.showError(`Failed to import registry: ${formatErrorMessage(err)}`);
+  } catch (error) {
+    host.showError(`Failed to import registry: ${formatErrorMessage(error)}`);
     return false;
   }
 
@@ -287,8 +293,8 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
       models: config.models,
     });
     await host.authFlow.refreshConfigAfterLogin();
-  } catch (err) {
-    host.showError(`Failed to apply registry: ${formatErrorMessage(err)}`);
+  } catch (error) {
+    host.showError(`Failed to apply registry: ${formatErrorMessage(error)}`);
     return false;
   }
 
@@ -321,7 +327,9 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     initialTabId: firstNewProvider,
     onSelect: ({ alias, thinking }) => {
       host.restoreEditor();
-      void setDefaultModel(host, alias, thinking);
+      void setDefaultModel(host, alias, thinking).catch((error: unknown) => {
+        host.showError(`Set default model failed: ${formatErrorMessage(error)}`);
+      });
     },
     onCancel: () => {
       host.restoreEditor();

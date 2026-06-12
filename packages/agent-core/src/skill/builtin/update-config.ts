@@ -1,6 +1,6 @@
 import { parseSkillText } from '../parser';
 import type { SkillDefinition } from '../types';
-import UPDATE_CONFIG_BODY from './update-config.md';
+import UPDATE_CONFIG_BODY from './update-config.md?raw';
 
 const PSEUDO_PATH = 'builtin://update-config';
 

@@ -17,6 +17,8 @@ export interface ResolvedRuntimeProvider {
   readonly providerName: string;
   readonly provider: KosongProviderConfig;
   readonly modelCapabilities: ModelCapability;
+  /** Declared 'always_thinking' capability — the model cannot disable thinking. */
+  readonly alwaysThinking?: boolean;
   readonly maxOutputSize?: number;
 }
 
@@ -116,6 +118,9 @@ export class ProviderManager implements ModelProvider {
       providerName,
       provider,
       modelCapabilities: resolveModelCapabilities(alias, provider),
+      alwaysThinking: (alias.capabilities ?? []).some(
+        (c) => c.trim().toLowerCase() === 'always_thinking',
+      ),
       maxOutputSize: alias.maxOutputSize,
     };
   }
