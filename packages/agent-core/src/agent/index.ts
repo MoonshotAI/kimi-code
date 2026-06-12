@@ -283,13 +283,15 @@ export class Agent {
   }
 
   useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
-    const systemPrompt = profile.systemPrompt({
-      osEnv: this.kaos.osEnv,
-      cwd: this.config.cwd,
-      skills: this.skills?.registry,
-      cwdListing: context?.cwdListing,
-      agentsMd: context?.agentsMd,
-    });
+    const systemPrompt =
+      context?.systemPromptOverride ??
+      profile.systemPrompt({
+        osEnv: this.kaos.osEnv,
+        cwd: this.config.cwd,
+        skills: this.skills?.registry,
+        cwdListing: context?.cwdListing,
+        agentsMd: context?.agentsMd,
+      });
     this.config.update({ profileName: profile.name, systemPrompt });
     this.tools.setActiveTools(profile.tools);
   }

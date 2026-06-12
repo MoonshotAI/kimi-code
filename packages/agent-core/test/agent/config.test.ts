@@ -82,6 +82,25 @@ describe('Agent config', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('useProfile uses a system prompt override when one is provided', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const profile: ResolvedAgentProfile = {
+      name: 'test-profile',
+      systemPrompt: () => 'Profile system prompt.',
+      tools: ['Bash'],
+    };
+
+    ctx.agent.useProfile(profile, { systemPromptOverride: 'Override system prompt.' });
+
+    expect(ctx.newEvents()).toMatchInlineSnapshot(`
+      [wire] config.update            { "profileName": "test-profile", "systemPrompt": "Override system prompt.", "time": "<time>" }
+      [emit] agent.status.updated     { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual" }
+      [wire] tools.set_active_tools   { "names": [ "Bash" ], "time": "<time>" }
+    `);
+    await ctx.expectResumeMatches();
+  });
+
   it('config.update with cwd initializes builtin tools', async () => {
     const ctx = testAgent();
     ctx.configure();

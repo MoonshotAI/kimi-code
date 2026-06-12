@@ -4,7 +4,7 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { loadAgentsMd } from '../../src/profile/context';
+import { loadAgentsMd, loadSystemPromptOverride } from '../../src/profile/context';
 import { testKaos } from '../fixtures/test-kaos';
 
 let homeDir: string;
@@ -109,5 +109,61 @@ describe('loadAgentsMd brand home (KIMI_CODE_HOME)', () => {
     const result = await loadAgentsMd(testKaos);
 
     expect(result).toContain('fallback branded');
+  });
+});
+
+describe('loadSystemPromptOverride', () => {
+  it('returns undefined when no override files exist', async () => {
+    const result = await loadSystemPromptOverride(testKaos);
+
+    expect(result).toBeUndefined();
+  });
+
+  it('loads the global override from ~/.kimi-code/sysprompt.md', async () => {
+    await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(homeDir, '.kimi-code', 'sysprompt.md'), 'global system prompt', 'utf-8');
+
+    const result = await loadSystemPromptOverride(testKaos);
+
+    expect(result).toBe('global system prompt');
+  });
+
+  it('loads the project override from <cwd>/.kimi-code/sysprompt.md', async () => {
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(workDir, '.kimi-code', 'sysprompt.md'), 'project system prompt', 'utf-8');
+
+    const result = await loadSystemPromptOverride(testKaos);
+
+    expect(result).toBe('project system prompt');
+  });
+
+  it('prefers the project override over the global override', async () => {
+    await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(homeDir, '.kimi-code', 'sysprompt.md'), 'global system prompt', 'utf-8');
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(workDir, '.kimi-code', 'sysprompt.md'), 'project system prompt', 'utf-8');
+
+    const result = await loadSystemPromptOverride(testKaos);
+
+    expect(result).toBe('project system prompt');
+  });
+
+  it('ignores empty or whitespace-only override files', async () => {
+    await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(homeDir, '.kimi-code', 'sysprompt.md'), '   \n  ', 'utf-8');
+
+    const result = await loadSystemPromptOverride(testKaos);
+
+    expect(result).toBeUndefined();
+  });
+
+  it('uses the brand home when provided', async () => {
+    const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-brand-'));
+    await writeFile(join(brandHome, 'sysprompt.md'), 'brand home system prompt', 'utf-8');
+
+    const result = await loadSystemPromptOverride(testKaos, brandHome);
+
+    expect(result).toBe('brand home system prompt');
+    await rm(brandHome, { recursive: true, force: true });
   });
 });

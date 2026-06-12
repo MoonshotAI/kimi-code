@@ -9,17 +9,45 @@ const AGENTS_MD_MAX_BYTES = 32 * 1024;
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
-export type PreparedSystemPromptContext = Pick<SystemPromptContext, 'cwdListing' | 'agentsMd'>;
+export type PreparedSystemPromptContext = Pick<SystemPromptContext, 'cwdListing' | 'agentsMd'> & {
+  systemPromptOverride?: string | undefined;
+};
 
 export async function prepareSystemPromptContext(
   kaos: Kaos,
   brandHome?: string,
 ): Promise<PreparedSystemPromptContext> {
-  const [cwdListing, agentsMd] = await Promise.all([
+  const [cwdListing, agentsMd, systemPromptOverride] = await Promise.all([
     listDirectory(kaos),
     loadAgentsMd(kaos, brandHome),
+    loadSystemPromptOverride(kaos, brandHome),
   ]);
-  return { cwdListing, agentsMd };
+  return { cwdListing, agentsMd, systemPromptOverride };
+}
+
+/**
+ * Load a user-provided system prompt override.
+ *
+ * Looks for `.kimi-code/sysprompt.md` in the current working directory first,
+ * then falls back to `<brandHome>/sysprompt.md` (default `~/.kimi-code/sysprompt.md`).
+ * A project-level file fully replaces a global file; if neither exists the
+ * agent falls back to the profile's rendered system prompt.
+ */
+export async function loadSystemPromptOverride(
+  kaos: Kaos,
+  brandHome?: string,
+): Promise<string | undefined> {
+  const workDir = kaos.getcwd();
+  const realHome = kaos.gethome();
+  const brandDir = brandHome ?? join(realHome, '.kimi-code');
+
+  const project = await readAgentFile(kaos, join(workDir, '.kimi-code', 'sysprompt.md'));
+  if (project !== undefined) return project.content;
+
+  const global = await readAgentFile(kaos, join(brandDir, 'sysprompt.md'));
+  if (global !== undefined) return global.content;
+
+  return undefined;
 }
 
 export async function loadAgentsMd(kaos: Kaos, brandHome?: string): Promise<string> {
