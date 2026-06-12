@@ -1722,6 +1722,7 @@ export class KimiTUI {
   }
 
   private syncTerminalProgress(active: boolean): void {
+    if (!this.state.terminalState.supportsProgress) return;
     if (this.state.terminalState.progressActive === active) return;
     this.state.terminal.setProgress(active);
     this.state.terminalState.progressActive = active;

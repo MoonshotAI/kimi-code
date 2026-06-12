@@ -47,6 +47,7 @@ function makeDriverWithTerminalProgress(): {
   const driver = new KimiTUI({} as never, makeStartupInput()) as unknown as ActivityDriver;
   vi.spyOn(driver.state.ui, 'requestRender').mockImplementation(() => {});
   driver.state.terminal = { columns: 80, setProgress } as unknown as TUIState['terminal'];
+  driver.state.terminalState.supportsProgress = true;
   return { driver, state: driver.state, setProgress };
 }
 
@@ -94,6 +95,24 @@ describe('updateActivityPane terminal progress', () => {
 
       expect(setProgress).toHaveBeenCalledTimes(2);
       expect(setProgress).toHaveBeenLastCalledWith(false);
+      expect(state.terminalState.progressActive).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never emits terminal progress when the terminal does not support OSC 9;4', () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, state, setProgress } = makeDriverWithTerminalProgress();
+      state.terminalState.supportsProgress = false;
+
+      state.livePane = { ...state.livePane, mode: 'waiting' };
+      driver.updateActivityPane();
+      state.livePane = { ...state.livePane, mode: 'idle' };
+      driver.updateActivityPane();
+
+      expect(setProgress).not.toHaveBeenCalled();
       expect(state.terminalState.progressActive).toBe(false);
     } finally {
       vi.useRealTimers();
