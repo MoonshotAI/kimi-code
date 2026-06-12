@@ -99,29 +99,68 @@ export class ReviewWorkerDriver {
   }
 
   private audit(): ReviewWorkerAudit {
-    const progress = this.options.runtime.getProgress(this.options.assignment.id);
-    const missingCoverage = this.options.runtime
-      .missingCoverage(this.options.assignment.id)
-      .map((item) => `${item.path} (${item.required})`);
-    const unreconciledComments = this.options.runtime.missingReconciliation(this.options.assignment.id);
-    const status = progress?.status ?? 'active';
-    const signature = JSON.stringify({
-      status,
-      missingCoverage,
-      unreconciledComments,
-      comments: this.options.runtime.getComments().length,
-      merged: this.options.runtime.getMergedComments().length,
-      dismissed: this.options.runtime.getDismissedComments().length,
-    });
+    return auditReviewAssignment(this.options.runtime, this.options.assignment);
+  }
+}
+
+export function auditReviewAssignment(
+  runtime: SessionReviewRuntime,
+  assignment: ReviewAssignment,
+): ReviewWorkerAudit {
+  const progress = runtime.getProgress(assignment.id);
+  const missingCoverage = runtime
+    .missingCoverage(assignment.id)
+    .map((item) => `${item.path} (${item.required})`);
+  const unreconciledComments = runtime.missingReconciliation(assignment.id);
+  const status = progress?.status ?? 'active';
+  const activity = assignmentActivity(runtime, assignment);
+  const signature = JSON.stringify({
+    status,
+    missingCoverage,
+    unreconciledComments,
+    ...activity,
+  });
+  return {
+    status,
+    summary: progress?.summary,
+    blocker: progress?.blocker,
+    missingCoverage,
+    unreconciledComments,
+    signature,
+  };
+}
+
+function assignmentActivity(
+  runtime: SessionReviewRuntime,
+  assignment: ReviewAssignment,
+): {
+  readonly comments: number;
+  readonly merged: number;
+  readonly dismissed: number;
+} {
+  const comments = runtime
+    .getComments()
+    .filter((comment) => comment.assignmentId === assignment.id)
+    .length;
+  const sourceCommentIds = new Set(assignment.sourceCommentIds ?? []);
+  if (sourceCommentIds.size === 0) {
     return {
-      status,
-      summary: progress?.summary,
-      blocker: progress?.blocker,
-      missingCoverage,
-      unreconciledComments,
-      signature,
+      comments,
+      merged: 0,
+      dismissed: 0,
     };
   }
+  return {
+    comments,
+    merged: runtime
+      .getMergedComments()
+      .filter((comment) => comment.sourceCommentIds.some((commentId) => sourceCommentIds.has(commentId)))
+      .length,
+    dismissed: runtime
+      .getDismissedComments()
+      .filter((dismissal) => sourceCommentIds.has(dismissal.commentId))
+      .length,
+  };
 }
 
 export function buildReviewWorkerContinuationPrompt(audit: ReviewWorkerAudit): string {

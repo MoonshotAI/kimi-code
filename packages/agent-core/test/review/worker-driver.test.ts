@@ -72,10 +72,73 @@ describe('ReviewWorkerDriver', () => {
       }).run(),
     ).rejects.toThrow('made no progress');
   });
+
+  it('does not count sibling assignment comments as worker progress', async () => {
+    const runtime = createRuntime();
+    const stuckAssignment = runtime.createAssignment({
+      role: 'reviewer',
+      assignedFiles: ['src/a.ts'],
+      requiredCoverage: 'patch',
+    });
+    const sibling = runtime.createAgentFacade(
+      runtime.createAssignment({
+        role: 'reviewer',
+        assignedFiles: ['src/a.ts'],
+        requiredCoverage: 'patch',
+      }).id,
+    );
+    sibling.recordPatchRead({
+      path: 'src/a.ts',
+      ranges: [{ start: 1, end: 2 }],
+    });
+    let resumes = 0;
+    const launcher = createLauncher({
+      onResume: () => {
+        resumes += 1;
+        if (resumes === 1) {
+          sibling.addComment({
+            severity: 'minor',
+            path: 'src/a.ts',
+            line: 1,
+            title: 'Sibling finding',
+            body: 'This belongs to another review assignment.',
+          });
+          return;
+        }
+        runtime.coverage.recordPatchRead(stuckAssignment.id, {
+          path: 'src/a.ts',
+          ranges: [{ start: 1, end: 2 }],
+        });
+        runtime.updateProgress(stuckAssignment.id, { status: 'complete', summary: 'done' });
+      },
+    });
+
+    await expect(
+      new ReviewWorkerDriver({
+        runtime,
+        launcher,
+        assignment: stuckAssignment,
+        profileName: 'reviewer',
+        prompt: 'review this',
+        description: 'Review changes',
+        parentToolCallId: 'review',
+        signal: new AbortController().signal,
+        maxNonProgressContinuations: 1,
+      }).run(),
+    ).rejects.toThrow('made no progress');
+    expect(launcher.resume).toHaveBeenCalledTimes(1);
+  });
 });
 
 function createRuntime(): SessionReviewRuntime {
-  const runtime = new SessionReviewRuntime({ idGenerator: (prefix) => `${prefix}-1` });
+  const counters = new Map<string, number>();
+  const runtime = new SessionReviewRuntime({
+    idGenerator: (prefix) => {
+      const next = (counters.get(prefix) ?? 0) + 1;
+      counters.set(prefix, next);
+      return `${prefix}-${String(next)}`;
+    },
+  });
   runtime.startReview(
     { target: { scope: 'working_tree' }, intensity: 'standard' },
     {

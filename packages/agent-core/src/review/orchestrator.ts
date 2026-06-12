@@ -43,8 +43,10 @@ import type {
   ReviewTargetPreview,
 } from './types';
 import {
+  auditReviewAssignment,
   buildReviewWorkerContinuationPrompt,
   ReviewWorkerDriver,
+  type ReviewWorkerAudit,
   type ReviewWorkerDriverResult,
   type ReviewWorkerLauncher,
 } from './worker-driver';
@@ -75,15 +77,6 @@ interface DeepReviewerSwarmState extends DeepReviewerAssignment {
   agentId?: string;
   previousSignature?: string;
   nonProgressContinuations: number;
-}
-
-interface ReviewWorkerAudit {
-  readonly status: ReviewProgressStatus;
-  readonly summary?: string;
-  readonly blocker?: string;
-  readonly missingCoverage: readonly string[];
-  readonly unreconciledComments: readonly string[];
-  readonly signature: string;
 }
 
 interface ReviewSwarmLauncher extends ReviewWorkerLauncher {
@@ -539,28 +532,7 @@ export class ReviewOrchestrator {
   }
 
   private auditAssignment(assignment: ReviewAssignment): ReviewWorkerAudit {
-    const progress = this.options.runtime.getProgress(assignment.id);
-    const missingCoverage = this.options.runtime
-      .missingCoverage(assignment.id)
-      .map((item) => `${item.path} (${item.required})`);
-    const unreconciledComments = this.options.runtime.missingReconciliation(assignment.id);
-    const status = progress?.status ?? 'active';
-    const signature = JSON.stringify({
-      status,
-      missingCoverage,
-      unreconciledComments,
-      comments: this.options.runtime.getComments().length,
-      merged: this.options.runtime.getMergedComments().length,
-      dismissed: this.options.runtime.getDismissedComments().length,
-    });
-    return {
-      status,
-      summary: progress?.summary,
-      blocker: progress?.blocker,
-      missingCoverage,
-      unreconciledComments,
-      signature,
-    };
+    return auditReviewAssignment(this.options.runtime, assignment);
   }
 
   private buildResult(
