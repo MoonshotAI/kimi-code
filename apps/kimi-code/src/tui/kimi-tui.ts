@@ -182,6 +182,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     upgrade: input.tuiConfig.upgrade,
     availableModels: {},
     availableProviders: {},
+    generationKwargs: null,
     sessionTitle: null,
     goal: null,
     mcpServersSummary: null,

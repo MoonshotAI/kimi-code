@@ -18,6 +18,7 @@ import type {
   RegisterToolPayload,
   SessionAPI,
   SetActiveToolsPayload,
+  SetGenerationKwargsPayload,
   SetModelPayload,
   SetPermissionPayload,
   SetThinkingPayload,
@@ -112,6 +113,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async setModel({ agentId, ...payload }: AgentScopedPayload<SetModelPayload>) {
     return (await this.getAgent(agentId)).setModel(payload);
+  }
+
+  async setGenerationKwargs({ agentId, ...payload }: AgentScopedPayload<SetGenerationKwargsPayload>) {
+    return (await this.getAgent(agentId)).setGenerationKwargs(payload);
   }
 
   async setThinking({ agentId, ...payload }: AgentScopedPayload<SetThinkingPayload>) {

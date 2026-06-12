@@ -8,6 +8,7 @@ export interface AgentConfigData {
   profileName?: string;
   thinkingLevel: string;
   systemPrompt: string;
+  generationKwargs?: Record<string, number>;
 }
 
 export type AgentConfigUpdateData = Partial<{
@@ -16,4 +17,5 @@ export type AgentConfigUpdateData = Partial<{
   profileName: string;
   thinkingLevel: string;
   systemPrompt: string;
+  generationKwargs: Record<string, number> | undefined;
 }>;

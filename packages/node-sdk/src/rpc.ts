@@ -77,6 +77,10 @@ export interface SetSessionThinkingRpcInput extends SessionIdRpcInput {
   readonly level: string;
 }
 
+export interface SetSessionGenerationKwargsRpcInput extends SessionIdRpcInput {
+  readonly kwargs: Record<string, number>;
+}
+
 export interface SetSessionPermissionRpcInput extends SessionIdRpcInput {
   readonly mode: PermissionMode;
 }
@@ -276,6 +280,15 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
       level: input.level,
+    });
+  }
+
+  async setGenerationKwargs(input: SetSessionGenerationKwargsRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.setGenerationKwargs({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      kwargs: input.kwargs,
     });
   }
 

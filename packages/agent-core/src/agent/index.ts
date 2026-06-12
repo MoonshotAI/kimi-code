@@ -359,6 +359,9 @@ export class Agent {
           providerName: resolved?.providerName,
         };
       },
+      setGenerationKwargs: (payload) => {
+        this.config.update({ generationKwargs: payload.kwargs });
+      },
       getModel: () => {
         return this.config.modelAlias ?? '';
       },

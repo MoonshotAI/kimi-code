@@ -56,6 +56,21 @@ If a project-level file exists, it takes precedence over the global file. If nei
 `AGENTS.md` is appended as supplementary context; `sysprompt.md` replaces the entire system prompt. You can use both together — for example, put your base persona in `sysprompt.md` and project-specific conventions in `AGENTS.md`.
 :::
 
+## Session-Level Sampling Overrides
+
+Use the `/spiceup` slash command to override model sampling parameters for the current session. The values take effect immediately, last until the session ends, override any defaults from `config.toml`, and are inherited by every sub-agent spawned in the session.
+
+The dialog lets you adjust:
+
+- **Temperature** — `0.0` (deterministic) to `2.0` (very random)
+- **Top P** — nucleus-sampling cutoff (`0.0`–`1.0`)
+- **Top K** — limit the token pool to the top K candidates
+- **Max tokens** — maximum tokens to generate
+- **Frequency penalty** — penalize repeated tokens (`-2.0`–`2.0`)
+- **Presence penalty** — penalize repeated topics (`-2.0`–`2.0`)
+
+Leave a field empty to clear that override. When all fields are empty, `/spiceup` removes every session-level sampling override and the model reverts to the values from `config.toml`.
+
 ## Storage Location in the Session Directory
 
 Sub-agent runtime state is persisted to the `agents/` subdirectory of the current session directory. Each sub-agent instance has its own directory, which contains a `wire.jsonl` file that records prompts, message history, and final state in chronological order. Background sub-agents also expose their lifecycle status through a `tasks/` subdirectory.

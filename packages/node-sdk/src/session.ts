@@ -152,6 +152,11 @@ export class Session {
     await this.rpc.setThinking({ sessionId: this.id, level: normalized });
   }
 
+  async setGenerationKwargs(kwargs: Record<string, number>): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setGenerationKwargs({ sessionId: this.id, kwargs });
+  }
+
   async setPermission(mode: PermissionMode): Promise<void> {
     this.ensureOpen();
     if (!isPermissionMode(mode)) {

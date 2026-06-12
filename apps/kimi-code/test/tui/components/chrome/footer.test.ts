@@ -54,6 +54,7 @@ const appState: AppState = {
   upgrade: { autoInstall: true },
   availableModels: {},
   availableProviders: {},
+  generationKwargs: null,
   mcpServersSummary: null,
 };
 

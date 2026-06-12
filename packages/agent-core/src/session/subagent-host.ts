@@ -230,6 +230,7 @@ export class SessionSubagentHost {
       modelAlias: parent.config.modelAlias,
       thinkingLevel: parent.config.thinkingLevel,
       systemPrompt: parent.config.systemPrompt,
+      generationKwargs: parent.config.generationKwargs,
     });
     child.tools.copyLoopToolsFrom(parent.tools);
     child.context.useProjectedHistoryFrom(parent.context);
@@ -378,6 +379,7 @@ export class SessionSubagentHost {
       cwd: parent.config.cwd,
       ...(effectiveModel !== undefined ? { modelAlias: effectiveModel } : {}),
       thinkingLevel,
+      generationKwargs: parent.config.generationKwargs,
     });
 
     const context = await prepareSystemPromptContext(

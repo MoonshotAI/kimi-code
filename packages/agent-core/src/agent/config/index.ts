@@ -23,6 +23,7 @@ export class ConfigState {
   private _profileName: string | undefined;
   private _thinkingLevel: ThinkingEffort = 'off';
   private _systemPrompt: string = '';
+  private _generationKwargs: Record<string, number> | undefined;
 
   constructor(protected readonly agent: Agent) {
     this._cwd = agent.kaos.getcwd();
@@ -59,6 +60,9 @@ export class ConfigState {
     if (changed.systemPrompt !== undefined) {
       this._systemPrompt = changed.systemPrompt;
     }
+    if (changed.generationKwargs !== undefined) {
+      this._generationKwargs = changed.generationKwargs;
+    }
     if (this.hasProvider && (changed.cwd !== undefined || changed.modelAlias)) {
       this.agent.tools.initializeBuiltinTools();
     }
@@ -75,6 +79,7 @@ export class ConfigState {
       profileName: this.profileName,
       thinkingLevel: this.thinkingLevel,
       systemPrompt: this.systemPrompt,
+      generationKwargs: this._generationKwargs,
     };
   }
 
@@ -104,8 +109,23 @@ export class ConfigState {
     //   - withThinking: preserve thinking during compaction (#464)
     //   - sampling params: KIMI_MODEL_TEMPERATURE / KIMI_MODEL_TOP_P
     //   - thinking.keep: KIMI_MODEL_THINKING_KEEP (only while thinking is on)
-    const provider = createProvider(this.providerConfig).withThinking(this.thinkingLevel);
-    return applyKimiEnvThinkingKeep(applyKimiEnvSamplingParams(provider), this.thinkingLevel);
+    const baseConfig = this.providerConfig;
+    const sessionKwargs = this._generationKwargs;
+    let provider: ChatProvider;
+    if (sessionKwargs !== undefined && Object.keys(sessionKwargs).length > 0) {
+      const mergedConfig = {
+        ...baseConfig,
+        generationKwargs: {
+          ...(baseConfig as { generationKwargs?: Record<string, unknown> }).generationKwargs,
+          ...sessionKwargs,
+        },
+      } as ProviderConfig;
+      provider = createProvider(mergedConfig).withThinking(this.thinkingLevel);
+    } else {
+      provider = createProvider(baseConfig).withThinking(this.thinkingLevel);
+    }
+    provider = applyKimiEnvSamplingParams(provider);
+    return applyKimiEnvThinkingKeep(provider, this.thinkingLevel);
   }
 
   get model(): string {
@@ -140,6 +160,10 @@ export class ConfigState {
 
   get systemPrompt(): string {
     return this._systemPrompt;
+  }
+
+  get generationKwargs(): Record<string, number> | undefined {
+    return this._generationKwargs;
   }
 
   get modelCapabilities(): ModelCapability {

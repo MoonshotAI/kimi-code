@@ -13,6 +13,10 @@ import {
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
+import {
+  SpiceupSelectorComponent,
+  type SpiceupSelection,
+} from '../components/dialogs/spiceup-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
 import { saveTuiConfig } from '../config';
@@ -284,6 +288,61 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
       },
     }),
   );
+}
+
+export function showSpiceupPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new SpiceupSelectorComponent({
+      currentValues: host.state.appState.generationKwargs ?? {},
+      onSubmit: (selection) => {
+        host.restoreEditor();
+        void applySpiceupChoice(host, selection);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+function spiceupSelectionToKwargs(selection: SpiceupSelection): Record<string, number> {
+  const kwargs: Record<string, number> = {};
+  if (selection.temperature !== undefined) kwargs['temperature'] = selection.temperature;
+  if (selection.topP !== undefined) kwargs['top_p'] = selection.topP;
+  if (selection.topK !== undefined) kwargs['top_k'] = selection.topK;
+  if (selection.maxTokens !== undefined) kwargs['max_tokens'] = selection.maxTokens;
+  if (selection.frequencyPenalty !== undefined) kwargs['frequency_penalty'] = selection.frequencyPenalty;
+  if (selection.presencePenalty !== undefined) kwargs['presence_penalty'] = selection.presencePenalty;
+  return kwargs;
+}
+
+export async function applySpiceupChoice(host: SlashCommandHost, selection: SpiceupSelection): Promise<void> {
+  const session = host.session;
+  if (session === undefined) {
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    return;
+  }
+
+  const kwargs = spiceupSelectionToKwargs(selection);
+  const keys = Object.keys(kwargs);
+  if (keys.length === 0) {
+    try {
+      await session.setGenerationKwargs({});
+      host.setAppState({ generationKwargs: null });
+      host.showStatus('Sampling overrides cleared for this session.');
+    } catch (error) {
+      host.showError(`Failed to clear sampling overrides: ${formatErrorMessage(error)}`);
+    }
+    return;
+  }
+
+  try {
+    await session.setGenerationKwargs(kwargs);
+    host.setAppState({ generationKwargs: selection });
+    host.showStatus(`Sampling overrides set: ${keys.join(', ')}`);
+  } catch (error) {
+    host.showError(`Failed to set sampling overrides: ${formatErrorMessage(error)}`);
+  }
 }
 
 async function performModelSwitch(host: SlashCommandHost, alias: string, thinking: boolean): Promise<void> {

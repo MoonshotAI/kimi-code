@@ -80,6 +80,7 @@ import type {
   SessionSummary,
   SetActiveToolsPayload,
   SetKimiConfigPayload,
+  SetGenerationKwargsPayload,
   SetModelPayload,
   SetModelResult,
   SetPermissionPayload,
@@ -529,6 +530,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }: SessionAgentPayload<SetModelPayload>): Promise<SetModelResult> {
     this.reloadProviderManager();
     return this.sessionApi(sessionId).setModel(payload);
+  }
+
+  setGenerationKwargs({ sessionId, ...payload }: SessionAgentPayload<SetGenerationKwargsPayload>) {
+    return this.sessionApi(sessionId).setGenerationKwargs(payload);
   }
 
   setThinking({ sessionId, ...payload }: SessionAgentPayload<SetThinkingPayload>) {
