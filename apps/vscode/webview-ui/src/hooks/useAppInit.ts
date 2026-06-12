@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { bridge, Events } from "@/services";
-import { useChatStore, useSettingsStore } from "@/stores";
+import { useSettingsStore } from "@/stores";
 import type { ExtensionConfig } from "shared/types";
 
 export type InitStatus = "loading" | "error" | "ready";
@@ -25,19 +25,15 @@ export function useAppInit(): AppInitState {
     errorMessage: null,
   });
 
-  const { initModels, setExtensionConfig, setMCPServers, models, modelsLoaded, currentModel, thinkingEnabled, mode } = useSettingsStore(
+  const { initModels, setExtensionConfig, setMCPServers, models, modelsLoaded } = useSettingsStore(
     useShallow((settings) => ({
       initModels: settings.initModels,
       setExtensionConfig: settings.setExtensionConfig,
       setMCPServers: settings.setMCPServers,
       models: settings.models,
       modelsLoaded: settings.modelsLoaded,
-      currentModel: settings.currentModel,
-      thinkingEnabled: settings.thinkingEnabled,
-      mode: settings.mode,
     })),
   );
-  const sessionId = useChatStore((state) => state.sessionId);
 
   const checkCLIAndLoadModels = useCallback(async (): Promise<boolean> => {
     try {
@@ -134,20 +130,6 @@ export function useAppInit(): AppInitState {
       }
     });
   }, [setExtensionConfig, checkCLIAndLoadModels]);
-
-  useEffect(() => {
-    if (state.status !== "ready" || !modelsLoaded || models.length === 0 || sessionId || !currentModel) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      bridge.prewarmSession(currentModel, thinkingEnabled, mode).catch((err) => {
-        console.warn("[init] Failed to prewarm session:", err);
-      });
-    }, 250);
-
-    return () => clearTimeout(timer);
-  }, [state.status, modelsLoaded, models.length, sessionId, currentModel, thinkingEnabled, mode]);
 
   // Check for no models after loading
   if (state.status === "ready" && modelsLoaded && models.length === 0) {
