@@ -360,7 +360,17 @@ export class ContextMemory {
         }
       }
 
-      this._history = this._history.filter((_, index) => !indicesToRemove.has(index));
+      const removedMessages = new Set<ContextMessage>();
+      this._history = this._history.filter((message, index) => {
+        if (indicesToRemove.has(index)) {
+          removedMessages.add(message);
+          return false;
+        }
+        return true;
+      });
+      // Also remove from replay builder so ResumeSessionResult doesn't
+      // include stale orphaned messages.
+      this.agent.replayBuilder.removeLastMessages(removedMessages);
     }
 
     // Flush any deferred messages that were blocked by the stale pending set.
