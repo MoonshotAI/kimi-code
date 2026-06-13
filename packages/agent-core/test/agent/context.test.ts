@@ -1,9 +1,15 @@
 import type { Message } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
+import type { CompactionStrategy } from '../../src/agent/compaction';
 import { renderNotificationXml } from '../../src/agent/context/notification-xml';
-import { project } from '../../src/agent/context/projector';
+import { project, trimTrailingOpenToolExchange } from '../../src/agent/context/projector';
 import type { ContextMessage } from '../../src/agent/context/types';
+import {
+  AGENT_WIRE_PROTOCOL_VERSION,
+  InMemoryAgentRecordPersistence,
+} from '../../src/agent/records';
+import type { AgentRecord } from '../../src/agent/records';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
 import { testAgent } from './harness/agent';
 
@@ -360,8 +366,6 @@ describe('Agent context', () => {
     expect(ctx.agent.context.messages.map((message) => message.role)).toEqual([
       'assistant',
       'user',
-      'assistant',
-      'tool',
     ]);
 
     ctx.dispatch({
@@ -505,6 +509,101 @@ describe('Agent context', () => {
     expect(ctx.agent.context.tokenCountWithPending).toBe(
       1_280 + estimateTokensForMessages(pendingMessages),
     );
+  });
+
+  it('does not expose an unclosed tool call in the messages getter', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const stepUuid = 'orphan-tool-step';
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'read a file' }]);
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '0', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'call_orphan_read',
+        turnId: '0',
+        step: 1,
+        stepUuid,
+        toolCallId: 'Read:158',
+        name: 'Read',
+        args: { file_path: '/tmp/test' },
+      },
+    });
+    // Simulate a crash: no tool.result or step.end is recorded.
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'continue after crash' }]);
+
+    const toolCallIds = ctx.agent.context.messages
+      .filter((message) => message.role === 'assistant')
+      .flatMap((message) => message.toolCalls.map((toolCall) => toolCall.id));
+    expect(toolCallIds).toEqual([]);
+  });
+
+  it('cleans up orphaned tool calls on resume and flushes deferred messages', async () => {
+    const records: AgentRecord[] = [
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'read a file' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.begin',
+          uuid: 'orphan-step',
+          turnId: '0',
+          step: 1,
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call_orphan_read',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'orphan-step',
+          toolCallId: 'Read:158',
+          name: 'Read',
+          args: { file_path: '/tmp/test' },
+        },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'continue after crash' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+    ];
+
+    const ctx = testAgent({
+      persistence: new InMemoryAgentRecordPersistence(records),
+    });
+    ctx.configure();
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual(['user', 'user']);
+    const toolCallIds = ctx.agent.context.messages
+      .filter((message) => message.role === 'assistant')
+      .flatMap((message) => message.toolCalls.map((toolCall) => toolCall.id));
+    expect(toolCallIds).toEqual([]);
   });
 
   it('undo only counts real user prompts, skipping background notifications', () => {
@@ -652,7 +751,120 @@ describe('Agent context', () => {
     ]);
   });
 
+  it('compacts a resumed history with orphaned tool calls without throwing', async () => {
+    const records: AgentRecord[] = [
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'old prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.begin',
+          uuid: 'old-step',
+          turnId: '0',
+          step: 1,
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          uuid: 'old-part',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'old-step',
+          part: { type: 'text', text: 'old response' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.end',
+          uuid: 'old-step',
+          turnId: '0',
+          step: 1,
+          finishReason: 'end_turn',
+        },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'read a file' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.begin',
+          uuid: 'orphan-step',
+          turnId: '0',
+          step: 2,
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call_orphan_read',
+          turnId: '0',
+          step: 2,
+          stepUuid: 'orphan-step',
+          toolCallId: 'Read:158',
+          name: 'Read',
+          args: { file_path: '/tmp/test' },
+        },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'continue after crash' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+    ];
+
+    const ctx = testAgent({
+      persistence: new InMemoryAgentRecordPersistence(records),
+      compactionStrategy: alwaysCompactOnce,
+    });
+    ctx.configure();
+
+    await ctx.agent.resume();
+
+    const compacted = ctx.once('context.apply_compaction');
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted after crash.' });
+    await ctx.agent.fullCompaction.beforeStep(new AbortController().signal);
+    await compacted;
+
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual(['assistant']);
+  });
+
 });
+
+const alwaysCompactOnce: CompactionStrategy = {
+  shouldCompact: () => true,
+  shouldBlock: () => true,
+  computeCompactCount: (messages: readonly Message[]) => messages.length,
+  reduceCompactOnOverflow: (messages: readonly Message[]) => messages.length,
+  checkAfterStep: true,
+  maxCompactionPerTurn: 1,
+};
 
 describe('Agent context notification projection', () => {
   it('renders task notifications with escaped attributes and a bounded output tail', () => {
@@ -775,6 +987,56 @@ describe('Agent context notification projection', () => {
     expect(textOf(messages[0]!)).toBe('First real prompt\n\nSecond real prompt');
     expect(textOf(messages[1]!)).toBe('No origin prompt');
     expect(textOf(messages[2]!)).toBe('Third real prompt');
+  });
+
+  it('keeps a complete parallel tool exchange in projection', () => {
+    const messages = project([
+      userMessage('run both tools', { kind: 'user' }),
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          { type: 'function', id: 'call_a', name: 'Lookup', arguments: '{}' },
+          { type: 'function', id: 'call_b', name: 'Lookup', arguments: '{}' },
+        ],
+      },
+      { role: 'tool', content: [{ type: 'text', text: 'a' }], toolCalls: [], toolCallId: 'call_a' },
+      { role: 'tool', content: [{ type: 'text', text: 'b' }], toolCalls: [], toolCallId: 'call_b' },
+    ]);
+
+    expect(messages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+    ]);
+  });
+
+  it('trims an open tool exchange from projection', () => {
+    const messages = trimTrailingOpenToolExchange(
+      project([
+        userMessage('read a file', { kind: 'user' }),
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'Read:158', name: 'Read', arguments: '{}' }],
+        },
+      ]),
+    );
+
+    expect(messages.map((message) => message.role)).toEqual(['user']);
+  });
+
+  it('does not trim tool messages that lack a preceding assistant', () => {
+    const messages = trimTrailingOpenToolExchange([
+      { role: 'tool', content: [{ type: 'text', text: 'orphan result' }], toolCalls: [], toolCallId: 'call_x' },
+    ]);
+
+    expect(messages.map((message) => message.role)).toEqual(['tool']);
+  });
+
+  it('does not trim an empty history', () => {
+    expect(trimTrailingOpenToolExchange([])).toEqual([]);
   });
 });
 

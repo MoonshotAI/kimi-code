@@ -296,6 +296,7 @@ export class Agent {
 
   async resume(): Promise<{ warning?: string }> {
     const result = await this.records.replay();
+    this.context.cleanupOrphanedToolCalls();
     this.goal.normalizeAfterReplay();
     await this.background.loadFromDisk();
     await this.background.reconcile();

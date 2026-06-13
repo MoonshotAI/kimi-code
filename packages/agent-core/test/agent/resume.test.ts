@@ -157,7 +157,7 @@ describe('Agent resume', () => {
 
     await ctx.agent.resume();
 
-    const toolCall = ctx.agent.context.messages[0]?.toolCalls[0] as
+    const toolCall = ctx.agent.context.history[0]?.toolCalls[0] as
       | { name?: string; arguments?: string | null; function?: unknown }
       | undefined;
     expect(toolCall).toMatchObject({
