@@ -111,6 +111,12 @@ function getNewlineInput(data: string): string | undefined {
   return undefined;
 }
 
+function isPasteImageShortcut(data: string): boolean {
+  if (process.platform === 'win32') return matchesKey(data, Key.alt('v'));
+  if (matchesKey(data, Key.ctrl('v'))) return true;
+  return process.platform === 'darwin' && matchesKey(data, Key.super('v'));
+}
+
 export class CustomEditor extends Editor {
   public onEscape?: () => void;
   public onCtrlD?: () => void;
@@ -132,8 +138,8 @@ export class CustomEditor extends Editor {
   public connectedAbove = false;
   public borderHighlighted = false;
   /**
-   * Called when the user triggers "paste image" (Ctrl-V on Unix,
-   * Alt-V on Windows — Ctrl-V is terminal-reserved there). Return
+   * Called when the user triggers "paste image" (Ctrl-V on non-Windows,
+   * plus Cmd-V on macOS and Alt-V on Windows). Return
    * `true` to consume the key (image was read and handled); return
    * `false` to let the key fall through to the normal paste path.
    * The callback may be async; pi-tui awaits it before dispatching
@@ -273,11 +279,11 @@ export class CustomEditor extends Editor {
     // Paste image binding — platform-aware:
     //   Windows terminals reserve Ctrl-V for their own paste handling
     //   (e.g. Windows Terminal's Ctrl+V shortcut), so we listen for
-    //   Alt-V there. Everywhere else Ctrl-V pastes. When the host
-    //   reports no image available, we fall through to pi-tui's
-    //   normal paste path so text from the clipboard still works.
-    const pasteKey = process.platform === 'win32' ? 'alt+v' : Key.ctrl('v');
-    if (matchesKey(normalized, pasteKey)) {
+    //   Alt-V there. Non-Windows keeps Ctrl-V, and macOS also accepts
+    //   Cmd-V (Kitty "super").
+    //   When the host reports no image available, we fall through to
+    //   pi-tui's normal paste path so text from the clipboard still works.
+    if (isPasteImageShortcut(normalized)) {
       if (this.expandPasteMarkerAtCursor()) {
         return;
       }

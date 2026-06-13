@@ -255,6 +255,29 @@ describe('CustomEditor paste marker expansion', () => {
   });
 });
 
+describe('CustomEditor image paste shortcuts', () => {
+  it('handles macOS Cmd+V as an image paste shortcut', async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    try {
+      const editor = makeEditor();
+      const onPasteImage = vi.fn(async () => true);
+      const onTextPaste = vi.fn();
+      editor.onPasteImage = onPasteImage;
+      editor.onTextPaste = onTextPaste;
+
+      editor.handleInput('\u001B[118;9u');
+      await Promise.resolve();
+
+      expect(onPasteImage).toHaveBeenCalledOnce();
+      expect(onTextPaste).not.toHaveBeenCalled();
+      expect(editor.getText()).toBe('');
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+  });
+});
+
 describe('CustomEditor shortcut telemetry hooks', () => {
   it('reports newline shortcuts, including Ctrl-J, before delegating to the base editor', () => {
     const editor = makeEditor();
