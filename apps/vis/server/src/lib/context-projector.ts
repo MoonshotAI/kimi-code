@@ -170,8 +170,14 @@ export function projectContext(entries: ReadonlyArray<WireEntry>): ContextProjec
         }];
         break;
       case 'usage.record': {
-        const scope = (rec.usageScope ?? 'session') as 'session' | 'turn';
-        addUsage(usage.byScope[scope], rec.usage);
+        // `byScope.session` is the cumulative session total — every usage
+        // record, matching agent-core's UsageRecorder.total / byModel — while
+        // `byScope.turn` is the turn-scoped subset. The main agent loop records
+        // every step as 'turn', so partitioning records into one bucket OR the
+        // other left `byScope.session` near-empty and under-reported the Context
+        // tab token bar, which reads `byScope.session`.
+        addUsage(usage.byScope.session, rec.usage);
+        if ((rec.usageScope ?? 'session') === 'turn') addUsage(usage.byScope.turn, rec.usage);
         if (!usage.byModel[rec.model]) usage.byModel[rec.model] = { ...ZERO };
         addUsage(usage.byModel[rec.model]!, rec.usage);
         break;

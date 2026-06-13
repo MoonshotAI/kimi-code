@@ -25,6 +25,13 @@ describe('context-projector', () => {
     expect(proj.usage.byScope.turn).toEqual({
       inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0,
     });
+    // `byScope.session` is the cumulative session total — the sum of every
+    // usage record (matching `byModel`), not just records explicitly scoped
+    // 'session'. The main loop records every step as 'turn', so before the fix
+    // this bucket stayed {0,0,0,0} and the Context tab token bar read empty.
+    expect(proj.usage.byScope.session).toEqual({
+      inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0,
+    });
     expect(proj.usage.byModel['kimi-k2']).toEqual({
       inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0,
     });
