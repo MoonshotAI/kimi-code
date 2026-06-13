@@ -119,7 +119,9 @@ function openMediaPreview(): void {
       <!-- eslint-disable-next-line vue/no-v-html -->
       <span v-if="glyph()" class="gl" v-html="glyph()" aria-hidden="true" />
       <span class="a">{{ label() }}</span>
-      <span class="p" :title="summary()">{{ summary() }}</span>
+      <!-- Summary lives on the header while collapsed; once expanded it moves
+           into the card body (below) so the header stays clean. -->
+      <span v-if="!open" class="p" :title="summary()">{{ summary() }}</span>
       <span class="rt">
         <span class="chip" v-if="chip()">{{ chip() }}</span>
         <span
@@ -133,8 +135,9 @@ function openMediaPreview(): void {
       </span>
     </div>
     <div v-if="open" class="bb">
-      <!-- The command/summary already shows on the header line; don't repeat it
-           at the top of the expanded body — show only the output here. -->
+      <!-- When expanded, the command/summary moves here (and is hidden from the
+           header) so it shows exactly once. -->
+      <div v-if="summary()" class="bb-summary">{{ summary() }}</div>
       <div v-for="(line, i) in tool.output" :key="i">{{ line }}</div>
     </div>
   </div>
@@ -285,6 +288,15 @@ function openMediaPreview(): void {
   font-family: var(--mono);
   white-space: pre-wrap;
   word-break: break-word;
+}
+/* The command/summary, shown at the top of the expanded body (it's hidden from
+   the header while open). Separated from the output by a dashed rule. */
+.bb-summary {
+  color: var(--ink);
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  word-break: break-all;
 }
 /* Mobile bubble layout: no left gutter indent, softer corners (prototype .tool). */
 .box.mob {
