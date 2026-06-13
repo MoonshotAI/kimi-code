@@ -14,9 +14,14 @@ export interface StateWriteInput {
 export async function writeSessionState(sessionDir: string, input: StateWriteInput): Promise<void> {
   await mkdir(sessionDir, { recursive: true, mode: 0o700 });
 
-  const customTitle = input.oldState.custom_title ?? null;
-  const isCustomTitle =
-    customTitle !== null && customTitle.length > 0 && !input.oldState.title_generated;
+  const customTitleRaw = input.oldState.custom_title ?? null;
+  // Trim and treat a blank/whitespace-only custom_title as absent, mirroring
+  // how `fallbackTitle` is trimmed below. Otherwise an all-spaces title slips
+  // past the length checks, producing a blank session title falsely flagged as
+  // user-custom.
+  const customTitle =
+    customTitleRaw !== null && customTitleRaw.trim().length > 0 ? customTitleRaw.trim() : null;
+  const isCustomTitle = customTitle !== null && !input.oldState.title_generated;
   const fallbackTitle = input.lastUserPrompt.slice(0, 50).trim();
   const candidateTitle = customTitle ?? fallbackTitle;
   const finalTitle = candidateTitle.length > 0 ? candidateTitle : 'Imported session';

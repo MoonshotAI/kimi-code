@@ -47,6 +47,34 @@ describe('writeSessionState', () => {
     expect(meta.isCustomTitle).toBe(false);
   });
 
+  it('treats a blank/whitespace-only custom_title as absent and falls back', async () => {
+    await writeSessionState(dir, {
+      oldState: { custom_title: '   ', title_generated: false, wire_mtime: 1 },
+      lastUserPrompt: 'a real prompt here',
+      sourcePath: '/a',
+      oldSessionUuid: 'u',
+      wireProtocolFromOld: null,
+      createdAtMs: 1,
+    });
+    const meta = JSON.parse(await readFile(join(dir, 'state.json'), 'utf-8'));
+    expect(meta.title).toBe('a real prompt here');
+    expect(meta.isCustomTitle).toBe(false);
+  });
+
+  it('trims surrounding whitespace from a custom_title', async () => {
+    await writeSessionState(dir, {
+      oldState: { custom_title: '  My chat  ', title_generated: false, wire_mtime: 1 },
+      lastUserPrompt: 'irrelevant',
+      sourcePath: '/a',
+      oldSessionUuid: 'u',
+      wireProtocolFromOld: null,
+      createdAtMs: 1,
+    });
+    const meta = JSON.parse(await readFile(join(dir, 'state.json'), 'utf-8'));
+    expect(meta.title).toBe('My chat');
+    expect(meta.isCustomTitle).toBe(true);
+  });
+
   it('uses Imported session as fallback when no title source', async () => {
     await writeSessionState(dir, {
       oldState: { wire_mtime: 1 },
