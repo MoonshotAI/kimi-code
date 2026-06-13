@@ -359,11 +359,13 @@ function estimateCost(run: EvalRunResult, costTable: Record<string, EvalCostRate
   if (costTable === undefined || run.usage === undefined) return undefined;
   const rates = costTable[run.model];
   if (rates === undefined) return undefined;
-  const inputCost = (run.usage.inputTokens / 1000) * rates.inputPer1k;
+  const cachedInputTokens = run.usage.cachedInputTokens ?? 0;
+  const nonCachedInputTokens = Math.max(0, run.usage.inputTokens - cachedInputTokens);
+  const inputCost = (nonCachedInputTokens / 1000) * rates.inputPer1k;
   const outputCost = (run.usage.outputTokens / 1000) * rates.outputPer1k;
   const cachedInputCost =
-    run.usage.cachedInputTokens !== undefined && rates.cachedInputPer1k !== undefined
-      ? (run.usage.cachedInputTokens / 1000) * rates.cachedInputPer1k
+    rates.cachedInputPer1k !== undefined
+      ? (cachedInputTokens / 1000) * rates.cachedInputPer1k
       : 0;
   return inputCost + outputCost + cachedInputCost;
 }

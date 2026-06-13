@@ -51,6 +51,9 @@ describe('CLI options parsing', () => {
         '1.2.3',
         () => {},
         () => {},
+        () => {},
+        () => {},
+        'test-feature',
       );
       program.exitOverride();
       program.configureOutput({
@@ -60,7 +63,7 @@ describe('CLI options parsing', () => {
       });
 
       expect(() => program.parse(['node', 'kimi', '--version'])).toThrow();
-      expect(output).toContain('1.2.3');
+      expect(output).toContain('v1.2-test-feature');
     });
 
     it('supports -V as a short alias', () => {
@@ -69,6 +72,9 @@ describe('CLI options parsing', () => {
         '4.5.6',
         () => {},
         () => {},
+        () => {},
+        () => {},
+        'test-feature',
       );
       program.exitOverride();
       program.configureOutput({
@@ -78,7 +84,7 @@ describe('CLI options parsing', () => {
       });
 
       expect(() => program.parse(['node', 'kimi', '-V'])).toThrow();
-      expect(output).toContain('4.5.6');
+      expect(output).toContain('v4.5-test-feature');
     });
   });
 

@@ -71,16 +71,22 @@ export class PowerShellTool implements BuiltinTool<PowerShellInput> {
   private spawn(effectiveCwd: string, command: string): Promise<KaosProcess> {
     // Prefer powershell.exe on Windows; pwsh (PowerShell Core) elsewhere if present.
     const shell = this.kaos.osEnv.osKind === 'Windows' ? 'powershell.exe' : 'pwsh';
+    const isWindowsPowerShell = shell === 'powershell.exe';
+
+    // powershell.exe does not support -WorkingDirectory; change directory inline.
+    const commandWithCwd = isWindowsPowerShell
+      ? `Set-Location -Path '${effectiveCwd.replace(/'/g, "''")}'; ${command}`
+      : command;
+
     const args = [
       shell,
       '-NoProfile',
       '-NonInteractive',
       '-ExecutionPolicy',
       'Bypass',
-      '-WorkingDirectory',
-      effectiveCwd,
+      ...(isWindowsPowerShell ? [] : ['-WorkingDirectory', effectiveCwd]),
       '-Command',
-      command,
+      commandWithCwd,
     ];
     const noninteractiveEnv: Record<string, string> = {
       NO_COLOR: '1',
