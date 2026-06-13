@@ -1,6 +1,7 @@
 import { copyFile, mkdir, stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
+import { resolveExecutableNativeFiles } from './assets.mjs';
 import { fail, run, tryRun } from './exec.mjs';
 import {
   appRoot,
@@ -52,12 +53,25 @@ async function injectSeaBlob(target) {
   await run(postjectPath(), args);
 }
 
+async function copyExecutableNativeFiles(target) {
+  const files = resolveExecutableNativeFiles({ appRoot, target });
+  for (const file of files) {
+    const destination = resolve(nativeBinDir(target), file.relativePath);
+    await mkdir(dirname(destination), { recursive: true });
+    await copyFile(file.sourcePath, destination);
+  }
+  if (files.length > 0) {
+    console.log(`Copied ${files.length} native helper file(s) for ${target}`);
+  }
+}
+
 export async function runInjectStep() {
   const target = targetTriple();
   await ensureBlobExists();
   await copyNodeExecutable(target);
   await removeSignatureIfNeeded(target);
   await injectSeaBlob(target);
+  await copyExecutableNativeFiles(target);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

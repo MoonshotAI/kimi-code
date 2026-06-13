@@ -27,6 +27,13 @@ const clipboardSubpackageByTarget = Object.freeze({
   'win32-x64': '@mariozechner/clipboard-win32-x64-msvc',
 });
 
+const piTuiExecutableFilesByTarget = Object.freeze({
+  'darwin-arm64': ['native/darwin/prebuilds/darwin-arm64/darwin-modifiers.node'],
+  'darwin-x64': ['native/darwin/prebuilds/darwin-x64/darwin-modifiers.node'],
+  'win32-arm64': ['native/win32/prebuilds/win32-arm64/win32-console-mode.node'],
+  'win32-x64': ['native/win32/prebuilds/win32-x64/win32-console-mode.node'],
+});
+
 export function isSupportedTarget(target) {
   return SUPPORTED_TARGETS.includes(target);
 }
@@ -43,6 +50,9 @@ export function isSupportedTarget(target) {
  * @property {(target: string) => string[]} [nativeFileRelatives]
  *           — explicit list of .node files relative to package root
  *           (used by 'js-and-native-file'; native-files mode auto-scans *.node)
+ * @property {(target: string) => string[]} [executableFileRelatives]
+ *           — files copied next to the native executable, preserving the
+ *           package-relative path
  */
 
 /** @type {readonly NativeDepDescriptor[]} */
@@ -59,7 +69,23 @@ export const nativeDeps = Object.freeze([
     collect: 'native-files',
     parent: 'clipboard-host',
   },
+  {
+    id: 'pi-tui',
+    name: () => '@earendil-works/pi-tui',
+    // pi-tui is bundled into main.cjs. Its native helpers are loaded from
+    // native/... beside the executable instead of from the native asset cache.
+    collect: 'virtual',
+    parent: null,
+    executableFileRelatives: (target) => piTuiExecutableFilesByTarget[target] ?? [],
+  },
 ]);
+
+export function resolveExecutableFileRelatives(target) {
+  if (!isSupportedTarget(target)) {
+    throw new Error(`Unsupported native executable target: ${target}`);
+  }
+  return nativeDeps.flatMap((d) => d.executableFileRelatives?.(target) ?? []);
+}
 
 /**
  * Resolve which deps need collecting for a given build target, with concrete names.

@@ -190,6 +190,10 @@
                 "apps/kimi-code/dist-native/bin/${nativeTarget}/kimi" \
                 "$out/bin/kimi"
 
+              if [ -d "apps/kimi-code/dist-native/bin/${nativeTarget}/native" ]; then
+                cp -R "apps/kimi-code/dist-native/bin/${nativeTarget}/native" "$out/bin/"
+              fi
+
               runHook postInstall
             '';
 

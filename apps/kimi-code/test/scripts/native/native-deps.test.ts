@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   nativeDeps,
+  resolveExecutableFileRelatives,
   resolveTargetDeps,
   isSupportedTarget,
   SUPPORTED_TARGETS,
 } from '../../../scripts/native/native-deps.mjs';
+import { resolveExecutableNativeFiles } from '../../../scripts/native/assets.mjs';
+import { appRoot } from '../../../scripts/native/paths.mjs';
 
 describe('SUPPORTED_TARGETS', () => {
   it('contains the six published targets', () => {
@@ -41,6 +44,7 @@ describe('resolveTargetDeps', () => {
     const names = deps.map((d) => d.resolvedName);
     expect(names).toContain('@mariozechner/clipboard');
     expect(names).toContain('@mariozechner/clipboard-darwin-arm64');
+    expect(names).not.toContain('@earendil-works/pi-tui');
   });
 
   it('picks the right clipboard subpackage per target', () => {
@@ -72,9 +76,28 @@ describe('nativeDeps registry shape', () => {
     expect(target?.parent).toBe('clipboard-host');
   });
 
-  it('only collects installed native packages', () => {
-    expect(nativeDeps.map((d) => d.id).toSorted()).toEqual(
-      ['clipboard-host', 'clipboard-target'].toSorted(),
-    );
+  it('keeps pi-tui as an executable helper dependency', () => {
+    const piTui = nativeDeps.find((d) => d.id === 'pi-tui');
+    expect(piTui?.collect).toBe('virtual');
+    expect(piTui?.executableFileRelatives?.('darwin-arm64')).toEqual([
+      'native/darwin/prebuilds/darwin-arm64/darwin-modifiers.node',
+    ]);
+    expect(piTui?.executableFileRelatives?.('win32-x64')).toEqual([
+      'native/win32/prebuilds/win32-x64/win32-console-mode.node',
+    ]);
+    expect(piTui?.executableFileRelatives?.('linux-x64')).toEqual([]);
+    expect(resolveExecutableFileRelatives('darwin-x64')).toEqual([
+      'native/darwin/prebuilds/darwin-x64/darwin-modifiers.node',
+    ]);
+  });
+
+  it('resolves pi-tui helper files copied next to the executable', () => {
+    expect(resolveExecutableNativeFiles({ appRoot, target: 'darwin-arm64' })).toEqual([
+      expect.objectContaining({
+        packageName: '@earendil-works/pi-tui',
+        relativePath: 'native/darwin/prebuilds/darwin-arm64/darwin-modifiers.node',
+      }),
+    ]);
+    expect(resolveExecutableNativeFiles({ appRoot, target: 'linux-x64' })).toEqual([]);
   });
 });

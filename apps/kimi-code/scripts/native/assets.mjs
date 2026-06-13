@@ -6,7 +6,7 @@ import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path
 import { pathToFileURL } from 'node:url';
 
 import { NATIVE_ASSET_MANIFEST_VERSION, buildManifestKey } from './manifest.mjs';
-import { resolveTargetDeps, SUPPORTED_TARGETS } from './native-deps.mjs';
+import { nativeDeps, resolveTargetDeps, SUPPORTED_TARGETS } from './native-deps.mjs';
 
 export { NATIVE_ASSET_MANIFEST_VERSION };
 
@@ -271,4 +271,40 @@ export async function collectNativeAssets({ appRoot, target }) {
     manifestJson: `${JSON.stringify(manifest, null, 2)}\n`,
     assets,
   };
+}
+
+export function resolveExecutableNativeFiles({ appRoot, target }) {
+  const requireFromApp = createRequire(pathToFileURL(resolve(appRoot, 'package.json')));
+  const files = [];
+
+  for (const dep of nativeDeps) {
+    const executableFileRelatives = dep.executableFileRelatives?.(target) ?? [];
+    if (executableFileRelatives.length === 0) continue;
+
+    const packageName = dep.name(target);
+    const parentName = dep.parent
+      ? nativeDeps.find((p) => p.id === dep.parent)?.name(target) ?? null
+      : null;
+    const packageRoot = resolvePackageRootGeneric(
+      requireFromApp,
+      packageName,
+      parentName,
+      appRoot,
+      target,
+    );
+
+    for (const relativePath of executableFileRelatives) {
+      const sourcePath = resolve(packageRoot, relativePath);
+      if (!existsSync(sourcePath)) {
+        fail(`Native package ${packageName} does not contain ${relativePath} at ${packageRoot}`);
+      }
+      files.push({
+        packageName,
+        relativePath: toPosixPath(relativePath),
+        sourcePath,
+      });
+    }
+  }
+
+  return files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 }
