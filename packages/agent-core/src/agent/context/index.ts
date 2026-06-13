@@ -308,37 +308,54 @@ export class ContextMemory {
    * provider on the next turn, causing a 400 error.
    */
   cleanupOrphanedToolCalls(): void {
+    // Build a set of tool_call_ids that have a matching tool result
+    // ANYWHERE in history. This is used only for the initial pending set
+    // cleanup — the per-assistant check below uses positional matching.
     const answeredIds = new Set<string>();
     for (const message of this._history) {
       if (message.role === 'tool' && typeof message.toolCallId === 'string') {
         answeredIds.add(message.toolCallId);
       }
     }
-    // Find tool_call_ids that have no matching tool result.
-    const orphanedIds = new Set<string>();
-    for (const id of this.pendingToolResultIds) {
-      if (!answeredIds.has(id)) {
-        orphanedIds.add(id);
-      }
-    }
+
+    // Clear stale pendingToolResultIds.
     this.pendingToolResultIds.clear();
 
-    if (orphanedIds.size > 0) {
-      // Collect ALL tool_call_ids from assistants that have any orphaned call,
-      // so we remove the entire assistant AND all its sibling tool messages.
-      const toolCallIdsToRemove = new Set<string>();
-      this._history = this._history.filter((message) => {
-        if (message.role === 'assistant') {
-          const hasOrphaned = message.toolCalls.some((tc) => orphanedIds.has(tc.id));
-          if (hasOrphaned) {
-            // Remove this assistant and mark all its tool_call_ids for removal.
-            for (const tc of message.toolCalls) {
-              toolCallIdsToRemove.add(tc.id);
-            }
-            return false;
-          }
-          return true;
+    // Find assistant messages that have unanswered tool_calls.
+    // Check positionally: a tool_call_id is "answered" only if there
+    // is a tool result AFTER the assistant in history. This prevents
+    // false matches when toolCallIds are reused across turns.
+    const assistantsToRemove = new Set<number>();
+    for (let i = 0; i < this._history.length; i++) {
+      const message = this._history[i];
+      if (message === undefined || message.role !== 'assistant' || message.toolCalls.length === 0) continue;
+
+      // Check if every tool_call has a result AFTER this assistant.
+      const allAnswered = message.toolCalls.every((tc) => {
+        for (let j = i + 1; j < this._history.length; j++) {
+          const later = this._history[j];
+          if (later !== undefined && later.role === 'tool' && later.toolCallId === tc.id) return true;
+          if (later !== undefined && later.role === 'assistant') break;
         }
+        return false;
+      });
+
+      if (!allAnswered) {
+        assistantsToRemove.add(i);
+      }
+    }
+
+    if (assistantsToRemove.size > 0) {
+      // Collect ALL tool_call_ids from assistants being removed.
+      const toolCallIdsToRemove = new Set<string>();
+      for (const idx of assistantsToRemove) {
+        for (const tc of this._history[idx]!.toolCalls) {
+          toolCallIdsToRemove.add(tc.id);
+        }
+      }
+
+      this._history = this._history.filter((message, index) => {
+        if (assistantsToRemove.has(index)) return false;
         if (message.role === 'tool' && typeof message.toolCallId === 'string') {
           return !toolCallIdsToRemove.has(message.toolCallId);
         }
