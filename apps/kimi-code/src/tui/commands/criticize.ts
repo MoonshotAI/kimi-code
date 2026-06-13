@@ -40,9 +40,19 @@ async function runCritique(host: SlashCommandHost, modelAlias: string): Promise<
   // Save the critic model choice
   host.setAppState({ criticConfig: { modelAlias } });
 
-  // Gather context: last transcript entries, plan file if in plan mode
+  // Gather context: recent transcript, plan file if in plan mode
   const planMode = host.state.appState.planMode;
   let context = '';
+
+  const transcript = host.state.transcriptEntries;
+  const recentEntries = transcript.slice(-30);
+  if (recentEntries.length > 0) {
+    context += '## Recent conversation\n\n';
+    for (const entry of recentEntries) {
+      if (entry.content.trim().length === 0) continue;
+      context += `[${entry.kind}] ${entry.content}\n\n`;
+    }
+  }
 
   if (planMode) {
     try {
@@ -65,7 +75,7 @@ async function runCritique(host: SlashCommandHost, modelAlias: string): Promise<
     // Append the critique as a system reminder so the main agent sees it
     await session.appendSystemReminder(
       `## Critique from /criticize\n\nThe following critique was produced by a dedicated critic agent using model "${modelAlias}". Review each point carefully. You may accept, rebut, or defend your approach.\n\n${critique}`,
-      { kind: 'critique', name: 'criticize' },
+      { kind: 'system_trigger', name: 'criticize' },
     );
 
     host.showStatus('Critique received. The agent will see it on the next turn.', 'success');

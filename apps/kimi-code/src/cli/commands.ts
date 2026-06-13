@@ -22,9 +22,10 @@ export function createProgram(
   onMigrate: MigrateCommandHandler,
   onPluginNodeRunner: PluginNodeRunnerHandler = () => {},
   onUpgrade: UpgradeCommandHandler = () => {},
+  featureSuffix?: string,
 ): Command {
   const [major, minor] = version.split('.');
-  const displayVersion = `v${major}.${minor}-${getFeatureSuffix()}`;
+  const displayVersion = `v${major}.${minor}-${featureSuffix ?? getFeatureSuffix()}`;
 
   const program = new Command(CLI_COMMAND_NAME)
     .description('The Starting Point for Next-Gen Agents')
