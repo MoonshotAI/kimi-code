@@ -410,6 +410,27 @@ describe('GoogleGenAIChatProvider', () => {
       });
     });
 
+    it('keeps the explicit MIME type of a data URL that has no ;base64 parameter', () => {
+      const messages: Message[] = [
+        {
+          role: 'user',
+          content: [{ type: 'image_url', imageUrl: { url: 'data:image/png,RAWDATA' } }],
+          toolCalls: [],
+        },
+      ];
+
+      const contents = messagesToGoogleGenAIContents(messages);
+      const userContent = contents[0] as unknown as { parts: Array<Record<string, unknown>> };
+      const inlineData = userContent.parts.find((p) => 'inlineData' in p) as
+        | { inlineData: { mimeType: string; data: string } }
+        | undefined;
+      // Without the fix the MIME slice required a ';', so this fell back to the
+      // generic fallback type instead of the URL's own `image/png`.
+      expect(inlineData).toMatchObject({
+        inlineData: { mimeType: 'image/png', data: 'RAWDATA' },
+      });
+    });
+
     it('tool message with audio_url and video_url results yields independent parts', () => {
       const messages: Message[] = [
         {

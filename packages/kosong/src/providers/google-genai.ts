@@ -169,9 +169,14 @@ function convertMediaUrl(
     const data = url.slice(commaIndex + 1);
     const colonIndex = meta.indexOf(':');
     const semiIndex = meta.indexOf(';');
+    // A data URL may carry an explicit MIME type without a `;base64`
+    // parameter (e.g. `data:image/png,<raw>`), so end the MIME slice at the
+    // first `;` when present, otherwise at the end of the meta segment —
+    // requiring only the leading `:` and a non-empty type.
+    const mimeEnd = semiIndex !== -1 ? semiIndex : meta.length;
     const mimeType =
-      colonIndex !== -1 && semiIndex !== -1
-        ? meta.slice(colonIndex + 1, semiIndex)
+      colonIndex !== -1 && mimeEnd > colonIndex + 1
+        ? meta.slice(colonIndex + 1, mimeEnd)
         : fallbackMimeType;
     return { inlineData: { mimeType, data } };
   }
