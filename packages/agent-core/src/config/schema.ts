@@ -104,6 +104,12 @@ export const BackgroundConfigSchema = z.object({
 
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
 
+export const SubagentConfigSchema = z.object({
+  model: z.string().optional(),
+});
+
+export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
+
 export const ExperimentalConfigSchema = z.record(z.string(), z.boolean());
 
 export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
@@ -204,6 +210,7 @@ export const KimiConfigSchema = z.object({
   loopControl: LoopControlSchema.optional(),
   background: BackgroundConfigSchema.optional(),
   experimental: ExperimentalConfigSchema.optional(),
+  subagents: SubagentConfigSchema.optional(),
   telemetry: z.boolean().optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });
@@ -243,6 +250,7 @@ export const KimiConfigPatchSchema = z
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
     experimental: ExperimentalConfigPatchSchema.optional(),
+    subagents: SubagentConfigSchema.optional(),
     telemetry: z.boolean().optional(),
   })
   .strict();
