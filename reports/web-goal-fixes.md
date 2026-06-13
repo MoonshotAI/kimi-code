@@ -2,6 +2,8 @@
 
 > 分支 `feat/web`。每个任务一个 commit，下面按提交顺序记录前因后果。
 > 本轮共 15 个代码 commit（从 `c8b16e8e` 之后），全程 `vue-tsc` 0 错、`oxlint` 0 error、单测从 75 增至 88 全绿。
+>
+> 验收补充（2026-06-13）：后续验收发现 P1-9 和 P2-12 还各有一个明显缺口，已 autosquash 追加进最终 commit `90b11087` 和 `76d12cf6`；因此本报告中这两项及其后的旧 hash 以 `reports/web-goal-fixes-acceptance.md` 为准。
 
 ## 总览（commit ↔ 任务）
 
