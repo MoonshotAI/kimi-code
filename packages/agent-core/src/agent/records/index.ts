@@ -255,6 +255,7 @@ export class AgentRecords {
   findStaleToolCallIds(records: readonly AgentRecord[]): Set<string> {
     const stale = new Set<string>();
     const pendingByAssistant = new Map<string, Set<string>>();
+    let hasOpenToolExchange = false;
     for (const record of records) {
       if (record.type === 'context.append_loop_event') {
         const event = record.event;
@@ -263,23 +264,32 @@ export class AgentRecords {
             pendingByAssistant.set(event.stepUuid, new Set());
           }
           pendingByAssistant.get(event.stepUuid)!.add(event.toolCallId);
+          hasOpenToolExchange = true;
         } else if (event.type === 'tool.result') {
-          // Remove from all pending sets (result may belong to any assistant).
           for (const pending of pendingByAssistant.values()) {
             pending.delete(event.toolCallId);
           }
-        }
-      } else if (record.type === 'context.append_message' && record.message.role === 'user') {
-        // A user message ends the current turn.  Any still-pending
-        // tool_call_ids from previous turns are stale.  Deferred
-        // same-turn messages (skill reminders, system triggers) are
-        // NOT turn boundaries — their tool results are still valid.
-        for (const pending of pendingByAssistant.values()) {
-          for (const id of pending) {
-            stale.add(id);
+          // Check if the exchange is now closed.
+          hasOpenToolExchange = false;
+          for (const pending of pendingByAssistant.values()) {
+            if (pending.size > 0) {
+              hasOpenToolExchange = true;
+              break;
+            }
           }
         }
-        pendingByAssistant.clear();
+      } else if (record.type === 'context.append_message' && record.message.role === 'user') {
+        // A user message that arrives while a tool exchange is still open
+        // is a deferred same-turn message, not a turn boundary.  Only
+        // treat it as a turn boundary if the exchange is closed.
+        if (!hasOpenToolExchange) {
+          for (const pending of pendingByAssistant.values()) {
+            for (const id of pending) {
+              stale.add(id);
+            }
+          }
+          pendingByAssistant.clear();
+        }
       }
     }
     // Any remaining pending IDs at the end of records are also stale.
