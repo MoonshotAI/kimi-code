@@ -118,6 +118,8 @@ export class Agent {
   readonly fullCompaction: FullCompaction;
   readonly microCompaction: MicroCompaction;
   readonly context: ContextMemory;
+  /** Tool_call_ids from stale incomplete turns, identified during replay. */
+  staleToolCallIds: Set<string> = new Set();
   readonly config: ConfigState;
   readonly turn: TurnFlow;
   readonly injection: InjectionManager;
@@ -296,6 +298,7 @@ export class Agent {
 
   async resume(): Promise<{ warning?: string }> {
     const result = await this.records.replay();
+    this.staleToolCallIds = this.records.staleToolCallIds;
     this.goal.normalizeAfterReplay();
     await this.background.loadFromDisk();
     await this.background.reconcile();

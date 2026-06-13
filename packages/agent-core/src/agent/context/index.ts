@@ -245,6 +245,12 @@ export class ContextMemory {
         return;
       }
       case 'tool.call': {
+        // Skip stale tool_call_ids from previous incomplete turns.
+        // These are identified during replay pre-scan and would otherwise
+        // pollute pendingToolResultIds, causing deferred user messages.
+        if (this.agent.staleToolCallIds.has(event.toolCallId)) {
+          return;
+        }
         const openStep = this.openSteps.get(event.stepUuid);
         if (openStep === undefined) {
           throw new Error(
