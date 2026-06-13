@@ -532,12 +532,15 @@ export class BackgroundManager {
   private appendOutput(entry: ManagedTask, chunk: string): void {
     entry.outputSizeBytes += Buffer.byteLength(chunk, 'utf-8');
     entry.outputChunks.push(chunk);
-    // Enforce output cap: drop oldest chunks when over budget.
-    let total = entry.outputChunks.reduce((s, c) => s + c.length, 0);
+    // Enforce output cap: drop oldest chunks when over budget. Measure in
+    // bytes (matching MAX_OUTPUT_BYTES and entry.outputSizeBytes) — using
+    // string length would let multibyte output grow the ring buffer well past
+    // the byte cap.
+    let total = entry.outputChunks.reduce((s, c) => s + Buffer.byteLength(c, 'utf-8'), 0);
     while (total > MAX_OUTPUT_BYTES && entry.outputChunks.length > 1) {
       const removed = entry.outputChunks.shift();
       if (removed === undefined) break;
-      total -= removed.length;
+      total -= Buffer.byteLength(removed, 'utf-8');
     }
 
     const persistence = this.persistence;
