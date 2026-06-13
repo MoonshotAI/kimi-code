@@ -2,24 +2,14 @@
 <!-- TUI-inspired todo list: clean rows with status glyphs, strikethrough done,
      compact output, minimal chrome. Matches the terminal todo-panel style. -->
 <script setup lang="ts">
-import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TaskItem } from '../types';
 
-const props = defineProps<{ tasks: TaskItem[] }>();
+defineProps<{ tasks: TaskItem[] }>();
 
 const emit = defineEmits<{ cancel: [taskId: string] }>();
 
 const { t } = useI18n();
-
-const MAX_VISIBLE = 5;
-
-const visibleTasks = computed(() => {
-  if (props.tasks.length <= MAX_VISIBLE) return props.tasks;
-  return props.tasks.slice(0, MAX_VISIBLE);
-});
-
-const hiddenCount = computed(() => props.tasks.length - visibleTasks.value.length);
 
 function statusGlyph(state: string): string {
   switch (state) {
@@ -53,7 +43,7 @@ function statusClass(state: string): string {
 
       <template v-else>
         <div
-          v-for="task in visibleTasks"
+          v-for="task in tasks"
           :key="task.id"
           class="tp-row"
           :class="{ done: task.state === 'done', fail: task.state === 'fail' }"
@@ -73,10 +63,6 @@ function statusClass(state: string): string {
           <div v-if="task.output" class="tp-out">
             <div v-for="(line, i) in task.output" :key="i">{{ line }}</div>
           </div>
-        </div>
-
-        <div v-if="hiddenCount > 0" class="tp-more">
-          … +{{ hiddenCount }} more
         </div>
       </template>
     </div>
@@ -112,8 +98,12 @@ function statusClass(state: string): string {
   font-size: 11px;
 }
 
-/* List: no cards, just clean rows */
+/* List: no cards, just clean rows. Shows ALL tasks and scrolls internally once
+   they overflow the pane (no "+N more" cap) so nothing is silently hidden. */
 .tp-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -207,11 +197,6 @@ function statusClass(state: string): string {
 }
 .tp-out > div { white-space: pre; }
 
-.tp-more {
-  padding: 4px 0 4px 22px;
-  font-size: 11px;
-  color: var(--faint);
-}
 .tp-empty {
   padding: 24px 0;
   text-align: center;
