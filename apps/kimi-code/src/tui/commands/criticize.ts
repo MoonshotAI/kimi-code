@@ -1,6 +1,7 @@
 import { isKimiError } from '@moonshot-ai/kimi-code-sdk';
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { nextTranscriptId } from '../utils/transcript-id';
 import type { SlashCommandHost } from './dispatch';
 import { CriticSelectorComponent } from '../components/dialogs/criticize-selector';
 
@@ -69,6 +70,15 @@ async function runCritique(host: SlashCommandHost, modelAlias: string): Promise<
 
   try {
     const critique = await session.runCritique(context, modelAlias);
+
+    // Show the critique to the user in the transcript so they can read it
+    host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'assistant',
+      turnId: undefined,
+      renderMode: 'markdown',
+      content: `## Critique from /criticize\n\n${critique}`,
+    });
 
     // Append the critique as a system reminder so the main agent sees it
     await session.appendSystemReminder(

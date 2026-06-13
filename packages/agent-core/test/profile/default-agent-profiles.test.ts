@@ -33,6 +33,20 @@ describe('default agent profiles', () => {
     }
   });
 
+  it('enables the Memory tool on agent and coder profiles', () => {
+    expect(DEFAULT_AGENT_PROFILES['agent']?.tools ?? []).toContain('Memory');
+    expect(DEFAULT_AGENT_PROFILES['coder']?.tools ?? []).toContain('Memory');
+  });
+
+  it('keeps the critic profile read-only (no shell or write tools)', () => {
+    const criticTools = DEFAULT_AGENT_PROFILES['critic']?.tools ?? [];
+    expect(criticTools).not.toContain('Bash');
+    expect(criticTools).not.toContain('PowerShell');
+    expect(criticTools).not.toContain('Write');
+    expect(criticTools).not.toContain('Edit');
+    expect(criticTools).toContain('Memory');
+  });
+
   it('fails loudly when an embedded system prompt source is missing', () => {
     expect(() =>
       loadAgentProfilesFromSources(['profile/default/agent.yaml'], {

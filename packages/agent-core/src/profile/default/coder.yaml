@@ -20,4 +20,5 @@ tools:
   - FetchURL
   - Think
   - ToolSearch
+  - Memory
   - mcp__*
