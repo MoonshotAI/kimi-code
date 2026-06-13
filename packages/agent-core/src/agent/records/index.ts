@@ -269,9 +269,11 @@ export class AgentRecords {
             pending.delete(event.toolCallId);
           }
         }
-      } else if (record.type === 'context.append_message') {
+      } else if (record.type === 'context.append_message' && record.message.role === 'user') {
         // A user message ends the current turn.  Any still-pending
-        // tool_call_ids from previous turns are stale.
+        // tool_call_ids from previous turns are stale.  Deferred
+        // same-turn messages (skill reminders, system triggers) are
+        // NOT turn boundaries — their tool results are still valid.
         for (const pending of pendingByAssistant.values()) {
           for (const id of pending) {
             stale.add(id);
