@@ -11,8 +11,14 @@ export abstract class DynamicInjector {
 
   onContextCompacted(compactedCount: number): void {
     if (this.injectedAt !== null) {
+      // applyCompaction replaces the first `compactedCount` messages with a
+      // single summary at index 0, so a surviving injection (old index >=
+      // compactedCount) maps to new index >= 1. An injection that was inside
+      // the compacted prefix — including the last one (injectedAt ===
+      // compactedCount - 1, which yields 0) — was folded into the summary and
+      // must become null rather than pointing at the summary itself.
       const newInjectedAt = this.injectedAt - compactedCount + 1;
-      this.injectedAt = newInjectedAt >= 0 ? newInjectedAt : null;
+      this.injectedAt = newInjectedAt >= 1 ? newInjectedAt : null;
     }
   }
 

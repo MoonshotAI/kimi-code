@@ -37,6 +37,19 @@ class BoomInjector extends DynamicInjector {
   }
 }
 
+class ProbeInjector extends DynamicInjector {
+  override readonly injectionVariant = 'probe_test';
+  protected override getInjection(): string | undefined {
+    return undefined;
+  }
+  setInjectedAt(value: number | null): void {
+    (this as unknown as { injectedAt: number | null }).injectedAt = value;
+  }
+  getInjectedAt(): number | null {
+    return (this as unknown as { injectedAt: number | null }).injectedAt;
+  }
+}
+
 function installInjectors(manager: InjectionManager, injectors: DynamicInjector[]): void {
   (manager as unknown as { injectors: DynamicInjector[] }).injectors = injectors;
 }
@@ -110,5 +123,30 @@ describe('InjectionManager registration', () => {
     const injectors = (ctx.agent.injection as unknown as { injectors: DynamicInjector[] }).injectors;
 
     expect(injectors.some((injector) => injector instanceof TodoListReminderInjector)).toBe(true);
+  });
+});
+
+describe('DynamicInjector.onContextCompacted index remapping', () => {
+  it('remaps a surviving injection to its post-summary index', () => {
+    const ctx = testAgent();
+    const probe = new ProbeInjector(ctx.agent);
+    probe.setInjectedAt(5); // old index 5
+    probe.onContextCompacted(3); // first 3 messages folded into the summary at index 0
+    expect(probe.getInjectedAt()).toBe(3); // 5 - 3 + 1
+  });
+
+  it('nulls an injection folded into the summary, including the last compacted message', () => {
+    const ctx = testAgent();
+    // Boundary: injectedAt === compactedCount - 1 was previously remapped to 0
+    // (pointing at the summary) instead of null.
+    const last = new ProbeInjector(ctx.agent);
+    last.setInjectedAt(2);
+    last.onContextCompacted(3); // indices 0..2 compacted away
+    expect(last.getInjectedAt()).toBeNull();
+
+    const earlier = new ProbeInjector(ctx.agent);
+    earlier.setInjectedAt(0);
+    earlier.onContextCompacted(3);
+    expect(earlier.getInjectedAt()).toBeNull();
   });
 });
