@@ -37,6 +37,7 @@ tools:
   - NotebookEdit
   - LSP
   - PowerShell
+  - Memory
   - mcp__*
 
 subagents:
