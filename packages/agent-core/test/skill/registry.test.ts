@@ -98,6 +98,92 @@ describe('skill registry prompt rendering', () => {
 
 function makeRegistry(skills: readonly SkillDefinition[]): SessionSkillRegistry {
   const registry = new SessionSkillRegistry();
+
+describe('skill registry search', () => {
+  it('searchSkills returns relevant results by name and description', () => {
+    const registry = makeRegistry([
+      makeSkill('playwright-e2e', 'user', 'End-to-end testing with Playwright browser automation'),
+      makeSkill('docker-expert', 'user', 'Docker containerization and deployment'),
+      makeSkill('react-ui', 'user', 'React component patterns and hooks'),
+    ]);
+
+    const results = registry.searchSkills('playwright browser test');
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]!.name).toBe('playwright-e2e');
+  });
+
+  it('searchSkills finds by synonym expansion', () => {
+    const registry = makeRegistry([
+      makeSkill('container-build', 'user', 'Docker container build optimization'),
+      makeSkill('api-design', 'user', 'REST API design patterns'),
+    ]);
+
+    // "container" is a synonym of "docker"
+    const results = registry.searchSkills('container image build');
+    expect(results.some((r) => r.name === 'container-build')).toBe(true);
+  });
+
+  it('searchSkills returns empty for nonsense queries', () => {
+    const registry = makeRegistry([makeSkill('alpha', 'user', 'does things')]);
+    const results = registry.searchSkills('xyzzy plugh foobar');
+    expect(results.length).toBe(0);
+  });
+
+  it('searchSkills lazily rebuilds index after register()', () => {
+    const registry = new SkillRegistry();
+    registry.register(makeSkill('initial-skill', 'user', 'initial'));
+
+    const before = registry.searchSkills('initial');
+    expect(before.length).toBe(1);
+
+    registry.register(makeSkill('added-later', 'user', 'added after first search'));
+
+    const after = registry.searchSkills('added');
+    expect(after.length).toBe(1);
+    expect(after[0]!.name).toBe('added-later');
+  });
+});
+
+describe('getModelSkillListing tiers', () => {
+  it('uses legacy full listing for ≤80 skills (auto-detect)', () => {
+    const skills = Array.from({ length: 50 }, (_, i) =>
+      makeSkill(`skill-${String(i)}`, 'user', `Description ${String(i)}`),
+    );
+    const registry = makeRegistry(skills);
+
+    const listing = registry.getModelSkillListing();
+    expect(listing).toContain('DISREGARD');
+    expect(listing).toContain('Description');
+  });
+
+  it('uses compact listing for 81–300 skills (auto-detect)', () => {
+    const skills = Array.from({ length: 100 }, (_, i) =>
+      makeSkill(`skill-${String(i)}`, 'user', `Description ${String(i)}`),
+    );
+    const registry = makeRegistry(skills);
+
+    const listing = registry.getModelSkillListing();
+    expect(listing).toContain('100 registered skills');
+    expect(listing).toContain('search');
+    expect(listing).not.toContain('DISREGARD');
+    expect(listing).not.toContain('SKILL.md');
+  });
+
+  it('uses names-only listing for 300+ skills (auto-detect)', () => {
+    const skills = Array.from({ length: 400 }, (_, i) =>
+      makeSkill(`skill-${String(i)}`, 'user', `Description for skill ${String(i)}`),
+    );
+    const registry = makeRegistry(skills);
+
+    const listing = registry.getModelSkillListing();
+    expect(listing).toContain('400 registered skills');
+    expect(listing).not.toContain('Description for skill');
+    expect(listing).toContain('skill-0');
+  });
+});
+
+function makeRegistry(skills: readonly SkillDefinition[]): SkillRegistry {
+  const registry = new SkillRegistry();
   for (const skill of skills) registry.register(skill);
   return registry;
 }

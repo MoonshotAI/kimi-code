@@ -46,11 +46,20 @@ export class NestedSkillTooDeepError extends Error {
 export interface SkillToolInput {
   skill: string;
   args?: string;
+  /** "load" (default) loads a skill's full instructions; "search" searches the catalog. */
+  action?: 'load' | 'search';
+  /** Search query — required when action is "search". */
+  query?: string;
+  /** Max search results (default 10, max 20). */
+  limit?: number;
 }
 
 export const SkillToolInputSchema: z.ZodType<SkillToolInput> = z.object({
   skill: z.string(),
   args: z.string().optional(),
+  action: z.enum(['load', 'search']).optional(),
+  query: z.string().optional(),
+  limit: z.number().int().min(1).max(20).optional(),
 });
 
 export interface SkillToolOptions {
@@ -95,6 +104,32 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
   }
 
   private async execution(args: SkillToolInput): Promise<ExecutableToolResult> {
+    const action = args.action ?? 'load';
+
+    // ── Search action ──────────────────────────────────────────────
+    if (action === 'search') {
+      const query = args.query ?? args.skill;
+      if (!query || query.trim().length === 0) {
+        return errorResult('A search query is required. Provide "query" or "skill".');
+      }
+      const skills = this.agent.skills;
+      if (skills === null) {
+        return errorResult('No skills are registered.');
+      }
+      const results = skills.registry.searchSkills(query, args.limit ?? 10);
+      if (results.length === 0) {
+        return { output: `No skills found matching "${query}". Try broader keywords.` };
+      }
+      const lines = [`Found ${String(results.length)} skill(s) matching "${query}":`];
+      for (const r of results) {
+        const wt = r.whenToUse ? ` (When: ${r.whenToUse})` : '';
+        lines.push(`- ${r.name}: ${r.description}${wt}  [score: ${String(r.score)}]`);
+      }
+      lines.push('', 'Call again with action:"load" and the skill name to load its instructions.');
+      return { output: lines.join('\n') };
+    }
+
+    // ── Load action (original behaviour) ───────────────────────────
     // Recursion hard cap. Once `currentDepth` has reached
     // MAX_SKILL_QUERY_DEPTH, firing another Skill call would push the
     // child to depth+1 which violates the invariant. Throw a structured

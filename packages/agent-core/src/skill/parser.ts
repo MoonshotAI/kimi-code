@@ -1,3 +1,4 @@
+import { createReadStream } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'pathe';
 
@@ -7,6 +8,13 @@ import regexpEscape from 'regexp.escape';
 import type { SkillDefinition, SkillMetadata, SkillSource } from './types';
 import { isSupportedSkillType } from './types';
 import { escapeXmlTags } from '../utils/xml-escape';
+
+/**
+ * Sentinel stored in SkillDefinition.content when only frontmatter was
+ * parsed at startup.  renderSkillPrompt() checks for this to decide
+ * whether to lazy-load the full body from disk.
+ */
+export const LAZY_CONTENT_SENTINEL = '\u0000LAZY';
 
 export class FrontmatterError extends Error {
   constructor(message: string, cause?: unknown) {
@@ -77,6 +85,53 @@ export async function parseSkillFromFile(options: ParseSkillOptions): Promise<Sk
     throw new SkillParseError(`Failed to read ${options.skillMdPath}`, error);
   }
   return parseSkillText({ ...options, text });
+}
+
+/**
+ * Read only the frontmatter from a SKILL.md file, leaving `content` empty.
+ * The body is not read from disk — callers can load it later via
+ * `readFile` + `parseSkillText` when the full content is actually needed.
+ *
+ * This avoids loading the full body of thousands of SKILL files into memory
+ * at startup when only the index (name, description) is needed.
+ */
+export async function parseSkillMetaFromFile(options: ParseSkillOptions): Promise<SkillDefinition> {
+  const stream = createReadStream(options.skillMdPath, { encoding: 'utf8', highWaterMark: 4096 });
+  let buffer = '';
+  let fenceCount = 0;
+
+  try {
+    for await (const chunk of stream) {
+      buffer += chunk;
+      const fences = buffer.match(/^---\s*$/gm);
+      if (fences !== null && fences.length >= 2) {
+        fenceCount = 2;
+        break;
+      }
+    }
+  } finally {
+    stream.close();
+  }
+
+  if (fenceCount < 2) {
+    return parseSkillFromFile(options);
+  }
+
+  // M1 fix: find second fence with line-anchored regex (not indexOf)
+  const lines = buffer.split(/\r?\n/);
+  let offset = 0;
+  let fencesFound = 0;
+  for (const line of lines) {
+    if (/^---\s*$/.test(line)) {
+      fencesFound++;
+      if (fencesFound === 2) break;
+    }
+    offset += line.length + 1;
+  }
+
+  const frontmatterOnly = buffer.slice(0, offset + 3);
+  const result = parseSkillText({ ...options, text: frontmatterOnly });
+  return { ...result, content: LAZY_CONTENT_SENTINEL };
 }
 
 export function parseFrontmatter(text: string): ParsedFrontmatter {
