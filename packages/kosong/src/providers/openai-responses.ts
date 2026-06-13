@@ -734,6 +734,19 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
           }
           yield thinkPart;
         }
+        // Mirror the streaming `output_item.done` path: when there is no
+        // summary text but the item still carries encrypted reasoning, emit a
+        // single empty think part so the encrypted content the provider asked
+        // for (`include: reasoning.encrypted_content`) survives round-tripping
+        // into the next turn instead of being silently dropped.
+        if (outputItem.summary.length === 0 && outputItem.encryptedContent !== undefined) {
+          const thinkPart: StreamedMessagePart & { encrypted: string } = {
+            type: 'think',
+            think: '',
+            encrypted: outputItem.encryptedContent,
+          };
+          yield thinkPart;
+        }
       }
     }
   }

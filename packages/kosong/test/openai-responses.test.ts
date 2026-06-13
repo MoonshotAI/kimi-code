@@ -1192,6 +1192,31 @@ describe('OpenAIResponsesChatProvider', () => {
 
       expect(parts).toEqual([{ type: 'think', think: 'Thinking...' }]);
     });
+
+    it('non-stream reasoning with empty summary still preserves encrypted_content', async () => {
+      // Matches the streaming output_item.done path: an encrypted reasoning
+      // item with no summary text must still emit a think part carrying the
+      // encrypted content, so it survives round-tripping into the next turn.
+      const provider = createProvider();
+      (provider as any)._stream = false;
+      ((provider as any)._client.responses as unknown as Record<string, unknown>)['create'] = vi
+        .fn()
+        .mockResolvedValue({
+          id: 'resp_reason3',
+          output: [{ type: 'reasoning', encrypted_content: 'enc_empty_summary', summary: [] }],
+          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        });
+
+      const stream = await provider.generate(
+        '',
+        [],
+        [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] }],
+      );
+      const parts: StreamedMessagePart[] = [];
+      for await (const p of stream) parts.push(p);
+
+      expect(parts).toEqual([{ type: 'think', think: '', encrypted: 'enc_empty_summary' }]);
+    });
   });
 
   describe('provider property accessors', () => {
