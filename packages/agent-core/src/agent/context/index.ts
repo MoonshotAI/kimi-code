@@ -322,22 +322,32 @@ export class ContextMemory {
       }
     }
     this.pendingToolResultIds.clear();
-    if (orphanedIds.size === 0) return;
 
-    // Remove assistant messages with unanswered tool_calls, and any
-    // trailing tool messages whose IDs are orphaned.
-    this._history = this._history.filter((message) => {
-      if (
-        message.role === 'assistant' &&
-        message.toolCalls.some((tc) => orphanedIds.has(tc.id))
-      ) {
-        return false;
-      }
-      if (message.role === 'tool' && typeof message.toolCallId === 'string' && orphanedIds.has(message.toolCallId)) {
-        return false;
-      }
-      return true;
-    });
+    if (orphanedIds.size > 0) {
+      // Collect ALL tool_call_ids from assistants that have any orphaned call,
+      // so we remove the entire assistant AND all its sibling tool messages.
+      const toolCallIdsToRemove = new Set<string>();
+      this._history = this._history.filter((message) => {
+        if (message.role === 'assistant') {
+          const hasOrphaned = message.toolCalls.some((tc) => orphanedIds.has(tc.id));
+          if (hasOrphaned) {
+            // Remove this assistant and mark all its tool_call_ids for removal.
+            for (const tc of message.toolCalls) {
+              toolCallIdsToRemove.add(tc.id);
+            }
+            return false;
+          }
+          return true;
+        }
+        if (message.role === 'tool' && typeof message.toolCallId === 'string') {
+          return !toolCallIdsToRemove.has(message.toolCallId);
+        }
+        return true;
+      });
+    }
+
+    // Flush any deferred messages that were blocked by the stale pending set.
+    this.flushDeferredMessagesIfToolExchangeClosed();
   }
 
   private pushHistory(...messages: ContextMessage[]): void {

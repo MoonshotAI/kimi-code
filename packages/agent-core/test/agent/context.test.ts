@@ -815,55 +815,65 @@ describe('Agent context notification projection', () => {
     expect(messages[2]!.role).toBe('tool');
   });
 
-  it('cleanupOrphanedToolCalls clears stale pendingToolResultIds and removes orphaned assistant from history', () => {
+  it('cleanupOrphanedToolCalls removes entire assistant and sibling tool messages', () => {
     const ctx = testAgent();
     ctx.configure();
 
-    // Simulate a tool.call event that never got a tool.result (session killed).
+    // Simulate an assistant with two tool calls: call_A (orphaned) and call_B (answered).
     ctx.dispatch({
       type: 'context.append_loop_event',
-      event: { type: 'step.begin', uuid: 'step-orphan', turnId: '', step: 1 },
+      event: { type: 'step.begin', uuid: 'step-multi', turnId: '', step: 1 },
     });
     ctx.dispatch({
       type: 'context.append_loop_event',
       event: {
         type: 'tool.call',
-        uuid: 'tool-orphan',
-        stepUuid: 'step-orphan',
+        uuid: 'tool-a',
+        stepUuid: 'step-multi',
         turnId: '',
         step: 1,
-        toolCallId: 'orphan_call',
+        toolCallId: 'call_A',
         name: 'Bash',
         args: {},
       },
     });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'tool-b',
+        stepUuid: 'step-multi',
+        turnId: '',
+        step: 1,
+        toolCallId: 'call_B',
+        name: 'Read',
+        args: {},
+      },
+    });
+    // Only call_B got a result before the crash.
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'tool-b',
+        toolCallId: 'call_B',
+        result: { output: 'file content' },
+      },
+    });
 
-    // The orphaned tool call should block new messages.
-    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'follow up' }]);
-    const historyBefore = ctx.agent.context.history.filter(
-      (m) => m.role === 'user' && m.content.some((p) => p.type === 'text' && 'text' in p && p.text === 'follow up'),
-    );
-    expect(historyBefore).toHaveLength(0);
-
-    // The orphaned assistant should be in history before cleanup.
+    // The assistant and both tool messages should be in history.
     const assistantBefore = ctx.agent.context.history.filter((m) => m.role === 'assistant');
-    expect(assistantBefore.length).toBeGreaterThanOrEqual(1);
+    const toolsBefore = ctx.agent.context.history.filter((m) => m.role === 'tool');
+    expect(assistantBefore).toHaveLength(1);
+    expect(toolsBefore).toHaveLength(1);
 
-    // Cleanup should clear pendingToolResultIds AND remove orphaned assistant.
+    // Cleanup should remove the assistant AND the answered sibling tool message.
     ctx.agent.context.cleanupOrphanedToolCalls();
 
-    // After cleanup, new messages should go through.
-    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'after cleanup' }]);
-    const historyAfter = ctx.agent.context.history.filter(
-      (m) => m.role === 'user' && m.content.some((p) => p.type === 'text' && 'text' in p && p.text === 'after cleanup'),
-    );
-    expect(historyAfter).toHaveLength(1);
-
-    // The orphaned assistant should no longer be in history.
-    const assistantAfter = ctx.agent.context.history.filter(
-      (m) => m.role === 'assistant' && m.toolCalls.some((tc) => tc.id === 'orphan_call'),
-    );
+    const assistantAfter = ctx.agent.context.history.filter((m) => m.role === 'assistant');
+    const toolsAfter = ctx.agent.context.history.filter((m) => m.role === 'tool');
     expect(assistantAfter).toHaveLength(0);
+    expect(toolsAfter).toHaveLength(0);
   });
 });
 
