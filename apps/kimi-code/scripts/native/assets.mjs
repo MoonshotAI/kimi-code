@@ -17,9 +17,7 @@ export const NATIVE_TARGETS = Object.freeze(
     SUPPORTED_TARGETS.map((t) => {
       const deps = resolveTargetDeps(t);
       const clipboardTarget = deps.find((d) => d.id === 'clipboard-target')?.resolvedName;
-      const koffiNativeFile = deps.find((d) => d.id === 'koffi')?.nativeFileRelatives?.[0];
-      const koffiTriplet = koffiNativeFile?.match(/koffi\/([^/]+)\/koffi\.node$/)?.[1] ?? null;
-      return [t, { clipboardPackage: clipboardTarget, koffiTriplet }];
+      return [t, { clipboardPackage: clipboardTarget }];
     }),
   ),
 );
