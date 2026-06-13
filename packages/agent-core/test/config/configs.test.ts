@@ -389,6 +389,21 @@ removed_flag = true
     expect(text).not.toContain('default_permission_mode');
   });
 
+  it('serializes defaultSwarmMode when writing config', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'config.toml');
+    const config = parseConfigString('default_swarm_mode = true\n', configPath);
+
+    expect(config.defaultSwarmMode).toBe(true);
+
+    await writeConfigFile(configPath, config);
+
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('default_swarm_mode = true');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.defaultSwarmMode).toBe(true);
+  });
+
   it('rejects invalid TOML and invalid schema with KimiError(config.invalid)', () => {
     expectKimiErrorCode(
       () => parseConfigString('[[[', 'broken.toml'),

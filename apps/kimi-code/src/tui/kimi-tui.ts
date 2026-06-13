@@ -506,7 +506,7 @@ export class KimiTUI {
     }
     if (shouldReplayHistory) {
       await this.sessionReplay.hydrateFromReplay(this.requireSession());
-      this.applyStartupPermissionAndPlanToAppState();
+      this.applyStartupPermissionPlanAndSwarmToAppState();
     }
     const resumeState = this.session?.getResumeState();
     if (resumeState?.warning !== undefined) {
@@ -595,7 +595,7 @@ export class KimiTUI {
       model: startup.model,
       permission: startup.auto ? 'auto' : startup.yolo ? 'yolo' : undefined,
       planMode: startup.plan ? true : undefined,
-      swarmMode: this.state.appState.swarmMode ? true : undefined,
+      swarmMode: this.state.appState.swarmMode,
     };
 
     try {
@@ -663,7 +663,7 @@ export class KimiTUI {
     }
     await this.setSession(session);
     await this.syncRuntimeState(session);
-    this.applyStartupPermissionAndPlanToAppState();
+    this.applyStartupPermissionPlanAndSwarmToAppState();
     this.state.startupState = 'ready';
     return shouldReplayHistory;
   }
@@ -1177,7 +1177,7 @@ export class KimiTUI {
   // Re-apply startup flags that the user explicitly passed on the command line.
   // syncRuntimeState and session-replay hydration can both read stale persisted
   // values, so this guarantees the footer reflects the CLI intent.
-  private applyStartupPermissionAndPlanToAppState(): void {
+  private applyStartupPermissionPlanAndSwarmToAppState(): void {
     const { startup } = this.options;
     if (startup.auto) {
       this.setAppState({ permissionMode: 'auto' });
@@ -1186,6 +1186,9 @@ export class KimiTUI {
     }
     if (startup.plan) {
       this.setAppState({ planMode: true });
+    }
+    if (startup.swarm) {
+      this.setAppState({ swarmMode: true });
     }
   }
 
@@ -1960,7 +1963,7 @@ export class KimiTUI {
               }
               if (options.applyStartupModes === true) {
                 await this.applyStartupModesToResumedSession(this.requireSession());
-                this.applyStartupPermissionAndPlanToAppState();
+                this.applyStartupPermissionPlanAndSwarmToAppState();
               }
               this.hideSessionPicker();
             })

@@ -251,6 +251,7 @@ describe('KimiTUI startup', () => {
       workDir: '/tmp/proj-a',
       permission: 'yolo',
       planMode: true,
+      swarmMode: false,
     });
     expect(session.setApprovalHandler).toHaveBeenCalledOnce();
     expect(session.setQuestionHandler).toHaveBeenCalledOnce();
@@ -345,6 +346,7 @@ describe('KimiTUI startup', () => {
       workDir: '/tmp/proj-a',
       permission: undefined,
       planMode: undefined,
+      swarmMode: false,
     });
     expect(driver.state.appState.swarmMode).toBe(false);
   });
@@ -593,6 +595,27 @@ describe('KimiTUI startup', () => {
     expect(driver.state.appState.planMode).toBe(true);
   });
 
+  it('keeps --swarm in the footer after session replay hydration', async () => {
+    const session = makeSession({
+      id: 'ses-latest',
+      getResumeState: vi.fn(() => createResumeState({ permissionMode: 'manual', planMode: false })),
+    });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-latest' }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ continue: true, swarm: true }));
+
+    await expect(driver.init()).resolves.toBe(true);
+    await (
+      driver as unknown as {
+        finishStartup(shouldReplayHistory: boolean): Promise<void>;
+      }
+    ).finishStartup(true);
+
+    expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'manual');
+    expect(driver.state.appState.swarmMode).toBe(true);
+  });
+
   it('applies --auto permission when resuming an explicit session', async () => {
     let permission = 'manual';
     const session = makeSession({
@@ -682,6 +705,7 @@ describe('KimiTUI startup', () => {
       model: 'kimi-code/k2.5',
       permission: undefined,
       planMode: undefined,
+      swarmMode: false,
     });
   });
 
@@ -995,6 +1019,7 @@ describe('KimiTUI startup', () => {
       workDir: '/tmp/proj-a',
       permission: 'yolo',
       planMode: true,
+      swarmMode: false,
     });
     expect(createSession).toHaveBeenNthCalledWith(2, {
       workDir: '/tmp/proj-a',
