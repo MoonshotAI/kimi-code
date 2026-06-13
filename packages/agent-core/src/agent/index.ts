@@ -307,6 +307,9 @@ export class Agent {
     // mid-tool-call).  Without this, new user messages would be silently
     // deferred because `hasOpenToolExchange()` would remain true.
     this.context.cleanupOrphanedToolCalls();
+    // Clear stale IDs after cleanup so they don't affect live turns
+    // that may reuse the same toolCallIds.
+    this.staleToolCallIds = new Set();
     this.turn.finishResume();
     return result;
   }
