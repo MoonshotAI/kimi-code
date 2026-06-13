@@ -23,6 +23,7 @@ whenToUse: |
   Use this agent when you need a second pair of eyes on the main agent's work. Call it to review plans, code changes, or reasoning for flaws, hallucinations, and blind spots.
 tools:
   - Bash
+  - PowerShell
   - Read
   - ReadMediaFile
   - Glob
@@ -32,3 +33,5 @@ tools:
   - FetchURL
   - Think
   - ToolSearch
+  - Memory
+  - mcp__*
