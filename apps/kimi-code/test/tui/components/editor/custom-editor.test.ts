@@ -4,9 +4,13 @@ import type {
   AutocompleteSuggestions,
   TUI,
 } from '@earendil-works/pi-tui';
+import { CURSOR_MARKER } from '@earendil-works/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
-import { CustomEditor } from '#/tui/components/editor/custom-editor';
+import {
+  CustomEditor,
+  removeFakeCursorAtHardwareMarker,
+} from '#/tui/components/editor/custom-editor';
 
 function makeEditor(): CustomEditor {
   const tui = {
@@ -132,6 +136,31 @@ describe('CustomEditor Kitty key release handling', () => {
   });
 });
 
+describe('removeFakeCursorAtHardwareMarker', () => {
+  it('removes the rendered fake cursor and keeps the hardware cursor marker in place', () => {
+    const line = `before${CURSOR_MARKER}\u001B[7m \u001B[0mafter`;
+
+    expect(removeFakeCursorAtHardwareMarker(line)).toBe(`before${CURSOR_MARKER} after`);
+  });
+
+  it('renders a focused editor with hardware cursor positioning but no fake cursor block', () => {
+    const editor = makeEditor();
+    editor.focused = true;
+    editor.setText('test');
+
+    const output = editor.render(40).join('\n');
+
+    expect(output).toContain(CURSOR_MARKER);
+    expect(output).not.toContain('\u001B[7m');
+  });
+
+  it('leaves unrelated marker-like lines untouched', () => {
+    const line = `before${CURSOR_MARKER}after`;
+
+    expect(removeFakeCursorAtHardwareMarker(line)).toBe(line);
+  });
+});
+
 describe('CustomEditor paste marker expansion', () => {
   const PASTE_START = '\x1b[200~';
   const PASTE_END = '\x1b[201~';
@@ -199,7 +228,7 @@ describe('CustomEditor paste marker expansion', () => {
 
     expect(editor.getText()).toMatch(/\[paste #1/);
 
-    editor.handleInput('\x16');
+    editor.handleInput(process.platform === 'win32' ? '\x1b[118;3u' : '\x16');
 
     expect(editor.getText()).not.toContain('[paste #');
     expect(editor.getText()).toContain(longText);

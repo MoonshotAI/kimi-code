@@ -4,6 +4,7 @@
 
 import {
   Editor,
+  CURSOR_MARKER,
   isKeyRelease,
   matchesKey,
   Key,
@@ -23,6 +24,8 @@ const ANSI_SGR = /\u001B\[[0-9;]*m/g;
 const PASTE_MARKER_RE = /\[paste #(\d+)(?: (?:\+\d+ lines|\d+ chars))?\]/g;
 const BRACKET_PASTE_START = '\u001B[200~';
 const BRACKET_PASTE_END = '\u001B[201~';
+const FAKE_CURSOR_START = '\u001B[7m';
+const FAKE_CURSOR_END = '\u001B[0m';
 
 // Kitty keyboard protocol CSI-u sequence: ESC [ keycode ; modifier[:eventType] u.
 // We intentionally match only the simple two-field form — enough to rewrite
@@ -239,9 +242,10 @@ export class CustomEditor extends Editor {
     // overwrite it (e.g. plan-mode / slash-context highlight via
     // `editor.borderColor = chalk.hex(primary)`), so we route corners and
     // side bars through the same hook to stay in sync.
-    return wrapWithSideBorders(lines, (s) => this.borderColor(s), {
+    const wrapped = wrapWithSideBorders(lines, (s) => this.borderColor(s), {
       connectedAbove: this.connectedAbove && !this.borderHighlighted,
     });
+    return wrapped.map(removeFakeCursorAtHardwareMarker);
   }
 
   override handleInput(data: string): void {
@@ -360,6 +364,25 @@ export class CustomEditor extends Editor {
 
     super.handleInput(normalized);
   }
+}
+
+export function removeFakeCursorAtHardwareMarker(line: string): string {
+  const markerStart = line.indexOf(CURSOR_MARKER);
+  if (markerStart < 0) return line;
+
+  const fakeCursorStart = markerStart + CURSOR_MARKER.length;
+  if (!line.startsWith(FAKE_CURSOR_START, fakeCursorStart)) return line;
+
+  const fakeCursorEnd = line.indexOf(
+    FAKE_CURSOR_END,
+    fakeCursorStart + FAKE_CURSOR_START.length,
+  );
+  if (fakeCursorEnd < 0) return line;
+
+  const cursorTextStart = fakeCursorStart + FAKE_CURSOR_START.length;
+  const cursorText = line.slice(cursorTextStart, fakeCursorEnd);
+  const afterFakeCursor = fakeCursorEnd + FAKE_CURSOR_END.length;
+  return line.slice(0, fakeCursorStart) + cursorText + line.slice(afterFakeCursor);
 }
 
 /**
