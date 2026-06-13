@@ -509,6 +509,21 @@ function connectEventsIfNeeded(): void {
       // is kept, only a marker line records the compaction).
       applyEvent(appEvent, meta.sessionId, meta.seq);
 
+      // The "sending" moon is an in-flight placeholder for the dead air BEFORE
+      // the reply streams. Clear it the instant the assistant produces anything
+      // — the first thinking/text token (assistantDelta) or a tool-use the turn
+      // opens with (messageUpdated) — so the moon yields to the live stream
+      // instead of lingering beside it until the turn ends.
+      if (
+        (appEvent.type === 'assistantDelta' || appEvent.type === 'messageUpdated') &&
+        rawState.sendingBySession[appEvent.sessionId]
+      ) {
+        rawState.sendingBySession = {
+          ...rawState.sendingBySession,
+          [appEvent.sessionId]: false,
+        };
+      }
+
       // Turn-end cleanup for the session the event belongs to — including
       // sessions running in the background (see onSessionIdle).
       if (
