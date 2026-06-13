@@ -308,29 +308,19 @@ export class ContextMemory {
    * provider on the next turn, causing a 400 error.
    */
   cleanupOrphanedToolCalls(): void {
-    // Build a set of tool_call_ids that have a matching tool result
-    // ANYWHERE in history. This is used only for the initial pending set
-    // cleanup — the per-assistant check below uses positional matching.
-    const answeredIds = new Set<string>();
-    for (const message of this._history) {
-      if (message.role === 'tool' && typeof message.toolCallId === 'string') {
-        answeredIds.add(message.toolCallId);
-      }
-    }
-
     // Clear stale pendingToolResultIds.
     this.pendingToolResultIds.clear();
 
     // Find assistant messages that have unanswered tool_calls.
     // Check positionally: a tool_call_id is "answered" only if there
-    // is a tool result AFTER the assistant in history. This prevents
-    // false matches when toolCallIds are reused across turns.
+    // is a tool result AFTER the assistant in history, before the next
+    // assistant. This prevents false matches when toolCallIds are reused
+    // across turns.
     const assistantsToRemove = new Set<number>();
     for (let i = 0; i < this._history.length; i++) {
       const message = this._history[i];
       if (message === undefined || message.role !== 'assistant' || message.toolCalls.length === 0) continue;
 
-      // Check if every tool_call has a result AFTER this assistant.
       const allAnswered = message.toolCalls.every((tc) => {
         for (let j = i + 1; j < this._history.length; j++) {
           const later = this._history[j];
@@ -346,21 +336,25 @@ export class ContextMemory {
     }
 
     if (assistantsToRemove.size > 0) {
-      // Collect ALL tool_call_ids from assistants being removed.
-      const toolCallIdsToRemove = new Set<string>();
+      // Build a set of indices to remove: each removed assistant AND all
+      // tool messages that follow it (up to the next assistant or end of
+      // history). This avoids globally removing tool messages by ID, which
+      // could incorrectly remove valid tool results from earlier turns
+      // when toolCallIds are reused.
+      const indicesToRemove = new Set<number>();
       for (const idx of assistantsToRemove) {
-        for (const tc of this._history[idx]!.toolCalls) {
-          toolCallIdsToRemove.add(tc.id);
+        indicesToRemove.add(idx);
+        // Remove tool messages after this assistant up to the next assistant.
+        for (let j = idx + 1; j < this._history.length; j++) {
+          const later = this._history[j];
+          if (later !== undefined && later.role === 'assistant') break;
+          if (later !== undefined && later.role === 'tool') {
+            indicesToRemove.add(j);
+          }
         }
       }
 
-      this._history = this._history.filter((message, index) => {
-        if (assistantsToRemove.has(index)) return false;
-        if (message.role === 'tool' && typeof message.toolCallId === 'string') {
-          return !toolCallIdsToRemove.has(message.toolCallId);
-        }
-        return true;
-      });
+      this._history = this._history.filter((_, index) => !indicesToRemove.has(index));
     }
 
     // Flush any deferred messages that were blocked by the stale pending set.
