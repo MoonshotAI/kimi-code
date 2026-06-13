@@ -52,6 +52,16 @@ jobs:
       - name: Build packages
         run: pnpm build
 
+      - name: Build plugin marketplace
+        run: pnpm run build:plugin-marketplace
+
+      - name: Upload plugin marketplace artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-marketplace
+          path: plugins/cdn
+          retention-days: 7
+
       - name: Create Release Pull Request or Publish to npm
         id: changesets
         uses: changesets/action@v1
@@ -128,3 +138,33 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
         run: gh release upload "$RELEASE_TAG" dist-native-release/* --clobber
+
+  publish-plugin-marketplace:
+    name: Publish plugin marketplace
+    needs: release
+    if: needs.release.outputs.packages_published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download plugin marketplace artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: plugin-marketplace
+          path: dist-plugin-marketplace
+          merge-multiple: true
+
+      - name: Upload plugin marketplace to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
+        run: |
+          # The artifact contains files directly under dist-plugin-marketplace/
+          cd dist-plugin-marketplace
+          gh release upload "$RELEASE_TAG" marketplace.json --clobber
+          find . -name "*.zip" -exec gh release upload "$RELEASE_TAG" {} --clobber \;
+          cd ..
+          # Also upload as a zip archive for convenience
+          zip -r plugin-marketplace.zip dist-plugin-marketplace
+          gh release upload "$RELEASE_TAG" plugin-marketplace.zip --clobber
