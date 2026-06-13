@@ -6,11 +6,12 @@ A sub-agent receives a task description from the main Agent, works in its own is
 
 ## Built-in Sub-Agents
 
-Kimi Code CLI includes three built-in sub-agents, ready to use out of the box, each aimed at a different task shape:
+Kimi Code CLI includes four built-in sub-agents, ready to use out of the box, each aimed at a different task shape:
 
 - **`coder`**: The default sub-agent — a general-purpose software engineering assistant that can read and write files, execute commands, search code, and land concrete changes.
 - **`explore`**: Dedicated to codebase exploration; performs read-only operations only and does not modify any files. Ideal for quickly searching, reading, and summarizing a repository without touching files.
 - **`plan`**: Dedicated to implementation planning and architecture design; even shell commands are not available, keeping the focus on "figuring out how to do something" rather than "actually doing it."
+- **`critic`**: Dedicated to reviewing the main agent's work for flaws, hallucinations, missing edge cases, security issues, and alternative approaches. Invoked manually via the `/criticize` slash command — not dispatched automatically by the main agent.
 
 ## How to Invoke
 

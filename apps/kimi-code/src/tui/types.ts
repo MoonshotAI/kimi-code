@@ -48,6 +48,8 @@ export interface AppState {
   mcpServersSummary: string | null;
   /** Force-MCP mode state: when enabled, all connected MCP tools are active. */
   forceMcp?: { enabled: boolean; previousActiveTools: readonly string[] } | undefined;
+  /** Critic model configuration: the model alias used for /criticize subagent. */
+  criticConfig?: { modelAlias: string } | undefined;
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
 }

@@ -54,6 +54,8 @@ In Plan mode the agent first outputs an action plan and waits for your approval 
 
 After producing a plan the agent pauses for your review — you can approve it, reject it, or ask for revisions. Exiting Plan mode always requires your confirmation, even if YOLO mode is also active.
 
+Before finalizing a plan, you can use `/criticize` to spawn a dedicated critic sub-agent that analyzes the plan for flaws, hallucinations, and edge cases. The critique is injected back into context, and the agent can review, rebut, or accept each point before you approve the plan.
+
 ### YOLO / Auto mode
 
 **YOLO mode** (`/yolo`) skips the approval confirmation for almost all tool calls, making it suitable for batch tasks you know are safe. The one exception is the exit-confirmation for Plan mode.

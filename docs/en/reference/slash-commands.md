@@ -50,6 +50,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/swarm on\|off` | — | Turn swarm mode on or off without sending a prompt. | Yes |
 | `/swarm <task>` | — | Turn swarm mode on, then send `<task>` as a normal prompt. If the turn completes normally, swarm mode turns off automatically. In `manual` permission mode, Kimi Code asks whether to switch to `auto` or `yolo` before starting. | No |
 | `/forcemcp [on\|off]` | — | Toggle force-MCP mode. While on, all connected MCP tools are activated and the model is reminded to use only the ones that add context. Run `/forcemcp off` (or toggle again) to restore the original active tool set. | Yes |
+| `/criticize` | `/critique` | Spawn a dedicated critic sub-agent that analyzes the main agent's work for flaws, hallucinations, edge cases, and alternative approaches. The critique is injected back into context so the main agent can review, rebut, or accept each point. In plan mode, it gathers the current plan content for analysis. If no critic model is configured yet, a model picker dialog opens first. | Yes |
 | `/goal [...]` | — | Start or manage an autonomous goal | See below |
 
 ::: warning

@@ -342,6 +342,8 @@ export interface AgentAPI {
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
   startBtw: (payload: EmptyPayload) => string;
+  runCritique: (payload: { context: string; modelAlias: string }) => string;
+  appendSystemReminder: (payload: { text: string; kind?: string; name?: string }) => void;
   createGoal: (payload: CreateGoalPayload) => GoalSnapshot;
   getGoal: (payload: EmptyPayload) => GoalToolResult;
   pauseGoal: (payload: EmptyPayload) => GoalSnapshot;

@@ -432,6 +432,13 @@ export class Agent {
         this.skills.activate(payload);
       },
       startBtw: () => this.subagentHost!.startBtw(),
+      runCritique: (payload) => this.subagentHost!.runCritique(payload.context, payload.modelAlias),
+      appendSystemReminder: (payload) => {
+        this.context.appendSystemReminder(payload.text, {
+          kind: 'system_trigger',
+          name: payload.name ?? 'system',
+        });
+      },
       createGoal: (payload) => this.goal.createGoal(payload),
       getGoal: () => this.goal.getGoal(),
       pauseGoal: () => this.goal.pauseGoal(),

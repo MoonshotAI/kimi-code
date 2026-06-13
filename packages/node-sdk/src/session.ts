@@ -128,6 +128,16 @@ export class Session {
     return this.rpc.startBtw({ sessionId: this.id });
   }
 
+  async appendSystemReminder(text: string, options?: { kind?: string; name?: string }): Promise<void> {
+    this.ensureOpen();
+    return this.rpc.appendSystemReminder({ sessionId: this.id, text, kind: options?.kind, name: options?.name });
+  }
+
+  async runCritique(context: string, modelAlias: string): Promise<string> {
+    this.ensureOpen();
+    return this.rpc.runCritique({ sessionId: this.id, context, modelAlias });
+  }
+
   async cancel(): Promise<void> {
     this.ensureOpen();
     await this.rpc.cancel({ sessionId: this.id });

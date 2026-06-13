@@ -208,6 +208,14 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return (await this.getAgent(agentId)).startBtw(payload);
   }
 
+  async runCritique({ agentId, ...payload }: AgentScopedPayload<{ context: string; modelAlias: string }>): Promise<string> {
+    return (await this.getAgent(agentId)).runCritique(payload);
+  }
+
+  async appendSystemReminder({ agentId, ...payload }: AgentScopedPayload<{ text: string; kind?: string; name?: string }>): Promise<void> {
+    return (await this.getAgent(agentId)).appendSystemReminder(payload);
+  }
+
   async createGoal({ agentId, ...payload }: AgentScopedPayload<CreateGoalPayload>) {
     return (await this.getAgent(agentId)).createGoal(payload);
   }

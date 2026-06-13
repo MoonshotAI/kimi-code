@@ -187,6 +187,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     goal: null,
     mcpServersSummary: null,
     forceMcp: undefined,
+    criticConfig: undefined,
     banner: undefined,
   };
 }

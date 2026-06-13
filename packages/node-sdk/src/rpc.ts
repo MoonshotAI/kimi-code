@@ -265,6 +265,23 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async appendSystemReminder(input: SessionIdRpcInput & { text: string; kind?: string; name?: string }): Promise<void> {
+    const agentId = this.interactiveAgentId;
+    const rpc = await this.getRpc();
+    return rpc.appendSystemReminder({ sessionId: input.sessionId, agentId, text: input.text, kind: input.kind, name: input.name });
+  }
+
+  async runCritique(input: SessionIdRpcInput & { context: string; modelAlias: string }): Promise<string> {
+    const agentId = this.interactiveAgentId;
+    const rpc = await this.getRpc();
+    return rpc.runCritique({
+      sessionId: input.sessionId,
+      agentId,
+      context: input.context,
+      modelAlias: input.modelAlias,
+    });
+  }
+
   async cancel(input: SessionIdRpcInput): Promise<void> {
     const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();

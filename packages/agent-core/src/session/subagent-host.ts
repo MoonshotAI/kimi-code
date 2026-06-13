@@ -242,6 +242,41 @@ export class SessionSubagentHost {
     return id;
   }
 
+  /**
+   * Run a critic subagent that analyzes the main agent's work.
+   * Creates a subagent with the 'critic' profile, feeds it the conversation
+   * context, and returns the structured critique.
+   */
+  async runCritique(context: string, modelAlias: string): Promise<string> {
+    const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
+    const profile = this.resolveProfile(parent, 'critic');
+    const { id, agent: child } = await this.session.createAgent(
+      {
+        type: 'sub',
+        generate: parent.rawGenerate,
+        persistence: new InMemoryAgentRecordPersistence(),
+      },
+      { parentAgentId: this.ownerAgentId, profile, persistMetadata: false },
+    );
+
+    await this.configureChild(parent, child, profile, modelAlias);
+
+    const signal = new AbortController().signal;
+    const prompt = `You are a critic. Analyze the following conversation context for flaws, hallucinations, missing edge cases, security issues, and alternative approaches. Be thorough and constructive.\n\n${context}`;
+
+    const turnId = child.turn.prompt(
+      [{ type: 'text', text: prompt }],
+      SUBAGENT_PROMPT_ORIGIN,
+    );
+    if (turnId === null) {
+      throw new Error('Critic subagent could not start a turn');
+    }
+    await runChildTurnToCompletion(child, signal);
+
+    const result = lastAssistantText(child);
+    return result;
+  }
+
   cancelAll(reason: unknown = userCancellationReason()): void {
     const foregroundChildren = Array.from(this.activeChildren).filter(
       ([, child]) => !child.runInBackground,

@@ -46,3 +46,5 @@ subagents:
     description: Fast codebase exploration with prompt-enforced read-only behavior.
   plan:
     description: Read-only implementation planning and architecture design.
+  critic:
+    description: Critical reviewer that analyzes work for flaws and hallucinations.

@@ -43,6 +43,7 @@ import {
   showSettingsSelector,
   showSpiceupPicker,
 } from './config';
+import { handleCriticizeCommand } from './criticize';
 import { handleForceMcpCommand } from './force-mcp';
 import { handleGoalCommand } from './goal';
 import { handleProviderCommand } from './provider';
@@ -342,6 +343,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'logout':
       await handleLogoutCommand(host);
+      return;
+    case 'criticize':
+      await handleCriticizeCommand(host, args);
       return;
     case 'undo':
       await handleUndoCommand(host, args);

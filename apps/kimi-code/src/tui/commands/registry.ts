@@ -117,6 +117,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'criticize',
+    aliases: ['critique'],
+    description: 'Critique the AI work for flaws and hallucinations',
+    priority: 90,
+    availability: 'always',
+  },
+  {
     name: 'btw',
     aliases: [],
     description: 'Ask a forked side agent a question',
