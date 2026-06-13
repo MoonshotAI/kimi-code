@@ -49,8 +49,12 @@ export function analyzeContextContent(lines: readonly string[]): ContextContent 
     } catch {
       continue;
     }
-    if (typeof parsed !== 'object' || parsed === null) continue;
+    // A line that JSON.parse accepts has "parsed" per the corrupt contract
+    // above, even when it is a scalar/array rather than an object. Mark it
+    // before the shape check so an all-valid-JSON-but-no-object context is
+    // classified 'empty' (cleared session), not 'corrupt' (disk damage).
     hadParseableLine = true;
+    if (typeof parsed !== 'object' || parsed === null) continue;
     const role = (parsed as Record<string, unknown>)['role'];
     if (typeof role === 'string' && USABLE_ROLES.has(role)) return 'real';
   }

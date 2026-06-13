@@ -170,4 +170,12 @@ describe('analyzeContextContent', () => {
       ]),
     ).toBe('empty');
   });
+
+  it("'empty' (not 'corrupt') when lines are valid JSON scalars/arrays, not objects", () => {
+    // These lines parse successfully, so they are not "disk damage". Per the
+    // corrupt contract (every non-blank line *failed to parse*), they must be
+    // classified 'empty', not 'corrupt'.
+    expect(analyzeContextContent(['42', '"hi"', 'true'])).toBe('empty');
+    expect(analyzeContextContent(['[]'])).toBe('empty');
+  });
 });
