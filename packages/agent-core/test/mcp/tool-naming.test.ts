@@ -43,6 +43,11 @@ describe('qualifyMcpToolName', () => {
     const name = qualifyMcpToolName(server, tool);
     expect(name.length).toBeLessThanOrEqual(64);
     expect(name.startsWith('mcp__')).toBe(true);
+    // The suffix must be a deterministic 8-char lowercase-hex hash. `Math.imul`
+    // yields a signed int, so a negative hash must not leak a `-` sign (which
+    // would also make the suffix 9 chars). These inputs hash negative.
+    const suffix = name.slice(name.lastIndexOf('_') + 1);
+    expect(suffix).toMatch(/^[0-9a-f]{8}$/);
     // Same input → same output (stable hash).
     expect(qualifyMcpToolName(server, tool)).toBe(name);
   });

@@ -45,5 +45,9 @@ function stableHash8(input: string): string {
     hash ^= input.codePointAt(i)!;
     hash = Math.trunc(Math.imul(hash, 0x01000193));
   }
-  return hash.toString(16).padStart(8, '0');
+  // `Math.imul` yields a signed 32-bit int, so coerce to unsigned before
+  // hex-encoding — otherwise a negative hash renders as a 9-char `-xxxxxxxx`
+  // suffix (the `-` is not a hex digit), breaking the documented 8-char hash.
+  const unsigned = hash < 0 ? hash + 0x1_0000_0000 : hash;
+  return unsigned.toString(16).padStart(8, '0');
 }
