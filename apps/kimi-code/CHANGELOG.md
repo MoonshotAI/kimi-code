@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code
 
+## 0.14.3
+
+### Patch Changes
+
+- [#713](https://github.com/MoonshotAI/kimi-code/pull/713) [`f874251`](https://github.com/MoonshotAI/kimi-code/commit/f874251288927243a9b9d4bfd546e8c17754d566) - Refresh provider model metadata before opening the model picker.
+
 ## 0.14.2
 
 ### Patch Changes
