@@ -3362,8 +3362,10 @@ command = "vim"
 
     driver.handleUserInput('/model turbo');
 
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
     const picker = driver.state.editorContainer.children[0];
-    expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
     const pickerOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
     expect(pickerOutput).toMatch(/Kimi K2\s+Kimi Code ← current/);
     expect(pickerOutput).toMatch(/❯ Kimi Turbo\s+Kimi Code/);
@@ -3411,8 +3413,10 @@ command = "vim"
 
     driver.handleUserInput('/model k2');
 
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
     const picker = driver.state.editorContainer.children[0];
-    expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
     (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
@@ -3423,6 +3427,101 @@ command = "vim"
     });
     expect(session.setModel).not.toHaveBeenCalled();
     expect(session.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('refreshes only OAuth provider models before opening /model picker', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Old Kimi K2',
+            capabilities: ['thinking'],
+          },
+        },
+      })),
+    });
+    const tui = driver as unknown as KimiTUI;
+    const refreshProviderModels = vi
+      .spyOn(tui.authFlow, 'refreshProviderModels')
+      .mockRejectedValue(new Error('full provider refresh should not run'));
+    const refreshOAuthProviderModels = vi.fn(async () => {
+      await Promise.resolve();
+      tui.setAppState({
+        availableModels: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Fresh Kimi K2',
+            capabilities: ['thinking'],
+          },
+        },
+      });
+      return { changed: [], unchanged: ['managed:kimi-code'], failed: [] };
+    });
+    (
+      tui.authFlow as unknown as {
+        refreshOAuthProviderModels: typeof refreshOAuthProviderModels;
+      }
+    ).refreshOAuthProviderModels = refreshOAuthProviderModels;
+
+    driver.handleUserInput('/model');
+
+    await vi.waitFor(() => {
+      const picker = driver.state.editorContainer.children[0];
+      expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
+      const output = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
+      expect(output).toContain('Fresh Kimi K2');
+      expect(output).not.toContain('Old Kimi K2');
+    });
+    expect(refreshOAuthProviderModels).toHaveBeenCalledOnce();
+    expect(refreshProviderModels).not.toHaveBeenCalled();
+  });
+
+  it('opens /model picker after 2s when OAuth refresh is still pending', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+        },
+      })),
+    });
+    const tui = driver as unknown as KimiTUI;
+    const refreshOAuthProviderModels = vi.fn(() => new Promise<never>(() => {}));
+    (
+      tui.authFlow as unknown as {
+        refreshOAuthProviderModels: typeof refreshOAuthProviderModels;
+      }
+    ).refreshOAuthProviderModels = refreshOAuthProviderModels;
+
+    vi.useFakeTimers();
+    try {
+      driver.handleUserInput('/model');
+      await Promise.resolve();
+
+      expect(refreshOAuthProviderModels).toHaveBeenCalledOnce();
+      expect(driver.state.editorContainer.children[0]).not.toBeInstanceOf(TabbedModelSelectorComponent);
+
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(driver.state.editorContainer.children[0]).not.toBeInstanceOf(TabbedModelSelectorComponent);
+
+      await vi.advanceTimersByTimeAsync(1);
+      const picker = driver.state.editorContainer.children[0];
+      expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
+      const output = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
+      expect(output).toContain('Kimi K2');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('enables search in the shared model selector helper', async () => {

@@ -273,7 +273,7 @@ async function handleBuiltInSlashCommand(
       await handleThemeCommand(host, args);
       return;
     case 'model':
-      handleModelCommand(host, args);
+      await handleModelCommand(host, args);
       return;
     case 'provider':
       await handleProviderCommand(host);
