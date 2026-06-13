@@ -117,16 +117,19 @@ export async function parseSkillMetaFromFile(options: ParseSkillOptions): Promis
     return parseSkillFromFile(options);
   }
 
-  // M1 fix: find second fence with line-anchored regex (not indexOf)
-  const lines = buffer.split(/\r?\n/);
-  let offset = 0;
+  // M1 fix: find second fence in the original buffer to handle CRLF correctly.
+  // split(/\r?\n/) strips \r\n as one separator but offset counting must
+  // account for the original byte positions.
   let fencesFound = 0;
+  let offset = 0;
+  const lines = buffer.split('\n');
   for (const line of lines) {
-    if (/^---\s*$/.test(line)) {
+    const trimmed = line.endsWith('\r') ? line.slice(0, -1) : line;
+    if (/^---\s*$/.test(trimmed)) {
       fencesFound++;
       if (fencesFound === 2) break;
     }
-    offset += line.length + 1;
+    offset += line.length + 1; // +1 for the \n that split removed
   }
 
   const frontmatterOnly = buffer.slice(0, offset + 3);

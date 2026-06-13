@@ -99,7 +99,9 @@ describe('SkillTool metadata and schema', () => {
     });
     expect(SkillToolInputSchema.safeParse({ skill: 'commit' }).success).toBe(true);
     expect(SkillToolInputSchema.safeParse({ skill: 'commit', args: '-m fix' }).success).toBe(true);
-    expect(SkillToolInputSchema.safeParse({}).success).toBe(false);
+    // skill is optional — empty object is valid for search-only calls
+    expect(SkillToolInputSchema.safeParse({}).success).toBe(true);
+    expect(SkillToolInputSchema.safeParse({ action: 'search', query: 'test' }).success).toBe(true);
     expect(MAX_SKILL_QUERY_DEPTH).toBe(3);
   });
 });
