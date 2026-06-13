@@ -1994,7 +1994,7 @@ export class ToolCallComponent extends Container {
     }
     if (typeof parsed !== 'object' || parsed === null) return false;
 
-    const accent = (text: string) => currentTheme.fg('primary', text);
+    const answerArrow = (text: string) => currentTheme.italicFg('textDim', text);
 
     const answers = (parsed as { answers?: unknown }).answers;
     const note = (parsed as { note?: unknown }).note;
@@ -2012,7 +2012,7 @@ export class ToolCallComponent extends Container {
     for (const [question, answer] of Object.entries(answers as Record<string, unknown>)) {
       const answerText = typeof answer === 'string' ? answer : JSON.stringify(answer);
       this.addChild(new Text(`  ${currentTheme.dim('Q')}  ${question}`, 0, 0));
-      this.addChild(new Text(`  ${accent('→')}  ${answerText}`, 0, 0));
+      this.addChild(new Text(`    ${answerArrow('→')}  ${answerText}`, 0, 0));
     }
     return true;
   }
