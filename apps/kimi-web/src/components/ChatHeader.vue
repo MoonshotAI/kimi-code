@@ -292,8 +292,9 @@ function startArchive(): void {
       <span>PR #{{ pr.number }} · {{ pr.state }}</span>
     </button>
 
-    <!-- Open workspace in an external app (style + behaviour mirrors kimi-cli/web). -->
-    <OpenInMenu v-if="sessionId" :work-dir="workspaceRoot" @open-in-app="(app) => emit('openInApp', app)" />
+    <!-- Open workspace in an external app (style + behaviour mirrors kimi-cli/web).
+         Temporarily hidden while the feature is being refined. -->
+    <OpenInMenu v-if="sessionId && false" :work-dir="workspaceRoot" @open-in-app="(app) => emit('openInApp', app)" />
   </header>
 </template>
 
