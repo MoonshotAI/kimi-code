@@ -37,6 +37,7 @@ export interface ApprovalRequest {
   toolCallId: string;
   toolName: string;
   action: string;
+  rawInput?: unknown;
   display: ToolInputDisplay;
 }
 

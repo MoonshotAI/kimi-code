@@ -152,6 +152,7 @@ export class PermissionManager {
             toolCallId: id,
             toolName: name,
             action,
+            rawInput: context.args,
             display,
           },
           { signal },

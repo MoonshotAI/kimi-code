@@ -218,7 +218,7 @@ describe('Agent permission', () => {
       [emit] assistant.delta             { "turnId": 0, "delta": "I will try Bash." }
       [emit] tool.call.delta             { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "argumentsPart": "{\\"command\\":\\"printf should-not-run\\",\\"timeout\\":60}" }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will try Bash." } }, "time": "<time>" }
-      [emit] requestApproval             { "turnId": 0, "toolCallId": "call_bash", "toolName": "Bash", "action": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }
+      [emit] requestApproval             { "turnId": 0, "toolCallId": "call_bash", "toolName": "Bash", "action": "Running: printf should-not-run", "rawInput": { "command": "printf should-not-run", "timeout": 60 }, "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
@@ -426,6 +426,7 @@ describe('Permission auto mode', () => {
         expect.objectContaining({
           toolName,
           action,
+          rawInput: args,
           display: {
             kind: 'file_io',
             operation,
@@ -1771,6 +1772,7 @@ describe('Plan mode Bash permission policy', () => {
         toolCallId: 'call_plan_bash',
         toolName: 'Bash',
         action: 'run command',
+        rawInput: { command: 'ls -la', timeout: 60 },
         display: {
           kind: 'command',
           command: 'ls -la',
@@ -1882,6 +1884,7 @@ describe('ExitPlanMode permission policy', () => {
         toolCallId: 'call_exit',
         toolName: 'ExitPlanMode',
         action: 'Presenting plan and exiting plan mode',
+        rawInput: { options: planOptions },
         display: {
           kind: 'plan_review',
           plan: '# Plan\n\n- Step',

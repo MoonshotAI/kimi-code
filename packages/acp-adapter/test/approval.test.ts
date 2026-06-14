@@ -211,6 +211,7 @@ describe('buildPermissionToolCallUpdate (Phase 5.1 minimal shape)', () => {
     toolCallId: 'abc',
     toolName: 'Bash',
     action: 'run command',
+    rawInput: { command: 'ls -la', timeout: 60 },
     display: fakeDisplay,
   };
 
@@ -218,6 +219,7 @@ describe('buildPermissionToolCallUpdate (Phase 5.1 minimal shape)', () => {
     const update = buildPermissionToolCallUpdate(42, baseReq);
     expect(update.toolCallId).toBe('42:abc');
     expect(update.title).toBe('Bash');
+    expect(update.rawInput).toEqual({ command: 'ls -la', timeout: 60 });
   });
 
   it('falls back to the raw SDK toolCallId when no turnId is tracked yet', () => {
@@ -238,7 +240,8 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
     } as unknown as KimiHarness;
 
     const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const agentConn = new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    void agentConn;
     const client = new ApprovalClient();
     client.reply = {
       outcome: { outcome: 'selected', optionId: APPROVE_ONCE_OPTION_ID },
@@ -278,6 +281,7 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
       toolCallId: 'tc-1',
       toolName: 'Bash',
       action: 'run command',
+      rawInput: { command: 'echo hi', timeout: 60 },
       display: { kind: 'command', command: 'echo hi' },
     };
     const decision = await handle.invokeHandler(approvalReq);
@@ -297,6 +301,7 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
     ]);
     expect(req.toolCall.toolCallId).toBe(`${turnId}:tc-1`);
     expect(req.toolCall.title).toBe('Bash');
+    expect(req.toolCall.rawInput).toEqual({ command: 'echo hi', timeout: 60 });
 
     // Settle the parked prompt with a turn.ended so the test exits
     // cleanly.
@@ -320,7 +325,8 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
     } as unknown as KimiHarness;
 
     const { agentStream, clientStream } = makeInMemoryStreamPair();
-    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const agentConn = new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    void agentConn;
     const client = new ApprovalClient();
     // Override to throw so the bridge falls into the catch branch.
     client.requestPermission = async (_p: RequestPermissionRequest) => {

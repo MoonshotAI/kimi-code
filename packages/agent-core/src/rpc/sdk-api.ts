@@ -19,6 +19,7 @@ export interface ApprovalRequest {
   readonly toolCallId: string;
   readonly toolName: string;
   readonly action: string;
+  readonly rawInput?: unknown;
   readonly display: ToolInputDisplay;
 }
 
