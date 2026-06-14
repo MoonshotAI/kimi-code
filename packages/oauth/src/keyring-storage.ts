@@ -63,7 +63,12 @@ export const KEYRING_PROBE_SERVICE = 'kimi-code-keyring-probe';
 export interface KeyringEntry {
   getPassword(): string | null;
   setPassword(password: string): void;
-  /** Returns true if a credential existed. */
+  /**
+   * Returns true when a credential was deleted. The native binding NEVER throws
+   * and maps EVERY failure (locked/no-access/ambiguous/platform error) to the
+   * SAME `false` it returns for "no such entry", so `false` is ambiguous —
+   * "did not exist" OR "delete failed". Disambiguate by re-reading `getPassword()`.
+   */
   deleteCredential(): boolean;
 }
 
@@ -275,10 +280,19 @@ export class KeyringTokenStorage implements TokenStorage {
     // (permissions, lock state, ambiguous entries) can never leave the
     // plaintext file behind — the "both stores cleared" guarantee must hold.
     // A genuine keyring error is surfaced after the file is cleared, never
-    // swallowed. (`deleteCredential() === false` for a missing entry is normal,
-    // not an error.)
+    // swallowed.
     try {
-      this.keyring.createEntry(this.service, name).deleteCredential();
+      const entry = this.keyring.createEntry(this.service, name);
+      const deleted = entry.deleteCredential();
+      // The native binding maps EVERY failure (locked/no-access/ambiguous/platform)
+      // to `false` — the same value as "no such entry" — and never throws. So a bare
+      // `false` is ambiguous; disambiguate by re-reading: if the credential is still
+      // present, the delete genuinely failed and must be surfaced (the file backend's
+      // unlink would have thrown). `getPassword()` also swallows errors to null, so a
+      // null re-read is the strongest lock-free signal that the entry is gone.
+      if (!deleted && entry.getPassword() !== null) {
+        throw new Error(`failed to delete keyring credential "${name}"`);
+      }
     } catch (error) {
       // Keyring delete failed — still clear the plaintext copy, then re-throw.
       await this.legacy.remove(name);

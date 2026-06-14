@@ -446,6 +446,79 @@ describe('KeyringTokenStorage', () => {
     expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
   });
 
+  it('remove() surfaces a failed keychain delete that returns false (real @napi-rs/keyring never throws)', async () => {
+    // The REAL @napi-rs/keyring v1.3.0 binding maps EVERY delete failure (locked
+    // keychain, no-access, ambiguous, platform error) to a plain `false` and
+    // NEVER throws — the SAME `false` returned for "no such entry". getPassword()
+    // likewise swallows errors to null. This fake models a delete that FAILS:
+    // deleteCredential() returns false while getPassword() STILL returns the
+    // stored value, so the credential definitively persists. remove() must
+    // disambiguate via the re-read and surface the failure — otherwise a logout
+    // would clear the plaintext but silently leave the keychain token alive.
+    const token = sampleToken();
+
+    class FailingDeleteKeyring extends FakeKeyring {
+      override createEntry(service: string, account: string): KeyringEntry {
+        const base = super.createEntry(service, account);
+        return {
+          getPassword: () => base.getPassword(),
+          setPassword(p: string): void {
+            base.setPassword(p);
+          },
+          // Genuine failure: returns false but the credential is NOT removed,
+          // so a follow-up getPassword() still sees it.
+          deleteCredential(): boolean {
+            return false;
+          },
+        };
+      }
+    }
+
+    const failingKeyring = new FailingDeleteKeyring();
+    const failingStorage = new KeyringTokenStorage({ keyring: failingKeyring, legacy });
+
+    // Seed the keychain (the credential persists through the failed delete) and a
+    // lingering plaintext copy that must still be cleared.
+    await failingStorage.save('kimi-code', token);
+    await legacy.save('kimi-code', token);
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
+
+    // The genuine keyring failure must be surfaced...
+    await expect(failingStorage.remove('kimi-code')).rejects.toThrow(
+      /failed to delete keyring credential/,
+    );
+    // ...but the legacy plaintext cleanup must still have run.
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+    // The keychain credential genuinely survived (the bug being guarded against).
+    expect(failingKeyring.createEntry(KEYRING_SERVICE, 'kimi-code').getPassword()).not.toBeNull();
+  });
+
+  it('remove() treats deleteCredential()=false with a null re-read as a no-op success (absent entry)', async () => {
+    // A bare `false` from deleteCredential() is overloaded: it means "delete
+    // failed" OR "no such entry". When the re-read getPassword() returns null the
+    // entry is genuinely gone (deleted or never existed), so logging out an absent
+    // entry must RESOLVE without throwing.
+    class AbsentDeleteKeyring extends FakeKeyring {
+      override createEntry(service: string, account: string): KeyringEntry {
+        const base = super.createEntry(service, account);
+        return {
+          // Always reports the entry as absent.
+          getPassword: () => null,
+          setPassword(p: string): void {
+            base.setPassword(p);
+          },
+          // Mirrors the native binding's "did not exist" → false.
+          deleteCredential(): boolean {
+            return false;
+          },
+        };
+      }
+    }
+
+    const absentStorage = new KeyringTokenStorage({ keyring: new AbsentDeleteKeyring(), legacy });
+    await expect(absentStorage.remove('never-existed')).resolves.toBeUndefined();
+  });
+
   it('list() unions keyring accounts and un-migrated legacy names, deduped', async () => {
     await storage.save('alpha', sampleToken()); // lands in keyring
     await legacy.save('beta', sampleToken()); // un-migrated plaintext
