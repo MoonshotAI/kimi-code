@@ -68,6 +68,10 @@ const THINKING_STORAGE_KEY = 'kimi-web.thinking';
 const PLAN_MODE_STORAGE_KEY = 'kimi-web.plan-mode';
 const SWARM_MODE_STORAGE_KEY = 'kimi-web.swarm-mode';
 const THEME_STORAGE_KEY = 'kimi-web.theme';
+const UI_FONT_SIZE_STORAGE_KEY = 'kimi-web.ui-font-size';
+const UI_FONT_SIZE_DEFAULT = 14;
+const UI_FONT_SIZE_MIN = 12;
+const UI_FONT_SIZE_MAX = 20;
 const SESSION_NOT_FOUND_CODE = 40401;
 const ONBOARDED_STORAGE_KEY = 'kimi-web.onboarded';
 const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
@@ -234,6 +238,33 @@ function saveThemeToStorage(v: Theme): void {
   } catch {
     // ignore
   }
+}
+
+function clampUiFontSize(value: number): number {
+  if (!Number.isFinite(value)) return UI_FONT_SIZE_DEFAULT;
+  return Math.min(UI_FONT_SIZE_MAX, Math.max(UI_FONT_SIZE_MIN, Math.round(value)));
+}
+
+function loadUiFontSizeFromStorage(): number {
+  try {
+    const v = localStorage.getItem(UI_FONT_SIZE_STORAGE_KEY);
+    return v === null ? UI_FONT_SIZE_DEFAULT : clampUiFontSize(Number(v));
+  } catch {
+    return UI_FONT_SIZE_DEFAULT;
+  }
+}
+
+function saveUiFontSizeToStorage(value: number): void {
+  try {
+    localStorage.setItem(UI_FONT_SIZE_STORAGE_KEY, String(clampUiFontSize(value)));
+  } catch {
+    // ignore
+  }
+}
+
+function applyUiFontSizeToDocument(value: number): void {
+  if (typeof document === 'undefined' || !document.documentElement) return;
+  document.documentElement.style.setProperty('--ui-font-size', `${clampUiFontSize(value)}px`);
 }
 
 function loadActiveWorkspaceFromStorage(): string | null {
@@ -533,6 +564,15 @@ function setTheme(t: Theme): void {
 /** Flip Terminal ↔ Modern. */
 function toggleTheme(): void {
   setTheme(theme.value === 'modern' ? 'terminal' : 'modern');
+}
+
+const uiFontSize = ref<number>(loadUiFontSizeFromStorage());
+watch(uiFontSize, applyUiFontSizeToDocument, { immediate: true });
+
+function setUiFontSize(value: number): void {
+  const next = clampUiFontSize(value);
+  uiFontSize.value = next;
+  saveUiFontSizeToStorage(next);
 }
 
 // ---------------------------------------------------------------------------
@@ -3538,6 +3578,8 @@ export function useKimiWebClient() {
     theme,
     setTheme,
     toggleTheme,
+    uiFontSize,
+    setUiFontSize,
 
     // Color scheme
     colorScheme,

@@ -338,7 +338,7 @@ function copyDiff(code: string, idx: number) {
 /* Base prose — matched to the sidebar session-title size (14px). */
 .md {
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: var(--ui-font-size);
   line-height: 1.6;
   color: var(--text);
   word-break: break-word;
@@ -346,7 +346,7 @@ function copyDiff(code: string, idx: number) {
 }
 .md :deep(.markdown-renderer) {
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: var(--ui-font-size);
   line-height: 1.6;
   color: var(--text);
   font-weight: 500;
@@ -375,7 +375,7 @@ function copyDiff(code: string, idx: number) {
 .md :deep(.markdown-renderer blockquote),
 .md :deep(.markdown-renderer td),
 .md :deep(.markdown-renderer th) {
-  font-size: 14px;
+  font-size: var(--ui-font-size);
 }
 
 /* Headings */
@@ -388,10 +388,10 @@ function copyDiff(code: string, idx: number) {
   margin: 0.85em 0 0.35em;
   line-height: 1.3;
 }
-.md :deep(h1) { font-size: 17px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
-.md :deep(h2) { font-size: 16px; }
-.md :deep(h3) { font-size: 15px; }
-.md :deep(h4) { font-size: 14px; color: var(--dim); }
+.md :deep(h1) { font-size: calc(var(--ui-font-size) + 3px); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.md :deep(h2) { font-size: calc(var(--ui-font-size) + 2px); }
+.md :deep(h3) { font-size: calc(var(--ui-font-size) + 1px); }
+.md :deep(h4) { font-size: var(--ui-font-size); color: var(--dim); }
 
 /* Paragraphs */
 .md :deep(p) {
@@ -412,7 +412,7 @@ function copyDiff(code: string, idx: number) {
 .md :deep(:not(pre) > code),
 .md :deep(.inline-code) {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--ui-font-size-sm);
   background: var(--panel2);
   color: var(--blue2);
   padding: 1px 5px;
@@ -470,11 +470,11 @@ function copyDiff(code: string, idx: number) {
   padding: 10px 12px;
   overflow-x: auto;
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: var(--ui-font-size);
 }
 .md :deep(.code-block-container pre code) {
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: var(--ui-font-size);
   background: none;
   border: none;
   padding: 0;
@@ -508,7 +508,7 @@ function copyDiff(code: string, idx: number) {
 /* Tables */
 .md :deep(table) {
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: var(--ui-font-size);
   margin: 0.5em 0;
 }
 .md :deep(th),
@@ -565,7 +565,7 @@ function copyDiff(code: string, idx: number) {
   border: none;
   cursor: pointer;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--ui-font-size-sm);
   padding: 0 2px;
   line-height: 1;
   font-family: var(--mono);
@@ -581,7 +581,7 @@ function copyDiff(code: string, idx: number) {
 }
 .diff-pre code {
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: var(--ui-font-size);
 }
 .diff-pre code span {
   display: block;

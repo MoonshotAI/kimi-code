@@ -26,9 +26,10 @@ const props = withDefaults(
     theme?: Theme;
     colorScheme?: ColorScheme;
     accent?: Accent;
+    uiFontSize?: number;
     authReady?: boolean;
   }>(),
-  { theme: 'terminal', colorScheme: 'system', accent: 'blue', authReady: false },
+  { theme: 'terminal', colorScheme: 'system', accent: 'blue', uiFontSize: 14, authReady: false },
 );
 
 const emit = defineEmits<{
@@ -41,6 +42,7 @@ const emit = defineEmits<{
   setTheme: [theme: Theme];
   setColorScheme: [colorScheme: ColorScheme];
   setAccent: [accent: Accent];
+  setUiFontSize: [size: number];
   login: [];
   logout: [];
 }>();
@@ -247,6 +249,25 @@ function onLogout(): void {
       <LanguageSwitcher />
     </div>
 
+    <div class="srow read-only pref">
+      <span class="srow-main">
+        <span class="srow-label">{{ t('settings.uiFontSize') }}</span>
+      </span>
+      <label class="num-field">
+        <input
+          class="num-input"
+          type="number"
+          min="12"
+          max="20"
+          step="1"
+          :value="uiFontSize"
+          :aria-label="t('settings.uiFontSize')"
+          @input="emit('setUiFontSize', Number(($event.target as HTMLInputElement).value))"
+        />
+        <span class="num-unit">px</span>
+      </label>
+    </div>
+
     <!-- Account: sign in / out -->
     <button v-if="authReady" type="button" class="srow acct out" @click="onLogout">
       <span class="srow-main">
@@ -364,6 +385,33 @@ function onLogout(): void {
   background: var(--soft);
   color: var(--blue2);
   font-weight: 600;
+}
+
+.num-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.num-input {
+  width: 50px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  text-align: right;
+}
+.num-unit {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
 }
 
 /* Account rows */

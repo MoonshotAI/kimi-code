@@ -6,6 +6,7 @@ export default {
   notifyDenied: 'Blocked in browser settings',
   notifyBody: 'Finished a turn',
   account: 'Account',
+  uiFontSize: 'Font size',
   advanced: 'Advanced',
   exportLog: 'Troubleshooting log',
   logHint: 'Enable with ?debug=1 to capture',

@@ -16,6 +16,7 @@ const props = defineProps<{
   theme: Theme;
   colorScheme: ColorScheme;
   accent: Accent;
+  uiFontSize: number;
   authReady: boolean;
   accountModel?: string | null;
   /** Browser-notification-on-completion preference. */
@@ -28,6 +29,7 @@ const emit = defineEmits<{
   setTheme: [theme: Theme];
   setColorScheme: [colorScheme: ColorScheme];
   setAccent: [accent: Accent];
+  setUiFontSize: [size: number];
   setNotify: [on: boolean];
   login: [];
   logout: [];
@@ -86,6 +88,22 @@ function exportLog(): void {
               <button type="button" class="opt" :class="{ on: accent === 'blue' }" :aria-pressed="accent === 'blue'" @click="emit('setAccent', 'blue')">{{ t('theme.accentBlue') }}</button>
               <button type="button" class="opt" :class="{ on: accent === 'mono' }" :aria-pressed="accent === 'mono'" @click="emit('setAccent', 'mono')">{{ t('theme.accentMono') }}</button>
             </div>
+          </div>
+          <div class="row">
+            <span class="rlabel">{{ t('settings.uiFontSize') }}</span>
+            <label class="num-field">
+              <input
+                class="num-input"
+                type="number"
+                min="12"
+                max="20"
+                step="1"
+                :value="uiFontSize"
+                :aria-label="t('settings.uiFontSize')"
+                @input="emit('setUiFontSize', Number(($event.target as HTMLInputElement).value))"
+              />
+              <span class="num-unit">px</span>
+            </label>
           </div>
           <div class="row">
             <span class="rlabel">{{ t('sidebar.language') }}</span>
@@ -217,6 +235,33 @@ function exportLog(): void {
 .rvalue { font-family: var(--sans); font-size: 12.5px; color: var(--muted); max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rvalue.mono { font-family: var(--mono); font-size: 12px; }
 .hint { font-size: 11px; color: var(--faint); font-family: var(--sans); }
+
+.num-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 0 8px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.num-input {
+  width: 48px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  text-align: right;
+}
+.num-unit {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
 
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .opt {

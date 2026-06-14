@@ -31,6 +31,11 @@
   --r-sm: 8px;
   --r-md: 12px;
   --r-lg: 16px;
+  --ui-font-size: 14px;
+  --ui-font-size-sm: calc(var(--ui-font-size) - 1px);
+  --ui-font-size-xs: calc(var(--ui-font-size) - 2px);
+  --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
+  --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: var(--mono);
   color-scheme: light dark;
@@ -199,9 +204,7 @@ body {
   font-family: var(--mono);
   color: var(--text);
   background: var(--bg);
-  /* Overall UI chrome a notch larger; the chat content + session list stay at
-     their explicit 14px (compact, aligned) so reading text doesn't grow with it. */
-  font-size: 14px;
+  font-size: var(--ui-font-size);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -1064,4 +1067,67 @@ html[data-color-scheme="dark"][data-theme="kimi"] ::selection {
 .md .markdown-renderer img {
   min-width: 0;
   min-height: 0;
+}
+
+/* User-controlled UI font size. Components still set explicit sizes for compact
+   surfaces; these shared chat/input/tool selectors keep readable content and
+   code in lockstep with the setting. */
+.app {
+  font-size: var(--ui-font-size);
+}
+.md,
+.md .markdown-renderer,
+.md .markdown-renderer p,
+.md .markdown-renderer li,
+.md .markdown-renderer blockquote,
+.md .markdown-renderer td,
+.md .markdown-renderer th,
+.md .code-block-container pre,
+.md .markstream-pre,
+.md .code-block-container pre code,
+.md .diff-pre code,
+.u-bub,
+.u-bub .u-text,
+.a-msg .msg,
+.box .bh,
+.box .bb,
+.ph,
+.queue-item,
+.queue-text,
+.ctx-num,
+.model-pill,
+.perm-pill,
+.mode-pill,
+.compact-chip,
+.qcard,
+.qtext,
+.qopt,
+.qbtn,
+.srow,
+.srow-val {
+  font-size: var(--ui-font-size);
+}
+.md :not(pre) > code,
+.md .inline-code,
+.a-msg code,
+.qopt-desc,
+.srow-label {
+  font-size: var(--ui-font-size-sm);
+}
+.code-block-header,
+.code-block-header *,
+.diff-lang,
+.queue-label,
+.qopt-key,
+.qstep,
+.srow-sub {
+  font-size: var(--ui-font-size-xs);
+}
+
+@media (max-width: 640px) {
+  .u-bub .u-text,
+  .a-msg .msg,
+  .ph {
+    font-size: max(16px, var(--ui-font-size-xl));
+  }
 }
