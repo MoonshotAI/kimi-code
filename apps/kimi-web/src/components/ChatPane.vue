@@ -99,6 +99,14 @@ const streamingTurnId = computed<string | null>(() => {
   return last.role === 'assistant' ? last.id : null;
 });
 
+// Trailing "working" moon. `sending` is an optimistic flag set on submit and
+// kept until the session goes idle, so during a normal turn the moon shows the
+// whole time. After a page refresh that in-memory flag is gone, so fall back to
+// `running` (restored from the session's live status) — otherwise a refresh mid
+// stream froze the transcript with no "still working" indicator. Either flag
+// shows the same moon footer.
+const showWorking = computed(() => props.sending || props.running);
+
 const emit = defineEmits<{
   openFile: [target: FilePreviewRequest];
   openMedia: [media: ToolMedia];
@@ -441,9 +449,11 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
     <!-- Compaction in progress — body-sized moon activity notice -->
     <ActivityNotice v-if="compaction" :label="t('conversation.compacting')" />
 
-    <!-- Sending placeholder — moon spinner while the request is in flight -->
-    <div v-if="sending" class="sending-placeholder">
-      <span class="moon-spin" aria-label="Sending…">{{ MOON_FRAMES[moonFrame] }}</span>
+    <!-- Working placeholder — moon spinner while the turn is in flight (covers
+         a page refresh mid-stream, where `sending` was lost but the session is
+         still running). -->
+    <div v-if="showWorking" class="sending-placeholder">
+      <span class="moon-spin" aria-label="Working…">{{ MOON_FRAMES[moonFrame] }}</span>
     </div>
   </div>
 
@@ -541,8 +551,10 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
     <!-- Compaction in progress — body-sized moon activity notice -->
     <ActivityNotice v-if="compaction" :label="t('conversation.compacting')" />
 
-    <!-- Sending placeholder — moon spinner while the request is in flight -->
-    <div v-if="sending" class="ln sending-line">
+    <!-- Working placeholder — moon spinner while the turn is in flight (covers
+         a page refresh mid-stream, where `sending` was lost but the session is
+         still running). -->
+    <div v-if="showWorking" class="ln sending-line">
       <span class="no">—</span>
       <div class="tx">
         <div class="role-row">
