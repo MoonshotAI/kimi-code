@@ -463,6 +463,7 @@ onUnmounted(() => {
 function editQueued(index: number, msg: string): void {
   const current = text.value;
   text.value = current ? `${msg}\n${current}` : msg;
+  queueOpen.value = false;
   emit('editQueued', index);
   void nextTick(() => {
     const el = textareaRef.value;
@@ -557,6 +558,7 @@ function handleSteer(): void {
   attachments.value = [];
   pushInputHistory(trimmed);
   text.value = '';
+  queueOpen.value = false;
   slashOpen.value = false;
   mentionOpen.value = false;
   emit('steer', payload);
@@ -702,6 +704,12 @@ function handleKeydown(e: KeyboardEvent): void {
 
 const sendLabel = computed(() => props.running ? t('composer.interrupt') : t('composer.send'));
 const hasUpload = computed(() => !!props.uploadImage);
+const queueOpen = ref(false);
+const queueCount = computed(() => props.queued.length);
+
+watch(queueCount, (count) => {
+  if (count === 0) queueOpen.value = false;
+});
 
 // ---------------------------------------------------------------------------
 // Bottom toolbar — split into individual controls
@@ -866,12 +874,19 @@ function selectModel(modelId: string): void {
     @dragleave="handleDragLeave"
     @drop="handleDrop"
   >
-    <!-- Queued message strip. Items carrying image attachments can't be
-         edited (the uploaded files can't be loaded back into the input);
-         they show an image badge and an "image ×N" placeholder when the
-         prompt has no text. -->
-    <div v-if="queued && queued.length > 0" class="queue-strip">
-      <span class="queue-label">{{ t('composer.queueLabel') }}</span>
+    <!-- Queue list: collapsed by default into a dashed bubble on the input. -->
+    <div v-if="queueOpen && queued && queued.length > 0" class="queue-popover">
+      <div class="queue-head">
+        <span class="queue-label">{{ t('composer.queueLabel') }} · {{ queued.length }}</span>
+        <!-- Steer the whole queue into the running turn right now (TUI ctrl+s) -->
+        <button
+          v-if="running"
+          class="queue-steer"
+          type="button"
+          :title="t('composer.steerTitle')"
+          @click="handleSteer()"
+        >{{ t('composer.steerNow') }}</button>
+      </div>
       <div
         v-for="(msg, i) in queued"
         :key="i"
@@ -891,14 +906,6 @@ function selectModel(modelId: string): void {
           <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.6" xmlns="http://www.w3.org/2000/svg"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
         </button>
       </div>
-      <!-- Steer the whole queue into the running turn right now (TUI ctrl+s) -->
-      <button
-        v-if="running"
-        class="queue-steer"
-        type="button"
-        :title="t('composer.steerTitle')"
-        @click="handleSteer()"
-      >{{ t('composer.steerNow') }}</button>
     </div>
 
     <!-- Attachment chips (above the input row) -->
@@ -930,6 +937,21 @@ function selectModel(modelId: string): void {
 
     <!-- Main composer card -->
     <div class="composer-card">
+      <button
+        v-if="queued && queued.length > 0"
+        class="queue-bubble"
+        type="button"
+        :aria-expanded="queueOpen"
+        :title="t('composer.queueLabel')"
+        @click="queueOpen = !queueOpen"
+      >
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M2 4l6 4 6-4" />
+          <rect x="2" y="4" width="12" height="8" rx="1.5" />
+        </svg>
+        <span>{{ t('composer.queueLabel') }}</span>
+        <span class="queue-count">{{ queued.length }}</span>
+      </button>
       <!-- Input row with popup menus -->
       <div class="cin-wrap">
         <!-- Slash menu (above textarea) -->
@@ -1234,6 +1256,7 @@ function selectModel(modelId: string): void {
 
 /* Main composer card */
 .composer-card {
+  position: relative;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--bg);
@@ -1243,13 +1266,19 @@ function selectModel(modelId: string): void {
 
 
 
-/* Queued strip */
-.queue-strip {
+/* Queue popover: opens above the composer card when the dashed bubble is used. */
+.queue-popover {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
-  padding: 4px 0 6px;
+  padding: 2px 2px 10px;
+}
+
+.queue-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .queue-label {
@@ -1264,15 +1293,15 @@ function selectModel(modelId: string): void {
 .queue-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  background: var(--panel2);
+  gap: 8px;
+  background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 2px 6px 2px 8px;
+  border-radius: 8px;
+  padding: 6px 8px;
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: 12.5px;
   color: var(--text);
-  max-width: 200px;
+  min-width: 0;
 }
 
 /* "Steer now" — inject the queue into the running turn (TUI ctrl+s) */
@@ -1296,16 +1325,17 @@ function selectModel(modelId: string): void {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   background: none;
   border: none;
   padding: 0;
   margin: 0;
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: 12.5px;
   color: var(--text);
   cursor: pointer;
-  max-width: 168px;
   text-align: left;
 }
 .queue-text:hover:not(:disabled) {
@@ -1336,6 +1366,44 @@ function selectModel(modelId: string): void {
 
 .queue-rm:hover {
   color: var(--err);
+}
+
+.queue-bubble {
+  position: absolute;
+  top: -13px;
+  right: 14px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px dashed var(--blueln);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--blue2);
+  padding: 3px 10px 3px 9px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.queue-bubble:hover,
+.queue-bubble[aria-expanded="true"] {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.queue-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--blue);
+  color: var(--bg);
+  font-size: 10.5px;
+  line-height: 1;
 }
 
 /* Attachment strip */
@@ -1949,9 +2017,10 @@ function selectModel(modelId: string): void {
     gap: 6px;
     min-width: 0;
   }
-  .queue-strip {
+  .queue-popover {
     max-width: 100%;
-    overflow-x: auto;
+    max-height: 34dvh;
+    overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     padding-bottom: 2px;
   }
@@ -1959,7 +2028,11 @@ function selectModel(modelId: string): void {
     flex: none;
   }
   .queue-item {
-    max-width: min(72vw, 320px);
+    max-width: 100%;
+  }
+  .queue-bubble {
+    right: 10px;
+    max-width: calc(100% - 20px);
   }
 
   /* Send → 36px round (hide the SVG arrow, show only the ::after glyph) */

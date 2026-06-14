@@ -265,7 +265,22 @@ watch(
 const bubble = computed(() => props.mobile === true || props.modern === true);
 
 const runningTasks = computed(() => props.tasks.filter((t) => t.state === 'run').length);
+const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
+const hasDockWork = computed(() => props.tasks.length > 0 || (props.todos?.length ?? 0) > 0);
+const dockPanel = ref<'tasks' | 'todos' | null>(null);
 const changesCount = computed(() => (props.gitInfo ? props.changes?.length ?? 0 : 0));
+
+function toggleDockPanel(panel: 'tasks' | 'todos'): void {
+  dockPanel.value = dockPanel.value === panel ? null : panel;
+}
+
+function closeDockPanel(): void {
+  dockPanel.value = null;
+}
+
+watch(hasDockWork, (hasWork) => {
+  if (!hasWork) closeDockPanel();
+});
 
 interface ConversationTocItem {
   id: string;
@@ -919,6 +934,7 @@ onUnmounted(() => {
             :ref="group.active === 'chat' ? 'panesRef' : undefined"
             class="panes group-panes"
             :class="{ 'files-layout': group.active === 'files', 'terminal-layout': group.active === 'terminal' }"
+            @click="closeDockPanel"
             @scroll.passive="group.active === 'chat' ? onPanesScroll() : undefined"
           >
             <div v-if="group.active === 'chat'" class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
@@ -1020,6 +1036,7 @@ onUnmounted(() => {
       ref="panesRef"
       class="panes"
       :class="{ 'files-layout': active === 'files', 'terminal-layout': active === 'terminal' }"
+      @click="closeDockPanel"
       @scroll.passive="onPanesScroll"
     >
       <!-- Chat reading column: constrained to a comfortable max width and
@@ -1268,11 +1285,93 @@ onUnmounted(() => {
          line is a quiet footer BELOW it (model/thinking/plan/permission left,
          ctx far right). -->
     <div ref="dockRef" class="dock" :class="[mobile ? 'align-mobile' : 'align-center']">
+      <Transition name="dock-panel">
+        <div
+          v-if="dockPanel"
+          class="dock-work-panel"
+          @click.stop
+        >
+          <div class="dock-work-head">
+            <button
+              v-if="tasks.length > 0 || dockPanel === 'tasks'"
+              type="button"
+              class="dock-work-tab"
+              :class="{ on: dockPanel === 'tasks' }"
+              @click="dockPanel = 'tasks'"
+            >
+              {{ t('tasks.dockTasks') }} · {{ runningTasks }} {{ t('tasks.running') }}
+            </button>
+            <button
+              v-if="(todos?.length ?? 0) > 0 || dockPanel === 'todos'"
+              type="button"
+              class="dock-work-tab"
+              :class="{ on: dockPanel === 'todos' }"
+              @click="dockPanel = 'todos'"
+            >
+              {{ t('tasks.dockTodos') }} · {{ todoDoneCount }}/{{ todos?.length ?? 0 }}
+            </button>
+            <button type="button" class="dock-work-close" :aria-label="t('tasks.closePanel')" @click="closeDockPanel">
+              <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+                <path d="M2 2l8 8M10 2l-8 8" />
+              </svg>
+            </button>
+          </div>
+          <div class="dock-work-body">
+            <TasksPane
+              v-if="dockPanel === 'tasks'"
+              :tasks="tasks"
+              @cancel="emit('cancelTask', $event)"
+            />
+            <TodoCard
+              v-else
+              :todos="todos ?? []"
+              inline
+            />
+          </div>
+        </div>
+      </Transition>
+
       <GoalStrip
         v-if="goal"
         :goal="goal"
         :force-expanded="goalExpandSignal"
       />
+      <div v-if="hasDockWork" class="dock-workbar">
+        <button
+          v-if="tasks.length > 0"
+          type="button"
+          class="dock-work-chip"
+          :class="{ on: dockPanel === 'tasks' }"
+          :aria-pressed="dockPanel === 'tasks'"
+          @click="toggleDockPanel('tasks')"
+        >
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <circle cx="8" cy="8" r="5.5" />
+            <path d="M8 4.5V8l2.5 1.5" />
+          </svg>
+          <span v-if="runningTasks > 0" class="dock-work-pulse" aria-hidden="true"></span>
+          <span>{{ t('tasks.dockTasks') }}</span>
+          <b>{{ tasks.length }}</b>
+          <span v-if="runningTasks > 0" class="dock-work-muted">{{ runningTasks }} {{ t('tasks.running') }}</span>
+        </button>
+        <button
+          v-if="(todos?.length ?? 0) > 0"
+          type="button"
+          class="dock-work-chip"
+          :class="{ on: dockPanel === 'todos' }"
+          :aria-pressed="dockPanel === 'todos'"
+          @click="toggleDockPanel('todos')"
+        >
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M3 4.5l1.5 1.5L7 3.5" />
+            <path d="M8.5 5h4" />
+            <path d="M3 11l1.5 1.5L7 10" />
+            <path d="M8.5 11.5h4" />
+          </svg>
+          <span>{{ t('tasks.dockTodos') }}</span>
+          <b>{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</b>
+        </button>
+      </div>
       <!-- A pending question or approval replaces the Composer here — both are
            the agent blocking on the user, so they share this docked slot. A
            question takes priority (it is a direct ask); the approval falls back
@@ -1618,6 +1717,7 @@ onUnmounted(() => {
   flex: none;
   display: flex;
   flex-direction: column;
+  position: relative;
   width: 100%;
   max-width: var(--read-max);
 }
@@ -1629,6 +1729,169 @@ onUnmounted(() => {
     box-sizing: border-box;
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
+  }
+}
+
+.dock-workbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 9px;
+  min-width: 0;
+}
+.dock-work-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 4px 11px;
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.dock-work-chip:hover,
+.dock-work-chip.on {
+  border-color: var(--bd);
+  background: var(--soft);
+  color: var(--blue2);
+}
+.dock-work-chip b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.dock-work-muted {
+  color: var(--blue2);
+  white-space: nowrap;
+}
+.dock-work-pulse {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--blue);
+  animation: dock-pulse 1.7s infinite;
+}
+@keyframes dock-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 55%, transparent); }
+  70% { box-shadow: 0 0 0 5px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.dock-work-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  z-index: 16;
+  display: flex;
+  flex-direction: column;
+  max-height: min(48vh, 320px);
+  margin-bottom: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: 0 -8px 30px rgba(0,0,0,0.12);
+}
+.dock-panel-enter-active,
+.dock-panel-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+.dock-panel-enter-from,
+.dock-panel-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.dock-work-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.dock-work-tab {
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  padding: 4px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.dock-work-tab:hover,
+.dock-work-tab.on {
+  background: var(--soft);
+  color: var(--blue2);
+}
+.dock-work-close {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  padding: 5px;
+  cursor: pointer;
+}
+.dock-work-close:hover {
+  background: var(--panel2);
+  color: var(--ink);
+}
+.dock-work-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dock-work-body :deep(.taskspane) {
+  padding: 10px 14px 12px;
+}
+.dock-work-body :deep(.taskspane .tp-head) {
+  margin-top: 0;
+}
+.dock-work-body :deep(.todo-card.tab-mode) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dock-work-body :deep(.todo-card.tab-mode .tc-list) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+@media (max-width: 640px) {
+  .dock-workbar {
+    padding: 2px 10px 9px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .dock-work-chip {
+    flex: none;
+    max-width: min(82vw, 360px);
+  }
+  .dock-work-panel {
+    left: 10px;
+    right: 10px;
+    max-height: 45dvh;
+  }
+  .dock-work-head {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .dock-work-tab {
+    flex: none;
+    white-space: nowrap;
   }
 }
 

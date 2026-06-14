@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { nextTick } from 'vue';
 
 import ConversationPane from '../src/components/ConversationPane.vue';
-import type { ConversationStatus, UIQuestion } from '../src/types';
+import type { ConversationStatus, TaskItem, TodoView, UIQuestion } from '../src/types';
 
 const status: ConversationStatus = {
   model: 'kimi-test',
@@ -104,5 +104,31 @@ describe('ConversationPane docked interrupt cards', () => {
 
     expect(wrapper.find('.body-generic').exists()).toBe(true);
     expect(wrapper.text()).toContain('second action');
+  });
+});
+
+describe('ConversationPane dock work panel', () => {
+  it('opens tasks and todos from the dock chips', async () => {
+    const tasks: TaskItem[] = [{
+      id: 'task_1',
+      name: 'Build web',
+      kind: 'task',
+      state: 'run',
+      timing: 'Running',
+    }];
+    const todos: TodoView[] = [{ title: 'Check mobile dock', status: 'in_progress' }];
+    const wrapper = mountPane({ tasks, todos });
+
+    expect(wrapper.find('.dock-work-panel').exists()).toBe(false);
+
+    const chips = wrapper.findAll('.dock-work-chip');
+    expect(chips).toHaveLength(2);
+
+    await chips[0]!.trigger('click');
+    expect(wrapper.find('.dock-work-panel').exists()).toBe(true);
+    expect(wrapper.find('tasks-pane-stub').exists()).toBe(true);
+
+    await chips[1]!.trigger('click');
+    expect(wrapper.find('todo-card-stub').exists()).toBe(true);
   });
 });

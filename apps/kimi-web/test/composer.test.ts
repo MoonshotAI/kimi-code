@@ -10,10 +10,15 @@ function mountComposer(props: Record<string, unknown> = {}) {
     messages: {
       en: {
         composer: {
+          editQueued: 'Edit queued',
           interrupt: 'Interrupt',
           interruptTitle: 'Interrupt',
           placeholder: 'Message Kimi',
+          queueLabel: 'Queue',
+          remove: 'Remove',
           send: 'Send',
+          steerNow: 'Steer now',
+          steerTitle: 'Steer now',
         },
       },
     },
@@ -149,5 +154,21 @@ describe('Composer draft persistence', () => {
     expect(wrapper.emitted('submit')).toHaveLength(1);
     // Draft cleared once sent.
     expect(localStorage.getItem('kimi-web.draft.sess_X')).toBe(null);
+  });
+});
+
+describe('Composer queue bubble', () => {
+  it('keeps queued prompts collapsed until the queue bubble is opened', async () => {
+    const wrapper = mountComposer({
+      queued: [{ text: 'follow up after this', attachmentCount: 0 }],
+    });
+
+    expect(wrapper.find('.queue-popover').exists()).toBe(false);
+    expect(wrapper.find('.queue-bubble').exists()).toBe(true);
+
+    await wrapper.find('.queue-bubble').trigger('click');
+
+    expect(wrapper.find('.queue-popover').exists()).toBe(true);
+    expect(wrapper.find('.queue-text-inner').text()).toBe('follow up after this');
   });
 });
