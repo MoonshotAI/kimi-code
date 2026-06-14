@@ -279,6 +279,20 @@ export class KeyringTokenStorage implements TokenStorage {
     // current authoritative token (refresh/login/tombstone), so any on-disk copy
     // is superseded — a concurrent file-backend writer is the documented
     // unsupported mixed-backend case.
+    //
+    // This unconditional prune deliberately DIFFERS from reconcileOnHit's
+    // read-path "leave a differing file in place" rule: there we have NOT
+    // established write-order authority over the file; here save() just MADE the
+    // keychain authoritative, so the file is by definition superseded. The only
+    // case the two could disagree is a TOMBSTONE-save whose `name` still has a
+    // valid plaintext copy — a flip-flop where the file run minted a token in the
+    // SAME second the keychain token was issued, so reconcileOnHit's strict `>`
+    // declined to adopt it. We prune anyway, ON PURPOSE: honoring the revocation
+    // (no resurrection of a deliberately tombstoned credential by a later
+    // keychain-unaware file run) outranks preserving that token. The cost is a
+    // forced re-login in that vanishingly rare edge — fail-CLOSED, and identical
+    // to what the file backend alone does once tombstoned. A recoverable re-login
+    // beats a resurrected revoked secret.
     await this.legacy.remove(name);
   }
 
