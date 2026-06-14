@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -387,6 +387,21 @@ removed_flag = true
     const text = await readFile(configPath, 'utf-8');
     expect(text).not.toContain('default_yolo');
     expect(text).not.toContain('default_permission_mode');
+  });
+
+  it('preserves config.toml symlinks when rewriting config files', async () => {
+    const dir = makeTempDir();
+    const syncDir = makeTempDir();
+    const configPath = join(dir, 'config.toml');
+    const targetPath = join(syncDir, 'config.toml');
+    await writeFile(targetPath, 'default_thinking = false\n', 'utf-8');
+    await symlink(targetPath, configPath);
+
+    const config = parseConfigString('default_thinking = true\n', configPath);
+    await writeConfigFile(configPath, config);
+
+    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+    await expect(readFile(targetPath, 'utf-8')).resolves.toContain('default_thinking = true');
   });
 
   it('rejects invalid TOML and invalid schema with KimiError(config.invalid)', () => {

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, open } from 'node:fs/promises';
-import { dirname } from 'pathe';
+import { lstat, mkdir, open, readlink } from 'node:fs/promises';
+import { dirname, resolve } from 'pathe';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import { applyEnvModelConfig, stripEnvModelConfig } from './env-model';
@@ -450,7 +450,26 @@ export async function writeConfigFile(filePath: string, config: KimiConfig): Pro
   // stripEnvModelConfig / the getConfig -> setConfig round-trip).
   const validated = validateConfig(stripEnvModelConfig(config));
   await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
-  await atomicWrite(filePath, `${stringifyToml(configToTomlData(validated))}\n`);
+  await atomicWrite(
+    await configWriteTarget(filePath),
+    `${stringifyToml(configToTomlData(validated))}\n`,
+  );
+}
+
+async function configWriteTarget(filePath: string): Promise<string> {
+  let stat: Awaited<ReturnType<typeof lstat>>;
+  try {
+    stat = await lstat(filePath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return filePath;
+    throw error;
+  }
+  if (!stat.isSymbolicLink()) return filePath;
+  // Preserve user-created config sync links while still atomically replacing
+  // the real target file.
+  const target = await readlink(filePath);
+  return resolve(dirname(filePath), target);
 }
 
 export function configToTomlData(config: KimiConfig): Record<string, unknown> {
