@@ -776,6 +776,105 @@ describe('Agent context notification projection', () => {
     expect(textOf(messages[1]!)).toBe('No origin prompt');
     expect(textOf(messages[2]!)).toBe('Third real prompt');
   });
+
+  it('project() trims trailing assistant message with unanswered tool_calls', () => {
+    const history: ContextMessage[] = [
+      userMessage('hello'),
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'I will run a tool' }],
+        toolCalls: [{ type: 'function', id: 'call_1', name: 'Bash', arguments: '{}' }],
+      },
+      // No tool result for call_1 — session was killed.
+    ];
+    const messages = project(history);
+    // The assistant message with open tool_calls should be trimmed.
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.role).toBe('user');
+  });
+
+  it('project() keeps assistant message when all tool_calls are answered', () => {
+    const history: ContextMessage[] = [
+      userMessage('hello'),
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'I will run a tool' }],
+        toolCalls: [{ type: 'function', id: 'call_1', name: 'Bash', arguments: '{}' }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'tool output' }],
+        toolCalls: [],
+        toolCallId: 'call_1',
+      },
+    ];
+    const messages = project(history);
+    // All three messages should be present.
+    expect(messages).toHaveLength(3);
+    expect(messages[1]!.role).toBe('assistant');
+    expect(messages[2]!.role).toBe('tool');
+  });
+
+  it('cleanupOrphanedToolCalls removes entire assistant and sibling tool messages', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    // Simulate an assistant with two tool calls: call_A (orphaned) and call_B (answered).
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 'step-multi', turnId: '', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'tool-a',
+        stepUuid: 'step-multi',
+        turnId: '',
+        step: 1,
+        toolCallId: 'call_A',
+        name: 'Bash',
+        args: {},
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'tool-b',
+        stepUuid: 'step-multi',
+        turnId: '',
+        step: 1,
+        toolCallId: 'call_B',
+        name: 'Read',
+        args: {},
+      },
+    });
+    // Only call_B got a result before the crash.
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'tool-b',
+        toolCallId: 'call_B',
+        result: { output: 'file content' },
+      },
+    });
+
+    // The assistant and both tool messages should be in history.
+    const assistantBefore = ctx.agent.context.history.filter((m) => m.role === 'assistant');
+    const toolsBefore = ctx.agent.context.history.filter((m) => m.role === 'tool');
+    expect(assistantBefore).toHaveLength(1);
+    expect(toolsBefore).toHaveLength(1);
+
+    // Cleanup should remove the assistant AND the answered sibling tool message.
+    ctx.agent.context.cleanupOrphanedToolCalls();
+
+    const assistantAfter = ctx.agent.context.history.filter((m) => m.role === 'assistant');
+    const toolsAfter = ctx.agent.context.history.filter((m) => m.role === 'tool');
+    expect(assistantAfter).toHaveLength(0);
+    expect(toolsAfter).toHaveLength(0);
+  });
 });
 
 function userMessage(text: string, origin?: ContextMessage['origin']): ContextMessage {

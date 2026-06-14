@@ -130,6 +130,8 @@ export interface RestoringContext {
 export class AgentRecords {
   private _restoring: RestoringContext | null = null;
   private metadataInitialized = false;
+  /** Tool_call_ids identified as stale during pre-scan of replay records. */
+  staleToolCallIds: Set<string> = new Set();
 
   constructor(
     private readonly agent: Agent,
@@ -174,12 +176,21 @@ export class AgentRecords {
 
   async replay(): Promise<{ warning?: string }> {
     if (!this.persistence) throw new Error('No persistence provided for AgentRecords');
+
+    // First pass: collect all records and pre-scan for stale tool_call_ids.
+    const allRecords: AgentRecord[] = [];
+    for await (const record of this.persistence.read()) {
+      allRecords.push(record as AgentRecord);
+    }
+    this.staleToolCallIds = this.findStaleToolCallIds(allRecords);
+
+    // Second pass: process records.
     let migrations: readonly WireMigration[] = [];
     let hasMetadata = false;
     let shouldRewrite = false;
     let warning: string | undefined;
     const replayedRecords: AgentRecord[] = [];
-    for await (const record of this.persistence.read()) {
+    for (const record of allRecords) {
       if (!hasMetadata) {
         if (record.type !== 'metadata') {
           throw new Error('AgentRecords replay expected metadata as the first record');
@@ -232,6 +243,62 @@ export class AgentRecords {
       await this.persistence.flush();
     }
     return { warning };
+  }
+
+  /**
+   * Pre-scan replay records to identify stale tool_call_ids — tool_calls
+   * that have no matching tool.result before the next context.append_message.
+   * These are from sessions killed mid-tool-call.  The stale set is stored
+   * on the agent so appendLoopEvent can skip them during replay, preventing
+   * them from polluting pendingToolResultIds.
+   */
+  findStaleToolCallIds(records: readonly AgentRecord[]): Set<string> {
+    const stale = new Set<string>();
+    const pendingByAssistant = new Map<string, Set<string>>();
+    let hasOpenToolExchange = false;
+    for (const record of records) {
+      if (record.type === 'context.append_loop_event') {
+        const event = record.event;
+        if (event.type === 'tool.call') {
+          if (!pendingByAssistant.has(event.stepUuid)) {
+            pendingByAssistant.set(event.stepUuid, new Set());
+          }
+          pendingByAssistant.get(event.stepUuid)!.add(event.toolCallId);
+          hasOpenToolExchange = true;
+        } else if (event.type === 'tool.result') {
+          for (const pending of pendingByAssistant.values()) {
+            pending.delete(event.toolCallId);
+          }
+          // Check if the exchange is now closed.
+          hasOpenToolExchange = false;
+          for (const pending of pendingByAssistant.values()) {
+            if (pending.size > 0) {
+              hasOpenToolExchange = true;
+              break;
+            }
+          }
+        }
+      } else if (record.type === 'context.append_message' && record.message.role === 'user') {
+        // A user message that arrives while a tool exchange is still open
+        // is a deferred same-turn message, not a turn boundary.  Only
+        // treat it as a turn boundary if the exchange is closed.
+        if (!hasOpenToolExchange) {
+          for (const pending of pendingByAssistant.values()) {
+            for (const id of pending) {
+              stale.add(id);
+            }
+          }
+          pendingByAssistant.clear();
+        }
+      }
+    }
+    // Any remaining pending IDs at the end of records are also stale.
+    for (const pending of pendingByAssistant.values()) {
+      for (const id of pending) {
+        stale.add(id);
+      }
+    }
+    return stale;
   }
 
   async flush(): Promise<void> {

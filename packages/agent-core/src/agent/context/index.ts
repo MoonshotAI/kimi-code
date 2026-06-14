@@ -253,6 +253,12 @@ export class ContextMemory {
         return;
       }
       case 'tool.call': {
+        // Skip stale tool_call_ids from previous incomplete turns.
+        // These are identified during replay pre-scan and would otherwise
+        // pollute pendingToolResultIds, causing deferred user messages.
+        if (this.agent.staleToolCallIds.has(event.toolCallId)) {
+          return;
+        }
         const openStep = this.openSteps.get(event.stepUuid);
         if (openStep === undefined) {
           throw new Error(
@@ -304,6 +310,79 @@ export class ContextMemory {
 
   private hasOpenToolExchange(): boolean {
     return this.pendingToolResultIds.size > 0;
+  }
+
+  /**
+   * Remove stale entries from `pendingToolResultIds` and trim orphaned
+   * assistant messages from `_history`.  This happens when a session is
+   * killed mid-tool-call and later resumed — the tool.call events are
+   * replayed but the tool.result events never arrived.  Without this
+   * cleanup, `hasOpenToolExchange()` would remain true (deferring new
+   * messages) and the orphaned assistant would still be sent to the
+   * provider on the next turn, causing a 400 error.
+   */
+  cleanupOrphanedToolCalls(): void {
+    // Clear stale pendingToolResultIds.
+    this.pendingToolResultIds.clear();
+
+    // Find assistant messages that have unanswered tool_calls.
+    // Check positionally: a tool_call_id is "answered" only if there
+    // is a tool result AFTER the assistant in history, before the next
+    // assistant. This prevents false matches when toolCallIds are reused
+    // across turns.
+    const assistantsToRemove = new Set<number>();
+    for (let i = 0; i < this._history.length; i++) {
+      const message = this._history[i];
+      if (message === undefined || message.role !== 'assistant' || message.toolCalls.length === 0) continue;
+
+      const allAnswered = message.toolCalls.every((tc) => {
+        for (let j = i + 1; j < this._history.length; j++) {
+          const later = this._history[j];
+          if (later !== undefined && later.role === 'tool' && later.toolCallId === tc.id) return true;
+          if (later !== undefined && later.role === 'assistant') break;
+        }
+        return false;
+      });
+
+      if (!allAnswered) {
+        assistantsToRemove.add(i);
+      }
+    }
+
+    if (assistantsToRemove.size > 0) {
+      // Build a set of indices to remove: each removed assistant AND all
+      // tool messages that follow it (up to the next assistant or end of
+      // history). This avoids globally removing tool messages by ID, which
+      // could incorrectly remove valid tool results from earlier turns
+      // when toolCallIds are reused.
+      const indicesToRemove = new Set<number>();
+      for (const idx of assistantsToRemove) {
+        indicesToRemove.add(idx);
+        // Remove tool messages after this assistant up to the next assistant.
+        for (let j = idx + 1; j < this._history.length; j++) {
+          const later = this._history[j];
+          if (later !== undefined && later.role === 'assistant') break;
+          if (later !== undefined && later.role === 'tool') {
+            indicesToRemove.add(j);
+          }
+        }
+      }
+
+      const removedMessages = new Set<ContextMessage>();
+      this._history = this._history.filter((message, index) => {
+        if (indicesToRemove.has(index)) {
+          removedMessages.add(message);
+          return false;
+        }
+        return true;
+      });
+      // Also remove from replay builder so ResumeSessionResult doesn't
+      // include stale orphaned messages.
+      this.agent.replayBuilder.removeLastMessages(removedMessages);
+    }
+
+    // Flush any deferred messages that were blocked by the stale pending set.
+    this.flushDeferredMessagesIfToolExchangeClosed();
   }
 
   private pushHistory(...messages: ContextMessage[]): void {

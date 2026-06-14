@@ -118,6 +118,8 @@ export class Agent {
   readonly fullCompaction: FullCompaction;
   readonly microCompaction: MicroCompaction;
   readonly context: ContextMemory;
+  /** Tool_call_ids from stale incomplete turns, identified during replay. */
+  staleToolCallIds: Set<string> = new Set();
   readonly config: ConfigState;
   readonly turn: TurnFlow;
   readonly injection: InjectionManager;
@@ -296,10 +298,18 @@ export class Agent {
 
   async resume(): Promise<{ warning?: string }> {
     const result = await this.records.replay();
+    this.staleToolCallIds = this.records.staleToolCallIds;
     this.goal.normalizeAfterReplay();
     await this.background.loadFromDisk();
     await this.background.reconcile();
     await this.cron?.loadFromDisk();
+    // Clean up any tool_call IDs that were never answered (session killed
+    // mid-tool-call).  Without this, new user messages would be silently
+    // deferred because `hasOpenToolExchange()` would remain true.
+    this.context.cleanupOrphanedToolCalls();
+    // Clear stale IDs after cleanup so they don't affect live turns
+    // that may reuse the same toolCallIds.
+    this.staleToolCallIds = new Set();
     this.turn.finishResume();
     return result;
   }

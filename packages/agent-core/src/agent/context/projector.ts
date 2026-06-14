@@ -12,7 +12,11 @@ export function project(history: readonly ContextMessage[]): Message[] {
       !(message.role === 'assistant' && message.content.length === 0 && message.toolCalls.length === 0)
     );
   });
-  return mergeAdjacentUserMessages(usable);
+  // Trim any trailing assistant message whose tool_calls were never answered
+  // (e.g. the session was killed mid-tool-call).  Sending an assistant
+  // message with open tool_calls violates the API contract and causes a
+  // 400 error on resume.
+  return trimTrailingOpenToolExchange(mergeAdjacentUserMessages(usable));
 }
 
 function mergeAdjacentUserMessages(history: readonly ContextMessage[]): Message[] {
@@ -77,8 +81,11 @@ export function trimTrailingOpenToolExchange(history: readonly Message[]): Messa
     lastNonToolIndex -= 1;
   }
 
+  // No assistant message found — nothing to trim.
+  if (lastNonToolIndex < 0) return [...history];
+
   const assistant = history[lastNonToolIndex];
-  if (assistant === undefined) return [];
+  if (assistant === undefined) return [...history];
   if (assistant.role !== 'assistant' || assistant.toolCalls.length === 0) return [...history];
 
   const trailingToolCallIds = new Set(
