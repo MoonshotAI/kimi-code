@@ -38,6 +38,11 @@ export function createProgram(
       ).argParser((val: string | boolean) => (val === true ? '' : (val as string))),
     )
     .addOption(
+      new Option('--sessions [id]')
+        .hideHelp()
+        .argParser((val: string | boolean) => (val === true ? '' : (val as string))),
+    )
+    .addOption(
       new Option('-r, --resume [id]')
         .hideHelp()
         .argParser((val: string | boolean) => (val === true ? '' : (val as string))),
@@ -104,7 +109,7 @@ export function createProgram(
 
     const raw = program.opts<Record<string, unknown>>();
 
-    const rawSession = raw['session'] ?? raw['resume'];
+    const rawSession = raw['session'] ?? raw['sessions'] ?? raw['resume'];
     const sessionValue = rawSession === true ? '' : (rawSession as string | undefined);
     const yoloValue = raw['yolo'] === true || raw['yes'] === true || raw['autoApprove'] === true;
     const autoValue = raw['auto'] === true;

@@ -36,11 +36,19 @@ export class WelcomeComponent implements Component {
       textWidth,
       '…',
     );
-    const isLoggedOut = !this.state.model;
+    const hasModel = this.state.model.length > 0;
+    const hasConfiguredModels = Object.keys(this.state.availableModels).length > 0;
+    const needsProvider = !hasModel && !hasConfiguredModels;
     const dim = chalk.hex(currentTheme.palette.textDim);
     const labelStyle = chalk.bold.hex(currentTheme.palette.textDim);
     const rightRow1 = truncateToWidth(
-      dim(isLoggedOut ? 'Run /login or /provider to get started.' : 'Send /help for help information.'),
+      dim(
+        needsProvider
+          ? 'Run /login or /provider to get started.'
+          : hasModel
+            ? 'Send /help for help information.'
+            : 'Pick a session or send /model to choose one.',
+      ),
       textWidth,
       '…',
     );
@@ -54,8 +62,10 @@ export class WelcomeComponent implements Component {
     }
 
     const activeModel = this.state.availableModels[this.state.model];
-    const modelValue = isLoggedOut
-      ? chalk.hex(currentTheme.palette.warning)('not set, run /login or /provider')
+    const modelValue = !hasModel
+      ? needsProvider
+        ? chalk.hex(currentTheme.palette.warning)('not set, run /login or /provider')
+        : dim('not selected')
       : (activeModel?.displayName ?? activeModel?.model ?? this.state.model);
 
     const infoLines = [

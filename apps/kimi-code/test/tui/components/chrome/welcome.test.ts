@@ -42,6 +42,10 @@ function truecolorCodes(text: string): Set<string> {
   return codes;
 }
 
+function stripSgr(text: string): string {
+  return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
+}
+
 /** The two header rows (logo + title) of the rendered welcome box. */
 function headerOf(lines: string[]): string {
   return [lines[3], lines[4]].join('\n');
@@ -90,5 +94,44 @@ describe('WelcomeComponent', () => {
     const off = headerOf(new WelcomeComponent(appState).render(80));
 
     expect(off).toBe(base);
+  });
+
+  it('shows setup guidance when no models are configured', () => {
+    const output = stripSgr(
+      new WelcomeComponent({
+        ...appState,
+        model: '',
+        availableModels: {},
+      })
+        .render(120)
+        .join('\n'),
+    );
+
+    expect(output).toContain('Run /login or /provider to get started.');
+    expect(output).toContain('Model:     not set, run /login or /provider');
+  });
+
+  it('shows an unselected model state when models are configured', () => {
+    const output = stripSgr(
+      new WelcomeComponent({
+        ...appState,
+        model: '',
+        sessionId: '',
+        availableModels: {
+          'kimi-code/k2': {
+            provider: 'kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 128000,
+            displayName: 'Kimi K2',
+          },
+        },
+      })
+        .render(120)
+        .join('\n'),
+    );
+
+    expect(output).toContain('Pick a session or send /model to choose one.');
+    expect(output).toContain('Model:     not selected');
+    expect(output).not.toContain('run /login');
   });
 });

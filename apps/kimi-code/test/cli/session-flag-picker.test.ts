@@ -25,10 +25,15 @@ function parse(argv: string[]): CLIOptions {
   return captured;
 }
 
-describe('--session / -r / -S picker routing', () => {
+describe('--session / --sessions / -r / -S picker routing', () => {
   describe('argParser: no-arg forms coerce to empty string', () => {
     it('--session with no id → session === ""', () => {
       const opts = parse(['--session']);
+      expect(opts.session).toBe('');
+    });
+
+    it('--sessions with no id → session === ""', () => {
+      const opts = parse(['--sessions']);
       expect(opts.session).toBe('');
     });
 
@@ -46,6 +51,11 @@ describe('--session / -r / -S picker routing', () => {
   describe('argParser: id forms keep the id verbatim', () => {
     it('--session foo → session === "foo"', () => {
       const opts = parse(['--session', 'foo']);
+      expect(opts.session).toBe('foo');
+    });
+
+    it('--sessions foo → session === "foo"', () => {
+      const opts = parse(['--sessions', 'foo']);
       expect(opts.session).toBe('foo');
     });
 
