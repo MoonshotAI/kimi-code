@@ -13,10 +13,11 @@
  */
 
 import {
-  applyCustomRegistryProvider,
+  applyCustomRegistryEntries,
   CustomRegistryApiError,
   fetchCustomRegistry,
   type CustomRegistrySource,
+  type CustomRegistryProviderEntry,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 import {
@@ -112,26 +113,20 @@ export async function handleProviderAdd(
     deps.exit(1);
   }
 
-  // `harness.removeProvider` reloads the config from disk on each call (see
-  // `core-impl.ts removeKimiProvider`), so calling it inside the apply loop
-  // would discard providers we already applied in memory but have not yet
-  // persisted. Drop every stale id up front in a single batch instead, then
-  // apply against the resulting fresh config.
   let config = await harness.getConfig();
-  const staleIds = entryList
-    .filter((entry) => config.providers[entry.id] !== undefined)
-    .map((entry) => entry.id);
-  for (const id of staleIds) {
+  // `setConfig` patches cannot clear defaultModel with undefined, so keep
+  // provider removals on the existing RPC path before applying the fresh batch.
+  for (const id of customRegistryProvidersToRemove(config, entries, source)) {
     config = await harness.removeProvider(id);
   }
 
   const addedProviderIds: string[] = [];
   let modelCount = 0;
   for (const entry of entryList) {
-    applyCustomRegistryProvider(asManaged(config), entry, source);
     addedProviderIds.push(entry.id);
     modelCount += Object.keys(entry.models).length;
   }
+  applyCustomRegistryEntries(asManaged(config), entries, source);
 
   await harness.setConfig({
     providers: config.providers,
@@ -527,15 +522,38 @@ function asManaged(config: KimiConfig): ManagedKimiConfigShape {
   return config as unknown as ManagedKimiConfigShape;
 }
 
-function providerSourceLabel(provider: KimiConfig['providers'][string]): string {
-  const source = provider.source;
-  if (source !== undefined) {
-    if (source['kind'] === 'apiJson' && typeof source['url'] === 'string') {
-      return `apiJson(${source['url']})`;
-    }
+function customRegistryProvidersToRemove(
+  config: KimiConfig,
+  entries: Record<string, CustomRegistryProviderEntry>,
+  source: CustomRegistrySource,
+): string[] {
+  const incoming = new Set(Object.values(entries).map((entry) => entry.id));
+  const removeIds = new Set<string>();
+
+  for (const id of incoming) {
+    if (config.providers[id] !== undefined) removeIds.add(id);
   }
+
+  for (const [id, provider] of Object.entries(config.providers)) {
+    if (incoming.has(id)) continue;
+    if (providerSourceUrl(provider) === source.url) removeIds.add(id);
+  }
+
+  return [...removeIds];
+}
+
+function providerSourceLabel(provider: KimiConfig['providers'][string]): string {
+  const url = providerSourceUrl(provider);
+  if (url !== undefined) return `apiJson(${url})`;
   if (provider.oauth !== undefined) return 'oauth';
   return 'inline';
+}
+
+function providerSourceUrl(provider: KimiConfig['providers'][string]): string | undefined {
+  const source = provider.source;
+  if (source === undefined) return undefined;
+  if (source['kind'] !== 'apiJson' || typeof source['url'] !== 'string') return undefined;
+  return source['url'];
 }
 
 function errorMessage(error: unknown): string {

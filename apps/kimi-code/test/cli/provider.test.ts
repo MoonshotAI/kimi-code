@@ -356,6 +356,80 @@ describe('kimi provider add', () => {
     expect(final.models?.['kohub-responses/legacy-model']).toBeUndefined();
   });
 
+  it('removes providers from the same custom registry when they disappear upstream', async () => {
+    const updatedRegistryBody = {
+      primary: {
+        id: 'registry-primary',
+        name: 'Primary Registry Provider',
+        api: 'https://registry.example.test',
+        type: 'openai',
+        models: {
+          'model-current': { id: 'model-current', name: 'Current Model' },
+        },
+      },
+    };
+    mockRegistryFetch(updatedRegistryBody);
+    const initial: KimiConfig = {
+      providers: {
+        'registry-primary': {
+          type: 'openai',
+          baseUrl: 'https://registry.example.test',
+          apiKey: 'test-key-old',
+          source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'test-key-old' },
+        },
+        'registry-removed': {
+          type: 'openai',
+          baseUrl: 'https://registry.example.test/v1',
+          apiKey: 'test-key-old',
+          source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'test-key-old' },
+        },
+        manual: {
+          type: 'openai',
+          baseUrl: 'https://manual.example.test/v1',
+          apiKey: 'test-key-manual',
+        },
+      },
+      models: {
+        'registry-primary/model-current': {
+          provider: 'registry-primary',
+          model: 'model-current',
+          maxContextSize: 1024,
+          capabilities: [],
+        },
+        'registry-removed/model-removed': {
+          provider: 'registry-removed',
+          model: 'model-removed',
+          maxContextSize: 1024,
+          capabilities: [],
+        },
+        'manual/model-manual': {
+          provider: 'manual',
+          model: 'model-manual',
+          maxContextSize: 1024,
+          capabilities: [],
+        },
+      },
+      defaultModel: 'registry-removed/model-removed',
+    } as unknown as KimiConfig;
+    const { harness, removeCalls, current } = makeHarness(initial);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleProviderAdd(deps, REGISTRY_URL, { apiKey: 'test-key-fresh' }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    expect(removeCalls).toEqual(['registry-primary', 'registry-removed']);
+    const final = current();
+    expect(Object.keys(final.providers).toSorted()).toEqual(['manual', 'registry-primary']);
+    expect(final.providers['registry-primary']?.apiKey).toBe('test-key-fresh');
+    expect(final.models?.['registry-primary/model-current']).toBeDefined();
+    expect(final.providers['registry-removed']).toBeUndefined();
+    expect(final.models?.['registry-removed/model-removed']).toBeUndefined();
+    expect(final.models?.['manual/model-manual']).toBeDefined();
+    expect(final.defaultModel).toBeUndefined();
+  });
+
   it('reads the api key from KIMI_REGISTRY_API_KEY when --api-key is omitted', async () => {
     const fetchMock = mockRegistryFetch();
     const { harness } = makeHarness({ providers: {} } as KimiConfig);
