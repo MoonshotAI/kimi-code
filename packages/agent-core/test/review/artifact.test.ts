@@ -109,6 +109,27 @@ describe('ReviewArtifactStore', () => {
     expect(summaries[0]).toMatchObject({ id: 1, commentCount: 1, criticalCount: 1, rejectedCount: 0 });
   });
 
+  it('derives a topic slug from the top finding and de-duplicates it', async () => {
+    const store = new ReviewArtifactStore(memKaos(), '/session');
+    const first = await store.save(
+      buildReviewArtifact({
+        result: result([comment({ title: 'Token refresh races on login' })]),
+        createdAt: '2026-06-14T14:30:52Z',
+        diff: DIFF,
+      }),
+    );
+    const second = await store.save(
+      buildReviewArtifact({
+        result: result([comment({ title: 'Token refresh races on login' })]),
+        createdAt: '2026-06-14T15:00:00Z',
+        diff: DIFF,
+      }),
+    );
+    expect(first.slug).toBe('token-refresh-races-on-login');
+    expect(second.slug).toBe('token-refresh-races-on-login-2');
+    expect((await store.list()).map((s) => s.slug)).toContain('token-refresh-races-on-login');
+  });
+
   it('reads a saved artifact back by id', async () => {
     const store = new ReviewArtifactStore(memKaos(), '/session');
     const saved = await store.save(

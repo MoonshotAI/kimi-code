@@ -43,8 +43,10 @@ export interface ReviewArtifactComment {
 
 /** The on-disk artifact: <sessionDir>/reviews/<timestamp>.json */
 export interface ReviewArtifact {
-  /** Short ordinal, session-scoped (the id the user types). */
+  /** Short ordinal, session-scoped — the stable internal/RPC key. */
   readonly id: number;
+  /** Human-readable, topic-derived handle the user types (e.g. /review read auth-refresh-races). */
+  readonly slug: string;
   readonly createdAt: string;
   readonly target: ReviewTarget;
   readonly intensity: ReviewIntensity;
@@ -55,11 +57,12 @@ export interface ReviewArtifact {
   readonly diff: string;
 }
 
-export type ReviewArtifactDraft = Omit<ReviewArtifact, 'id'>;
+export type ReviewArtifactDraft = Omit<ReviewArtifact, 'id' | 'slug'>;
 
 /** Compact, immutable-ish metadata for `/review read` autocomplete and listing. */
 export interface ReviewArtifactSummary {
   readonly id: number;
+  readonly slug: string;
   readonly createdAt: string;
   readonly scope: ReviewTarget['scope'];
   readonly intensity: ReviewIntensity;
@@ -120,9 +123,29 @@ function toArtifactComment(
   };
 }
 
+const SEVERITY_RANK: Record<ReviewCommentSeverity, number> = { critical: 0, important: 1, minor: 2 };
+
+/** Derive a short, topic-ish slug from the most severe finding (or the scope). */
+export function reviewSlug(draft: ReviewArtifactDraft): string {
+  const top = [...draft.comments].sort(
+    (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity],
+  )[0];
+  const source = top?.title ?? draft.target.scope.replace('_', ' ');
+  const words = source
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 0)
+    .slice(0, 5);
+  const slug = words.join('-');
+  return slug.length > 0 ? slug : draft.target.scope.replace('_', '-');
+}
+
 function summarize(artifact: ReviewArtifact, file: string): ReviewArtifactIndexEntry {
   return {
     id: artifact.id,
+    slug: artifact.slug,
     file,
     createdAt: artifact.createdAt,
     scope: artifact.target.scope,
@@ -146,7 +169,8 @@ export class ReviewArtifactStore {
   async save(draft: ReviewArtifactDraft): Promise<ReviewArtifact> {
     const index = await this.readIndex();
     const id = index.nextId;
-    const artifact: ReviewArtifact = { ...draft, id };
+    const slug = uniqueSlug(index, reviewSlug(draft));
+    const artifact: ReviewArtifact = { ...draft, id, slug };
     const file = this.uniqueFileName(index, draft.createdAt);
     await this.kaos.mkdir(this.dir, { parents: true, existOk: true });
     await this.kaos.writeText(join(this.dir, file), `${JSON.stringify(artifact, null, 2)}\n`);
@@ -256,6 +280,14 @@ export class ReviewArtifactStore {
     }
     return candidate;
   }
+}
+
+function uniqueSlug(index: ReviewArtifactIndex, base: string): string {
+  const taken = new Set(index.entries.map((entry) => entry.slug));
+  if (!taken.has(base)) return base;
+  let counter = 2;
+  while (taken.has(`${base}-${String(counter)}`)) counter += 1;
+  return `${base}-${String(counter)}`;
 }
 
 /** Convert an ISO timestamp to a sortable, filename-safe slug (YYYYMMDD-HHMMSS). */

@@ -204,4 +204,6 @@ export interface ReviewResult {
   readonly comments: readonly ReviewFinalComment[];
   /** Short ordinal of the persisted artifact, set once the review is saved. */
   readonly reviewId?: number;
+  /** Topic slug of the persisted artifact (the user-facing handle). */
+  readonly reviewSlug?: string;
 }

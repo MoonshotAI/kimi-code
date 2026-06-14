@@ -613,7 +613,7 @@ export class Session {
       const artifact = await this.reviewStore.save(
         buildReviewArtifact({ result, createdAt: new Date().toISOString(), diff }),
       );
-      return { ...result, reviewId: artifact.id };
+      return { ...result, reviewId: artifact.id, reviewSlug: artifact.slug };
     } catch (error) {
       this.log.error('review artifact persist failed', error);
       return result;
