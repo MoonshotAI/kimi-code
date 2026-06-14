@@ -4,6 +4,7 @@ import type { ReviewArtifact, ReviewResult } from '@moonshot-ai/kimi-code-sdk';
 
 import {
   formatReviewArtifactCompactMarkdown,
+  formatReviewArtifactMarkdown,
   formatReviewCompactMarkdown,
 } from '#/tui/utils/review-options';
 
@@ -86,5 +87,17 @@ describe('formatReviewArtifactCompactMarkdown', () => {
     expect(text).toContain('- ~~`src/b.ts:3` — Redundant clone~~');
     // The active critical is still listed normally.
     expect(text).toContain('- `src/a.ts:8` — Races on login');
+  });
+
+  it('exports full Markdown excluding rejected findings from severity groups', () => {
+    const md = formatReviewArtifactMarkdown(artifact);
+    expect(md).toContain('# Code review 2');
+    expect(md).toContain('## Critical');
+    expect(md).toContain('### Races on login');
+    expect(md).toContain('`src/a.ts:8`');
+    // Rejected finding is not under a severity group, only in the Rejected section.
+    expect(md).not.toContain('## Minor');
+    expect(md).toContain('## Rejected');
+    expect(md).toContain('- ~~`src/b.ts:3` — Redundant clone~~');
   });
 });

@@ -169,6 +169,46 @@ export function formatReviewArtifactCompactMarkdown(artifact: ReviewArtifact): s
   });
 }
 
+/** Full grouped-by-severity Markdown for `/review export`. */
+export function formatReviewArtifactMarkdown(artifact: ReviewArtifact): string {
+  const lines = [`# Code review ${String(artifact.id)}`, '', artifact.summary, ''];
+  for (const severity of SEVERITY_ORDER) {
+    const group = artifact.comments.filter(
+      (comment) => comment.severity === severity && comment.state !== 'dismissed',
+    );
+    if (group.length === 0) continue;
+    lines.push(`## ${severityLabel(severity)}`, '');
+    for (const comment of group) {
+      lines.push(`### ${comment.title}`);
+      lines.push(`\`${comment.anchor.path}:${String(comment.anchor.line)}\``, '');
+      if (comment.body.length > 0) lines.push(comment.body, '');
+      if (comment.suggestedFix !== undefined && comment.suggestedFix.length > 0) {
+        lines.push(`**Suggested fix:** ${comment.suggestedFix}`, '');
+      }
+    }
+  }
+  const rejected = artifact.comments.filter((comment) => comment.state === 'dismissed');
+  if (rejected.length > 0) {
+    lines.push('## Rejected', '');
+    for (const comment of rejected) {
+      lines.push(`- ~~\`${comment.anchor.path}:${String(comment.anchor.line)}\` — ${comment.title}~~`);
+    }
+    lines.push('');
+  }
+  return `${lines.join('\n').trimEnd()}\n`;
+}
+
+export function reviewScopeLabel(scope: ReviewArtifact['target']['scope']): string {
+  switch (scope) {
+    case 'working_tree':
+      return 'Working tree';
+    case 'current_branch':
+      return 'Current branch';
+    case 'single_commit':
+      return 'Single commit';
+  }
+}
+
 function renderCompactReview(input: {
   readonly summary: string;
   readonly stats: ReviewDiffStats;
