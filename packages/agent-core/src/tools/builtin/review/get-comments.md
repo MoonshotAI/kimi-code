@@ -1,1 +1,1 @@
-Return candidate, merged, or dismissed review comments. Reconciliators use this to inspect source comments and provenance.
+Return candidate, merged, or dismissed review comments. Reconciliators use this to inspect source comments, compare duplicates, preserve provenance, and ensure every assigned source comment is merged or dismissed.

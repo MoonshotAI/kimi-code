@@ -172,13 +172,16 @@ export function buildReviewWorkerContinuationPrompt(audit: ReviewWorkerAudit): s
   if (audit.blocker !== undefined) lines.push(`Current blocker: ${audit.blocker}`);
   if (audit.missingCoverage.length > 0) {
     lines.push(`Missing required coverage: ${audit.missingCoverage.join(', ')}.`);
+    lines.push('Read the missing coverage before adding new findings or marking the assignment complete.');
   } else if (audit.unreconciledComments.length > 0) {
     lines.push(`Unreconciled source comments: ${audit.unreconciledComments.join(', ')}.`);
+    lines.push('If coverage is complete, inspect unresolved source comments and merge or dismiss each one.');
   } else {
     lines.push('Required coverage is satisfied, but progress is not marked complete.');
+    lines.push('If all findings or reconciliation decisions are submitted, call UpdateProgress with `complete` and a concise summary.');
   }
   lines.push(
-    'Read any missing coverage, add or reconcile comments as needed, then call UpdateProgress with `complete` or `blocked`.',
+    'Do not call complete until every required read and reconciliation step is done. Use `blocked` only when a concrete blocker prevents completion.',
   );
   return lines.join('\n');
 }

@@ -42,6 +42,6 @@ subagents:
   plan:
     description: Read-only implementation planning and architecture design.
   reviewer:
-    description: Read-only code review worker for assigned changes.
+    description: Read-only code review worker that inspects assigned changes and submits actionable findings.
   reconciliator:
-    description: Read-only code review reconciler for combining source comments.
+    description: Read-only code review reconciler that merges valid source comments and dismisses weak ones.

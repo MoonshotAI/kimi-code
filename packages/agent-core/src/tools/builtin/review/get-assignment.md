@@ -1,1 +1,1 @@
-Return this worker's review assignment, including its role, perspective, assigned files, required coverage, and source comments if it is a reconciliator.
+Return this worker's review assignment, including its role, perspective, assigned files, required coverage, and source comment ids if it is a reconciliator. Use this before reading or commenting so findings stay inside the assigned scope.

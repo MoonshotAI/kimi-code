@@ -1,1 +1,1 @@
-Update this review assignment's progress. Mark complete only after reading all required coverage and submitting all comments.
+Update this review assignment's progress. Mark complete only after reading all required coverage and submitting all review comments or reconciliation decisions. Use blocked only when a concrete blocker prevents completion.

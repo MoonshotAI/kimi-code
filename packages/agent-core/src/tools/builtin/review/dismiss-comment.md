@@ -1,1 +1,1 @@
-Dismiss one source review comment with a specific reason and summary. Link it to a merged comment when it is covered there.
+Dismiss one source review comment with a specific reason and summary. Use this for duplicates, false positives, unsupported claims, pre-existing issues, low-confidence guesses, out-of-scope comments, and non-actionable feedback. Link it to a merged comment when that final comment covers the same root issue.

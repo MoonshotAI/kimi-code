@@ -1,1 +1,1 @@
-Merge one or more source review comments into a final review comment while preserving source comment ids.
+Merge one or more source review comments into a final review comment while preserving source comment ids. Merge only comments that describe the same root issue, and write a standalone final comment with clear severity, scenario, reason, and impact.
