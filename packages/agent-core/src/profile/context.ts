@@ -5,7 +5,9 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import { listDirectory } from '../tools/support/list-directory';
 import type { SystemPromptContext } from './types';
 
-const AGENTS_MD_MAX_BYTES = 32 * 1024;
+const INSTRUCTION_FILES_MAX_BYTES = 32 * 1024;
+const KIMI_AGENT_FILE_NAMES = ['AGENTS.md', 'agents.md'] as const;
+const CLAUDE_AGENT_FILE_NAMES = ['CLAUDE.md', 'claude.md'] as const;
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
@@ -30,7 +32,7 @@ export async function loadAgentsMd(kaos: Kaos, brandHome?: string): Promise<stri
   const seen = new Set<string>();
 
   const collect = async (path: string): Promise<boolean> => {
-    const file = await readAgentFile(kaos, path);
+    const file = await readInstructionFile(kaos, path);
     if (file === undefined) return false;
     const key = kaos.normpath(file.path);
     if (seen.has(key)) return false;
@@ -39,7 +41,14 @@ export async function loadAgentsMd(kaos: Kaos, brandHome?: string): Promise<stri
     return true;
   };
 
-  // User-level files come first so any project-level AGENTS.md overrides them.
+  const collectFirst = async (paths: readonly string[]): Promise<boolean> => {
+    for (const path of paths) {
+      if (await collect(path)) return true;
+    }
+    return false;
+  };
+
+  // User-level files come first so any project-level instructions override them.
   // The brand dir follows KIMI_CODE_HOME (default ~/.kimi-code); the generic
   // .agents dir stays under the real OS home so it can be shared across tools.
   const realHome = kaos.gethome();
@@ -49,17 +58,15 @@ export async function loadAgentsMd(kaos: Kaos, brandHome?: string): Promise<stri
   // Generic user-level dir (.agents) matches skill discovery.
   const genericDirs = [join(realHome, '.agents')];
   const genericFiles = genericDirs.flatMap((dir) =>
-    ['AGENTS.md', 'agents.md'].map((name) => join(dir, name)),
+    KIMI_AGENT_FILE_NAMES.map((name) => join(dir, name)),
   );
-  for (const file of genericFiles) {
-    if (await collect(file)) break;
-  }
+  await collectFirst(genericFiles);
 
   for (const dir of dirs) {
+    await collect(join(dir, '.claude', 'CLAUDE.md'));
+    await collectFirst(CLAUDE_AGENT_FILE_NAMES.map((name) => join(dir, name)));
     await collect(join(dir, '.kimi-code', 'AGENTS.md'));
-    for (const fileName of ['AGENTS.md', 'agents.md']) {
-      if (await collect(join(dir, fileName))) break;
-    }
+    await collectFirst(KIMI_AGENT_FILE_NAMES.map((name) => join(dir, name)));
   }
 
   return renderAgentFiles(discovered);
@@ -97,7 +104,7 @@ interface AgentFile {
   readonly content: string;
 }
 
-async function readAgentFile(kaos: Kaos, path: string): Promise<AgentFile | undefined> {
+async function readInstructionFile(kaos: Kaos, path: string): Promise<AgentFile | undefined> {
   if (!(await isFile(kaos, path))) return undefined;
   const content = (await kaos.readText(path, { errors: 'ignore' })).trim();
   if (content.length === 0) return undefined;
@@ -125,7 +132,7 @@ async function isFile(kaos: Kaos, path: string): Promise<boolean> {
 function renderAgentFiles(files: readonly AgentFile[]): string {
   if (files.length === 0) return '';
 
-  let remaining = AGENTS_MD_MAX_BYTES;
+  let remaining = INSTRUCTION_FILES_MAX_BYTES;
   const budgeted: Array<AgentFile | undefined> = Array.from({ length: files.length });
 
   for (let i = files.length - 1; i >= 0; i--) {
@@ -170,5 +177,4 @@ function byteLength(text: string): number {
 function annotationFor(path: string): string {
   return `<!-- From: ${path} -->\n`;
 }
-
 

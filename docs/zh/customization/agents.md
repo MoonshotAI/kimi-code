@@ -39,7 +39,9 @@ Kimi Code CLI 内置三种子 Agent，开箱即用，分别面向不同任务形
 
 ## 指令文件
 
-全局 Kimi 专属指令可放在 `$KIMI_CODE_HOME/AGENTS.md`（默认：`~/.kimi-code/AGENTS.md`）。当你用 `KIMI_CODE_HOME` 移动数据根时，这份全局指令文件也会一起移动。跨工具通用指令仍可放在真实 OS home 下的 `~/.agents/AGENTS.md`，项目级指令仍放在项目目录中，例如 `.kimi-code/AGENTS.md` 或 `AGENTS.md`。
+全局 Kimi 专属指令可放在 `$KIMI_CODE_HOME/AGENTS.md`（默认：`~/.kimi-code/AGENTS.md`）。当你用 `KIMI_CODE_HOME` 移动数据根时，这份全局指令文件也会一起移动。跨工具通用指令仍可放在真实 OS home 下的 `~/.agents/AGENTS.md`。
+
+项目级指令会从仓库根目录一路加载到当前工作目录。每个目录中，Kimi Code 会先读取兼容 Claude Code 的指令文件：`.claude/CLAUDE.md`，然后读取 `CLAUDE.md` 和 `claude.md` 中第一个存在的文件；`CLAUDE.md` 和 `claude.md` 同时存在时，使用 `CLAUDE.md`。随后再追加 Kimi 原生文件：`.kimi-code/AGENTS.md`，然后是 `AGENTS.md` 和 `agents.md` 中第一个存在的文件，因此同一目录下的 Kimi 专属指令可以覆盖复用的 Claude 指令。
 
 ## 会话目录中的存储位置
 

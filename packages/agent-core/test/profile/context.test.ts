@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loadAgentsMd } from '../../src/profile/context';
 import { testKaos } from '../fixtures/test-kaos';
+import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 
 let homeDir: string;
 let workDir: string;
@@ -111,3 +112,79 @@ describe('loadAgentsMd brand home (KIMI_CODE_HOME)', () => {
     expect(result).toContain('fallback branded');
   });
 });
+
+describe('loadAgentsMd Claude compatibility', () => {
+  it('loads Claude instruction files alongside Kimi-native instructions', async () => {
+    const projectRoot = join(workDir, 'repo');
+    const leafDir = join(projectRoot, 'packages', 'app');
+    vi.spyOn(testKaos, 'getcwd').mockReturnValue(leafDir);
+
+    await mkdir(join(projectRoot, '.git'), { recursive: true });
+    await mkdir(join(projectRoot, '.claude'), { recursive: true });
+    await mkdir(join(projectRoot, '.kimi-code'), { recursive: true });
+    await mkdir(leafDir, { recursive: true });
+
+    await writeFile(join(projectRoot, '.claude', 'CLAUDE.md'), 'root claude dir', 'utf-8');
+    await writeFile(join(projectRoot, 'CLAUDE.md'), 'root claude upper', 'utf-8');
+    await writeFile(join(projectRoot, '.kimi-code', 'AGENTS.md'), 'root branded agents', 'utf-8');
+    await writeFile(join(projectRoot, 'AGENTS.md'), 'root agents', 'utf-8');
+    await writeFile(join(leafDir, 'claude.md'), 'leaf claude lower', 'utf-8');
+    await writeFile(join(leafDir, 'AGENTS.md'), 'leaf agents', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos);
+
+    expect(result).toContain('root claude dir');
+    expect(result).toContain('root claude upper');
+    expect(result).toContain('root branded agents');
+    expect(result).toContain('root agents');
+    expect(result).toContain('leaf claude lower');
+    expect(result).toContain('leaf agents');
+    expect(result.indexOf('root claude dir')).toBeLessThan(result.indexOf('root claude upper'));
+    expect(result.indexOf('root claude upper')).toBeLessThan(
+      result.indexOf('root branded agents'),
+    );
+    expect(result.indexOf('root branded agents')).toBeLessThan(result.indexOf('root agents'));
+    expect(result.indexOf('leaf claude lower')).toBeLessThan(result.indexOf('leaf agents'));
+  });
+
+  it('prefers CLAUDE.md over claude.md in the same directory', async () => {
+    const files = new Map([
+      ['/repo/CLAUDE.md', 'upper claude'],
+      ['/repo/claude.md', 'lower claude'],
+    ]);
+    const dirs = new Set(['/repo', '/repo/.git']);
+    const kaos = createFakeKaos({
+      getcwd: () => '/repo',
+      stat: vi.fn(async (path: string) => {
+        if (dirs.has(path)) return stat('dir');
+        if (files.has(path)) return stat('file');
+        throw new Error(`ENOENT ${path}`);
+      }),
+      readText: vi.fn(async (path: string) => {
+        const content = files.get(path);
+        if (content === undefined) throw new Error(`ENOENT ${path}`);
+        return content;
+      }),
+    });
+
+    const result = await loadAgentsMd(kaos);
+
+    expect(result).toContain('upper claude');
+    expect(result).not.toContain('lower claude');
+  });
+});
+
+function stat(kind: 'dir' | 'file') {
+  return {
+    stMode: kind === 'dir' ? 0o040000 : 0o100000,
+    stIno: 0,
+    stDev: 0,
+    stNlink: 1,
+    stUid: 0,
+    stGid: 0,
+    stSize: 0,
+    stAtime: 0,
+    stMtime: 0,
+    stCtime: 0,
+  };
+}

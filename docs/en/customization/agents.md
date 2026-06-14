@@ -39,7 +39,9 @@ If you need a particular type of tool to be permanently unavailable inside sub-a
 
 ## Instruction Files
 
-Global Kimi-specific instructions can live at `$KIMI_CODE_HOME/AGENTS.md` (default: `~/.kimi-code/AGENTS.md`). When you relocate the data root with `KIMI_CODE_HOME`, this global instruction file moves with it. Generic cross-tool instructions can still live under `~/.agents/AGENTS.md` in the real OS home, and project-level instructions remain under the project tree, for example `.kimi-code/AGENTS.md` or `AGENTS.md`.
+Global Kimi-specific instructions can live at `$KIMI_CODE_HOME/AGENTS.md` (default: `~/.kimi-code/AGENTS.md`). When you relocate the data root with `KIMI_CODE_HOME`, this global instruction file moves with it. Generic cross-tool instructions can still live under `~/.agents/AGENTS.md` in the real OS home.
+
+Project-level instructions are loaded from the repository root toward the current working directory. In each directory, Kimi Code reads Claude Code-compatible files first: `.claude/CLAUDE.md`, then the first existing file from `CLAUDE.md` and `claude.md`; when both `CLAUDE.md` and `claude.md` exist, `CLAUDE.md` wins. It then appends Kimi-native files: `.kimi-code/AGENTS.md`, then the first existing file from `AGENTS.md` and `agents.md`, so Kimi-specific instructions in the same directory can override reused Claude instructions.
 
 ## Storage Location in the Session Directory
 
