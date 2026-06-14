@@ -12,6 +12,7 @@
 import {
   Container,
   Key,
+  Markdown,
   matchesKey,
   truncateToWidth,
   visibleWidth,
@@ -21,6 +22,7 @@ import type { ReviewArtifact, ReviewArtifactComment } from '@moonshot-ai/kimi-co
 
 import { highlightLines, langFromPath } from '@/tui/components/media/code-highlight';
 import { currentTheme } from '#/tui/theme';
+import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { buildDiffWindow, diffGutter, type DiffViewRow } from '@/tui/utils/review-diff';
 import { printableChar } from '@/tui/utils/printable-key';
 
@@ -110,29 +112,32 @@ export class ReviewReaderComponent extends Container implements Focusable {
     const position = `comment ${String(this.index + 1)}/${String(this.comments.length)}`;
     const rejected = comment.state === 'dismissed';
     const tag = severityColor(comment.severity)(SEVERITY_TAG[comment.severity]);
-    const rejectedTag = rejected ? currentTheme.fg('textMuted', '  (rejected)') : '';
+    const rejectedTag = rejected ? currentTheme.fg('warning', '  (rejected)') : '';
+    // Header line, then the (long) path on its own gray line, then the title —
+    // so the title never wraps awkwardly beside the path.
     lines.push(
-      currentTheme.boldFg('primary', ` Review ${String(this.artifact.id)}`) +
+      currentTheme.boldFg('primary', ` Review ${this.artifact.slug}`) +
         currentTheme.fg('textMuted', ` · ${position} · `) +
         tag +
         rejectedTag,
     );
     lines.push(
-      ` ${currentTheme.fg('text', `${comment.anchor.path}:${String(comment.anchor.line)}`)}  ` +
-        currentTheme.boldFg('text', comment.title),
+      ` ${currentTheme.fg('textDim', `${comment.anchor.path}:${String(comment.anchor.line)}`)}`,
     );
+    for (const line of wrap(comment.title, inner - 1)) {
+      lines.push(` ${currentTheme.boldFg('textStrong', line)}`);
+    }
     lines.push('');
-    for (const line of wrap(comment.body, inner - 1)) lines.push(` ${currentTheme.fg('text', line)}`);
+    for (const line of renderMarkdownLines(comment.body, inner - 1)) lines.push(` ${line}`);
     if (comment.suggestedFix !== undefined && comment.suggestedFix.length > 0) {
       lines.push('');
-      lines.push(currentTheme.boldFg('textMuted', ' Suggested fix'));
-      for (const line of wrap(comment.suggestedFix, inner - 1)) {
-        lines.push(` ${currentTheme.fg('textMuted', line)}`);
-      }
+      lines.push(currentTheme.boldFg('accent', ' Suggested fix'));
+      for (const line of renderMarkdownLines(comment.suggestedFix, inner - 1)) lines.push(` ${line}`);
     }
 
     lines.push('');
     lines.push(...this.renderDiff(comment, inner));
+    lines.push('');
     lines.push(this.statusBar());
     return lines;
   }
@@ -165,7 +170,7 @@ export class ReviewReaderComponent extends Container implements Focusable {
   private statusBar(): string {
     const hint = '↑/↓ move · x reject · u restore · q close';
     const flash = this.flash === undefined ? '' : currentTheme.fg('success', `  ${this.flash}`);
-    return currentTheme.fg('textMuted', ` ${hint}`) + flash;
+    return currentTheme.fg('primary', ` ${hint}`) + flash;
   }
 }
 
@@ -180,6 +185,16 @@ function renderDiffRow(
     row.kind === 'add' ? 'diffAdded' : row.kind === 'del' ? 'diffRemoved' : 'diffGutter';
   const available = Math.max(1, inner - visibleWidth(gutter) - 1);
   return currentTheme.fg(gutterColor, gutter) + ' ' + truncateToWidth(highlightedText, available, '…');
+}
+
+/** Render prose through pi-tui Markdown so inline code/bold match the chat. */
+function renderMarkdownLines(text: string, width: number): string[] {
+  const rendered = new Markdown(text.trim(), 0, 0, createMarkdownTheme()).render(Math.max(1, width));
+  // Drop trailing blank lines the block renderer may emit.
+  while (rendered.length > 0 && (rendered.at(-1) ?? '').trim().length === 0) {
+    rendered.pop();
+  }
+  return rendered;
 }
 
 function severityColor(severity: ReviewArtifactComment['severity']): (text: string) => string {
