@@ -8,6 +8,8 @@ const DOWN = `${ESC}[B`;
 const PAGE_UP = `${ESC}[5~`;
 const PAGE_DOWN = `${ESC}[6~`;
 const BACKSPACE = String.fromCodePoint(127);
+const KITTY_J = `${ESC}[106u`;
+const KITTY_K = `${ESC}[107u`;
 
 const ITEMS = Array.from({ length: 10 }, (_, i) => `item${String(i).padStart(2, '0')}`);
 
@@ -96,5 +98,21 @@ describe('SearchableList', () => {
     expect(search.handleKey('a')).toBe(true);
     expect(search.handleKey(BACKSPACE)).toBe(true);
     expect(search.view().query).toBe('');
+  });
+
+  it('uses j/k as navigation only for non-searchable lists', () => {
+    const nav = make({ searchable: false });
+    expect(nav.handleKey('j')).toBe(true);
+    expect(nav.view().selectedIndex).toBe(1);
+    expect(nav.handleKey(KITTY_J)).toBe(true);
+    expect(nav.view().selectedIndex).toBe(2);
+    expect(nav.handleKey('k')).toBe(true);
+    expect(nav.view().selectedIndex).toBe(1);
+    expect(nav.handleKey(KITTY_K)).toBe(true);
+    expect(nav.view().selectedIndex).toBe(0);
+
+    const search = make({ searchable: true });
+    expect(search.handleKey('j')).toBe(true);
+    expect(search.view().query).toBe('j');
   });
 });
