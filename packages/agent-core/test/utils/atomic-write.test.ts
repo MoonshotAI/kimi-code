@@ -1,11 +1,13 @@
 /**
  * Tests for atomicWrite — specifically symlink preservation.
  *
- * The core invariant: if `filePath` is a symlink, atomicWrite should
- * preserve the symlink (write to the resolved target), not replace it.
+ * The core invariant: when followSymlinks is true and `filePath` is a
+ * symlink, atomicWrite should preserve the symlink (write to the resolved
+ * target), not replace it. Default behavior (followSymlinks false) replaces
+ * the symlink itself.
  */
 
-import { mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -46,40 +48,55 @@ describe('atomicWrite', () => {
     expect(content).toBe('new content');
   });
 
-  it('preserves symlink and writes to target', async () => {
-    // Create a real file in a subdirectory (simulating iCloud target)
+  it('default behavior: replaces symlink with regular file', async () => {
+    const targetDir = join(rootDir, 'target');
+    await mkdir(targetDir);
+    const realFile = join(targetDir, 'config.toml');
+    await writeFile(realFile, 'original');
+
+    const symlinkPath = join(rootDir, 'config.toml');
+    await symlink(realFile, symlinkPath);
+
+    // Without followSymlinks, symlink is replaced
+    await atomicWrite(symlinkPath, 'new content');
+
+    const stat = await lstat(symlinkPath);
+    expect(stat.isSymbolicLink()).toBe(false);
+
+    const content = await readFile(symlinkPath, 'utf-8');
+    expect(content).toBe('new content');
+
+    // Original target unchanged
+    const originalContent = await readFile(realFile, 'utf-8');
+    expect(originalContent).toBe('original');
+  });
+
+  it('followSymlinks: preserves symlink and writes to target', async () => {
     const targetDir = join(rootDir, 'real-target');
     await mkdir(targetDir);
     const realFile = join(targetDir, 'config.toml');
     await writeFile(realFile, 'original content');
 
-    // Create a symlink to the real file
     const symlinkPath = join(rootDir, 'config.toml');
     await symlink(realFile, symlinkPath);
 
-    // Verify symlink exists and points to real file
-    const symlinkStat = await stat(symlinkPath, { bigint: false });
-    const lstatResult = await (await import('node:fs/promises')).lstat(symlinkPath);
-    expect(lstatResult.isSymbolicLink()).toBe(true);
+    // Verify symlink exists
+    expect((await lstat(symlinkPath)).isSymbolicLink()).toBe(true);
 
-    // Write via atomicWrite using the symlink path
-    await atomicWrite(symlinkPath, 'updated content');
+    // Write with followSymlinks
+    await atomicWrite(symlinkPath, 'updated content', { followSymlinks: true });
 
     // Symlink should still exist
-    const afterLstat = await (await import('node:fs/promises')).lstat(symlinkPath);
-    expect(afterLstat.isSymbolicLink()).toBe(true);
+    expect((await lstat(symlinkPath)).isSymbolicLink()).toBe(true);
 
     // Real file should have new content
-    const realContent = await readFile(realFile, 'utf-8');
-    expect(realContent).toBe('updated content');
+    expect(await readFile(realFile, 'utf-8')).toBe('updated content');
 
     // Reading via symlink should also show new content
-    const symlinkContent = await readFile(symlinkPath, 'utf-8');
-    expect(symlinkContent).toBe('updated content');
+    expect(await readFile(symlinkPath, 'utf-8')).toBe('updated content');
   });
 
-  it('replaces broken symlink when target does not exist', async () => {
-    // Create symlink to non-existent file (broken symlink)
+  it('followSymlinks: replaces broken symlink when target does not exist', async () => {
     const targetDir = join(rootDir, 'target-dir');
     await mkdir(targetDir);
     const realFile = join(targetDir, 'new-file.toml');
@@ -87,22 +104,16 @@ describe('atomicWrite', () => {
     await symlink(realFile, symlinkPath);
 
     // Verify it's a broken symlink
-    const lstatBefore = await (await import('node:fs/promises')).lstat(symlinkPath);
-    expect(lstatBefore.isSymbolicLink()).toBe(true);
+    expect((await lstat(symlinkPath)).isSymbolicLink()).toBe(true);
 
     // realpath fails on broken symlink, falls back to original path
-    // which replaces the symlink with a regular file
-    await atomicWrite(symlinkPath, 'new content');
+    await atomicWrite(symlinkPath, 'new content', { followSymlinks: true });
 
     // Symlink is replaced by regular file (fallback behavior)
-    const lstatAfter = await (await import('node:fs/promises')).lstat(symlinkPath);
-    expect(lstatAfter.isSymbolicLink()).toBe(false);
+    expect((await lstat(symlinkPath)).isSymbolicLink()).toBe(false);
 
-    // File should have content
-    const content = await readFile(symlinkPath, 'utf-8');
-    expect(content).toBe('new content');
+    expect(await readFile(symlinkPath, 'utf-8')).toBe('new content');
   });
-
 
   it('handles non-existent file (no symlink)', async () => {
     const filePath = join(rootDir, 'new-file.txt');
@@ -112,7 +123,7 @@ describe('atomicWrite', () => {
     expect(content).toBe('brand new');
   });
 
-  it('preserves symlink through multiple writes', async () => {
+  it('followSymlinks: preserves symlink through multiple writes', async () => {
     const targetDir = join(rootDir, 'target');
     await mkdir(targetDir);
     const realFile = join(targetDir, 'config.toml');
@@ -121,17 +132,28 @@ describe('atomicWrite', () => {
     const symlinkPath = join(rootDir, 'config.toml');
     await symlink(realFile, symlinkPath);
 
-    // Multiple writes
-    await atomicWrite(symlinkPath, 'v2');
-    await atomicWrite(symlinkPath, 'v3');
-    await atomicWrite(symlinkPath, 'v4');
+    await atomicWrite(symlinkPath, 'v2', { followSymlinks: true });
+    await atomicWrite(symlinkPath, 'v3', { followSymlinks: true });
+    await atomicWrite(symlinkPath, 'v4', { followSymlinks: true });
 
-    // Symlink should still exist
-    const lstatResult = await (await import('node:fs/promises')).lstat(symlinkPath);
-    expect(lstatResult.isSymbolicLink()).toBe(true);
+    expect((await lstat(symlinkPath)).isSymbolicLink()).toBe(true);
+    expect(await readFile(realFile, 'utf-8')).toBe('v4');
+  });
 
-    // Final content
-    const content = await readFile(realFile, 'utf-8');
-    expect(content).toBe('v4');
+  it('followSymlinks: handles circular symlink gracefully', async () => {
+    // Create circular symlinks: a -> b -> a
+    const linkA = join(rootDir, 'link-a.toml');
+    const linkB = join(rootDir, 'link-b.toml');
+    await symlink(linkB, linkA);
+    await symlink(linkA, linkB);
+
+    // realpath should fail on circular symlink, fall back to original path
+    await expect(
+      atomicWrite(linkA, 'content', { followSymlinks: true }),
+    ).resolves.not.toThrow();
+
+    // Fallback: symlink is replaced by regular file
+    expect((await lstat(linkA)).isSymbolicLink()).toBe(false);
+    expect(await readFile(linkA, 'utf-8')).toBe('content');
   });
 });
