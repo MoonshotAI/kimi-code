@@ -37,7 +37,8 @@
  * token ONLY when BOTH sides are valid (neither a tombstone) AND the file is
  * strictly newer (`expiresAt`). It NEVER un-revokes a deliberate tombstone from
  * stale plaintext, and only prunes a plaintext copy it made authoritative or one
- * byte-identical to the authoritative keychain value. See `reconcileOnHit`.
+ * equal to the keychain value after canonical re-serialization. See
+ * `reconcileOnHit`.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -215,9 +216,16 @@ export class KeyringTokenStorage implements TokenStorage {
 
     // Keychain stays authoritative (keyring newer/equal, or EITHER side is a
     // tombstone — the no-un-revoke invariant). As cleanup, prune the plaintext
-    // ONLY when it is byte-identical to the authoritative keychain value; a file
-    // whose bytes differ is left in place (conservative — we never delete a
-    // token we did not make authoritative).
+    // ONLY when it is equal to the authoritative keychain value after canonical
+    // re-serialization (a redundant duplicate); a file whose serialized form
+    // differs — reordered keys, extra fields, or a genuinely different token — is
+    // left in place (conservative — we never delete a token we did not make
+    // authoritative).
+    //
+    // A file left here is intentional and persists: no future `load` cleans it
+    // up (this branch only prunes the redundant-duplicate case), so it lingers
+    // until the next explicit `remove()` / logout. Deliberate — we never delete a
+    // token we did not make authoritative.
     if (this.serialize(fileToken) === raw) {
       await this.removeIfBytesMatch(name, raw);
     }
@@ -231,6 +239,9 @@ export class KeyringTokenStorage implements TokenStorage {
    * different token between our decision and this delete is left untouched.
    */
   private async removeIfBytesMatch(name: string, expected: string): Promise<void> {
+    // The re-read is the compare-and-delete guard, not redundant I/O: it catches
+    // a concurrent file-backend writer that landed a newer token between our
+    // decision and this delete, so we only unlink bytes that still match.
     const current = await this.legacy.load(name);
     if (current !== undefined && this.serialize(current) === expected) {
       await this.legacy.remove(name);
