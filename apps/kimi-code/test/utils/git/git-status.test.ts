@@ -200,6 +200,44 @@ describe('git status cache', () => {
     });
   });
 
+  it('shows the current commit when the repository is in detached HEAD', async () => {
+    mocks.execFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(new Error('no pull request'), '', '');
+      },
+    );
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('rev-parse') && args.includes('--is-inside-work-tree')) {
+        return { status: 0, stdout: 'true\n' };
+      }
+      if (args.includes('branch')) {
+        return { status: 0, stdout: '\n' };
+      }
+      if (args.includes('rev-parse') && args.includes('--short')) {
+        return { status: 0, stdout: 'abc1234\n' };
+      }
+      if (args.includes('status')) {
+        return { status: 0, stdout: '## HEAD (no branch)\n' };
+      }
+      return { status: 1, stdout: '' };
+    });
+
+    expect(createGitStatusCache('/tmp/repo').getStatus()).toEqual({
+      branch: 'detached@abc1234',
+      dirty: false,
+      ahead: 0,
+      behind: 0,
+      diffAdded: 0,
+      diffDeleted: 0,
+      pullRequest: null,
+    });
+  });
+
   it('returns null when the working directory is not a git repo and formats badges', () => {
     mocks.spawnSync.mockReturnValue({ status: 1, stdout: '' });
     expect(createGitStatusCache('/tmp/not-a-repo').getStatus()).toBeNull();

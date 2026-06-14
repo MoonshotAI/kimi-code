@@ -163,7 +163,21 @@ function readBranch(workDir: string): string | null {
     });
     if (result.status !== 0) return null;
     const name = result.stdout.trim();
-    return name.length > 0 ? name : null;
+    return name.length > 0 ? name : readDetachedHead(workDir);
+  } catch {
+    return null;
+  }
+}
+
+function readDetachedHead(workDir: string): string | null {
+  try {
+    const result = spawnSync('git', ['-C', workDir, 'rev-parse', '--short', 'HEAD'], {
+      encoding: 'utf8',
+      timeout: SPAWN_TIMEOUT_MS,
+    });
+    if (result.status !== 0) return null;
+    const hash = result.stdout.trim();
+    return hash.length > 0 ? `detached@${hash}` : null;
   } catch {
     return null;
   }
