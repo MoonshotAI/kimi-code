@@ -190,20 +190,20 @@ export function mergedToFinalComment(comment: ReviewMergedComment): ReviewFinalC
 export function summarizeReviewResult(result: Omit<ReviewResult, 'summary'>): string {
   if (result.status === 'blocked') {
     return result.comments.length === 0
-      ? 'Review blocked before producing actionable findings.'
-      : `Review blocked after producing ${formatCount(result.comments.length, 'finding')}.`;
+      ? 'Review blocked before producing review comments.'
+      : `Review blocked after producing ${formatCount(result.comments.length, 'review comment')}.`;
   }
 
   if (result.comments.length === 0) {
-    return `Review completed for ${formatStats(result.stats)}. No actionable findings.`;
+    return `Review completed for ${formatStats(result.stats)}. No review comments.`;
   }
 
-  const findings = result.comments
+  const comments = result.comments
     .map((comment) => `- ${comment.severity}: ${comment.path}:${String(comment.line)} ${comment.title}`)
     .join('\n');
   return [
-    `Review completed for ${formatStats(result.stats)} with ${formatCount(result.comments.length, 'finding')}.`,
-    findings,
+    `Review completed for ${formatStats(result.stats)} with ${formatCount(result.comments.length, 'review comment')}.`,
+    comments,
   ].join('\n');
 }
 

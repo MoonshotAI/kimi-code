@@ -71,7 +71,7 @@ export class ReviewSummaryComponent implements Component {
       ' ' +
       currentTheme.fg('diffRemoved', `-${String(this.data.deletions)}`) +
       dot +
-      currentTheme.boldFg('text', `${String(active.length)} ${active.length === 1 ? 'finding' : 'findings'}`);
+      currentTheme.boldFg('text', `${String(active.length)} ${active.length === 1 ? 'review comment' : 'review comments'}`);
     if (critical > 0) header += dot + currentTheme.boldFg('error', `${String(critical)} critical`);
     if (rejectedCount > 0) header += dot + currentTheme.fg('textDim', `${String(rejectedCount)} rejected`);
     return header;

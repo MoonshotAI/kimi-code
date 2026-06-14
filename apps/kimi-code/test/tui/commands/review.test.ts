@@ -44,7 +44,7 @@ function result(
     intensity,
     status: 'complete',
     stats: preview(target).stats,
-    summary: 'Review completed with 1 finding.',
+    summary: 'Review completed with 1 review comment.',
     comments: [
       {
         id: 'review-comment-1',

@@ -245,7 +245,7 @@ export class EditorKeyboardController {
     this.host.mountEditorReplacement(
       new ChoicePickerComponent({
         title: 'Stop review?',
-        notice: 'Running reviewers will be cancelled. Partial findings may be lost.',
+        notice: 'Running reviewers will be cancelled. Partial review comments may be lost.',
         options: [
           {
             value: 'stop',

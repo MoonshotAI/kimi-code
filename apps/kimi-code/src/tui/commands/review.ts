@@ -174,7 +174,7 @@ async function resolveReviewId(
     title,
     options: reviews.toReversed().map((review) => ({
       value: String(review.id),
-      label: `${review.slug} · ${review.commentCount} ${review.commentCount === 1 ? 'finding' : 'findings'}`,
+      label: `${review.slug} · ${review.commentCount} ${review.commentCount === 1 ? 'review comment' : 'review comments'}`,
       description: `${reviewScopeLabel(review.scope)} · ${String(review.criticalCount)} critical · ${String(review.rejectedCount)} rejected`,
     })),
     searchable: true,

@@ -40,7 +40,7 @@ describe('ReviewOrchestrator standard review', () => {
 
       expect(result.status).toBe('complete');
       expect(result.comments).toEqual([]);
-      expect(result.summary).toContain('No actionable findings');
+      expect(result.summary).toContain('No review comments');
       expect(runtime.getActiveRun()).toBeNull();
     });
   });
@@ -76,7 +76,7 @@ describe('ReviewOrchestrator standard review', () => {
           title: 'Missing validation',
         }),
       ]);
-      expect(result.summary).toContain('1 finding');
+      expect(result.summary).toContain('1 review comment');
     });
   });
 
