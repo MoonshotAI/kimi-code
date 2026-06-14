@@ -66,6 +66,7 @@ export function pickResultRenderer(toolName: string): ResultRenderer {
       return goalSummary;
     case 'GetAssignment':
     case 'GetChangedFiles':
+    case 'ReadDiff':
     case 'ReadPatch':
     case 'ReadFileVersion':
     case 'UpdateProgress':

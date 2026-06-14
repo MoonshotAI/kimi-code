@@ -159,17 +159,17 @@ describe('approval adapter', () => {
 
   it('uses generic review display summary and detail as the approval description', () => {
     const adapted = adaptApprovalRequest({
-      toolCallId: 'tc-review-patch',
-      toolName: 'ReadPatch',
-      action: 'Reading changed lines for src/foo.ts',
+      toolCallId: 'tc-review-diff',
+      toolName: 'ReadDiff',
+      action: 'Reading review diff',
       display: {
         kind: 'generic',
-        summary: 'changed section: src/foo.ts',
+        summary: 'changed section',
         detail: 'section 2 · 5 nearby lines',
       },
     });
 
-    expect(adapted.description).toBe('changed section: src/foo.ts (section 2 · 5 nearby lines)');
+    expect(adapted.description).toBe('changed section (section 2 · 5 nearby lines)');
     expect(adapted.display).toEqual([]);
   });
 

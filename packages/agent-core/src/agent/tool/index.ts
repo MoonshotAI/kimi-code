@@ -402,7 +402,7 @@ export class ToolManager {
         new b.TaskStopTool(background),
         this.agent.review && new b.GetAssignmentTool(this.agent.review),
         this.agent.review && new b.GetChangedFilesTool(this.agent.review),
-        this.agent.review && new b.ReadPatchTool(kaos, this.agent.review),
+        this.agent.review && new b.ReadDiffTool(kaos, this.agent.review),
         this.agent.review && new b.ReadFileVersionTool(kaos, this.agent.review),
         this.agent.review && new b.UpdateProgressTool(this.agent.review),
         this.agent.review && new b.AddCommentTool(this.agent.review),

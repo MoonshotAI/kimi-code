@@ -44,7 +44,7 @@ describe('review mode permission guard', () => {
     async (mode) => {
       const manager = makeReviewPermissionManager(mode);
 
-      for (const toolName of ['GetAssignment', 'ReadPatch', 'AddComment', 'UpdateProgress', 'Grep', 'Glob']) {
+      for (const toolName of ['GetAssignment', 'ReadDiff', 'AddComment', 'UpdateProgress', 'Grep', 'Glob']) {
         await expect(
           manager.beforeToolCall(hookContext({ id: `call_${toolName}`, toolName })),
         ).resolves.toBeUndefined();
@@ -59,7 +59,7 @@ describe('review mode permission guard', () => {
     for (const toolName of [
       'GetAssignment',
       'GetChangedFiles',
-      'ReadPatch',
+      'ReadDiff',
       'ReadFileVersion',
       'UpdateProgress',
       'AddComment',

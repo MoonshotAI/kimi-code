@@ -40,7 +40,7 @@ describe('default agent profiles', () => {
     expect(DEFAULT_AGENT_PROFILES['reviewer']?.tools).toEqual([
       'GetAssignment',
       'GetChangedFiles',
-      'ReadPatch',
+      'ReadDiff',
       'ReadFileVersion',
       'UpdateProgress',
       'AddComment',
@@ -53,7 +53,7 @@ describe('default agent profiles', () => {
       'MergeComments',
       'DismissComment',
       'UpdateProgress',
-      'ReadPatch',
+      'ReadDiff',
       'ReadFileVersion',
     ]);
   });

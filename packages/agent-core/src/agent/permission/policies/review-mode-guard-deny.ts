@@ -4,7 +4,7 @@ import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult 
 export const REVIEW_MODE_ALLOWED_TOOLS = new Set([
   'GetAssignment',
   'GetChangedFiles',
-  'ReadPatch',
+  'ReadDiff',
   'ReadFileVersion',
   'UpdateProgress',
   'AddComment',

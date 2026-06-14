@@ -10,8 +10,8 @@ import { GetChangedFilesTool } from '../../src/tools/builtin/review/get-changed-
 import { GetCommentEvidenceTool } from '../../src/tools/builtin/review/get-comment-evidence';
 import { GetCommentsTool } from '../../src/tools/builtin/review/get-comments';
 import { MergeCommentsTool } from '../../src/tools/builtin/review/merge-comments';
+import { ReadDiffTool } from '../../src/tools/builtin/review/read-diff';
 import { ReadFileVersionTool } from '../../src/tools/builtin/review/read-file-version';
-import { ReadPatchTool } from '../../src/tools/builtin/review/read-patch';
 import { UpdateProgressTool } from '../../src/tools/builtin/review/update-progress';
 import type { ToolExecution } from '../../src/loop';
 import { createFakeKaos } from './fixtures/fake-kaos';
@@ -57,14 +57,14 @@ describe('review tools', () => {
       summary: 'changed files',
       detail: 'all files · statuses: modified, added',
     });
-    expect(displayOf(new ReadPatchTool(kaos, review).resolveExecution({
-      path: 'src/a.ts',
-      hunk_id: 'hunk-2',
+    expect(displayOf(new ReadDiffTool(kaos, review).resolveExecution({
+      paths: ['src/a.ts'],
+      section_id: 'section-2',
       context_lines: 5,
     }))).toEqual({
       kind: 'generic',
-      summary: 'changed section: src/a.ts',
-      detail: 'section 2 · 5 nearby lines',
+      summary: 'changed section',
+      detail: 'src/a.ts · section 2 · 5 nearby lines',
     });
     expect(displayOf(new ReadFileVersionTool(kaos, review).resolveExecution({
       path: 'src/a.ts',
@@ -170,7 +170,7 @@ describe('review tools', () => {
     expect(json(result).error).toContain('must cite a line that the worker read');
   });
 
-  it('reads an untracked patch and records patch coverage', async () => {
+  it('reads an untracked diff and records diff coverage', async () => {
     const review = createReviewer({
       assignedFiles: ['src/new.ts'],
       requiredCoverage: 'patch',
@@ -181,27 +181,28 @@ describe('review tools', () => {
       readText: vi.fn().mockResolvedValue('first\nsecond\n'),
     });
 
-    const patchResult = await executeTool(new ReadPatchTool(kaos, review), context({
-      path: 'src/new.ts',
+    const diffResult = await executeTool(new ReadDiffTool(kaos, review), context({
+      paths: ['src/new.ts'],
     }));
-    expect(patchResult.isError).toBeFalsy();
-    expect(json(patchResult)).toMatchObject({
-      path: 'src/new.ts',
-      hunks: [{ id: 'hunk-1', new_start: 1, new_count: 2 }],
-    });
+    expect(diffResult.isError).toBeFalsy();
+    const diffOutput = text(diffResult);
+    expect(diffOutput).toContain('Review diff for 1 file');
+    expect(diffOutput).toContain('--- file: src/new.ts');
+    expect(diffOutput).toContain('section: section-1');
+    expect(diffOutput).toContain('+second');
 
     const commentResult = await executeTool(new AddCommentTool(review), context({
       severity: 'important',
       path: 'src/new.ts',
       line: 2,
       title: 'Check new path',
-      body: 'Line 2 was covered by ReadPatch.',
+      body: 'Line 2 was covered by ReadDiff.',
     }));
     expect(commentResult.isError).toBeFalsy();
     expect(json(commentResult)).toMatchObject({ path: 'src/new.ts', line: 2 });
   });
 
-  it('requires all patch hunks before hunk-filtered ReadPatch satisfies patch coverage', async () => {
+  it('requires all diff sections before section-filtered ReadDiff satisfies diff coverage', async () => {
     const review = createReviewer({
       assignedFiles: ['src/a.ts'],
       requiredCoverage: 'patch',
@@ -211,11 +212,11 @@ describe('review tools', () => {
       exec: vi.fn(async () => processWithOutput(twoHunkPatch())),
     });
 
-    const firstHunk = await executeTool(new ReadPatchTool(kaos, review), context({
-      path: 'src/a.ts',
-      hunk_id: 'hunk-1',
+    const firstSection = await executeTool(new ReadDiffTool(kaos, review), context({
+      paths: ['src/a.ts'],
+      section_id: 'section-1',
     }));
-    expect(firstHunk.isError).toBeFalsy();
+    expect(firstSection.isError).toBeFalsy();
 
     const incomplete = await executeTool(new UpdateProgressTool(review), context({
       status: 'complete',
@@ -224,11 +225,11 @@ describe('review tools', () => {
     expect(incomplete.isError).toBe(true);
     expect(json(incomplete).error).toContain('src/a.ts (patch)');
 
-    const secondHunk = await executeTool(new ReadPatchTool(kaos, review), context({
-      path: 'src/a.ts',
-      hunk_id: 'hunk-2',
+    const secondSection = await executeTool(new ReadDiffTool(kaos, review), context({
+      paths: ['src/a.ts'],
+      section_id: 'section-2',
     }));
-    expect(secondHunk.isError).toBeFalsy();
+    expect(secondSection.isError).toBeFalsy();
 
     const complete = await executeTool(new UpdateProgressTool(review), context({
       status: 'complete',
@@ -236,6 +237,54 @@ describe('review tools', () => {
     }));
     expect(complete.isError).toBeFalsy();
     expect(json(complete)).toMatchObject({ status: 'complete' });
+  });
+
+  it('paginates multi-file ReadDiff output while preserving coverage across pages', async () => {
+    const review = createReviewer({
+      assignedFiles: ['src/a.ts', 'src/b.ts'],
+      requiredCoverage: 'patch',
+      files: [
+        { path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 },
+        { path: 'src/b.ts', status: 'modified', additions: 1, deletions: 1 },
+      ],
+    });
+    const exec = vi.fn(async (...args: string[]) => {
+      const path = args.at(-1);
+      return processWithOutput(path === 'src/a.ts' ? oneHunkPatch('src/a.ts', 'a') : oneHunkPatch('src/b.ts', 'b'));
+    });
+    const kaos = createFakeKaos({
+      getcwd: () => '/workspace',
+      exec,
+    });
+
+    const firstPage = await executeTool(new ReadDiffTool(kaos, review), context({
+      max_bytes: 1_000,
+    }));
+    expect(firstPage.isError).toBeFalsy();
+    const firstOutput = text(firstPage);
+    expect(firstOutput).toContain('--- file: src/a.ts');
+    expect(firstOutput).toContain('[next_cursor: ');
+    const cursor = /\[next_cursor: ([^\]]+)\]/.exec(firstOutput)?.[1];
+    expect(cursor).toBeDefined();
+
+    const incomplete = await executeTool(new UpdateProgressTool(review), context({
+      status: 'complete',
+      summary: 'only first page read',
+    }));
+    expect(incomplete.isError).toBe(true);
+
+    const secondPage = await executeTool(new ReadDiffTool(kaos, review), context({
+      cursor,
+      max_bytes: 1_000,
+    }));
+    expect(secondPage.isError).toBeFalsy();
+    expect(text(secondPage)).toContain('--- file: src/b.ts');
+
+    const complete = await executeTool(new UpdateProgressTool(review), context({
+      status: 'complete',
+      summary: 'all pages read',
+    }));
+    expect(complete.isError).toBeFalsy();
   });
 
   it('reads file versions and allows full-file completion after coverage is complete', async () => {
@@ -532,8 +581,12 @@ function context<Input>(args: Input) {
 }
 
 function json(result: { readonly output: unknown }): any {
+  return JSON.parse(text(result));
+}
+
+function text(result: { readonly output: unknown }): string {
   if (typeof result.output !== 'string') throw new Error('expected string output');
-  return JSON.parse(result.output);
+  return result.output;
 }
 
 function displayOf(execution: ToolExecution) {
@@ -566,6 +619,18 @@ function twoHunkPatch(): string {
     '-old again',
     '+new again',
     ' context again',
+    '',
+  ].join('\n');
+}
+
+function oneHunkPatch(path: string, marker: string): string {
+  return [
+    `diff --git a/${path} b/${path}`,
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    '@@ -1,2 +1,2 @@',
+    `-${marker.repeat(1_200)}`,
+    `+${marker.repeat(1_200)} changed`,
     '',
   ].join('\n');
 }

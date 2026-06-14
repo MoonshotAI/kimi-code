@@ -14,7 +14,7 @@ import {
   previewReviewTarget,
   resolveReviewTarget,
 } from '../../src/review/git-target';
-import { readPatchForTarget } from '../../src/tools/builtin/review/support';
+import { readDiffForTarget } from '../../src/tools/builtin/review/support';
 import { testKaos } from '../fixtures/test-kaos';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 
@@ -75,7 +75,7 @@ describe('review git target resolver', () => {
       await git(repo, 'add', '.');
       await git(repo, 'commit', '-m', 'move head during review');
 
-      const patch = await readPatchForTarget(
+      const diff = await readDiffForTarget(
         kaos,
         {
           target,
@@ -88,8 +88,8 @@ describe('review git target resolver', () => {
       );
 
       expect(target).toMatchObject({ scope: 'working_tree', baseRef: baseCommit });
-      expect(patch.hunks).toHaveLength(1);
-      expect(patch.patch).toContain('+changed');
+      expect(diff.hunks).toHaveLength(1);
+      expect(diff.patch).toContain('+changed');
     });
   }, 15_000);
 

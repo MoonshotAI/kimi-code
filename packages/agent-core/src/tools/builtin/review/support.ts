@@ -37,17 +37,17 @@ export interface PatchHunk {
   readonly patch: string;
 }
 
-export interface ReadPatchResult {
+export interface ReadDiffResult {
   readonly patch: string;
   readonly hunks: readonly PatchHunk[];
 }
 
-export async function readPatchForTarget(
+export async function readDiffForTarget(
   kaos: Kaos,
   run: ReviewRuntimeRun,
   path: string,
   contextLines: number,
-): Promise<ReadPatchResult> {
+): Promise<ReadDiffResult> {
   const file = run.stats?.files.find((item) => item.path === path);
   if (run.target.scope === 'working_tree' && file?.status === 'untracked') {
     const content = await kaos.readText(joinGitPath(kaos, kaos.getcwd(), path), {

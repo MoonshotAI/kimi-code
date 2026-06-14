@@ -31,17 +31,19 @@ describe('review tool activity labels', () => {
     );
   });
 
-  it('keeps review paths in the detail segment for patch and comment tools', () => {
-    expect(formatReviewToolActivityLabel('ReadPatch', {
-      path: 'src/a.ts',
-      hunk_id: '2',
+  it('keeps review paths in the detail segment for diff and comment tools', () => {
+    expect(formatReviewToolActivityLabel('ReadDiff', {
+      paths: ['src/a.ts'],
+      section_id: 'section-2',
       context_lines: 5,
     })).toBe('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
 
-    expect(formatReviewToolActivityLabel('ReadPatch', {
-      path: 'src/a.ts',
+    expect(formatReviewToolActivityLabel('ReadDiff', {
+      paths: ['src/a.ts'],
       context_lines: 0,
     })).toBe('Read changed lines (src/a.ts)');
+
+    expect(formatReviewToolActivityLabel('ReadDiff', {})).toBe('Read changed lines (assigned files)');
 
     expect(formatReviewToolActivityLabel('AddComment', {
       path: 'src/a.ts',
@@ -49,6 +51,14 @@ describe('review tool activity labels', () => {
       severity: 'important',
       title: 'Validate input',
     })).toBe('Added review comment (src/a.ts:12 · important · Validate input)');
+  });
+
+  it('formats legacy ReadPatch records for replay', () => {
+    expect(formatReviewToolActivityLabel('ReadPatch', {
+      path: 'src/a.ts',
+      hunk_id: 'hunk-2',
+      context_lines: 5,
+    })).toBe('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
   });
 
   it('does not inline multi-line UpdateProgress summaries', () => {

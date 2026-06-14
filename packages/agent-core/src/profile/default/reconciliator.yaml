@@ -15,5 +15,5 @@ tools:
   - MergeComments
   - DismissComment
   - UpdateProgress
-  - ReadPatch
+  - ReadDiff
   - ReadFileVersion

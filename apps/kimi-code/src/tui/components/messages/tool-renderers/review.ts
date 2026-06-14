@@ -11,6 +11,7 @@ export interface ReviewToolLabel {
 const REVIEW_TOOL_NAMES = new Set([
   'GetAssignment',
   'GetChangedFiles',
+  'ReadDiff',
   'ReadPatch',
   'ReadFileVersion',
   'UpdateProgress',
@@ -53,8 +54,9 @@ export function formatReviewToolLabel(
       return label('Loaded review assignment');
     case 'GetChangedFiles':
       return label('Listed changed files', changedFilesDetail(args, display));
+    case 'ReadDiff':
     case 'ReadPatch':
-      return label(readPatchSummary(args), readPatchDetail(args, display));
+      return label(readDiffSummary(args), readDiffDetail(args, display));
     case 'ReadFileVersion':
       return label(
         readFileVersionSummary(args),
@@ -114,18 +116,21 @@ function changedFilesDetail(
   ]) ?? displayDetail(display);
 }
 
-function readPatchDetail(
+function readDiffDetail(
   args: Record<string, unknown>,
   display: ToolInputDisplay | undefined,
 ): string | undefined {
-  const hasPatchArgs =
+  const paths = pathsArg(args);
+  const sectionId = stringArg(args, 'section_id') ?? stringArg(args, 'hunk_id');
+  const hasDiffArgs =
+    paths !== undefined ||
     stringArg(args, 'path') !== undefined ||
-    stringArg(args, 'hunk_id') !== undefined ||
+    sectionId !== undefined ||
     numberArg(args, 'context_lines') !== undefined;
-  if (!hasPatchArgs) return displayDetail(display);
+  if (!hasDiffArgs) return displayDetail(display) ?? 'assigned files';
   return joinDetails([
-    stringArg(args, 'path'),
-    changedSectionDetail(stringArg(args, 'hunk_id')),
+    pathsDetail(paths ?? legacyPathArg(args)),
+    changedSectionDetail(sectionId),
     nearbyLinesDetail(numberArg(args, 'context_lines')),
   ]);
 }
@@ -177,8 +182,10 @@ function mergeDetail(
   ]) ?? displayDetail(display);
 }
 
-function readPatchSummary(args: Record<string, unknown>): string {
-  return stringArg(args, 'hunk_id') === undefined ? 'Read changed lines' : 'Read changed section';
+function readDiffSummary(args: Record<string, unknown>): string {
+  return stringArg(args, 'section_id') === undefined && stringArg(args, 'hunk_id') === undefined
+    ? 'Read changed lines'
+    : 'Read changed section';
 }
 
 function readFileVersionSummary(args: Record<string, unknown>): string {
@@ -250,6 +257,21 @@ function stringArrayArg(args: Record<string, unknown>, key: string): string[] | 
   return strings;
 }
 
+function pathsArg(args: Record<string, unknown>): string[] | undefined {
+  return stringArrayArg(args, 'paths');
+}
+
+function legacyPathArg(args: Record<string, unknown>): string[] | undefined {
+  const path = stringArg(args, 'path');
+  return path === undefined ? undefined : [path];
+}
+
+function pathsDetail(paths: readonly string[] | undefined): string | undefined {
+  if (paths === undefined) return 'assigned files';
+  if (paths.length === 1) return paths[0];
+  return countLabel(paths.length, 'file', 'files');
+}
+
 function joinDetails(parts: readonly (string | undefined)[]): string | undefined {
   const compact = parts.filter((part): part is string => part !== undefined && part.length > 0);
   if (compact.length === 0) return undefined;
@@ -276,7 +298,7 @@ function countLabel(count: number, singular: string, plural: string): string {
 
 function changedSectionDetail(hunkId: string | undefined): string | undefined {
   if (hunkId === undefined) return undefined;
-  const match = /^hunk-(\d+)$/i.exec(hunkId);
+  const match = /^(?:hunk|section)-(\d+)$/i.exec(hunkId);
   return `section ${match?.[1] ?? hunkId}`;
 }
 

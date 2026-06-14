@@ -108,7 +108,7 @@ function buildReviewerPrompt(
 function patchCoverageWorkflow(): readonly string[] {
   return [
     '1. Call GetAssignment and GetChangedFiles to orient yourself.',
-    '2. For every assigned file, call ReadPatch for the file before completing the assignment.',
+    '2. Call ReadDiff to inspect the actual changed lines before completing the assignment. ReadDiff is the review-safe equivalent of running `git diff` and is scoped to your assigned files.',
     '3. Add one AddComment call per actionable finding. Each comment must cite a line you read.',
     '4. Call UpdateProgress with status `complete` when coverage is satisfied, even if there are no findings.',
     '5. Call UpdateProgress with status `blocked` only if the assignment cannot be completed.',
@@ -149,8 +149,8 @@ export function buildReconciliatorPrompt(input: {
     '',
     'Required workflow:',
     '1. Call GetComments with include_sources true to inspect all candidate source comments.',
-    '2. Call GetCommentEvidence or read the relevant patch/file context whenever a source comment is not self-evidently supported.',
-    '3. Call ReadPatch for every assigned file before completing the assignment.',
+    '2. Call GetCommentEvidence or read the relevant diff/file context whenever a source comment is not self-evidently supported.',
+    '3. Call ReadDiff for every assigned file before completing the assignment. ReadDiff is the review-safe equivalent of running `git diff` and is scoped to your assigned files.',
     '4. Merge each actionable finding with MergeComments, preserving every supporting source_comment_id; merge comments only when they describe the same root issue.',
     '5. Do not weaken severity when the highest-impact source comment is valid; adjust severity only when the evidence shows a lower or higher actual impact.',
     '6. Use DismissComment for false positives, duplicates, unsupported claims, pre-existing issues, low-confidence guesses, out-of-scope comments, and comments that are not actionable.',

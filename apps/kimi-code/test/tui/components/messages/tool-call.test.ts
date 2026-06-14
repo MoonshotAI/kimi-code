@@ -825,12 +825,12 @@ describe('ToolCallComponent', () => {
   it('renders review tool display metadata instead of raw argument previews', () => {
     const component = new ToolCallComponent(
       {
-        id: 'call_review_patch',
-        name: 'ReadPatch',
-        args: { path: 'src/a.ts', hunk_id: 'hunk-2', context_lines: 5 },
+        id: 'call_review_diff',
+        name: 'ReadDiff',
+        args: { paths: ['src/a.ts'], section_id: 'section-2', context_lines: 5 },
         display: {
           kind: 'generic',
-          summary: 'changed section: src/a.ts',
+          summary: 'changed section',
           detail: 'section 2 · 5 nearby lines',
         },
       },
@@ -840,9 +840,26 @@ describe('ToolCallComponent', () => {
     const out = strip(component.render(120).join('\n'));
 
     expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
+    expect(out).not.toContain('Using ReadDiff');
+    expect(out).not.toContain('section_id');
+    expect(out).not.toContain('context_lines');
+  });
+
+  it('renders legacy ReadPatch records without raw argument previews', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_review_patch',
+        name: 'ReadPatch',
+        args: { path: 'src/a.ts', hunk_id: 'hunk-2', context_lines: 5 },
+      },
+      undefined,
+    );
+
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
     expect(out).not.toContain('Using ReadPatch');
     expect(out).not.toContain('hunk_id');
-    expect(out).not.toContain('context_lines');
   });
 
   it('shortens full refs in ReadFileVersion labels only', () => {
@@ -952,12 +969,12 @@ describe('ToolCallComponent', () => {
       runInBackground: false,
     });
     component.appendSubToolCall({
-      id: 'sub_review:read-patch',
-      name: 'ReadPatch',
-      args: { path: 'src/a.ts', hunk_id: 'hunk-2', context_lines: 5 },
+      id: 'sub_review:read-diff',
+      name: 'ReadDiff',
+      args: { paths: ['src/a.ts'], section_id: 'section-2', context_lines: 5 },
       display: {
         kind: 'generic',
-        summary: 'changed section: src/a.ts',
+        summary: 'changed section',
         detail: 'section 2 · 5 nearby lines',
       },
     });
@@ -965,8 +982,8 @@ describe('ToolCallComponent', () => {
     const out = strip(component.render(120).join('\n'));
 
     expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
-    expect(out).not.toContain('Using ReadPatch');
-    expect(out).not.toContain('hunk_id');
+    expect(out).not.toContain('Using ReadDiff');
+    expect(out).not.toContain('section_id');
   });
 
   it('renders the same nested review label before and after display metadata arrives', () => {
@@ -987,24 +1004,24 @@ describe('ToolCallComponent', () => {
       runInBackground: false,
     });
     component.appendSubToolCall({
-      id: 'sub_review_fallback:read-patch',
-      name: 'ReadPatch',
-      args: { path: 'src/a.ts', hunk_id: 'hunk-2', context_lines: 5 },
+      id: 'sub_review_fallback:read-diff',
+      name: 'ReadDiff',
+      args: { paths: ['src/a.ts'], section_id: 'section-2', context_lines: 5 },
     });
 
     let out = strip(component.render(120).join('\n'));
     expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
-    expect(out).not.toContain('Using ReadPatch');
+    expect(out).not.toContain('Using ReadDiff');
 
     component.finishSubToolCall({
-      tool_call_id: 'sub_review_fallback:read-patch',
+      tool_call_id: 'sub_review_fallback:read-diff',
       output: JSON.stringify({ path: 'src/a.ts' }),
       is_error: false,
     });
 
     out = strip(component.render(120).join('\n'));
     expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
-    expect(out).not.toContain('Used ReadPatch');
+    expect(out).not.toContain('Used ReadDiff');
   });
 
   it('does not preview successful nested review tool JSON output', () => {
