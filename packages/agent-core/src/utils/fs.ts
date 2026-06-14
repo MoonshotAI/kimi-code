@@ -17,7 +17,7 @@
 import { randomBytes } from 'node:crypto';
 import { closeSync, fsyncSync, openSync } from 'node:fs';
 import * as nodeFs from 'node:fs';
-import { open, rename, unlink } from 'node:fs/promises';
+import { open, rename, unlink, lstat, realpath } from 'node:fs/promises';
 import { dirname } from 'pathe';
 
 /**
@@ -141,6 +141,9 @@ function syncFd(fd: number): Promise<void> {
  * Atomically write `content` to `filePath`. If the target already exists
  * it is replaced; if it does not exist it is created.
  *
+ * If `filePath` is a symlink, the write targets the resolved real path so
+ * the symlink itself is preserved (not replaced by the rename).
+ *
  * @param filePath — absolute or relative path to the target file.
  * @param content  — string or binary payload to write.
  * @param _syncOverride — test seam: override the fsync implementation for
@@ -151,8 +154,22 @@ export async function atomicWrite(
   content: string | Uint8Array,
   _syncOverride?: (fd: number) => Promise<void>,
 ): Promise<void> {
+  // Resolve symlinks so rename() doesn't replace the symlink itself.
+  // If lstat or realpath fails (file doesn't exist, broken symlink, etc.),
+  // fall back to the original path — same behavior as before.
+  let writeTarget = filePath;
+  try {
+    const stat = await lstat(filePath);
+    if (stat.isSymbolicLink()) {
+      writeTarget = await realpath(filePath);
+    }
+  } catch {
+    // ENOENT = file doesn't exist yet; realpath failure = broken symlink.
+    // Fall back to original path — rename will create/replace as before.
+  }
+
   const hex = randomBytes(4).toString('hex');
-  const tmpPath = `${filePath}.tmp.${process.pid}.${hex}`;
+  const tmpPath = `${writeTarget}.tmp.${process.pid}.${hex}`;
   let renamed = false;
   try {
     const fh = await open(tmpPath, 'w');
@@ -167,13 +184,13 @@ export async function atomicWrite(
     // before the rename turns this into the POSIX-style "replace" case.
     if (process.platform === 'win32') {
       try {
-        await unlink(filePath);
+        await unlink(writeTarget);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code !== 'ENOENT') throw error;
       }
     }
-    await rename(tmpPath, filePath);
+    await rename(tmpPath, writeTarget);
     renamed = true;
   } finally {
     if (!renamed) {
