@@ -27,6 +27,17 @@
  * file-backend writer may have just landed. Migration is LOCK-FREE, exactly like
  * `FileTokenStorage`. `remove` and `list` also reconcile against the legacy file
  * store so pre-migration plaintext can never linger or go missing.
+ *
+ * Reconcile-on-hit (flip-flop repair): `resolveTokenStorage` can pick a
+ * DIFFERENT backend per run for one credentialsDir (keychain locked,
+ * headless/SSH, `KIMI_DISABLE_KEYRING=1`, native binary missing, probe fails).
+ * A sequential flip-flop then splits state — the keychain may hold an OLDER
+ * token while a fallback run wrote a NEWER one to the plaintext file. So `load`
+ * reconciles against the legacy file even on a keychain HIT, adopting the file
+ * token ONLY when BOTH sides are valid (neither a tombstone) AND the file is
+ * strictly newer (`expiresAt`). It NEVER un-revokes a deliberate tombstone from
+ * stale plaintext, and only prunes a plaintext copy it made authoritative or one
+ * byte-identical to the authoritative keychain value. See `reconcileOnHit`.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -36,6 +47,7 @@ import { join, resolve } from 'node:path';
 
 import { FileTokenStorage } from './storage';
 import type { TokenStorage } from './storage';
+import { classifyToken } from './token-state';
 import type { TokenInfo, TokenInfoWire } from './types';
 import { tokenFromWire, tokenToWire } from './types';
 import { isRecord } from './utils';
@@ -96,7 +108,7 @@ export class KeyringTokenStorage implements TokenStorage {
   async load(name: string): Promise<TokenInfo | undefined> {
     const raw = this.keyring.createEntry(this.service, name).getPassword();
     if (raw !== null) {
-      return this.deserialize(raw);
+      return this.reconcileOnHit(name, raw);
     }
     // Not in the keychain — migrate any plaintext token written by an older
     // file-only build, then drop the cleartext copy (LOCK-FREE, exactly like
@@ -150,6 +162,79 @@ export class KeyringTokenStorage implements TokenStorage {
     // (never delete a token we may not have migrated) and return the latest
     // value we wrote to the keychain; a subsequent load will reconcile.
     return latest;
+  }
+
+  /**
+   * Reconcile a keychain HIT against the legacy plaintext file.
+   *
+   * The keychain backend must be a faithful drop-in for the single-store file
+   * backend, but `resolveTokenStorage` can pick a DIFFERENT backend per run for
+   * one credentialsDir (keychain locked, headless/SSH, KIMI_DISABLE_KEYRING=1,
+   * native binary missing, probe fails). A flip-flop then splits state: the
+   * keychain may hold an OLDER token while a fallback run wrote a NEWER one to
+   * the plaintext file. Returning the keychain value blindly would silently
+   * ignore the user's real, newer token — and if the older token's refresh_token
+   * is now rejected, the manager would re-read it and overwrite the keychain
+   * with a revoked tombstone while the valid file token sits ignored → forced
+   * re-login despite a valid token. So we reconcile on the HIT path too.
+   *
+   * Invariant — NEVER un-revoke from plaintext: a deliberately-written revoked
+   * tombstone (refresh_token rejected) must outrank any stale plaintext token.
+   * We therefore adopt the file token ONLY when BOTH sides are VALID (neither is
+   * a tombstone) AND the file is STRICTLY newer (`expiresAt` is stamped at
+   * issuance time, so a larger value means more-recently issued). In every other
+   * case the keychain stays authoritative.
+   */
+  private async reconcileOnHit(name: string, raw: string): Promise<TokenInfo | undefined> {
+    const keyringToken = this.deserialize(raw);
+    const fileToken = await this.legacy.load(name);
+
+    // FAST PATH: steady state has no plaintext file (one cheap readFile that
+    // ENOENTs), or the keychain bytes were corrupt JSON (must still return
+    // undefined per the existing contract). Either way, nothing to reconcile.
+    if (fileToken === undefined || keyringToken === undefined) {
+      return keyringToken;
+    }
+
+    // Adopt the file token ONLY when both are valid (not tombstones) and the file
+    // is strictly newer. This is the flip-flop repair: a fallback run landed a
+    // newer token on disk; make it keychain-authoritative now.
+    if (
+      classifyToken(keyringToken).kind === 'valid' &&
+      classifyToken(fileToken).kind === 'valid' &&
+      fileToken.expiresAt > keyringToken.expiresAt
+    ) {
+      const fileSerialized = this.serialize(fileToken);
+      this.keyring.createEntry(this.service, name).setPassword(fileSerialized);
+      // Compare-and-delete: re-read and unlink ONLY if the on-disk bytes still
+      // equal what we just made authoritative — never delete a token whose bytes
+      // changed under a concurrent writer.
+      await this.removeIfBytesMatch(name, fileSerialized);
+      return fileToken;
+    }
+
+    // Keychain stays authoritative (keyring newer/equal, or EITHER side is a
+    // tombstone — the no-un-revoke invariant). As cleanup, prune the plaintext
+    // ONLY when it is byte-identical to the authoritative keychain value; a file
+    // whose bytes differ is left in place (conservative — we never delete a
+    // token we did not make authoritative).
+    if (this.serialize(fileToken) === raw) {
+      await this.removeIfBytesMatch(name, raw);
+    }
+    return keyringToken;
+  }
+
+  /**
+   * Compare-and-delete the plaintext copy: re-read the file and unlink it ONLY
+   * when its serialized bytes still equal `expected` (the value we made
+   * keychain-authoritative). A concurrent file-backend writer that landed a
+   * different token between our decision and this delete is left untouched.
+   */
+  private async removeIfBytesMatch(name: string, expected: string): Promise<void> {
+    const current = await this.legacy.load(name);
+    if (current !== undefined && this.serialize(current) === expected) {
+      await this.legacy.remove(name);
+    }
   }
 
   async save(name: string, token: TokenInfo): Promise<void> {
