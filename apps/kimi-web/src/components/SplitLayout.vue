@@ -59,7 +59,9 @@ function startResize(event: MouseEvent, index: number): void {
 </script>
 
 <template>
-  <slot v-if="layout.type === 'group'" name="group" :group="layout" />
+  <div v-if="layout.type === 'group'" class="split-group">
+    <slot name="group" :group="layout" />
+  </div>
   <div v-else ref="rootRef" class="split-layout" :class="layout.dir" :style="gridStyle">
     <template v-for="(child, index) in layout.children" :key="child.id">
       <SplitLayout
@@ -90,6 +92,11 @@ function startResize(event: MouseEvent, index: number): void {
   min-height: 0;
   height: 100%;
   display: grid;
+}
+.split-group {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 .split-child {
   min-width: 0;
