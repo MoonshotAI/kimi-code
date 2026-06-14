@@ -79,7 +79,7 @@ The operating environment is not in a sandbox. Any actions you do will immediate
 
 ## Date and Time
 
-The current date and time in ISO format is `{{ KIMI_NOW }}`. This is only a reference for you when searching the web, or checking file modification time, etc. If you need the exact time, use Bash tool with proper command.
+If a task depends on the current date or time, use the Bash tool with an appropriate command. Do not rely on session creation time or previously cached timestamps.
 
 ## Working Directory
 

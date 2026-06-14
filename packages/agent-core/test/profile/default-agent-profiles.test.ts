@@ -21,6 +21,8 @@ describe('default agent profiles', () => {
     expect(prompt).toContain('You are Kimi Code CLI');
     expect(prompt).toContain('Available skills');
     expect(prompt).toContain('/workspace');
+    expect(prompt).toContain('If a task depends on the current date or time');
+    expect(prompt).not.toContain(promptContext.now);
   });
 
   it('lists the goal tools on the agent profile but not on subagent profiles', () => {
