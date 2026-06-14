@@ -134,6 +134,7 @@ kimi
 | `KIMI_MODEL_THINKING_KEEP` | Moonshot 保留思考透传（`thinking.keep`），仅对 `kimi` 供应商生效，且仅在 Thinking 开启时注入 | API 接受的值，如 `all` |
 | `KIMI_CODE_NO_AUTO_UPDATE` | 完全禁用更新预检——不检查、不后台安装、不提示。同时兼容旧名 `KIMI_CLI_NO_AUTO_UPDATE` | 真值：`1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |
+| `KIMI_DISABLE_KEYRING` | 强制 OAuth 凭据使用明文文件存储而非操作系统密钥链（系统无可用密钥链时也会自动回退到该方式） | `1` 表示强制使用文件后端 |
 
 ## 诊断日志
 

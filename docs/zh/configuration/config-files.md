@@ -107,6 +107,8 @@ timeout = 5
 | `env` | `table<string, string>` | 否 | 供应商凭证的备用来源，详见下文 |
 | `custom_headers` | `table<string, string>` | 否 | 每次请求附加的自定义 HTTP 头 |
 
+> **OAuth 凭据存储**：OAuth 令牌默认存放在操作系统密钥链（macOS Keychain、Windows 凭据管理器、Linux Secret Service）中。已有的明文凭据文件会被迁移到密钥链并随后删除。`oauth.storage` 字段记录令牌所在位置、由登录流程自动注入，并不用于选择后端。设置 [`KIMI_DISABLE_KEYRING=1`](./env-vars.md#运行时开关) 可强制使用明文文件存储；当系统没有可用密钥链时也会自动回退到该方式。
+
 **`env` 子表**：可以把供应商惯用的键名（如 `KIMI_API_KEY`）写在 `[providers.<name>.env]` 里，作为 `api_key` / `base_url` 的备用来源。这个子表**只在配置文件里读取**，不会修改 shell 环境：
 
 ```toml
