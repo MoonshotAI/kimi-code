@@ -82,6 +82,19 @@ export interface ExtraBody {
   thinking?: ThinkingConfig;
   [key: string]: unknown;
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function applyDisabledThinkingTemperatureDefault(params: Record<string, unknown>): void {
+  if (params['temperature'] !== undefined) return;
+  const thinking = params['thinking'];
+  if (isRecord(thinking) && thinking['type'] === 'disabled') {
+    params['temperature'] = 0.6;
+  }
+}
+
 const KIMI_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
   maxLength: 64,
@@ -475,6 +488,7 @@ export class KimiChatProvider implements ChatProvider {
       ...requestKwargs,
       ...(extraBody as Record<string, unknown> | undefined),
     };
+    applyDisabledThinkingTemperatureDefault(createParams);
 
     if (tools.length > 0) {
       createParams['tools'] = tools.map((t) => convertTool(t));
