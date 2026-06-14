@@ -20,6 +20,9 @@ const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
 const TOOL_EMPTY_ERROR_STATUS =
   '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
 const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
+const TOOL_RESULT_MISSING_AFTER_RESUME =
+  'Tool result missing because the previous process exited before it was recorded. ' +
+  'Treat this tool call as interrupted and continue from the next user instruction.';
 
 export class ContextMemory {
   private _history: ContextMessage[] = [];
@@ -203,6 +206,27 @@ export class ContextMemory {
 
   get messages(): Message[] {
     return this.project(this.history);
+  }
+
+  recoverIncompleteToolResultsAfterRestore(): boolean {
+    const missingToolCallIds = [...this.pendingToolResultIds];
+    this.openSteps.clear();
+    if (missingToolCallIds.length === 0) return false;
+
+    // Hard crashes can persist tool.call records before their matching
+    // tool.result records. Repair the transcript before the next prompt.
+    for (const toolCallId of missingToolCallIds) {
+      this.appendLoopEvent({
+        type: 'tool.result',
+        parentUuid: toolCallId,
+        toolCallId,
+        result: {
+          isError: true,
+          output: TOOL_RESULT_MISSING_AFTER_RESUME,
+        },
+      });
+    }
+    return true;
   }
 
   useProjectedHistoryFrom(source: ContextMemory): void {
