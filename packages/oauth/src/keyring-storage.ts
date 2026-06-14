@@ -24,6 +24,7 @@
  * pre-migration plaintext can never linger or go missing.
  */
 
+import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 
 import { FileTokenStorage } from './storage';
@@ -92,11 +93,32 @@ export class KeyringTokenStorage implements TokenStorage {
     }
     // Not in the keychain — migrate any plaintext token written by an older
     // file-only build, then drop the cleartext copy.
-    const legacyToken = await this.legacy.load(name);
-    if (legacyToken === undefined) return undefined;
-    this.keyring.createEntry(this.service, name).setPassword(this.serialize(legacyToken));
+    //
+    // Re-read-before-delete guards against a concurrent file-backend writer
+    // (an old build, a KIMI_DISABLE_KEYRING process, or a fallback instance)
+    // saving a NEWER token between our copy-in and our remove. Without the
+    // re-read we would delete that newer file and leave a stale token shadowing
+    // it in the keychain forever. So we re-read immediately before deleting and
+    // let the latest observed value win.
+    const first = await this.legacy.load(name);
+    if (first === undefined) return undefined;
+    let serialized = this.serialize(first);
+    this.keyring.createEntry(this.service, name).setPassword(serialized);
+
+    let latest = first;
+    const second = await this.legacy.load(name);
+    if (second !== undefined) {
+      const secondSerialized = this.serialize(second);
+      if (secondSerialized !== serialized) {
+        // A newer token landed on disk; make the keychain authoritative with it.
+        this.keyring.createEntry(this.service, name).setPassword(secondSerialized);
+        serialized = secondSerialized;
+        latest = second;
+      }
+    }
+
     await this.legacy.remove(name);
-    return legacyToken;
+    return latest;
   }
 
   async save(name: string, token: TokenInfo): Promise<void> {
@@ -107,7 +129,20 @@ export class KeyringTokenStorage implements TokenStorage {
     // Clear both stores so a pre-migration plaintext copy can never linger
     // (e.g. logout before the token was ever migrated). Missing credentials
     // are a no-op, not an error.
-    this.keyring.createEntry(this.service, name).deleteCredential();
+    //
+    // The legacy cleanup must ALWAYS run so a failing native keyring delete
+    // (permissions, lock state, ambiguous entries) can never leave the
+    // plaintext file behind — the "both stores cleared" guarantee must hold.
+    // A genuine keyring error is surfaced after the file is cleared, never
+    // swallowed. (`deleteCredential() === false` for a missing entry is normal,
+    // not an error.)
+    try {
+      this.keyring.createEntry(this.service, name).deleteCredential();
+    } catch (error) {
+      // Keyring delete failed — still clear the plaintext copy, then re-throw.
+      await this.legacy.remove(name);
+      throw error;
+    }
     await this.legacy.remove(name);
   }
 
@@ -155,15 +190,26 @@ function loadNativeKeyring(): KeyringApi | undefined {
  * usable on this host.
  */
 function probeKeyring(keyring: KeyringApi): boolean {
+  // A UNIQUE account per attempt: two CLI processes probing concurrently must
+  // not share one sentinel account, or one's delete clobbers the other's
+  // round-trip → false mismatch → spurious file fallback on a healthy keychain
+  // (which then splits file/keyring state — the very thing migration avoids).
+  const account = `probe-${process.pid}-${randomBytes(8).toString('hex')}`;
   const sentinel = `probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const entry = keyring.createEntry(KEYRING_PROBE_SERVICE, account);
   try {
-    const entry = keyring.createEntry(KEYRING_PROBE_SERVICE, 'probe');
     entry.setPassword(sentinel);
     const readBack = entry.getPassword();
-    entry.deleteCredential();
     return readBack === sentinel;
   } catch {
     return false;
+  } finally {
+    // Always remove our own sentinel, even if the round-trip threw mid-way.
+    try {
+      entry.deleteCredential();
+    } catch {
+      // best-effort cleanup; a failed delete must not mask the probe result
+    }
   }
 }
 
