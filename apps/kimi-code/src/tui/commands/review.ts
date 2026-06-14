@@ -182,13 +182,14 @@ async function resolveReviewId(
   return value === undefined ? undefined : Number(value);
 }
 
-function appendReviewSummary(host: SlashCommandHost, artifact: ReviewArtifact): void {
+/** After the user reads/triages a review, show a "browsed" note (rejected comments struck). */
+function appendReviewBrowsed(host: SlashCommandHost, artifact: ReviewArtifact): void {
   host.appendTranscriptEntry({
     id: nextTranscriptId(),
     kind: 'review-summary',
     renderMode: 'plain',
     content: artifact.summary,
-    reviewSummaryData: buildReviewArtifactSummaryData(artifact),
+    reviewSummaryData: { ...buildReviewArtifactSummaryData(artifact), variant: 'browsed' },
   });
 }
 
@@ -212,7 +213,7 @@ function openReviewReader(host: SlashCommandHost, artifact: ReviewArtifact, inde
       ...reviewMutationCallbacks(host, artifact),
       onClose: (updated) => {
         host.restoreEditor();
-        appendReviewSummary(host, updated);
+        appendReviewBrowsed(host, updated);
       },
       onFullscreen: (current, currentIndex) => {
         host.restoreEditor();
@@ -243,7 +244,7 @@ function openReviewReaderFullscreen(
       for (const child of saved) ui.addChild(child);
       ui.setFocus(host.state.editor);
       ui.requestRender(true);
-      appendReviewSummary(host, updated);
+      appendReviewBrowsed(host, updated);
     },
     requestRender: () => {
       ui.requestRender();

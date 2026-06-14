@@ -152,6 +152,7 @@ export class SessionEventHandler {
   private reviewAgentSwarmToolCallId: string | undefined;
   private readonly reviewAgentSwarmReviewerAssignmentIds = new Set<string>();
   private activeReviewIntensity: ReviewStartedEvent['intensity'] | undefined;
+  private reviewCommentsAdded = 0;
   private readonly reviewAssignmentRoles = new Map<string, ReviewAssignmentStartedEvent['assignment']['role']>();
   private readonly pendingReviewAssignmentProgress = new Map<string, ReviewAssignmentProgressEvent['progress']>();
   private goalCompletionAwaitingClear = false;
@@ -358,6 +359,7 @@ export class SessionEventHandler {
   private handleReviewStarted(event: ReviewStartedEvent): void {
     this.host.setReviewActive(true);
     this.activeReviewIntensity = event.intensity;
+    this.reviewCommentsAdded = 0;
     if (event.agentSwarm !== undefined) {
       this.reviewAgentSwarmToolCallId = event.agentSwarm.toolCallId;
       this.subAgentEventHandler.handleReviewSwarmToolCallStarted(
@@ -365,18 +367,15 @@ export class SessionEventHandler {
         argsRecord(event.agentSwarm.args),
       );
     }
-    if (event.intensity === 'thorough') {
-      this.appendReviewProgress({
-        state: 'started',
-        title: 'Thorough review',
-        detail: thoroughReviewDetail(event.stats),
-      });
-      return;
-    }
     this.appendReviewProgress({
       state: 'started',
-      title: 'Review started',
+      title: 'Code review started',
       detail: `${formatReviewStats(event.stats)} · ${event.intensity}`,
+    });
+    this.appendReviewProgress({
+      state: 'assignment',
+      title: reviewersStartedTitle(event.intensity),
+      detail: event.intensity === 'thorough' ? thoroughReviewDetail(event.stats) : undefined,
     });
   }
 
@@ -412,11 +411,15 @@ export class SessionEventHandler {
       }
       return;
     }
-    this.appendReviewProgress({
-      state: 'assignment',
-      title: `${reviewWorkerRoleLabel(event.assignment.role)} started`,
-      detail: assignmentDetail(event.assignment.assignedFiles.length, event.assignment.perspective),
-    });
+    // Reviewers are announced once at review start (see handleReviewStarted),
+    // so we don't emit a per-reviewer "started" line here.
+    if (event.assignment.role !== 'reviewer') {
+      this.appendReviewProgress({
+        state: 'assignment',
+        title: `${reviewWorkerRoleLabel(event.assignment.role)} started`,
+        detail: assignmentDetail(event.assignment.assignedFiles.length, event.assignment.perspective),
+      });
+    }
     if (pendingProgress !== undefined) {
       this.appendReviewAssignmentProgress(pendingProgress, event.assignment.role);
     }
@@ -458,14 +461,9 @@ export class SessionEventHandler {
         event.comment,
       );
     }
-    if (this.activeReviewIntensity === 'thorough' || this.activeReviewIntensity === 'deep') {
-      return;
-    }
-    this.appendReviewProgress({
-      state: 'comment',
-      title: 'Review finding added',
-      detail: `${event.comment.severity}: ${event.comment.path}:${String(event.comment.line)} ${event.comment.title}`,
-    });
+    // Don't insert one line per comment — just count, and announce the total
+    // once when the review completes (see handleReviewCompleted).
+    this.reviewCommentsAdded += 1;
   }
 
   private handleReviewCommentMerged(_event: ReviewCommentMergedEvent): void {
@@ -486,6 +484,10 @@ export class SessionEventHandler {
     this.activeReviewIntensity = undefined;
     this.reviewAssignmentRoles.clear();
     this.pendingReviewAssignmentProgress.clear();
+    if (this.reviewCommentsAdded > 0) {
+      this.appendReviewProgress({ state: 'comment', title: commentsAddedTitle(this.reviewCommentsAdded) });
+    }
+    this.reviewCommentsAdded = 0;
     if (commandOwnsFinalReviewResult) return;
     this.appendReviewProgress({
       state: 'completed',
@@ -1329,4 +1331,26 @@ function thoroughReviewDetail(stats: ReviewStartedEvent['stats']): string {
 
 function reviewWorkerRoleLabel(role: ReviewAssignmentStartedEvent['assignment']['role']): string {
   return role === 'reconciliator' ? 'Reconciliator' : 'Reviewer';
+}
+
+function reviewersStartedTitle(intensity: ReviewStartedEvent['intensity']): string {
+  switch (intensity) {
+    case 'standard':
+      return 'Sub-agent reviewer started';
+    case 'thorough':
+      return 'Sub-agent reviewers started';
+    case 'deep':
+      return 'Swarm reviewers started';
+  }
+}
+
+const NUMBER_WORDS = [
+  'Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
+];
+
+function commentsAddedTitle(count: number): string {
+  const word = count >= 0 && count <= 10 ? NUMBER_WORDS[count]! : String(count);
+  const noun = count === 1 ? 'review comment' : 'review comments';
+  const verb = count === 1 ? 'was' : 'were';
+  return `${word} ${noun} ${verb} added`;
 }

@@ -132,11 +132,13 @@ export interface ReviewSummaryComment {
 }
 
 export interface ReviewSummaryTranscriptData {
+  /** 'completed' = the post-review compact block; 'browsed' = the after-reading note. */
+  readonly variant?: 'completed' | 'browsed';
   readonly fileCount: number;
   readonly additions: number;
   readonly deletions: number;
   readonly handle?: string;
-  /** Fallback text shown when there are no findings. */
+  /** Fallback text shown when there are no comments. */
   readonly summary: string;
   readonly comments: readonly ReviewSummaryComment[];
 }

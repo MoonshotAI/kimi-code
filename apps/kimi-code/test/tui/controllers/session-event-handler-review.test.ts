@@ -130,11 +130,30 @@ describe('SessionEventHandler review events', () => {
 
     expect(host.state.reviewActive).toBe(false);
     expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
-      'Review started',
-      'Review finding added',
+      'Code review started',
+      'Sub-agent reviewer started',
+      'One review comment was added',
       'Review completed',
     ]);
     expect(appendedEntries(host)[0]!.reviewData!.detail).toContain('1 file: +2 -1');
+  });
+
+  it('aggregates multiple added comments into one pluralized line', () => {
+    const host = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(reviewStartedEvent(), vi.fn());
+    handler.handleEvent(reviewCommentEvent(), vi.fn());
+    handler.handleEvent(reviewCommentEvent(), vi.fn());
+    handler.handleEvent(reviewCommentEvent(), vi.fn());
+    handler.handleEvent(reviewCompletedEvent(), vi.fn());
+
+    expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
+      'Code review started',
+      'Sub-agent reviewer started',
+      'Three review comments were added',
+      'Review completed',
+    ]);
   });
 
   it('skips the completion progress row while the slash command owns final review rendering', () => {
@@ -224,10 +243,13 @@ describe('SessionEventHandler review events', () => {
     }
 
     const reviewData = appendedEntries(host).map((entry) => entry.reviewData);
-    expect(reviewData.map((entry) => entry?.title)).toEqual(['Thorough review']);
-    expect(reviewData[0]?.detail).toContain('3 reviewer agents running in parallel');
-    expect(reviewData[0]?.detail).toContain('Correctness and regressions');
-    expect(reviewData[0]?.detail).toContain('1 file: +2 -1');
+    expect(reviewData.map((entry) => entry?.title)).toEqual([
+      'Code review started',
+      'Sub-agent reviewers started',
+    ]);
+    expect(reviewData[1]?.detail).toContain('3 reviewer agents running in parallel');
+    expect(reviewData[1]?.detail).toContain('Correctness and regressions');
+    expect(reviewData[1]?.detail).toContain('1 file: +2 -1');
   });
 
   it('suppresses intermediate candidate finding rows during Thorough review', () => {
@@ -241,7 +263,8 @@ describe('SessionEventHandler review events', () => {
     handler.handleEvent(reviewCommentEvent(), vi.fn());
 
     expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
-      'Thorough review',
+      'Code review started',
+      'Sub-agent reviewers started',
     ]);
   });
 
@@ -279,7 +302,8 @@ describe('SessionEventHandler review events', () => {
     } as any, vi.fn());
 
     expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
-      'Thorough review',
+      'Code review started',
+      'Sub-agent reviewers started',
       'Reconciliation running',
       'Reconciliator complete',
     ]);
@@ -319,7 +343,8 @@ describe('SessionEventHandler review events', () => {
     } as any, vi.fn());
 
     expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
-      'Thorough review',
+      'Code review started',
+      'Sub-agent reviewers started',
       'Reconciliation running',
       'Reconciliator complete',
     ]);
@@ -454,7 +479,8 @@ describe('SessionEventHandler review events', () => {
     expect(output).toContain('Reviewing...');
     expect(output).toContain('0/1 files reviewed');
     expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
-      'Review started',
+      'Code review started',
+      'Swarm reviewers started',
     ]);
   });
 
@@ -500,7 +526,8 @@ describe('SessionEventHandler review events', () => {
     } as any, vi.fn());
 
     expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
-      'Review started',
+      'Code review started',
+      'Swarm reviewers started',
     ]);
   });
 
@@ -515,7 +542,8 @@ describe('SessionEventHandler review events', () => {
     handler.handleEvent(reviewCommentEvent(), vi.fn());
 
     expect(appendedEntries(host).map((entry) => entry.reviewData?.title)).toEqual([
-      'Review started',
+      'Code review started',
+      'Swarm reviewers started',
     ]);
   });
 });

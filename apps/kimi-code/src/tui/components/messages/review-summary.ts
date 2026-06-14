@@ -29,6 +29,7 @@ export class ReviewSummaryComponent implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
+    if (this.data.variant === 'browsed') return this.renderBrowsed(width);
     const active = this.data.comments.filter((comment) => !comment.rejected);
     const rejected = this.data.comments.filter((comment) => comment.rejected);
     if (active.length === 0 && rejected.length === 0) {
@@ -56,6 +57,20 @@ export class ReviewSummaryComponent implements Component {
           currentTheme.fg('textDim', 'Browse or reject: ') +
           currentTheme.fg('primary', `/review read ${this.data.handle}`),
       );
+    }
+    return lines.map((line) => truncateToWidth(line, width));
+  }
+
+  private renderBrowsed(width: number): string[] {
+    const rejected = this.data.comments.filter((comment) => comment.rejected);
+    const heading =
+      currentTheme.boldFg('success', `${STATUS_BULLET}Code review browsed`) +
+      currentTheme.fg('textDim', rejected.length === 0
+        ? ' · no comments rejected'
+        : ` · ${String(rejected.length)} rejected`);
+    const lines = ['', heading];
+    for (const comment of rejected) {
+      lines.push('   ' + currentTheme.fg('textDim', `• ${comment.path}:${String(comment.line)} — ${comment.title}`));
     }
     return lines.map((line) => truncateToWidth(line, width));
   }
