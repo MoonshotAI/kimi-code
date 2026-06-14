@@ -9,6 +9,8 @@ import type {
   ReviewScopeSummary,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import type { ReviewSummaryTranscriptData } from '#/tui/types';
+
 export type ReviewScopeChoice = 'working_tree' | 'current_branch' | 'ahead_of_upstream' | 'single_commit';
 
 export interface ReviewChoice {
@@ -113,25 +115,19 @@ export function reviewCommitChoice(commit: ReviewCommit): ReviewChoice {
 
 const SEVERITY_ORDER: readonly ReviewCommentSeverity[] = ['critical', 'important', 'minor'];
 
-interface CompactComment {
-  readonly severity: ReviewCommentSeverity;
-  readonly path: string;
-  readonly line: number;
-  readonly title: string;
-  readonly rejected: boolean;
-}
-
 /** Escape Markdown control characters in a dynamic value before interpolation. */
 export function escapeMarkdown(text: string): string {
-  return text.replace(/([\\`*_~#[\]<>])/g, '\\$1');
+  return text.replaceAll(/([\\`*_~#[\]<>])/g, '\\$1');
 }
 
-/** Compact transcript render for a freshly completed review. */
-export function formatReviewCompactMarkdown(result: ReviewResult): string {
-  return renderCompactReview({
-    summary: result.summary,
-    stats: result.stats,
+/** Structured data for the colored compact block, from a freshly completed review. */
+export function buildReviewSummaryData(result: ReviewResult): ReviewSummaryTranscriptData {
+  return {
+    fileCount: result.stats.fileCount,
+    additions: result.stats.additions,
+    deletions: result.stats.deletions,
     handle: result.reviewSlug ?? (result.reviewId === undefined ? undefined : String(result.reviewId)),
+    summary: result.summary,
     comments: result.comments.map((comment) => ({
       severity: comment.severity,
       path: comment.path,
@@ -139,15 +135,17 @@ export function formatReviewCompactMarkdown(result: ReviewResult): string {
       title: comment.title,
       rejected: false,
     })),
-  });
+  };
 }
 
-/** Compact transcript render from a persisted artifact (folds rejected state). */
-export function formatReviewArtifactCompactMarkdown(artifact: ReviewArtifact): string {
-  return renderCompactReview({
-    summary: artifact.summary,
-    stats: artifact.stats,
+/** Structured data for the colored compact block, from a persisted artifact (folds rejected). */
+export function buildReviewArtifactSummaryData(artifact: ReviewArtifact): ReviewSummaryTranscriptData {
+  return {
+    fileCount: artifact.stats.fileCount,
+    additions: artifact.stats.additions,
+    deletions: artifact.stats.deletions,
     handle: artifact.slug,
+    summary: artifact.summary,
     comments: artifact.comments.map((comment) => ({
       severity: comment.severity,
       path: comment.anchor.path,
@@ -155,7 +153,7 @@ export function formatReviewArtifactCompactMarkdown(artifact: ReviewArtifact): s
       title: comment.title,
       rejected: comment.state === 'dismissed',
     })),
-  });
+  };
 }
 
 /** Full grouped-by-severity Markdown for `/review export`. All dynamic values escaped. */
@@ -196,44 +194,6 @@ export function reviewScopeLabel(scope: ReviewArtifact['target']['scope']): stri
     case 'single_commit':
       return 'Single commit';
   }
-}
-
-function renderCompactReview(input: {
-  readonly summary: string;
-  readonly stats: ReviewDiffStats;
-  readonly handle: string | undefined;
-  readonly comments: readonly CompactComment[];
-}): string {
-  const active = input.comments.filter((comment) => !comment.rejected);
-  const rejected = input.comments.filter((comment) => comment.rejected);
-  if (active.length === 0 && rejected.length === 0) return input.summary;
-
-  const criticalCount = active.filter((comment) => comment.severity === 'critical').length;
-  const countParts = [formatCount(active.length, 'finding')];
-  if (criticalCount > 0) countParts.push(`${String(criticalCount)} critical`);
-  if (rejected.length > 0) countParts.push(`${String(rejected.length)} rejected`);
-
-  const lines = [`**Code review** · ${formatReviewStats(input.stats)} · ${countParts.join(' · ')}`, ''];
-  for (const severity of SEVERITY_ORDER) {
-    const group = active.filter((comment) => comment.severity === severity);
-    if (group.length === 0) continue;
-    lines.push(`**${severityLabel(severity)}**`);
-    for (const comment of group) {
-      lines.push(`- \`${comment.path}:${String(comment.line)}\` — ${comment.title}`);
-    }
-    lines.push('');
-  }
-  if (rejected.length > 0) {
-    lines.push('**Rejected**');
-    for (const comment of rejected) {
-      lines.push(`- ~~\`${comment.path}:${String(comment.line)}\` — ${comment.title}~~`);
-    }
-    lines.push('');
-  }
-  if (input.handle !== undefined) {
-    lines.push(`Browse or reject findings: \`/review read ${input.handle}\``);
-  }
-  return lines.join('\n').trimEnd();
 }
 
 export function isReviewIntensity(value: string): value is ReviewIntensity {

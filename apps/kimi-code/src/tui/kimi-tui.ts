@@ -71,6 +71,7 @@ import {
   GoalSetMessageComponent,
 } from './components/messages/goal-panel';
 import { ReviewProgressComponent } from './components/messages/review-progress';
+import { ReviewSummaryComponent } from './components/messages/review-summary';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
   NoticeMessageComponent,
@@ -1401,6 +1402,9 @@ export class KimiTUI {
       case 'review':
         if (entry.reviewData === undefined) return null;
         return new ReviewProgressComponent(entry.reviewData);
+      case 'review-summary':
+        if (entry.reviewSummaryData === undefined) return null;
+        return new ReviewSummaryComponent(entry.reviewSummaryData);
       case 'assistant': {
         if (entry.content.trimStart().startsWith('✓ Goal complete')) {
           return new GoalCompletionMessageComponent(entry.content);

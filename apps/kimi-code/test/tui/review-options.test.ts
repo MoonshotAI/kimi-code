@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 import type { ReviewArtifact, ReviewResult } from '@moonshot-ai/kimi-code-sdk';
 
 import {
-  formatReviewArtifactCompactMarkdown,
+  buildReviewArtifactSummaryData,
+  buildReviewSummaryData,
   formatReviewArtifactMarkdown,
-  formatReviewCompactMarkdown,
 } from '#/tui/utils/review-options';
 
 const STATS = {
@@ -31,25 +31,26 @@ function result(overrides: Partial<ReviewResult> = {}): ReviewResult {
   };
 }
 
-describe('formatReviewCompactMarkdown', () => {
-  it('renders a compact list grouped by severity with the reopen command', () => {
-    const text = formatReviewCompactMarkdown(result());
-    expect(text).toContain('**Code review** · 2 files: +10 -3 · 2 findings · 1 critical');
-    expect(text).toContain('**Critical**');
-    expect(text).toContain('- `src/a.ts:8` — Races on login');
-    expect(text).toContain('**Minor**');
-    expect(text).toContain('/review read 2');
-    // The wall-of-text body must not be inlined.
-    expect(text).not.toContain('Reviewed 2 files.\n');
+describe('buildReviewSummaryData', () => {
+  it('captures diffstat, handle, and per-comment data for the colored block', () => {
+    const data = buildReviewSummaryData(result({ reviewSlug: 'races-on-login' }));
+    expect(data).toMatchObject({ fileCount: 2, additions: 10, deletions: 3, handle: 'races-on-login' });
+    expect(data.comments).toHaveLength(2);
+    expect(data.comments[0]).toEqual({
+      severity: 'critical',
+      path: 'src/a.ts',
+      line: 8,
+      title: 'Races on login',
+      rejected: false,
+    });
   });
 
-  it('falls back to the summary when there are no findings', () => {
-    const text = formatReviewCompactMarkdown(result({ comments: [], reviewId: undefined }));
-    expect(text).toBe('Reviewed 2 files.');
+  it('falls back to the numeric id when there is no slug', () => {
+    expect(buildReviewSummaryData(result()).handle).toBe('2');
   });
 });
 
-describe('formatReviewArtifactCompactMarkdown', () => {
+describe('buildReviewArtifactSummaryData / formatReviewArtifactMarkdown', () => {
   const artifact: ReviewArtifact = {
     id: 2,
     slug: 'races-on-login',
@@ -81,13 +82,11 @@ describe('formatReviewArtifactCompactMarkdown', () => {
     ],
   };
 
-  it('folds rejected comments into a struck-through Rejected group', () => {
-    const text = formatReviewArtifactCompactMarkdown(artifact);
-    expect(text).toContain('1 finding · 1 critical · 1 rejected');
-    expect(text).toContain('**Rejected**');
-    expect(text).toContain('- ~~`src/b.ts:3` — Redundant clone~~');
-    // The active critical is still listed normally.
-    expect(text).toContain('- `src/a.ts:8` — Races on login');
+  it('folds rejected state into the summary data', () => {
+    const data = buildReviewArtifactSummaryData(artifact);
+    expect(data.handle).toBe('races-on-login');
+    expect(data.comments.find((c) => c.path === 'src/b.ts')?.rejected).toBe(true);
+    expect(data.comments.find((c) => c.path === 'src/a.ts')?.rejected).toBe(false);
   });
 
   it('exports full Markdown excluding rejected findings from severity groups', () => {

@@ -406,6 +406,7 @@ function isUndoContextEntry(entry: TranscriptEntry): boolean {
     case 'status':
     case 'goal':
     case 'review':
+    case 'review-summary':
       return entry.turnId !== undefined;
     case 'welcome':
       return false;

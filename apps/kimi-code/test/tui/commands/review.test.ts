@@ -203,9 +203,12 @@ describe('handleReviewCommand', () => {
     });
     expect(host.appendTranscriptEntry).toHaveBeenCalledWith(
       expect.objectContaining({
-        kind: 'assistant',
-        renderMode: 'markdown',
-        content: expect.stringContaining('Missing validation'),
+        kind: 'review-summary',
+        reviewSummaryData: expect.objectContaining({
+          comments: expect.arrayContaining([
+            expect.objectContaining({ title: expect.stringContaining('Missing validation') }),
+          ]),
+        }),
       }),
     );
   });

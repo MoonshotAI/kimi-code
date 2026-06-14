@@ -123,6 +123,24 @@ export type GoalTranscriptData =
   | { readonly kind: 'created' }
   | { readonly kind: 'lifecycle'; readonly change: GoalChange };
 
+export interface ReviewSummaryComment {
+  readonly severity: 'critical' | 'important' | 'minor';
+  readonly path: string;
+  readonly line: number;
+  readonly title: string;
+  readonly rejected: boolean;
+}
+
+export interface ReviewSummaryTranscriptData {
+  readonly fileCount: number;
+  readonly additions: number;
+  readonly deletions: number;
+  readonly handle?: string;
+  /** Fallback text shown when there are no findings. */
+  readonly summary: string;
+  readonly comments: readonly ReviewSummaryComment[];
+}
+
 export interface ReviewTranscriptData {
   readonly state:
     | 'started'
@@ -146,7 +164,8 @@ export type TranscriptEntryKind =
   | 'skill_activation'
   | 'cron'
   | 'goal'
-  | 'review';
+  | 'review'
+  | 'review-summary';
 
 export type SkillActivationTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
 
@@ -164,6 +183,7 @@ export interface TranscriptEntry {
   cronData?: CronTranscriptData;
   goalData?: GoalTranscriptData;
   reviewData?: ReviewTranscriptData;
+  reviewSummaryData?: ReviewSummaryTranscriptData;
   imageAttachmentIds?: readonly number[];
   skillActivationId?: string;
   skillName?: string;

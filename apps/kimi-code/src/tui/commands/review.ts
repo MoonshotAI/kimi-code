@@ -16,9 +16,9 @@ import { ChoicePickerComponent, type ChoiceOption } from '../components/dialogs/
 import { ReviewReaderComponent } from '../components/dialogs/review-reader';
 import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import {
-  formatReviewArtifactCompactMarkdown,
+  buildReviewArtifactSummaryData,
+  buildReviewSummaryData,
   formatReviewArtifactMarkdown,
-  formatReviewCompactMarkdown,
   formatReviewStats,
   isReviewIntensity,
   isReviewScopeChoice,
@@ -101,7 +101,7 @@ export type ReviewCommandInvocation =
  */
 export function parseReviewCommand(args: string): ReviewCommandInvocation {
   const trimmed = args.trim();
-  const parts = trimmed.split(/\s+/).filter((part) => part.length > 0);
+  const parts = trimmed.length === 0 ? [] : trimmed.split(/\s+/);
   const [head, ...rest] = parts;
   if ((head === 'read' || head === 'export') && rest.length <= 1) {
     return { kind: head, idArg: rest[0] };
@@ -192,9 +192,10 @@ function openReviewReader(host: SlashCommandHost, artifact: ReviewArtifact): voi
         host.restoreEditor();
         host.appendTranscriptEntry({
           id: nextTranscriptId(),
-          kind: 'assistant',
-          renderMode: 'markdown',
-          content: formatReviewArtifactCompactMarkdown(updated),
+          kind: 'review-summary',
+          renderMode: 'plain',
+          content: updated.summary,
+          reviewSummaryData: buildReviewArtifactSummaryData(updated),
         });
       },
       requestRender: () => {
@@ -361,13 +362,14 @@ async function startReview(
     host.setReviewActive(false);
     host.appendTranscriptEntry({
       id: nextTranscriptId(),
-      kind: 'assistant',
-      renderMode: 'markdown',
-      content: formatReviewCompactMarkdown(result),
+      kind: 'review-summary',
+      renderMode: 'plain',
+      content: result.summary,
+      reviewSummaryData: buildReviewSummaryData(result),
     });
   } catch (error) {
     const message = formatErrorMessage(error);
-    const reviewEventHandled = host.state.reviewActive === false;
+    const reviewEventHandled = !host.state.reviewActive;
     host.setReviewActive(false);
     if (message.toLowerCase().includes('aborted')) {
       host.showStatus('Review cancelled.');
