@@ -106,10 +106,68 @@ browser and replay-fold are wanted.
 All touched packages typecheck clean; the TUI printable-key guard passes for the
 new component.
 
-## Not covered
+## Not covered (phase 1)
 
 - Runtime/visual verification of the interactive reader (no TUI harness in this
   environment); its pure helpers (diff window, formatters) are unit-tested, the
   view layer is exercised only by typecheck and the key-guard.
 - The full-screen container-swap browser, responsive side-by-side diff, and
   replay-time fold of rejection events (see deviations).
+
+---
+
+# Phase 2 — trial feedback
+
+After a `/review` trial (see `code-review-presentation-issues.md`), the
+following was addressed. Decisions: review handles are **topic slugs** derived
+from the top finding (numeric id stays the internal/RPC key); the drawer reader
+stays the default with a full-screen reader reachable by `f`.
+
+## Correctness bugs (found by the review of my own code)
+
+- **Unescaped Markdown in export** → `escapeMarkdown` applied to every dynamic
+  value in `formatReviewArtifactMarkdown`.
+- **`/review read|export` vs focus text** → `parseReviewCommand` only treats
+  them as subcommands when followed by ≤1 token; multi-word stays a focus.
+- **Follow-up errors mis-reported as review failures** → the post-review
+  selector now runs outside the review try/catch.
+- **Silent "Browse" no-op / silent export overwrite** → both now surface a
+  message; export picks a non-clobbering `review-<slug>.md`.
+- **Follow-up titled "complete" for blocked reviews** → uses real status.
+
+## UX changes
+
+- **Drawer reader**: title on its own line beneath a gray path; body and
+  suggested fix rendered through pi-tui Markdown (inline code/bold like chat);
+  blank line before a non-gray status bar.
+- **Compact block**: now a colored `ReviewSummaryComponent` (green `● Code
+  review`, red/green diffstat, bold counts, severity groups) instead of plain
+  Markdown.
+- **Review names**: topic slugs (`/review read auth-refresh-races`); the picker
+  and footer show slugs.
+- **Reconciliation/progress**: suppressed the per-finding "merged/dismissed"
+  stream (the reconciliator already renders as a sub-agent element + emits a
+  single summary); removed the duplicate review spinner in favor of the
+  `● Reviewing...` chrome.
+- **Full-screen reader**: new `ReviewReaderFullscreenApp` (container-swap),
+  two-column list + detail/diff; `f` switches from the drawer.
+
+## Tests added (phase 2)
+
+- `agent-core/test/review/artifact.test.ts` — topic-slug derivation + de-dup.
+- `apps/kimi-code/test/tui/review-command.test.ts` — `parseReviewCommand`
+  subcommand/focus disambiguation + `escapeMarkdown`.
+- `apps/kimi-code/test/tui/review-options.test.ts` — `buildReviewSummaryData`
+  (diffstat/handle/rejected fold) + Markdown export escaping.
+- `apps/kimi-code/test/tui/review-reader.test.ts` — `clampIndex`.
+
+## Still not covered
+
+- Visual/runtime behavior of the drawer and full-screen readers (no TUI harness
+  here): the shared pure helpers are unit-tested; the rendering is verified only
+  by typecheck, lint, and the printable-key guard. **Worth a manual `/review`
+  pass** to confirm the colored block, Markdown body, and full-screen layout.
+- Responsive side-by-side diff and replay-time fold of rejection events remain
+  out of scope.
+- The full-screen detail pane truncates rather than scrolls when a comment’s
+  body + diff exceed the viewport.
