@@ -413,6 +413,8 @@ let userActionFollowUntil = 0;
 // Timestamp of the last SMOOTH programmatic scroll (the only async multi-event
 // path). The synchronous streaming scrolls are intentionally NOT recorded here.
 let lastSmoothScroll = 0;
+let stableFollowRaf = 0;
+let stableFollowToken = 0;
 
 function hasUserActionFollowLock(): boolean {
   return Date.now() < userActionFollowUntil;
@@ -486,6 +488,62 @@ function scrollToBottom(smooth = false): void {
   showPill.value = false;
 }
 
+function currentLayoutKey(): string {
+  const el = panesRef.value;
+  if (!el) return 'none';
+  const content = el.firstElementChild;
+  const contentHeight = content instanceof HTMLElement ? content.offsetHeight : 0;
+  const dockHeight = dockRef.value?.offsetHeight ?? 0;
+  return `${el.scrollHeight}:${el.clientHeight}:${contentHeight}:${dockHeight}`;
+}
+
+function raf(cb: () => void): number {
+  return (typeof requestAnimationFrame === 'function'
+    ? requestAnimationFrame(cb)
+    : setTimeout(cb, 16)) as unknown as number;
+}
+
+function cancelRaf(id: number): void {
+  if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id);
+  else clearTimeout(id);
+}
+
+/**
+ * Re-pin until the tail layout is stable for a few consecutive frames. A page
+ * refresh can rebuild the transcript before the working moon, copy footer,
+ * markdown images, or code highlighting have their final height; this waits for
+ * those late tail elements instead of trusting one early scroll.
+ */
+function scheduleStableFollow(maxFrames = 36): void {
+  if (active.value !== 'chat') return;
+  if (!following.value && !hasUserActionFollowLock()) return;
+  const token = ++stableFollowToken;
+  let lastKey = '';
+  let stableFrames = 0;
+  let frames = 0;
+  if (stableFollowRaf) {
+    cancelRaf(stableFollowRaf);
+    stableFollowRaf = 0;
+  }
+
+  const tick = () => {
+    stableFollowRaf = 0;
+    if (token !== stableFollowToken) return;
+    if (active.value !== 'chat') return;
+    if (!following.value && !hasUserActionFollowLock()) return;
+    scrollToBottom(false);
+    const key = currentLayoutKey();
+    stableFrames = key === lastKey ? stableFrames + 1 : 0;
+    lastKey = key;
+    frames++;
+    if (stableFrames < 3 && frames < maxFrames) {
+      stableFollowRaf = raf(tick);
+    }
+  };
+
+  stableFollowRaf = raf(tick);
+}
+
 // Scroll key: reacts to new turns AND to ANY streaming content on the last turn —
 // thinking deltas, text deltas, and tool output all grow the view, so all must
 // trigger the follow-to-bottom (previously only text was tracked, so the view
@@ -524,7 +582,7 @@ watch(active, async (tab) => {
   if (tab !== 'chat') return;
   following.value = true;
   await nextTick();
-  scrollToBottom(false);
+  scheduleStableFollow();
 });
 
 // New session (reload key changes): reset the mobile files drill-down + clear
@@ -538,7 +596,7 @@ watch(
     selectedFile.value = null;
     following.value = true;
     await nextTick();
-    scrollToBottom(false);
+    scheduleStableFollow();
   },
 );
 
@@ -551,7 +609,7 @@ watch(
     if (active.value !== 'chat') return;
     following.value = true;
     await nextTick();
-    scrollToBottom(false);
+    scheduleStableFollow();
   },
 );
 
@@ -569,21 +627,7 @@ watch(
     if (active.value !== 'chat') return;
     if (!following.value && !hasUserActionFollowLock()) return;
     await nextTick();
-    scrollToBottom(false);
-    const schedule = typeof requestAnimationFrame === 'function'
-      ? requestAnimationFrame
-      : (cb: () => void) => setTimeout(cb, 16) as unknown as number;
-    schedule(() => {
-      if (following.value) scrollToBottom(false);
-      schedule(() => {
-        if (following.value) scrollToBottom(false);
-      });
-    });
-    // Final catch-up for async syntax highlighting / image layout that lands a
-    // few hundred ms after the turn ends.
-    setTimeout(() => {
-      if (following.value) scrollToBottom(false);
-    }, 250);
+    scheduleStableFollow(48);
   },
 );
 
@@ -594,11 +638,7 @@ function followAfterUserAction(): void {
   showPill.value = false;
   userActionFollowUntil = Date.now() + USER_ACTION_FOLLOW_LOCK_MS;
   void nextTick(() => {
-    scrollToBottom(false);
-    const schedule = typeof requestAnimationFrame === 'function'
-      ? requestAnimationFrame
-      : (cb: () => void) => setTimeout(cb, 16) as unknown as number;
-    schedule(() => scrollToBottom(false));
+    scheduleStableFollow(16);
   });
 }
 
@@ -665,7 +705,7 @@ function onContentMutated(): void {
 function onVisibilityChange(): void {
   if (typeof document === 'undefined') return;
   if (document.visibilityState === 'visible' && following.value && active.value === 'chat') {
-    scrollToBottom(false);
+    scheduleStableFollow();
   }
 }
 
@@ -702,22 +742,7 @@ function onKeyDown(event: KeyboardEvent): void {
 onMounted(() => {
   // Initial scroll to bottom on first load.
   nextTick(() => {
-    scrollToBottom(false);
-    // A page refresh mid-stream lands here with the full transcript already
-    // present; markdown highlighting / images then lay out asynchronously and
-    // grow the content AFTER this first scroll, leaving the view short of the
-    // bottom. Re-pin on the next frame (and once more) so a refresh reliably
-    // ends at the latest content. `following` stays true, so the observers keep
-    // it pinned as more late layout settles.
-    const schedule = typeof requestAnimationFrame === 'function'
-      ? requestAnimationFrame
-      : (cb: () => void) => setTimeout(cb, 16) as unknown as number;
-    schedule(() => {
-      if (following.value) scrollToBottom(false);
-      schedule(() => {
-        if (following.value) scrollToBottom(false);
-      });
-    });
+    scheduleStableFollow(48);
     if (panesRef.value && typeof MutationObserver === 'function') {
       contentObserver = new MutationObserver(onContentMutated);
       contentObserver.observe(panesRef.value, {
@@ -743,6 +768,7 @@ onUnmounted(() => {
   if (contentObserver) contentObserver.disconnect();
   if (resizeObserver) resizeObserver.disconnect();
   if (scrollRaf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(scrollRaf);
+  if (stableFollowRaf) cancelRaf(stableFollowRaf);
   if (abortToastTimer !== null) clearTimeout(abortToastTimer);
   if (copyConversationCopiedTimer !== null) {
     clearTimeout(copyConversationCopiedTimer);
