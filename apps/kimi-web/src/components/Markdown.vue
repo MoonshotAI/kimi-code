@@ -6,6 +6,7 @@ import { MarkdownRender } from 'markstream-vue';
 import { useIsDark } from '../composables/useIsDark';
 import type { FilePreviewRequest } from '../types';
 import { collectFilePathAliases, findFilePathLinks } from '../lib/filePathLinks';
+import { markdownRenderPlan } from '../lib/markdownPerformance';
 // px-based CSS build (our app is px, not rem). Imported here so the styles
 // load wherever Markdown is used; scoped overrides below re-skin it to
 // Terminal Pro. Importing the same file from multiple components is a no-op
@@ -36,6 +37,16 @@ const props = withDefaults(
 
 const final = computed(() => !props.streaming);
 const filePathAliases = computed(() => collectFilePathAliases(props.text ?? ''));
+const renderPlan = computed(() => {
+  // While a turn is actively streaming, never downgrade the code renderer:
+  // markstream keys each code block on the renderer value, so flipping
+  // shiki→pre mid-stream remounts every block (visible jitter + lost
+  // highlighting) right in the "fast output" scenario this is meant to fix.
+  // Plan for heaviness only once the turn has settled — already-loaded history
+  // is never `streaming`, so the large/heavy-session case still gets `pre`.
+  if (props.streaming) return { codeRenderer: 'shiki' as const, codeFenceCount: 0, codeChars: 0 };
+  return markdownRenderPlan(props.text ?? '');
+});
 
 // Code blocks follow the app colour scheme (shiki re-renders on flip).
 const isDark = useIsDark();
@@ -221,6 +232,13 @@ const codeBlockProps = {
   loading: false,
 };
 
+// Root cause for the "large session turns into code skeletons" failure:
+// markstream mounts every code block in the loaded transcript, then shiki has
+// to tokenize all of them. `loading: false` removes the visible skeleton gate,
+// but it still leaves a long shiki queue on very large messages. Heavy messages
+// therefore use markstream's plain <pre> renderer: no highlighter queue, no
+// skeleton path, and the content remains immediately readable.
+
 // ---------------------------------------------------------------------------
 // ```diff fences are handled locally, NOT by markstream.
 //
@@ -296,7 +314,7 @@ function copyDiff(code: string, idx: number) {
         v-if="seg.kind === 'md'"
         :content="seg.text"
         mode="chat"
-        code-renderer="shiki"
+        :code-renderer="renderPlan.codeRenderer"
         :is-dark="isDark"
         :code-block-light-theme="CODE_LIGHT_THEME"
         :code-block-dark-theme="CODE_DARK_THEME"
