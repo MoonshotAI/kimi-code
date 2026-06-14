@@ -26,7 +26,9 @@
  * living in the clear without ever dropping a newer token a concurrent
  * file-backend writer may have just landed. Migration is LOCK-FREE, exactly like
  * `FileTokenStorage`. `remove` and `list` also reconcile against the legacy file
- * store so pre-migration plaintext can never linger or go missing.
+ * store so pre-migration plaintext can never linger or go missing. `save` prunes
+ * any legacy plaintext copy after the keychain write so a later file-backend run
+ * can't resurrect a superseded token.
  *
  * Reconcile-on-hit (flip-flop repair): `resolveTokenStorage` can pick a
  * DIFFERENT backend per run for one credentialsDir (keychain locked,
@@ -269,6 +271,15 @@ export class KeyringTokenStorage implements TokenStorage {
 
   async save(name: string, token: TokenInfo): Promise<void> {
     this.keyring.createEntry(this.service, name).setPassword(this.serialize(token));
+    // The keychain is now authoritative for `name`. Drop any plaintext copy so a
+    // later FILE-backend run (KIMI_DISABLE_KEYRING=1, probe/native-load failure) —
+    // which is keychain-unaware and cannot reconcile — can't resurrect an obsolete
+    // token or a stale tombstone, and no secret lingers in cleartext. Lock-free
+    // unlink; a missing file is a no-op. Safe because save() always writes the
+    // current authoritative token (refresh/login/tombstone), so any on-disk copy
+    // is superseded — a concurrent file-backend writer is the documented
+    // unsupported mixed-backend case.
+    await this.legacy.remove(name);
   }
 
   async remove(name: string): Promise<void> {

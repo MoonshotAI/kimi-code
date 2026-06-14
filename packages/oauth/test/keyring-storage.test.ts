@@ -155,6 +155,35 @@ describe('KeyringTokenStorage', () => {
     expect(JSON.parse(raw as string)).toEqual(tokenToWire(token));
   });
 
+  it('save() prunes a lingering plaintext copy after writing the keychain', async () => {
+    // A stale plaintext file lingers from a prior file-backend run (or a
+    // keychain-wins reconcile that left an older file). A later save() must make
+    // the keychain authoritative AND drop the cleartext, so a subsequent
+    // KIMI_DISABLE_KEYRING / probe-failure run (keychain-unaware FileTokenStorage)
+    // can no longer resurrect the obsolete token, and no secret lingers on disk.
+    const fileTok = sampleToken({ accessToken: 'at-stale-file', refreshToken: 'rt-stale-file' });
+    const newTok = sampleToken({ accessToken: 'at-new', refreshToken: 'rt-new' });
+    await legacy.save('kimi-code', fileTok);
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
+
+    await storage.save('kimi-code', newTok);
+
+    const raw = keyring.createEntry(KEYRING_SERVICE, 'kimi-code').getPassword();
+    expect(raw).toBe(JSON.stringify(tokenToWire(newTok)));
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+  });
+
+  it('save() is a no-op on the file when none exists (ENOENT path)', async () => {
+    const tok = sampleToken({ accessToken: 'at-fresh', refreshToken: 'rt-fresh' });
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+
+    await expect(storage.save('kimi-code', tok)).resolves.toBeUndefined();
+
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+    const raw = keyring.createEntry(KEYRING_SERVICE, 'kimi-code').getPassword();
+    expect(JSON.parse(raw as string)).toEqual(tokenToWire(tok));
+  });
+
   it('migrates a plaintext token into the keychain, then deletes the file', async () => {
     const token = sampleToken();
     await legacy.save('kimi-code', token);

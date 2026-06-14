@@ -252,6 +252,60 @@ describe('KimiOAuthToolkit with a keyring-backed store (hermetic)', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it('a refresh prunes a pre-seeded stale plaintext file so a later file run cannot resurrect it', async () => {
+    // Pre-seed a stale plaintext token at <credentialsDir>/kimi-code.json via a
+    // real FileTokenStorage — exactly what a prior file-backend fallback run (or
+    // a keychain-wins reconcile) leaves behind. The keychain holds an expired
+    // token so ensureFresh refreshes and calls save(). After save() the cleartext
+    // copy must be gone, so a later KIMI_DISABLE_KEYRING run (keychain-unaware)
+    // can no longer read it back and resurrect the obsolete credential.
+    await new FileTokenStorage(dir).save(
+      'kimi-code',
+      token({ accessToken: 'stale-plaintext', refreshToken: 'stale-plaintext-refresh' }),
+    );
+    expect(plaintextTokenFiles(dir)).toEqual(['kimi-code.json']);
+
+    // Keychain token is already expired so ensureFresh must refresh it.
+    await storage.save('kimi-code', token({ accessToken: 'stale-access', expiresAt: 100 }));
+
+    const fetchImpl = vi.fn(async (input: unknown, init?: RequestInit) => {
+      expect(fetchInputUrl(input)).toBe(`${FLOW_CONFIG.oauthHost}/api/oauth/token`);
+      if (typeof init?.body !== 'string') throw new TypeError('expected form body');
+      expect(new URLSearchParams(init.body).get('grant_type')).toBe('refresh_token');
+      return new Response(
+        JSON.stringify({
+          access_token: 'rotated-access',
+          refresh_token: 'rotated-refresh',
+          expires_in: 3600,
+          scope: '',
+          token_type: 'Bearer',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: dir,
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 1_000,
+      flowConfig: FLOW_CONFIG,
+    });
+
+    await expect(toolkit.ensureFresh()).resolves.toBe('rotated-access');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    // The rotated token is authoritative in the keychain...
+    const raw = keyring.createEntry(service, 'kimi-code').getPassword();
+    expect(raw).not.toBeNull();
+    expect((JSON.parse(raw as string) as Record<string, unknown>)['access_token']).toBe(
+      'rotated-access',
+    );
+    // ...and the pre-seeded stale plaintext copy is gone (no resurrection path).
+    expect(plaintextTokenFiles(dir)).toEqual([]);
+  });
+
   it('logout() removes the token from the keychain', async () => {
     await storage.save('kimi-code', token());
     const toolkit = new KimiOAuthToolkit({
