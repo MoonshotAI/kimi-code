@@ -3,6 +3,7 @@ import { registerMigrateCommand } from '#/migration/index';
 import { Command, Option } from 'commander';
 
 import type { CLIOptions } from './options';
+import { registerHeadlessCommand, type HeadlessCommandHandler } from './headless/commands';
 import { registerAcpCommand } from './sub/acp';
 import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
@@ -20,11 +21,13 @@ export function createProgram(
   onMigrate: MigrateCommandHandler,
   onPluginNodeRunner: PluginNodeRunnerHandler = () => {},
   onUpgrade: UpgradeCommandHandler = () => {},
+  onHeadless: HeadlessCommandHandler = () => {},
 ): Command {
   const program = new Command(CLI_COMMAND_NAME)
     .description('The Starting Point for Next-Gen Agents')
     .version(version, '-V, --version')
     .allowUnknownOption(false)
+    .enablePositionalOptions()
     .configureHelp({ helpWidth: 100 })
     .helpOption('-h, --help', 'Show help.')
     .usage('[options] [command]')
@@ -81,6 +84,7 @@ export function createProgram(
   registerLoginCommand(program);
   registerDoctorCommand(program);
   registerMigrateCommand(program, onMigrate);
+  registerHeadlessCommand(program, onHeadless);
   program
     .command('upgrade')
     .description('Upgrade Kimi Code to the latest version.')

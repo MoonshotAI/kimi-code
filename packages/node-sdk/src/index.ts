@@ -1,6 +1,8 @@
 export { KimiHarness } from '#/kimi-harness';
 export type { KimiHarnessRuntimeOptions } from '#/kimi-harness';
 export { Session } from '#/session';
+export { acquireSessionRunLock } from '#/session-lock';
+export type { AcquireSessionRunLockInput, SessionRunLock } from '#/session-lock';
 export { KimiAuthFacade } from '#/auth';
 export {
   createKimiHarness,

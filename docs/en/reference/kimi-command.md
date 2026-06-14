@@ -117,9 +117,61 @@ kimi -p "List changed files" --output-format stream-json
 
 In `stream-json` mode, regular replies produce an Assistant message; when the model calls a tool, an Assistant message with `tool_calls` is emitted first, followed by the corresponding Tool message, then subsequent Assistant messages. Thinking content is not written to JSONL; tool progress and "resuming session" notices are still written to stderr.
 
+### Headless mode for agents and scripts
+
+Use `kimi headless` when another program or coding agent needs to start, inspect, or control a non-TUI run:
+
+```sh
+kimi headless run --prompt "Inspect this repository"
+kimi headless run --prompt "Fix the failing test" --status-file /tmp/kimi-run/status.json
+kimi headless status --file /tmp/kimi-run/status.json
+```
+
+`headless run` is still turn-based. The process exits when the run ends. It does not use `--output-format`; stdout starts with one JSON metadata line. By default, the Assistant response follows after a blank line as verbatim Markdown. Add `--metadata-only` to print only metadata, or add `--output-dir <dir>` to write response Markdown files and list them in the metadata.
+
+Useful options:
+
+| Option | Description |
+| --- | --- |
+| `--prompt <prompt>` | Run one prompt turn |
+| `--cwd <dir>` | Select or validate the session workspace |
+| `--session <id>` | Resume a specific session |
+| `--continue` | Continue the latest session for the working directory |
+| `--model <model>` | Override the model for this run |
+| `--status-file <path>` | Write JSON status updates that another process can poll |
+| `--output-dir <dir>` | Write response Markdown and sidecar files to this directory |
+| `--metadata-only` | Omit Markdown from stdout |
+| `--approve-plan` | Approve a plan review if one appears |
+| `--reject-plan` | Reject a plan review if one appears |
+| `--skills-dir <dir>` | Load Skills from this directory. Can be repeated |
+
+Goal-backed headless runs use files for each completed turn:
+
+```sh
+KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi headless run \
+  --goal "Raise coverage to 99.5%" \
+  --status-file /tmp/kimi-run/status.json \
+  --output-dir /tmp/kimi-run
+```
+
+While a goal is running, read the status file or run:
+
+```sh
+kimi headless status --file /tmp/kimi-run/status.json
+kimi headless status --file /tmp/kimi-run/status.json --json
+```
+
+Use goal control commands with the same status file. `pause` matches TUI `/goal pause`: the current turn continues, then the goal stops before the next turn. `interrupt` stops the active turn immediately.
+
+```sh
+kimi headless goal pause --file /tmp/kimi-run/status.json
+kimi headless goal cancel --file /tmp/kimi-run/status.json
+kimi headless goal interrupt --file /tmp/kimi-run/status.json
+```
+
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `doctor` (validate configuration files), `export` (export a session), `headless` (run without the TUI), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
 
 ### `kimi login`
 

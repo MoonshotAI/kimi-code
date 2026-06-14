@@ -117,9 +117,61 @@ kimi -p "List changed files" --output-format stream-json
 
 `stream-json` 模式下，普通回复输出 Assistant 消息；模型调用工具时，先输出带 `tool_calls` 的 Assistant 消息，再输出对应的 Tool 消息，最后继续输出后续 Assistant 消息。thinking 内容不会写入 JSONL；工具进度和恢复会话提示仍写到 stderr。
 
+### 面向 Agent 和脚本的 headless 模式
+
+当另一个程序或编码 Agent 需要启动、查看或控制一次非 TUI 运行时，使用 `kimi headless`：
+
+```sh
+kimi headless run --prompt "Inspect this repository"
+kimi headless run --prompt "Fix the failing test" --status-file /tmp/kimi-run/status.json
+kimi headless status --file /tmp/kimi-run/status.json
+```
+
+`headless run` 仍然按轮次运行。运行结束后，进程退出。它不使用 `--output-format`；stdout 的开头是一行 JSON 元数据。默认情况下，Assistant 回复会在一个空行后以原样 Markdown 形式输出。加 `--metadata-only` 只打印元数据，或加 `--output-dir <dir>` 写入回复 Markdown 文件，并在元数据中列出这些文件。
+
+常用选项：
+
+| 选项 | 说明 |
+| --- | --- |
+| `--prompt <prompt>` | 运行一个 prompt 轮次 |
+| `--cwd <dir>` | 选择或校验会话工作区 |
+| `--session <id>` | 恢复指定会话 |
+| `--continue` | 继续当前工作目录下最近一次的会话 |
+| `--model <model>` | 为本次运行覆盖模型 |
+| `--status-file <path>` | 写入可供另一个进程轮询的 JSON 状态更新 |
+| `--output-dir <dir>` | 把回复 Markdown 和附带文件写入该目录 |
+| `--metadata-only` | 不把 Markdown 输出到 stdout |
+| `--approve-plan` | 如果出现计划审阅，则批准计划 |
+| `--reject-plan` | 如果出现计划审阅，则拒绝计划 |
+| `--skills-dir <dir>` | 从该目录加载 Skills。可重复传入 |
+
+目标驱动的 headless 运行会为每个完成的轮次写入文件：
+
+```sh
+KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi headless run \
+  --goal "Raise coverage to 99.5%" \
+  --status-file /tmp/kimi-run/status.json \
+  --output-dir /tmp/kimi-run
+```
+
+目标运行期间，可以读取状态文件，也可以运行：
+
+```sh
+kimi headless status --file /tmp/kimi-run/status.json
+kimi headless status --file /tmp/kimi-run/status.json --json
+```
+
+目标控制命令使用同一个状态文件。`pause` 与 TUI 的 `/goal pause` 体验一致：当前轮次继续运行，然后目标会在下一个轮次前停止。`interrupt` 会立刻停止当前轮次。
+
+```sh
+kimi headless goal pause --file /tmp/kimi-run/status.json
+kimi headless goal cancel --file /tmp/kimi-run/status.json
+kimi headless goal interrupt --file /tmp/kimi-run/status.json
+```
+
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`doctor`（校验配置文件）、`export`（导出会话）、`headless`（不打开 TUI 运行）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
 
 ### `kimi login`
 

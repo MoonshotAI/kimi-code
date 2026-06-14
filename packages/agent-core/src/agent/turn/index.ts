@@ -279,6 +279,11 @@ export class TurnFlow {
     this.steerBuffer.length = 0;
   }
 
+  restoreTurnCount(count: number): void {
+    if (count <= 0) return;
+    this.turnId = Math.max(this.turnId, count - 1);
+  }
+
   /**
    * The body of the single in-flight `activeTurn`. Routes to the goal driver
    * (sequential continuation turns) when a goal is active, otherwise runs exactly

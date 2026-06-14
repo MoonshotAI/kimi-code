@@ -20,6 +20,7 @@ export const ErrorCodes = {
   SESSION_STATE_NOT_FOUND: 'session.state_not_found',
   SESSION_STATE_INVALID: 'session.state_invalid',
   SESSION_FORK_ACTIVE_TURN: 'session.fork_active_turn',
+  SESSION_LOCKED: 'session.locked',
   SESSION_EXPORT_NOT_FOUND: 'session.export_not_found',
   SESSION_EXPORT_MISSING_VERSION: 'session.export_missing_version',
   SESSION_CLOSED: 'session.closed',
@@ -154,6 +155,12 @@ export const KIMI_ERROR_INFO = {
     retryable: true,
     public: true,
     action: 'Wait for the active turn to complete before forking.',
+  },
+  'session.locked': {
+    title: 'Session is locked',
+    retryable: true,
+    public: true,
+    action: 'Wait for the active run to finish or remove a stale lock.',
   },
   'session.export_not_found': {
     title: 'Session export directory missing',

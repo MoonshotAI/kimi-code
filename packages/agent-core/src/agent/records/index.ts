@@ -123,6 +123,54 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
   }
 }
 
+function inferRestoredTurnCount(records: readonly AgentRecord[]): number {
+  return Math.max(
+    countAcceptedTopLevelTurnInputs(records),
+    countFirstStepLoopEvents(records),
+  );
+}
+
+function countAcceptedTopLevelTurnInputs(records: readonly AgentRecord[]): number {
+  let count = 0;
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (record?.type !== 'turn.prompt' && record?.type !== 'turn.steer') continue;
+    const next = nextLaunchSignalRecord(records, index + 1);
+    if (
+      next?.type === 'context.append_message' &&
+      next.message.role === 'user' &&
+      JSON.stringify(next.message.content) === JSON.stringify(record.input) &&
+      JSON.stringify(next.message.origin) === JSON.stringify(record.origin)
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function nextLaunchSignalRecord(
+  records: readonly AgentRecord[],
+  startIndex: number,
+): AgentRecord | undefined {
+  for (let index = startIndex; index < records.length; index += 1) {
+    const record = records[index];
+    if (record === undefined) return undefined;
+    if (record.type === 'metadata') continue;
+    if (record.type.startsWith('goal.')) continue;
+    return record;
+  }
+  return undefined;
+}
+
+function countFirstStepLoopEvents(records: readonly AgentRecord[]): number {
+  return records.filter(
+    (record) =>
+      record.type === 'context.append_loop_event' &&
+      record.event.type === 'step.begin' &&
+      record.event.step === 1,
+  ).length;
+}
+
 export interface RestoringContext {
   time?: number;
 }
@@ -217,6 +265,7 @@ export class AgentRecords {
         await this.agent.blobStore.rehydrateParts(msg.content);
       }
     }
+    this.agent.turn.restoreTurnCount(inferRestoredTurnCount(replayedRecords));
     const firstRecord = replayedRecords[0];
     if (
       firstRecord?.type === 'metadata' &&

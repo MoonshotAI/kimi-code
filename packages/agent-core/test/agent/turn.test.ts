@@ -26,6 +26,7 @@ import type {
 } from '../../src/session/subagent-host';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
 import { createCommandKaos, testAgent, type TestAgentOptions } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
@@ -146,6 +147,62 @@ describe('Agent turn flow', () => {
         dup_type: 'cross_step',
         duration_ms: expect.any(Number),
       }),
+    });
+  });
+
+  it('continues turn ids after multiple completed prompts are replayed', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ persistence });
+    ctx.configure();
+
+    ctx.mockNextResponse({ type: 'text', text: 'first done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'First prompt' }] });
+    await ctx.untilTurnEnd();
+
+    ctx.mockNextResponse({ type: 'text', text: 'second done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Second prompt' }] });
+    await ctx.untilTurnEnd();
+
+    const resumed = testAgent({
+      persistence: new InMemoryAgentRecordPersistence(persistence.records),
+    });
+    await resumed.agent.resume();
+
+    resumed.mockNextResponse({ type: 'text', text: 'third done' });
+    await resumed.rpc.prompt({ input: [{ type: 'text', text: 'Third prompt' }] });
+
+    expect(await resumed.untilTurnEnd()).toContainEqual({
+      type: '[rpc]',
+      event: 'turn.started',
+      args: { turnId: 2, origin: { kind: 'user' } },
+    });
+  });
+
+  it('does not count rejected busy prompts when restoring turn ids', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ kaos: createCommandKaos('should-not-run'), persistence });
+    ctx.configure({ tools: ['Bash'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will wait for approval.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the active turn' }] });
+    await ctx.untilApprovalRequest();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Rejected busy prompt' }] });
+    await ctx.rpc.cancel({ turnId: 0 });
+    await ctx.untilTurnEnd();
+
+    const resumed = testAgent({
+      persistence: new InMemoryAgentRecordPersistence(persistence.records),
+    });
+    await resumed.agent.resume();
+
+    resumed.mockNextResponse({ type: 'text', text: 'next done' });
+    await resumed.rpc.prompt({ input: [{ type: 'text', text: 'Next real prompt' }] });
+
+    expect(await resumed.untilTurnEnd()).toContainEqual({
+      type: '[rpc]',
+      event: 'turn.started',
+      args: { turnId: 1, origin: { kind: 'user' } },
     });
   });
 

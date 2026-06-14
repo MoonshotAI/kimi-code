@@ -4,6 +4,7 @@ import { ErrorCodes, KimiError } from '@moonshot-ai/kimi-code-sdk';
 import { validateOptions } from '#/cli/options';
 import type { CLIOptions } from '#/cli/options';
 import type * as OptionsModule from '#/cli/options';
+import { runHeadless } from '#/cli/headless/run';
 import { runPrompt } from '#/cli/run-prompt';
 import { runShell } from '#/cli/run-shell';
 import { formatStartupError } from '#/cli/startup-error';
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => {
     runUpdatePreflight: vi.fn(),
     runShell: vi.fn(),
     runPrompt: vi.fn(),
+    runHeadless: vi.fn(),
     installCrashHandlers: vi.fn(),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
@@ -125,6 +127,10 @@ vi.mock('../../src/cli/run-shell', () => ({
 
 vi.mock('../../src/cli/run-prompt', () => ({
   runPrompt: mocks.runPrompt,
+}));
+
+vi.mock('../../src/cli/headless/run', () => ({
+  runHeadless: mocks.runHeadless,
 }));
 
 class ExitCalled extends Error {
@@ -233,6 +239,29 @@ describe('main entry command handling', () => {
     });
     expect(runPrompt).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
     expect(runShell).not.toHaveBeenCalled();
+  });
+
+  it('routes parsed headless commands to the headless runner', () => {
+    main();
+
+    const createProgramCall = mocks.createProgram.mock.calls[0] as unknown[] | undefined;
+    const onHeadless = createProgramCall?.[5] as ((command: unknown) => void) | undefined;
+    expect(onHeadless).toBeTypeOf('function');
+
+    const command = {
+      kind: 'run',
+      options: {
+        prompt: 'inspect',
+        continue: false,
+        metadataOnly: false,
+        approvePlan: false,
+        rejectPlan: false,
+        skillsDirs: [],
+      },
+    };
+    onHeadless?.(command);
+
+    expect(runHeadless).toHaveBeenCalledWith(command, '0.0.1-alpha.2');
   });
 
   it('keeps shell mode update preflight interactive by default', async () => {
