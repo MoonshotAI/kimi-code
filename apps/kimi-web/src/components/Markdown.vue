@@ -200,6 +200,17 @@ const CODE_DARK_THEME = 'github-dark';
 // header with a copy button + language label, so we keep the header + copy
 // button (preserving our previous per-block copy affordance) and turn off the
 // monaco-only buttons (expand / preview / font-size) that don't fit a chat.
+//
+// `loading: false` is the important one. markstream's CodeBlock shows a loading
+// SKELETON whenever `!stream && loading`, and its `loading` prop DEFAULTS TO
+// TRUE. We never set it, so every settled (non-streaming) code block sat in the
+// skeleton state until shiki finished highlighting it — and when a screenful of
+// code mounts at once (switching to a long session, or a fast burst of output)
+// shiki can't keep up, so the skeletons get stuck and the whole page reads as
+// blank placeholders. Pinning `loading` to false drops the skeleton entirely:
+// the block renders its plain-text fallback immediately and shiki upgrades it to
+// the highlighted version when the highlighter is ready. Streaming blocks are
+// unaffected (their `stream` is true, so the skeleton gate was already false).
 const codeBlockProps = {
   showHeader: true,
   showCopyButton: true,
@@ -207,6 +218,7 @@ const codeBlockProps = {
   showPreviewButton: false,
   showCollapseButton: false,
   showFontSizeButtons: false,
+  loading: false,
 };
 
 // ---------------------------------------------------------------------------
