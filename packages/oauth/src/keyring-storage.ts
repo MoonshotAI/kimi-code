@@ -2,10 +2,12 @@
  * Keychain-backed OAuth token storage with plaintext-file fallback.
  *
  * Backend: the OS keychain (macOS Keychain, Windows Credential Manager,
- * Linux Secret Service) via `@napi-rs/keyring`. All tokens live under a single
- * keychain *service* (`KEYRING_SERVICE`); each token is one entry whose
- * *account* is the token `name` and whose *password* is the snake_case wire
- * JSON — the exact same payload `FileTokenStorage` writes to disk.
+ * Linux Secret Service) via `@napi-rs/keyring`. Tokens live under a keychain
+ * *service* derived per credentials directory (`keyringServiceForCredentialsDir`)
+ * so distinct profiles / SDK callers stay isolated exactly like the file backend
+ * isolates them by directory; each token is one entry whose *account* is the
+ * token `name` and whose *password* is the snake_case wire JSON — the exact same
+ * payload `FileTokenStorage` writes to disk.
  *
  * Selection (`resolveTokenStorage`): the keychain is used only when it is
  * actually usable. Two guards are required because the failure modes differ:
@@ -19,13 +21,18 @@
  *
  * Migration: when the keychain is selected but a token is still only on disk
  * (written by an older file-only build), `load` migrates it — copy into the
- * keychain, then delete the plaintext file — so secrets stop living in the
- * clear. `remove` and `list` also reconcile against the legacy file store so
- * pre-migration plaintext can never linger or go missing.
+ * keychain, then compare-and-delete the plaintext file (only unlink a file that
+ * still matches the value we made keychain-authoritative) — so secrets stop
+ * living in the clear without ever dropping a newer token a concurrent
+ * file-backend writer may have just landed. Migration is LOCK-FREE, exactly like
+ * `FileTokenStorage`. `remove` and `list` also reconcile against the legacy file
+ * store so pre-migration plaintext can never linger or go missing.
  */
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import { FileTokenStorage } from './storage';
 import type { TokenStorage } from './storage';
@@ -92,32 +99,56 @@ export class KeyringTokenStorage implements TokenStorage {
       return this.deserialize(raw);
     }
     // Not in the keychain — migrate any plaintext token written by an older
-    // file-only build, then drop the cleartext copy.
+    // file-only build, then drop the cleartext copy (LOCK-FREE, exactly like
+    // FileTokenStorage — no proper-lockfile, because reusing the oauth-manager
+    // refresh lock here would deadlock the manager's in-lock re-read, and a
+    // separate lock wouldn't coordinate with an old file-backend process).
     //
-    // Re-read-before-delete guards against a concurrent file-backend writer
-    // (an old build, a KIMI_DISABLE_KEYRING process, or a fallback instance)
-    // saving a NEWER token between our copy-in and our remove. Without the
-    // re-read we would delete that newer file and leave a stale token shadowing
-    // it in the keychain forever. So we re-read immediately before deleting and
-    // let the latest observed value win.
+    // Compare-and-delete guards against a concurrent file-backend writer (an old
+    // build, a KIMI_DISABLE_KEYRING process, or a fallback instance) saving a
+    // NEWER token between our copy-in and our remove. We never unlink a file
+    // whose serialized value differs from the one we just made authoritative in
+    // the keychain — only a token we actually migrated is deleted.
     const first = await this.legacy.load(name);
     if (first === undefined) return undefined;
     let serialized = this.serialize(first);
+    let latest = first;
     this.keyring.createEntry(this.service, name).setPassword(serialized);
 
-    let latest = first;
-    const second = await this.legacy.load(name);
-    if (second !== undefined) {
-      const secondSerialized = this.serialize(second);
-      if (secondSerialized !== serialized) {
-        // A newer token landed on disk; make the keychain authoritative with it.
-        this.keyring.createEntry(this.service, name).setPassword(secondSerialized);
-        serialized = secondSerialized;
-        latest = second;
+    // Bounded converge loop: ensure the keychain holds the latest observed
+    // serialized value `S`, then re-read the file ONE more time right before
+    // deleting and only unlink when it still equals `S`. A newer value found on
+    // the pre-delete re-read is written to keychain and we retry; persistent
+    // churn after a few iterations leaves the file in place (a later load
+    // reconciles) rather than risk deleting a token we didn't migrate.
+    //
+    // NOTE: the residual sub-microsecond TOCTOU under concurrently-MIXED
+    // file+keyring backends is a documented best-effort limitation; running the
+    // file and keyring backends simultaneously against one credentialsDir is
+    // unsupported.
+    for (let i = 0; i < 3; i += 1) {
+      const current = await this.legacy.load(name);
+      if (current === undefined) {
+        // A peer already removed/migrated the file — nothing to delete, the
+        // keychain already holds the latest value we observed.
+        return latest;
       }
+      const currentSerialized = this.serialize(current);
+      if (currentSerialized === serialized) {
+        // The file still matches what we migrated → safe to drop the cleartext.
+        await this.legacy.remove(name);
+        return latest;
+      }
+      // A newer token landed; make the keychain authoritative with it and retry
+      // the compare-and-delete against this newer value.
+      this.keyring.createEntry(this.service, name).setPassword(currentSerialized);
+      serialized = currentSerialized;
+      latest = current;
     }
 
-    await this.legacy.remove(name);
+    // Converge budget exhausted under persistent churn: leave the file in place
+    // (never delete a token we may not have migrated) and return the latest
+    // value we wrote to the keychain; a subsequent load will reconcile.
     return latest;
   }
 
@@ -213,6 +244,27 @@ function probeKeyring(keyring: KeyringApi): boolean {
   }
 }
 
+/**
+ * Derive the keychain *service* name for a credentials directory so that the
+ * keyring backend isolates profiles by directory exactly like the file backend
+ * isolates them by `credentialsDir`. Without this, every profile / SDK caller
+ * collides on one fixed `'kimi-code'` service — a data-loss regression vs the
+ * file store.
+ *
+ * The "default" detection is deliberately keyed off the STANDARD path
+ * (`~/.kimi-code/credentials`), NOT `defaultKimiHome()` / `KIMI_CODE_HOME`:
+ * two different `KIMI_CODE_HOME` values would both look "default" and re-collide
+ * on `'kimi-code'`. Hashing the actual resolved dir guarantees isolation for
+ * every non-standard dir, while the one standard home per OS user keeps a
+ * stable, human-readable `'kimi-code'` service for the common case.
+ */
+export function keyringServiceForCredentialsDir(credentialsDir: string): string {
+  const resolved = resolve(credentialsDir);
+  const standard = resolve(join(homedir(), '.kimi-code', 'credentials'));
+  if (resolved === standard) return KEYRING_SERVICE;
+  return `kimi-code-${createHash('sha256').update(resolved).digest('hex').slice(0, 16)}`;
+}
+
 interface ResolveTokenStorageDeps {
   /** Returns a usable KeyringApi, or undefined when the native load fails. */
   loadKeyring?: () => KeyringApi | undefined;
@@ -240,5 +292,11 @@ export function resolveTokenStorage(
 
   if (!probeKeyring(keyring)) return legacy;
 
-  return new KeyringTokenStorage({ keyring, legacy });
+  // Namespace the keychain service by credentialsDir so distinct profiles /
+  // SDK callers stay isolated, matching the file backend's per-directory
+  // isolation. The legacy file store and the derived service both come from the
+  // SAME credentialsDir, so a file at `<credentialsDir>/<name>.json` migrates
+  // into the matching namespaced service.
+  const service = keyringServiceForCredentialsDir(credentialsDir);
+  return new KeyringTokenStorage({ keyring, legacy, service });
 }
