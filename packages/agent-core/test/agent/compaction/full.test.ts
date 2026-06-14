@@ -1522,6 +1522,47 @@ describe('FullCompaction', () => {
     );
   });
 
+  it('honors model max output size during compaction', async () => {
+    let callCount = 0;
+    const compactionMaxCompletionTokens: unknown[] = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-output-cap');
+      }
+      if (callCount === 2) {
+        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        return textResult('Output cap compacted summary.');
+      }
+      await callbacks?.onMessagePart?.({
+        type: 'text',
+        text: 'Recovered with output cap.',
+      });
+      return textResult('Recovered with output cap.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    const providerManager = ctx.agent.modelProvider;
+    if (providerManager === undefined) throw new Error('Expected provider manager');
+    const resolveProviderConfig = providerManager.resolveProviderConfig.bind(providerManager);
+    providerManager.resolveProviderConfig = (model) => ({
+      ...resolveProviderConfig(model),
+      maxOutputSize: 16_384,
+    });
+    expect(ctx.agent.config.maxOutputSize).toBe(16_384);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry with output cap' }] });
+    await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(3);
+    expect(compactionMaxCompletionTokens).toEqual([16_384]);
+  });
+
   it('honors completion budget env hard caps during compaction', async () => {
     vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', '8192');
     let callCount = 0;
