@@ -196,6 +196,18 @@ export function reviewScopeLabel(scope: ReviewArtifact['target']['scope']): stri
   }
 }
 
+/** Header heading for a review's scope, including the base ref / commit when relevant. */
+export function reviewTargetHeading(target: ReviewArtifact['target']): string {
+  switch (target.scope) {
+    case 'working_tree':
+      return 'working tree';
+    case 'current_branch':
+      return `vs ${target.baseRef}`;
+    case 'single_commit':
+      return `commit ${target.commit.slice(0, 7)}`;
+  }
+}
+
 export function isReviewIntensity(value: string): value is ReviewIntensity {
   return value === 'standard' || value === 'thorough' || value === 'deep';
 }

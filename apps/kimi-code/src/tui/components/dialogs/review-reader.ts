@@ -73,8 +73,12 @@ export class ReviewReaderComponent extends Container implements Focusable {
       this.move(1);
       return;
     }
-    if (char === 'x' || char === 'u') {
-      this.toggleReject();
+    if (char === 'y') {
+      this.setVerdict(false);
+      return;
+    }
+    if (char === 'n') {
+      this.setVerdict(true);
     }
   }
 
@@ -90,14 +94,12 @@ export class ReviewReaderComponent extends Container implements Focusable {
     this.props.requestRender();
   }
 
-  private toggleReject(): void {
+  private setVerdict(reject: boolean): void {
     const comment = this.comments[this.index];
     if (comment === undefined) return;
-    const rejected = comment.state === 'dismissed';
-    const action = rejected
-      ? this.props.onRestore(comment.id)
-      : this.props.onReject(comment.id);
-    this.flash = rejected ? 'Restored.' : 'Rejected.';
+    if ((comment.state === 'dismissed') === reject) return; // already in that state
+    const action = reject ? this.props.onReject(comment.id) : this.props.onRestore(comment.id);
+    this.flash = reject ? 'Rejected.' : 'Kept.';
     this.props.requestRender();
     void action.then((updated) => {
       if (updated !== undefined) {
@@ -152,8 +154,8 @@ export class ReviewReaderComponent extends Container implements Focusable {
 
   private statusBar(): string {
     const hint = this.props.onFullscreen === undefined
-      ? '↑/↓ move · x reject · u restore · q close'
-      : '↑/↓ move · x reject · u restore · f fullscreen · q close';
+      ? '↑/↓ move · y keep · n reject · q close'
+      : '↑/↓ move · y keep · n reject · f fullscreen · q close';
     const flash = this.flash === undefined ? '' : currentTheme.fg('success', `  ${this.flash}`);
     return currentTheme.fg('primary', ` ${hint}`) + flash;
   }

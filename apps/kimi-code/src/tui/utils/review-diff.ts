@@ -62,6 +62,49 @@ export function buildDiffWindow(
   return { rows: [], anchorIndex: -1, found: false };
 }
 
+export interface FileDiffRow {
+  readonly kind: 'context' | 'add' | 'del' | 'hunk';
+  readonly oldLine?: number;
+  readonly newLine?: number;
+  readonly text: string;
+}
+
+export interface FileDiffView {
+  readonly rows: readonly FileDiffRow[];
+  /** Index in `rows` of the anchored line, or -1 when not found. */
+  readonly anchorIndex: number;
+  readonly found: boolean;
+  /** Max line-number digit width, for gutter alignment. */
+  readonly lineNumberWidth: number;
+}
+
+/**
+ * Build the full diff of the anchor's file (every hunk, with hunk-header rows),
+ * plus the index of the anchored row — for the scrollable full-screen pane.
+ */
+export function buildFileDiff(
+  diff: string,
+  anchor: Pick<ReviewCommentAnchor, 'path' | 'side' | 'line'>,
+): FileDiffView {
+  const file = fileDiffForPath(parseUnifiedDiff(diff), anchor.path);
+  if (file === undefined) return { rows: [], anchorIndex: -1, found: false, lineNumberWidth: 1 };
+
+  const rows: FileDiffRow[] = [];
+  let anchorIndex = -1;
+  let maxLine = 0;
+  for (const hunk of file.hunks) {
+    rows.push({ kind: 'hunk', text: hunk.header });
+    for (const line of hunk.lines) {
+      const at = anchor.side === 'new' ? line.newLine : line.oldLine;
+      if (line.newLine !== undefined) maxLine = Math.max(maxLine, line.newLine);
+      if (line.oldLine !== undefined) maxLine = Math.max(maxLine, line.oldLine);
+      if (at === anchor.line && anchorIndex === -1) anchorIndex = rows.length;
+      rows.push({ kind: line.kind, oldLine: line.oldLine, newLine: line.newLine, text: line.text });
+    }
+  }
+  return { rows, anchorIndex, found: anchorIndex !== -1, lineNumberWidth: Math.max(1, String(maxLine).length) };
+}
+
 /** Format the gutter line-number column for a diff row. */
 export function diffGutter(row: DiffViewRow, width: number): string {
   const marker = row.kind === 'add' ? '+' : row.kind === 'del' ? '-' : ' ';
