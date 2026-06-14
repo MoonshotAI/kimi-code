@@ -187,14 +187,6 @@ export class SessionReplayRenderer {
         return;
       case 'plan_updated':
         this.flushAssistant(context);
-        if (!record.enabled && context.suppressNextPlanModeOffNotice) {
-          context.suppressNextPlanModeOffNotice = false;
-          return;
-        }
-        context.suppressNextPlanModeOffNotice = false;
-        this.host.appendTranscriptEntry(
-          replayEntry(context, 'status', `Plan mode: ${record.enabled ? 'ON' : 'OFF'}`, 'notice'),
-        );
         return;
       case 'permission_updated':
         this.flushAssistant(context);
@@ -540,7 +532,6 @@ export class SessionReplayRenderer {
   ): void {
     const { result } = record;
     if (result.decision === 'approved') {
-      context.suppressNextPlanModeOffNotice = true;
       return;
     }
     this.removeToolCall(record.toolCallId);

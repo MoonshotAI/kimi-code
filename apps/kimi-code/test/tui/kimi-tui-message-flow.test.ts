@@ -630,6 +630,7 @@ command = "vim"
     });
     expect(harness.track).toHaveBeenCalledWith('shortcut_plan_toggle', { enabled: true });
     expect(harness.track).toHaveBeenCalledWith('shortcut_mode_switch', { to_mode: 'plan' });
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Plan mode: ON');
   });
 
   it('routes /yolo through session permission state without app-layer telemetry duplication', async () => {
