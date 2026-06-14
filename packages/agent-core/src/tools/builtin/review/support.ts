@@ -132,7 +132,16 @@ export function isChangedFileVersionRead(
 function patchArgs(run: ReviewRuntimeRun, path: string, unified: string): readonly string[] {
   switch (run.target.scope) {
     case 'working_tree':
-      return ['diff', '--no-ext-diff', '--no-color', unified, '--end-of-options', 'HEAD', '--', path];
+      return [
+        'diff',
+        '--no-ext-diff',
+        '--no-color',
+        unified,
+        '--end-of-options',
+        run.target.baseRef ?? 'HEAD',
+        '--',
+        path,
+      ];
     case 'current_branch':
       return [
         'diff',
@@ -172,7 +181,7 @@ async function resolveFileSource(
   switch (run.target.scope) {
     case 'working_tree':
       if (input.version === 'base' || input.version === 'head') {
-        return { kind: 'git', version: input.version, ref: 'HEAD' };
+        return { kind: 'git', version: input.version, ref: run.target.baseRef ?? 'HEAD' };
       }
       return { kind: 'worktree', version: 'current' };
     case 'current_branch':

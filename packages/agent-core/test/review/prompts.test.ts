@@ -31,6 +31,7 @@ describe('review prompts', () => {
     expect(prompt).toContain('Do not suggest broad refactors');
     expect(prompt).toContain('severity');
     expect(prompt).toContain('expected impact');
+    expect(prompt).toContain('For working-tree modified or renamed files, use version `current`');
   });
 
   it('asks reconciliators to preserve valid findings and dismiss weak ones', () => {

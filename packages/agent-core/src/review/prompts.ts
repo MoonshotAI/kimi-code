@@ -87,6 +87,7 @@ function buildReviewerPrompt(
     '- Add a comment only when you can describe a real failure scenario, not just a possible improvement.',
     '- Each AddComment body should explain the scenario, why the changed code is wrong or risky, and the expected impact.',
     '- Cite the smallest useful line you read. Prefer changed lines; use nearby context lines only when that is where the defect is visible.',
+    '- For working-tree modified or renamed files, use version `current` when reading changed code with ReadFileVersion; version `base` is the pre-change file.',
     '- Choose severity by expected impact: critical for security exposure, data loss, crashes, or severe correctness failures; important for likely user-visible regressions; minor for real but lower-impact issues.',
     '- Missing tests are findings only when the missing coverage lets a concrete regression through; describe the regression, not just the absence of tests.',
     '',
@@ -118,10 +119,11 @@ function fullFileCoverageWorkflow(): readonly string[] {
   return [
     '1. Call GetAssignment and GetChangedFiles to orient yourself.',
     '2. For every assigned file, call ReadFileVersion until the entire file is covered before completing the assignment.',
-    '3. For deleted files, use ReadFileVersion with version `base`; for added or untracked files, use version `current`; for branch or commit reviews, use the version that contains the changed code unless you need the base for comparison.',
-    '4. Add one AddComment call per actionable finding. Each comment must cite a line you read.',
-    '5. Call UpdateProgress with status `complete` when full-file coverage is satisfied, even if there are no findings.',
-    '6. Call UpdateProgress with status `blocked` only if the assignment cannot be completed.',
+    '3. For working-tree modified or renamed files, use version `current` to read changed code; version `base` is the pre-change file.',
+    '4. For deleted files, use ReadFileVersion with version `base`; for added or untracked files, use version `current`; for branch or commit reviews, use the version that contains the changed code unless you need the base for comparison.',
+    '5. Add one AddComment call per actionable finding. Each comment must cite a line you read.',
+    '6. Call UpdateProgress with status `complete` when full-file coverage is satisfied, even if there are no findings.',
+    '7. Call UpdateProgress with status `blocked` only if the assignment cannot be completed.',
   ];
 }
 

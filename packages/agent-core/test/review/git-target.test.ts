@@ -14,6 +14,7 @@ import {
   previewReviewTarget,
   resolveReviewTarget,
 } from '../../src/review/git-target';
+import { readPatchForTarget } from '../../src/tools/builtin/review/support';
 import { testKaos } from '../fixtures/test-kaos';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 
@@ -57,6 +58,40 @@ describe('review git target resolver', () => {
       expect(stats.deletions).toBe(1);
     });
   });
+
+  it('keeps working tree patch reads anchored to the resolved base commit', async () => {
+    await withGitRepo(async (repo) => {
+      await mkdir(join(repo, 'src'));
+      await writeFile(join(repo, 'src/a.ts'), 'base\n');
+      await git(repo, 'add', '.');
+      await git(repo, 'commit', '-m', 'base');
+      const baseCommit = await gitOutput(repo, 'rev-parse', 'HEAD');
+
+      await writeFile(join(repo, 'src/a.ts'), 'base\nchanged\n');
+      const kaos = testKaos.withCwd(repo);
+      const target = await resolveReviewTarget(kaos, { scope: 'working_tree' });
+      const stats = await previewReviewTarget(kaos, target);
+
+      await git(repo, 'add', '.');
+      await git(repo, 'commit', '-m', 'move head during review');
+
+      const patch = await readPatchForTarget(
+        kaos,
+        {
+          target,
+          intensity: 'standard',
+          stats,
+          startedAt: Date.now(),
+        },
+        'src/a.ts',
+        3,
+      );
+
+      expect(target).toMatchObject({ scope: 'working_tree', baseRef: baseCommit });
+      expect(patch.hunks).toHaveLength(1);
+      expect(patch.patch).toContain('+changed');
+    });
+  }, 15_000);
 
   it('resolves the current branch against a selected base ref', async () => {
     await withGitRepo(async (repo) => {

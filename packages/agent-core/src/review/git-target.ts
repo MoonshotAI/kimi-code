@@ -33,7 +33,7 @@ export async function resolveReviewTarget(kaos: Kaos, input: ReviewTarget): Prom
 
   switch (input.scope) {
     case 'working_tree':
-      return { scope: 'working_tree' };
+      return { scope: 'working_tree', baseRef: await resolveCommitRef(kaos, input.baseRef ?? 'HEAD') };
 
     case 'current_branch': {
       const baseRef = await resolveCommitRef(kaos, input.baseRef);
@@ -124,7 +124,7 @@ async function listChangedFiles(kaos: Kaos, target: ReviewTarget): Promise<reado
           '--no-color',
           '-M',
           '--end-of-options',
-          'HEAD',
+          target.baseRef ?? 'HEAD',
           '--',
         ])),
         ...(await listUntrackedFileChanges(kaos)),

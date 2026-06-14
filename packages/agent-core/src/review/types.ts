@@ -25,6 +25,7 @@ export type ReviewDismissalReason =
 
 export interface ReviewWorkingTreeTarget {
   readonly scope: 'working_tree';
+  readonly baseRef?: string;
 }
 
 export interface ReviewCurrentBranchTarget {
