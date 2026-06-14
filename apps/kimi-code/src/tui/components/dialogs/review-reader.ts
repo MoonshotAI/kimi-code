@@ -26,7 +26,7 @@ import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { buildDiffWindow, diffGutter, type DiffViewRow } from '@/tui/utils/review-diff';
 import { printableChar } from '@/tui/utils/printable-key';
 
-const SEVERITY_TAG: Record<ReviewArtifactComment['severity'], string> = {
+export const SEVERITY_TAG: Record<ReviewArtifactComment['severity'], string> = {
   critical: '! critical',
   important: '! important',
   minor: '· minor',
@@ -34,9 +34,12 @@ const SEVERITY_TAG: Record<ReviewArtifactComment['severity'], string> = {
 
 export interface ReviewReaderProps {
   readonly artifact: ReviewArtifact;
+  readonly initialIndex?: number;
   readonly onReject: (commentId: string) => Promise<ReviewArtifact | undefined>;
   readonly onRestore: (commentId: string) => Promise<ReviewArtifact | undefined>;
   readonly onClose: (artifact: ReviewArtifact) => void;
+  /** Switch to the full-screen reader, carrying the current artifact + selection. */
+  readonly onFullscreen?: (artifact: ReviewArtifact, index: number) => void;
   readonly requestRender: () => void;
 }
 
@@ -49,12 +52,17 @@ export class ReviewReaderComponent extends Container implements Focusable {
   constructor(private readonly props: ReviewReaderProps) {
     super();
     this.artifact = props.artifact;
+    this.index = clampIndex(props.initialIndex ?? 0, this.artifact.comments.length);
   }
 
   handleInput(data: string): void {
     const char = printableChar(data);
     if (matchesKey(data, Key.escape) || char === 'q') {
       this.props.onClose(this.artifact);
+      return;
+    }
+    if (char === 'f' && this.props.onFullscreen !== undefined) {
+      this.props.onFullscreen(this.artifact, this.index);
       return;
     }
     if (matchesKey(data, Key.up) || char === 'k') {
@@ -136,39 +144,16 @@ export class ReviewReaderComponent extends Container implements Focusable {
     }
 
     lines.push('');
-    lines.push(...this.renderDiff(comment, inner));
+    lines.push(...renderCommentDiff(this.artifact.diff, comment, inner));
     lines.push('');
     lines.push(this.statusBar());
     return lines;
   }
 
-  private renderDiff(comment: ReviewArtifactComment, inner: number): string[] {
-    const window = buildDiffWindow(this.artifact.diff, comment.anchor, 3);
-    if (window.rows.length === 0) {
-      return [currentTheme.fg('textMuted', ' (no diff available for this comment)')];
-    }
-    const gutterWidth = 4;
-    const code = window.rows.map((row) => row.text).join('\n');
-    const highlighted = highlightLines(code, langFromPath(comment.anchor.path));
-    const out: string[] = [];
-    if (!window.found) {
-      out.push(currentTheme.fg('textMuted', ' diff shifted since review — showing nearest hunk'));
-    }
-    window.rows.forEach((row, i) => {
-      out.push(' ' + renderDiffRow(row, highlighted[i] ?? row.text, gutterWidth, inner));
-      if (i === window.anchorIndex) {
-        out.push(
-          ' ' +
-            currentTheme.boldFg('warning', '┃ ') +
-            currentTheme.fg('warning', truncateToWidth(comment.title, Math.max(1, inner - 3), '…')),
-        );
-      }
-    });
-    return out;
-  }
-
   private statusBar(): string {
-    const hint = '↑/↓ move · x reject · u restore · q close';
+    const hint = this.props.onFullscreen === undefined
+      ? '↑/↓ move · x reject · u restore · q close'
+      : '↑/↓ move · x reject · u restore · f fullscreen · q close';
     const flash = this.flash === undefined ? '' : currentTheme.fg('success', `  ${this.flash}`);
     return currentTheme.fg('primary', ` ${hint}`) + flash;
   }
@@ -187,8 +172,43 @@ function renderDiffRow(
   return currentTheme.fg(gutterColor, gutter) + ' ' + truncateToWidth(highlightedText, available, '…');
 }
 
+/** Render a windowed, syntax-highlighted diff for a comment, with a band at the anchor. */
+export function renderCommentDiff(
+  diff: string,
+  comment: ReviewArtifactComment,
+  inner: number,
+): string[] {
+  const window = buildDiffWindow(diff, comment.anchor, 3);
+  if (window.rows.length === 0) {
+    return [currentTheme.fg('textMuted', ' (no diff available for this comment)')];
+  }
+  const gutterWidth = 4;
+  const code = window.rows.map((row) => row.text).join('\n');
+  const highlighted = highlightLines(code, langFromPath(comment.anchor.path));
+  const out: string[] = [];
+  if (!window.found) {
+    out.push(currentTheme.fg('textMuted', ' diff shifted since review — showing nearest hunk'));
+  }
+  window.rows.forEach((row, i) => {
+    out.push(' ' + renderDiffRow(row, highlighted[i] ?? row.text, gutterWidth, inner));
+    if (i === window.anchorIndex) {
+      out.push(
+        ' ' +
+          currentTheme.boldFg('warning', '┃ ') +
+          currentTheme.fg('warning', truncateToWidth(comment.title, Math.max(1, inner - 3), '…')),
+      );
+    }
+  });
+  return out;
+}
+
+export function clampIndex(index: number, length: number): number {
+  if (length === 0) return 0;
+  return Math.min(Math.max(0, Math.trunc(index)), length - 1);
+}
+
 /** Render prose through pi-tui Markdown so inline code/bold match the chat. */
-function renderMarkdownLines(text: string, width: number): string[] {
+export function renderMarkdownLines(text: string, width: number): string[] {
   const rendered = new Markdown(text.trim(), 0, 0, createMarkdownTheme()).render(Math.max(1, width));
   // Drop trailing blank lines the block renderer may emit.
   while (rendered.length > 0 && (rendered.at(-1) ?? '').trim().length === 0) {
@@ -197,7 +217,7 @@ function renderMarkdownLines(text: string, width: number): string[] {
   return rendered;
 }
 
-function severityColor(severity: ReviewArtifactComment['severity']): (text: string) => string {
+export function severityColor(severity: ReviewArtifactComment['severity']): (text: string) => string {
   switch (severity) {
     case 'critical':
       return (text) => currentTheme.boldFg('error', text);
@@ -208,7 +228,7 @@ function severityColor(severity: ReviewArtifactComment['severity']): (text: stri
   }
 }
 
-function wrap(text: string, width: number): string[] {
+export function wrap(text: string, width: number): string[] {
   const max = Math.max(1, width);
   const words = text.trim().split(/\s+/).filter((word) => word.length > 0);
   if (words.length === 0) return [];

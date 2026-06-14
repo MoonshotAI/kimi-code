@@ -14,6 +14,7 @@ import type {
 
 import { ChoicePickerComponent, type ChoiceOption } from '../components/dialogs/choice-picker';
 import { ReviewReaderComponent } from '../components/dialogs/review-reader';
+import { ReviewReaderFullscreenApp } from '../components/dialogs/review-reader-fullscreen';
 import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import {
   buildReviewArtifactSummaryData,
@@ -181,28 +182,77 @@ async function resolveReviewId(
   return value === undefined ? undefined : Number(value);
 }
 
-function openReviewReader(host: SlashCommandHost, artifact: ReviewArtifact): void {
+function appendReviewSummary(host: SlashCommandHost, artifact: ReviewArtifact): void {
+  host.appendTranscriptEntry({
+    id: nextTranscriptId(),
+    kind: 'review-summary',
+    renderMode: 'plain',
+    content: artifact.summary,
+    reviewSummaryData: buildReviewArtifactSummaryData(artifact),
+  });
+}
+
+function reviewMutationCallbacks(host: SlashCommandHost, artifact: ReviewArtifact): {
+  onReject: (commentId: string) => Promise<ReviewArtifact | undefined>;
+  onRestore: (commentId: string) => Promise<ReviewArtifact | undefined>;
+} {
   const session = host.requireSession();
+  return {
+    onReject: (commentId) => session.rejectReviewComment(artifact.id, commentId),
+    onRestore: (commentId) => session.restoreReviewComment(artifact.id, commentId),
+  };
+}
+
+/** Open the drawer reader (default). Pressing `f` hands off to the fullscreen reader. */
+function openReviewReader(host: SlashCommandHost, artifact: ReviewArtifact, index?: number): void {
   host.mountEditorReplacement(
     new ReviewReaderComponent({
       artifact,
-      onReject: (commentId) => session.rejectReviewComment(artifact.id, commentId),
-      onRestore: (commentId) => session.restoreReviewComment(artifact.id, commentId),
+      initialIndex: index,
+      ...reviewMutationCallbacks(host, artifact),
       onClose: (updated) => {
         host.restoreEditor();
-        host.appendTranscriptEntry({
-          id: nextTranscriptId(),
-          kind: 'review-summary',
-          renderMode: 'plain',
-          content: updated.summary,
-          reviewSummaryData: buildReviewArtifactSummaryData(updated),
-        });
+        appendReviewSummary(host, updated);
+      },
+      onFullscreen: (current, currentIndex) => {
+        host.restoreEditor();
+        openReviewReaderFullscreen(host, current, currentIndex);
       },
       requestRender: () => {
         host.state.ui.requestRender();
       },
     }),
   );
+}
+
+/** Open the full-screen reader via container swap (saves/restores the UI children). */
+function openReviewReaderFullscreen(
+  host: SlashCommandHost,
+  artifact: ReviewArtifact,
+  index: number,
+): void {
+  const ui = host.state.ui;
+  const saved = [...ui.children];
+  const app = new ReviewReaderFullscreenApp({
+    artifact,
+    initialIndex: index,
+    terminal: host.state.terminal,
+    ...reviewMutationCallbacks(host, artifact),
+    onClose: (updated) => {
+      ui.clear();
+      for (const child of saved) ui.addChild(child);
+      ui.setFocus(host.state.editor);
+      ui.requestRender(true);
+      appendReviewSummary(host, updated);
+    },
+    requestRender: () => {
+      ui.requestRender();
+    },
+  });
+  ui.clear();
+  ui.addChild(app);
+  ui.setFocus(app);
+  ui.requestRender(true);
 }
 
 async function offerReviewFollowUp(host: SlashCommandHost, result: ReviewResult): Promise<void> {
