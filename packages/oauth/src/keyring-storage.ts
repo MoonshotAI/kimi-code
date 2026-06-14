@@ -34,8 +34,9 @@
  * A sequential flip-flop then splits state — the keychain may hold an OLDER
  * token while a fallback run wrote a NEWER one to the plaintext file. So `load`
  * reconciles against the legacy file even on a keychain HIT, adopting the file
- * token ONLY when BOTH sides are valid (neither a tombstone) AND the file is
- * strictly newer (`expiresAt`). It NEVER un-revokes a deliberate tombstone from
+ * token ONLY when BOTH sides are valid (neither a tombstone) AND the file was
+ * issued strictly later (mint second `expiresAt - expiresIn`, not the expiration
+ * time `expiresAt`). It NEVER un-revokes a deliberate tombstone from
  * stale plaintext, and only prunes a plaintext copy it made authoritative or one
  * equal to the keychain value after canonical re-serialization. See
  * `reconcileOnHit`.
@@ -182,9 +183,19 @@ export class KeyringTokenStorage implements TokenStorage {
    * Invariant — NEVER un-revoke from plaintext: a deliberately-written revoked
    * tombstone (refresh_token rejected) must outrank any stale plaintext token.
    * We therefore adopt the file token ONLY when BOTH sides are VALID (neither is
-   * a tombstone) AND the file is STRICTLY newer (`expiresAt` is stamped at
-   * issuance time, so a larger value means more-recently issued). In every other
-   * case the keychain stays authoritative.
+   * a tombstone) AND the file was ISSUED strictly later. `expiresAt` is an
+   * EXPIRATION time (mint second + `expiresIn`), NOT a write-order proxy, so we
+   * recover the mint second via `issuedAt = expiresAt - expiresIn` — the
+   * `expiresIn` cancels out, making the comparison robust to the server returning
+   * a different `expires_in` across refreshes (an older, longer-lived token can
+   * otherwise have a LARGER `expiresAt` than a newer, shorter-lived one). In
+   * every other case the keychain stays authoritative.
+   *
+   * Residual limitation: issuance time has 1-second granularity, so two tokens
+   * minted in the SAME wall-clock second tie and the keychain stays authoritative
+   * (strict `>`). That edge is practically unreachable, and we deliberately avoid
+   * a new wire field / monotonic generation counter to keep ZERO breaking change
+   * to the on-disk + keychain format.
    */
   private async reconcileOnHit(name: string, raw: string): Promise<TokenInfo | undefined> {
     const keyringToken = this.deserialize(raw);
@@ -198,12 +209,15 @@ export class KeyringTokenStorage implements TokenStorage {
     }
 
     // Adopt the file token ONLY when both are valid (not tombstones) and the file
-    // is strictly newer. This is the flip-flop repair: a fallback run landed a
-    // newer token on disk; make it keychain-authoritative now.
+    // was ISSUED strictly later. This is the flip-flop repair: a fallback run
+    // landed a newer token on disk; make it keychain-authoritative now. We compare
+    // mint time (`expiresAt - expiresIn`), NOT `expiresAt` (an expiration time),
+    // so a variable server `expires_in` can't make an older long-lived token look
+    // newer than a freshly-rotated short-lived one.
     if (
       classifyToken(keyringToken).kind === 'valid' &&
       classifyToken(fileToken).kind === 'valid' &&
-      fileToken.expiresAt > keyringToken.expiresAt
+      issuedAt(fileToken) > issuedAt(keyringToken)
     ) {
       const fileSerialized = this.serialize(fileToken);
       this.keyring.createEntry(this.service, name).setPassword(fileSerialized);
@@ -278,6 +292,16 @@ export class KeyringTokenStorage implements TokenStorage {
     const fromLegacy = await this.legacy.list();
     return [...new Set([...fromKeyring, ...fromLegacy])];
   }
+}
+
+/**
+ * Recover a token's mint second from persisted fields. `expiresAt` is stamped at
+ * issuance as `floor(mintTime) + expiresIn`, so subtracting `expiresIn` cancels
+ * the lifetime and yields the issuance instant — robust to a variable server
+ * `expires_in` across refreshes (1-second granularity; same-second mints tie).
+ */
+function issuedAt(token: TokenInfo): number {
+  return token.expiresAt - token.expiresIn;
 }
 
 /**
