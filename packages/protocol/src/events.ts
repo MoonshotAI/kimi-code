@@ -216,7 +216,8 @@ export interface ReviewEventDismissedComment {
     | 'unsupported'
     | 'low_confidence'
     | 'superseded'
-    | 'not_actionable';
+    | 'not_actionable'
+    | 'rejected_by_user';
   readonly summary: string;
   readonly mergedCommentId?: string;
 }

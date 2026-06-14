@@ -21,7 +21,8 @@ export type ReviewDismissalReason =
   | 'unsupported'
   | 'low_confidence'
   | 'superseded'
-  | 'not_actionable';
+  | 'not_actionable'
+  | 'rejected_by_user';
 
 export interface ReviewWorkingTreeTarget {
   readonly scope: 'working_tree';

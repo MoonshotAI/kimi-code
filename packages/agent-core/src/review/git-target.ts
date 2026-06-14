@@ -114,6 +114,56 @@ export async function previewReviewTarget(
   };
 }
 
+/**
+ * Capture the unified diff (`git diff -p`) for a resolved review target.
+ * Untracked working-tree files are appended as synthetic added-file patches.
+ * Best-effort: returns an empty string when no patch can be produced.
+ */
+export async function readReviewPatch(kaos: Kaos, target: ReviewTarget): Promise<string> {
+  await ensureGitRepository(kaos);
+  switch (target.scope) {
+    case 'working_tree': {
+      const tracked = await runGitOrEmpty(kaos, [
+        'diff', '--no-ext-diff', '--no-color', '-M',
+        '--end-of-options', target.baseRef ?? 'HEAD', '--',
+      ]);
+      const untracked = await readUntrackedPatches(kaos);
+      return [tracked, untracked].filter((part) => part.length > 0).join('');
+    }
+    case 'current_branch':
+      return runGitOrEmpty(kaos, [
+        'diff', '--no-ext-diff', '--no-color', '-M',
+        '--end-of-options', `${target.baseRef}...${target.headRef ?? 'HEAD'}`, '--',
+      ]);
+    case 'single_commit':
+      return runGitOrEmpty(kaos, [
+        'diff-tree', '--root', '--no-commit-id', '-r', '-p',
+        '--no-ext-diff', '--no-color', '-M', '--end-of-options', target.commit,
+      ]);
+  }
+}
+
+async function readUntrackedPatches(kaos: Kaos): Promise<string> {
+  const raw = await runGitOrEmpty(kaos, ['ls-files', '--others', '--exclude-standard', '-z']);
+  const paths = raw.split('\0').filter(Boolean);
+  const patches: string[] = [];
+  for (const path of paths) {
+    const filePath = joinGitPath(kaos, kaos.getcwd(), path);
+    const bytes = await kaos.readBytes(filePath, UNTRACKED_FILE_PREVIEW_BYTES);
+    if (bytes.includes(0)) continue; // skip binary
+    patches.push(buildAddedFilePatch(path, bytes.toString('utf8')));
+  }
+  return patches.join('');
+}
+
+function buildAddedFilePatch(path: string, content: string): string {
+  const lines = content.length === 0 ? [] : content.replace(/\n$/, '').split('\n');
+  const header = `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n`;
+  if (lines.length === 0) return header;
+  const body = lines.map((line) => `+${line}`).join('\n');
+  return `${header}@@ -0,0 +1,${String(lines.length)} @@\n${body}\n`;
+}
+
 async function listChangedFiles(kaos: Kaos, target: ReviewTarget): Promise<readonly ReviewFileChange[]> {
   switch (target.scope) {
     case 'working_tree':
