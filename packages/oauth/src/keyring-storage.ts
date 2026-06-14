@@ -299,6 +299,11 @@ export class KeyringTokenStorage implements TokenStorage {
  * issuance as `floor(mintTime) + expiresIn`, so subtracting `expiresIn` cancels
  * the lifetime and yields the issuance instant — robust to a variable server
  * `expires_in` across refreshes (1-second granularity; same-second mints tie).
+ *
+ * Operates on any `TokenInfo`: both fields are always numeric (`tokenFromWire`
+ * defaults them to 0), so even an externally-edited record compares as a
+ * consistent integer order — never NaN/throw. Only the caller's both-valid guard
+ * feeds it real minted tokens; tombstones (`expiresIn: 0`) are excluded there.
  */
 function issuedAt(token: TokenInfo): number {
   return token.expiresAt - token.expiresIn;
