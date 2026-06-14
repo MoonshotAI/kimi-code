@@ -1,5 +1,7 @@
 import type {
+  ReviewArtifact,
   ReviewBaseRef,
+  ReviewCommentSeverity,
   ReviewCommit,
   ReviewDiffStats,
   ReviewIntensity,
@@ -123,6 +125,86 @@ export function formatReviewResultMarkdown(result: ReviewResult): string {
     }
   }
   return lines.join('\n');
+}
+
+const SEVERITY_ORDER: readonly ReviewCommentSeverity[] = ['critical', 'important', 'minor'];
+
+interface CompactComment {
+  readonly severity: ReviewCommentSeverity;
+  readonly path: string;
+  readonly line: number;
+  readonly title: string;
+  readonly rejected: boolean;
+}
+
+/** Compact transcript render for a freshly completed review. */
+export function formatReviewCompactMarkdown(result: ReviewResult): string {
+  return renderCompactReview({
+    summary: result.summary,
+    stats: result.stats,
+    reviewId: result.reviewId,
+    comments: result.comments.map((comment) => ({
+      severity: comment.severity,
+      path: comment.path,
+      line: comment.line,
+      title: comment.title,
+      rejected: false,
+    })),
+  });
+}
+
+/** Compact transcript render from a persisted artifact (folds rejected state). */
+export function formatReviewArtifactCompactMarkdown(artifact: ReviewArtifact): string {
+  return renderCompactReview({
+    summary: artifact.summary,
+    stats: artifact.stats,
+    reviewId: artifact.id,
+    comments: artifact.comments.map((comment) => ({
+      severity: comment.severity,
+      path: comment.anchor.path,
+      line: comment.anchor.line,
+      title: comment.title,
+      rejected: comment.state === 'dismissed',
+    })),
+  });
+}
+
+function renderCompactReview(input: {
+  readonly summary: string;
+  readonly stats: ReviewDiffStats;
+  readonly reviewId: number | undefined;
+  readonly comments: readonly CompactComment[];
+}): string {
+  const active = input.comments.filter((comment) => !comment.rejected);
+  const rejected = input.comments.filter((comment) => comment.rejected);
+  if (active.length === 0 && rejected.length === 0) return input.summary;
+
+  const criticalCount = active.filter((comment) => comment.severity === 'critical').length;
+  const countParts = [formatCount(active.length, 'finding')];
+  if (criticalCount > 0) countParts.push(`${String(criticalCount)} critical`);
+  if (rejected.length > 0) countParts.push(`${String(rejected.length)} rejected`);
+
+  const lines = [`**Code review** · ${formatReviewStats(input.stats)} · ${countParts.join(' · ')}`, ''];
+  for (const severity of SEVERITY_ORDER) {
+    const group = active.filter((comment) => comment.severity === severity);
+    if (group.length === 0) continue;
+    lines.push(`**${severityLabel(severity)}**`);
+    for (const comment of group) {
+      lines.push(`- \`${comment.path}:${String(comment.line)}\` — ${comment.title}`);
+    }
+    lines.push('');
+  }
+  if (rejected.length > 0) {
+    lines.push('**Rejected**');
+    for (const comment of rejected) {
+      lines.push(`- ~~\`${comment.path}:${String(comment.line)}\` — ${comment.title}~~`);
+    }
+    lines.push('');
+  }
+  if (input.reviewId !== undefined) {
+    lines.push(`Browse or reject findings: \`/review read ${String(input.reviewId)}\``);
+  }
+  return lines.join('\n').trimEnd();
 }
 
 export function isReviewIntensity(value: string): value is ReviewIntensity {

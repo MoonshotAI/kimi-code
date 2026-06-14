@@ -9,7 +9,7 @@ import type {
 import { ChoicePickerComponent, type ChoiceOption } from '../components/dialogs/choice-picker';
 import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import {
-  formatReviewResultMarkdown,
+  formatReviewCompactMarkdown,
   formatReviewStats,
   isReviewIntensity,
   isReviewScopeChoice,
@@ -200,7 +200,7 @@ async function startReview(
       id: nextTranscriptId(),
       kind: 'assistant',
       renderMode: 'markdown',
-      content: formatReviewResultMarkdown(result),
+      content: formatReviewCompactMarkdown(result),
     });
   } catch (error) {
     const message = formatErrorMessage(error);
