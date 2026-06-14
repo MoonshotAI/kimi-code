@@ -76,16 +76,19 @@ describe('applyEnvModelConfig', () => {
   });
 
   it('applies provider type and its default base url', () => {
-    expect(apply({ ...MIN, KIMI_MODEL_PROVIDER_TYPE: 'openai' })
-      .providers[ENV_MODEL_PROVIDER_KEY]).toMatchObject({
+    const openai = apply({ ...MIN, KIMI_MODEL_PROVIDER_TYPE: 'openai' });
+    expect(openai.providers[ENV_MODEL_PROVIDER_KEY]).toMatchObject({
       type: 'openai',
       baseUrl: 'https://api.openai.com/v1',
     });
-    const anthropic = apply({ ...MIN, KIMI_MODEL_PROVIDER_TYPE: 'anthropic' })
-      .providers[ENV_MODEL_PROVIDER_KEY];
+    expect(openai.models?.[ENV_MODEL_ALIAS_KEY]?.capabilities).toBeUndefined();
+
+    const anthropicConfig = apply({ ...MIN, KIMI_MODEL_PROVIDER_TYPE: 'anthropic' });
+    const anthropic = anthropicConfig.providers[ENV_MODEL_PROVIDER_KEY];
     expect(anthropic).toBeDefined();
     expect(anthropic?.type).toBe('anthropic');
     expect(anthropic?.baseUrl).toBeUndefined();
+    expect(anthropicConfig.models?.[ENV_MODEL_ALIAS_KEY]?.capabilities).toBeUndefined();
   });
 
   it('rejects unsupported provider types', () => {
@@ -103,7 +106,11 @@ describe('applyEnvModelConfig', () => {
 
   it('parses comma-separated capabilities (trimmed, lowercased)', () => {
     expect(
-      apply({ ...MIN, KIMI_MODEL_CAPABILITIES: 'Image_In, thinking ,' })
+      apply({
+        ...MIN,
+        KIMI_MODEL_PROVIDER_TYPE: 'openai',
+        KIMI_MODEL_CAPABILITIES: 'Image_In, thinking ,',
+      })
         .models?.[ENV_MODEL_ALIAS_KEY]?.capabilities,
     ).toEqual(['image_in', 'thinking']);
   });
