@@ -8,7 +8,7 @@
  * contract; in-process types use camelCase per TS convention.
  */
 
-export type OAuthStorageBackend = 'file';
+export type OAuthStorageBackend = 'file' | 'keyring';
 
 /** A persisted OAuth token bundle. */
 export interface TokenInfo {
