@@ -265,6 +265,11 @@ function resolveMaxContextSize(model: CustomRegistryModelEntry): number {
   return CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT;
 }
 
+function resolveMaxOutputSize(model: CustomRegistryModelEntry): number | undefined {
+  const output = model.limit?.output;
+  return typeof output === 'number' && Number.isInteger(output) && output > 0 ? output : undefined;
+}
+
 function resolveCapabilities(model: CustomRegistryModelEntry): string[] {
   if (hasRichCapabilityHints(model)) {
     return capabilitiesFromCustomEntry(model);
@@ -314,6 +319,7 @@ export function applyCustomRegistryProvider(
       provider: providerKey,
       model: model.id,
       maxContextSize,
+      maxOutputSize: resolveMaxOutputSize(model),
       capabilities,
       displayName,
     };

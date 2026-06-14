@@ -338,12 +338,14 @@ describe('refreshAllProviderModels', () => {
       'image_in',
       'video_in',
     ]);
+    expect(host.current().models?.[modelAlias]?.maxOutputSize).toBe(262144);
     expect(host.current().models?.[siblingModelAlias]?.capabilities).toEqual([
       'tool_use',
       'thinking',
       'image_in',
       'video_in',
     ]);
+    expect(host.current().models?.[siblingModelAlias]?.maxOutputSize).toBe(262144);
     expect(host.current().models?.[userAlias]).toEqual(userAliasModel);
   });
 
@@ -658,6 +660,7 @@ describe('refreshAllProviderModels', () => {
           provider: providerId,
           model: modelId,
           maxContextSize: 262144,
+          maxOutputSize: 262144,
           capabilities: richCapabilities,
           displayName: 'Reasoner Pro',
         },

@@ -271,9 +271,11 @@ describe('applyCustomRegistryProvider', () => {
 
     const alias = config.models?.['rich/rich-vision'] as {
       maxContextSize: number;
+      maxOutputSize: number;
       capabilities: string[];
     };
     expect(alias.maxContextSize).toBe(200000);
+    expect(alias.maxOutputSize).toBe(8192);
     expect(alias.capabilities).toEqual(expect.arrayContaining(['tool_use', 'thinking', 'image_in']));
     expect(alias.capabilities).not.toContain('image_out');
   });

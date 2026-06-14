@@ -117,6 +117,7 @@ export interface ManagedKimiModelAlias {
   provider: string;
   model: string;
   maxContextSize: number;
+  maxOutputSize?: number;
   capabilities?: string[] | undefined;
   displayName?: string | undefined;
   readonly [key: string]: unknown;
