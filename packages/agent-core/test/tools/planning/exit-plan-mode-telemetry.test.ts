@@ -123,7 +123,7 @@ function permissionContext(args: ExitPlanModeInput): PermissionPolicyContext {
 }
 
 describe('ExitPlanMode telemetry', () => {
-  it('tracks submitted without options and auto approval', async () => {
+  it('tracks submitted without options and approved auto-mode plan review', async () => {
     const { agent, telemetryTrack, exitPlanMode } = makeAgent({ mode: 'auto' });
 
     const result = await execute(agent);
@@ -132,7 +132,7 @@ describe('ExitPlanMode telemetry', () => {
     expect(exitPlanMode).toHaveBeenCalledTimes(1);
     expect(telemetryTrack).toHaveBeenCalledWith('plan_submitted', { has_options: false });
     expect(telemetryTrack).toHaveBeenCalledWith('plan_resolved', {
-      outcome: 'auto_approved',
+      outcome: 'approved',
     });
   });
 
@@ -245,7 +245,7 @@ describe('ExitPlanMode telemetry', () => {
     );
   });
 
-  it('does not track auto_approved when exitPlanMode fails', async () => {
+  it('does not track approved in auto mode when exitPlanMode fails', async () => {
     const { agent, telemetryTrack, exitPlanMode } = makeAgent({ mode: 'auto' });
     exitPlanMode.mockImplementation(() => {
       throw new Error('state transition failure');
@@ -258,7 +258,7 @@ describe('ExitPlanMode telemetry', () => {
     expect(exitPlanMode).toHaveBeenCalledTimes(1);
     expect(telemetryTrack).toHaveBeenCalledWith('plan_submitted', { has_options: false });
     expect(telemetryTrack).not.toHaveBeenCalledWith('plan_resolved', {
-      outcome: 'auto_approved',
+      outcome: 'approved',
     });
   });
 

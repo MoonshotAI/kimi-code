@@ -704,11 +704,11 @@ describe('Permission policy chain', () => {
       'auto-mode-ask-user-question-deny',
       'plan-mode-guard-deny',
       'user-configured-deny',
+      'exit-plan-mode-review-ask',
       'auto-mode-approve',
       'session-approval-history',
       'user-configured-ask',
       'user-configured-allow',
-      'exit-plan-mode-review-ask',
       'plan-mode-tool-approve',
       'sensitive-file-access-ask',
       'git-control-path-access-ask',
@@ -1841,18 +1841,47 @@ describe('ExitPlanMode permission policy', () => {
     { label: 'Approach B', description: 'Use the complete refactor.' },
   ];
 
-  it('allows ExitPlanMode directly in auto mode without requesting approval', async () => {
-    const { manager, requestApproval } = makePlanPermissionManager({
+  it('requests plan-review approval in auto mode and returns formatted output', async () => {
+    const { manager, requestApproval, exit } = makePlanPermissionManager({
       mode: 'auto',
-      plan: '# Auto Plan',
+      plan: '# Auto Plan\n\n- Step',
+      path: '/tmp/auto-plan.md',
     });
 
     const result = await manager.beforeToolCall(
-      hookContext({ id: 'call_exit', toolName: 'ExitPlanMode', args: {} }),
+      hookContext({
+        id: 'call_exit',
+        toolName: 'ExitPlanMode',
+        args: {},
+        execution: planReviewExecution({
+          plan: '# Auto Plan\n\n- Step',
+          path: '/tmp/auto-plan.md',
+        }),
+      }),
     );
 
-    expect(result).toBeUndefined();
-    expect(requestApproval).not.toHaveBeenCalled();
+    expect(requestApproval).toHaveBeenCalledWith(
+      {
+        turnId: 0,
+        toolCallId: 'call_exit',
+        toolName: 'ExitPlanMode',
+        action: 'Presenting plan and exiting plan mode',
+        display: {
+          kind: 'plan_review',
+          plan: '# Auto Plan\n\n- Step',
+          path: '/tmp/auto-plan.md',
+          options: undefined,
+        },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(exit).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      syntheticResult: {
+        isError: false,
+        output: expect.stringContaining('## Approved Plan:\n# Auto Plan'),
+      },
+    });
   });
 
   it('requests plan-review approval in yolo mode and returns formatted output', async () => {
@@ -1909,7 +1938,7 @@ describe('ExitPlanMode permission policy', () => {
     });
   });
 
-  it('reuses session approval for ExitPlanMode without re-prompting plan review', async () => {
+  it('does not reuse session approval for a new ExitPlanMode plan review', async () => {
     const { manager, requestApproval, exit } = makePlanPermissionManager({
       mode: 'manual',
       plan: '# Updated Plan',
@@ -1933,9 +1962,23 @@ describe('ExitPlanMode permission policy', () => {
       }),
     );
 
-    expect(requestApproval).not.toHaveBeenCalled();
-    expect(exit).not.toHaveBeenCalled();
-    expect(result).toBeUndefined();
+    expect(requestApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: 'ExitPlanMode',
+        display: expect.objectContaining({
+          kind: 'plan_review',
+          plan: '# Updated Plan',
+        }),
+      }),
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(exit).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      syntheticResult: {
+        isError: false,
+        output: expect.stringContaining('## Approved Plan:\n# Updated Plan'),
+      },
+    });
   });
 
   it('returns a synthetic stop-turn result when the user rejects the plan', async () => {
