@@ -186,7 +186,7 @@ async function waitForPicker(host: SlashCommandHost, count: number): Promise<voi
 
 describe('handleReviewCommand', () => {
   it('starts a Standard working-tree review with focus text', async () => {
-    const { host, session, spinnerStop, workingTreePreview } = makeHost();
+    const { host, session, workingTreePreview } = makeHost();
     const task = handleReviewCommand(host, 'focus on security');
 
     await waitForPicker(host, 1);
@@ -201,7 +201,6 @@ describe('handleReviewCommand', () => {
       intensity: 'standard',
       focus: 'focus on security',
     });
-    expect(spinnerStop).toHaveBeenCalledWith({ ok: true, label: 'Review completed.' });
     expect(host.appendTranscriptEntry).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'assistant',
@@ -263,7 +262,7 @@ describe('handleReviewCommand', () => {
   });
 
   it('does not show a duplicate command error after a review failure event', async () => {
-    const { host, session, spinnerStop } = makeHost();
+    const { host, session } = makeHost();
     session.startReview.mockImplementationOnce(async () => {
       host.state.reviewActive = false;
       throw new Error('Rate limited');
@@ -276,7 +275,6 @@ describe('handleReviewCommand', () => {
     mountedPicker(host, 1).handleInput(ENTER);
     await task;
 
-    expect(spinnerStop).toHaveBeenCalledWith({ ok: false, label: 'Review stopped.' });
     expect(host.showError).not.toHaveBeenCalled();
     expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
   });

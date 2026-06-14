@@ -468,20 +468,14 @@ export class SessionEventHandler {
     });
   }
 
-  private handleReviewCommentMerged(event: ReviewCommentMergedEvent): void {
-    this.appendReviewProgress({
-      state: 'comment',
-      title: 'Review finding merged',
-      detail: `${event.comment.severity}: ${event.comment.path}:${String(event.comment.line)} ${event.comment.title}`,
-    });
+  private handleReviewCommentMerged(_event: ReviewCommentMergedEvent): void {
+    // Reconciliation internals: a merge/dismiss per finding is noise. The
+    // reconciliator renders as its own sub-agent element and emits a single
+    // "Reconciled N into M" completion summary, which is what users want.
   }
 
-  private handleReviewCommentDismissed(event: ReviewCommentDismissedEvent): void {
-    this.appendReviewProgress({
-      state: 'comment',
-      title: 'Review finding dismissed',
-      detail: `${event.dismissal.reason}: ${event.dismissal.summary}`,
-    });
+  private handleReviewCommentDismissed(_event: ReviewCommentDismissedEvent): void {
+    // See handleReviewCommentMerged — suppressed in favor of the summary.
   }
 
   private handleReviewCompleted(event: ReviewCompletedEvent): void {

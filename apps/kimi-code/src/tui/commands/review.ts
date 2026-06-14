@@ -351,20 +351,14 @@ async function startReview(
   host: SlashCommandHost,
   input: ReviewStartInput,
 ): Promise<void> {
-  const spinner = input.intensity === 'deep'
-    ? undefined
-    : host.showProgressSpinner('Reviewing changes…');
+  // No separate spinner: the ● Reviewing... chrome already indicates progress
+  // while a review is active, so a second "Review completed." indicator is noise.
   host.setReviewActive(true);
   host.state.reviewResultPending = true;
   let result: ReviewResult | undefined;
   try {
     result = await host.requireSession().startReview(input);
     host.setReviewActive(false);
-    const complete = result.status === 'complete';
-    spinner?.stop({
-      ok: complete,
-      label: complete ? 'Review completed.' : 'Review blocked.',
-    });
     host.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'assistant',
@@ -376,11 +370,8 @@ async function startReview(
     const reviewEventHandled = host.state.reviewActive === false;
     host.setReviewActive(false);
     if (message.toLowerCase().includes('aborted')) {
-      spinner?.stop({ ok: false, label: 'Review cancelled.' });
-    } else if (reviewEventHandled) {
-      spinner?.stop({ ok: false, label: 'Review stopped.' });
-    } else {
-      spinner?.stop({ ok: false, label: `Review stopped: ${message}` });
+      host.showStatus('Review cancelled.');
+    } else if (!reviewEventHandled) {
       host.showError(`Review stopped: ${message}`);
     }
   } finally {
