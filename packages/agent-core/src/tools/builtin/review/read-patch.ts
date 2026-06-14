@@ -31,13 +31,16 @@ export class ReadPatchTool implements BuiltinTool<ReadPatchInput> {
   resolveExecution(args: ReadPatchInput): ToolExecution {
     const contextLines = args.context_lines ?? 3;
     const detail = joinReviewDetails([
-      args.hunk_id === undefined ? 'all hunks' : `hunk ${args.hunk_id}`,
-      countLabel(contextLines, 'context line', 'context lines'),
+      changedSectionDetail(args.hunk_id),
+      nearbyLinesDetail(args.context_lines),
     ]);
     return {
       approvalRule: this.name,
-      description: `Reading review patch for ${args.path}`,
-      display: reviewDisplay(`review patch: ${args.path}`, detail),
+      description: `Reading changed lines for ${args.path}`,
+      display: reviewDisplay(
+        `${args.hunk_id === undefined ? 'changed lines' : 'changed section'}: ${args.path}`,
+        detail,
+      ),
       execute: async () => {
         try {
           requireAssignedPath(this.review, args.path);
@@ -86,4 +89,15 @@ export class ReadPatchTool implements BuiltinTool<ReadPatchInput> {
       },
     };
   }
+}
+
+function changedSectionDetail(hunkId: string | undefined): string | undefined {
+  if (hunkId === undefined) return undefined;
+  const match = /^hunk-(\d+)$/i.exec(hunkId);
+  return `section ${match?.[1] ?? hunkId}`;
+}
+
+function nearbyLinesDetail(count: number | undefined): string | undefined {
+  if (count === undefined || count <= 0) return undefined;
+  return countLabel(count, 'nearby line', 'nearby lines');
 }

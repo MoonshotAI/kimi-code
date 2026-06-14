@@ -161,15 +161,15 @@ describe('approval adapter', () => {
     const adapted = adaptApprovalRequest({
       toolCallId: 'tc-review-patch',
       toolName: 'ReadPatch',
-      action: 'Reading review patch for src/foo.ts',
+      action: 'Reading changed lines for src/foo.ts',
       display: {
         kind: 'generic',
-        summary: 'review patch: src/foo.ts',
-        detail: 'hunk hunk-2 · 5 context lines',
+        summary: 'changed section: src/foo.ts',
+        detail: 'section 2 · 5 nearby lines',
       },
     });
 
-    expect(adapted.description).toBe('review patch: src/foo.ts (hunk hunk-2 · 5 context lines)');
+    expect(adapted.description).toBe('changed section: src/foo.ts (section 2 · 5 nearby lines)');
     expect(adapted.display).toEqual([]);
   });
 

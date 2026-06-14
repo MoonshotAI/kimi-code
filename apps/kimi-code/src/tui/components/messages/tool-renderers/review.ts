@@ -123,11 +123,10 @@ function readPatchDetail(
     stringArg(args, 'hunk_id') !== undefined ||
     numberArg(args, 'context_lines') !== undefined;
   if (!hasPatchArgs) return displayDetail(display);
-  const contextLines = numberArg(args, 'context_lines') ?? 3;
   return joinDetails([
     stringArg(args, 'path'),
-    stringArg(args, 'hunk_id') === undefined ? 'all hunks' : `hunk ${stringArg(args, 'hunk_id')}`,
-    countLabel(contextLines, 'context line', 'context lines'),
+    changedSectionDetail(stringArg(args, 'hunk_id')),
+    nearbyLinesDetail(numberArg(args, 'context_lines')),
   ]);
 }
 
@@ -179,7 +178,7 @@ function mergeDetail(
 }
 
 function readPatchSummary(args: Record<string, unknown>): string {
-  return stringArg(args, 'hunk_id') === undefined ? 'Read review patch' : 'Read review patch hunk';
+  return stringArg(args, 'hunk_id') === undefined ? 'Read changed lines' : 'Read changed section';
 }
 
 function readFileVersionSummary(args: Record<string, unknown>): string {
@@ -273,6 +272,17 @@ function formatReviewRefForLabel(ref: string): string {
 
 function countLabel(count: number, singular: string, plural: string): string {
   return `${String(count)} ${count === 1 ? singular : plural}`;
+}
+
+function changedSectionDetail(hunkId: string | undefined): string | undefined {
+  if (hunkId === undefined) return undefined;
+  const match = /^hunk-(\d+)$/i.exec(hunkId);
+  return `section ${match?.[1] ?? hunkId}`;
+}
+
+function nearbyLinesDetail(count: number | undefined): string | undefined {
+  if (count === undefined || count <= 0) return undefined;
+  return countLabel(count, 'nearby line', 'nearby lines');
 }
 
 function lineRangeLabel(lineOffset: number | undefined, nLines: number | undefined): string {

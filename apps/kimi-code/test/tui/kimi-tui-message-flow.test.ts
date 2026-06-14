@@ -1217,7 +1217,9 @@ command = "vim"
       sendQueued,
     );
 
-    expect(stripSgr(renderReviewStatus(driver))).toContain('● Reviewing...');
+    const statusLines = stripSgr(renderReviewStatus(driver)).split('\n');
+    expect(statusLines[0]?.trim()).toBe('');
+    expect(statusLines[1]).toContain('● Reviewing...');
 
     driver.sessionEventHandler.handleEvent(
       {

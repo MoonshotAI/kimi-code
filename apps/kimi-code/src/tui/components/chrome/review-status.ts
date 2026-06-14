@@ -7,6 +7,6 @@ export class ReviewStatusComponent implements Component {
 
   render(width: number): string[] {
     const status = `${currentTheme.boldFg('primary', '●')} ${currentTheme.boldFg('primary', 'Reviewing...')}`;
-    return [truncateToWidth(status, width)];
+    return ['', truncateToWidth(status, width)];
   }
 }

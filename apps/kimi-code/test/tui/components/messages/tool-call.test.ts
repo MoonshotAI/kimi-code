@@ -830,8 +830,8 @@ describe('ToolCallComponent', () => {
         args: { path: 'src/a.ts', hunk_id: 'hunk-2', context_lines: 5 },
         display: {
           kind: 'generic',
-          summary: 'Read patch: src/a.ts',
-          detail: 'hunk hunk-2 · 5 context lines',
+          summary: 'changed section: src/a.ts',
+          detail: 'section 2 · 5 nearby lines',
         },
       },
       undefined,
@@ -839,7 +839,7 @@ describe('ToolCallComponent', () => {
 
     const out = strip(component.render(120).join('\n'));
 
-    expect(out).toContain('Read review patch hunk (src/a.ts · hunk hunk-2 · 5 context lines)');
+    expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
     expect(out).not.toContain('Using ReadPatch');
     expect(out).not.toContain('hunk_id');
     expect(out).not.toContain('context_lines');
@@ -941,7 +941,7 @@ describe('ToolCallComponent', () => {
       {
         id: 'call_agent_review_tools',
         name: 'Agent',
-        args: { description: 'review patch' },
+        args: { description: 'review changes' },
       },
       undefined,
     );
@@ -957,14 +957,14 @@ describe('ToolCallComponent', () => {
       args: { path: 'src/a.ts', hunk_id: 'hunk-2', context_lines: 5 },
       display: {
         kind: 'generic',
-        summary: 'Read patch: src/a.ts',
-        detail: 'hunk hunk-2 · 5 context lines',
+        summary: 'changed section: src/a.ts',
+        detail: 'section 2 · 5 nearby lines',
       },
     });
 
     const out = strip(component.render(120).join('\n'));
 
-    expect(out).toContain('Read review patch hunk (src/a.ts · hunk hunk-2 · 5 context lines)');
+    expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
     expect(out).not.toContain('Using ReadPatch');
     expect(out).not.toContain('hunk_id');
   });
@@ -976,7 +976,7 @@ describe('ToolCallComponent', () => {
       {
         id: 'call_agent_review_fallback',
         name: 'Agent',
-        args: { description: 'review patch' },
+        args: { description: 'review changes' },
       },
       undefined,
     );
@@ -993,7 +993,7 @@ describe('ToolCallComponent', () => {
     });
 
     let out = strip(component.render(120).join('\n'));
-    expect(out).toContain('Read review patch hunk (src/a.ts · hunk hunk-2 · 5 context lines)');
+    expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
     expect(out).not.toContain('Using ReadPatch');
 
     component.finishSubToolCall({
@@ -1003,7 +1003,7 @@ describe('ToolCallComponent', () => {
     });
 
     out = strip(component.render(120).join('\n'));
-    expect(out).toContain('Read review patch hunk (src/a.ts · hunk hunk-2 · 5 context lines)');
+    expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
     expect(out).not.toContain('Used ReadPatch');
   });
 
@@ -1014,7 +1014,7 @@ describe('ToolCallComponent', () => {
       {
         id: 'call_agent_review_json',
         name: 'Agent',
-        args: { description: 'review patch' },
+        args: { description: 'review changes' },
       },
       undefined,
     );

@@ -36,7 +36,12 @@ describe('review tool activity labels', () => {
       path: 'src/a.ts',
       hunk_id: '2',
       context_lines: 5,
-    })).toBe('Read review patch hunk (src/a.ts · hunk 2 · 5 context lines)');
+    })).toBe('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
+
+    expect(formatReviewToolActivityLabel('ReadPatch', {
+      path: 'src/a.ts',
+      context_lines: 0,
+    })).toBe('Read changed lines (src/a.ts)');
 
     expect(formatReviewToolActivityLabel('AddComment', {
       path: 'src/a.ts',

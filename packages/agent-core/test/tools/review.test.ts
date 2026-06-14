@@ -63,8 +63,8 @@ describe('review tools', () => {
       context_lines: 5,
     }))).toEqual({
       kind: 'generic',
-      summary: 'review patch: src/a.ts',
-      detail: 'hunk hunk-2 · 5 context lines',
+      summary: 'changed section: src/a.ts',
+      detail: 'section 2 · 5 nearby lines',
     });
     expect(displayOf(new ReadFileVersionTool(kaos, review).resolveExecution({
       path: 'src/a.ts',
@@ -219,7 +219,7 @@ describe('review tools', () => {
 
     const incomplete = await executeTool(new UpdateProgressTool(review), context({
       status: 'complete',
-      summary: 'only one hunk read',
+      summary: 'only one section read',
     }));
     expect(incomplete.isError).toBe(true);
     expect(json(incomplete).error).toContain('src/a.ts (patch)');
@@ -232,7 +232,7 @@ describe('review tools', () => {
 
     const complete = await executeTool(new UpdateProgressTool(review), context({
       status: 'complete',
-      summary: 'all hunks read',
+      summary: 'all sections read',
     }));
     expect(complete.isError).toBeFalsy();
     expect(json(complete)).toMatchObject({ status: 'complete' });
