@@ -742,7 +742,7 @@ command = "vim"
     let resolveSnapshot: (
       servers: Array<{
         name: string;
-        transport: 'stdio' | 'http';
+        transport: 'stdio' | 'http' | 'sse';
         status: 'pending' | 'connected' | 'failed' | 'disabled';
         toolCount: number;
         error?: string;
