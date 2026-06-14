@@ -222,6 +222,18 @@ describe('supportsTerminalProgress', () => {
     expect(supportsTerminalProgress({ ConEmuANSI: 'ON' })).toBe(true);
   });
 
+  it('rejects Windows Terminal under WSL', () => {
+    expect(supportsTerminalProgress({ WT_SESSION: 'abc-123', WSL_DISTRO_NAME: 'example' })).toBe(
+      false,
+    );
+    expect(supportsTerminalProgress({ WT_SESSION: 'abc-123', WSLENV: 'WT_SESSION/u' })).toBe(
+      false,
+    );
+    expect(
+      supportsTerminalProgress({ WT_SESSION: 'abc-123', WSL_INTEROP: '/run/WSL/example.sock' }),
+    ).toBe(false);
+  });
+
   it('detects Ghostty / WezTerm via TERM_PROGRAM and TERM', () => {
     expect(supportsTerminalProgress({ TERM_PROGRAM: 'ghostty' })).toBe(true);
     expect(supportsTerminalProgress({ TERM: 'xterm-ghostty' })).toBe(true);

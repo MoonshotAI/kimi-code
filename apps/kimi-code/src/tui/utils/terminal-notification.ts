@@ -120,7 +120,7 @@ export function supportsOsc9Notification(env: NodeJS.ProcessEnv = process.env): 
  * always safe.
  */
 export function supportsTerminalProgress(env: NodeJS.ProcessEnv = process.env): boolean {
-  if ((env['WT_SESSION'] ?? '').length > 0) return true;
+  if ((env['WT_SESSION'] ?? '').length > 0) return !isInsideWsl(env);
   if (env['ConEmuANSI'] === 'ON') return true;
   const termProgram = env['TERM_PROGRAM'] ?? '';
   if (termProgram === 'ghostty' || termProgram === 'WezTerm') return true;
@@ -132,6 +132,14 @@ export function supportsTerminalProgress(env: NodeJS.ProcessEnv = process.env): 
 export function isInsideTmux(env: NodeJS.ProcessEnv = process.env): boolean {
   const tmux = env['TMUX'] ?? '';
   return tmux.length > 0;
+}
+
+function isInsideWsl(env: NodeJS.ProcessEnv): boolean {
+  return (
+    (env['WSL_DISTRO_NAME'] ?? '').length > 0 ||
+    (env['WSLENV'] ?? '').length > 0 ||
+    (env['WSL_INTEROP'] ?? '').length > 0
+  );
 }
 
 function sanitizeNotificationText(value: string): string {
