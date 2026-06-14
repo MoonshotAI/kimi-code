@@ -3,4 +3,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Prevent orphaned tool calls from causing provider errors after resume, compaction, or any projected context that ends with an unclosed tool exchange.
+Prevent orphaned tool calls from causing provider errors after resume or compaction, and stop deferred messages from getting stuck when an open tool exchange is compacted away.

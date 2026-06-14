@@ -169,6 +169,10 @@ export class ContextMemory {
       ...this._history.slice(result.compactedCount),
     ];
     this.openSteps.clear();
+    const trimmed = trimTrailingOpenToolExchange(this._history);
+    if (trimmed.length === this._history.length) {
+      this.pendingToolResultIds.clear();
+    }
     this.flushDeferredMessagesIfToolExchangeClosed();
     this._tokenCount = result.tokensAfter;
     this.tokenCountCoveredMessageCount = this._history.length;

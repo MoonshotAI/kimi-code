@@ -855,6 +855,68 @@ describe('Agent context', () => {
     expect(ctx.agent.context.history.map((message) => message.role)).toEqual(['assistant']);
   });
 
+  it('flushes pending tool state after compaction removes an open tool exchange', async () => {
+    const ctx = testAgent({ compactionStrategy: alwaysCompactOnce });
+    ctx.configure();
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendPartiallyResolvedParallelToolExchange();
+
+    const compacted = ctx.once('context.apply_compaction');
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted open exchange.' });
+    await ctx.agent.fullCompaction.beforeStep(new AbortController().signal);
+    await compacted;
+
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual(['assistant']);
+
+    ctx.agent.context.appendUserMessage([
+      { type: 'text', text: 'continue after compaction' },
+    ]);
+
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'assistant',
+      'user',
+    ]);
+    const toolCallIds = ctx.agent.context.messages
+      .filter((message) => message.role === 'assistant')
+      .flatMap((message) => message.toolCalls.map((toolCall) => toolCall.id));
+    expect(toolCallIds).toEqual([]);
+  });
+
+  it('flushes deferred messages after an open tool exchange is compacted away', async () => {
+    const ctx = testAgent({ compactionStrategy: alwaysCompactOnce });
+    ctx.configure();
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendPartiallyResolvedParallelToolExchange();
+
+    ctx.agent.context.appendUserMessage([
+      { type: 'text', text: 'deferred while tool is open' },
+    ]);
+
+    // The new message is deferred because the tool exchange is still open.
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'tool',
+    ]);
+
+    const compacted = ctx.once('context.apply_compaction');
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted open exchange.' });
+    await ctx.agent.fullCompaction.beforeStep(new AbortController().signal);
+    await compacted;
+
+    // The open exchange was compacted away, so pending state is cleared and the
+    // deferred message is flushed into history.
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'assistant',
+      'user',
+    ]);
+    expect(ctx.agent.context.history.at(-1)?.content).toEqual([
+      { type: 'text', text: 'deferred while tool is open' },
+    ]);
+  });
+
 });
 
 const alwaysCompactOnce: CompactionStrategy = {
