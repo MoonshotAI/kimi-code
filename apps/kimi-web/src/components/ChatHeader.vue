@@ -267,10 +267,6 @@ function startArchive(): void {
          git repo, even a detached HEAD (empty branch → "detached" label), so the
          diff counter below is never hidden just because there's no branch name. -->
     <div v-if="isGitRepo" class="ch-git" :title="t('header.gitTooltip')">
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-        <circle cx="4" cy="4" r="1.7" /><circle cx="4" cy="12" r="1.7" /><circle cx="12" cy="6" r="1.7" />
-        <path d="M4 5.7v4.6M5.7 4H9a2 2 0 0 1 2 2v.3" />
-      </svg>
       <span class="ch-branch" :class="{ 'ch-detached': !branch }">{{ branch || t('header.detached') }}</span>
       <span v-if="ahead > 0 || behind > 0" class="ch-pill ch-sync-pill">
         <span v-if="ahead > 0" class="ch-ahead">↑{{ ahead }}</span>
@@ -294,8 +290,12 @@ function startArchive(): void {
       :title="t('header.openPr')"
       @click="pr && emit('openPr', pr.url)"
     >
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
-        <path d="M11.5 4.5a2 2 0 1 0-2.7 1.86V9.6A2 2 0 1 0 10 11.5V6.36A2 2 0 0 0 11.5 4.5zM4.5 2.5a2 2 0 0 0-.7 3.86v3.28a2 2 0 1 0 1.4 0V6.36A2 2 0 0 0 4.5 2.5z"/>
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="5" cy="6" r="3" />
+        <path d="M5 9v12" />
+        <circle cx="19" cy="18" r="3" />
+        <path d="m15 9-3-3 3-3" />
+        <path d="M12 6h5a2 2 0 0 1 2 2v7" />
       </svg>
       <span>PR #{{ pr.number }} · {{ pr.state }}</span>
     </button>
@@ -352,7 +352,6 @@ function startArchive(): void {
   font-size: calc(var(--ui-font-size) - 2.5px);
   min-width: 0;
 }
-.ch-git svg { flex: none; margin-right: 1px; }
 .ch-branch { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; margin-right: 4px; }
 .ch-detached { color: var(--muted); font-style: italic; }
 .ch-pill {
