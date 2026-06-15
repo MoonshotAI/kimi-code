@@ -434,13 +434,21 @@ function probeKeyring(keyring: KeyringApi): boolean {
     // The keychain is the AUTHORITATIVE store once selected, so it MUST also be
     // able to DELETE — logout/revocation and load()'s migrate-then-delete all
     // depend on it. The native binding never throws and maps a failed delete to
-    // `false`, so we do NOT trust the boolean: delete the sentinel and confirm it
-    // is actually gone via a re-read (mirrors remove()'s own disambiguation). A
-    // backend that stores+reads but cannot delete would trap migrated tokens it
-    // can never remove and make logout throw — reject it here so we fall back to
-    // the plaintext file store instead of migrating into a one-way keychain.
+    // `false`, so we do NOT trust the boolean. A backend that stores+reads but
+    // cannot delete would trap migrated tokens it can never remove and make
+    // logout throw — reject it here so we fall back to the plaintext file store
+    // instead of migrating into a one-way keychain.
     entry.deleteCredential();
-    return entry.getPassword() === null;
+    // Confirm the delete the same non-error-ambiguous way remove() does. The binding
+    // collapses a denied delete to `false` AND a denied/errored read to `null`, so
+    // `getPassword() === null` cannot prove the sentinel is gone (equally "deleted" or
+    // "read denied"). findAccounts() THROWS on an unreachable store (→ caught below →
+    // unusable) and lists accounts when reachable; our UNIQUE per-process probe
+    // account being ABSENT from that listing proves the backend can truly delete (and
+    // also catches a "lying" deleteCredential() that returns success while the entry
+    // survives). Checking only our own unique account keeps this correct under
+    // concurrent probes.
+    return !keyring.findAccounts(KEYRING_PROBE_SERVICE).includes(account);
   } catch {
     return false;
   } finally {

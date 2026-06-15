@@ -854,10 +854,11 @@ describe('resolveTokenStorage', () => {
 
   it('rejects a keyring whose delete returns true but the entry SURVIVES (lying boolean)', () => {
     // The native binding maps a failed delete to `false`, but the probe does NOT
-    // trust the boolean — it confirms removal via a re-read (getPassword() ===
-    // null), mirroring remove()'s own disambiguation. A backend that LIES (delete
-    // reports true while the entry persists) must still be rejected, proving the
-    // probe relies on the authoritative re-read, not the return value.
+    // trust the boolean — it confirms removal via the service-scoped findAccounts()
+    // listing (our unique probe account must be ABSENT), mirroring remove()'s own
+    // disambiguation. A backend that LIES (delete reports true while the entry
+    // persists) must still be rejected, proving the probe relies on the
+    // authoritative service listing, not the return value.
     class LyingDeleteKeyring extends FakeKeyring {
       override createEntry(service: string, account: string): KeyringEntry {
         const base = super.createEntry(service, account);
@@ -872,6 +873,73 @@ describe('resolveTokenStorage', () => {
       }
     }
     const storage = resolveTokenStorage(dir, { loadKeyring: () => new LyingDeleteKeyring() });
+    expect(storage).toBeInstanceOf(FileTokenStorage);
+    expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
+  });
+
+  it('rejects a keyring whose post-delete read is DENIED (null) while the sentinel SURVIVES (read-error ambiguity)', () => {
+    // FAILS on the pre-fix probe, PASSES on the fix. The v1.3.0 binding collapses
+    // every read error to null, so a denied/locked post-delete read returns null
+    // EVEN THOUGH the sentinel still exists. Here the probe's set + FIRST getPassword
+    // round-trip succeed, deleteCredential() returns false (denied — sentinel NOT
+    // removed), and the post-delete getPassword() collapses to null (read denied) —
+    // BUT findAccounts(KEYRING_PROBE_SERVICE) STILL lists the probe account because
+    // the entry physically persists. The OLD probe keyed off `getPassword() === null`
+    // → saw null → returned true → wrongly selected KeyringTokenStorage (a one-way
+    // keychain that traps migrated tokens). The NEW probe proves absence via the
+    // service listing, sees its own account still present → returns false → falls
+    // back to FileTokenStorage.
+    class DeniedReadSurvivingProbeKeyring extends FakeKeyring {
+      override createEntry(service: string, account: string): KeyringEntry {
+        const base = super.createEntry(service, account);
+        let reads = 0;
+        return {
+          // First read (the round-trip check) returns the stored sentinel; every
+          // later read collapses to null (denied), as the binding does on error.
+          getPassword(): string | null {
+            reads += 1;
+            return reads === 1 ? base.getPassword() : null;
+          },
+          setPassword(p: string): void {
+            base.setPassword(p);
+          },
+          // Denied delete: returns false and the sentinel SURVIVES in the store,
+          // so the faithful findAccounts() still lists this probe account.
+          deleteCredential: () => false,
+        };
+      }
+    }
+    const storage = resolveTokenStorage(dir, {
+      loadKeyring: () => new DeniedReadSurvivingProbeKeyring(),
+    });
+    expect(storage).toBeInstanceOf(FileTokenStorage);
+    expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
+  });
+
+  it('rejects a keyring whose post-delete findAccounts THROWS (unreachable store mid-probe)', () => {
+    // A locked / no-access store discovered only at the post-delete confirmation:
+    // set + the first read succeed, deleteCredential() returns false, but the
+    // service-scoped findAccounts() THROWS (findCredentials throws on an
+    // unreachable store). The probe's findAccounts throw is caught → probe returns
+    // false → FileTokenStorage, never migrating plaintext into an unusable keychain.
+    class UnreachableProbeKeyring extends FakeKeyring {
+      override createEntry(service: string, account: string): KeyringEntry {
+        const base = super.createEntry(service, account);
+        return {
+          getPassword: () => base.getPassword(),
+          setPassword(p: string): void {
+            base.setPassword(p);
+          },
+          deleteCredential: () => false,
+        };
+      }
+      override findAccounts(): string[] {
+        throw new Error('keychain store unreachable (locked / no-access)');
+      }
+    }
+    const storage = resolveTokenStorage(dir, {
+      loadKeyring: () => new UnreachableProbeKeyring(),
+    });
     expect(storage).toBeInstanceOf(FileTokenStorage);
     expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
   });
