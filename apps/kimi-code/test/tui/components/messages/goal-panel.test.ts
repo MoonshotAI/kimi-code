@@ -158,6 +158,14 @@ describe('GoalStatusMessageComponent', () => {
     expect(strip([rendered[1]!])).toContain('╭ Goal · active ');
   });
 
+  it('wraps objective blockquotes without clipping them at 80 columns', () => {
+    const rendered = new GoalStatusMessageComponent(
+      goal({ objective: 'word '.repeat(30).trim() }),
+    ).render(80);
+
+    expect(strip(rendered)).not.toContain('...');
+  });
+
   it('keeps the status box within narrow widths', () => {
     const rendered = new GoalStatusMessageComponent(goal({ objective: '管理飞书日历的技能描述 '.repeat(4).trim() }));
 

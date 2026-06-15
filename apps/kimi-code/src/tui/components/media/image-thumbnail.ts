@@ -23,6 +23,8 @@ const MAX_IMAGE_WIDTH = 40;
 export class ImageThumbnail extends Container {
   private readonly attachment: ImageAttachment;
   private lastRenderWidth = 80;
+  private lastBuiltWidth: number | undefined;
+  private lastBuiltInline: boolean | undefined;
 
   constructor(attachment: ImageAttachment) {
     super();
@@ -37,6 +39,8 @@ export class ImageThumbnail extends Container {
 
     if (!supportsInline) {
       this.addChild(new Text(currentTheme.fg('accent', this.attachment.placeholder), 0, 0));
+      this.lastBuiltWidth = width;
+      this.lastBuiltInline = false;
       return;
     }
 
@@ -56,6 +60,8 @@ export class ImageThumbnail extends Container {
       { widthPx: this.attachment.width, heightPx: this.attachment.height },
     );
     this.addChild(image);
+    this.lastBuiltWidth = width;
+    this.lastBuiltInline = true;
   }
 
   override render(width: number): string[] {
@@ -68,7 +74,11 @@ export class ImageThumbnail extends Container {
       );
     }
 
-    this.buildChildren(safeWidth);
+    const caps = getCapabilities();
+    const supportsInline = caps.images === 'kitty' || caps.images === 'iterm2';
+    if (this.lastBuiltWidth !== safeWidth || this.lastBuiltInline !== supportsInline) {
+      this.buildChildren(safeWidth);
+    }
     return super.render(safeWidth);
   }
 

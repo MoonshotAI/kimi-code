@@ -142,12 +142,14 @@ export function buildGoalReportLines(goal: GoalSnapshot, wrapWidth: number = WRA
     (goal.status === 'paused' && reason !== undefined) || goal.status === 'blocked' || isComplete;
   const lines: string[] = [];
 
-  // Condition as a blockquote left-trail.
-  for (const line of wrap(goal.objective, wrapWidth, MAX_OBJECTIVE_LINES)) {
+  // Condition as a blockquote left-trail. Reserve the visible "▌ " prefix before
+  // wrapping so the panel doesn't clip rows that exactly fit the panel interior.
+  const blockquoteWrapWidth = Math.max(1, wrapWidth - visibleWidth('▌ '));
+  for (const line of wrap(goal.objective, blockquoteWrapWidth, MAX_OBJECTIVE_LINES)) {
     lines.push(`${bar('▌')} ${value(line)}`);
   }
   if (goal.completionCriterion !== undefined) {
-    for (const line of wrap(`✓ ${goal.completionCriterion}`, wrapWidth, MAX_CRITERION_LINES)) {
+    for (const line of wrap(`✓ ${goal.completionCriterion}`, blockquoteWrapWidth, MAX_CRITERION_LINES)) {
       lines.push(`${bar('▌')} ${muted(line)}`);
     }
   }
