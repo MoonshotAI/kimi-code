@@ -97,6 +97,15 @@ function emptyResult(): ConfigStepResult {
   };
 }
 
+function stripLegacyLoopControlFields(
+  value: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const keptEntries = Object.entries(value).filter(
+    ([field]) => field !== 'max_steps_per_turn',
+  );
+  return keptEntries.length > 0 ? Object.fromEntries(keptEntries) : undefined;
+}
+
 /** True when the kimi-cli provider entry validates against kimi-code's schema. */
 function providerIsSupported(prov: Record<string, unknown>): boolean {
   const transformed = transformTomlData({ providers: { x: prov } });
@@ -328,6 +337,13 @@ export async function migrateConfigStep(input: ConfigStepInput): Promise<ConfigS
       keptModels[v] === undefined &&
       !availableModelNames.has(v)
     ) {
+      continue;
+    }
+    if (k === 'loop_control' && isRecord(v)) {
+      const strippedLoopControl = stripLegacyLoopControlFields(v);
+      if (strippedLoopControl !== undefined) {
+        migratedTop[k] = strippedLoopControl;
+      }
       continue;
     }
     migratedTop[k] = v;

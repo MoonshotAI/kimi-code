@@ -430,6 +430,24 @@ base_url = "https://target.example/v1"
     expect(r.siblingContents.hooks).toBe(2);
   });
 
+  it('drops legacy loop_control.max_steps_per_turn but keeps other loop control fields', async () => {
+    await writeFile(
+      join(src, 'config.toml'),
+      'default_thinking = true\n' +
+        '[loop_control]\n' +
+        'max_steps_per_turn = 1000\n' +
+        'max_retries_per_step = 2\n',
+    );
+
+    const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
+
+    expect(r.migrated).toBe(true);
+    const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
+    expect(cfg).toContain('[loop_control]');
+    expect(cfg).toContain('max_retries_per_step = 2');
+    expect(cfg).not.toContain('max_steps_per_turn');
+  });
+
   it('maps default_yolo to default_permission_mode = "yolo"', async () => {
     await writeFile(
       join(src, 'config.toml'),
