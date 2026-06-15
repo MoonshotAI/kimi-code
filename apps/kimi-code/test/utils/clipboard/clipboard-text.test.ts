@@ -49,6 +49,8 @@ describe('copyTextToClipboard', () => {
     spawnSyncMock.mockReturnValue({ status: 1, stderr: 'missing' } as ReturnType<typeof spawnSync>);
 
     await expect(copyTextToClipboard('cd "/tmp/proj-b"')).rejects.toBeInstanceOf(Error);
-    await expect(copyTextToClipboard('cd "/tmp/proj-b"')).rejects.toThrow('pbcopy exited with code 1: missing');
+    await expect(copyTextToClipboard('cd "/tmp/proj-b"')).rejects.toThrow(
+      /(?:clip\.exe|pbcopy|wl-copy|xclip) exited with code 1: missing/,
+    );
   });
 });
