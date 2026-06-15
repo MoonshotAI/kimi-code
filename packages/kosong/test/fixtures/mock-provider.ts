@@ -1,4 +1,3 @@
-import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/capability';
 import type { Message, StreamedMessagePart } from '#/message';
 import type {
   ChatProvider,
@@ -68,10 +67,6 @@ export class MockChatProvider implements ChatProvider {
       this._finishReason,
       this._rawFinishReason,
     );
-  }
-
-  getCapability(_model?: string): ModelCapability {
-    return UNKNOWN_CAPABILITY;
   }
 
   withThinking(_effort: ThinkingEffort): MockChatProvider {
