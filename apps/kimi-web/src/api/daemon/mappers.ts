@@ -254,6 +254,7 @@ export function toWirePromptSubmission(input: PromptSubmission): WirePromptSubmi
   return {
     content: input.content.map(toWireMessageContent),
     metadata: input.metadata,
+    agent_id: input.agentId,
     model: input.model,
     thinking: input.thinking,
     permission_mode: input.permissionMode,

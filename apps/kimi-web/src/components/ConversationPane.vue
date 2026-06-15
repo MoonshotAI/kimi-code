@@ -122,6 +122,7 @@ const emit = defineEmits<{
   togglePlan: [];
   toggleSwarm: [];
   toggleGoal: [];
+  openBtw: [];
   createGoal: [objective: string];
   controlGoal: [action: 'pause' | 'resume' | 'cancel'];
   compact: [];
@@ -1293,6 +1294,7 @@ onUnmounted(() => {
             @toggle-plan="emit('togglePlan')"
             @toggle-swarm="emit('toggleSwarm')"
             @toggle-goal="emit('toggleGoal')"
+            @open-btw="emit('openBtw')"
             @create-goal="emit('createGoal', $event)"
             @control-goal="emit('controlGoal', $event)"
             @focus-goal="focusGoal"
@@ -1618,6 +1620,7 @@ onUnmounted(() => {
         @toggle-plan="emit('togglePlan')"
         @toggle-swarm="emit('toggleSwarm')"
         @toggle-goal="emit('toggleGoal')"
+        @open-btw="emit('openBtw')"
         @create-goal="emit('createGoal', $event)"
         @control-goal="emit('controlGoal', $event)"
         @focus-goal="focusGoal"

@@ -1,8 +1,8 @@
 // apps/kimi-web/test/side-chat.test.ts
 //
-// Side chat ("BTW"): openSideChat creates a CHILD session via the /children
-// endpoint, sends the question to that child, echoes it into the side-chat
-// transcript, and keeps the child out of the main session list.
+// Side chat ("BTW"): openSideChat starts a TUI-style forked agent, sends the
+// question to the parent session with agentId, echoes it into the side-chat
+// transcript, and never creates a sidebar session.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppSession, KimiEventHandlers, KimiWebApi } from '../src/api/types';
@@ -49,7 +49,6 @@ async function setup() {
   };
   let promptN = 0;
   const created = session('sess_1');
-  const child = session('child_1', { parentSessionId: 'sess_1', title: 'Side chat' });
   const api = {
     createSession: vi.fn(async () => created),
     getSessionSnapshot: vi.fn(async () => ({
@@ -83,7 +82,7 @@ async function setup() {
       return eventConn;
     }),
     getFileUrl: vi.fn((fileId: string) => `/files/${fileId}`),
-    createChildSession: vi.fn(async () => child),
+    startBtw: vi.fn(async () => ({ agentId: 'agent_btw' })),
   } as unknown as KimiWebApi;
 
   vi.doMock('../src/api', () => ({ getKimiWebApi: () => api }));
@@ -91,7 +90,6 @@ async function setup() {
 
   return {
     api,
-    child,
     client: useKimiWebClient(),
     getHandlers: () => {
       if (!handlers) throw new Error('connectEvents was not called');
@@ -107,40 +105,73 @@ afterEach(() => {
 });
 
 describe('side chat (BTW)', () => {
-  it('opens a child session, sends the question, and echoes it', async () => {
-    const { api, client } = await setup();
+  it('opens a side-channel agent, sends the question, and echoes it', async () => {
+    const { api, client, getHandlers } = await setup();
     await client.createSession('/repo');
 
     await client.openSideChat('what does this do?');
 
-    // A child session is created under the active session.
-    expect(api.createChildSession).toHaveBeenCalledWith('sess_1', { title: 'Side chat' });
-    // The question goes to the CHILD, as a plain text prompt.
+    // A BTW agent is started under the active session.
+    expect(api.startBtw).toHaveBeenCalledWith('sess_1');
+    // The question goes to the SAME session, scoped to the BTW agent.
     const call = (api.submitPrompt as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    expect(call[0]).toBe('child_1');
-    expect((call[1] as { content: unknown[] }).content).toEqual([
-      { type: 'text', text: 'what does this do?' },
-    ]);
+    expect(call[0]).toBe('sess_1');
+    expect(call[1]).toMatchObject({
+      agentId: 'agent_btw',
+      content: [
+        { type: 'text', text: 'what does this do?' },
+      ],
+    });
 
     // The side-chat panel is open and shows the question.
     expect(client.sideChatVisible.value).toBe(true);
     const userTurns = client.sideChatTurns.value.filter((t) => t.role === 'user');
     expect(userTurns.map((t) => t.text)).toEqual(['what does this do?']);
-  });
 
-  it('keeps the child session out of the main session list', async () => {
-    const { client, getHandlers } = await setup();
-    await client.createSession('/repo');
-    await client.openSideChat();
-
-    // The daemon broadcasts the child's creation like any session.
     getHandlers().onEvent(
-      { type: 'sessionCreated', session: session('child_1', { parentSessionId: 'sess_1' }) },
-      { sessionId: 'child_1', seq: 1 },
+      {
+        type: 'taskProgress',
+        sessionId: 'sess_1',
+        taskId: 'agent_btw',
+        outputChunk: 'It checks the diff.',
+        stream: 'stdout',
+      },
+      { sessionId: 'sess_1', seq: 2 },
     );
 
+    const assistantTurns = client.sideChatTurns.value.filter((t) => t.role === 'assistant');
+    expect(assistantTurns.map((t) => t.text)).toEqual(['It checks the diff.']);
+  });
+
+  it('does not create a child session for the sidebar', async () => {
+    const { api, client } = await setup();
+    await client.createSession('/repo');
+
+    await client.openSideChat();
+
+    expect(api.startBtw).toHaveBeenCalledWith('sess_1');
+    expect(api.createChildSession).toBeUndefined();
     const ids = client.sessionsForView.value.map((s) => s.id);
-    expect(ids).toContain('sess_1');
-    expect(ids).not.toContain('child_1');
+    expect(ids).toEqual(['sess_1']);
+  });
+
+  it('keeps the question in the panel when task progress is not available yet', async () => {
+    const { api, client } = await setup();
+    await client.createSession('/repo');
+
+    await client.openSideChat('what does this do?');
+
+    expect(api.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        agentId: 'agent_btw',
+        content: [
+          { type: 'text', text: 'what does this do?' },
+        ],
+      }),
+    );
+    expect(client.sideChatTurns.value.filter((t) => t.role === 'user').map((t) => t.text)).toEqual([
+      'what does this do?',
+    ]);
   });
 });

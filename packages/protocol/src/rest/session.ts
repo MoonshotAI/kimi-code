@@ -5,6 +5,7 @@
  *   GET     /v1/sessions/{id}/profile     -                     data: Session
  *   POST    /v1/sessions/{id}/profile     body: SessionUpdate   data: Session
  *   POST    /v1/sessions/{id}:fork        body: SessionFork     data: Session
+ *   POST    /v1/sessions/{id}:btw         -                     data: StartBtwSession
  *   GET     /v1/sessions/{id}/children    query: ListSessions   data: Page<Session>
  *   POST    /v1/sessions/{id}/children    body: SessionChild    data: Session
  *   GET     /v1/sessions/{id}/status      -                     data: SessionStatus
@@ -68,6 +69,11 @@ export type ForkSessionRequest = z.infer<typeof forkSessionRequestSchema>;
 
 export const forkSessionResponseSchema = sessionSchema;
 export type ForkSessionResponse = z.infer<typeof forkSessionResponseSchema>;
+
+export const startBtwSessionResponseSchema = z.object({
+  agent_id: z.string().min(1),
+});
+export type StartBtwSessionResponse = z.infer<typeof startBtwSessionResponseSchema>;
 
 export const listSessionChildrenQuerySchema = listSessionsQuerySchema;
 export type ListSessionChildrenQuery = z.infer<typeof listSessionChildrenQuerySchema>;

@@ -193,6 +193,8 @@ export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export interface PromptSubmission {
   content: AppMessageContent[];
   metadata?: Record<string, unknown>;
+  /** Optional non-main agent id, used by BTW side-channel prompts. */
+  agentId?: string;
   /** The daemon requires these on every prompt (per-prompt, not session-level). */
   model?: string;
   thinking?: ThinkingLevel;
@@ -599,10 +601,12 @@ export interface KimiWebApi {
   compactSession(sessionId: string, instruction?: string): Promise<void>;
   undoSession(sessionId: string, count?: number): Promise<void>;
   forkSession(sessionId: string, input?: { title?: string }): Promise<AppSession>;
-  /** Create a child ("side chat") session under a parent — POST /sessions/{id}/children. */
+  /** Create a child session under a parent — POST /sessions/{id}/children. */
   createChildSession(sessionId: string, input?: { title?: string }): Promise<AppSession>;
   /** List a session's child sessions — GET /sessions/{id}/children. */
   listChildSessions(sessionId: string): Promise<AppSession[]>;
+  /** Start a BTW side-channel agent under the session — POST /sessions/{id}:btw. */
+  startBtw(sessionId: string): Promise<{ agentId: string }>;
   respondApproval(sessionId: string, approvalId: string, response: ApprovalResponse): Promise<{ resolved: true; resolvedAt: string }>;
   respondQuestion(sessionId: string, questionId: string, response: QuestionResponse): Promise<{ resolved: true; resolvedAt: string }>;
   dismissQuestion(sessionId: string, questionId: string): Promise<{ dismissed: true; dismissedAt: string }>;

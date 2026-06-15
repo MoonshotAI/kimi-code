@@ -47,6 +47,7 @@ export type PromptPermissionMode = z.infer<typeof promptPermissionModeSchema>;
 export const promptSubmissionSchema = z.object({
   content: z.array(messageContentSchema).min(1),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  agent_id: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   thinking: promptThinkingSchema.optional(),
   permission_mode: promptPermissionModeSchema.optional(),

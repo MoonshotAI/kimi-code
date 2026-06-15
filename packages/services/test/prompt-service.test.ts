@@ -104,6 +104,7 @@ interface RpcRecord {
   enterPlanCalls: unknown[];
   cancelPlanCalls: unknown[];
   getSwarmModeCalls: number;
+  startBtwCalls: unknown[];
   enterSwarmCalls: unknown[];
   exitSwarmCalls: unknown[];
   createGoalCalls: unknown[];
@@ -137,6 +138,7 @@ function makeBridge(
     enterPlanCalls: [],
     cancelPlanCalls: [],
     getSwarmModeCalls: 0,
+    startBtwCalls: [],
     enterSwarmCalls: [],
     exitSwarmCalls: [],
     createGoalCalls: [],
@@ -202,6 +204,10 @@ function makeBridge(
     getSwarmMode: vi.fn().mockImplementation(async () => {
       record.getSwarmModeCalls += 1;
       return false;
+    }),
+    startBtw: vi.fn().mockImplementation(async (payload) => {
+      record.startBtwCalls.push(payload);
+      return 'agent_btw';
     }),
     enterSwarm: vi.fn().mockImplementation(async (payload) => {
       record.enterSwarmCalls.push(payload);
@@ -464,6 +470,40 @@ describe('PromptService.submit', () => {
     expect(listed.queued.map((p) => p.prompt_id)).toEqual([second.prompt_id]);
   });
 
+  it('runs an agent-scoped prompt without queueing behind the main prompt', async () => {
+    const { bridge, record } = makeBridge();
+    const { bus, events } = makeBus();
+    const impl = newSvc(bridge, bus);
+
+    const main = await impl.submit(SID, mkBodyMinimal({ content: [{ type: 'text', text: 'main' }] }));
+    const btw = await impl.submit(
+      SID,
+      mkBodyMinimal({
+        agent_id: 'agent_btw',
+        content: [{ type: 'text', text: 'side question' }],
+      }),
+    );
+    const listed = await impl.list(SID);
+
+    expect(main.status).toBe('running');
+    expect(btw.status).toBe('running');
+    expect(listed.active?.prompt_id).toBe(main.prompt_id);
+    expect(listed.queued).toHaveLength(0);
+    expect(record.promptCalls).toEqual([
+      { sessionId: SID, agentId: 'main', input: [{ type: 'text', text: 'main' }] },
+      { sessionId: SID, agentId: 'agent_btw', input: [{ type: 'text', text: 'side question' }] },
+    ]);
+    const submitted = events.filter((event) => event.type === 'prompt.submitted') as Array<{
+      type: 'prompt.submitted';
+      agentId: string;
+      promptId: string;
+    }>;
+    expect(submitted.map((event) => [event.agentId, event.promptId])).toEqual([
+      ['main', main.prompt_id],
+      ['agent_btw', btw.prompt_id],
+    ]);
+  });
+
   it('publishes prompt.submitted when a prompt is queued', async () => {
     const { bridge } = makeBridge();
     const { bus, events } = makeBus();
@@ -555,6 +595,18 @@ describe('PromptService.submit', () => {
     expect(resumeOrder).toBeDefined();
     expect(promptOrder).toBeDefined();
     expect(resumeOrder!).toBeLessThan(promptOrder!);
+  });
+});
+
+describe('PromptService.startBtw', () => {
+  it('starts a side-channel agent through core RPC', async () => {
+    const { bridge, record } = makeBridge();
+    const { bus } = makeBus();
+    const impl = newSvc(bridge, bus);
+
+    await expect(impl.startBtw(SID)).resolves.toBe('agent_btw');
+
+    expect(record.startBtwCalls).toEqual([{ sessionId: SID, agentId: 'main' }]);
   });
 });
 

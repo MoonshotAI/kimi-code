@@ -41,6 +41,10 @@ import {
 
 const MAIN_AGENT_ID = 'main';
 
+function promptKey(sessionId: string, agentId: string): string {
+  return `${sessionId}\u0000${agentId}`;
+}
+
 /** Cap per-session dispatch-log entries; ring-buffer drops oldest on overflow. */
 const DISPATCH_LOG_CAP = 100;
 
@@ -90,6 +94,7 @@ function pickAgentStatePatch(body: PromptSubmission): AgentStatePatch | undefine
  * around so abort-on-already-completed surfaces as 40903, not 40402.
  */
 interface PromptState {
+  agentId: string;
   promptId: string;
   userMessageId: string;
   body: PromptSubmission;
@@ -304,7 +309,9 @@ export class PromptService
       this.sessionService.onDidClose(({ sessionId }) => {
         this._agentState.delete(sessionId);
         this._dispatchLog.delete(sessionId);
-        this._queued.delete(sessionId);
+        for (const key of [...this._queued.keys()]) {
+          if (key.startsWith(`${sessionId}\u0000`)) this._queued.delete(key);
+        }
       }),
     );
   }
@@ -313,13 +320,14 @@ export class PromptService
 
   async list(sid: string): Promise<PromptListResponse> {
     await this._requireSession(sid);
-    const active = this._active.get(sid);
+    const key = promptKey(sid, MAIN_AGENT_ID);
+    const active = this._active.get(key);
     return {
       active:
         active !== undefined && !active.completed && !active.aborted
           ? toPromptItem(active, 'running')
           : null,
-      queued: (this._queued.get(sid) ?? []).map((state) =>
+      queued: (this._queued.get(key) ?? []).map((state) =>
         toPromptItem(state, 'queued'),
       ),
     };
@@ -336,20 +344,28 @@ export class PromptService
 
     const promptId = `prompt_${ulid()}`;
     const state = this._createPromptState(sid, promptId, body);
+    const key = promptKey(sid, state.agentId);
 
-    const existing = this._active.get(sid);
+    const existing = this._active.get(key);
     if (existing !== undefined && !existing.completed && !existing.aborted) {
       this._enqueue(sid, state);
       const item = toPromptItem(state, 'queued');
-      this._publishSubmitted(sid, item);
+      this._publishSubmitted(sid, state, item);
       return item;
     }
 
     const item = toPromptItem(state, 'running');
     await this._startPrompt(sid, state, () => {
-      this._publishSubmitted(sid, item);
+      this._publishSubmitted(sid, state, item);
     });
     return item;
+  }
+
+  async startBtw(sid: string): Promise<string> {
+    await this._requireSession(sid);
+    await this.core.rpc.resumeSession({ sessionId: sid });
+    await this.auth.ensureReady();
+    return this.core.rpc.startBtw({ sessionId: sid, agentId: MAIN_AGENT_ID });
   }
 
   async steer(sid: string, promptIds: readonly string[]): Promise<PromptSteerResult> {
@@ -357,12 +373,13 @@ export class PromptService
     if (promptIds.length === 0) {
       throw new PromptNotFoundError(sid, '');
     }
-    const active = this._active.get(sid);
+    const key = promptKey(sid, MAIN_AGENT_ID);
+    const active = this._active.get(key);
     if (active === undefined || active.completed || active.aborted) {
       throw new PromptNotFoundError(sid, promptIds[0]!);
     }
 
-    const queue = this._queued.get(sid) ?? [];
+    const queue = this._queued.get(key) ?? [];
     const selected: PromptState[] = [];
     for (const promptId of promptIds) {
       const state = queue.find((item) => item.promptId === promptId);
@@ -374,7 +391,7 @@ export class PromptService
 
     const selectedIds = new Set(promptIds);
     const remaining = queue.filter((item) => !selectedIds.has(item.promptId));
-    this._replaceQueue(sid, remaining);
+    this._replaceQueue(sid, MAIN_AGENT_ID, remaining);
 
     try {
       await this.core.rpc.steer({
@@ -405,13 +422,14 @@ export class PromptService
     state: PromptState,
     onStarted?: () => void,
   ): Promise<void> {
-    const overridePatch = pickAgentStatePatch(state.body);
+    const overridePatch = state.agentId === MAIN_AGENT_ID ? pickAgentStatePatch(state.body) : undefined;
     if (overridePatch !== undefined) {
       await this._ensureAgentStateBootstrapped(sid);
       await this._applyAgentStateInternal(sid, overridePatch, 'prompt', state.promptId);
     }
 
-    this._active.set(sid, state);
+    const key = promptKey(sid, state.agentId);
+    this._active.set(key, state);
     const input = contentToCoreParts(state.body.content);
     onStarted?.();
 
@@ -422,11 +440,11 @@ export class PromptService
     try {
       // eslint-disable-next-line no-console
       console.error(
-        `[DBG prompt-service.submit] sid=${sid} promptId=${state.promptId} agent=${MAIN_AGENT_ID} parts=${input.length} -> core.rpc.prompt(...)`,
+        `[DBG prompt-service.submit] sid=${sid} promptId=${state.promptId} agent=${state.agentId} parts=${input.length} -> core.rpc.prompt(...)`,
       );
       await this.core.rpc.prompt({
         sessionId: sid,
-        agentId: MAIN_AGENT_ID,
+        agentId: state.agentId,
         input,
       });
       // eslint-disable-next-line no-console
@@ -436,8 +454,8 @@ export class PromptService
     } catch (error) {
       // Clear our active-prompt state so the next submit succeeds; surface
       // the error to the route layer.
-      if (this._active.get(sid)?.promptId === state.promptId) {
-        this._active.delete(sid);
+      if (this._active.get(key)?.promptId === state.promptId) {
+        this._active.delete(key);
       }
       // eslint-disable-next-line no-console
       console.error(
@@ -447,10 +465,10 @@ export class PromptService
     }
   }
 
-  private _publishSubmitted(sid: string, item: PromptSubmitResult): void {
+  private _publishSubmitted(sid: string, state: PromptState, item: PromptSubmitResult): void {
     const event: SyntheticPromptSubmittedEvent = {
       type: 'prompt.submitted',
-      agentId: MAIN_AGENT_ID,
+      agentId: state.agentId,
       sessionId: sid,
       promptId: item.prompt_id,
       userMessageId: item.user_message_id,
@@ -461,10 +479,10 @@ export class PromptService
     this.eventService.publish(event);
   }
 
-  private _publishAborted(sid: string, pid: string): void {
+  private _publishAborted(sid: string, agentId: string, pid: string): void {
     const ev: SyntheticPromptAbortedEvent = {
       type: 'prompt.aborted',
-      agentId: MAIN_AGENT_ID,
+      agentId,
       sessionId: sid,
       promptId: pid,
       abortedAt: new Date().toISOString(),
@@ -478,7 +496,8 @@ export class PromptService
 
   async abort(sid: string, pid: string): Promise<PromptAbortResult> {
     await this._requireSession(sid);
-    const state = this._active.get(sid);
+    const key = promptKey(sid, MAIN_AGENT_ID);
+    const state = this._active.get(key);
     if (state !== undefined && state.promptId === pid) {
       if (state.completed || state.aborted) {
         throw new PromptAlreadyCompletedError(sid, pid);
@@ -488,7 +507,7 @@ export class PromptService
       try {
         const cancelArgs: { sessionId: string; agentId: string; turnId?: number } = {
           sessionId: sid,
-          agentId: MAIN_AGENT_ID,
+          agentId: state.agentId,
         };
         if (state.turnId !== null) cancelArgs.turnId = state.turnId;
         await this.core.rpc.cancel(cancelArgs);
@@ -498,28 +517,28 @@ export class PromptService
         state.aborted = false;
         throw error;
       }
-      this._publishAborted(sid, pid);
+      this._publishAborted(sid, state.agentId, pid);
       return { aborted: true };
     }
 
     // Queued prompt: remove it from the queue and synthesize prompt.aborted.
     // No core RPC is needed because the prompt was never dispatched.
-    const queue = this._queued.get(sid) ?? [];
+    const queue = this._queued.get(key) ?? [];
     const index = queue.findIndex((item) => item.promptId === pid);
     if (index === -1) {
       throw new PromptNotFoundError(sid, pid);
     }
     queue.splice(index, 1);
     if (queue.length === 0) {
-      this._queued.delete(sid);
+      this._queued.delete(key);
     }
-    this._publishAborted(sid, pid);
+    this._publishAborted(sid, MAIN_AGENT_ID, pid);
     return { aborted: true };
   }
 
   async abortBySession(sid: string): Promise<PromptAbortResult> {
     await this._requireSession(sid);
-    const state = this._active.get(sid);
+    const state = this._active.get(promptKey(sid, MAIN_AGENT_ID));
     if (state !== undefined && !state.completed && !state.aborted) {
       // Normal prompt path: let abort() handle turnId mapping and event synthesis.
       return this.abort(sid, state.promptId);
@@ -532,7 +551,7 @@ export class PromptService
   }
 
   getCurrentPromptId(sid: string): string | undefined {
-    const state = this._active.get(sid);
+    const state = this._active.get(promptKey(sid, MAIN_AGENT_ID));
     if (state === undefined || state.completed || state.aborted) {
       return undefined;
     }
@@ -782,7 +801,9 @@ export class PromptService
       return;
     }
 
-    const state = this._active.get(sid);
+    const agentId = (event as { agentId?: string }).agentId ?? MAIN_AGENT_ID;
+    const key = promptKey(sid, agentId);
+    const state = this._active.get(key);
     if (state === undefined) return;
 
     if (isTurnStarted(event)) {
@@ -801,8 +822,8 @@ export class PromptService
       // If we already synthesized via abort RPC, don't double-emit. Mark
       // completed to prevent stale lookups, but emit nothing.
       if (state.aborted) {
-        this._active.delete(sid);
-        void this._startNextQueued(sid);
+        this._active.delete(key);
+        void this._startNextQueued(sid, state.agentId);
         return;
       }
 
@@ -814,33 +835,33 @@ export class PromptService
         state.aborted = true;
         const synth: SyntheticPromptAbortedEvent = {
           type: 'prompt.aborted',
-          agentId: MAIN_AGENT_ID,
+          agentId: state.agentId,
           sessionId: sid,
           promptId: state.promptId,
           abortedAt: new Date().toISOString(),
         };
-        this._active.delete(sid);
+        this._active.delete(key);
         // Fire typed listeners BEFORE publishing the synth event.
         this._onDidAbort.fire(synth);
         this.eventService.publish(synth as unknown as Event);
-        void this._startNextQueued(sid);
+        void this._startNextQueued(sid, state.agentId);
         return;
       }
 
       state.completed = true;
       const synth: SyntheticPromptCompletedEvent = {
         type: 'prompt.completed',
-        agentId: MAIN_AGENT_ID,
+        agentId: state.agentId,
         sessionId: sid,
         promptId: state.promptId,
         finishedAt: new Date().toISOString(),
         reason: reason === 'failed' ? 'failed' : 'completed',
       };
-      this._active.delete(sid);
+      this._active.delete(key);
       // Fire typed listeners BEFORE publishing the synth event.
       this._onDidComplete.fire(synth);
       this.eventService.publish(synth as unknown as Event);
-      void this._startNextQueued(sid);
+      void this._startNextQueued(sid, state.agentId);
     }
   }
 
@@ -848,7 +869,7 @@ export class PromptService
    * Test helper — peek at active prompt state.
    */
   _activeForTest(sid: string): Readonly<PromptState> | undefined {
-    const state = this._active.get(sid);
+    const state = this._active.get(promptKey(sid, MAIN_AGENT_ID));
     return state === undefined ? undefined : { ...state };
   }
 
@@ -892,7 +913,8 @@ export class PromptService
    * contract; the underscore prefix is a "do not use in prod" signal.
    */
   _injectActiveForTest(sid: string, promptId: string, turnId: number | null): void {
-    this._active.set(sid, {
+    this._active.set(promptKey(sid, MAIN_AGENT_ID), {
+      agentId: MAIN_AGENT_ID,
       promptId,
       userMessageId: `msg_${sid}_pending_${promptId}`,
       body: { content: [{ type: 'text', text: 'test' }] },
@@ -911,6 +933,7 @@ export class PromptService
     body: PromptSubmission,
   ): PromptState {
     return {
+      agentId: body.agent_id ?? MAIN_AGENT_ID,
       promptId,
       userMessageId: `msg_${sid}_pending_${promptId}`,
       body,
@@ -922,40 +945,43 @@ export class PromptService
   }
 
   private _enqueue(sid: string, state: PromptState): void {
-    let queue = this._queued.get(sid);
+    const key = promptKey(sid, state.agentId);
+    let queue = this._queued.get(key);
     if (queue === undefined) {
       queue = [];
-      this._queued.set(sid, queue);
+      this._queued.set(key, queue);
     }
     queue.push(state);
   }
 
-  private _replaceQueue(sid: string, queue: PromptState[]): void {
+  private _replaceQueue(sid: string, agentId: string, queue: PromptState[]): void {
+    const key = promptKey(sid, agentId);
     if (queue.length === 0) {
-      this._queued.delete(sid);
+      this._queued.delete(key);
       return;
     }
-    this._queued.set(sid, queue);
+    this._queued.set(key, queue);
   }
 
   private _restoreSteeredQueueItems(sid: string, selected: readonly PromptState[]): void {
-    const queue = this._queued.get(sid) ?? [];
+    const queue = this._queued.get(promptKey(sid, MAIN_AGENT_ID)) ?? [];
     const queueIds = new Set(queue.map((state) => state.promptId));
     const missing = selected.filter((state) => !queueIds.has(state.promptId));
-    this._replaceQueue(sid, [...missing, ...queue]);
+    this._replaceQueue(sid, MAIN_AGENT_ID, [...missing, ...queue]);
   }
 
-  private async _startNextQueued(sid: string): Promise<void> {
-    const active = this._active.get(sid);
+  private async _startNextQueued(sid: string, agentId = MAIN_AGENT_ID): Promise<void> {
+    const key = promptKey(sid, agentId);
+    const active = this._active.get(key);
     if (active !== undefined && !active.completed && !active.aborted) return;
-    const queue = this._queued.get(sid);
+    const queue = this._queued.get(key);
     const next = queue?.shift();
     if (queue !== undefined && queue.length === 0) {
-      this._queued.delete(sid);
+      this._queued.delete(key);
     }
     if (next === undefined) return;
     await this._startPrompt(sid, next).catch(() => {
-      void this._startNextQueued(sid);
+      void this._startNextQueued(sid, agentId);
     });
   }
 

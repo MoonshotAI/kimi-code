@@ -82,6 +82,7 @@ const emit = defineEmits<{
   togglePlan: [];
   toggleSwarm: [];
   toggleGoal: [];
+  openBtw: [];
   createGoal: [objective: string];
   controlGoal: [action: 'pause' | 'resume' | 'cancel'];
   focusGoal: [];
@@ -1176,6 +1177,13 @@ function selectModel(modelId: string): void {
               </div>
             </div>
           </div>
+
+          <button
+            type="button"
+            class="btw-btn"
+            :title="t('sideChat.title')"
+            @click="emit('openBtw')"
+          >BTW</button>
         </div>
 
         <!-- Right: ctx + model -->
@@ -1676,6 +1684,26 @@ function selectModel(modelId: string): void {
   background: var(--soft);
 }
 
+.btw-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 7px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: var(--ui-font-size);
+  line-height: 1;
+  flex: none;
+}
+.btw-btn:hover {
+  background: var(--soft);
+  color: var(--blue2);
+}
+
 /* Permission pill */
 .perm-pill {
   display: inline-flex;
@@ -2142,6 +2170,7 @@ function selectModel(modelId: string): void {
      at ≥80% usage) and tapping it triggers compaction directly. */
   .perm-pill,
   .modes,
+  .btw-btn,
   .ctx-group {
     display: none;
   }

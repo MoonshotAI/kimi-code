@@ -15,6 +15,7 @@ import {
   sessionSchema,
   sessionStatusResponseSchema,
   sessionStatusSchema,
+  startBtwSessionResponseSchema,
   updateSessionProfileRequestSchema,
   undoSessionRequestSchema,
   undoSessionResponseSchema,
@@ -368,7 +369,7 @@ export function registerSessionsRoutes(
       path: '/sessions/{tail}',
       params: sessionActionTailParamSchema,
       body: sessionActionRequestSchema,
-      success: { data: z.union([sessionSchema, compactSessionResponseSchema, undoSessionResponseSchema, sessionAbortResponseSchema]) },
+      success: { data: z.union([sessionSchema, compactSessionResponseSchema, undoSessionResponseSchema, sessionAbortResponseSchema, startBtwSessionResponseSchema]) },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
@@ -385,7 +386,7 @@ export function registerSessionsRoutes(
         const { tail } = req.params;
         const parsed = parseActionSuffix({
           tail,
-          allowedActions: ['fork', 'compact', 'undo', 'abort'] as const,
+          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw'] as const,
           resourceLabel: 'session',
         });
         if (parsed.kind !== 'action') {
@@ -424,6 +425,14 @@ export function registerSessionsRoutes(
             a.get(IPromptService).abortBySession(parsed.id),
           );
           reply.send(okEnvelope(result, req.id));
+          return;
+        }
+
+        if (parsed.action === 'btw') {
+          const agentId = await ix.invokeFunction((a) =>
+            a.get(IPromptService).startBtw(parsed.id),
+          );
+          reply.send(okEnvelope({ agent_id: agentId }, req.id));
           return;
         }
 

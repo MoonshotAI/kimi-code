@@ -564,6 +564,16 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return data.items.map(toAppSession);
   }
 
+  // POST /sessions/{id}:btw — start a TUI-style side-channel agent. Follow-up
+  // prompts use the returned agent_id on the normal /prompts route.
+  async startBtw(sessionId: string): Promise<{ agentId: string }> {
+    const data = await this.http.post<{ agent_id: string }>(
+      `/sessions/${encodeURIComponent(sessionId)}:btw`,
+      {},
+    );
+    return { agentId: data.agent_id };
+  }
+
   // -------------------------------------------------------------------------
   // Approval / Question
   // -------------------------------------------------------------------------

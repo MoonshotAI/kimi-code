@@ -353,7 +353,7 @@ function closeAgentPanel(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Side chat (BTW child session) — also shares the right-side slot.
+// Side chat (BTW side-channel agent) — also shares the right-side slot.
 // ---------------------------------------------------------------------------
 function openSideChatPanel(prompt?: string): void {
   closeFilePreview();
@@ -782,6 +782,7 @@ function openPr(url: string): void {
       @toggle-plan="client.togglePlanMode()"
       @toggle-swarm="client.toggleSwarmMode()"
       @toggle-goal="client.toggleGoalMode()"
+      @open-btw="openSideChatPanel()"
       @create-goal="client.createGoal($event)"
       @control-goal="client.controlGoal($event)"
       @rename-session="(id, title) => client.renameSession(id, title)"

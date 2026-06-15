@@ -407,6 +407,10 @@ interface ExtendedState extends KimiClientState {
   availableOpenInApps: string[];
   /** Global daemon configuration (secrets redacted). */
   config: AppConfig | null;
+  /** Transient BTW side-panel transcript, keyed by forked agent id. */
+  sideChatMessagesByAgent: Record<string, AppMessage[]>;
+  /** Local sending flag for BTW agents; agent ids are not session ids. */
+  sideChatSendingByAgent: Record<string, boolean>;
 }
 
 const rawState: ExtendedState = reactive({
@@ -437,6 +441,8 @@ const rawState: ExtendedState = reactive({
   hiddenWorkspaceRoots: loadHiddenWorkspacesFromStorage(),
   availableOpenInApps: [],
   config: null,
+  sideChatMessagesByAgent: {},
+  sideChatSendingByAgent: {},
 });
 
 // Models + Providers reactive state (lazy-loaded, cached)
@@ -853,6 +859,15 @@ function connectEventsIfNeeded(): void {
       // persistent divider marker in the reducer (TUI parity: the scrollback
       // is kept, only a marker line records the compaction).
       applyEvent(appEvent, meta.sessionId, meta.seq);
+
+      const sideTarget = sideChatTarget.value;
+      if (sideTarget && meta.sessionId === sideTarget.parentId) {
+        if (appEvent.type === 'taskProgress' && appEvent.taskId === sideTarget.agentId) {
+          appendSideChatAssistantText(sideTarget.agentId, sideTarget.parentId, appEvent.outputChunk);
+        } else if (appEvent.type === 'taskCompleted' && appEvent.taskId === sideTarget.agentId) {
+          finishSideChatAgent(sideTarget.agentId, sideTarget.parentId, appEvent.outputPreview);
+        }
+      }
 
       // The daemon's prompt.submitted event is projected as a user messageCreated
       // carrying the real prompt_id. When the HTTP submit response is lost
@@ -1671,7 +1686,9 @@ const isSending = computed<boolean>(() => {
 const activeAppTasks = computed<AppTask[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
-  return rawState.tasksBySession[sid] ?? [];
+  const hiddenBtwAgentId =
+    sideChatTarget.value?.parentId === sid ? sideChatTarget.value.agentId : undefined;
+  return (rawState.tasksBySession[sid] ?? []).filter((task) => task.id !== hiddenBtwAgentId);
 });
 
 const turns = computed<ChatTurn[]>(() => {
@@ -1689,34 +1706,34 @@ const turns = computed<ChatTurn[]>(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Side chat ("BTW") — a CHILD session shown in the right-side panel. The daemon
-// forks the parent into the child (so it inherits the parent's context), so we
-// only DISPLAY messages created after the child opens — keeping the side chat a
-// clean Q&A rather than a copy of the whole parent transcript.
+// Side chat ("BTW") — a TUI-style forked agent shown in the right-side panel.
+// It is not a child session and never appears in the sidebar. The panel keeps a
+// transient local transcript keyed by agent id; raw non-main agent deltas are
+// already projected as task progress, which we copy into this transcript.
 // ---------------------------------------------------------------------------
-const sideChatTarget = ref<{ parentId: string; childId: string; baseline: number } | null>(null);
+const sideChatTarget = ref<{ parentId: string; agentId: string } | null>(null);
 
-const sideChatSessionId = computed<string | null>(() => sideChatTarget.value?.childId ?? null);
+const sideChatSessionId = computed<string | null>(() => sideChatTarget.value?.parentId ?? null);
 const sideChatVisible = computed<boolean>(() => sideChatTarget.value !== null);
 
 const sideChatSending = computed<boolean>(() => {
-  const id = sideChatTarget.value?.childId;
-  return id ? Boolean(rawState.sendingBySession[id]) : false;
+  const id = sideChatTarget.value?.agentId;
+  return id ? Boolean(rawState.sideChatSendingByAgent[id]) : false;
 });
 
 const sideChatRunning = computed<boolean>(() => {
-  const id = sideChatTarget.value?.childId;
-  if (!id) return false;
-  if (rawState.sendingBySession[id]) return true;
-  return rawState.sessions.find((x) => x.id === id)?.status === 'running';
+  const target = sideChatTarget.value;
+  if (!target) return false;
+  if (rawState.sideChatSendingByAgent[target.agentId]) return true;
+  return (rawState.tasksBySession[target.parentId] ?? []).some(
+    (task) => task.id === target.agentId && task.status === 'running',
+  );
 });
 
 const sideChatTurns = computed<ChatTurn[]>(() => {
   const target = sideChatTarget.value;
   if (!target) return [];
-  // Only show messages exchanged in the side chat — the fork's inherited parent
-  // history sits before `baseline` and stays hidden (the model still has it).
-  const messages = (rawState.messagesBySession[target.childId] ?? []).slice(target.baseline);
+  const messages = rawState.sideChatMessagesByAgent[target.agentId] ?? [];
   return messagesToTurns(
     messages,
     [],
@@ -1726,25 +1743,97 @@ const sideChatTurns = computed<ChatTurn[]>(() => {
   );
 });
 
+function updateSideChatMessages(agentId: string, update: (messages: AppMessage[]) => AppMessage[]): void {
+  rawState.sideChatMessagesByAgent = {
+    ...rawState.sideChatMessagesByAgent,
+    [agentId]: update(rawState.sideChatMessagesByAgent[agentId] ?? []),
+  };
+}
+
+function appendSideChatMessage(agentId: string, message: AppMessage): void {
+  updateSideChatMessages(agentId, (messages) => [...messages, message]);
+}
+
+function removeLastSideChatUserMessage(agentId: string): void {
+  updateSideChatMessages(agentId, (messages) => {
+    const idx = [...messages].reverse().findIndex((message) => message.role === 'user');
+    if (idx === -1) return messages;
+    const removeIndex = messages.length - 1 - idx;
+    return messages.filter((_, index) => index !== removeIndex);
+  });
+}
+
+function stampLastSideChatUserPrompt(agentId: string, promptId: string): void {
+  updateSideChatMessages(agentId, (messages) => {
+    const next = [...messages];
+    for (let i = next.length - 1; i >= 0; i -= 1) {
+      const message = next[i]!;
+      if (message.role !== 'user') continue;
+      next[i] = { ...message, promptId: message.promptId ?? promptId };
+      return next;
+    }
+    return messages;
+  });
+}
+
+function appendSideChatAssistantText(agentId: string, sessionId: string, chunk: string): void {
+  if (!chunk) return;
+  updateSideChatMessages(agentId, (messages) => {
+    const last = messages.at(-1);
+    if (last?.role === 'assistant') {
+      const first = last.content[0];
+      const text = first?.type === 'text' ? first.text : '';
+      return [
+        ...messages.slice(0, -1),
+        {
+          ...last,
+          content: [{ type: 'text', text: `${text}${chunk}` }],
+        },
+      ];
+    }
+    return [
+      ...messages,
+      {
+        id: nextOptimisticMsgId(),
+        sessionId,
+        role: 'assistant',
+        content: [{ type: 'text', text: chunk }],
+        createdAt: new Date().toISOString(),
+      },
+    ];
+  });
+}
+
+function finishSideChatAgent(agentId: string, sessionId: string, outputPreview?: string): void {
+  rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: false };
+  if (!outputPreview) return;
+  const messages = rawState.sideChatMessagesByAgent[agentId] ?? [];
+  const last = messages.at(-1);
+  const lastText = last?.role === 'assistant' && last.content[0]?.type === 'text'
+    ? last.content[0].text
+    : '';
+  if (lastText.trim().length > 0) return;
+  appendSideChatAssistantText(agentId, sessionId, outputPreview);
+}
+
 /** Open (creating if needed) the side chat for the active session; optionally send a first prompt. */
 async function openSideChat(initialPrompt?: string): Promise<void> {
   const parent = rawState.activeSessionId;
   if (!parent) return;
   // Reuse the existing side chat only if it belongs to the current parent.
   if (sideChatTarget.value?.parentId !== parent) {
-    let child: AppSession;
+    let agentId: string;
     try {
-      child = await getKimiWebApi().createChildSession(parent, { title: 'Side chat' });
+      ({ agentId } = await getKimiWebApi().startBtw(parent));
     } catch (err) {
       pushOperationFailure('openSideChat', err, { sessionId: parent });
       return;
     }
-    // Load + subscribe to the child so its replies stream in. The snapshot also
-    // seeds the inherited fork history; record its length as a baseline so the
-    // panel only displays the messages exchanged here.
-    await syncSessionFromSnapshot(child.id);
-    const baseline = (rawState.messagesBySession[child.id] ?? []).length;
-    sideChatTarget.value = { parentId: parent, childId: child.id, baseline };
+    rawState.sideChatMessagesByAgent = {
+      ...rawState.sideChatMessagesByAgent,
+      [agentId]: rawState.sideChatMessagesByAgent[agentId] ?? [],
+    };
+    sideChatTarget.value = { parentId: parent, agentId };
   }
   if (initialPrompt && initialPrompt.trim()) {
     await sendSideChatPrompt(initialPrompt.trim());
@@ -1760,44 +1849,28 @@ async function sendSideChatPrompt(text: string): Promise<void> {
   const target = sideChatTarget.value;
   const trimmed = text.trim();
   if (!target || !trimmed) return;
-  const sid = target.childId;
-  rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: true };
-  const tempId = nextOptimisticMsgId();
-  const optimisticMsg: AppMessage = {
-    id: tempId,
+  const sid = target.parentId;
+  const agentId = target.agentId;
+  rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: true };
+  const userMsg: AppMessage = {
+    id: nextOptimisticMsgId(),
     sessionId: sid,
     role: 'user',
     content: [{ type: 'text', text: trimmed }],
     createdAt: new Date().toISOString(),
     metadata: { 'kimiWeb.optimisticUserMessage': true },
   };
-  rawState.messagesBySession = {
-    ...rawState.messagesBySession,
-    [sid]: [...(rawState.messagesBySession[sid] ?? []), optimisticMsg],
-  };
+  appendSideChatMessage(agentId, userMsg);
   try {
-    const child = rawState.sessions.find((s) => s.id === sid);
-    const model =
-      (child?.model && child.model.length > 0 ? child.model : rawState.defaultModel) ?? undefined;
     const result = await getKimiWebApi().submitPrompt(sid, {
       content: [{ type: 'text', text: trimmed }],
-      model,
-      thinking: rawState.thinking,
-      permissionMode: rawState.permission,
+      agentId,
     });
-    rawState.promptIdBySession = { ...rawState.promptIdBySession, [sid]: result.promptId };
-    const msgs = rawState.messagesBySession[sid] ?? [];
-    const idx = msgs.findIndex((m) => m.id === tempId);
-    if (idx !== -1) {
-      const updated = [...msgs];
-      updated[idx] = { ...updated[idx]!, promptId: updated[idx]!.promptId ?? result.promptId };
-      rawState.messagesBySession = { ...rawState.messagesBySession, [sid]: updated };
-    }
+    stampLastSideChatUserPrompt(agentId, result.promptId);
   } catch (err) {
     pushOperationFailure('sendSideChatPrompt', err, { sessionId: sid });
-    const msgs = rawState.messagesBySession[sid] ?? [];
-    rawState.messagesBySession = { ...rawState.messagesBySession, [sid]: msgs.filter((m) => m.id !== tempId) };
-    rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
+    removeLastSideChatUserMessage(agentId);
+    rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: false };
   }
 }
 
@@ -4019,7 +4092,7 @@ export function useKimiWebClient() {
 
     sendPrompt,
     steerPrompt,
-    // Side chat (BTW child session)
+    // Side chat (BTW side-channel agent)
     sideChatVisible,
     sideChatSessionId,
     sideChatTurns,

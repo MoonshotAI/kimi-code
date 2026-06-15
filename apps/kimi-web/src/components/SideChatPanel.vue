@@ -1,7 +1,6 @@
 <!-- apps/kimi-web/src/components/SideChatPanel.vue -->
-<!-- BTW "side chat": a child session rendered in the right-side panel. The child
-     was forked from the parent (so the model keeps the parent's context), but we
-     only show the messages exchanged here — a focused Q&A on the side. Reuses
+<!-- BTW "side chat": a side-channel agent rendered in the right-side panel.
+     It keeps the parent's context without creating a sidebar session. Reuses
      ChatPane for the transcript; its panel-open emits are no-ops here. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';

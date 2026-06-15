@@ -132,6 +132,12 @@ export interface IPromptService {
   submit(sid: string, body: PromptSubmission): Promise<PromptSubmitResult>;
 
   /**
+   * Start a BTW side-channel agent for a session. Returns the forked agent id;
+   * callers submit follow-up prompts with `PromptSubmission.agent_id`.
+   */
+  startBtw(sid: string): Promise<string>;
+
+  /**
    * `POST /v1/sessions/{sid}/prompts/{pid}:steer` and collection
    * `POST /v1/sessions/{sid}/prompts:steer` — remove queued prompt(s) and
    * inject their content into the active turn via agent-core steer.

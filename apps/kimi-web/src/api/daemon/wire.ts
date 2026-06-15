@@ -177,6 +177,7 @@ export interface WireMessage {
 export interface WirePromptSubmission {
   content: WireMessageContent[];
   metadata?: Record<string, unknown>;
+  agent_id?: string;
   model?: string;
   thinking?: string;
   permission_mode?: string;
