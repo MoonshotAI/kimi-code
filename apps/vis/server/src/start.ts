@@ -30,7 +30,7 @@ export async function startVisServer(
   const app = await createApp({ authToken, homeDir, webAsset: opts.webAsset });
   const port = opts.port ?? resolvePort();
 
-  return await new Promise<StartedVisServer>((resolveStarted, rejectStarted) => {
+  return new Promise<StartedVisServer>((resolveStarted, rejectStarted) => {
     const server = serve({ fetch: app.fetch, hostname: host, port }, (info) => {
       resolveStarted({
         port: info.port,
