@@ -1,8 +1,32 @@
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+/* eslint-disable import/first -- vi.mock setup must run before RotatingFileSink imports fs promises. */
+import type * as FsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const fsMockState = vi.hoisted(() => ({
+  blockedRename: undefined as { from: string; to: string; code: string } | undefined,
+}));
+
+vi.mock('node:fs/promises', async () => {
+  const actual = await vi.importActual<typeof FsPromises>('node:fs/promises');
+  return {
+    ...actual,
+    rename: async (...args: Parameters<typeof actual.rename>) => {
+      const [from, to] = args;
+      const blockedRename = fsMockState.blockedRename;
+      if (blockedRename && String(from) === blockedRename.from && String(to) === blockedRename.to) {
+        throw Object.assign(new Error(`${blockedRename.code}: busy rename`), {
+          code: blockedRename.code,
+        });
+      }
+      return actual.rename(...args);
+    },
+  };
+});
+
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 
 import { PENDING_MAX, RotatingFileSink } from '#/logging/sinks';
 
@@ -13,6 +37,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  fsMockState.blockedRename = undefined;
   await rm(workDir, { recursive: true, force: true });
 });
 
@@ -78,35 +103,32 @@ describe('RotatingFileSink', () => {
     }
   });
 
-  it.skipIf(process.platform === 'win32')(
-    'keeps writing when rotation is temporarily blocked',
-    async () => {
-      const dir = join(workDir, 'locked');
-      const path = join(dir, 'app.log');
-      await mkdir(dir);
-      await writeFile(path, 'seed\n', 'utf-8');
-      await chmod(dir, 0o555);
+  it('keeps writing when rotation is temporarily blocked', async () => {
+    const path = join(workDir, 'app.log');
+    await writeFile(path, 'seed\n', 'utf-8');
+    fsMockState.blockedRename = {
+      from: path,
+      to: `${path}.1`,
+      code: 'EBUSY',
+    };
 
-      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-      try {
-        const sink = new RotatingFileSink({ path, maxBytes: 8, files: 2 });
-        sink.enqueue('after\n');
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const sink = new RotatingFileSink({ path, maxBytes: 8, files: 2 });
+      sink.enqueue('after\n');
 
-        expect(await sink.flush()).toBe(true);
-        await chmod(dir, 0o755);
+      expect(await sink.flush()).toBe(true);
 
-        const text = await readFile(path, 'utf-8');
-        expect(text).toContain('seed\n');
-        expect(text).toContain('after\n');
-        expect(
-          stderrSpy.mock.calls.some((c) => String(c[0]).includes('[logger] write failed')),
-        ).toBe(false);
-      } finally {
-        stderrSpy.mockRestore();
-        await chmod(dir, 0o755).catch(() => {});
-      }
-    },
-  );
+      const text = await readFile(path, 'utf-8');
+      expect(text).toContain('seed\n');
+      expect(text).toContain('after\n');
+      expect(stderrSpy.mock.calls.some((c) => String(c[0]).includes('[logger] write failed'))).toBe(
+        false,
+      );
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
 
   it('drops oldest when pending overflows', async () => {
     const path = join(workDir, 'app.log');
