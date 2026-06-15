@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
+import { readKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
 import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
 
 import { getUpdateRolloutLogFile } from '#/utils/paths';
@@ -185,9 +185,13 @@ export async function appendRolloutDecisionLog(
   }
 }
 
-/** Stable per-installation id used for bucketing; same id telemetry uses. */
+/**
+ * Stable per-installation id used for bucketing when telemetry has already
+ * minted one. Missing ids stay ephemeral here so update preflight never
+ * creates the telemetry device_id before telemetry can emit first_launch.
+ */
 export function resolveUpdateDeviceId(): string {
-  return createKimiDeviceId(resolveKimiHome());
+  return readKimiDeviceId(resolveKimiHome()) ?? randomUUID();
 }
 
 /**

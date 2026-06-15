@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,6 +13,7 @@ import {
   rolloutBucket,
   rolloutDelayForBucket,
   rolloutDelaySeconds,
+  resolveUpdateDeviceId,
   selectPassiveUpdateTarget,
 } from '#/cli/update/rollout';
 import type { RolloutBatch, UpdateManifest } from '#/cli/update/types';
@@ -283,6 +284,35 @@ describe('appendRolloutDecisionLog', () => {
     await expect(
       appendRolloutDecisionLog({ reason: 'held' }, '/dev/null/nope/rollout.log'),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('resolveUpdateDeviceId', () => {
+  const originalEnv = { ...process.env };
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'kimi-rollout-device-id-'));
+    process.env['KIMI_CODE_HOME'] = dir;
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('does not create the telemetry device id file when one is missing', () => {
+    const deviceId = resolveUpdateDeviceId();
+
+    expect(deviceId).toMatch(/^[0-9a-f-]+$/);
+    expect(existsSync(join(dir, 'device_id'))).toBe(false);
+  });
+
+  it('reuses an existing telemetry device id without rewriting it', () => {
+    writeFileSync(join(dir, 'device_id'), 'existing-device-id', 'utf-8');
+
+    expect(resolveUpdateDeviceId()).toBe('existing-device-id');
+    expect(readFileSync(join(dir, 'device_id'), 'utf-8')).toBe('existing-device-id');
   });
 });
 

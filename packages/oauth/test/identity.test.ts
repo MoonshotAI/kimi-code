@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,7 @@ import {
   createKimiDeviceId,
   createKimiUserAgent,
   KIMI_CODE_PLATFORM,
+  readKimiDeviceId,
 } from '../src/identity';
 
 const tmpRoots: string[] = [];
@@ -41,6 +42,23 @@ describe('Kimi identity factories', () => {
     const second = createKimiDeviceId(tempHome());
 
     expect(second).not.toBe(first);
+  });
+
+  it('reads an existing device id without creating one when missing', () => {
+    const homeDir = tempHome();
+
+    expect(readKimiDeviceId(homeDir)).toBeNull();
+    expect(readKimiDeviceId(homeDir)).toBeNull();
+
+    const first = createKimiDeviceId(homeDir);
+    expect(readKimiDeviceId(homeDir)).toBe(first);
+  });
+
+  it('treats an empty device id file as missing', () => {
+    const homeDir = tempHome();
+    writeFileSync(join(homeDir, 'device_id'), '  \n', 'utf-8');
+
+    expect(readKimiDeviceId(homeDir)).toBeNull();
   });
 
   it('creates complete X-Msh device headers from host version', () => {
