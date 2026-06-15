@@ -879,13 +879,29 @@ describe('FullCompaction', () => {
       messages:
         user: text "old user one"
         assistant: text "old assistant one"
-        user: text "run both tools"
-        assistant: []  calls call_open_one:LookupOne { "query": "one" }, call_open_two:LookupTwo { "query": "two" }
-        tool[call_open_one]: text "one result"
         user: text <compaction-instruction>
     `);
     expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
       'assistant',
+      'user',
+      'assistant',
+      'tool',
+    ]);
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_open_two',
+        toolCallId: 'call_open_two',
+        result: { output: 'two result' },
+      },
+    });
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'assistant',
+      'user',
+      'assistant',
+      'tool',
+      'tool',
     ]);
     await ctx.expectResumeMatches();
   });
@@ -1152,6 +1168,9 @@ describe('FullCompaction', () => {
 
     expect(ctx.agent.context.history.map((m) => m.role)).toEqual([
       'assistant',
+      'user',
+      'assistant',
+      'tool',
     ]);
 
     ctx.dispatch({
@@ -1166,6 +1185,9 @@ describe('FullCompaction', () => {
 
     expect(ctx.agent.context.history.map((m) => m.role)).toEqual([
       'assistant',
+      'user',
+      'assistant',
+      'tool',
       'tool',
       'user',
     ]);
