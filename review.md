@@ -121,7 +121,7 @@ if (options.bootstrap.firstLaunch) {
 
 ---
 
-### 2. `prompt-refresh` 决策用了刷新后的 manifest，但 telemetry 仍用旧 cache manifest
+### 2. `prompt-refresh` 决策用了刷新后的 manifest，但 telemetry 仍用旧 cache manifest（本轮已修复）
 
 位置：
 
@@ -178,6 +178,8 @@ type UserVisibleUpdateTarget = {
 - cache 中是旧 manifest，refresh 后是新 manifest。
 - 两个 manifest 的 rollout delay 不同，但 refresh 后的 target 最终 eligible。
 - 断言 `update_prompted` 或 `update_background_install_started` 中的 `rollout_delay_seconds` / `rollout_from_manifest` 来自 refreshed manifest，而不是 cache manifest。
+
+本轮修复方式：`refreshUserVisibleUpdateTarget()` 现在返回 `{ target, manifest }`。刷新成功时使用 `refreshed.manifest` 计算后续 rollout telemetry；刷新超时或失败时回退到传入的 `cachedManifest`，避免 prompt / background install telemetry 与真实决策来源不一致。
 
 ---
 
@@ -475,8 +477,8 @@ sha256(`${deviceId}:${version}`) 的前 4 字节 % 100
 
 ## 建议优先修复顺序
 
-1. **避免 update preflight 抢先创建 telemetry `device_id`，恢复 `first_launch` attribution。**
-2. **修复 prompt-refresh telemetry 使用 stale manifest。**
+1. **避免 update preflight 抢先创建 telemetry `device_id`，恢复 `first_launch` attribution（本轮已修复）。**
+2. **修复 prompt-refresh telemetry 使用 stale manifest（本轮已修复）。**
 3. **给 `/latest.json` / fallback 请求加超时。**
 4. **让 cache 在 manifest 损坏时只降级 manifest，不丢失 latest。**
 5. 补齐 changeset。
@@ -518,9 +520,8 @@ sha256(`${deviceId}:${version}`) 的前 4 字节 % 100
 
 这个 PR 的主要行为实现得比较扎实，关键语义已经被测试覆盖：fallback、passive gate、24h ceiling、manual upgrade bypass gate 都基本正确。
 
-第一条 `first_launch` 丢失问题已在本次修复。合并前仍建议至少处理：
+第一条 `first_launch` 丢失问题和第二条 prompt-refresh telemetry stale manifest 问题已在本次修复。合并前仍建议至少处理：
 
-- prompt-refresh telemetry 的 stale manifest 问题；
 - `/latest.json` 无超时导致 fallback/`upgrade` 阻塞的问题；
 - cache 中坏 manifest 丢弃整个 latest 的问题。
 

@@ -273,13 +273,23 @@ function refreshAndMaybeInstallInBackground(
   })().catch(() => {});
 }
 
+interface UserVisibleUpdateTarget {
+  readonly target: UpdateTarget | null;
+  readonly manifest: UpdateManifest | null;
+}
+
 async function refreshUserVisibleUpdateTarget(
   currentVersion: string,
   deviceId: string,
   bypassRollout: boolean,
   fallbackTarget: UpdateTarget,
-): Promise<UpdateTarget | null> {
+  fallbackManifest: UpdateManifest | null,
+): Promise<UserVisibleUpdateTarget> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  const fallback: UserVisibleUpdateTarget = {
+    target: fallbackTarget,
+    manifest: fallbackManifest,
+  };
   try {
     const refresh = refreshUpdateCache()
       .then((refreshed) => {
@@ -292,17 +302,20 @@ async function refreshUserVisibleUpdateTarget(
           bypassRollout,
         );
         logRolloutDecision('prompt-refresh', currentVersion, refreshed.latest, refreshed.manifest, decision);
-        return decision.target;
+        return {
+          target: decision.target,
+          manifest: refreshed.manifest,
+        };
       })
-      .catch(() => fallbackTarget);
-    const fallback = new Promise<UpdateTarget>((resolve) => {
+      .catch(() => fallback);
+    const timeoutFallback = new Promise<UserVisibleUpdateTarget>((resolve) => {
       timeout = setTimeout(() => {
-        resolve(fallbackTarget);
+        resolve(fallback);
       }, USER_VISIBLE_UPDATE_REFRESH_TIMEOUT_MS);
     });
-    return await Promise.race([refresh, fallback]);
+    return await Promise.race([refresh, timeoutFallback]);
   } catch {
-    return fallbackTarget;
+    return fallback;
   } finally {
     if (timeout !== undefined) {
       clearTimeout(timeout);
@@ -717,17 +730,19 @@ export async function runUpdatePreflight(
       return 'continue';
     }
 
-    const userVisibleTarget = await refreshUserVisibleUpdateTarget(
+    const userVisibleUpdate = await refreshUserVisibleUpdateTarget(
       currentVersion,
       deviceId,
       bypassRollout,
       target,
+      cachedManifest,
     );
+    const userVisibleTarget = userVisibleUpdate.target;
     if (userVisibleTarget === null) return 'continue';
     const userVisibleRollout = rolloutTelemetryFor(
       deviceId,
       userVisibleTarget.version,
-      cachedManifest,
+      userVisibleUpdate.manifest,
       bypassRollout,
     );
     if (

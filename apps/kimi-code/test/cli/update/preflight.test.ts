@@ -922,6 +922,36 @@ describe('runUpdatePreflight', () => {
       }));
     });
 
+    it('uses the refreshed manifest for rollout telemetry when the prompt target changes', async () => {
+      disableAutoInstall();
+      const cached = cacheWithManifest(manifestFor('0.6.0', {
+        publishedAt: '2020-01-01T00:00:00.000Z',
+        rollout: [{ percent: 100, delaySeconds: 0 }],
+      }));
+      const refreshed = cacheWithManifest(manifestFor('0.7.0', {
+        publishedAt: '2020-01-01T00:00:00.000Z',
+        rollout: [{ percent: 100, delaySeconds: 43_200 }],
+      }));
+      mocks.readUpdateCache.mockResolvedValue(cached);
+      mocks.refreshUpdateCache.mockResolvedValue(refreshed);
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      mocks.promptForInstallChoice.mockResolvedValue('skip');
+      const { options } = captureOutput();
+      const track = vi.fn();
+
+      await expect(runUpdatePreflight('0.5.0', { ...options, track })).resolves.toBe('continue');
+
+      expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
+        expect.objectContaining({ target: { version: '0.7.0' } }),
+      );
+      expect(track).toHaveBeenCalledWith('update_prompted', expect.objectContaining({
+        latest: '0.7.0',
+        rollout_bucket: expect.any(Number),
+        rollout_delay_seconds: 43_200,
+        rollout_from_manifest: true,
+      }));
+    });
+
     it('suppresses the manual-command notice while a homebrew device batch is held', async () => {
       const held = cacheWithManifest(heldForEveryone('0.5.0'));
       mocks.readUpdateCache.mockResolvedValue(held);
