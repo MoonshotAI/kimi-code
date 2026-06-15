@@ -165,6 +165,19 @@ describe('Composer draft persistence', () => {
   });
 });
 
+describe('Composer height', () => {
+  it('does not write an autosized textarea height as text grows', async () => {
+    const wrapper = mountComposer();
+    const textarea = wrapper.get('textarea');
+    const el = textarea.element as HTMLTextAreaElement;
+    el.style.height = '180px';
+
+    await textarea.setValue('one line\nsecond line\nthird line');
+
+    expect(el.style.height).toBe('');
+  });
+});
+
 describe('Composer queue bubble', () => {
   it('keeps queued prompts collapsed until the queue bubble is opened', async () => {
     const wrapper = mountComposer({

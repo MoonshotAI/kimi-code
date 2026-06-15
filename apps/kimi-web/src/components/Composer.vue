@@ -128,10 +128,7 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null);
 function autosize(): void {
   const el = textareaRef.value;
   if (!el) return;
-  el.style.height = 'auto';
-  // Two lines tall by default (~56px); grows up to ~180px as the user types.
-  const next = Math.max(56, Math.min(180, el.scrollHeight));
-  el.style.height = `${next}px`;
+  el.style.removeProperty('height');
 }
 
 watch(text, (value) => {
@@ -1557,8 +1554,9 @@ function selectModel(modelId: string): void {
   font-family: var(--mono);
   font-size: var(--ui-font-size);
   background: transparent;
+  height: 56px;
   min-height: 56px;
-  max-height: 200px;
+  max-height: 56px;
   overflow-y: auto;
   line-height: 1.5;
   margin-bottom: 6px;
@@ -2188,7 +2186,9 @@ function selectModel(modelId: string): void {
   .ph {
     /* Pinned at 16px to prevent iOS auto-zoom on focus (not part of UI font scale). */
     font-size: 16px;
+    height: 44px;
     min-height: 44px;
+    max-height: 44px;
   }
   .model-pill,
   .attach-btn {
