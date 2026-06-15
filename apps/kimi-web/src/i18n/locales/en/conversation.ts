@@ -16,6 +16,7 @@ export default {
   manuallyAborted: 'Manually stopped',
   activatedSkill: 'Activated skill: {name}',
   undo: 'Undo',
+  undoTooltip: 'Undoing the conversation will not roll back code changes',
   undoConfirm: 'Undo last message?',
   confirm: 'Confirm',
   cancel: 'Cancel',

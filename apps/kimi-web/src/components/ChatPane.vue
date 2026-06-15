@@ -475,7 +475,7 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
               v-if="confirmingEditTurnId !== turn.id"
               type="button"
               class="u-edit"
-              :title="t('conversation.undo')"
+              :data-tooltip="t('conversation.undoTooltip')"
               @click="confirmingEditTurnId = turn.id"
             >
               <span class="u-edit-text">{{ t('conversation.undo') }}</span>
@@ -683,7 +683,7 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
             v-if="confirmingEditTurnId !== turn.id"
             type="button"
             class="u-edit"
-            :title="t('conversation.undo')"
+            :data-tooltip="t('conversation.undoTooltip')"
             @click="confirmingEditTurnId = turn.id"
           >
             <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1022,6 +1022,49 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
 }
 .u-edit span { line-height: 1; }
 .u-edit:hover { opacity: 1; color: var(--blue); background: var(--hover); }
+/* Custom tooltip for the undo button: appears faster than the native title
+   tooltip and avoids duplicating the browser's long default delay. */
+.u-edit[data-tooltip] {
+  position: relative;
+}
+.u-edit[data-tooltip]::after,
+.u-edit[data-tooltip]::before {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+  transition-delay: 0s;
+  z-index: 100;
+}
+.u-edit[data-tooltip]::after {
+  content: attr(data-tooltip);
+  bottom: calc(100% + 6px);
+  padding: 4px 8px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 12px;
+  line-height: 1.3;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.u-edit[data-tooltip]::before {
+  content: '';
+  bottom: calc(100% + 2px);
+  border-width: 4px;
+  border-style: solid;
+  border-color: var(--ink) transparent transparent transparent;
+}
+.u-edit[data-tooltip]:hover::after,
+.u-edit[data-tooltip]:hover::before,
+.u-edit[data-tooltip]:focus-visible::after,
+.u-edit[data-tooltip]:focus-visible::before {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0.25s;
+}
 /* Mobile bubble layout: right-align the undo button below the bubble. */
 .u-edit-wrap { display: flex; justify-content: flex-end; }
 .u-edit-wrap.undoing {

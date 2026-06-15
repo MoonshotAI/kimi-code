@@ -16,6 +16,7 @@ export default {
   manuallyAborted: '您已手动终止',
   activatedSkill: '已激活技能: {name}',
   undo: '撤销',
+  undoTooltip: '撤销对话不会回滚代码',
   undoConfirm: '确定撤销？',
   confirm: '确定',
   cancel: '取消',
