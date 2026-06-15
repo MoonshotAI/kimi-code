@@ -255,7 +255,7 @@ watch(
     if (!file && !loading && !error) paneLayout.closePreview();
   },
 );
-defineExpose({ switchTab, loadComposerForEdit, openPreviewPane });
+defineExpose({ switchTab, loadComposerForEdit, openPreviewPane, openWorkspaceFileInFiles });
 
 function firstGroupId(node: PaneLayout): string | undefined {
   if (node.type === 'group') return node.id;
@@ -272,15 +272,55 @@ function findGroupIdByActive(node: PaneLayout, pane: PaneKey): string | undefine
   return node.children.map((child) => findGroupIdByActive(child, pane)).find((id): id is string => id !== undefined);
 }
 
-function openChangedFiles(): void {
-  changedView.value = 'changed';
-  filesShowPreview.value = false;
-  selectedFile.value = null;
-  props.clearFileDiff?.();
+function focusFilesPane(): void {
   active.value = 'files';
   const root = paneLayout.layout.value;
   const groupId = findGroupIdByActive(root, 'chat') ?? firstGroupId(root);
   if (groupId) paneLayout.setActive(groupId, 'files');
+}
+
+function openChangedFiles(): void {
+  changedView.value = 'changed';
+  filesShowPreview.value = false;
+  selectedFile.value = null;
+  selectedFileLine.value = undefined;
+  props.clearFileDiff?.();
+  focusFilesPane();
+}
+
+async function openWorkspaceFileInFiles(target: FilePreviewRequest): Promise<void> {
+  focusFilesPane();
+  if (isChanged(target.path)) {
+    changedView.value = 'changed';
+    pickChanged(target.path);
+    return;
+  }
+  changedView.value = 'all';
+  filesShowPreview.value = true;
+  props.clearFileDiff?.();
+  previewLoading.value = true;
+  selectedFile.value = null;
+  selectedFileLine.value = target.line;
+  try {
+    const result = await props.readFile?.(target.path);
+    if (result) {
+      selectedFile.value = {
+        ...result,
+        path: result.path || target.path,
+      };
+    } else {
+      selectedFile.value = {
+        path: target.path,
+        content: '',
+        encoding: 'utf-8',
+        mime: 'text/plain',
+        isBinary: false,
+        size: 0,
+      };
+    }
+  } finally {
+    previewLoading.value = false;
+  }
 }
 
 function refreshChanges(): void {
@@ -498,6 +538,7 @@ const pendingApproval = computed(() =>
 // ---------------------------------------------------------------------------
 
 const selectedFile = ref<FileData | null>(null);
+const selectedFileLine = ref<number | undefined>(undefined);
 const previewLoading = ref(false);
 // Mobile drill-down: false = showing the tree, true = showing the preview with a
 // Back affordance. Desktop ignores this (the split shows both at once).
@@ -509,6 +550,7 @@ async function handleFileSelect(entry: FsEntry): Promise<void> {
   if (props.mobile) filesShowPreview.value = true;
   previewLoading.value = true;
   selectedFile.value = null;
+  selectedFileLine.value = undefined;
   try {
     const result = await props.readFile(entry.path);
     if (result) {
@@ -559,6 +601,7 @@ function isChanged(path: string): boolean {
 /** Pick a changed file → show its diff. Clears any file-content preview first. */
 function pickChanged(path: string): void {
   selectedFile.value = null;
+  selectedFileLine.value = undefined;
   if (props.mobile) filesShowPreview.value = true;
   void props.loadFileDiff?.(path);
 }
@@ -579,6 +622,7 @@ function handleFilesBack(): void {
   filesShowPreview.value = false;
   props.clearFileDiff?.();
   selectedFile.value = null;
+  selectedFileLine.value = undefined;
 }
 
 // No-op loadDir fallback so FileTree never receives undefined
@@ -1222,7 +1266,7 @@ onUnmounted(() => {
                   <span class="files-back-label">{{ t('fileTree.backToTree') }}</span>
                 </button>
                 <DiffView v-if="selectedDiffPath" mode="detail" :hide-back="true" :changes="changes ?? []" :git-info="gitInfo ?? null" :file-diff="fileDiff ?? []" :selected-diff-path="selectedDiffPath ?? null" :file-diff-loading="fileDiffLoading ?? false" />
-                <FilePreview v-else-if="selectedFile || previewLoading" :file="selectedFile" :loading="previewLoading" />
+                <FilePreview v-else-if="selectedFile || previewLoading" :file="selectedFile" :loading="previewLoading" :line="selectedFileLine" />
                 <div v-else class="files-empty">{{ filesView === 'changed' ? t('fileTree.selectChanged') : t('fileTree.selectFile') }}</div>
               </div>
             </template>
@@ -1468,6 +1512,7 @@ onUnmounted(() => {
             v-else-if="selectedFile || previewLoading"
             :file="selectedFile"
             :loading="previewLoading"
+            :line="selectedFileLine"
           />
           <div v-else class="files-empty">
             {{ filesView === 'changed' ? t('fileTree.selectChanged') : t('fileTree.selectFile') }}

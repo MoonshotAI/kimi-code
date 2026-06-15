@@ -5,9 +5,9 @@
 // render and the full file tree shows directly. With git info present the
 // toggle renders and defaults to the Changed view.
 
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { createI18n } from 'vue-i18n';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 
 import ConversationPane from '../src/components/ConversationPane.vue';
@@ -38,6 +38,7 @@ const stubs = {
   FileTree: true,
   DiffView: true,
   ChangedTree: true,
+  FilePreview: true,
 };
 
 function mountFilesTab(gitInfo: { branch: string; ahead: number; behind: number } | null, changes: { path: string; status: string }[]) {
@@ -125,5 +126,43 @@ describe('files tab in a non-git workspace', () => {
     await wrapper.find('.nav-tools .layout-toggle').trigger('click');
 
     expect(wrapper.emitted('refreshGitStatus')).toHaveLength(1);
+  });
+
+  it('opens workspace file links inside the Files tab preview', async () => {
+    const readFile = vi.fn(async (path: string) => ({
+      path,
+      content: '<h1>Report</h1>',
+      encoding: 'utf-8' as const,
+      mime: 'text/html',
+      isBinary: false,
+      size: 15,
+    }));
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en: {} },
+      missingWarn: false,
+      fallbackWarn: false,
+    });
+    const wrapper = mount(ConversationPane, {
+      props: {
+        turns,
+        tasks: [],
+        status,
+        gitInfo: { branch: 'main', ahead: 0, behind: 0 },
+        changes: [],
+        readFile,
+      },
+      global: { plugins: [i18n], stubs },
+    });
+
+    await (wrapper.vm as unknown as {
+      openWorkspaceFileInFiles(target: { path: string; line?: number }): Promise<void>;
+    }).openWorkspaceFileInFiles({ path: 'reports/output.html', line: 3 });
+    await flushPromises();
+
+    expect(readFile).toHaveBeenCalledWith('reports/output.html');
+    expect(wrapper.find('.files-nav').exists()).toBe(true);
+    expect(wrapper.find('file-preview-stub').exists()).toBe(true);
   });
 });

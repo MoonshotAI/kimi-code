@@ -182,33 +182,22 @@ async function openFilePreview(target: FilePreviewRequest): Promise<void> {
   compactionTarget.value = null;
   agentTarget.value = null;
   client.closeSideChat();
-  // Desktop: surface the preview as a split pane (a peer of chat/files).
-  if (!isMobile.value) conversationPaneRef.value?.openPreviewPane();
   const normalized = normalizePreviewPath(target.path);
-  previewTarget.value = target;
   previewFile.value = null;
   previewError.value = null;
 
-  if ('error' in normalized) {
-    previewLoading.value = false;
-    previewError.value = normalized.error;
+  if (!('error' in normalized)) {
+    closeFilePreview();
+    await conversationPaneRef.value?.openWorkspaceFileInFiles({ path: normalized.path, line: target.line });
     return;
   }
 
-  const requestSeq = ++previewRequestSeq;
-  previewTarget.value = { path: normalized.path, line: target.line };
-  previewLoading.value = true;
-  try {
-    const file = await client.readFileContent(normalized.path);
-    if (requestSeq !== previewRequestSeq) return;
-    if (!file) {
-      previewError.value = t('filePreview.errors.loadFailed');
-      return;
-    }
-    previewFile.value = file;
-  } finally {
-    if (requestSeq === previewRequestSeq) previewLoading.value = false;
-  }
+  // Paths outside the active workspace cannot be read through the Files tab.
+  // Keep the preview pane so the click has a visible result and error message.
+  if (!isMobile.value) conversationPaneRef.value?.openPreviewPane();
+  previewTarget.value = target;
+  previewLoading.value = false;
+  previewError.value = normalized.error;
 }
 
 function mimeFromDataUrl(url: string): string | undefined {
