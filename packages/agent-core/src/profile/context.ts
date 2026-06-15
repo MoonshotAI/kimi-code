@@ -6,6 +6,8 @@ import { listDirectory } from '../tools/support/list-directory';
 import type { SystemPromptContext } from './types';
 
 const AGENTS_MD_MAX_BYTES = 32 * 1024;
+const AGENTS_MD_TRUNCATION_MARKER =
+  '<!-- Some AGENTS.md files were truncated or omitted to fit the 32 KB budget -->';
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
@@ -126,6 +128,7 @@ function renderAgentFiles(files: readonly AgentFile[]): string {
   if (files.length === 0) return '';
 
   let remaining = AGENTS_MD_MAX_BYTES;
+  let didTruncate = false;
   const budgeted: Array<AgentFile | undefined> = Array.from({ length: files.length });
 
   for (let i = files.length - 1; i >= 0; i--) {
@@ -138,21 +141,25 @@ function renderAgentFiles(files: readonly AgentFile[]): string {
     if (remaining <= 0) {
       budgeted[i] = { path: file.path, content: '' };
       remaining = 0;
+      didTruncate = true;
       continue;
     }
 
     let content = file.content;
     if (byteLength(content) > remaining) {
       content = truncateUtf8(content, remaining).trim();
+      didTruncate = true;
     }
     remaining -= byteLength(content);
     budgeted[i] = { path: file.path, content };
   }
 
-  return budgeted
+  const rendered = budgeted
     .filter((file): file is AgentFile => file !== undefined && file.content.length > 0)
     .map((file) => `${annotationFor(file.path)}${file.content}`)
     .join('\n\n');
+
+  return didTruncate ? `${AGENTS_MD_TRUNCATION_MARKER}\n${rendered}` : rendered;
 }
 
 function truncateUtf8(text: string, maxBytes: number): string {
