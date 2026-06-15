@@ -447,8 +447,8 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
           </div>
           <!-- User input renders verbatim (pre-wrap), never through Markdown -->
           <div v-else class="u-text">{{ turn.text }}</div>
-          <div v-if="turn.createdAt" class="u-time">{{ formatMessageTime(turn.createdAt, t('conversation.yesterday')) }}</div>
         </div>
+        <div v-if="turn.createdAt" class="u-time">{{ formatMessageTime(turn.createdAt, t('conversation.yesterday')) }}</div>
         <div v-if="canEditTurn(turn)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
           <button
             v-if="confirmingEditTurnId !== turn.id"
@@ -880,8 +880,11 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
   font-size: var(--ui-font-size);
   line-height: 1.55;
 }
-.u-bub .u-time {
-  margin-top: 6px;
+.u-time {
+  align-self: flex-end;
+  max-width: 84%;
+  margin-top: 2px;
+  margin-right: 4px;
   font-size: 0.75rem;
   line-height: 1.2;
   color: var(--muted);
