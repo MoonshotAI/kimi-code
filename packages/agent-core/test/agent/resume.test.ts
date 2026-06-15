@@ -21,6 +21,28 @@ const MOCK_PROVIDER = {
 } as const;
 
 describe('Agent resume', () => {
+  it('does not append metadata when resuming records that include legacy app version', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+        app_version: '0.0.1-old',
+      } as unknown as AgentRecord,
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'old prompt' }],
+        origin: { kind: 'user' },
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(persistence.appended).toEqual([]);
+    expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
+  });
+
   it('replays persisted records without restarting turns, compactions, plan turns, or tools', async () => {
     const persistence = new RecordingAgentPersistence(resumeHistory());
     const execWithEnv = vi.fn().mockRejectedValue(new Error('Bash should not execute on resume'));

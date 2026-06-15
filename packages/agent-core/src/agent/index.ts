@@ -86,7 +86,6 @@ export interface AgentOptions {
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
-  readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
 }
 
@@ -110,7 +109,6 @@ export class Agent {
   readonly hooks?: HookEngine;
   readonly log: Logger;
   readonly telemetry: TelemetryClient;
-  readonly appVersion?: string;
   readonly experimentalFlags: ExperimentalFlagResolver;
 
   readonly blobStore: BlobStore | undefined;
@@ -147,7 +145,6 @@ export class Agent {
     this.subagentHost = options.subagentHost;
     this.mcp = options.mcp;
     this.hooks = options.hookEngine;
-    this.appVersion = options.appVersion;
     this.log = options.log ?? log;
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
