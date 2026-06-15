@@ -32,8 +32,8 @@ import {
 } from './chat-completions-stream';
 import {
   DeepSeekInlineToolCallFilter,
+  firstBlockStart,
   parseDeepSeekInlineToolCalls,
-  DEEPSEEK_TOOL_CALLS_BEGIN,
 } from './deepseek-inline-tool-calls';
 import {
   mergeRequestHeaders,
@@ -371,18 +371,15 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
     // Fallback: a backend served a DeepSeek-format model but left its inline
     // tool-call tokens in `content` instead of structuring them as `tool_calls`.
-    // Strip the block from visible text whenever the begin token is present (and
+    // Strip the block from visible text whenever a block boundary is present (and
     // the provider returned no structured call) — even if some blocks fail to
     // parse — so the raw tokens never render. Parse what we can into dispatchable
     // tool calls. No-op when absent or already structured.
-    const hasInlineBlock =
-      structuredToolCalls.length === 0 && content.includes(DEEPSEEK_TOOL_CALLS_BEGIN);
-    const inlineToolCalls = hasInlineBlock ? parseDeepSeekInlineToolCalls(content) : [];
+    const blockStart = structuredToolCalls.length === 0 ? firstBlockStart(content) : -1;
+    const inlineToolCalls = blockStart >= 0 ? parseDeepSeekInlineToolCalls(content) : [];
 
     if (content.length > 0) {
-      const text = hasInlineBlock
-        ? content.slice(0, content.indexOf(DEEPSEEK_TOOL_CALLS_BEGIN))
-        : content;
+      const text = blockStart >= 0 ? content.slice(0, blockStart) : content;
       if (text.length > 0) {
         yield { type: 'text', text } satisfies StreamedMessagePart;
       }
@@ -454,8 +451,14 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
         // tool calls — preserve `index` on every yielded part so the generate
         // loop can route interleaved argument deltas from parallel tool calls.
-        if (delta.tool_calls && delta.tool_calls.length > 0) {
+        if (delta.tool_calls && delta.tool_calls.length > 0 && !sawStructuredToolCall) {
           sawStructuredToolCall = true;
+          // A structured tool call means no inline leak is possible: release any
+          // held-back preamble text now so it isn't reordered after the call parts.
+          const released = inlineFilter.releaseHoldback();
+          if (released.length > 0) {
+            yield { type: 'text', text: released } satisfies StreamedMessagePart;
+          }
         }
         for (const toolCall of delta.tool_calls ?? []) {
           for (const part of convertChatCompletionStreamToolCall(toolCall, bufferedToolCalls)) {
