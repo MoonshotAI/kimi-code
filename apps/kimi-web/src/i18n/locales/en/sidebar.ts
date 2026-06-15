@@ -2,6 +2,7 @@ export default {
   workspaceMeta: 'workspace · {branch}',
   sessionsHeader: 'sessions',
   newSession: 'New Session',
+  newChat: 'New Chat',
   newWorkspace: 'New Workspace',
   emptyState: 'No sessions yet · click New Session to start',
   archiveConfirm: 'Archive session?',

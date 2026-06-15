@@ -1194,6 +1194,7 @@ onUnmounted(() => {
           <!-- Empty session: Composer rendered in the centre of the pane -->
           <div class="empty-spacer" />
           <div class="empty-hint">
+            <span class="empty-hint-title">{{ t('composer.emptyConversationTitle') }}</span>
             <span class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
             <!-- Workspace picker: choose where this new conversation starts. -->
             <div v-if="(workspaces?.length ?? 0) > 0" class="ws-pick">
@@ -1836,16 +1837,20 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 8px;
   text-align: center;
   padding: 0 16px 16px;
   color: var(--ink);
   font-family: var(--sans);
-  font-size: calc(var(--ui-font-size) + 8px);
-  font-weight: 400;
+}
+.empty-hint-title {
+  font-size: calc(var(--ui-font-size) + 16px);
+  font-weight: 600;
 }
 .empty-hint-text {
   display: inline-block;
+  font-size: calc(var(--ui-font-size) + 2px);
+  color: var(--dim);
   /* Long workspace names must not wrap into a multi-line hint. */
   max-width: 100%;
   overflow: hidden;

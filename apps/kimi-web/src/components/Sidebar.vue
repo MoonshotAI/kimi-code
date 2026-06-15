@@ -372,17 +372,6 @@ function blinkOnce(): void {
         </div>
         <button
           type="button"
-          class="new-chat-btn"
-          :title="t('sidebar.newSession')"
-          :aria-label="t('sidebar.newSession')"
-          @click.stop="emit('create')"
-        >
-          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 2.5h8a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8.5l-2.5 2V11.5H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z" />
-          </svg>
-        </button>
-        <button
-          type="button"
           class="settings-btn"
           :title="t('settings.title')"
           :aria-label="t('settings.title')"
@@ -395,13 +384,25 @@ function blinkOnce(): void {
         </button>
       </div>
 
-      <!-- New workspace button -->
+      <!-- New chat + new workspace buttons -->
       <div class="btn-wrap">
-        <button class="btn-new-ws" @click.stop="emit('addWorkspace')">
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-            <path d="M8 3v10M3 8h10"/>
+        <button class="btn-new-chat" @click.stop="emit('create')">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 2.5h8a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8.5l-2.5 2V11.5H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z" />
           </svg>
-          <span>{{ t('sidebar.newWorkspace') }}</span>
+          <span>{{ t('sidebar.newChat') }}</span>
+        </button>
+        <button
+          type="button"
+          class="btn-new-ws"
+          :title="t('sidebar.newWorkspace')"
+          :aria-label="t('sidebar.newWorkspace')"
+          @click.stop="emit('addWorkspace')"
+        >
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
+            <path d="M1 5.5h12"/>
+          </svg>
         </button>
       </div>
 
@@ -642,7 +643,6 @@ function blinkOnce(): void {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
 }
-.new-chat-btn,
 .settings-btn {
   flex: none;
   width: 28px;
@@ -657,35 +657,58 @@ function blinkOnce(): void {
   cursor: pointer;
   padding: 0;
 }
-.new-chat-btn:hover,
 .settings-btn:hover { background: var(--soft); color: var(--ink); }
 
 /* Action buttons */
  .btn-wrap {
+  display: flex;
+  gap: 8px;
   padding: 10px 12px;
 }
-.btn-new-ws {
+.btn-wrap button {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  width: 100%;
-  padding: 9px 12px;
+  gap: 6px;
+  padding: 9px 10px;
   font-family: var(--mono);
   font-size: var(--ui-font-size-sm);
   font-weight: 400;
-  color: var(--dim);
-  background: transparent;
-  border: 1px solid var(--line);
   border-radius: 8px;
   cursor: pointer;
   text-align: left;
+  white-space: nowrap;
 }
-.btn-new-ws:hover {
+.btn-wrap button svg { flex: none; }
+.btn-wrap button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.btn-new-chat {
+  flex: 1;
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+.btn-new-chat:hover {
   background: var(--panel);
   border-color: var(--bd);
   color: var(--ink);
 }
-
+.btn-new-ws {
+  flex: none;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+.btn-new-ws:hover {
+  background: var(--panel);
+  border-color: var(--bd);
+  color: var(--dim);
+}
 /* Sessions */
 .sessions {
   flex: 1;
