@@ -91,7 +91,9 @@ The directory listing of current working directory is:
 {{ KIMI_WORK_DIR_LS }}
 ```
 
-Use this as your basic understanding of the project structure. The tree only shows the first two levels; entries marked "... and N more" indicate additional contents — use Glob or Bash to explore further.
+Use this as your basic understanding of the project structure. The tree only shows the first two levels for normal directories; entries marked "... and N more" indicate additional contents. Hidden directories are shown as entries only; their contents are intentionally omitted to reduce noise.
+
+If the task requires inspecting hidden paths, use `Glob` to discover them (for example `.*`, `.github/**`, `.agents/**`, or `.git/**`), use `Read` for known non-sensitive hidden files, and use `Grep` to search hidden file contents. `Grep` searches hidden files by default but excludes VCS metadata and sensitive files such as `.env`, credential stores, and SSH keys. Use `Bash` only for raw listings like `ls -A` when a dedicated tool is not appropriate.
 {% if KIMI_ADDITIONAL_DIRS_INFO %}
 
 ## Additional Directories

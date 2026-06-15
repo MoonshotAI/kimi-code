@@ -1242,6 +1242,9 @@ describe('Session.createAgent', () => {
             '/repo/.git',
             '/repo/packages',
             workDir,
+            `${workDir}/.agents`,
+            `${workDir}/.github`,
+            `${workDir}/.github/workflows`,
             `${workDir}/src`,
             `${workDir}/.kimi-code`,
           ].includes(path)
@@ -1255,6 +1258,8 @@ describe('Session.createAgent', () => {
             `${workDir}/AGENTS.md`,
             `${workDir}/package.json`,
             `${workDir}/src/index.ts`,
+            `${workDir}/.agents/hidden.md`,
+            `${workDir}/.github/workflows/ci.yml`,
           ].includes(path)
         ) {
           return stat('file');
@@ -1263,8 +1268,22 @@ describe('Session.createAgent', () => {
       }),
       iterdir: async function* (path: string) {
         if (path === workDir) {
+          yield `${workDir}/.agents`;
+          yield `${workDir}/.github`;
           yield `${workDir}/src`;
           yield `${workDir}/package.json`;
+          return;
+        }
+        if (path === `${workDir}/.agents`) {
+          yield `${workDir}/.agents/hidden.md`;
+          return;
+        }
+        if (path === `${workDir}/.github`) {
+          yield `${workDir}/.github/workflows`;
+          return;
+        }
+        if (path === `${workDir}/.github/workflows`) {
+          yield `${workDir}/.github/workflows/ci.yml`;
           return;
         }
         if (path === `${workDir}/src`) {
@@ -1291,9 +1310,13 @@ describe('Session.createAgent', () => {
     const created = await session.createAgent({ type: 'main' }, { profile: contextProfile() });
 
     expect(created.agent.config.systemPrompt).toContain('cwd=/repo/packages/app');
-    expect(created.agent.config.systemPrompt).toContain('listing=├── src/');
+    expect(created.agent.config.systemPrompt).toContain('listing=├── .agents/');
+    expect(created.agent.config.systemPrompt).toContain('├── .github/');
+    expect(created.agent.config.systemPrompt).toContain('├── src/');
     expect(created.agent.config.systemPrompt).toContain('│   └── index.ts');
     expect(created.agent.config.systemPrompt).toContain('└── package.json');
+    expect(created.agent.config.systemPrompt).not.toContain('hidden.md');
+    expect(created.agent.config.systemPrompt).not.toContain('ci.yml');
     expect(created.agent.config.systemPrompt).toContain('<!-- From: /repo/AGENTS.md -->');
     expect(created.agent.config.systemPrompt).toContain('root instructions');
     expect(created.agent.config.systemPrompt).toContain(

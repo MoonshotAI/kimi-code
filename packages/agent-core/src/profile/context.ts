@@ -16,7 +16,7 @@ export async function prepareSystemPromptContext(
   brandHome?: string,
 ): Promise<PreparedSystemPromptContext> {
   const [cwdListing, agentsMd] = await Promise.all([
-    listDirectory(kaos),
+    listDirectory(kaos, undefined, { collapseHiddenDirs: true }),
     loadAgentsMd(kaos, brandHome),
   ]);
   return { cwdListing, agentsMd };
