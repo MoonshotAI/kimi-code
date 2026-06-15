@@ -137,7 +137,7 @@ export class SessionPickerComponent extends Container implements Focusable {
   private resolveInitialSelectedIndex(initialSelectedSessionId: string | undefined): number {
     if (initialSelectedSessionId === undefined) return 0;
     const index = this.sessions.findIndex((session) => session.id === initialSelectedSessionId);
-    return index >= 0 ? index : 0;
+    return Math.max(index, 0);
   }
 
   private filteredSessions(): readonly SessionRow[] {
@@ -206,9 +206,16 @@ export class SessionPickerComponent extends Container implements Focusable {
   // prevents the "Rendered line exceeds terminal width" crash (issue #240).
   private renderLines(width: number): string[] {
     const lines: string[] = [currentTheme.fg('primary', '─'.repeat(width))];
+    const title = this.scope === 'all' ? 'All sessions' : 'Sessions';
+    const scopeHint =
+      this.onToggleScope === undefined
+        ? undefined
+        : this.scope === 'all'
+          ? 'Ctrl+A current cwd'
+          : 'Ctrl+A all';
 
     if (this.loading) {
-      lines.push(currentTheme.boldFg('primary', truncateToWidth('Sessions', width, ELLIPSIS)));
+      lines.push(currentTheme.boldFg('primary', truncateToWidth(title, width, ELLIPSIS)));
       lines.push(
         currentTheme.fg('textMuted', truncateToWidth('Loading sessions...', width, ELLIPSIS)),
       );
@@ -217,27 +224,24 @@ export class SessionPickerComponent extends Container implements Focusable {
     }
 
     if (this.sessions.length === 0) {
-      lines.push(currentTheme.boldFg('primary', truncateToWidth('Sessions', width, ELLIPSIS)));
+      const hintParts = [scopeHint, 'Esc cancel'].filter(
+        (item): item is string => item !== undefined,
+      );
+      lines.push(currentTheme.boldFg('primary', truncateToWidth(title, width, ELLIPSIS)));
       lines.push(
-        currentTheme.fg(
-          'textMuted',
-          truncateToWidth('No sessions found. Press Escape to close.', width, ELLIPSIS),
-        ),
+        currentTheme.fg('textMuted', truncateToWidth(hintParts.join(' · '), width, ELLIPSIS)),
+      );
+      lines.push('');
+      lines.push(
+        currentTheme.fg('textMuted', truncateToWidth('No sessions found.', width, ELLIPSIS)),
       );
       lines.push(currentTheme.fg('primary', '─'.repeat(width)));
       return lines;
     }
 
     const view = this.list.view();
-    const title = this.scope === 'all' ? 'All sessions' : 'Sessions';
     const titleSuffix =
       view.query.length === 0 ? currentTheme.fg('textMuted', '  (type to search)') : '';
-    const scopeHint =
-      this.onToggleScope === undefined
-        ? undefined
-        : this.scope === 'all'
-          ? 'Ctrl+A current cwd'
-          : 'Ctrl+A all';
     const hintParts = [
       ...(view.query.length > 0 ? ['Backspace clear'] : []),
       '↑↓ navigate',

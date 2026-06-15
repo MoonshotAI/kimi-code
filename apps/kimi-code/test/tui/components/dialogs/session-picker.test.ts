@@ -337,7 +337,7 @@ describe('SessionPickerComponent', () => {
       onToggleScope,
     });
 
-    component.handleInput('\u001b[B');
+    component.handleInput('\u001B[B');
     component.handleInput('\u0001');
 
     expect(onToggleScope).toHaveBeenCalledOnce();
@@ -360,6 +360,23 @@ describe('SessionPickerComponent', () => {
 
     expect(onToggleScope).toHaveBeenCalledOnce();
     expect(onToggleScope).toHaveBeenCalledWith('ses_current');
+  });
+
+  it('renders the Ctrl+A all-sessions hint when the current cwd has no sessions', () => {
+    const component = new SessionPickerComponent({
+      sessions: [],
+      loading: false,
+      currentSessionId: 'ses_current',
+      scope: 'cwd',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onToggleScope: vi.fn(),
+    });
+
+    const output = renderPlain(component);
+
+    expect(output).toContain('No sessions found.');
+    expect(output).toContain('Ctrl+A all');
   });
 
   it('renders all-sessions scope header and Ctrl+A current-cwd hint', () => {
@@ -429,7 +446,7 @@ describe('SessionPickerComponent', () => {
     });
 
     for (let i = 0; i < 50; i++) {
-      component.handleInput('\u001b[B');
+      component.handleInput('\u001B[B');
     }
 
     const output = renderPlain(component);
@@ -649,7 +666,7 @@ describe('SessionPickerComponent', () => {
     component.handleInput('l');
     component.handleInput('e');
     for (let i = 0; i < 50; i++) {
-      component.handleInput('\u001b[B');
+      component.handleInput('\u001B[B');
     }
 
     const output = renderPlain(component);
