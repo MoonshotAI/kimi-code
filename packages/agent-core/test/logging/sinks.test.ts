@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PENDING_MAX, RotatingFileSink } from '#/logging/sinks';
 
 let workDir: string;
+const itPosix = process.platform === 'win32' ? it.skip : it;
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), 'logger-sinks-'));
@@ -75,6 +76,33 @@ describe('RotatingFileSink', () => {
     expect(files).toContain('app.log.1');
     for (const file of files) {
       expect((await stat(join(workDir, file))).size).toBeLessThanOrEqual(maxBytes);
+    }
+  });
+
+  itPosix('keeps writing when rotation is temporarily blocked', async () => {
+    const dir = join(workDir, 'locked');
+    const path = join(dir, 'app.log');
+    await mkdir(dir);
+    await writeFile(path, 'seed\n', 'utf-8');
+    await chmod(dir, 0o555);
+
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const sink = new RotatingFileSink({ path, maxBytes: 8, files: 2 });
+      sink.enqueue('after\n');
+
+      expect(await sink.flush()).toBe(true);
+      await chmod(dir, 0o755);
+
+      const text = await readFile(path, 'utf-8');
+      expect(text).toContain('seed\n');
+      expect(text).toContain('after\n');
+      expect(
+        stderrSpy.mock.calls.some((c) => String(c[0]).includes('[logger] write failed')),
+      ).toBe(false);
+    } finally {
+      stderrSpy.mockRestore();
+      await chmod(dir, 0o755).catch(() => {});
     }
   });
 
