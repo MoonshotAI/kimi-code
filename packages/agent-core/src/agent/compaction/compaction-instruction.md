@@ -65,3 +65,5 @@ The goal of compaction is to keep essential code patterns, technical details, an
 
 - [Detailed non tool use user message]
 - ...
+
+<!-- Must output a summary matching the above template in the **final answer**, not in thinking. -->

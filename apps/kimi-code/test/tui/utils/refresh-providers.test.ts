@@ -126,6 +126,92 @@ describe('refreshAllProviderModels', () => {
     expect(resolveOAuthToken).toHaveBeenCalledWith(KIMI_CODE_PROVIDER_NAME, envOauthRef);
   });
 
+  it('can refresh only the managed OAuth provider without fetching third-party registries', async () => {
+    const baseUrl = 'https://api.example.test/coding/v1';
+    const registryUrl = 'https://registry.example.test/v1/models/api.json';
+    const config: KimiConfig = {
+      providers: {
+        [KIMI_CODE_PROVIDER_NAME]: {
+          type: 'kimi',
+          baseUrl,
+          apiKey: '',
+          oauth: {
+            storage: 'file',
+            key: resolveKimiCodeOAuthKey({ baseUrl }),
+          },
+        },
+        custom: {
+          type: 'openai',
+          baseUrl: 'https://custom.example.test/v1',
+          apiKey: 'sk-test-token',
+          source: { kind: 'apiJson', url: registryUrl, apiKey: 'sk-test-token' },
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-for-coding',
+          maxContextSize: 262144,
+          capabilities: ['thinking', 'tool_use'],
+          displayName: 'Old Kimi',
+        },
+        'custom/m1': {
+          provider: 'custom',
+          model: 'm1',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'Custom M1',
+        },
+      },
+      defaultModel: 'kimi-code/kimi-for-coding',
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    const resolveOAuthToken = vi.fn(async () => 'oauth-access-token');
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      expect(fetchInputUrl(input)).toBe(`${baseUrl}/models`);
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer oauth-access-token');
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'kimi-for-coding',
+              context_length: 262144,
+              supports_reasoning: true,
+              display_name: 'Fresh Kimi',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels(
+      {
+        getConfig: async () => host.current(),
+        removeProvider: host.removeProvider,
+        setConfig: host.setConfig,
+        resolveOAuthToken,
+      },
+      { scope: 'oauth' },
+    );
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      {
+        providerId: KIMI_CODE_PROVIDER_NAME,
+        providerName: 'Kimi Code',
+        added: 0,
+        removed: 0,
+      },
+    ]);
+    expect(result.unchanged).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(host.current().models?.['kimi-code/kimi-for-coding']?.displayName).toBe('Fresh Kimi');
+    expect(host.current().models?.['custom/m1']?.displayName).toBe('Custom M1');
+  });
+
   it('refreshes custom-registry model capabilities even when model ids are unchanged', async () => {
     const registryUrl = 'https://registry.example.test/v1/models/api.json';
     const providerId = 'example_chat-completions';
@@ -259,6 +345,289 @@ describe('refreshAllProviderModels', () => {
       'video_in',
     ]);
     expect(host.current().models?.[userAlias]).toEqual(userAliasModel);
+  });
+
+  it('adds custom-registry providers that appear under an existing source URL', async () => {
+    const registryUrl = 'https://registry.example.test/v1/models/api.json';
+    const apiKey = 'sk-test-token';
+    const source = { kind: 'apiJson', url: registryUrl, apiKey };
+    const host = makeRefreshHost({
+      providers: {
+        a: {
+          type: 'openai',
+          baseUrl: 'https://a.example.test/v1',
+          apiKey,
+          source,
+        },
+      },
+      models: {
+        'a/m1': {
+          provider: 'a',
+          model: 'm1',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'm1',
+        },
+      },
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      expect(fetchInputUrl(input)).toBe(registryUrl);
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer sk-test-token');
+      return new Response(
+        JSON.stringify({
+          a: {
+            id: 'a',
+            name: 'Provider A',
+            api: 'https://a.example.test/v1',
+            type: 'openai',
+            models: { m1: { id: 'm1' } },
+          },
+          b: {
+            id: 'b',
+            name: 'Provider B',
+            api: 'https://b.example.test/v1',
+            type: 'openai',
+            models: { m1: { id: 'm1' } },
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.unchanged).toEqual(['a']);
+    expect(result.changed).toEqual([
+      {
+        providerId: 'b',
+        providerName: 'Provider B',
+        added: 1,
+        removed: 0,
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(host.removeProvider).not.toHaveBeenCalled();
+    expect(host.setConfig).toHaveBeenCalledTimes(1);
+    expect(Object.keys(host.current().providers).toSorted()).toEqual(['a', 'b']);
+    expect(host.current().providers['b']).toMatchObject({
+      type: 'openai',
+      baseUrl: 'https://b.example.test/v1',
+      apiKey,
+      source,
+    });
+    expect(host.current().models?.['b/m1']).toEqual({
+      provider: 'b',
+      model: 'm1',
+      maxContextSize: 131072,
+      capabilities: ['tool_use'],
+      displayName: 'm1',
+    });
+  });
+
+  it('removes custom-registry providers that disappear from an existing source URL', async () => {
+    const registryUrl = 'https://registry.example.test/v1/models/api.json';
+    const apiKey = 'sk-test-token';
+    const source = { kind: 'apiJson', url: registryUrl, apiKey };
+    const host = makeRefreshHost({
+      providers: {
+        a: {
+          type: 'openai',
+          baseUrl: 'https://a.example.test/v1',
+          apiKey,
+          source,
+        },
+        b: {
+          type: 'openai',
+          baseUrl: 'https://b.example.test/v1',
+          apiKey,
+          source,
+        },
+      },
+      models: {
+        'a/m1': {
+          provider: 'a',
+          model: 'm1',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'm1',
+        },
+        'b/m1': {
+          provider: 'b',
+          model: 'm1',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'm1',
+        },
+        'my-b': {
+          provider: 'b',
+          model: 'm1',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'My B',
+        },
+      },
+      defaultModel: 'my-b',
+      defaultThinking: true,
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      expect(fetchInputUrl(input)).toBe(registryUrl);
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer sk-test-token');
+      return new Response(
+        JSON.stringify({
+          a: {
+            id: 'a',
+            name: 'Provider A',
+            api: 'https://a.example.test/v1',
+            type: 'openai',
+            models: { m1: { id: 'm1' } },
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.unchanged).toEqual(['a']);
+    expect(result.changed).toEqual([
+      {
+        providerId: 'b',
+        providerName: 'b',
+        added: 0,
+        removed: 1,
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(host.removeProvider).toHaveBeenCalledWith('b');
+    expect(host.setConfig).toHaveBeenCalledTimes(1);
+    expect(Object.keys(host.current().providers)).toEqual(['a']);
+    expect(host.current().models?.['a/m1']).toBeDefined();
+    expect(host.current().models?.['b/m1']).toBeUndefined();
+    expect(host.current().models?.['my-b']).toBeUndefined();
+    expect(host.current().defaultModel).toBeUndefined();
+    expect(host.current().defaultThinking).toBeUndefined();
+  });
+
+  it('coalesces duplicate custom-registry source URLs without reporting config-only changes', async () => {
+    const registryUrl = 'https://registry.example.test/v1/models/api.json';
+    const oldSource = { kind: 'apiJson', url: registryUrl, apiKey: 'sk-old-token' };
+    const newSource = { kind: 'apiJson', url: registryUrl, apiKey: 'sk-new-token' };
+    const host = makeRefreshHost({
+      providers: {
+        a: {
+          type: 'openai',
+          baseUrl: 'https://a.example.test/v1',
+          apiKey: 'sk-old-token',
+          source: oldSource,
+        },
+        b: {
+          type: 'openai',
+          baseUrl: 'https://b.example.test/v1',
+          apiKey: 'sk-new-token',
+          source: newSource,
+        },
+      },
+      models: {
+        'a/m1': {
+          provider: 'a',
+          model: 'm1',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'm1',
+        },
+        'b/m1': {
+          provider: 'b',
+          model: 'm1',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'm1',
+        },
+      },
+      telemetry: true,
+    } as unknown as KimiConfig);
+
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      expect(fetchInputUrl(input)).toBe(registryUrl);
+      const authorization = new Headers(init?.headers).get('authorization');
+      if (authorization === 'Bearer sk-old-token') {
+        return new Response(JSON.stringify({ message: 'expired token' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      expect(authorization).toBe('Bearer sk-new-token');
+      return new Response(
+        JSON.stringify({
+          a: {
+            id: 'a',
+            name: 'Provider A',
+            api: 'https://a.example.test/v1',
+            type: 'openai',
+            models: { m1: { id: 'm1' } },
+          },
+          b: {
+            id: 'b',
+            name: 'Provider B',
+            api: 'https://b.example.test/v1',
+            type: 'openai',
+            models: { m1: { id: 'm1' }, m2: { id: 'm2' } },
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.unchanged).toEqual(['a']);
+    expect(result.changed).toEqual([
+      {
+        providerId: 'b',
+        providerName: 'Provider B',
+        added: 1,
+        removed: 0,
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(host.removeProvider).toHaveBeenCalledWith('a');
+    expect(host.removeProvider).toHaveBeenCalledWith('b');
+    expect(host.setConfig).toHaveBeenCalledTimes(1);
+    expect(host.current().providers['a']?.source).toEqual(newSource);
+    expect(host.current().providers['b']?.source).toEqual(newSource);
+    expect(host.current().providers['a']?.apiKey).toBe('sk-new-token');
+    expect(host.current().providers['b']?.apiKey).toBe('sk-new-token');
+    expect(host.current().models?.['b/m2']).toEqual({
+      provider: 'b',
+      model: 'm2',
+      maxContextSize: 131072,
+      capabilities: ['tool_use'],
+      displayName: 'm2',
+    });
   });
 
   it('ignores user-defined aliases when custom-registry metadata is unchanged', async () => {

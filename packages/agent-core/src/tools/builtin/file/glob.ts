@@ -43,7 +43,7 @@ import type { PathClass } from '../../policies/path-access';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
-import GLOB_DESCRIPTION from './glob.md';
+import GLOB_DESCRIPTION from './glob.md?raw';
 
 export const GlobInputSchema = z.object({
   pattern: z.string().describe('Glob pattern to match files/directories.'),

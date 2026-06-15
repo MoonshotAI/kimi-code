@@ -6,6 +6,8 @@ import type { Tool } from '@moonshot-ai/kosong';
 
 import { abortable } from '../utils/abort';
 import { HttpMcpClient } from './client-http';
+import { isRemoteMcpConfig } from './client-remote';
+import { SseMcpClient } from './client-sse';
 import type { UnexpectedCloseReason } from './client-shared';
 import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from './oauth';
@@ -15,7 +17,7 @@ export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 
 
 export interface McpServerEntry {
   readonly name: string;
-  readonly transport: 'stdio' | 'http';
+  readonly transport: McpServerConfig['transport'];
   readonly status: McpServerStatus;
   readonly toolCount: number;
   readonly error?: string;
@@ -36,12 +38,12 @@ export type McpStatusListener = (entry: McpServerEntry) => void;
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 
-type RuntimeMcpClient = StdioMcpClient | HttpMcpClient;
+type RuntimeMcpClient = StdioMcpClient | HttpMcpClient | SseMcpClient;
 
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
   /**
-   * Optional OAuth orchestrator. When provided, HTTP servers without a
+   * Optional OAuth orchestrator. When provided, remote servers without a
    * static bearer token participate in the OAuth-via-synthetic-tool flow:
    *  - If `oauthService.hasTokens(name, url)` is true, the provider is
    *    attached to the transport so the SDK can refresh tokens on 401.
@@ -88,15 +90,23 @@ export class McpConnectionManager {
   }
 
   /**
-   * Returns the URL of an HTTP MCP server by name, or `undefined` for
-   * unknown / non-HTTP / disabled entries. Used by the synthetic auth tool
+   * Returns the URL of a remote MCP server by name, or `undefined` for
+   * unknown / non-remote / disabled entries. Used by the synthetic auth tool
    * to drive OAuth discovery against the right base URL.
    */
-  getHttpServerUrl(name: string): string | undefined {
+  getRemoteServerUrl(name: string): string | undefined {
     const entry = this.entries.get(name);
     if (entry === undefined) return undefined;
-    if (entry.config.transport !== 'http') return undefined;
+    if (!isRemoteMcpConfig(entry.config)) return undefined;
     return entry.config.url;
+  }
+
+  /**
+   * @deprecated Use {@link getRemoteServerUrl}. Kept for in-repo callers that
+   * were written before legacy SSE support shared the same OAuth path.
+   */
+  getHttpServerUrl(name: string): string | undefined {
+    return this.getRemoteServerUrl(name);
   }
 
   onStatusChange(listener: McpStatusListener): () => void {
@@ -323,6 +333,13 @@ export class McpConnectionManager {
     if (config.transport === 'stdio') {
       return new StdioMcpClient(config, { toolCallTimeoutMs });
     }
+    if (config.transport === 'sse') {
+      return new SseMcpClient(config, {
+        toolCallTimeoutMs,
+        envLookup: this.options.envLookup,
+        oauthProvider: this.resolveOAuthProvider(config, name),
+      });
+    }
     return new HttpMcpClient(config, {
       toolCallTimeoutMs,
       envLookup: this.options.envLookup,
@@ -336,7 +353,7 @@ export class McpConnectionManager {
   ): ReturnType<McpOAuthService['getProvider']> | undefined {
     const oauthService = this.oauthService;
     if (oauthService === undefined) return undefined;
-    if (config.transport !== 'http') return undefined;
+    if (!isRemoteMcpConfig(config)) return undefined;
     if (config.bearerTokenEnvVar !== undefined) return undefined;
     // Only attach the provider once tokens have been minted; before that,
     // the transport should propagate a clean 401 so we can flip the entry
@@ -348,7 +365,7 @@ export class McpConnectionManager {
 
   private shouldMarkNeedsAuth(entry: InternalEntry, error: unknown): boolean {
     if (this.oauthService === undefined) return false;
-    if (entry.config.transport !== 'http') return false;
+    if (!isRemoteMcpConfig(entry.config)) return false;
     if (entry.config.bearerTokenEnvVar !== undefined) return false;
     // If the user pinned a static `headers` block, treat 401s as a bad header
     // rather than hijacking them into the OAuth flow — the real error is more

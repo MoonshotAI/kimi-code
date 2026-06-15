@@ -20,7 +20,13 @@ const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
 const TOOL_EMPTY_ERROR_STATUS =
   '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
 const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
+const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
+  'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
 
+// Invariant: _history must not contain an unresolved tool call exchange except
+// at the tail. When the tail is unresolved, pendingToolResultIds is exactly the
+// set of missing tool result ids for that tail exchange; appendMessage keeps
+// later messages in deferredMessages until those ids are resolved.
 export class ContextMemory {
   private _history: ContextMessage[] = [];
   private _tokenCount = 0;
@@ -208,6 +214,24 @@ export class ContextMemory {
   useProjectedHistoryFrom(source: ContextMemory): void {
     this.clear();
     this.pushHistory(...trimTrailingOpenToolExchange(source.project(source.history)));
+  }
+
+  finishResume(): void {
+    const interruptedToolCallIds = [...this.pendingToolResultIds];
+    this.openSteps.clear();
+    if (interruptedToolCallIds.length === 0) return;
+
+    for (const toolCallId of interruptedToolCallIds) {
+      this.appendLoopEvent({
+        type: 'tool.result',
+        parentUuid: toolCallId,
+        toolCallId,
+        result: {
+          output: TOOL_INTERRUPTED_ON_RESUME_OUTPUT,
+          isError: true,
+        },
+      });
+    }
   }
 
   appendLoopEvent(event: LoopRecordedEvent): void {

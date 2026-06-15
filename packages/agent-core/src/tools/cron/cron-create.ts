@@ -42,7 +42,7 @@ import {
   oneShotJitteredNextCronRunMs,
 } from './jitter';
 import { formatLocalIsoWithOffset } from './time-format';
-import CRON_CREATE_DESCRIPTION from './cron-create.md';
+import CRON_CREATE_DESCRIPTION from './cron-create.md?raw';
 
 // ── Constants ────────────────────────────────────────────────────────
 

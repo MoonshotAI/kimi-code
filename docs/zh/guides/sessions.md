@@ -51,7 +51,7 @@ kimi --session
 ```
 
 ::: warning 注意
-`--continue` 与 `--session` 互斥；`--yolo` 和 `--plan` 也不能与它们同时使用。
+`--continue` 与 `--session` 互斥。
 :::
 
 ## 在 TUI 中切换会话

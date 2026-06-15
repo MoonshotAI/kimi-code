@@ -65,35 +65,10 @@ importers:
         version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
 
   apps/kimi-code:
-    dependencies:
+    devDependencies:
       '@earendil-works/pi-tui':
         specifier: ^0.74.0
         version: 0.74.0
-      '@mariozechner/clipboard':
-        specifier: ^0.3.2
-        version: 0.3.2
-      chalk:
-        specifier: ^5.4.1
-        version: 5.6.2
-      cli-highlight:
-        specifier: ^2.1.11
-        version: 2.1.11
-      commander:
-        specifier: ^13.1.0
-        version: 13.1.0
-      pathe:
-        specifier: ^2.0.3
-        version: 2.0.3
-      semver:
-        specifier: ^7.7.4
-        version: 7.7.4
-      smol-toml:
-        specifier: ^1.6.1
-        version: 1.6.1
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
-    devDependencies:
       '@moonshot-ai/acp-adapter':
         specifier: workspace:^
         version: link:../../packages/acp-adapter
@@ -115,15 +90,43 @@ importers:
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
+      chalk:
+        specifier: ^5.4.1
+        version: 5.6.2
+      cli-highlight:
+        specifier: ^2.1.11
+        version: 2.1.11
+      commander:
+        specifier: ^13.1.0
+        version: 13.1.0
+      pathe:
+        specifier: ^2.0.3
+        version: 2.0.3
       postject:
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6
+      semver:
+        specifier: ^7.7.4
+        version: 7.7.4
+      smol-toml:
+        specifier: ^1.6.1
+        version: 1.6.1
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
       yazl:
         specifier: ^3.3.1
         version: 3.3.1
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    optionalDependencies:
+      '@mariozechner/clipboard':
+        specifier: ^0.3.2
+        version: 0.3.2
+      koffi:
+        specifier: ^2.16.0
+        version: 2.16.0
 
   apps/vis:
     devDependencies:
@@ -6438,6 +6441,7 @@ snapshots:
       '@mariozechner/clipboard-linux-x64-musl': 0.3.2
       '@mariozechner/clipboard-win32-arm64-msvc': 0.3.2
       '@mariozechner/clipboard-win32-x64-msvc': 0.3.2
+    optional: true
 
   '@mermaid-js/mermaid-mindmap@9.3.0':
     dependencies:

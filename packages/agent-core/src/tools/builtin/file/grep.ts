@@ -35,7 +35,7 @@ import { ensureRgPath, rgUnavailableMessage } from '../../support/rg-locator';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
 import type { WorkspaceConfig } from '../../support/workspace';
-import GREP_DESCRIPTION from './grep.md';
+import GREP_DESCRIPTION from './grep.md?raw';
 
 export const GrepInputSchema = z.object({
   pattern: z.string().describe('Regular expression to search for.'),

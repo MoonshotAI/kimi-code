@@ -28,6 +28,8 @@ import type { SlashCommandHost } from './dispatch';
 // Plan / Config commands
 // ---------------------------------------------------------------------------
 
+const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
+
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
@@ -196,8 +198,9 @@ export async function handleThemeCommand(host: SlashCommandHost, args: string): 
   await applyThemeChoice(host, theme);
 }
 
-export function handleModelCommand(host: SlashCommandHost, args: string): void {
+export async function handleModelCommand(host: SlashCommandHost, args: string): Promise<void> {
   const alias = args.trim();
+  await refreshModelsForPicker(host);
   if (alias.length === 0) {
     showModelPicker(host);
     return;
@@ -227,6 +230,37 @@ function showEditorPicker(host: SlashCommandHost): void {
       },
     }),
   );
+}
+
+async function refreshModelsForPicker(host: SlashCommandHost): Promise<void> {
+  try {
+    const result = await withTimeout(
+      host.authFlow.refreshOAuthProviderModels(),
+      MODEL_PICKER_REFRESH_TIMEOUT_MS,
+    );
+    if (result === undefined) return;
+    for (const f of result.failed) {
+      host.showStatus(`Skipped refreshing ${f.provider}: ${f.reason}`, 'warning');
+    }
+  } catch (error) {
+    host.showStatus(`Skipped refreshing models: ${formatErrorMessage(error)}`, 'warning');
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<undefined>((resolve) => {
+        timeout = setTimeout(() => {
+          resolve(undefined);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 async function applyEditorChoice(host: SlashCommandHost, value: string): Promise<void> {

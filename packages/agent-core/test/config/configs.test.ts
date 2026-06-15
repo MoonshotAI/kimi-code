@@ -9,10 +9,13 @@ import { ErrorCodes, KimiError } from '../../src/errors';
 import {
   KimiConfigSchema,
   ensureConfigFile,
+  loadRuntimeConfig,
+  loadRuntimeConfigSafe,
   mergeConfigPatch,
   parseConfigString,
   parseBooleanEnv,
   readConfigFile,
+  readConfigFileForUpdate,
   resolveConfigPath,
   resolveConfigValue,
   resolveKimiHome,
@@ -232,29 +235,29 @@ source = { kind = "apiJson", url = "https://registry.example/api.json", apiKey =
     const toml = `
 [providers."managed:kimi-code"]
 type = "kimi"
-base_url = "https://coding.deva.msh.team/coding/v1"
+base_url = "https://api.dev.example.test/coding/v1"
 api_key = ""
-oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "https://auth.dev.kimi.team" }
+oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "https://auth.dev.example.test" }
 
 [services.moonshot_search]
-base_url = "https://coding.deva.msh.team/coding/v1/search"
+base_url = "https://api.dev.example.test/coding/v1/search"
 api_key = ""
-oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "https://auth.dev.kimi.team" }
+oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "https://auth.dev.example.test" }
 `;
     const config = parseConfigString(toml, configPath);
     expect(config.providers['managed:kimi-code']?.oauth).toEqual({
       storage: 'file',
       key: 'oauth/kimi-code-env-1234',
-      oauthHost: 'https://auth.dev.kimi.team',
+      oauthHost: 'https://auth.dev.example.test',
     });
-    expect(config.services?.moonshotSearch?.oauth?.oauthHost).toBe('https://auth.dev.kimi.team');
+    expect(config.services?.moonshotSearch?.oauth?.oauthHost).toBe('https://auth.dev.example.test');
 
     await writeConfigFile(configPath, config);
     const text = await readFile(configPath, 'utf-8');
-    expect(text).toContain('oauth_host = "https://auth.dev.kimi.team"');
+    expect(text).toContain('oauth_host = "https://auth.dev.example.test"');
     const roundTripped = parseConfigString(text, configPath);
     expect(roundTripped.providers['managed:kimi-code']?.oauth?.oauthHost).toBe(
-      'https://auth.dev.kimi.team',
+      'https://auth.dev.example.test',
     );
   });
 
@@ -659,5 +662,211 @@ describe('config value env override helpers', () => {
         parseEnv: parseBooleanEnv,
       }),
     ).toBe(false);
+  });
+});
+
+describe('loadRuntimeConfigSafe', () => {
+  const VALID_TOML = `
+default_model = "k2"
+
+[providers.kimi]
+type = "kimi"
+api_key = "sk-good"
+
+[models.k2]
+provider = "kimi"
+model = "kimi-for-coding"
+max_context_size = 128000
+`;
+
+  async function writeTempConfig(text: string): Promise<string> {
+    const configPath = join(makeTempDir(), 'config.toml');
+    await writeFile(configPath, text, 'utf-8');
+    return configPath;
+  }
+
+  it('loads a valid file with no warnings, matching the strict loader', async () => {
+    const configPath = await writeTempConfig(VALID_TOML);
+    const result = loadRuntimeConfigSafe(configPath, {});
+    expect(result.fileWarnings).toEqual([]);
+    expect(result.envWarnings).toEqual([]);
+    expect(result.config).toEqual(loadRuntimeConfig(configPath, {}));
+  });
+
+  it('returns defaults with no warnings when the file is missing', () => {
+    const configPath = join(makeTempDir(), 'config.toml');
+    const result = loadRuntimeConfigSafe(configPath, {});
+    expect(result.fileWarnings).toEqual([]);
+    expect(result.envWarnings).toEqual([]);
+    expect(result.config.providers).toEqual({});
+  });
+
+  it('reports a fileError and defaults on invalid TOML syntax', async () => {
+    const configPath = await writeTempConfig('[[[');
+    const result = loadRuntimeConfigSafe(configPath, {});
+    expect(result.config.providers).toEqual({});
+    // The whole file is unusable: callers decide to fail startup (fileError)
+    // or keep the last good config mid-run (fileWarnings).
+    expect(result.fileError).toBeInstanceOf(KimiError);
+    expect(result.fileError?.code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect(result.fileError?.message).toContain('Invalid TOML');
+    expect(result.fileError?.message).toContain(configPath);
+    expect(result.fileWarnings).toHaveLength(1);
+    const warning = result.fileWarnings[0]!;
+    expect(warning).toContain('Invalid TOML');
+    // Single-line summary with the error location, not the multi-line code frame.
+    expect(warning).not.toContain('\n');
+    expect(warning).toContain('line 1');
+  });
+
+  it('does not set fileError when only sections are dropped', async () => {
+    const configPath = await writeTempConfig(`${VALID_TOML}
+[loop_control]
+max_steps_per_turn = "nope"
+`);
+    const result = loadRuntimeConfigSafe(configPath, {});
+    expect(result.fileError).toBeUndefined();
+    expect(result.fileWarnings).toHaveLength(1);
+  });
+
+  it('drops only an invalid section on schema errors and keeps the rest', async () => {
+    const configPath = await writeTempConfig(`${VALID_TOML}
+[loop_control]
+max_steps_per_turn = "not-a-number"
+`);
+    const result = loadRuntimeConfigSafe(configPath, {});
+    expect(result.config.loopControl).toBeUndefined();
+    expect(result.config.providers['kimi']).toMatchObject({ type: 'kimi', apiKey: 'sk-good' });
+    expect(result.config.models?.['k2']).toMatchObject({ maxContextSize: 128000 });
+    expect(result.config.defaultModel).toBe('k2');
+    expect(result.fileWarnings).toHaveLength(1);
+    expect(result.fileWarnings[0]).toContain('loop_control');
+    // The original file content stays visible in raw so nothing is lost.
+    expect(result.config.raw?.['loop_control']).toEqual({ max_steps_per_turn: 'not-a-number' });
+  });
+
+  it('drops only the broken provider entry, keeping other providers', async () => {
+    const configPath = await writeTempConfig(`${VALID_TOML}
+[providers.bad]
+type = "not-a-provider"
+`);
+    const result = loadRuntimeConfigSafe(configPath, {});
+    expect(result.config.providers['bad']).toBeUndefined();
+    expect(result.config.providers['kimi']).toMatchObject({ type: 'kimi' });
+    expect(result.fileWarnings).toHaveLength(1);
+    expect(result.fileWarnings[0]).toContain('providers.bad');
+  });
+
+  it('keeps other providers when one entry has multiple validation issues', async () => {
+    // Two issues on the same entry: the second must not escalate to
+    // deleting the whole providers section after the first dropped the entry.
+    const configPath = await writeTempConfig(`${VALID_TOML}
+[providers.bad]
+type = "not-a-provider"
+api_key = 123
+`);
+    const result = loadRuntimeConfigSafe(configPath, {});
+    expect(result.config.providers['bad']).toBeUndefined();
+    expect(result.config.providers['kimi']).toMatchObject({ type: 'kimi' });
+    expect(result.fileWarnings).toHaveLength(1);
+    expect(result.fileWarnings[0]).toContain('providers.bad');
+    expect(result.fileWarnings[0]).not.toMatch(/providers[,.]? /);
+  });
+
+  it('drops only the broken model entry', async () => {
+    const configPath = await writeTempConfig(`${VALID_TOML}
+[models.broken]
+provider = "kimi"
+model = "x"
+max_context_size = -5
+`);
+    const result = loadRuntimeConfigSafe(configPath, {});
+    expect(result.config.models?.['broken']).toBeUndefined();
+    expect(result.config.models?.['k2']).toBeDefined();
+    expect(result.fileWarnings[0]).toContain('models.broken');
+  });
+
+  it('drops the whole hooks list when one hook is invalid', async () => {
+    const configPath = await writeTempConfig(`${VALID_TOML}
+[[hooks]]
+event = "NotARealEvent"
+command = "echo hi"
+`);
+    const result = loadRuntimeConfigSafe(configPath, {});
+    expect(result.config.hooks).toBeUndefined();
+    expect(result.config.providers['kimi']).toBeDefined();
+    expect(result.fileWarnings[0]).toContain('hooks');
+  });
+
+  it('reports every dropped section in the warning', async () => {
+    const configPath = await writeTempConfig(`${VALID_TOML}
+[loop_control]
+max_steps_per_turn = "nope"
+
+[background]
+max_running_tasks = 0
+`);
+    const result = loadRuntimeConfigSafe(configPath, {});
+    expect(result.config.loopControl).toBeUndefined();
+    expect(result.config.background).toBeUndefined();
+    expect(result.fileWarnings).toHaveLength(1);
+    expect(result.fileWarnings[0]).toContain('loop_control');
+    expect(result.fileWarnings[0]).toContain('background');
+  });
+
+  it('applies KIMI_MODEL_* env overrides on top of a salvaged config', async () => {
+    const configPath = await writeTempConfig(`${VALID_TOML}
+[loop_control]
+max_steps_per_turn = "nope"
+`);
+    const result = loadRuntimeConfigSafe(configPath, {
+      KIMI_MODEL_NAME: 'env-model',
+      KIMI_MODEL_API_KEY: 'sk-env',
+      KIMI_MODEL_MAX_CONTEXT_SIZE: '262144',
+    });
+    expect(result.envWarnings).toEqual([]);
+    expect(result.config.models?.['__kimi_env_model__']).toBeDefined();
+    expect(result.config.providers['kimi']).toBeDefined();
+    expect(result.fileWarnings).toHaveLength(1);
+  });
+
+  it('skips KIMI_MODEL_* overrides with an env warning instead of throwing', async () => {
+    const configPath = await writeTempConfig(VALID_TOML);
+    const result = loadRuntimeConfigSafe(configPath, {
+      KIMI_MODEL_NAME: 'env-model',
+    });
+    expect(result.fileWarnings).toEqual([]);
+    expect(result.envWarnings).toHaveLength(1);
+    expect(result.envWarnings[0]).toContain('KIMI_MODEL');
+    expect(result.config).toEqual(readConfigFile(configPath));
+  });
+
+  it('readConfigFileForUpdate rewraps validation errors with an actionable message', async () => {
+    const configPath = await writeTempConfig(`${VALID_TOML}
+[loop_control]
+max_steps_per_turn = "nope"
+`);
+    try {
+      readConfigFileForUpdate(configPath);
+      throw new Error('expected readConfigFileForUpdate to throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(KimiError);
+      expect((error as KimiError).message).toContain('fix it first');
+      expect((error as KimiError).message).toContain('kimi doctor');
+      expect((error as KimiError).message).not.toContain('invalid_type');
+    }
+
+    const goodPath = await writeTempConfig(VALID_TOML);
+    expect(readConfigFileForUpdate(goodPath)).toEqual(readConfigFile(goodPath));
+  });
+
+  it('drops invalid top-level scalars and keeps the rest', async () => {
+    const configPath = await writeTempConfig(`default_thinking = "not-a-boolean"
+${VALID_TOML}`);
+    const result = loadRuntimeConfigSafe(configPath, {});
+    expect(result.config.defaultThinking).toBeUndefined();
+    expect(result.config.providers['kimi']).toBeDefined();
+    expect(result.fileWarnings).toHaveLength(1);
+    expect(result.fileWarnings[0]).toContain('default_thinking');
   });
 });

@@ -117,6 +117,25 @@ describe('McpConnectionManager', () => {
     }
   });
 
+  it('marks SSE servers failed when configured bearer token env var is missing', async () => {
+    const cm = new McpConnectionManager({ envLookup: () => undefined });
+    try {
+      await cm.connectAll({
+        legacy: {
+          transport: 'sse',
+          url: 'https://example.invalid/sse',
+          bearerTokenEnvVar: 'LEGACY_MCP_TOKEN',
+        },
+      });
+      const entry = cm.get('legacy');
+      expect(entry?.transport).toBe('sse');
+      expect(entry?.status).toBe('failed');
+      expect(entry?.error).toContain('"LEGACY_MCP_TOKEN" is not set or is empty');
+    } finally {
+      await cm.shutdown();
+    }
+  });
+
   it('marks disabled servers without attempting a connection', async () => {
     const cm = new McpConnectionManager();
     try {
@@ -361,6 +380,47 @@ describe('McpConnectionManager', () => {
       const entry = cm.get('gated');
       expect(entry?.status).toBe('needs-auth');
       expect(entry?.error).toContain('run /mcp-config login gated');
+      expect(entry?.toolCount).toBe(0);
+    } finally {
+      await cm.shutdown();
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve();
+        });
+      });
+      await rm(storeDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('flips SSE servers into needs-auth when the server returns 401 and no static token is set', async () => {
+    const server: HttpServer = createHttpServer((_req, res) => {
+      res.writeHead(401, {
+        'content-type': 'text/plain',
+        'www-authenticate': 'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
+      });
+      res.end('unauthorized');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as HttpAddress).port;
+    const storeDir = await mkdtemp(join(tmpdir(), 'kimi-mcp-oauth-sse-cm-'));
+    const oauthService = new McpOAuthService({ store: new JsonFileStore(storeDir) });
+    const cm = new McpConnectionManager({ oauthService });
+    try {
+      await cm.connectAll({
+        legacy: {
+          transport: 'sse',
+          url: `http://127.0.0.1:${port}/sse`,
+          startupTimeoutMs: 5_000,
+        },
+      });
+      const entry = cm.get('legacy');
+      expect(entry?.transport).toBe('sse');
+      expect(entry?.status).toBe('needs-auth');
+      expect(entry?.error).toContain('run /mcp-config login legacy');
       expect(entry?.toolCount).toBe(0);
     } finally {
       await cm.shutdown();

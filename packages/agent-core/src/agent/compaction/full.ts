@@ -29,7 +29,7 @@ import {
   applyCompletionBudget,
   resolveCompletionBudget,
 } from '../../utils/completion-budget';
-import compactionInstructionTemplate from './compaction-instruction.md';
+import compactionInstructionTemplate from './compaction-instruction.md?raw';
 import { renderMessagesToText } from './render-messages';
 import { renderTodoList, type TodoItem } from '../../tools/builtin/state/todo-list';
 import type { CompactionBeginData, CompactionResult } from './types';

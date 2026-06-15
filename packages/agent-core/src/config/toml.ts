@@ -23,7 +23,7 @@ import {
   validateConfig,
 } from '#/config/schema';
 import { atomicWrite } from '#/utils/fs';
-import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
+import { parse as parseToml, stringify as stringifyToml, TomlError } from 'smol-toml';
 
 /* ------------------------------------------------------------------ */
 /*  Key helpers – reuse generic snake / camel conversion instead of    */
@@ -71,6 +71,27 @@ export function readConfigFile(filePath: string): KimiConfig {
 }
 
 /**
+ * Strict read for write paths (read-merge-write must never use a salvaged
+ * config as its base, or the rewrite would drop the user's broken-but-fixable
+ * sections). Re-throws validation failures with a short actionable message —
+ * UIs surface it directly — instead of the raw validation details.
+ */
+export function readConfigFileForUpdate(filePath: string): KimiConfig {
+  try {
+    return readConfigFile(filePath);
+  } catch (error) {
+    if (error instanceof KimiError && error.code === ErrorCodes.CONFIG_INVALID) {
+      throw new KimiError(
+        ErrorCodes.CONFIG_INVALID,
+        `Cannot change settings while ${filePath} is invalid — fix it first (run \`kimi doctor\` for details).`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+/**
  * Load the config for runtime consumption: the on-disk config plus any model
  * synthesized from `KIMI_MODEL_*` environment variables. Use this everywhere a
  * value is assigned to the live runtime config; use the raw `readConfigFile`
@@ -81,6 +102,164 @@ export function loadRuntimeConfig(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): KimiConfig {
   return applyEnvModelConfig(readConfigFile(filePath), env);
+}
+
+export interface RuntimeConfigLoadResult {
+  readonly config: KimiConfig;
+  /** Problems in config.toml itself; non-empty means parts (or all) of the file were ignored. */
+  readonly fileWarnings: readonly string[];
+  /** Problems applying KIMI_MODEL_* env overrides; the overlay was skipped. */
+  readonly envWarnings: readonly string[];
+  /**
+   * Set when the file is entirely unusable (unreadable, TOML syntax error, or
+   * nothing salvageable) and `config` is pure defaults. Startup fails fast on
+   * this — defaults-only means the user looks logged out, which is worse than
+   * an actionable parse error. Mid-run reloads ignore it and keep the last
+   * good config instead.
+   */
+  readonly fileError?: KimiError;
+}
+
+/**
+ * Lenient variant of `loadRuntimeConfig` that never throws: schema errors
+ * drop only the offending sections (whole entry for `providers`/`models`,
+ * whole top-level section otherwise) and a bad KIMI_MODEL_* env overlay is
+ * skipped, each reported as a warning. A file that cannot be used at all
+ * additionally sets `fileError` so startup can fail fast while mid-run
+ * reloads degrade. Runtime read paths use this; write paths must keep using
+ * the strict readers so a broken file is never silently rewritten.
+ */
+export function loadRuntimeConfigSafe(
+  filePath: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): RuntimeConfigLoadResult {
+  const fileWarnings: string[] = [];
+  let fileError: KimiError | undefined;
+  let config = getDefaultConfig();
+
+  let text: string | undefined;
+  try {
+    text = existsSync(filePath) ? readFileSync(filePath, 'utf-8') : undefined;
+  } catch (error) {
+    fileError = new KimiError(
+      ErrorCodes.CONFIG_INVALID,
+      `Failed to read ${filePath}: ${describeUnknownError(error)}`,
+      { cause: error },
+    );
+    fileWarnings.push(`Failed to read ${filePath}: ${describeUnknownError(error)}.`);
+  }
+
+  if (text !== undefined && text.trim().length > 0) {
+    let data: Record<string, unknown> | undefined;
+    try {
+      data = parseToml(text) as Record<string, unknown>;
+    } catch (error) {
+      // Same message as the strict parser, code frame included, so failing
+      // startup points straight at the offending line.
+      fileError = new KimiError(
+        ErrorCodes.CONFIG_INVALID,
+        `Invalid TOML in ${filePath}: ${describeUnknownError(error)}`,
+        { cause: error },
+      );
+      fileWarnings.push(`Invalid TOML in ${filePath}: ${describeTomlSyntaxError(error)}.`);
+    }
+    if (data !== undefined) {
+      const raw = cloneRecord(data);
+      const transformed = transformTomlData(data);
+      transformed['raw'] = raw;
+      const salvaged = salvageConfigData(transformed);
+      if (salvaged.config === undefined) {
+        fileError = new KimiError(
+          ErrorCodes.CONFIG_INVALID,
+          `Invalid configuration in ${filePath}: ${formatConfigValidationError(salvaged.error)}`,
+          { cause: salvaged.error },
+        );
+        fileWarnings.push(
+          `Invalid configuration in ${filePath}: ${formatConfigValidationError(salvaged.error)}.`,
+        );
+      } else {
+        config = salvaged.config;
+        if (salvaged.dropped.length > 0) {
+          fileWarnings.push(
+            `Ignored invalid config in ${filePath}: ${salvaged.dropped.join(', ')}. Run \`kimi doctor\` for details.`,
+          );
+        }
+      }
+    }
+  }
+
+  const envWarnings: string[] = [];
+  try {
+    config = applyEnvModelConfig(config, env);
+  } catch (error) {
+    envWarnings.push(
+      `Ignoring KIMI_MODEL_* environment overrides: ${describeUnknownError(error)}`,
+    );
+  }
+
+  return { config, fileWarnings, envWarnings, fileError };
+}
+
+/** Sections keyed by user-chosen names where single entries can be dropped. */
+const ENTRY_KEYED_SECTIONS = new Set(['providers', 'models']);
+
+interface SalvageResult {
+  readonly config: KimiConfig | undefined;
+  readonly dropped: readonly string[];
+  readonly error?: unknown;
+}
+
+function salvageConfigData(transformed: Record<string, unknown>): SalvageResult {
+  const dropped: string[] = [];
+  for (;;) {
+    const result = KimiConfigSchema.safeParse(transformed);
+    if (result.success) {
+      return { config: result.data, dropped };
+    }
+    let deletedAny = false;
+    for (const issue of result.error.issues) {
+      const [section, entry] = issue.path;
+      if (typeof section !== 'string' || !(section in transformed)) continue;
+      const sectionValue = transformed[section];
+      if (
+        ENTRY_KEYED_SECTIONS.has(section) &&
+        typeof entry === 'string' &&
+        isPlainObject(sectionValue)
+      ) {
+        // Issues on entry-keyed sections only ever drop that entry. An entry
+        // with several issues is deleted by the first one; later issues are
+        // no-ops and must not escalate to deleting the whole section.
+        if (entry in sectionValue) {
+          delete sectionValue[entry];
+          dropped.push(`${camelToSnake(section)}.${entry}`);
+          deletedAny = true;
+        }
+        continue;
+      }
+      delete transformed[section];
+      dropped.push(camelToSnake(section));
+      deletedAny = true;
+    }
+    if (!deletedAny) {
+      return { config: undefined, dropped, error: result.error };
+    }
+  }
+}
+
+function describeUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * One-line summary of a smol-toml parse error: first message line plus the
+ * line/column location, without the multi-line code-frame block.
+ */
+function describeTomlSyntaxError(error: unknown): string {
+  const firstLine = describeUnknownError(error).split('\n', 1)[0] ?? '';
+  if (error instanceof TomlError) {
+    return `${firstLine} (line ${error.line}, column ${error.column})`;
+  }
+  return firstLine;
 }
 
 export function parseConfigString(tomlText: string, filePath = 'config.toml'): KimiConfig {

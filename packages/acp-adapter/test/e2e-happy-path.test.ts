@@ -10,7 +10,7 @@
  *
  *  1. `initialize` returns the documented capability matrix
  *     (PLAN D4: image=true, audio=false, embeddedContext=true,
- *      mcp.http=true, mcp.sse=false, loadSession=true,
+ *      mcp.http=true, mcp.sse=true, loadSession=true,
  *      sessionCapabilities.list={}).
  *  2. `session/new` returns a non-empty sessionId.
  *  3. `session/prompt` streams at least one `agent_message_chunk`
@@ -171,7 +171,7 @@ describe('AcpServer end-to-end happy path', () => {
       },
       mcpCapabilities: {
         http: true,
-        sse: false,
+        sse: true,
       },
       sessionCapabilities: {
         list: {},

@@ -37,12 +37,10 @@ kimi <subcommand> [options]
 
 - `--continue` 与 `--session` 互斥——两者都表示"恢复历史会话"
 - `--yolo` 和 `--auto` 互斥——两种权限模式互斥
-- `--yolo` 与 `--auto` 不能与 `--continue` 或 `--session` 同时使用——恢复会话时沿用原会话的审批设置
-- `--plan` 不能与 `--continue` 或 `--session` 同时使用——Plan 模式只对新会话生效
 - `--prompt` 不能与 `--yolo`、`--auto` 或 `--plan` 同时使用——非交互模式固定使用 `auto` 权限
 - `--output-format` 只能与 `--prompt` 一起使用
 
-如需在恢复会话时强制使用 YOLO 或 Plan 模式，请改在交互式会话内通过斜杠命令切换。
+恢复会话时，可以通过 `--auto`、`--yolo` 或 `--plan` 覆盖原会话保存的权限或计划模式。例如，`kimi --continue --auto` 会恢复最近会话并切换到 auto 权限模式。
 
 ## 典型用法
 
@@ -228,7 +226,7 @@ kimi provider <action> [options]
 
 #### `kimi provider add <url>`
 
-从自定义 registry（`api.json`）批量导入所有供应商。命令会拉取 registry，为每个条目创建 `[providers.<id>]` 和 `[models.<alias>]`，并写入 `source` 元数据，使 TUI 下次启动时自动刷新模型列表。
+从自定义 registry（`api.json`）批量导入所有供应商。命令会拉取 registry，为每个条目创建 `[providers.<id>]` 和 `[models.<alias>]`，并写入 `source` 元数据，使 TUI 下次启动时自动刷新同一 registry 地址下的供应商和模型。
 
 | 参数 / 选项 | 说明 |
 | --- | --- |

@@ -194,7 +194,7 @@ describe('loadMcpServers', () => {
     const home = makeTempDir();
     const cwd = makeTempDir();
     await writeJson(join(home, 'mcp.json'), {
-      mcpServers: { bad: { transport: 'sse', url: 'https://x' } },
+      mcpServers: { bad: { transport: 'websocket', url: 'https://x' } },
     });
     await expect(loadMcpServers({ cwd, homeDir: home })).rejects.toMatchObject({
       code: ErrorCodes.CONFIG_INVALID,
@@ -240,6 +240,28 @@ describe('loadMcpServers', () => {
     expect(servers['remote']).toEqual({
       transport: 'http',
       url: 'https://mcp.example.com/sse',
+    });
+  });
+
+  it('loads explicit SSE server config', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        legacy: {
+          transport: 'sse',
+          url: 'https://mcp.example.com/sse',
+          headers: { 'X-Tenant': 'kimi' },
+          bearerTokenEnvVar: 'LEGACY_MCP_TOKEN',
+        },
+      },
+    });
+    const servers = await loadMcpServers({ cwd, homeDir: home });
+    expect(servers['legacy']).toEqual({
+      transport: 'sse',
+      url: 'https://mcp.example.com/sse',
+      headers: { 'X-Tenant': 'kimi' },
+      bearerTokenEnvVar: 'LEGACY_MCP_TOKEN',
     });
   });
 

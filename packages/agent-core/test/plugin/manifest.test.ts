@@ -305,6 +305,11 @@ describe('parseManifest', () => {
               url: 'https://example.com/mcp',
               headers: { 'X-Test': '1' },
             },
+            events: {
+              transport: 'sse',
+              url: 'https://example.com/sse',
+              headers: { 'X-Events': '1' },
+            },
           },
         }),
       },
@@ -323,6 +328,11 @@ describe('parseManifest', () => {
       transport: 'http',
       url: 'https://example.com/mcp',
       headers: { 'X-Test': '1' },
+    });
+    expect(result.manifest?.mcpServers?.['events']).toEqual({
+      transport: 'sse',
+      url: 'https://example.com/sse',
+      headers: { 'X-Events': '1' },
     });
   });
 

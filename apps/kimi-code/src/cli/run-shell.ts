@@ -23,6 +23,7 @@ import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { KimiTUI } from '#/tui/index';
 import { currentTheme, getColorPalette } from '#/tui/theme';
+import { combineStartupNotice } from '#/tui/utils/startup';
 
 import type { CLIOptions } from './options';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
@@ -91,6 +92,9 @@ export async function runShell(
     return;
   }
   const config = await harness.getConfig();
+  for (const warning of (await harness.getConfigDiagnostics()).warnings) {
+    configWarning = combineStartupNotice(configWarning, warning);
+  }
   const configMs = Date.now() - configStartedAt;
   const tui = new KimiTUI(harness, {
     cliOptions: opts,

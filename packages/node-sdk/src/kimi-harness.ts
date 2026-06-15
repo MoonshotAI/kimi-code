@@ -10,6 +10,7 @@ import { Session } from '#/session';
 import type { KimiAuthFacade } from '#/auth';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
+  ConfigDiagnostics,
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
@@ -213,6 +214,11 @@ export class KimiHarness {
 
   async getConfig(options: GetConfigOptions = {}): Promise<KimiConfig> {
     return this.rpc.getConfig(options);
+  }
+
+  /** Warnings from the most recent config.toml load; empty when the config is fully valid. */
+  async getConfigDiagnostics(): Promise<ConfigDiagnostics> {
+    return this.rpc.getConfigDiagnostics();
   }
 
   async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {

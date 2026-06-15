@@ -33,7 +33,7 @@ import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '../../s
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
-import readMediaDescriptionHead from './read-media.md';
+import readMediaDescriptionHead from './read-media.md?raw';
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -171,10 +171,10 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
     }
 
     try {
-      // Sniff header first — read the first 512 bytes before deciding
-      // anything about MIME.
+      // For media input, the bytes are authoritative; the extension is only
+      // a fallback for formats that cannot be sniffed from the header.
       const header = await this.kaos.readBytes(safePath, MEDIA_SNIFF_BYTES);
-      const fileType = detectFileType(safePath, header);
+      const fileType = detectFileType(safePath, header, 'media');
 
       if (fileType.kind === 'text') {
         return {
