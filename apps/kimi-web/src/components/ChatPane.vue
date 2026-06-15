@@ -175,6 +175,27 @@ const confirmingEditTurnId = ref<string | null>(null);
 const undoingTurnId = ref<string | null>(null);
 let undoTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Expanded timestamp state (keyed by turn id)
+const expandedTimeTurnIds = ref<Set<string>>(new Set());
+function isTimeExpanded(turnId: string): boolean {
+  return expandedTimeTurnIds.value.has(turnId);
+}
+function toggleTime(turnId: string): void {
+  const next = new Set(expandedTimeTurnIds.value);
+  if (next.has(turnId)) next.delete(turnId);
+  else next.add(turnId);
+  expandedTimeTurnIds.value = next;
+}
+function displayMessageTime(iso: string, turnId: string): string {
+  if (isTimeExpanded(turnId)) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    const pad2 = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  }
+  return formatMessageTime(iso, t('conversation.yesterday'));
+}
+
 function confirmEditMessage(turn: ChatTurn): void {
   if (undoingTurnId.value !== null) return;
   confirmingEditTurnId.value = null;
@@ -481,7 +502,14 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
               </button>
             </div>
           </div>
-          <div v-if="turn.createdAt" class="u-time">{{ formatMessageTime(turn.createdAt, t('conversation.yesterday')) }}</div>
+          <button
+            v-if="turn.createdAt"
+            type="button"
+            class="u-time"
+            @click.stop="toggleTime(turn.id)"
+          >
+            {{ displayMessageTime(turn.createdAt, turn.id) }}
+          </button>
         </div>
       </template>
 
@@ -893,10 +921,25 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
   margin-right: 4px;
 }
 .u-meta .u-time {
-  font-size: 0.75rem;
-  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 5px;
+  background: none;
+  border: none;
+  border-radius: 5px;
   color: var(--muted);
+  font: inherit;
+  font-size: calc(var(--ui-font-size) - 3px);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
   white-space: nowrap;
+}
+.u-meta .u-time:hover {
+  opacity: 1;
+  color: var(--blue);
+  background: var(--hover);
 }
 .u-meta .u-edit-text {
   max-width: 0;
