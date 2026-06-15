@@ -11,4 +11,7 @@ export default {
   exportLog: '故障排查日志',
   logHint: '加 ?debug=1 开启采集',
   exportLogBtn: '导出日志',
+  beta: '实验功能',
+  betaToc: '对话目录增强',
+  betaTocHint: '更大的气泡、视口指示器和悬停提示',
 };

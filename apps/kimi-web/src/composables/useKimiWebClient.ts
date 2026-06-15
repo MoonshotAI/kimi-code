@@ -595,6 +595,31 @@ function setUiFontSize(value: number): void {
 }
 
 // ---------------------------------------------------------------------------
+// Beta: proportional conversation TOC with viewport indicator and hover tooltip.
+// Default off; persisted per browser.
+// ---------------------------------------------------------------------------
+const BETA_TOC_STORAGE_KEY = 'kimi-web.beta-toc';
+function loadBetaTocFromStorage(): boolean {
+  try {
+    return localStorage.getItem(BETA_TOC_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+function saveBetaTocToStorage(v: boolean): void {
+  try {
+    localStorage.setItem(BETA_TOC_STORAGE_KEY, v ? 'true' : 'false');
+  } catch {
+    // ignore
+  }
+}
+const betaToc = ref<boolean>(loadBetaTocFromStorage());
+function setBetaToc(v: boolean): void {
+  betaToc.value = v;
+  saveBetaTocToStorage(v);
+}
+
+// ---------------------------------------------------------------------------
 // Color scheme (light / dark / system). Persisted and mirrored onto
 // <html data-color-scheme> so CSS can switch variables.
 // ---------------------------------------------------------------------------
@@ -3637,6 +3662,10 @@ export function useKimiWebClient() {
     toggleTheme,
     uiFontSize,
     setUiFontSize,
+
+    // Beta features
+    betaToc,
+    setBetaToc,
 
     // Color scheme
     colorScheme,

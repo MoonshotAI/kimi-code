@@ -28,6 +28,7 @@ const props = withDefaults(
     accent?: Accent;
     uiFontSize?: number;
     authReady?: boolean;
+    betaToc?: boolean;
   }>(),
   { theme: 'terminal', colorScheme: 'system', accent: 'blue', uiFontSize: 14, authReady: false },
 );
@@ -43,6 +44,7 @@ const emit = defineEmits<{
   setColorScheme: [colorScheme: ColorScheme];
   setAccent: [accent: Accent];
   setUiFontSize: [size: number];
+  setBetaToc: [on: boolean];
   login: [];
   logout: [];
 }>();
@@ -267,6 +269,14 @@ function onLogout(): void {
         <span class="num-unit">px</span>
       </label>
     </div>
+
+    <button type="button" class="srow" @click="emit('setBetaToc', !betaToc)">
+      <span class="srow-main">
+        <span class="srow-label">{{ t('settings.betaToc') }}</span>
+        <span class="srow-sub">{{ t('settings.betaTocHint') }}</span>
+      </span>
+      <span class="toggle" :class="{ on: betaToc }" role="switch" :aria-checked="betaToc" />
+    </button>
 
     <!-- Account: sign in / out -->
     <button v-if="authReady" type="button" class="srow acct out" @click="onLogout">

@@ -23,6 +23,8 @@ const props = defineProps<{
   notify: boolean;
   /** OS permission state ('default' | 'granted' | 'denied') for the hint. */
   notifyPermission?: string;
+  /** Beta conversation TOC (proportional, viewport, hover tooltip). */
+  betaToc?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -31,6 +33,7 @@ const emit = defineEmits<{
   setAccent: [accent: Accent];
   setUiFontSize: [size: number];
   setNotify: [on: boolean];
+  setBetaToc: [on: boolean];
   login: [];
   logout: [];
   openOnboarding: [];
@@ -160,6 +163,27 @@ function exportLog(): void {
               <span v-if="!isTraceEnabled()" class="hint">{{ t('settings.logHint') }}</span>
             </span>
             <button type="button" class="act" @click="exportLog">{{ t('settings.exportLogBtn') }}</button>
+          </div>
+        </section>
+
+        <!-- Beta -->
+        <section class="sec">
+          <h3 class="sec-title">{{ t('settings.beta') }}</h3>
+          <div class="row">
+            <span class="rlabel">
+              {{ t('settings.betaToc') }}
+              <span class="hint">{{ t('settings.betaTocHint') }}</span>
+            </span>
+            <button
+              type="button"
+              class="switch"
+              role="switch"
+              :class="{ on: betaToc }"
+              :aria-checked="betaToc"
+              @click="emit('setBetaToc', !betaToc)"
+            >
+              <span class="knob" />
+            </button>
           </div>
         </section>
       </div>

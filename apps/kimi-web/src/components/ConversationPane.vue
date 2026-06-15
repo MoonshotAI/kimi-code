@@ -101,6 +101,8 @@ const props = defineProps<{
   previewLine?: number;
   previewDownloadUrl?: string | null;
   previewExternalActions?: boolean;
+  /** Beta conversation outline: proportional bubbles, viewport indicator, hover tooltip. */
+  betaToc?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -316,6 +318,93 @@ const conversationTocItems = computed<ConversationTocItem[]>(() =>
     title: tocTitle(turn),
   })),
 );
+
+function turnContentLength(turn: ChatTurn): number {
+  if (turn.role === 'compaction') return 20;
+  if (turn.role === 'user') {
+    return (turn.text?.length ?? 0) + (turn.skillActivation ? 20 : 0);
+  }
+  return (
+    (turn.text?.length ?? 0) +
+    (turn.thinking?.length ?? 0) +
+    (turn.tools?.reduce(
+      (n, tool) => n + tool.name.length + (tool.arg?.length ?? 0) + (tool.output?.join('').length ?? 0),
+      0,
+    ) ?? 0)
+  );
+}
+
+const TOC_BUBBLE_MIN = 10;
+const TOC_BUBBLE_MAX = 56;
+const TOC_TRACK_HEIGHT = 420;
+
+const tocMetrics = computed<{ id: string; height: number }[]>(() => {
+  const items = conversationTocItems.value;
+  const lengths = items.map((item) => {
+    const turn = props.turns.find((t) => t.id === item.id);
+    return turn ? turnContentLength(turn) : TOC_BUBBLE_MIN;
+  });
+  const total = lengths.reduce((s, n) => s + n, 0) || items.length * TOC_BUBBLE_MIN;
+  return items.map((item, i) => {
+    const len = lengths[i] ?? TOC_BUBBLE_MIN;
+    const ratio = total > 0 ? len / total : 0;
+    const height = Math.max(TOC_BUBBLE_MIN, Math.min(TOC_BUBBLE_MAX, ratio * TOC_TRACK_HEIGHT));
+    return { id: item.id, height: Math.round(height) };
+  });
+});
+
+const tocTotalHeight = computed(() =>
+  tocMetrics.value.reduce((s, m) => s + m.height, 0) + (conversationTocItems.value.length - 1) * 4,
+);
+
+const activeTurnId = ref<string | null>(null);
+const tocViewport = ref<{ top: number; height: number } | null>(null);
+const tooltip = ref<{ visible: boolean; text: string; top: number }>({
+  visible: false,
+  text: '',
+  top: 0,
+});
+
+function updateTocViewport(): void {
+  const pane = panesRef.value;
+  if (!pane) return;
+  const anchors = pane.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id]');
+  if (!anchors.length) return;
+  const paneRect = pane.getBoundingClientRect();
+  const paneMiddle = paneRect.height / 2;
+  let bestId: string | null = null;
+  let bestDist = Infinity;
+  anchors.forEach((el) => {
+    const rect = el.getBoundingClientRect();
+    const top = rect.top - paneRect.top;
+    const dist = Math.abs(top + rect.height / 2 - paneMiddle);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestId = el.dataset.turnId ?? null;
+    }
+  });
+  activeTurnId.value = bestId;
+
+  const maxScroll = pane.scrollHeight - pane.clientHeight;
+  const ratio = maxScroll > 0 ? pane.scrollTop / maxScroll : 0;
+  const total = tocTotalHeight.value;
+  const top = ratio * total;
+  const height = pane.scrollHeight > 0 ? (pane.clientHeight / pane.scrollHeight) * total : total;
+  tocViewport.value = {
+    top: Math.max(0, top),
+    height: Math.max(8, Math.min(height, total - top)),
+  };
+}
+
+function showTooltip(text: string, event: MouseEvent): void {
+  const target = event.currentTarget as HTMLElement | null;
+  if (!target) return;
+  tooltip.value = { visible: true, text, top: target.offsetTop };
+}
+
+function hideTooltip(): void {
+  tooltip.value.visible = false;
+}
 
 // Desktop renders chat per split-group (`group.active`), not via the top-level
 // `active` ref (which only tracks the mobile single-pane tab). Drive the TOC off
@@ -535,6 +624,7 @@ function onPanesScroll(): void {
     showPill.value = false;
   }
   lastScrollTop = top;
+  updateTocViewport();
 }
 
 function scrollToBottom(smooth = false): void {
@@ -654,6 +744,7 @@ watch(scrollKey, async () => {
   await nextTick();
   if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
   else showPill.value = true;
+  updateTocViewport();
 });
 
 // When switching to the chat tab, scroll to bottom immediately. Leaving the
@@ -665,6 +756,7 @@ watch(active, async (tab) => {
   following.value = true;
   await nextTick();
   scheduleStableFollow();
+  updateTocViewport();
 });
 
 // New session (reload key changes): reset the mobile files drill-down + clear
@@ -679,6 +771,7 @@ watch(
     following.value = true;
     await nextTick();
     scheduleStableFollow();
+    updateTocViewport();
   },
 );
 
@@ -692,6 +785,7 @@ watch(
     following.value = true;
     await nextTick();
     scheduleStableFollow();
+    updateTocViewport();
   },
 );
 
@@ -710,6 +804,7 @@ watch(
     if (!following.value && !hasUserActionFollowLock()) return;
     await nextTick();
     scheduleStableFollow(48);
+    updateTocViewport();
   },
 );
 
@@ -826,6 +921,7 @@ onMounted(() => {
   // Initial scroll to bottom on first load.
   nextTick(() => {
     scheduleStableFollow(48);
+    updateTocViewport();
     if (panesRef.value && typeof MutationObserver === 'function') {
       contentObserver = new MutationObserver(onContentMutated);
       contentObserver.observe(panesRef.value, {
@@ -891,9 +987,10 @@ onUnmounted(() => {
       @archive-session="(id) => emit('archiveSession', id)"
     />
 
+    <!-- Legacy conversation outline: left gutter, uniform bubbles, native title. -->
     <nav
-      v-if="showConversationToc"
-      class="conversation-toc"
+      v-if="showConversationToc && !betaToc"
+      class="conversation-toc legacy"
       :aria-label="t('conversation.toc')"
     >
       <button
@@ -907,6 +1004,44 @@ onUnmounted(() => {
       >
         <span class="toc-no">{{ item.no }}</span>
       </button>
+    </nav>
+
+    <!-- Beta conversation outline: right edge, proportional bubbles, viewport indicator, hover tooltip. -->
+    <nav
+      v-if="showConversationToc && betaToc"
+      class="conversation-toc beta"
+      :aria-label="t('conversation.toc')"
+    >
+      <div class="toc-track">
+        <button
+          v-for="(item, index) in conversationTocItems"
+          :key="item.id"
+          type="button"
+          class="toc-bubble"
+          :class="[item.role, { active: activeTurnId === item.id }]"
+          :style="{ height: tocMetrics[index]?.height + 'px' }"
+          :aria-label="`#${item.no} ${item.title}`"
+          @mouseenter="(e: MouseEvent) => showTooltip(item.title, e)"
+          @mouseleave="hideTooltip"
+          @click="scrollToTurn(item.id)"
+        >
+          <span class="toc-no">{{ item.no }}</span>
+        </button>
+        <div
+          v-if="tocViewport"
+          class="toc-viewport"
+          :style="{ top: tocViewport.top + 'px', height: tocViewport.height + 'px' }"
+        />
+      </div>
+      <Transition name="toc-tip">
+        <div
+          v-show="tooltip.visible"
+          class="toc-tooltip"
+          :style="{ top: tooltip.top + 'px' }"
+        >
+          {{ tooltip.text }}
+        </div>
+      </Transition>
     </nav>
 
     <TabBar
@@ -1536,13 +1671,18 @@ onUnmounted(() => {
 }
 .conversation-toc {
   position: absolute;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+/* Legacy outline: left gutter, uniform bubbles. */
+.conversation-toc.legacy {
   top: 58px;
   bottom: 130px;
   left: 12px;
-  z-index: 8;
   width: 34px;
-  display: flex;
-  flex-direction: column;
   gap: 6px;
   align-items: stretch;
   padding: 5px 4px;
@@ -1550,10 +1690,10 @@ onUnmounted(() => {
   overscroll-behavior: contain;
   scrollbar-width: none;
 }
-.conversation-toc::-webkit-scrollbar {
+.conversation-toc.legacy::-webkit-scrollbar {
   display: none;
 }
-.toc-bubble {
+.conversation-toc.legacy .toc-bubble {
   appearance: none;
   position: relative;
   border: 0;
@@ -1565,13 +1705,13 @@ onUnmounted(() => {
   opacity: 0.68;
   transition: opacity 0.14s ease, transform 0.14s ease;
 }
-.toc-bubble:hover,
-.toc-bubble:focus-visible {
+.conversation-toc.legacy .toc-bubble:hover,
+.conversation-toc.legacy .toc-bubble:focus-visible {
   opacity: 1;
   transform: translateX(1px);
   outline: none;
 }
-.toc-bubble::before {
+.conversation-toc.legacy .toc-bubble::before {
   content: '';
   display: block;
   width: 18px;
@@ -1580,21 +1720,96 @@ onUnmounted(() => {
   background: var(--line2);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 8%, transparent);
 }
-.toc-bubble.user::before {
+.conversation-toc.legacy .toc-bubble.user::before {
   margin-left: auto;
   background: var(--blue);
   box-shadow: none;
 }
-.toc-bubble.assistant::before {
+.conversation-toc.legacy .toc-bubble.assistant::before {
   margin-right: auto;
 }
-.toc-bubble.compaction::before {
+.conversation-toc.legacy .toc-bubble.compaction::before {
   width: 22px;
   height: 3px;
   margin: 6px auto 0;
   border-radius: 999px;
   background: var(--faint);
   box-shadow: none;
+}
+
+/* Beta outline: right edge, proportional bubbles, viewport, tooltip. */
+.conversation-toc.beta {
+  top: 74px;
+  bottom: auto;
+  left: calc(50% + (var(--read-max) / 2) + 8px);
+  width: 46px;
+  max-height: calc(100% - 74px - 130px);
+  opacity: 0.45;
+  transition: opacity 0.18s ease;
+}
+.conversation-toc.beta:hover {
+  opacity: 1;
+}
+.conversation-toc.beta .toc-track {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  padding: 6px 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  max-height: 100%;
+  position: relative;
+}
+.conversation-toc.beta .toc-track::-webkit-scrollbar {
+  display: none;
+}
+.conversation-toc.beta .toc-bubble {
+  appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  border: 0;
+  padding: 0;
+  width: 34px;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+}
+.conversation-toc.beta .toc-bubble.active {
+  opacity: 1;
+}
+.conversation-toc.beta .toc-bubble:hover,
+.conversation-toc.beta .toc-bubble:focus-visible {
+  opacity: 1;
+  transform: translateX(2px) scale(1.05);
+  outline: none;
+}
+.conversation-toc.beta .toc-bubble.user {
+  background: var(--blue);
+  box-shadow: none;
+}
+.conversation-toc.beta .toc-bubble.assistant {
+  background: var(--panel2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.conversation-toc.beta .toc-bubble.compaction {
+  height: 10px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--faint);
+  border-radius: 999px;
+}
+.conversation-toc.beta .toc-bubble.active::after {
+  content: '';
+  position: absolute;
+  inset: -2px -4px -2px -2px;
+  border: 2px solid var(--blue);
+  border-radius: 10px;
+  pointer-events: none;
+  opacity: 0.35;
 }
 .toc-no {
   position: absolute;
@@ -1603,6 +1818,52 @@ onUnmounted(() => {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+.conversation-toc.beta .toc-viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+  pointer-events: none;
+  border-radius: 4px;
+  z-index: 0;
+}
+.conversation-toc.beta .toc-tooltip {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 0;
+  z-index: 20;
+  max-width: 240px;
+  padding: 6px 10px;
+  background: var(--ink);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+.conversation-toc.beta .toc-tooltip::before {
+  content: '';
+  position: absolute;
+  left: auto;
+  right: -5px;
+  top: 10px;
+  border-width: 5px 0 5px 5px;
+  border-style: solid;
+  border-color: transparent transparent transparent var(--ink);
+}
+.toc-tip-enter-active,
+.toc-tip-leave-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.toc-tip-enter-from,
+.toc-tip-leave-to {
+  opacity: 0;
+  transform: translateX(4px);
 }
 @media (max-width: 1180px) {
   .conversation-toc {
