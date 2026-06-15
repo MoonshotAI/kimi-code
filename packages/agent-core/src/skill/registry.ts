@@ -2,6 +2,7 @@ import { expandSkillParameters, skillArgumentNames } from './parser';
 import { discoverSkills, type DiscoverSkillsOptions } from './scanner';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
 import { isInlineSkillType, normalizeSkillName } from './types';
+import type { SkillRegistry as AgentSkillRegistry } from '../agent/skill/types';
 import { escapeXmlAttr } from '../utils/xml-escape';
 
 const LISTING_DESC_MAX = 250;
@@ -22,7 +23,7 @@ export interface SkillRegistryOptions {
   readonly sessionId?: string;
 }
 
-export class SkillRegistry {
+export class SessionSkillRegistry implements AgentSkillRegistry {
   private readonly byName = new Map<string, SkillDefinition>();
   private readonly byPluginAndName = new Map<string, SkillDefinition>();
   private readonly roots: string[] = [];

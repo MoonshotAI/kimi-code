@@ -19,7 +19,6 @@ import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
-import type { SkillRegistry } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager, BackgroundTaskPersistence } from './background';
@@ -46,6 +45,7 @@ import {
 } from './records';
 import { ReplayBuilder } from './replay';
 import { SkillManager } from './skill';
+import type { SkillRegistry } from './skill/types';
 import { SwarmMode } from './swarm';
 import { ToolManager } from './tool/index';
 import { TurnFlow } from './turn';

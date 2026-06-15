@@ -30,8 +30,8 @@ import {
 import type { ProviderManager } from './provider-manager';
 import {
   registerBuiltinSkills,
+  SessionSkillRegistry,
   resolveSkillRoots,
-  SkillRegistry,
   summarizeSkill,
   type SkillRoot,
   type SkillSummary,
@@ -138,7 +138,7 @@ async function waitForSettlementOrTimeout(
 export class Session {
   readonly rpc: SDKSessionRPC;
   readonly telemetry: TelemetryClient;
-  readonly skills: SkillRegistry;
+  readonly skills: SessionSkillRegistry;
   readonly agents: Map<string, AgentEntry> = new Map();
   readonly mcp: McpConnectionManager;
   readonly log: Logger;
@@ -182,7 +182,7 @@ export class Session {
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.toolKaos = options.kaos;
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
-    this.skills = new SkillRegistry({
+    this.skills = new SessionSkillRegistry({
       sessionId: options.id,
     });
     this.mcp = new McpConnectionManager({
