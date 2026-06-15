@@ -470,6 +470,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
     'defaultThinking',
     'defaultPermissionMode',
     'defaultPlanMode',
+    'defaultSwarmMode',
     'mergeAllAvailableSkills',
     'extraSkillDirs',
     'telemetry',

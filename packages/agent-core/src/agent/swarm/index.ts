@@ -13,7 +13,11 @@ export type SwarmModeTrigger = 'manual' | 'task' | 'tool';
 export class SwarmMode {
   protected active: SwarmModeTrigger | null = null;
 
-  constructor(protected readonly agent: Agent) {}
+  constructor(protected readonly agent: Agent) {
+    if (agent.kimiConfig?.defaultSwarmMode === true) {
+      this.active = 'manual';
+    }
+  }
 
   enter(trigger: SwarmModeTrigger): void {
     if (this.active !== null) return;
