@@ -1,5 +1,37 @@
 # @moonshot-ai/agent-core
 
+## 0.12.3
+
+### Patch Changes
+
+- [#651](https://github.com/MoonshotAI/kimi-code/pull/651) [`c39c625`](https://github.com/MoonshotAI/kimi-code/commit/c39c62590db708fc81bd8627ea661c38f3fff9af) - Qualify sub-skill names with their parent prefix and expose sub-skills as dotted slash commands in the TUI.
+
+- [#617](https://github.com/MoonshotAI/kimi-code/pull/617) [`911e7c3`](https://github.com/MoonshotAI/kimi-code/commit/911e7c3fcfc8a005b1b8d90388260d1a4032f76f) - Show completed and cancelled compaction records correctly when resuming a session.
+
+- [#676](https://github.com/MoonshotAI/kimi-code/pull/676) [`dcf3075`](https://github.com/MoonshotAI/kimi-code/commit/dcf30754d09c7560101bc410387792194c3fe2b4) - Stream foreground Bash stdout and stderr while commands are still running.
+
+- [#689](https://github.com/MoonshotAI/kimi-code/pull/689) [`8d251f8`](https://github.com/MoonshotAI/kimi-code/commit/8d251f8ab44ead65f6c1bb264980ee7d075142ad) - Drop invalid config.toml sections with a warning instead of failing to start.
+
+## 0.12.2
+
+### Patch Changes
+
+- [#643](https://github.com/MoonshotAI/kimi-code/pull/643) [`4e5043b`](https://github.com/MoonshotAI/kimi-code/commit/4e5043b03b2fb03374550dc65d04871bc83e932a) - Require AgentSwarm tool calls to run alone in a model response.
+
+- [#661](https://github.com/MoonshotAI/kimi-code/pull/661) [`0927f79`](https://github.com/MoonshotAI/kimi-code/commit/0927f79883e036d0127d4384f60f8e486afb3b8c) - Cancel active turns during session shutdown so foreground shell commands do not outlive prompt-mode exits.
+
+- [#604](https://github.com/MoonshotAI/kimi-code/pull/604) [`7ec738c`](https://github.com/MoonshotAI/kimi-code/commit/7ec738c4a1de41b3a042cfb48700dfaf51e9de94) - Fix premature stream close errors when shell processes time out or are killed.
+
+- [#644](https://github.com/MoonshotAI/kimi-code/pull/644) [`a58b5b2`](https://github.com/MoonshotAI/kimi-code/commit/a58b5b20bb42228c72277daba9fa07bb1cd539a6) - Polish builtin skills.
+
+- [#649](https://github.com/MoonshotAI/kimi-code/pull/649) [`a2c5e1b`](https://github.com/MoonshotAI/kimi-code/commit/a2c5e1be25484f7c52f729e333196c485f83b84c) - Add runtime support for dynamic MCP server updates, reference skills, replay timestamps, and Node file uploads.
+
+- [#641](https://github.com/MoonshotAI/kimi-code/pull/641) [`30459af`](https://github.com/MoonshotAI/kimi-code/commit/30459af6abc8308e7f13822d9dbef3a5be80dd4a) - Stop background tasks by default when sessions close.
+
+- Updated dependencies [[`d8cdebf`](https://github.com/MoonshotAI/kimi-code/commit/d8cdebf3c03efa3a3dfa4f1deb3186a8f8f7f5ef), [`0381329`](https://github.com/MoonshotAI/kimi-code/commit/0381329570d3dca9fd861761c843968cc1c5e927), [`ff80327`](https://github.com/MoonshotAI/kimi-code/commit/ff803273440f3a2ff53d2c529c6fc892fde1d93f), [`a2c5e1b`](https://github.com/MoonshotAI/kimi-code/commit/a2c5e1be25484f7c52f729e333196c485f83b84c)]:
+  - @moonshot-ai/kosong@0.4.4
+  - @moonshot-ai/kaos@0.1.5
+
 ## 0.12.1
 
 ### Patch Changes

@@ -1,4 +1,3 @@
-import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/capability';
 import { ChatProviderError } from '#/errors';
 import type {
   AudioURLPart,
@@ -383,10 +382,6 @@ export class EchoChatProvider implements ChatProvider {
   withThinking(_effort: ThinkingEffort): EchoChatProvider {
     return new EchoChatProvider();
   }
-
-  getCapability(_model?: string): ModelCapability {
-    return UNKNOWN_CAPABILITY;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -432,9 +427,5 @@ export class ScriptedEchoChatProvider implements ChatProvider {
 
   withThinking(_effort: ThinkingEffort): ScriptedEchoChatProvider {
     return new ScriptedEchoChatProvider(this._scripts.slice(this._cursor));
-  }
-
-  getCapability(_model?: string): ModelCapability {
-    return UNKNOWN_CAPABILITY;
   }
 }

@@ -4,7 +4,7 @@ import path from 'pathe';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { discoverSkills, resolveSkillRoots, SkillRegistry, type SkillRoot } from '../../src/skill';
+import { discoverSkills, resolveSkillRoots, SessionSkillRegistry, type SkillRoot } from '../../src/skill';
 
 const tempDirs: string[] = [];
 
@@ -138,7 +138,7 @@ describe('skill discovery', () => {
       '```',
     ]);
 
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
     await registry.loadRoots([{ path: projectRoot, source: 'project' }]);
 
     expect(registry.listSkills().map((skill) => skill.name)).toEqual(['review-flow']);
@@ -363,7 +363,9 @@ describe('discoverSkills shape and ordering', () => {
 
     const skills = await discoverSkills({ roots: [{ path: root, source: 'user' }] });
 
-    expect(skills.map((s) => s.name)).toEqual(['inner', 'outer']);
+    expect(skills.map((s) => s.name)).toEqual(['outer', 'outer.inner']);
+    expect(skills.find((s) => s.name === 'outer')?.metadata.isSubSkill).toBeUndefined();
+    expect(skills.find((s) => s.name === 'outer.inner')?.metadata.isSubSkill).toBe(true);
   });
 
   it('does not discover nested SKILL.md files when the parent bundle disables sub-skills', async () => {
@@ -852,7 +854,7 @@ describe('resolveSkillRoots extra dirs', () => {
       '',
       'plugin body',
     ]);
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
 
     await registry.loadRoots([
       { path: projectRoot, source: 'project' },

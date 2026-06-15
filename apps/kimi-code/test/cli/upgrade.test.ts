@@ -4,11 +4,15 @@ import { handleUpgrade } from '#/cli/sub/upgrade';
 import type { InstallPromptChoiceValue } from '#/cli/update/prompt';
 import type { InstallSource, UpdateCache } from '#/cli/update/types';
 
-function cacheWith(version: string | null): UpdateCache {
+function cacheWith(
+  version: string | null,
+  manifest: UpdateCache['manifest'] = null,
+): UpdateCache {
   return {
     source: 'cdn',
     checkedAt: '2026-04-23T08:00:00.000Z',
     latest: version,
+    manifest,
   };
 }
 
@@ -34,6 +38,7 @@ function captureOutput(): {
 
 function createDeps(overrides: {
   readonly latest?: string | null;
+  readonly manifest?: UpdateCache['manifest'];
   readonly source?: InstallSource;
   readonly isInteractive?: boolean;
   readonly promptForInstallChoice?: () => Promise<InstallPromptChoiceValue>;
@@ -48,7 +53,9 @@ function createDeps(overrides: {
     ) => Promise<void>>().mockResolvedValue(undefined);
 
   return {
-    refreshUpdateCache: vi.fn().mockResolvedValue(cacheWith(overrides.latest ?? '0.5.0')),
+    refreshUpdateCache: vi
+      .fn()
+      .mockResolvedValue(cacheWith(overrides.latest ?? '0.5.0', overrides.manifest ?? null)),
     detectInstallSource: vi.fn().mockResolvedValue(overrides.source ?? 'npm-global'),
     promptForInstallChoice:
       overrides.promptForInstallChoice ?? vi.fn().mockResolvedValue('install'),
@@ -205,5 +212,24 @@ describe('handleUpgrade', () => {
       stage: 'refresh',
     }));
     expect(stderr.join('')).toContain('error: failed to check for updates: cdn unavailable');
+  });
+
+  it('ignores rollout gating: installs the latest version while every batch is still held', async () => {
+    const { stdout, writable } = captureOutput();
+    const deps = createDeps({
+      latest: '0.5.0',
+      // Published seconds ago with every device delayed by 24h — passive
+      // update surfaces would hide this version, manual upgrade must not.
+      manifest: {
+        version: '0.5.0',
+        publishedAt: new Date(Date.now() - 1_000).toISOString(),
+        rollout: [{ percent: 100, delaySeconds: 86_400 }],
+      },
+    });
+
+    await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(0);
+
+    expect(deps.installUpdate).toHaveBeenCalledWith('npm-global', '0.5.0', 'darwin');
+    expect(stdout.join('')).toContain('Updated @moonshot-ai/kimi-code to 0.5.0');
   });
 });

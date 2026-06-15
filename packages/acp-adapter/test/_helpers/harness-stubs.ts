@@ -29,10 +29,20 @@ export const UNAUTHED_STATUS = {
  * mirrors what a real config file would carry.
  */
 export function makeModelsMap(
-  entries: ReadonlyArray<{ id: string; name?: string; thinkingSupported?: boolean }>,
+  entries: ReadonlyArray<{
+    id: string;
+    name?: string;
+    thinkingSupported?: boolean;
+    alwaysThinking?: boolean;
+  }>,
 ): Record<string, ModelAlias> {
   const out: Record<string, ModelAlias> = {};
   for (const entry of entries) {
+    const capabilities = entry.alwaysThinking === true
+      ? ['thinking', 'always_thinking']
+      : entry.thinkingSupported === true
+        ? ['thinking']
+        : undefined;
     out[entry.id] = {
       // The fields below are the minimum shape the adapter reads off
       // each alias — `provider`/`max_context_size` are required by the
@@ -40,7 +50,7 @@ export function makeModelsMap(
       // here and the partial-record cast keeps the test stub honest.
       model: entry.id,
       ...(entry.name !== undefined ? { displayName: entry.name } : {}),
-      ...(entry.thinkingSupported === true ? { capabilities: ['thinking'] } : {}),
+      ...(capabilities !== undefined ? { capabilities } : {}),
     } as ModelAlias;
   }
   return out;

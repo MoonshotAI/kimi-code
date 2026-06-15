@@ -94,6 +94,14 @@ describe('buildThinkingOption', () => {
     if (off.type !== 'select') throw new Error('expected SessionConfigSelect');
     expect(off.currentValue).toBe('off');
   });
+
+  it('collapses to a single locked "on" entry for always-thinking models', () => {
+    const locked = buildThinkingOption(true, true);
+    if (locked.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(locked.currentValue).toBe('on');
+    expect(locked.options.map((o) => ('value' in o ? o.value : ''))).toEqual(['on']);
+    expect(locked.options.map((o) => ('name' in o ? o.name : ''))).toEqual(['Thinking On']);
+  });
 });
 
 describe('buildModeOption', () => {
@@ -169,6 +177,24 @@ describe('buildSessionConfigOptions', () => {
     const toggle = result.find((o) => o.id === 'thinking');
     if (!toggle || toggle.type !== 'select') throw new Error('expected thinking select toggle');
     expect(toggle.currentValue).toBe('on');
+  });
+
+  it('locks the thinking toggle to on for always-thinking models even when the session state says off', async () => {
+    const { harness } = makeHarnessWithModels([
+      {
+        id: 'kimi-deep',
+        model: 'kimi-deep-coder',
+        displayName: 'Kimi Deep',
+        capabilities: ['thinking', 'always_thinking'],
+      },
+    ]);
+
+    const result = await buildSessionConfigOptions(harness, 'kimi-deep', false, 'default');
+
+    const toggle = result.find((o) => o.id === 'thinking');
+    if (!toggle || toggle.type !== 'select') throw new Error('expected thinking select toggle');
+    expect(toggle.currentValue).toBe('on');
+    expect(toggle.options.map((o) => ('value' in o ? o.value : ''))).toEqual(['on']);
   });
 
   it('omits the thinking toggle when the current base model id is not in the catalog (defensive)', async () => {

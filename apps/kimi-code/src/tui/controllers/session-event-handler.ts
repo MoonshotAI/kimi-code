@@ -515,12 +515,17 @@ export class SessionEventHandler {
   }
 
   private handleToolProgress(event: ToolProgressEvent): void {
-    if (event.update.kind !== 'status') return;
     const text = event.update.text;
     if (text === undefined || text.length === 0) return;
     const tc = this.host.streamingUI.getToolComponent(event.toolCallId);
     if (tc === undefined) return;
-    tc.appendProgress(text);
+    if (event.update.kind === 'status') {
+      tc.appendProgress(text);
+      return;
+    }
+    if (event.update.kind === 'stdout' || event.update.kind === 'stderr') {
+      tc.appendLiveOutput(text);
+    }
   }
 
   private handleToolResult(event: ToolResultEvent): void {

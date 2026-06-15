@@ -1,5 +1,18 @@
 # @moonshot-ai/acp-adapter
 
+## 0.2.5
+
+### Patch Changes
+
+- [#628](https://github.com/MoonshotAI/kimi-code/pull/628) [`0ee9106`](https://github.com/MoonshotAI/kimi-code/commit/0ee91066eaa8ec794c8337faefc14d1b1200ce82) - Fix ACP file reads and edits for Windows workspaces opened through IDE clients.
+
+- [#654](https://github.com/MoonshotAI/kimi-code/pull/654) [`ff80327`](https://github.com/MoonshotAI/kimi-code/commit/ff803273440f3a2ff53d2c529c6fc892fde1d93f) - Propagate configured execution environment overrides across spawned processes.
+
+- Updated dependencies [[`4e5043b`](https://github.com/MoonshotAI/kimi-code/commit/4e5043b03b2fb03374550dc65d04871bc83e932a), [`0927f79`](https://github.com/MoonshotAI/kimi-code/commit/0927f79883e036d0127d4384f60f8e486afb3b8c), [`7ec738c`](https://github.com/MoonshotAI/kimi-code/commit/7ec738c4a1de41b3a042cfb48700dfaf51e9de94), [`ff80327`](https://github.com/MoonshotAI/kimi-code/commit/ff803273440f3a2ff53d2c529c6fc892fde1d93f), [`a58b5b2`](https://github.com/MoonshotAI/kimi-code/commit/a58b5b20bb42228c72277daba9fa07bb1cd539a6), [`a2c5e1b`](https://github.com/MoonshotAI/kimi-code/commit/a2c5e1be25484f7c52f729e333196c485f83b84c), [`54302ad`](https://github.com/MoonshotAI/kimi-code/commit/54302ad612294056a47ada74b76737f2284861b5), [`30459af`](https://github.com/MoonshotAI/kimi-code/commit/30459af6abc8308e7f13822d9dbef3a5be80dd4a)]:
+  - @moonshot-ai/agent-core@0.12.2
+  - @moonshot-ai/kaos@0.1.5
+  - @moonshot-ai/kimi-code-sdk@0.9.2
+
 ## 0.2.4
 
 ### Patch Changes

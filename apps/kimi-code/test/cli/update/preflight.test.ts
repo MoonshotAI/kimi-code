@@ -15,8 +15,14 @@ import { promptForInstallChoice } from '#/cli/update/prompt';
 import type * as PromptModule from '#/cli/update/prompt';
 import { refreshUpdateCache } from '#/cli/update/refresh';
 import type * as RefreshModule from '#/cli/update/refresh';
+import type * as RolloutModule from '#/cli/update/rollout';
 import { detectInstallSource } from '#/cli/update/source';
-import { emptyUpdateCache, type UpdateCache, type UpdateInstallState } from '#/cli/update/types';
+import {
+  emptyUpdateCache,
+  type UpdateCache,
+  type UpdateInstallState,
+  type UpdateManifest,
+} from '#/cli/update/types';
 import type { TuiConfig } from '#/tui/config';
 
 const mocks = vi.hoisted(() => ({
@@ -28,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   detectInstallSource: vi.fn(),
   promptForInstallChoice: vi.fn(),
   refreshUpdateCache: vi.fn(),
+  resolveUpdateDeviceId: vi.fn(),
+  appendRolloutDecisionLog: vi.fn(),
   spawn: vi.fn(),
 }));
 
@@ -81,6 +89,16 @@ vi.mock('../../../src/cli/update/refresh', async () => {
   };
 });
 
+vi.mock('../../../src/cli/update/rollout', async () => {
+  const actual = await vi.importActual<typeof RolloutModule>('../../../src/cli/update/rollout.js');
+  return {
+    ...actual,
+    resolveUpdateDeviceId: mocks.resolveUpdateDeviceId,
+    // Stubbed so preflight tests never write a real rollout.log.
+    appendRolloutDecisionLog: mocks.appendRolloutDecisionLog,
+  };
+});
+
 vi.mock('node:child_process', async () => {
   const actual = await vi.importActual<typeof ChildProcess>('node:child_process');
   return {
@@ -94,7 +112,41 @@ function cacheWith(version: string): UpdateCache {
     source: 'cdn',
     checkedAt: '2026-04-23T08:00:00.000Z',
     latest: version,
+    manifest: null,
   };
+}
+
+function manifestFor(version: string, overrides: Partial<UpdateManifest> = {}): UpdateManifest {
+  return {
+    version,
+    publishedAt: '2020-01-01T00:00:00.000Z',
+    rollout: [],
+    ...overrides,
+  };
+}
+
+function cacheWithManifest(manifest: UpdateManifest): UpdateCache {
+  return {
+    source: 'cdn',
+    checkedAt: '2026-04-23T08:00:00.000Z',
+    latest: manifest.version,
+    manifest,
+  };
+}
+
+/** Every bucket delayed by 24h and the clock just started: nobody is eligible. */
+function heldForEveryone(version: string): UpdateManifest {
+  return manifestFor(version, {
+    publishedAt: new Date(Date.now() - 1_000).toISOString(),
+    rollout: [{ percent: 100, delaySeconds: 86_400 }],
+  });
+}
+
+/** Every bucket immediate and publishedAt long past: everybody is eligible. */
+function releasedForEveryone(version: string): UpdateManifest {
+  return manifestFor(version, {
+    rollout: [{ percent: 100, delaySeconds: 0 }],
+  });
 }
 
 function installState(overrides: Partial<UpdateInstallState> = {}): UpdateInstallState {
@@ -177,6 +229,8 @@ describe('runUpdatePreflight', () => {
     mocks.readUpdateInstallState.mockResolvedValue(emptyUpdateInstallState());
     mocks.writeUpdateInstallState.mockResolvedValue(undefined);
     mocks.loadTuiConfig.mockResolvedValue(tuiConfig());
+    mocks.resolveUpdateDeviceId.mockReturnValue('test-device');
+    mocks.appendRolloutDecisionLog.mockResolvedValue(undefined);
     mocks.tryAcquireUpdateInstallLock.mockResolvedValue({
       filePath: '/tmp/kimi-update-install.lock',
       release: vi.fn().mockResolvedValue(undefined),
@@ -779,6 +833,230 @@ describe('runUpdatePreflight', () => {
       decision: 'prompt-install',
       source: 'npm-global',
     }));
+  });
+
+  describe('rollout gating', () => {
+    it('hides a cached update whose batch is not yet eligible', async () => {
+      const held = cacheWithManifest(heldForEveryone('0.5.0'));
+      mocks.readUpdateCache.mockResolvedValue(held);
+      mocks.refreshUpdateCache.mockResolvedValue(held);
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      const { stdout, options } = captureOutput();
+
+      await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+      await flushBackgroundInstall();
+
+      expect(stdout.join('')).toBe('');
+      expect(promptForInstallChoice).not.toHaveBeenCalled();
+      expect(detectInstallSource).not.toHaveBeenCalled();
+      expect(mocks.spawn).not.toHaveBeenCalled();
+      // The launch still refreshes the cache in the background so the device
+      // flips to eligible purely by time passing.
+      expect(refreshUpdateCache).toHaveBeenCalledTimes(1);
+      // Both checks of this launch are recorded in the rollout log.
+      expect(mocks.appendRolloutDecisionLog).toHaveBeenCalledWith(expect.objectContaining({
+        phase: 'startup-cache',
+        reason: 'held',
+        current: '0.4.0',
+        latest: '0.5.0',
+        bucket: expect.any(Number),
+        delaySeconds: 86_400,
+        eligibleAt: expect.any(String),
+      }));
+      expect(mocks.appendRolloutDecisionLog).toHaveBeenCalledWith(expect.objectContaining({
+        phase: 'background-refresh',
+        reason: 'held',
+      }));
+    });
+
+    it('starts the background install once the device batch is eligible', async () => {
+      const released = cacheWithManifest(releasedForEveryone('0.5.0'));
+      mocks.readUpdateCache.mockResolvedValue(released);
+      mocks.refreshUpdateCache.mockResolvedValue(released);
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      mockSpawnExit(0);
+      const { options } = captureOutput();
+      const track = vi.fn();
+
+      await expect(runUpdatePreflight('0.4.0', { ...options, track })).resolves.toBe('continue');
+      await flushBackgroundInstall();
+
+      expect(mocks.spawn).toHaveBeenCalledWith(
+        expect.stringMatching(/^npm(\.cmd)?$/),
+        ['install', '-g', '@moonshot-ai/kimi-code@0.5.0'],
+        { detached: true, stdio: 'ignore' },
+      );
+      expect(track).toHaveBeenCalledWith('update_background_install_started', expect.objectContaining({
+        target_version: '0.5.0',
+        rollout_bucket: expect.any(Number),
+        rollout_delay_seconds: 0,
+        rollout_from_manifest: true,
+      }));
+      expect(mocks.appendRolloutDecisionLog).toHaveBeenCalledWith(expect.objectContaining({
+        phase: 'startup-cache',
+        reason: 'eligible',
+        target: '0.5.0',
+      }));
+    });
+
+    it('prompts with rollout telemetry when eligible and auto-install is disabled', async () => {
+      disableAutoInstall();
+      const released = cacheWithManifest(releasedForEveryone('0.5.0'));
+      mocks.readUpdateCache.mockResolvedValue(released);
+      mocks.refreshUpdateCache.mockResolvedValue(released);
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      mocks.promptForInstallChoice.mockResolvedValue('skip');
+      const { options } = captureOutput();
+      const track = vi.fn();
+
+      await expect(runUpdatePreflight('0.4.0', { ...options, track })).resolves.toBe('continue');
+
+      expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
+        expect.objectContaining({ target: { version: '0.5.0' } }),
+      );
+      expect(track).toHaveBeenCalledWith('update_prompted', expect.objectContaining({
+        latest: '0.5.0',
+        rollout_bucket: expect.any(Number),
+        rollout_delay_seconds: 0,
+        rollout_from_manifest: true,
+      }));
+    });
+
+    it('uses the refreshed manifest for rollout telemetry when the prompt target changes', async () => {
+      disableAutoInstall();
+      const cached = cacheWithManifest(manifestFor('0.6.0', {
+        publishedAt: '2020-01-01T00:00:00.000Z',
+        rollout: [{ percent: 100, delaySeconds: 0 }],
+      }));
+      const refreshed = cacheWithManifest(manifestFor('0.7.0', {
+        publishedAt: '2020-01-01T00:00:00.000Z',
+        rollout: [{ percent: 100, delaySeconds: 43_200 }],
+      }));
+      mocks.readUpdateCache.mockResolvedValue(cached);
+      mocks.refreshUpdateCache.mockResolvedValue(refreshed);
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      mocks.promptForInstallChoice.mockResolvedValue('skip');
+      const { options } = captureOutput();
+      const track = vi.fn();
+
+      await expect(runUpdatePreflight('0.5.0', { ...options, track })).resolves.toBe('continue');
+
+      expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
+        expect.objectContaining({ target: { version: '0.7.0' } }),
+      );
+      expect(track).toHaveBeenCalledWith('update_prompted', expect.objectContaining({
+        latest: '0.7.0',
+        rollout_bucket: expect.any(Number),
+        rollout_delay_seconds: 43_200,
+        rollout_from_manifest: true,
+      }));
+    });
+
+    it('suppresses the manual-command notice while a homebrew device batch is held', async () => {
+      const held = cacheWithManifest(heldForEveryone('0.5.0'));
+      mocks.readUpdateCache.mockResolvedValue(held);
+      mocks.refreshUpdateCache.mockResolvedValue(held);
+      mocks.detectInstallSource.mockResolvedValue('homebrew');
+      const { stdout, options } = captureOutput();
+
+      await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+      await flushBackgroundInstall();
+
+      expect(stdout.join('')).toBe('');
+      expect(mocks.spawn).not.toHaveBeenCalled();
+    });
+
+    it('does not start a fresh-check background install while the refreshed manifest is held', async () => {
+      mocks.readUpdateCache.mockResolvedValue(emptyUpdateCache());
+      mocks.refreshUpdateCache.mockResolvedValue(cacheWithManifest(heldForEveryone('0.5.0')));
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      const { options } = captureOutput();
+
+      await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+      await flushBackgroundInstall();
+
+      expect(refreshUpdateCache).toHaveBeenCalledTimes(1);
+      expect(detectInstallSource).not.toHaveBeenCalled();
+      expect(mocks.spawn).not.toHaveBeenCalled();
+    });
+
+    it('stays silent when the user-visible refresh reveals a held newer version', async () => {
+      disableAutoInstall();
+      mocks.readUpdateCache.mockResolvedValue(cacheWithManifest(releasedForEveryone('0.6.0')));
+      mocks.refreshUpdateCache.mockResolvedValue(cacheWithManifest(heldForEveryone('0.7.0')));
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      const { stdout, options } = captureOutput();
+
+      await expect(runUpdatePreflight('0.5.0', options)).resolves.toBe('continue');
+
+      expect(stdout.join('')).toBe('');
+      expect(promptForInstallChoice).not.toHaveBeenCalled();
+      expect(mocks.spawn).not.toHaveBeenCalled();
+    });
+
+    it('KIMI_CODE_EXPERIMENTAL_FLAG bypasses the rollout: held devices still update', async () => {
+      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+      const held = cacheWithManifest(heldForEveryone('0.5.0'));
+      mocks.readUpdateCache.mockResolvedValue(held);
+      mocks.refreshUpdateCache.mockResolvedValue(held);
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      mockSpawnExit(0);
+      const { options } = captureOutput();
+      const track = vi.fn();
+
+      await expect(runUpdatePreflight('0.4.0', { ...options, track })).resolves.toBe('continue');
+      await flushBackgroundInstall();
+
+      expect(mocks.spawn).toHaveBeenCalledWith(
+        expect.stringMatching(/^npm(\.cmd)?$/),
+        ['install', '-g', '@moonshot-ai/kimi-code@0.5.0'],
+        { detached: true, stdio: 'ignore' },
+      );
+      expect(track).toHaveBeenCalledWith('update_background_install_started', expect.objectContaining({
+        target_version: '0.5.0',
+        rollout_bypassed: true,
+      }));
+      expect(mocks.appendRolloutDecisionLog).toHaveBeenCalledWith(expect.objectContaining({
+        phase: 'startup-cache',
+        reason: 'experimental',
+        target: '0.5.0',
+      }));
+    });
+
+    it('KIMI_CODE_NO_AUTO_UPDATE still wins over the experimental flag', async () => {
+      vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+      vi.stubEnv('KIMI_CODE_NO_AUTO_UPDATE', '1');
+      mocks.readUpdateCache.mockResolvedValue(cacheWithManifest(releasedForEveryone('0.5.0')));
+      const { options } = captureOutput();
+
+      await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+
+      expect(readUpdateCache).not.toHaveBeenCalled();
+      expect(mocks.spawn).not.toHaveBeenCalled();
+    });
+
+    it('treats any plan older than 24h as fully rolled out', async () => {
+      disableAutoInstall();
+      const staleRollout = manifestFor('0.5.0', {
+        publishedAt: new Date(Date.now() - 25 * 3_600 * 1_000).toISOString(),
+        rollout: [
+          { percent: 30, delaySeconds: 0 },
+          { percent: 30, delaySeconds: 43_200 },
+          { percent: 40, delaySeconds: 86_400 },
+        ],
+      });
+      mocks.readUpdateCache.mockResolvedValue(cacheWithManifest(staleRollout));
+      mocks.refreshUpdateCache.mockResolvedValue(cacheWithManifest(staleRollout));
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      mocks.promptForInstallChoice.mockResolvedValue('skip');
+      const { options } = captureOutput();
+
+      await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+
+      expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
+        expect.objectContaining({ target: { version: '0.5.0' } }),
+      );
+    });
   });
 });
 

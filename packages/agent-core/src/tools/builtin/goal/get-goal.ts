@@ -10,7 +10,7 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
-import DESCRIPTION from './get-goal.md';
+import DESCRIPTION from './get-goal.md?raw';
 
 export const GetGoalToolInputSchema = z.object({}).strict();
 export type GetGoalToolInput = z.infer<typeof GetGoalToolInputSchema>;

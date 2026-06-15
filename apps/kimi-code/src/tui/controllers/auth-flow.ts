@@ -2,7 +2,11 @@ import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import type { SkillListSession } from '../commands';
 
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
-import { refreshAllProviderModels } from '../utils/refresh-providers';
+import {
+  refreshAllProviderModels,
+  type RefreshProviderScope,
+  type RefreshResult,
+} from '../utils/refresh-providers';
 import type { SessionEventHandler } from './session-event-handler';
 import type { AppState, KimiTUIOptions } from '../types';
 import type { TUIState } from '../tui-state';
@@ -142,26 +146,28 @@ export class AuthFlowController {
    * config.  Runs best-effort: individual provider failures are collected
    * and returned instead of thrown.
    */
-  async refreshProviderModels(): Promise<{
-    readonly changed: ReadonlyArray<{
-      readonly providerId: string;
-      readonly providerName: string;
-      readonly added: number;
-      readonly removed: number;
-    }>;
-    readonly unchanged: readonly string[];
-    readonly failed: ReadonlyArray<{ readonly provider: string; readonly reason: string }>;
-  }> {
+  async refreshProviderModels(): Promise<RefreshResult> {
+    return this.refreshProviderModelsWithScope('all');
+  }
+
+  async refreshOAuthProviderModels(): Promise<RefreshResult> {
+    return this.refreshProviderModelsWithScope('oauth');
+  }
+
+  private async refreshProviderModelsWithScope(scope: RefreshProviderScope): Promise<RefreshResult> {
     const { host } = this;
-    const result = await refreshAllProviderModels({
-      getConfig: () => host.harness.getConfig({ reload: true }),
-      removeProvider: (id) => host.harness.removeProvider(id),
-      setConfig: (patch) => host.harness.setConfig(patch),
-      resolveOAuthToken: async (providerName, oauthRef) => {
-        const tokenProvider = host.harness.auth.resolveOAuthTokenProvider(providerName, oauthRef);
-        return tokenProvider.getAccessToken();
+    const result = await refreshAllProviderModels(
+      {
+        getConfig: () => host.harness.getConfig({ reload: true }),
+        removeProvider: (id) => host.harness.removeProvider(id),
+        setConfig: (patch) => host.harness.setConfig(patch),
+        resolveOAuthToken: async (providerName, oauthRef) => {
+          const tokenProvider = host.harness.auth.resolveOAuthTokenProvider(providerName, oauthRef);
+          return tokenProvider.getAccessToken();
+        },
       },
-    });
+      { scope },
+    );
     if (result.changed.length > 0) {
       await this.refreshAvailableModels();
     }

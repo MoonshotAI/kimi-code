@@ -3,7 +3,7 @@ import {
   type StartPermissionOption,
 } from './start-permission-prompt';
 
-export type SwarmStartPermissionChoice = 'auto' | 'manual';
+export type SwarmStartPermissionChoice = 'auto' | 'yolo' | 'manual';
 
 export interface SwarmStartPermissionPromptOptions {
   readonly onSelect: (choice: SwarmStartPermissionChoice) => void;
@@ -16,6 +16,12 @@ const OPTIONS: readonly StartPermissionOption<SwarmStartPermissionChoice>[] = [
     label: 'Switch to Auto and start',
     description:
       'Best for swarm tasks. Tools are approved automatically, and questions are skipped.',
+  },
+  {
+    value: 'yolo',
+    label: 'Switch to YOLO and start',
+    description:
+      'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
   },
   {
     value: 'manual',

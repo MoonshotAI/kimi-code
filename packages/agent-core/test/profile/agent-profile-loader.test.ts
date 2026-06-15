@@ -11,7 +11,7 @@ import {
   resolveAgentProfiles,
   type SystemPromptContext,
 } from '../../src/profile';
-import { SkillRegistry, type SkillDefinition } from '../../src/skill';
+import { SessionSkillRegistry, type SkillDefinition } from '../../src/skill';
 
 let workDir: string;
 
@@ -186,10 +186,13 @@ describe('default agent profiles', () => {
   });
 
   it('renders the model-invocable skill listing for bundled prompts', () => {
-    const skills = new SkillRegistry();
+    const skills = new SessionSkillRegistry();
     skills.register(skill('review', { whenToUse: 'When code review is requested.' }));
     skills.register({
-      ...skill('nested-review', { whenToUse: 'When nested review is requested.' }),
+      ...skill('nested-review', {
+        isSubSkill: true,
+        whenToUse: 'When nested review is requested.',
+      }),
       path: '/skills/parent/nested-review/SKILL.md',
       dir: '/skills/parent/nested-review',
       content: 'Nested review body must not enter system prompt.',
@@ -204,10 +207,10 @@ describe('default agent profiles', () => {
 
     expect(prompt).toContain('Current available skills:');
     expect(prompt).toContain('- review:');
-    expect(prompt).toContain('- nested-review:');
-    expect(prompt).toContain('Path: /skills/parent/nested-review/SKILL.md');
     expect(prompt).toContain('When to use: When code review is requested.');
-    expect(prompt).toContain('When to use: When nested review is requested.');
+    expect(prompt).not.toContain('- nested-review:');
+    expect(prompt).not.toContain('Path: /skills/parent/nested-review/SKILL.md');
+    expect(prompt).not.toContain('When to use: When nested review is requested.');
     expect(prompt).not.toContain('private');
     expect(prompt).not.toContain('flow-only');
     expect(prompt).not.toContain('body of review');

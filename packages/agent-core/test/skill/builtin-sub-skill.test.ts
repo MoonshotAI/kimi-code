@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  SkillRegistry,
+  SessionSkillRegistry,
   SUB_SKILL_CONSOLIDATE,
   SUB_SKILL_PARENT,
   SUB_SKILL_REVIEW,
@@ -22,7 +22,7 @@ describe('builtin skill: sub-skill', () => {
   });
 
   it('registers through registerBuiltinSkills but stays out of the model skill listing', () => {
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
     registerBuiltinSkills(registry);
 
     expect(registry.getSkill('sub-skill')).toBeDefined();
@@ -32,14 +32,14 @@ describe('builtin skill: sub-skill', () => {
   });
 
   it('remains visible in the full skill list for CLI display', () => {
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
     registerBuiltinSkills(registry);
 
     expect(registry.listSkills().some((skill) => skill.name === 'sub-skill')).toBe(true);
   });
 
   it('registers every sub-skill builtin', () => {
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
     registerBuiltinSkills(registry);
 
     expect(registry.getSkill('sub-skill')).toBeDefined();
@@ -54,6 +54,7 @@ describe('builtin skill: sub-skill.review', () => {
     expect(SUB_SKILL_REVIEW.source).toBe('builtin');
     expect(SUB_SKILL_REVIEW.description.length).toBeGreaterThan(0);
     expect(SUB_SKILL_REVIEW.metadata.type).toBe('inline');
+    expect(SUB_SKILL_REVIEW.metadata.name).toBe('review');
   });
 
   it('is hidden from model invocation', () => {
@@ -61,7 +62,7 @@ describe('builtin skill: sub-skill.review', () => {
   });
 
   it('registers through registerBuiltinSkills', () => {
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
     registerBuiltinSkills(registry);
 
     expect(registry.getSkill('sub-skill.review')).toBeDefined();
@@ -77,6 +78,7 @@ describe('builtin skill: sub-skill.consolidate', () => {
     expect(SUB_SKILL_CONSOLIDATE.source).toBe('builtin');
     expect(SUB_SKILL_CONSOLIDATE.description.length).toBeGreaterThan(0);
     expect(SUB_SKILL_CONSOLIDATE.metadata.type).toBe('inline');
+    expect(SUB_SKILL_CONSOLIDATE.metadata.name).toBe('consolidate');
   });
 
   it('is hidden from model invocation', () => {
@@ -88,8 +90,13 @@ describe('builtin skill: sub-skill.consolidate', () => {
     expect(SUB_SKILL_CONSOLIDATE.content).toContain('timestamped');
   });
 
+  it('mentions documentation directory alignment in its content', () => {
+    expect(SUB_SKILL_CONSOLIDATE.content).toContain('documentation');
+    expect(SUB_SKILL_CONSOLIDATE.content).toContain('directory alignment');
+  });
+
   it('registers through registerBuiltinSkills', () => {
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
     registerBuiltinSkills(registry);
 
     expect(registry.getSkill('sub-skill.consolidate')).toBeDefined();

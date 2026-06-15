@@ -24,7 +24,7 @@ import {
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
-import DESCRIPTION from './update-goal.md';
+import DESCRIPTION from './update-goal.md?raw';
 
 export const UpdateGoalToolInputSchema = z
   .object({

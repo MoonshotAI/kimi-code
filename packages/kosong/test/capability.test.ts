@@ -1,6 +1,6 @@
 /**
  * `ModelCapability` type and `UNKNOWN_CAPABILITY` default — pure
- * type/helper layer. Provider-specific `getCapability` tables live in
+ * type/helper layer. Per-wire `getModelCapability` tables live in
  * `capability-providers.test.ts`.
  */
 

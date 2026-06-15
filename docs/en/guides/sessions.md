@@ -51,7 +51,7 @@ kimi --session
 ```
 
 ::: warning
-`--continue` and `--session` are mutually exclusive. `--yolo` and `--plan` cannot be combined with them either.
+`--continue` and `--session` are mutually exclusive.
 :::
 
 ## Switching sessions inside the TUI

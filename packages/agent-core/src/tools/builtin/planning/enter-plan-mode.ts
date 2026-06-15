@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
-import DESCRIPTION from './enter-plan-mode.md';
+import DESCRIPTION from './enter-plan-mode.md?raw';
 
 // ── Input schema ─────────────────────────────────────────────────────
 

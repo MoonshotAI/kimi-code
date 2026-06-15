@@ -3,6 +3,7 @@ import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
+import { currentTheme } from '#/tui/theme';
 import { darkColors } from '#/tui/theme/colors';
 
 const ANSI = /\[[0-9;]*m/g;
@@ -94,14 +95,58 @@ describe('ModelSelectorComponent', () => {
       onCancel: vi.fn(),
     });
 
-    expect(text(picker)).toContain('[ Always on ]');
+    // Always-on: On selected, Off greyed out with an explanation.
+    const alwaysOut = text(picker);
+    expect(alwaysOut).toContain('[ On ]');
+    expect(alwaysOut).toContain('Off (Unsupported)');
+    expect(alwaysOut).not.toContain('Always on');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'always', thinking: true });
+
+    // Unsupported: Off selected, On greyed out — same style, mirrored.
+    picker.handleInput(DOWN);
+    const plainOut = text(picker);
+    expect(plainOut).toContain('On (Unsupported)');
+    expect(plainOut).toContain('[ Off ]');
+    expect(plainOut).not.toContain('] unsupported');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'plain', thinking: false });
+  });
+
+  it('ignores Left/Right on always-on and unsupported models', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        always: model('Kimi Thinking', ['always_thinking']),
+        plain: model('Kimi Plain', ['tool_use']),
+      },
+      currentValue: 'always',
+      currentThinking: true,
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    picker.handleInput(RIGHT);
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenLastCalledWith({ alias: 'always', thinking: true });
 
     picker.handleInput(DOWN);
-    expect(text(picker)).toContain('[ Off ] unsupported');
+    picker.handleInput(LEFT);
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenLastCalledWith({ alias: 'plain', thinking: false });
+  });
+
+  it('renders the unavailable thinking segment muted', () => {
+    const picker = new ModelSelectorComponent({
+      models: { always: model('Kimi Thinking', ['always_thinking']) },
+      currentValue: 'always',
+      currentThinking: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const raw = picker.render(120).join('\n');
+    expect(raw).toContain(currentTheme.fg('textMuted', '  Off (Unsupported)  '));
   });
 
   it('keeps the thinking draft when moving across models', () => {

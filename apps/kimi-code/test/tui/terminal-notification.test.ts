@@ -8,6 +8,7 @@ import {
   isInsideTmux,
   notifyTerminalOnce,
   supportsOsc9Notification,
+  supportsTerminalProgress,
 } from '#/tui/utils/terminal-notification';
 
 function makeNotificationState(args: {
@@ -212,6 +213,32 @@ describe('supportsOsc9Notification', () => {
     expect(supportsOsc9Notification({ ConEmuANSI: 'ON' })).toBe(false);
     expect(supportsOsc9Notification({ TERM: 'xterm-256color' })).toBe(false);
     expect(supportsOsc9Notification({})).toBe(false);
+  });
+});
+
+describe('supportsTerminalProgress', () => {
+  it('detects Windows Terminal / ConEmu via env flags', () => {
+    expect(supportsTerminalProgress({ WT_SESSION: 'abc-123' })).toBe(true);
+    expect(supportsTerminalProgress({ ConEmuANSI: 'ON' })).toBe(true);
+  });
+
+  it('detects Ghostty / WezTerm via TERM_PROGRAM and TERM', () => {
+    expect(supportsTerminalProgress({ TERM_PROGRAM: 'ghostty' })).toBe(true);
+    expect(supportsTerminalProgress({ TERM: 'xterm-ghostty' })).toBe(true);
+    expect(supportsTerminalProgress({ TERM_PROGRAM: 'WezTerm' })).toBe(true);
+  });
+
+  it('rejects terminals that show every OSC 9 payload as a notification', () => {
+    // iTerm2 treats any OSC 9 payload as a desktop notification, so the
+    // ConEmu-style 9;4 progress sequence must never be sent there.
+    expect(supportsTerminalProgress({ TERM_PROGRAM: 'iTerm.app' })).toBe(false);
+    expect(supportsTerminalProgress({ TERM_PROGRAM: 'Apple_Terminal' })).toBe(false);
+    expect(supportsTerminalProgress({ TERM_PROGRAM: 'WarpTerminal' })).toBe(false);
+    expect(supportsTerminalProgress({ TERM: 'xterm-kitty' })).toBe(false);
+    expect(supportsTerminalProgress({ TERM: 'xterm-256color' })).toBe(false);
+    expect(supportsTerminalProgress({ ConEmuANSI: 'OFF' })).toBe(false);
+    expect(supportsTerminalProgress({ WT_SESSION: '' })).toBe(false);
+    expect(supportsTerminalProgress({})).toBe(false);
   });
 });
 

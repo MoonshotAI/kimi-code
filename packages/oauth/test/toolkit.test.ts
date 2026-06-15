@@ -146,10 +146,10 @@ describe('KimiOAuthToolkit', () => {
 
   it('refreshes configured bearer token refs against their OAuth host', async () => {
     const storage = new MemoryTokenStorage();
-    const oauthHost = 'https://auth.dev.kimi.team';
+    const oauthHost = 'https://auth.dev.example.test';
     const oauthKey = resolveKimiCodeOAuthKey({
       oauthHost,
-      baseUrl: 'https://coding.deva.msh.team/coding/v1',
+      baseUrl: 'https://api.dev.example.test/coding/v1',
     });
     storage.tokens.set(resolveKimiTokenStorageName({ oauthKey }), {
       ...token('expired-dev-access'),
@@ -419,8 +419,8 @@ describe('KimiOAuthToolkit', () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('kimi-code', token('prod-access'));
     const config: ManagedKimiConfigShape = { providers: {} };
-    const devBaseUrl = 'https://coding.deva.msh.team/coding/v1';
-    const devOauthHost = 'https://auth.dev.kimi.team';
+    const devBaseUrl = 'https://api.dev.example.test/coding/v1';
+    const devOauthHost = 'https://auth.dev.example.test';
     const devOauthKey = resolveKimiCodeOAuthKey({
       oauthHost: devOauthHost,
       baseUrl: devBaseUrl,

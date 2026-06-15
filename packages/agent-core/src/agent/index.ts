@@ -19,7 +19,6 @@ import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
-import type { SkillRegistry } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager, BackgroundTaskPersistence } from './background';
@@ -46,6 +45,7 @@ import {
 } from './records';
 import { ReplayBuilder } from './replay';
 import { SkillManager } from './skill';
+import type { SkillRegistry } from './skill/types';
 import { SwarmMode } from './swarm';
 import { ToolManager } from './tool/index';
 import { TurnFlow } from './turn';
@@ -296,11 +296,17 @@ export class Agent {
 
   async resume(): Promise<{ warning?: string }> {
     const result = await this.records.replay();
-    this.goal.normalizeAfterReplay();
-    await this.background.loadFromDisk();
-    await this.background.reconcile();
-    await this.cron?.loadFromDisk();
-    this.turn.finishResume();
+    try {
+      this.replayBuilder.postRestoring = true;
+      this.goal.normalizeAfterReplay();
+      await this.background.loadFromDisk();
+      await this.background.reconcile();
+      await this.cron?.loadFromDisk();
+      this.context.finishResume();
+      this.turn.finishResume();
+    } finally {
+      this.replayBuilder.postRestoring = false;
+    }
     return result;
   }
 

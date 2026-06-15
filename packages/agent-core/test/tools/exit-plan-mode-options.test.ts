@@ -6,7 +6,7 @@ import {
   ExitPlanModeTool,
   type ExitPlanModeInput,
 } from '../../src/tools/builtin/planning/exit-plan-mode';
-import DESCRIPTION from '../../src/tools/builtin/planning/exit-plan-mode.md';
+import DESCRIPTION from '../../src/tools/builtin/planning/exit-plan-mode.md?raw';
 import { executeTool } from './fixtures/execute-tool';
 import { toolContentString } from './fixtures/fake-kaos';
 

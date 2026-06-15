@@ -1,15 +1,32 @@
 import type { Agent } from '..';
-import type { AgentReplayRecord } from '../..';
+import type { AgentReplayRecord, AgentReplayRecordPayload } from '../..';
 import type { ContextMessage } from '../context';
 
 export class ReplayBuilder {
+  postRestoring = false;
+  captureLiveRecords = false;
   protected readonly records: AgentReplayRecord[] = [];
 
   constructor(public readonly agent: Agent) {}
 
-  push(record: AgentReplayRecord): void {
+  push(record: AgentReplayRecordPayload): void {
+    if (this.captureLiveRecords || this.agent.records.restoring || this.postRestoring) {
+      this.records.push({
+        ...record,
+        time: this.agent.records.restoring?.time ?? Date.now(),
+      });
+    }
+  }
+
+  patchLast<T extends AgentReplayRecord['type']>(
+    type: T,
+    patch: Partial<Extract<AgentReplayRecord, { type: T }>>,
+  ): void {
     if (this.agent.records.restoring) {
-      this.records.push(record);
+      const last = this.records.at(-1);
+      if (last && last.type === type) {
+        Object.assign(last, patch);
+      }
     }
   }
 

@@ -30,8 +30,8 @@ import {
 import type { ProviderManager } from './provider-manager';
 import {
   registerBuiltinSkills,
+  SessionSkillRegistry,
   resolveSkillRoots,
-  SkillRegistry,
   summarizeSkill,
   type SkillRoot,
   type SkillSummary,
@@ -40,6 +40,7 @@ import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import { SessionSubagentHost } from './subagent-host';
 import type { ToolServices } from '../tools/support/services';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
+import { abortError } from '../utils/abort';
 
 export interface SessionOptions {
   readonly kaos: Kaos;
@@ -107,11 +108,37 @@ export interface SessionMeta {
 }
 
 const BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';
+const ACTIVE_TURN_CLOSE_TIMEOUT_MS = 8_000;
+
+async function waitForSettlementOrTimeout(
+  promise: Promise<unknown>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<false>((resolve) => {
+        timeout = setTimeout(() => {
+          resolve(false);
+        }, timeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+  }
+}
 
 export class Session {
   readonly rpc: SDKSessionRPC;
   readonly telemetry: TelemetryClient;
-  readonly skills: SkillRegistry;
+  readonly skills: SessionSkillRegistry;
   readonly agents: Map<string, AgentEntry> = new Map();
   readonly mcp: McpConnectionManager;
   readonly log: Logger;
@@ -155,7 +182,7 @@ export class Session {
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.toolKaos = options.kaos;
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
-    this.skills = new SkillRegistry({
+    this.skills = new SessionSkillRegistry({
       sessionId: options.id,
     });
     this.mcp = new McpConnectionManager({
@@ -232,6 +259,7 @@ export class Session {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
       );
+      await this.cancelActiveTurnsOnClose();
       await this.stopBackgroundTasksOnExit();
       await this.flushMetadata();
       await this.triggerSessionEnd('exit');
@@ -259,12 +287,60 @@ export class Session {
     }
   }
 
+  private async cancelActiveTurnsOnClose(): Promise<void> {
+    const backgroundAgentIds = this.activeBackgroundAgentIds();
+    const cancellations: Array<Promise<void>> = [];
+    for (const [agentId, entry] of this.agents) {
+      if (!(entry instanceof Agent) || backgroundAgentIds.has(agentId)) continue;
+      cancellations.push(this.cancelAgentTurnOnClose(entry));
+    }
+    await Promise.allSettled(cancellations);
+  }
+
+  private activeBackgroundAgentIds(): Set<string> {
+    const agentIds = new Set<string>();
+    for (const agent of this.readyAgents()) {
+      for (const task of agent.background.list(true)) {
+        if (task.kind === 'agent' && task.agentId !== undefined) {
+          agentIds.add(task.agentId);
+        }
+      }
+    }
+    return agentIds;
+  }
+
+  private async cancelAgentTurnOnClose(agent: Agent): Promise<void> {
+    if (!agent.turn.hasActiveTurn) return;
+
+    let waitForTurn: Promise<unknown>;
+    try {
+      waitForTurn = agent.turn.waitForCurrentTurn();
+    } catch (error: unknown) {
+      this.log.debug('active turn wait unavailable during session close', {
+        agentType: agent.type,
+        agentHomedir: agent.homedir,
+        error,
+      });
+      return;
+    }
+
+    agent.turn.cancel(undefined, abortError('Session closed'));
+    const settled = await waitForSettlementOrTimeout(waitForTurn, ACTIVE_TURN_CLOSE_TIMEOUT_MS);
+    if (!settled) {
+      this.log.warn('timed out waiting for active turn to cancel during session close', {
+        agentType: agent.type,
+        agentHomedir: agent.homedir,
+        timeoutMs: ACTIVE_TURN_CLOSE_TIMEOUT_MS,
+      });
+    }
+  }
+
   private async stopBackgroundTasksOnExit(): Promise<void> {
     const keepAliveOnExit = resolveConfigValue({
       env: process.env,
       envKey: BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV,
       configValue: this.options.background?.keepAliveOnExit,
-      defaultValue: true,
+      defaultValue: false,
       parseEnv: parseBooleanEnv,
     });
     if (keepAliveOnExit) return;

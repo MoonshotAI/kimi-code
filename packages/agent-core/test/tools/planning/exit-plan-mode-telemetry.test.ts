@@ -102,8 +102,16 @@ function permissionContext(args: ExitPlanModeInput): PermissionPolicyContext {
       id: 'call_exit_plan',
       type: 'function',
       name: 'ExitPlanMode',
-        arguments: JSON.stringify(args),
+      arguments: JSON.stringify(args),
     },
+    toolCalls: [
+      {
+        id: 'call_exit_plan',
+        type: 'function',
+        name: 'ExitPlanMode',
+        arguments: JSON.stringify(args),
+      },
+    ],
     args,
     execution: {
       description: 'Presenting plan and exiting plan mode',

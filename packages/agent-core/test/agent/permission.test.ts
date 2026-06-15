@@ -17,6 +17,7 @@ import {
   parsePattern,
   type PermissionRuleMatchExecution,
 } from '../../src/agent/permission/matches-rule';
+import { AgentSwarmExclusiveDenyPermissionPolicy } from '../../src/agent/permission/policies/agent-swarm-exclusive-deny';
 import { AutoModeApprovePermissionPolicy } from '../../src/agent/permission/policies/auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicy } from '../../src/agent/permission/policies/auto-mode-ask-user-question-deny';
 import { FallbackAskPermissionPolicy } from '../../src/agent/permission/policies/fallback-ask';
@@ -57,6 +58,7 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "Running without asking." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf permission-output", "timeout": 60 }, "description": "Running: printf permission-output", "display": { "kind": "command", "command": "printf permission-output", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf permission-output", "timeout": 60 }, "description": "Running: printf permission-output", "display": { "kind": "command", "command": "printf permission-output", "cwd": "<cwd>", "language": "bash" } }
+      [emit] tool.progress               { "turnId": 0, "toolCallId": "call_bash", "update": { "kind": "stdout", "text": "auto-output" } }
       [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "auto-output" } }, "time": "<time>" }
       [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "auto-output" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
@@ -112,6 +114,7 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "Running in yolo mode." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf permission-output", "timeout": 60 }, "description": "Running: printf permission-output", "display": { "kind": "command", "command": "printf permission-output", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf permission-output", "timeout": 60 }, "description": "Running: printf permission-output", "display": { "kind": "command", "command": "printf permission-output", "cwd": "<cwd>", "language": "bash" } }
+      [emit] tool.progress               { "turnId": 0, "toolCallId": "call_bash", "update": { "kind": "stdout", "text": "yolo-output" } }
       [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "yolo-output" } }, "time": "<time>" }
       [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "yolo-output" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
@@ -697,6 +700,7 @@ describe('Permission policy chain', () => {
   it('keeps built-in policies in document order', () => {
     expect(createPermissionDecisionPolicies({} as Agent).map((policy) => policy.name)).toEqual([
       'pre-tool-call-hook',
+      'agent-swarm-exclusive-deny',
       'auto-mode-ask-user-question-deny',
       'plan-mode-guard-deny',
       'user-configured-deny',
@@ -716,6 +720,42 @@ describe('Permission policy chain', () => {
     ]);
   });
 
+  it('denies invalid AgentSwarm batches before auto-mode approval', async () => {
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.mode = 'auto';
+    const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    const readCall = toolCall('call_read', 'Read', { path: 'src/a.ts' });
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_agent_swarm',
+          toolName: 'AgentSwarm',
+          toolCalls: [agentSwarmCall, readCall],
+        }),
+      ),
+    ).resolves.toMatchObject({
+      block: true,
+      reason: expect.stringContaining('AgentSwarm must be the only tool call'),
+    });
+
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({
+        policy_name: 'agent-swarm-exclusive-deny',
+        tool_name: 'AgentSwarm',
+        permission_mode: 'auto',
+        decision: 'deny',
+      }),
+    );
+  });
 });
 
 describe('Simple permission policy direct behavior', () => {
@@ -785,6 +825,99 @@ describe('Simple permission policy direct behavior', () => {
     ).toEqual({ kind: 'approve' });
     expect(
       policy.evaluate(hookContext({ id: 'call_agent_active', toolName: 'Agent' })),
+    ).toBeUndefined();
+  });
+
+  it('denies AgentSwarm mixed with other tool calls in the same response', () => {
+    const policy = new AgentSwarmExclusiveDenyPermissionPolicy();
+    const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    const readCall = toolCall('call_read', 'Read', { path: 'src/a.ts' });
+
+    expect(
+      policy.evaluate(
+        hookContext({
+          id: 'call_agent_swarm',
+          toolName: 'AgentSwarm',
+          toolCalls: [agentSwarmCall, readCall],
+        }),
+      ),
+    ).toMatchObject({
+      kind: 'deny',
+      message: expect.stringContaining('AgentSwarm must be the only tool call'),
+      reason: {
+        agent_swarm_tool_calls: 1,
+        tool_calls: 2,
+      },
+    });
+    expect(
+      policy.evaluate(
+        hookContext({
+          id: 'call_read',
+          toolName: 'Read',
+          args: { path: 'src/a.ts' },
+          toolCalls: [agentSwarmCall, readCall],
+        }),
+      ),
+    ).toMatchObject({ kind: 'deny' });
+  });
+
+  it('denies multiple AgentSwarm calls with one-at-a-time guidance', () => {
+    const policy = new AgentSwarmExclusiveDenyPermissionPolicy();
+    const first = toolCall('call_agent_swarm_1', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    const second = toolCall('call_agent_swarm_2', 'AgentSwarm', {
+      description: 'Review tests',
+      prompt_template: 'Review {{item}}',
+      items: ['test/a.ts', 'test/b.ts'],
+    });
+
+    const result = policy.evaluate(
+      hookContext({
+        id: 'call_agent_swarm_1',
+        toolName: 'AgentSwarm',
+        toolCalls: [first, second],
+      }),
+    );
+
+    expect(result).toMatchObject({
+      kind: 'deny',
+      message: expect.stringContaining('Multiple AgentSwarm calls are not forbidden'),
+      reason: {
+        agent_swarm_tool_calls: 2,
+        tool_calls: 2,
+      },
+    });
+    expect(result).toMatchObject({
+      message: expect.stringContaining('call one AgentSwarm, wait for its result'),
+    });
+    expect(result).toMatchObject({
+      message: expect.stringContaining('merge the work into a single AgentSwarm'),
+    });
+  });
+
+  it('allows a single AgentSwarm call for later permission policies', () => {
+    const policy = new AgentSwarmExclusiveDenyPermissionPolicy();
+    const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+
+    expect(
+      policy.evaluate(
+        hookContext({
+          id: 'call_agent_swarm',
+          toolName: 'AgentSwarm',
+          toolCalls: [agentSwarmCall],
+        }),
+      ),
     ).toBeUndefined();
   });
 
@@ -2332,10 +2465,12 @@ describe('Agent-local approve for session', () => {
 
     ctx.dispatch(event);
 
-    expect(ctx.agent.replayBuilder.buildResult()).toContainEqual({
-      type: 'approval_result',
-      record: event,
-    });
+    expect(ctx.agent.replayBuilder.buildResult()).toContainEqual(
+      expect.objectContaining({
+        type: 'approval_result',
+        record: event,
+      }),
+    );
     expect(ctx.agent.permission.data().rules).toEqual([]);
   });
 });
@@ -3655,6 +3790,7 @@ function hookContext(input: {
   readonly toolName?: string | undefined;
   readonly args?: Record<string, unknown> | undefined;
   readonly execution?: PermissionPolicyContext['execution'] | undefined;
+  readonly toolCalls?: readonly ToolCall[] | undefined;
 }): PermissionPolicyContext {
   const toolName = input.toolName ?? 'Bash';
   const args = input.args ?? { command: 'printf first', timeout: 60 };
@@ -3662,7 +3798,7 @@ function hookContext(input: {
     type: 'function',
     id: input.id,
     name: toolName,
-      arguments: JSON.stringify(args),
+    arguments: JSON.stringify(args),
   };
   return {
     turnId: '0',
@@ -3670,8 +3806,18 @@ function hookContext(input: {
     signal: new AbortController().signal,
     llm: {} as PermissionPolicyContext['llm'],
     toolCall,
+    toolCalls: input.toolCalls ?? [toolCall],
     args,
     execution: input.execution ?? testExecution(toolName, args),
+  };
+}
+
+function toolCall(id: string, name: string, args: Record<string, unknown>): ToolCall {
+  return {
+    type: 'function',
+    id,
+    name,
+    arguments: JSON.stringify(args),
   };
 }
 

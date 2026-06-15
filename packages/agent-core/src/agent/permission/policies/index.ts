@@ -1,5 +1,6 @@
 import type { Agent } from '../..';
 import type { PermissionPolicy } from '../types';
+import { AgentSwarmExclusiveDenyPermissionPolicy } from './agent-swarm-exclusive-deny';
 import { AutoModeApprovePermissionPolicy } from './auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicy } from './auto-mode-ask-user-question-deny';
 import { DefaultToolApprovePermissionPolicy } from './default-tool-approve';
@@ -27,6 +28,8 @@ export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy
   return [
     // PreToolUse hook returned a block → deny.
     new PreToolCallHookPermissionPolicy(agent),
+    // AgentSwarm is batch-exclusive and must run alone, regardless of permission mode.
+    new AgentSwarmExclusiveDenyPermissionPolicy(),
     // auto mode + AskUserQuestion → deny.
     new AutoModeAskUserQuestionDenyPermissionPolicy(agent),
     // plan mode: Write/Edit outside the plan file, or TaskStop → deny.
@@ -46,7 +49,7 @@ export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy
     // EnterPlanMode, Write/Edit on the plan file, or ExitPlanMode with no actionable plan_review → approve.
     new PlanModeToolApprovePermissionPolicy(agent),
     // Access touches a sensitive file (.env, SSH key, credentials) → ask.
-    new SensitiveFileAccessAskPermissionPolicy(agent),
+    new SensitiveFileAccessAskPermissionPolicy(),
     // Access touches .git or a git control-dir path → ask.
     new GitControlPathAccessAskPermissionPolicy(agent),
     // yolo mode → approve.

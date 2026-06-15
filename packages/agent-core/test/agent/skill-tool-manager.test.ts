@@ -11,7 +11,8 @@ import type { AgentRecordPersistence } from '../../src/agent/records';
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { ApprovalResponse, SDKAgentRPC, SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
-import { SkillRegistry, type SkillDefinition } from '../../src/skill';
+import { SessionSkillRegistry, type SkillDefinition } from '../../src/skill';
+import type { SkillRegistry as AgentSkillRegistry } from '../../src/agent/skill';
 import { SkillTool } from '../../src/tools/builtin/collaboration/skill-tool';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
@@ -35,7 +36,7 @@ function makeSkill(name: string, metadata: SkillDefinition['metadata'] = {}): Sk
 }
 
 function makeAgent(
-  skills?: SkillRegistry,
+  skills?: AgentSkillRegistry,
   persistence?: AgentRecordPersistence,
 ): Agent {
   const rpc = {
@@ -104,7 +105,7 @@ describe('ToolManager SkillTool registration', () => {
   });
 
   it('does not expose Skill when there are no model-invocable skills', () => {
-    const skills = new SkillRegistry();
+    const skills = new SessionSkillRegistry();
     skills.register(makeSkill('private', { disableModelInvocation: true }));
 
     const agent = makeAgent(skills);
@@ -114,7 +115,7 @@ describe('ToolManager SkillTool registration', () => {
   });
 
   it('exposes Skill when at least one inline skill is model-invocable', () => {
-    const skills = new SkillRegistry();
+    const skills = new SessionSkillRegistry();
     skills.register(makeSkill('review'));
     skills.register(makeSkill('flow-only', { type: 'flow' }));
 
@@ -126,8 +127,27 @@ describe('ToolManager SkillTool registration', () => {
     expect(skillTool).toBeInstanceOf(SkillTool);
   });
 
+  it('accepts a structural skill registry implementation', () => {
+    const skill = makeSkill('review');
+    const skills: AgentSkillRegistry = {
+      getSkill: (name) => (name === skill.name ? skill : undefined),
+      getPluginSkill: () => undefined,
+      renderSkillPrompt: () => skill.content,
+      listInvocableSkills: () => [skill],
+      getSkillRoots: () => ['/skills/review'],
+      getModelSkillListing: () => '- review: desc for review',
+    };
+
+    const agent = makeAgent(skills);
+
+    expect(agent.skills?.registry.getSkillRoots()).toEqual(['/skills/review']);
+    expect(agent.tools.loopTools.find((tool) => tool.name === 'Skill')).toBeInstanceOf(
+      SkillTool,
+    );
+  });
+
   it('persists model-invoked inline skill reminders through agent wire', async () => {
-    const skills = new SkillRegistry();
+    const skills = new SessionSkillRegistry();
     skills.register(makeSkill('review'));
     const wireRecords: AgentRecord[] = [];
     const persistence = new InMemoryAgentRecordPersistence([], {

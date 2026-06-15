@@ -24,7 +24,7 @@ import { isInlineSkillType, type SkillDefinition } from '../../../skill';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { matchesGlobRuleSubject } from '../../support/rule-match';
-import skillDescriptionTemplate from './skill-tool.md';
+import skillDescriptionTemplate from './skill-tool.md?raw';
 
 export const MAX_SKILL_QUERY_DEPTH = 3;
 

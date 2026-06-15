@@ -20,6 +20,8 @@ export interface ShellExecutionOptions {
    */
   readonly commandPreviewLines?: number;
   readonly resultPreviewLines?: number;
+  readonly tailOutput?: boolean;
+  readonly expandHint?: boolean;
 }
 
 export class ShellExecutionComponent extends Container {
@@ -35,6 +37,8 @@ export class ShellExecutionComponent extends Container {
         options.result,
         options.expanded ?? false,
         options.resultPreviewLines ?? PREVIEW_LINES,
+        options.tailOutput ?? false,
+        options.expandHint ?? true,
       );
     }
   }
@@ -53,6 +57,8 @@ export class ShellExecutionComponent extends Container {
     result: ToolResultBlockData,
     expanded: boolean,
     previewLines: number,
+    tailOutput: boolean,
+    expandHint: boolean,
   ): void {
     if (!result.output) return;
     this.addChild(
@@ -60,6 +66,8 @@ export class ShellExecutionComponent extends Container {
         expanded,
         isError: result.is_error ?? false,
         maxLines: previewLines,
+        tail: tailOutput,
+        expandHint,
       }),
     );
   }

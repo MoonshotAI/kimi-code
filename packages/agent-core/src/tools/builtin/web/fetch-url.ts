@@ -14,7 +14,7 @@ import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from 
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
-import DESCRIPTION from './fetch-url.md';
+import DESCRIPTION from './fetch-url.md?raw';
 
 // ── Provider interface (host-injected) ───────────────────────────────
 

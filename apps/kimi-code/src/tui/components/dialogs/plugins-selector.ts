@@ -539,8 +539,8 @@ function buildMcpItems(info: PluginInfo): PluginsOverviewItem[] {
 
 function mcpServerDescription(server: PluginMcpServerInfo): string {
   const action = server.enabled ? 'Enter/Space disable' : 'Enter/Space enable';
-  if (server.transport === 'http') {
-    return `${action} · HTTP · ${server.url ?? server.runtimeName}`;
+  if (server.transport === 'http' || server.transport === 'sse') {
+    return `${action} · ${server.transport.toUpperCase()} · ${server.url ?? server.runtimeName}`;
   }
   const args = server.args !== undefined && server.args.length > 0 ? ` ${server.args.join(' ')}` : '';
   const command = `${server.command ?? ''}${args}`.trim();

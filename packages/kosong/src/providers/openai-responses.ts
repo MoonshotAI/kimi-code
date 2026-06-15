@@ -1,4 +1,3 @@
-import type { ModelCapability } from '#/capability';
 import {
   APIContextOverflowError,
   APIProviderRateLimitError,
@@ -19,10 +18,7 @@ import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import OpenAI from 'openai';
 
-import {
-  getOpenAIResponsesModelCapability,
-  usesOpenAIResponsesDeveloperRole,
-} from './capability-registry';
+import { usesOpenAIResponsesDeveloperRole } from './capability-registry';
 import {
   convertOpenAIError,
   isMediaPart,
@@ -1029,10 +1025,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     };
   }
 
-  getCapability(model?: string): ModelCapability {
-    return getOpenAIResponsesModelCapability(model ?? this._model);
-  }
-
   async generate(
     systemPrompt: string,
     tools: Tool[],
@@ -1040,13 +1032,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     options?: GenerateOptions,
   ): Promise<StreamedMessage> {
     const input: unknown[] = [];
-    if (systemPrompt) {
-      const sysItem: Record<string, unknown> = { role: 'system', content: systemPrompt };
-      if (usesOpenAIResponsesDeveloperRole(this._model)) {
-        sysItem['role'] = 'developer';
-      }
-      input.push(sysItem);
-    }
 
     const normalizedHistory = normalizeToolCallIdsForProvider(
       history,
@@ -1086,6 +1071,9 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
         stream: this._stream,
         ...kwargs,
       };
+      if (systemPrompt) {
+        createParams['instructions'] = systemPrompt;
+      }
 
       if (
         !('responses' in client) ||

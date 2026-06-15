@@ -55,14 +55,5 @@ export function validateOptions(opts: CLIOptions): ValidatedOptions {
   if (opts.yolo && opts.auto) {
     throw new OptionConflictError('Cannot combine --yolo with --auto.');
   }
-  if (!promptMode && (opts.continue || opts.session !== undefined) && opts.yolo) {
-    throw new OptionConflictError('Cannot combine --yolo with --continue or --session.');
-  }
-  if (!promptMode && (opts.continue || opts.session !== undefined) && opts.auto) {
-    throw new OptionConflictError('Cannot combine --auto with --continue or --session.');
-  }
-  if (!promptMode && (opts.continue || opts.session !== undefined) && opts.plan) {
-    throw new OptionConflictError('Cannot combine --plan with --continue or --session.');
-  }
   return { options: opts, uiMode: promptMode ? 'print' : 'shell' };
 }

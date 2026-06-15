@@ -10,7 +10,7 @@ import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import { matchesGlobRuleSubject } from '../support/rule-match';
 import { formatPlainObject } from './format';
-import TASK_LIST_DESCRIPTION from './task-list.md';
+import TASK_LIST_DESCRIPTION from './task-list.md?raw';
 
 // ── Input schema ─────────────────────────────────────────────────────
 

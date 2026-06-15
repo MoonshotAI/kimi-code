@@ -11,7 +11,7 @@ import type { BuiltinTool } from '../../../agent/tool';
 import type { GoalBudgetLimits } from '../../../agent/goal';
 import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
-import DESCRIPTION from './set-goal-budget.md';
+import DESCRIPTION from './set-goal-budget.md?raw';
 
 const MIN_REASONABLE_TIME_BUDGET_MS = 1_000;
 const MAX_REASONABLE_TIME_BUDGET_MS = 24 * 60 * 60 * 1000;

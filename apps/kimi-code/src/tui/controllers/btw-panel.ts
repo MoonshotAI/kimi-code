@@ -191,14 +191,7 @@ export class BtwPanelController {
   }
 
   private withInteractiveAgent<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
-    const previousAgentId = this.host.harness.interactiveAgentId;
-    this.host.harness.interactiveAgentId = agentId;
-    try {
-      // SDK RPC methods snapshot interactiveAgentId before their first await.
-      return fn();
-    } finally {
-      this.host.harness.interactiveAgentId = previousAgentId;
-    }
+    return this.host.harness.withInteractiveAgent(agentId, fn);
   }
 }
 

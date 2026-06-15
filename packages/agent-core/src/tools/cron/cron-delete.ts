@@ -42,7 +42,7 @@ import type { BuiltinTool } from '../../agent/tool';
 import type { CronManager } from '../../agent/cron';
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
-import CRON_DELETE_DESCRIPTION from './cron-delete.md';
+import CRON_DELETE_DESCRIPTION from './cron-delete.md?raw';
 
 // ── Constants ────────────────────────────────────────────────────────
 

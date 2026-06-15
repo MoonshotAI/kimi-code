@@ -22,7 +22,7 @@ The table below lists the capabilities declared by the current ACP adapter layer
 | `promptCapabilities.audio` | `false` | Audio prompts not yet supported |
 | `promptCapabilities.embeddedContext` | `true` | Client may send `resource`/`resource_link` embedded resource blocks; text content is injected into the prompt as `<resource uri="...">...</resource>`; blob resources are dropped with a warn |
 | `mcpCapabilities.http` | `true` | Forwards HTTP MCP services configured by the IDE |
-| `mcpCapabilities.sse` | `false` | SSE MCP services not supported; matching entries are discarded and a warn is logged |
+| `mcpCapabilities.sse` | `true` | Forwards legacy SSE MCP services configured by the IDE |
 | `loadSession` | `true` | Supports `session/load` to resume an existing session, replaying history on load |
 | `sessionCapabilities.list` | `{}` | Supports `session/list` to enumerate the current user's sessions |
 
@@ -74,7 +74,8 @@ When an ACP client provides `mcpServers` in `session/new` or `session/load`, the
 
 - `http` → kimi's `transport: 'http'` configuration
 - `stdio` → kimi's `transport: 'stdio'` configuration
-- `sse` / `acp` → discarded with a warn log entry
+- `sse` → kimi's `transport: 'sse'` configuration
+- `acp` → discarded with a warn log entry
 
 ## Next steps
 
