@@ -59,6 +59,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
+      - run: pnpm -C apps/vscode run lint
       - run: pnpm run sherif
 
   typecheck:

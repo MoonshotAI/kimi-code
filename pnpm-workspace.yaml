@@ -1,6 +1,9 @@
 packages:
   - packages/*
   - apps/*
+  - apps/vscode/agent-sdk
+  - apps/vscode/agent-display-model
+  - apps/vscode/webview-ui
   - apps/vis/server
   - apps/vis/web
   - docs

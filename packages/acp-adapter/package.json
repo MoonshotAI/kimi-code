@@ -16,6 +16,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./protocol": {
+      "types": "./src/protocol/index.ts",
+      "default": "./src/protocol/index.ts"
     }
   },
   "publishConfig": {
@@ -25,6 +29,11 @@
         "types": "./dist/index.d.mts",
         "import": "./dist/index.mjs",
         "default": "./dist/index.mjs"
+      },
+      "./protocol": {
+        "types": "./dist/protocol.d.mts",
+        "import": "./dist/protocol.mjs",
+        "default": "./dist/protocol.mjs"
       }
     },
     "provenance": true

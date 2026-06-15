@@ -16,11 +16,17 @@ import {
 } from '@agentclientprotocol/sdk';
 import type { Event, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
+import {
+  KIMI_EXT_COMPACTION,
+  KIMI_EXT_STEP_INTERRUPTED,
+  KIMI_EXT_SUBAGENT_EVENT,
+} from '../src/protocol';
 import { AcpServer } from '../src/server';
 import { AUTHED_STATUS } from './_helpers/harness-stubs';
 
 class CollectingClient implements Client {
   readonly updates: SessionNotification[] = [];
+  readonly extNotifications: Array<{ method: string; params: Record<string, unknown> }> = [];
 
   /**
    * Updates produced AFTER `session/new` returns. Phase 9.3 makes
@@ -41,6 +47,9 @@ class CollectingClient implements Client {
   }
   async sessionUpdate(n: SessionNotification): Promise<void> {
     this.updates.push(n);
+  }
+  async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
+    this.extNotifications.push({ method, params });
   }
   async writeTextFile(_p: WriteTextFileRequest): Promise<WriteTextFileResponse> {
     throw new Error('CollectingClient.writeTextFile should not be called in prompt test');
@@ -144,6 +153,77 @@ describe('AcpServer session/prompt', () => {
     });
 
     // Listener must be unsubscribed exactly once after turn.ended fires.
+    expect(unsubscribeCount()).toBe(1);
+  });
+
+  it('forwards main agent status updates as usage_update notifications', async () => {
+    const sessionId = 'sess-status';
+    const { session, unsubscribeCount } = makeScriptedSession(sessionId, [
+      {
+        type: 'agent.status.updated',
+        sessionId,
+        agentId: 'subagent',
+        contextTokens: 999,
+        maxContextTokens: 200_000,
+        contextUsage: 0.004995,
+      } as Event,
+      {
+        type: 'agent.status.updated',
+        sessionId,
+        agentId: 'main',
+        contextTokens: 1_234,
+        maxContextTokens: 200_000,
+        contextUsage: 0.00617,
+        permission: 'manual',
+        planMode: false,
+        usage: {
+          currentTurn: {
+            inputOther: 100,
+            output: 20,
+            inputCacheRead: 5,
+            inputCacheCreation: 3,
+          },
+        },
+      } as Event,
+      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+    ]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await client.prompt({ sessionId, prompt: [textBlock('hi')] });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const usageUpdates = collecting.promptUpdates.filter(
+      (n) => (n.update as { sessionUpdate?: string }).sessionUpdate === 'usage_update',
+    );
+    expect(usageUpdates).toHaveLength(1);
+    expect(usageUpdates[0]).toMatchObject({
+      sessionId,
+      update: {
+        sessionUpdate: 'usage_update',
+        used: 1_234,
+        size: 200_000,
+        _meta: {
+          contextUsage: 0.00617,
+          permission: 'manual',
+          planMode: false,
+          currentTurn: {
+            input_other: 100,
+            output: 20,
+            input_cache_read: 5,
+            input_cache_creation: 3,
+          },
+        },
+      },
+    });
     expect(unsubscribeCount()).toBe(1);
   });
 
@@ -401,6 +481,180 @@ describe('AcpServer session/prompt', () => {
     expect(response.stopReason).toBe('end_turn');
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(collecting.promptUpdates).toHaveLength(2);
+    expect(unsubscribeCount()).toBe(1);
+  });
+
+  it('forwards main step interrupted events as Kimi extension notifications', async () => {
+    const sessionId = 'sess-step-interrupted';
+    const { session, unsubscribeCount } = makeScriptedSession(sessionId, [
+      {
+        type: 'turn.step.interrupted',
+        sessionId,
+        agentId: 'main',
+        turnId: 1,
+        step: 2,
+        reason: 'aborted',
+        message: 'Interrupted by user',
+      } as Event,
+      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'cancelled' } as Event,
+    ]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(response.stopReason).toBe('cancelled');
+    expect(collecting.extNotifications).toContainEqual({
+      method: KIMI_EXT_STEP_INTERRUPTED,
+      params: {
+        sessionId,
+        turnId: 1,
+        step: 2,
+        reason: 'aborted',
+        message: 'Interrupted by user',
+      },
+    });
+    expect(unsubscribeCount()).toBe(1);
+  });
+
+  it('forwards compaction events as Kimi extension notifications', async () => {
+    const sessionId = 'sess-compaction';
+    const { session, unsubscribeCount } = makeScriptedSession(sessionId, [
+      {
+        type: 'compaction.started',
+        sessionId,
+        agentId: 'main',
+        trigger: 'auto',
+      } as Event,
+      {
+        type: 'compaction.completed',
+        sessionId,
+        agentId: 'main',
+        result: { summary: 'Compacted', compactedCount: 4, tokensBefore: 1000, tokensAfter: 250 },
+      } as Event,
+      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+    ]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(response.stopReason).toBe('end_turn');
+    expect(collecting.extNotifications).toContainEqual({
+      method: KIMI_EXT_COMPACTION,
+      params: { sessionId, phase: 'started', trigger: 'auto' },
+    });
+    expect(collecting.extNotifications).toContainEqual({
+      method: KIMI_EXT_COMPACTION,
+      params: {
+        sessionId,
+        phase: 'completed',
+        result: { summary: 'Compacted', compactedCount: 4, tokensBefore: 1000, tokensAfter: 250 },
+      },
+    });
+    expect(unsubscribeCount()).toBe(1);
+  });
+
+  it('forwards subagent lifecycle and child activity as Kimi extension notifications', async () => {
+    const sessionId = 'sess-subagent-ext';
+    const { session, unsubscribeCount } = makeScriptedSession(sessionId, [
+      {
+        type: 'tool.call.started',
+        sessionId,
+        agentId: 'main',
+        turnId: 1,
+        toolCallId: 'task-1',
+        name: 'Task',
+        args: { prompt: 'inspect' },
+      } as Event,
+      {
+        type: 'subagent.spawned',
+        sessionId,
+        agentId: 'main',
+        subagentId: 'sub-1',
+        subagentName: 'explore',
+        parentToolCallId: 'task-1',
+        runInBackground: false,
+      } as Event,
+      { type: 'subagent.started', sessionId, agentId: 'main', subagentId: 'sub-1' } as Event,
+      {
+        type: 'thinking.delta',
+        sessionId,
+        agentId: 'sub-1',
+        turnId: 99,
+        delta: 'nested thought',
+      } as Event,
+      { type: 'turn.ended', sessionId, agentId: 'sub-1', turnId: 99, reason: 'completed' } as Event,
+      { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+    ]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(response.stopReason).toBe('end_turn');
+    expect(collecting.promptUpdates).toHaveLength(1);
+    expect(collecting.extNotifications).toContainEqual({
+      method: KIMI_EXT_SUBAGENT_EVENT,
+      params: {
+        sessionId,
+        parentToolCallId: '1:task-1',
+        subagentId: 'sub-1',
+        subagentName: 'explore',
+        runInBackground: false,
+        phase: 'spawned',
+      },
+    });
+    expect(collecting.extNotifications).toContainEqual({
+      method: KIMI_EXT_SUBAGENT_EVENT,
+      params: {
+        sessionId,
+        parentToolCallId: '1:task-1',
+        subagentId: 'sub-1',
+        subagentName: 'explore',
+        runInBackground: false,
+        phase: 'started',
+      },
+    });
+    expect(collecting.extNotifications).toContainEqual({
+      method: KIMI_EXT_SUBAGENT_EVENT,
+      params: {
+        sessionId,
+        parentToolCallId: '1:task-1',
+        subagentId: 'sub-1',
+        subagentName: 'explore',
+        runInBackground: false,
+        phase: 'child_event',
+        event: { type: 'ContentPart', payload: { type: 'think', think: 'nested thought' } },
+      },
+    });
     expect(unsubscribeCount()).toBe(1);
   });
 });

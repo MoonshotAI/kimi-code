@@ -1,0 +1,41 @@
+{
+  "name": "kimi/subagent_event child tool call -> nested ToolCall",
+  "method": "kimi/subagent_event",
+  "params": {
+    "sessionId": "sess-1",
+    "parentToolCallId": "1:task-1",
+    "subagentId": "sub-1",
+    "phase": "child_event",
+    "event": {
+      "type": "ToolCall",
+      "payload": {
+        "type": "function",
+        "id": "99:child-tool-1",
+        "function": {
+          "name": "Read",
+          "arguments": "{\"path\":\"README.md\"}"
+        }
+      }
+    }
+  },
+  "expectedEvents": [
+    {
+      "type": "SubagentEvent",
+      "payload": {
+        "task_tool_call_id": "1:task-1",
+        "event": {
+          "type": "ToolCall",
+          "payload": {
+            "type": "function",
+            "id": "99:child-tool-1",
+            "function": {
+              "name": "Read",
+              "arguments": "{\"path\":\"README.md\"}"
+            },
+            "extras": null
+          }
+        }
+      }
+    }
+  ]
+}

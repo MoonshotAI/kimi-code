@@ -381,6 +381,14 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async clearContext(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    await rpc.clearContext({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
   async getUsage(input: SessionIdRpcInput): Promise<SessionUsage> {
     const rpc = await this.getRpc();
     return rpc.getUsage({

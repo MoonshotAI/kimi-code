@@ -1,0 +1,14 @@
+{
+  "name": "agent message chunk becomes text ContentPart",
+  "method": "session/update",
+  "params": {
+    "sessionId": "sess-agent-message",
+    "update": {
+      "sessionUpdate": "agent_message_chunk",
+      "content": { "type": "text", "text": "Hi" }
+    }
+  },
+  "expectedEvents": [
+    { "type": "ContentPart", "payload": { "type": "text", "text": "Hi" } }
+  ]
+}

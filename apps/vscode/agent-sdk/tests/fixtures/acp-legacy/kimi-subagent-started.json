@@ -1,0 +1,25 @@
+{
+  "name": "kimi/subagent_event started -> nested StepBegin",
+  "method": "kimi/subagent_event",
+  "params": {
+    "sessionId": "sess-1",
+    "parentToolCallId": "1:task-1",
+    "subagentId": "sub-1",
+    "subagentName": "explore",
+    "phase": "started"
+  },
+  "expectedEvents": [
+    {
+      "type": "SubagentEvent",
+      "payload": {
+        "task_tool_call_id": "1:task-1",
+        "event": {
+          "type": "StepBegin",
+          "payload": {
+            "n": 1
+          }
+        }
+      }
+    }
+  ]
+}
