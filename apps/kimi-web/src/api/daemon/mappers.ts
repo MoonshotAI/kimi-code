@@ -525,15 +525,6 @@ export function toAppEvent(wire: WireEvent): AppEvent {
       };
     }
 
-    // Global config-changed broadcast (sessionId `__global__`). The web has no
-    // consumer for the daemon's global config yet, so treat it as a known no-op
-    // — this keeps it from being flagged as an unknown event (which would push a
-    // spurious warning on every config change). When a settings UI needs to read
-    // or react to global config, map this to a `configChanged` AppEvent and add
-    // a `config` field to the reducer state.
-    case 'event.config.changed':
-      return { type: 'unknown', raw: { _noop: true, _wireType: w.type } };
-
     // ----- Message lifecycle -----
     case 'event.message.created':
       return { type: 'messageCreated', message: toAppMessage(w.payload.message) };
