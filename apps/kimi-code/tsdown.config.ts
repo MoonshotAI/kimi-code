@@ -6,24 +6,6 @@ import { rawTextPlugin } from '../../build/raw-text-plugin.mjs';
 import { BUILT_IN_CATALOG_DEFINE, builtInCatalogDefine } from './scripts/built-in-catalog.mjs';
 
 const appRoot = import.meta.dirname;
-const bundledRuntimeDependencies = new Set([
-  '@earendil-works/pi-tui',
-  'chalk',
-  'cli-highlight',
-  'commander',
-  'pathe',
-  'semver',
-  'smol-toml',
-  'zod',
-]);
-
-function shouldAlwaysBundle(id: string): boolean {
-  if (id.startsWith('@moonshot-ai/')) return true;
-  for (const dependency of bundledRuntimeDependencies) {
-    if (id === dependency || id.startsWith(`${dependency}/`)) return true;
-  }
-  return false;
-}
 
 export default defineConfig({
   entry: ['./src/main.ts'],
@@ -49,8 +31,6 @@ export default defineConfig({
     [BUILT_IN_CATALOG_DEFINE]: builtInCatalogDefine(),
   },
   deps: {
-    alwaysBundle: shouldAlwaysBundle,
-    neverBundle: ['@mariozechner/clipboard', 'koffi'],
     onlyBundle: false,
   },
   outputOptions: {
