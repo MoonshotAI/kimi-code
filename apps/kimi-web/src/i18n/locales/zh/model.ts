@@ -2,6 +2,8 @@ export default {
   dialogLabel: '切换模型',
   title: '切换模型',
   close: '关闭 (Esc)',
+  allTab: '全部',
+  providerTabs: '模型提供商',
   searchPlaceholder: '搜索模型或提供商…',
   loading: '加载模型中…',
   unavailable: 'daemon 暂不支持模型列表',

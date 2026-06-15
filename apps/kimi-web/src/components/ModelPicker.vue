@@ -2,7 +2,7 @@
 <!-- Modal overlay for switching the active session's model. -->
 <!-- Light only, monospace-forward, Kimi blue #1565C0, no emoji. -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppModel } from '../api/types';
 
@@ -27,36 +27,41 @@ const emit = defineEmits<{
 
 const query = ref('');
 const searchRef = ref<HTMLInputElement | null>(null);
+const activeTab = ref('all');
 
-const grouped = computed<Map<string, AppModel[]>>(() => {
+const providerTabs = computed(() => {
+  const seen = new Set<string>();
+  const tabs: { id: string; label: string }[] = [{ id: 'all', label: t('model.allTab') }];
+  for (const model of props.models) {
+    if (seen.has(model.provider)) continue;
+    seen.add(model.provider);
+    tabs.push({ id: model.provider, label: model.provider });
+  }
+  return tabs;
+});
+
+const filtered = computed<AppModel[]>(() => {
   const q = query.value.toLowerCase().trim();
-  const result = new Map<string, AppModel[]>();
-  for (const m of props.models) {
+  return props.models.filter((m) => {
+    if (activeTab.value !== 'all' && m.provider !== activeTab.value) return false;
     const matchName = (m.displayName ?? m.model).toLowerCase().includes(q);
     const matchProvider = m.provider.toLowerCase().includes(q);
     const matchId = m.id.toLowerCase().includes(q);
-    if (!q || matchName || matchProvider || matchId) {
-      const bucket = result.get(m.provider) ?? [];
-      bucket.push(m);
-      result.set(m.provider, bucket);
-    }
-  }
-  return result;
+    return !q || matchName || matchProvider || matchId;
+  });
 });
 
-const flat = computed<AppModel[]>(() => {
-  const out: AppModel[] = [];
-  for (const items of grouped.value.values()) {
-    out.push(...items);
-  }
-  return out;
-});
-
+const flat = computed<AppModel[]>(() => filtered.value);
 const selectedIdx = ref(0);
 
 // Reset selection when filter changes
-import { watch } from 'vue';
-watch(query, () => { selectedIdx.value = 0; });
+watch([query, activeTab], () => { selectedIdx.value = 0; });
+watch(providerTabs, (tabs) => {
+  if (!tabs.some((tab) => tab.id === activeTab.value)) activeTab.value = 'all';
+});
+watch(flat, (items) => {
+  selectedIdx.value = Math.min(selectedIdx.value, Math.max(items.length - 1, 0));
+});
 
 // -------------------------------------------------------------------------
 // Keyboard navigation
@@ -96,6 +101,10 @@ function choose(modelId: string): void {
 function flatIdx(m: AppModel): number {
   return flat.value.indexOf(m);
 }
+
+function selectTab(tabId: string): void {
+  activeTab.value = tabId;
+}
 </script>
 
 <template>
@@ -122,6 +131,21 @@ function flatIdx(m: AppModel): number {
         />
       </div>
 
+      <div v-if="providerTabs.length > 1" class="tab-strip" role="tablist" :aria-label="t('model.providerTabs')">
+        <button
+          v-for="tab in providerTabs"
+          :key="tab.id"
+          type="button"
+          class="tab-btn"
+          :class="{ on: tab.id === activeTab }"
+          role="tab"
+          :aria-selected="tab.id === activeTab"
+          @click="selectTab(tab.id)"
+        >
+          {{ tab.label }}
+        </button>
+      </div>
+
       <!-- Loading state -->
       <div v-if="loading" class="loading-state">
         <svg class="spin-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5">
@@ -142,31 +166,32 @@ function flatIdx(m: AppModel): number {
         <span>{{ t('model.unavailable') }}</span>
       </div>
 
-      <!-- Model list grouped by provider -->
+      <!-- Model list -->
       <div v-else class="model-list">
-        <template v-for="[provId, items] in grouped" :key="provId">
-          <div class="group-label">{{ provId }}</div>
-          <div
-            v-for="m in items"
-            :key="m.id"
-            class="model-row"
-            :class="{
-              'is-current': m.id === current,
-              'is-selected': flatIdx(m) === selectedIdx,
-            }"
-            role="option"
-            :aria-selected="m.id === current"
-            @click="choose(m.id)"
-            @mouseenter="selectedIdx = flatIdx(m)"
-          >
-            <span class="check">{{ m.id === current ? '✓' : '' }}</span>
+        <div
+          v-for="m in flat"
+          :key="m.id"
+          class="model-row"
+          :class="{
+            'is-current': m.id === current,
+            'is-selected': flatIdx(m) === selectedIdx,
+          }"
+          role="option"
+          :aria-selected="m.id === current"
+          @click="choose(m.id)"
+          @mouseenter="selectedIdx = flatIdx(m)"
+        >
+          <span class="check">{{ m.id === current ? '✓' : '' }}</span>
+          <span class="model-main">
             <span class="model-name">{{ m.displayName ?? m.model }}</span>
-            <span class="model-ctx">{{ t('model.contextSuffix', { size: Math.round(m.maxContextSize / 1000) }) }}</span>
-            <span v-if="m.capabilities && m.capabilities.length > 0" class="caps">
-              {{ m.capabilities.join(', ') }}
-            </span>
-          </div>
-        </template>
+            <span class="model-id">{{ m.id }}</span>
+          </span>
+          <span class="model-provider">{{ m.provider }}</span>
+          <span class="model-ctx">{{ t('model.contextSuffix', { size: Math.round(m.maxContextSize / 1000) }) }}</span>
+          <span v-if="m.capabilities && m.capabilities.length > 0" class="caps">
+            {{ m.capabilities.join(', ') }}
+          </span>
+        </div>
         <div v-if="flat.length === 0 && !loading && !unavailable" class="empty">
           {{ props.models.length === 0 ? t('model.emptyNoModels') : t('model.emptyNoMatch') }}
         </div>
@@ -192,15 +217,15 @@ function flatIdx(m: AppModel): number {
 .dialog {
   background: var(--bg);
   border: 1px solid var(--line);
-  border-top: 2px solid var(--blue);
-  border-radius: 4px;
-  width: 540px;
+  border-radius: 8px;
+  width: 620px;
+  height: min(680px, calc(100vh - 80px));
   max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 80px);
   display: flex;
   flex-direction: column;
   font-family: var(--mono);
   box-shadow: 0 8px 32px rgba(0,0,0,0.14);
+  overflow: hidden;
 }
 
 /* Header */
@@ -211,6 +236,7 @@ function flatIdx(m: AppModel): number {
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   gap: 8px;
+  box-shadow: inset 0 2px 0 var(--blue);
 }
 .dtitle {
   font-size: calc(var(--ui-font-size) - 1.5px);
@@ -234,6 +260,7 @@ function flatIdx(m: AppModel): number {
 .search-wrap {
   padding: 8px 12px;
   border-bottom: 1px solid var(--line2);
+  flex: none;
 }
 .search-input {
   width: 100%;
@@ -248,34 +275,55 @@ function flatIdx(m: AppModel): number {
   outline: none;
 }
 
+.tab-strip {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line2);
+  background: var(--panel);
+  overflow-x: auto;
+}
+.tab-btn {
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: calc(var(--ui-font-size) - 2px);
+  padding: 4px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab-btn:hover {
+  color: var(--ink);
+  background: var(--panel2);
+}
+.tab-btn.on {
+  color: var(--bg);
+  background: var(--blue);
+  border-color: var(--blue);
+  font-weight: 700;
+}
 
 /* Model list */
 .model-list {
   overflow-y: auto;
   flex: 1;
-  padding: 4px 0;
-  min-height: 80px;
+  min-height: 0;
+  padding: 6px 0;
 }
-
-.group-label {
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
-  color: var(--muted);
-  padding: 8px 14px 3px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  border-top: 1px solid var(--line2);
-  user-select: none;
-}
-.group-label:first-child { border-top: none; }
 
 .model-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 14px;
+  padding: 7px 14px;
   cursor: pointer;
   font-size: calc(var(--ui-font-size) - 1.5px);
   color: var(--text);
+  min-width: 0;
 }
 .model-row:hover, .model-row.is-selected {
   background: var(--soft);
@@ -295,10 +343,32 @@ function flatIdx(m: AppModel): number {
   align-items: center;
   justify-content: center;
 }
-.model-name {
+.model-main {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.model-name {
   font-weight: 500;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-id {
+  color: var(--faint);
+  font-size: max(9px, calc(var(--ui-font-size) - 4px));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-provider {
+  color: var(--muted);
+  font-size: max(9px, calc(var(--ui-font-size) - 4px));
+  flex: none;
+  max-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -325,6 +395,8 @@ function flatIdx(m: AppModel): number {
   padding: 20px 14px;
   color: var(--dim);
   font-size: var(--ui-font-size);
+  flex: 1;
+  justify-content: center;
 }
 .unavail-state { color: var(--warn); }
 
@@ -341,6 +413,22 @@ function flatIdx(m: AppModel): number {
   color: var(--faint);
   border-top: 1px solid var(--line2);
   background: var(--panel);
-  border-radius: 0 0 4px 4px;
+  flex: none;
+}
+
+@media (max-width: 640px) {
+  .backdrop {
+    align-items: stretch;
+    padding: 12px;
+  }
+  .dialog {
+    width: 100%;
+    height: min(640px, calc(100vh - 24px));
+    max-width: none;
+  }
+  .model-provider,
+  .caps {
+    display: none;
+  }
 }
 </style>
