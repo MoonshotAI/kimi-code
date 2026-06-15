@@ -79,7 +79,7 @@ function skillTool(
   return new SkillTool(skillToolAgent(skills, methods), options);
 }
 
-function execute(tool: SkillTool, args: { skill: string; args?: string }) {
+function execute(tool: SkillTool, args: { skill?: string; args?: string; action?: 'load' | 'search'; query?: string; limit?: number }) {
   return executeTool(tool, {
     turnId: '0',
     toolCallId: 'call_skill',
@@ -290,5 +290,59 @@ describe('SkillTool recursion guard', () => {
     const tool = skillTool(registry([skill('loop')])).withInitialQueryDepth(MAX_SKILL_QUERY_DEPTH);
 
     await expect(execute(tool, { skill: 'loop' })).rejects.toBeInstanceOf(NestedSkillTooDeepError);
+  });
+});
+
+describe('SkillTool search action', () => {
+  it('returns ranked search results', async () => {
+    const methods = skillToolMethods();
+    const tool = skillTool(
+      registry([
+        skill('docker-expert', {}, 'Docker containerization guide'),
+        skill('react-ui', {}, 'React component patterns'),
+      ]),
+      methods,
+    );
+
+    const result = await execute(tool, { action: 'search', query: 'docker container' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('docker-expert');
+    expect(result.output).toContain('score:');
+    expect(result.output).toContain('Call again with action:"load"');
+    expect(methods.recordSkillActivation).not.toHaveBeenCalled();
+    expect(methods.recordUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('falls back to skill name as query when query is omitted', async () => {
+    const tool = skillTool(
+      registry([
+        skill('docker-expert', {}, 'Docker containerization guide'),
+        skill('react-ui', {}, 'React component patterns'),
+      ]),
+    );
+
+    const result = await execute(tool, { action: 'search', skill: 'react' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('react-ui');
+  });
+
+  it('errors when search query is missing', async () => {
+    const tool = skillTool(registry());
+
+    const result = await execute(tool, { action: 'search' });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('search query is required');
+  });
+
+  it('returns no-results message when nothing matches', async () => {
+    const tool = skillTool(registry([skill('alpha')]));
+
+    const result = await execute(tool, { action: 'search', query: 'zzzzzz' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('No skills found');
   });
 });
