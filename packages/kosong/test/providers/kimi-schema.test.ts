@@ -1,5 +1,5 @@
 import { derefJsonSchema, normalizeKimiToolSchema } from '#/providers/kimi-schema';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 describe('derefJsonSchema', () => {
   it('returns schema unchanged when there are no $ref', () => {
@@ -368,6 +368,82 @@ describe('normalizeKimiToolSchema', () => {
       type: 'object',
       properties: {
         explicit: { type: 'string', enum: ['already-typed'] },
+      },
+    });
+  });
+
+  it('repairs mismatched explicit type when enum values contradict it', () => {
+    // Regression: Xcode MCP (xcrun mcpbridge) Version 26.5 (17F42) and later
+    // generates schemas where String-backed Swift enums incorrectly carry
+    // type: 'object' alongside string enum values. We overwrite the contradictory
+    // type and strip object/array structure keys that are no longer relevant.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const schema = {
+      type: 'object',
+      properties: {
+        operation: {
+          type: 'object',
+          enum: ['move', 'copy'],
+          properties: {
+            rawValue: { type: 'string' },
+          },
+          required: ['rawValue'],
+        },
+      },
+    };
+
+    try {
+      const result = normalizeKimiToolSchema(schema);
+
+      expect(result).toEqual({
+        type: 'object',
+        properties: {
+          operation: {
+            type: 'string',
+            enum: ['move', 'copy'],
+          },
+        },
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('repairs mismatched explicit type when const value contradicts it', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        mode: { type: 'object', const: 'fast' },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        mode: { type: 'string', const: 'fast' },
+      },
+    });
+  });
+
+  it('leaves mixed enum types with explicit type untouched to surface provider error', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        bad: { type: 'object', enum: ['move', 1] },
+      },
+    };
+
+    // inferTypeFromValues throws for mixed types; we should not overwrite the
+    // explicit type so the downstream provider validator can report the issue.
+    expect(() => normalizeKimiToolSchema(schema)).not.toThrow();
+    const result = normalizeKimiToolSchema(schema);
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        bad: { type: 'object', enum: ['move', 1] },
       },
     });
   });
