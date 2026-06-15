@@ -880,8 +880,37 @@ describe('FullCompaction', () => {
         user: text "old user one"
         assistant: text "old assistant one"
         user: text "run both tools"
-        assistant: []  calls call_open_one:LookupOne { "query": "one" }, call_open_two:LookupTwo { "query": "two" }
-        tool[call_open_one]: text "one result"
+        user: text <compaction-instruction>
+    `);
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'assistant',
+    ]);
+    await ctx.expectResumeMatches();
+  });
+
+  it('keeps a fully resolved tool exchange in the compaction prompt', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendToolExchange();
+    const compacted = ctx.once('context.apply_compaction');
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted with tools.' });
+    await ctx.rpc.beginCompaction({ instruction: 'Keep stable facts.' });
+    await compacted;
+
+    expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
+      system: <system-prompt>
+      tools: []
+      messages:
+        user: text "old user one"
+        assistant: text "old assistant one"
+        user: text "lookup something"
+        assistant: text "I will call Lookup."  calls call_lookup:Lookup { "query": "moon" }
+        tool[call_lookup]: text "lookup result"
         user: text <compaction-instruction>
     `);
     expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
@@ -1123,7 +1152,7 @@ describe('FullCompaction', () => {
     ]);
   });
 
-  it('keeps a deferred system reminder behind a partially resolved tool exchange across compaction', async () => {
+  it('flushes a deferred system reminder when a partially resolved tool exchange is compacted away', async () => {
     const ctx = testAgent();
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -1150,8 +1179,14 @@ describe('FullCompaction', () => {
     await ctx.rpc.beginCompaction({});
     await compacted;
 
+    // The open tool exchange was removed by compaction, so pending state is cleared
+    // and the deferred reminder is flushed immediately.
     expect(ctx.agent.context.history.map((m) => m.role)).toEqual([
       'assistant',
+      'user',
+    ]);
+    expect(ctx.agent.context.history.at(-1)?.content).toEqual([
+      { type: 'text', text: '<system-reminder>\nhost note\n</system-reminder>' },
     ]);
 
     ctx.dispatch({
@@ -1164,13 +1199,11 @@ describe('FullCompaction', () => {
       },
     });
 
+    // The late tool result is recorded as an orphan tool message.
     expect(ctx.agent.context.history.map((m) => m.role)).toEqual([
       'assistant',
-      'tool',
       'user',
-    ]);
-    expect(ctx.agent.context.history.at(-1)?.content).toEqual([
-      { type: 'text', text: '<system-reminder>\nhost note\n</system-reminder>' },
+      'tool',
     ]);
   });
 

@@ -169,6 +169,10 @@ export class ContextMemory {
       ...this._history.slice(result.compactedCount),
     ];
     this.openSteps.clear();
+    const trimmed = trimTrailingOpenToolExchange(this._history);
+    if (trimmed.length === this._history.length) {
+      this.pendingToolResultIds.clear();
+    }
     this.flushDeferredMessagesIfToolExchangeClosed();
     this._tokenCount = result.tokensAfter;
     this.tokenCountCoveredMessageCount = this._history.length;
@@ -198,7 +202,29 @@ export class ContextMemory {
   }
 
   project(messages: readonly ContextMessage[]): Message[] {
-    return project(this.agent.microCompaction.compact(messages));
+    return trimTrailingOpenToolExchange(
+      project(this.agent.microCompaction.compact(messages)),
+    );
+  }
+
+  cleanupOrphanedToolCalls(): void {
+    if (this.pendingToolResultIds.size === 0) return;
+    const trimmed = trimTrailingOpenToolExchange(this._history);
+    const removed = this._history.length - trimmed.length;
+    if (removed > 0) {
+      this.agent.records.logRecord({
+        type: 'context.cleanup_orphan_tool_calls',
+        removed,
+      });
+      this._history.length = trimmed.length;
+      this.tokenCountCoveredMessageCount = Math.min(
+        this.tokenCountCoveredMessageCount,
+        this._history.length,
+      );
+    }
+    this.openSteps.clear();
+    this.pendingToolResultIds.clear();
+    this.flushDeferredMessagesIfToolExchangeClosed();
   }
 
   get messages(): Message[] {

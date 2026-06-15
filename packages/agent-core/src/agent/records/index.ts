@@ -99,6 +99,9 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'context.undo':
       agent.context.undo(input.count);
       return;
+    case 'context.cleanup_orphan_tool_calls':
+      agent.context.cleanupOrphanedToolCalls();
+      return;
     case 'tools.register_user_tool':
       agent.tools.registerUserTool(input);
       return;
