@@ -1,3 +1,4 @@
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { TruncatedOutputComponent } from '#/tui/components/messages/tool-renderers/truncated';
@@ -58,5 +59,19 @@ describe('TruncatedOutputComponent', () => {
     const out = strip(component.render(80).join('\n'));
     expect(out).toContain('d');
     expect(out).not.toContain('more lines, ctrl+o');
+  });
+
+  it('keeps the truncation footer within the requested render width', () => {
+    const output = Array.from({ length: 20 }, (_, i) => `line ${String(i)}`).join('\n');
+    const component = new TruncatedOutputComponent(output, {
+      expanded: false,
+      isError: false,
+      maxLines: 3,
+      indent: 2,
+    });
+
+    for (const line of component.render(37)) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(37);
+    }
   });
 });

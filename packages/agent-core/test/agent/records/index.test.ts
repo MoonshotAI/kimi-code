@@ -24,6 +24,8 @@ describe('AgentRecords persistence metadata', () => {
       type: 'metadata',
       protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
     });
+    expect(persistence.records[0]).not.toHaveProperty('app_version');
+    expect(persistence.records[0]).not.toHaveProperty('resumed');
     expect(persistence.records[1]?.type).toBe('turn.prompt');
   });
 

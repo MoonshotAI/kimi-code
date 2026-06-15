@@ -12,6 +12,11 @@ import {
   type TelemetryClient,
 } from '../../src';
 import {
+  __resetRootLoggerForTest,
+  getRootLogger,
+} from '../../src/logging/logger';
+import { resolveLoggingConfig } from '../../src/logging/resolve-config';
+import {
   recordingContextTelemetry,
   type TelemetryContextRecord,
 } from '../fixtures/telemetry';
@@ -46,6 +51,7 @@ describe('HarnessAPI session model aliases', () => {
   });
 
   afterEach(async () => {
+    await __resetRootLoggerForTest();
     await rm(tmp, { recursive: true, force: true });
   });
 
@@ -277,6 +283,21 @@ reason = "no rm"
     );
   });
 
+  it('logs app_version when resuming a session', async () => {
+    await getRootLogger().configure(resolveLoggingConfig({ homeDir }));
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ workDir, model: 'kimi-code/kimi-for-coding' });
+    await rpc.closeSession({ sessionId: created.id });
+
+    const freshRpc = await createTestRpc({ appVersion: '1.2.3-test' });
+    await freshRpc.resumeSession({ sessionId: created.id });
+    await getRootLogger().flushSession(created.id);
+
+    const logText = await readFile(join(created.sessionDir, 'logs', 'kimi-code.log'), 'utf-8');
+    expect(logText).toContain('session resume');
+    expect(logText).toContain('app_version=1.2.3-test');
+  });
+
   it('surfaces a config error when a resumed model is configured but unresolvable', async () => {
     const rpc = await createTestRpc();
     const created = await rpc.createSession({ workDir, model: 'kimi-code/kimi-for-coding' });
@@ -397,11 +418,17 @@ max_context_size = 1000000
     return join(root, match);
   }
 
-  async function createTestRpc(options: { readonly telemetry?: TelemetryClient } = {}) {
+  async function createTestRpc(
+    options: {
+      readonly appVersion?: string;
+      readonly telemetry?: TelemetryClient;
+    } = {},
+  ) {
     const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
     void new KimiCore(coreRpc, {
       homeDir,
       configPath,
+      appVersion: options.appVersion,
       telemetry: options.telemetry,
     });
     return sdkRpc({

@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   buildGoalReportLines,
@@ -115,6 +116,14 @@ describe('GoalSetMessageComponent', () => {
         chalk.hex(darkColors.primary).bold('Goal set'),
     );
   });
+
+  it('keeps the lifecycle line within narrow widths', () => {
+    for (const width of [39, 20, 10, 4]) {
+      for (const line of new GoalSetMessageComponent().render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
 });
 
 describe('UpcomingGoalAddedMessageComponent', () => {
@@ -131,6 +140,14 @@ describe('UpcomingGoalAddedMessageComponent', () => {
         ),
     );
   });
+
+  it('wraps the upcoming-goal confirmation within narrow widths', () => {
+    for (const width of [39, 20, 10, 4]) {
+      for (const line of new UpcomingGoalAddedMessageComponent().render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
 });
 
 describe('GoalStatusMessageComponent', () => {
@@ -139,6 +156,24 @@ describe('GoalStatusMessageComponent', () => {
 
     expect(rendered[0]).toBe('');
     expect(strip([rendered[1]!])).toContain('╭ Goal · active ');
+  });
+
+  it('wraps objective blockquotes without clipping them at 80 columns', () => {
+    const rendered = new GoalStatusMessageComponent(
+      goal({ objective: 'word '.repeat(30).trim() }),
+    ).render(80);
+
+    expect(strip(rendered)).not.toContain('...');
+  });
+
+  it('keeps the status box within narrow widths', () => {
+    const rendered = new GoalStatusMessageComponent(goal({ objective: '管理飞书日历的技能描述 '.repeat(4).trim() }));
+
+    for (const width of [39, 24, 20, 10]) {
+      for (const line of rendered.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 });
 

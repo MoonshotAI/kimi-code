@@ -1,4 +1,4 @@
-import type { TUI } from '@earendil-works/pi-tui';
+import { visibleWidth, type TUI } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -47,6 +47,27 @@ describe('ToolCallComponent', () => {
     expect(out).toContain(`${STATUS_BULLET}Used Read`);
     expect(out).not.toContain(`\u23FA Used Read`);
     expect(out).not.toContain(`${String.fromCodePoint(0x23fa, 0xfe0e)} Used Read`);
+  });
+
+  it('keeps collapsed tool-call lines within very narrow widths', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_narrow_read',
+        name: 'Read',
+        args: { path: 'very/long/path/to/foo.ts' },
+      },
+      {
+        tool_call_id: 'call_narrow_read',
+        output: 'content',
+        is_error: false,
+      },
+    );
+
+    for (const width of [1, 2, 4, 10, 39]) {
+      for (const line of component.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 
   it('keeps collapsed tool results short and expands on demand', () => {

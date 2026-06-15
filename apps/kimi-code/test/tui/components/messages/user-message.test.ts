@@ -1,3 +1,4 @@
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { UserMessageComponent } from '#/tui/components/messages/user-message';
@@ -19,5 +20,15 @@ describe('UserMessageComponent', () => {
     expect(out).toContain('[video #1 sample.mov]');
     expect(out).not.toContain('\u001B_G');
     expect(out).not.toContain('\u001B]1337;File=');
+  });
+
+  it('keeps user lines within very narrow widths', () => {
+    const component = new UserMessageComponent('please inspect the attached output', []);
+
+    for (const width of [1, 2, 4, 10, 39]) {
+      for (const line of component.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 });
