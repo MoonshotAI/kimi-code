@@ -1,4 +1,4 @@
-import type { TUI } from '@earendil-works/pi-tui';
+import { visibleWidth, type TUI } from '@earendil-works/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
@@ -79,5 +79,14 @@ describe('ThinkingComponent', () => {
     const collapsed = strip(component.render(80).join('\n'));
     expect(collapsed).not.toContain('line7');
     expect(collapsed).toContain('ctrl+o to expand');
+  });
+
+  it('keeps the finalized truncation footer within the requested render width', () => {
+    const component = new ThinkingComponent(longThinking, true, 'live');
+    component.finalize();
+
+    for (const line of component.render(37)) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(37);
+    }
   });
 });

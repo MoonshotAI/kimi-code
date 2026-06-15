@@ -13,8 +13,13 @@
  *   Stop       after 20 turns (7/20)      (or a dim "no stop condition" note)
  */
 
-import type { Component } from '@earendil-works/pi-tui';
-import { Text, visibleWidth } from '@earendil-works/pi-tui';
+import {
+  Text,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+  type Component,
+} from '@earendil-works/pi-tui';
 import type { GoalSnapshot, GoalStatus } from '@moonshot-ai/kimi-code-sdk';
 
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
@@ -30,10 +35,18 @@ const MAX_OBJECTIVE_LINES = 6;
 const MAX_CRITERION_LINES = 3;
 const LABEL_WIDTH = 11;
 
-function renderLifecycleLine(label: string): string[] {
+function renderLifecycleLine(label: string, width: number): string[] {
+  if (width <= 0) return [''];
+
   const marker = currentTheme.boldFg('primary', STATUS_BULLET);
-  const text = currentTheme.boldFg('primary', label);
-  return ['', marker + text];
+  const text = new Text(currentTheme.boldFg('primary', label), 0, 0);
+  const contentWidth = Math.max(1, width - visibleWidth(STATUS_BULLET));
+  return [
+    '',
+    ...text
+      .render(contentWidth)
+      .map((line, index) => (index === 0 ? marker : MESSAGE_INDENT) + line.trimEnd()),
+  ];
 }
 
 /**
@@ -44,17 +57,18 @@ function renderLifecycleLine(label: string): string[] {
 export class GoalSetMessageComponent implements Component {
   invalidate(): void {}
 
-  render(_width: number): string[] {
-    return renderLifecycleLine('Goal set');
+  render(width: number): string[] {
+    return renderLifecycleLine('Goal set', width);
   }
 }
 
 export class UpcomingGoalAddedMessageComponent implements Component {
   invalidate(): void {}
 
-  render(_width: number): string[] {
+  render(width: number): string[] {
     return renderLifecycleLine(
       'Upcoming goal added. It will start after the current goal is complete.',
+      width,
     );
   }
 }
@@ -99,8 +113,9 @@ export class GoalStatusMessageComponent implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
+    const panelContentWidth = Math.max(1, width - 6);
     const panel = new UsagePanelComponent(
-      () => buildGoalReportLines(this.goal),
+      () => buildGoalReportLines(this.goal, panelContentWidth),
       'primary',
       goalPanelTitle(this.goal),
     );
@@ -113,7 +128,7 @@ export function goalPanelTitle(goal: GoalSnapshot): string {
   return ` Goal · ${goal.status} `;
 }
 
-export function buildGoalReportLines(goal: GoalSnapshot): string[] {
+export function buildGoalReportLines(goal: GoalSnapshot, wrapWidth: number = WRAP_WIDTH): string[] {
   const statusColor = statusToken(goal.status);
   const bar = (s: string) => currentTheme.fg(statusColor, s);
   const value = (s: string) => currentTheme.fg('text', s);
@@ -128,11 +143,11 @@ export function buildGoalReportLines(goal: GoalSnapshot): string[] {
   const lines: string[] = [];
 
   // Condition as a blockquote left-trail.
-  for (const line of wrap(goal.objective, WRAP_WIDTH, MAX_OBJECTIVE_LINES)) {
+  for (const line of wrap(goal.objective, wrapWidth, MAX_OBJECTIVE_LINES)) {
     lines.push(`${bar('▌')} ${value(line)}`);
   }
   if (goal.completionCriterion !== undefined) {
-    for (const line of wrap(`✓ ${goal.completionCriterion}`, WRAP_WIDTH, MAX_CRITERION_LINES)) {
+    for (const line of wrap(`✓ ${goal.completionCriterion}`, wrapWidth, MAX_CRITERION_LINES)) {
       lines.push(`${bar('▌')} ${muted(line)}`);
     }
   }
@@ -194,22 +209,12 @@ function statusToken(status: GoalStatus): ColorToken {
 
 /** Word-wrap to `width`, capped at `maxLines` (last line gets an ellipsis when clipped). */
 function wrap(text: string, width: number, maxLines: number): string[] {
-  const words = text.replaceAll(/\s+/g, ' ').trim().split(' ');
-  const lines: string[] = [];
-  let current = '';
-  for (const word of words) {
-    const candidate = current.length === 0 ? word : `${current} ${word}`;
-    if (candidate.length > width && current.length > 0) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current.length > 0) lines.push(current);
+  const safeWidth = Math.max(1, width);
+  const lines = wrapTextWithAnsi(text.replaceAll(/\s+/g, ' ').trim(), safeWidth);
   if (lines.length === 0) return [''];
   if (lines.length <= maxLines) return lines;
   const clipped = lines.slice(0, maxLines);
-  clipped[maxLines - 1] = `${clipped[maxLines - 1]!.slice(0, Math.max(0, width - 1))}…`;
+  const lastLine = clipped[maxLines - 1] ?? '';
+  clipped[maxLines - 1] = truncateToWidth(`${lastLine}…`, safeWidth, '…');
   return clipped;
 }

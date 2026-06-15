@@ -1,3 +1,4 @@
+import { visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 import { beforeAll, describe, expect, it } from 'vitest';
 
@@ -53,6 +54,16 @@ describe('FeedbackInputDialogComponent', () => {
     const ansiOpen = sample.split('x')[0]!;
     expect(rendered).toContain(`${ansiOpen}╭`);
     expect(rendered).toContain(`${ansiOpen}╰`);
+  });
+
+  it('keeps every line within narrow widths', () => {
+    const { dialog } = makeDialog();
+
+    for (const width of [39, 20, 10, 4]) {
+      for (const line of dialog.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 
   it('typing then pressing Enter submits the trimmed value', () => {
