@@ -107,7 +107,7 @@ describe('update cache', () => {
     });
   });
 
-  it('falls back to an empty cache when the manifest field is malformed', async () => {
+  it('keeps latest and treats a malformed manifest field as null', async () => {
     mkdirSync(join(dir, 'updates'), { recursive: true });
     writeFileSync(
       getUpdateStateFile(),
@@ -120,7 +120,12 @@ describe('update cache', () => {
       'utf-8',
     );
 
-    await expect(readUpdateCache()).resolves.toEqual(emptyUpdateCache());
+    await expect(readUpdateCache()).resolves.toEqual({
+      source: 'cdn',
+      checkedAt: '2026-04-23T08:00:00.000Z',
+      latest: '0.5.0',
+      manifest: null,
+    });
   });
 });
 
