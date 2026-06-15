@@ -67,7 +67,8 @@
     "postinstall": "node scripts/postinstall.mjs"
   },
   "optionalDependencies": {
-    "@mariozechner/clipboard": "^0.3.2"
+    "@mariozechner/clipboard": "^0.3.2",
+    "koffi": "^2.16.0"
   },
   "devDependencies": {
     "@earendil-works/pi-tui": "^0.74.0",

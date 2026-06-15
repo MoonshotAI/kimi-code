@@ -36,9 +36,10 @@ describe('npm package manifest', () => {
     }
   });
 
-  it('keeps clipboard support optional', () => {
+  it('keeps native support packages optional', () => {
     expect(packageJson.optionalDependencies).toEqual({
       '@mariozechner/clipboard': '^0.3.2',
+      koffi: '^2.16.0',
     });
   });
 });

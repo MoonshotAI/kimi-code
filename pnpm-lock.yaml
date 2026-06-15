@@ -124,6 +124,9 @@ importers:
       '@mariozechner/clipboard':
         specifier: ^0.3.2
         version: 0.3.2
+      koffi:
+        specifier: ^2.16.0
+        version: 2.16.0
 
   apps/vis:
     devDependencies:
