@@ -10,6 +10,7 @@ export default {
   uploading: '上传中',
   uploadFailed: '上传失败',
   attachImage: '附加图片',
+  previewAttachment: '预览 {name}',
   interrupt: '中断',
   interruptTitle: '中断当前操作',
   steerNow: '立即插入 ⌃S',

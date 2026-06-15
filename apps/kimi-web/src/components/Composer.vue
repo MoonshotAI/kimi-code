@@ -334,6 +334,7 @@ function handleInput(): void {
 // ---------------------------------------------------------------------------
 
 const attachments = ref<Attachment[]>([]);
+const previewAttachment = ref<Attachment | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const isDragOver = ref(false);
 
@@ -382,8 +383,17 @@ async function addFiles(files: File[]): Promise<void> {
 
 function removeAttachment(localId: string): void {
   const att = attachments.value.find((a) => a.localId === localId);
+  if (previewAttachment.value?.localId === localId) previewAttachment.value = null;
   if (att) revokeAttachment(att);
   attachments.value = attachments.value.filter((a) => a.localId !== localId);
+}
+
+function openAttachmentPreview(att: Attachment): void {
+  previewAttachment.value = att;
+}
+
+function closeAttachmentPreview(): void {
+  previewAttachment.value = null;
 }
 
 function openFilePicker(): void {
@@ -473,6 +483,7 @@ onUnmounted(() => {
   for (const att of attachments.value) {
     revokeAttachment(att);
   }
+  previewAttachment.value = null;
   clearCompositionEndTimer();
 });
 
@@ -552,6 +563,7 @@ function handleSubmit(): void {
   };
 
   // Revoke object URLs for submitted attachments
+  previewAttachment.value = null;
   for (const att of attachments.value) {
     revokeAttachment(att);
   }
@@ -952,11 +964,13 @@ function selectModel(modelId: string): void {
     <div v-if="attachments.length > 0" class="att-strip">
       <div v-for="att in attachments" :key="att.localId" class="att-chip" :class="{ 'att-error': att.error }">
         <!-- Thumbnail (video shows its first frame; an icon overlays it) -->
-        <video v-if="att.kind === 'video'" class="att-thumb" :src="att.previewUrl" muted playsinline preload="metadata" />
-        <img v-else class="att-thumb" :src="att.previewUrl" :alt="att.name" />
-        <span v-if="att.kind === 'video'" class="att-video-badge" aria-hidden="true">
-          <svg viewBox="0 0 16 16" width="9" height="9" fill="currentColor"><path d="M5 3.5v9l7-4.5z"/></svg>
-        </span>
+        <button type="button" class="att-preview" :title="t('composer.previewAttachment', { name: att.name })" @click="openAttachmentPreview(att)">
+          <video v-if="att.kind === 'video'" class="att-thumb" :src="att.previewUrl" muted playsinline preload="metadata" />
+          <img v-else class="att-thumb" :src="att.previewUrl" :alt="att.name" />
+          <span v-if="att.kind === 'video'" class="att-video-badge" aria-hidden="true">
+            <svg viewBox="0 0 16 16" width="9" height="9" fill="currentColor"><path d="M5 3.5v9l7-4.5z"/></svg>
+          </span>
+        </button>
         <!-- Name + status -->
         <span class="att-name">{{ att.name }}</span>
         <!-- Spinner while uploading -->
@@ -976,6 +990,21 @@ function selectModel(modelId: string): void {
         <button class="att-rm" :title="t('composer.removeNamed', { name: att.name })" @click="removeAttachment(att.localId)">
           <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.6" xmlns="http://www.w3.org/2000/svg"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
         </button>
+      </div>
+    </div>
+
+    <div v-if="previewAttachment" class="att-lightbox" @click.self="closeAttachmentPreview">
+      <div class="att-lightbox-card">
+        <button type="button" class="att-lightbox-close" :title="t('model.close')" @click="closeAttachmentPreview">✕</button>
+        <video
+          v-if="previewAttachment.kind === 'video'"
+          class="att-lightbox-media"
+          :src="previewAttachment.previewUrl"
+          controls
+          playsinline
+        />
+        <img v-else class="att-lightbox-media" :src="previewAttachment.previewUrl" :alt="previewAttachment.name" />
+        <div class="att-lightbox-name">{{ previewAttachment.name }}</div>
       </div>
     </div>
 
@@ -1458,6 +1487,23 @@ function selectModel(modelId: string): void {
   max-width: 220px;
 }
 
+.att-preview {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  padding: 0;
+  cursor: zoom-in;
+  flex: none;
+}
+.att-preview:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
 /* Play glyph over a video thumbnail so it reads as a video, not a still. */
 .att-video-badge {
   position: absolute;
@@ -1525,6 +1571,55 @@ function selectModel(modelId: string): void {
 
 .att-rm:hover {
   color: var(--err);
+}
+
+.att-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 260;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(20, 23, 28, 0.62);
+}
+.att-lightbox-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: min(960px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+}
+.att-lightbox-media {
+  max-width: 100%;
+  max-height: calc(100vh - 96px);
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: 0 12px 42px rgba(0,0,0,0.22);
+  object-fit: contain;
+}
+.att-lightbox-name {
+  max-width: 100%;
+  color: #fff;
+  font-family: var(--mono);
+  font-size: calc(var(--ui-font-size) - 2px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.att-lightbox-close {
+  position: absolute;
+  top: -14px;
+  right: -14px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255,255,255,0.45);
+  border-radius: 50%;
+  background: rgba(20,23,28,0.82);
+  color: #fff;
+  cursor: pointer;
 }
 
 /* Hidden file input */

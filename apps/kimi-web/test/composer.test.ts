@@ -1,6 +1,6 @@
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { createI18n } from 'vue-i18n';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Composer from '../src/components/Composer.vue';
 
 function mountComposer(props: Record<string, unknown> = {}) {
@@ -15,7 +15,9 @@ function mountComposer(props: Record<string, unknown> = {}) {
           interruptTitle: 'Interrupt',
           placeholder: 'Message Kimi',
           queueLabel: 'Queue',
+          previewAttachment: 'Preview {name}',
           remove: 'Remove',
+          removeNamed: 'Remove {name}',
           send: 'Send',
           steerNow: 'Steer now',
           steerTitle: 'Steer now',
@@ -47,6 +49,7 @@ function waitForCompositionEndTimer(): Promise<void> {
 afterEach(() => {
   document.body.innerHTML = '';
   try { localStorage.clear(); } catch { /* ignore */ }
+  vi.restoreAllMocks();
 });
 
 describe('Composer IME input', () => {
@@ -175,6 +178,46 @@ describe('Composer height', () => {
     await textarea.setValue('one line\nsecond line\nthird line');
 
     expect(el.style.height).toBe('');
+  });
+});
+
+describe('Composer attachment preview', () => {
+  it('opens a pasted image preview from the attachment thumbnail', async () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:preview'),
+      configurable: true,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+    });
+    const wrapper = mountComposer({
+      uploadImage: vi.fn(async () => ({ fileId: 'file_1', name: 'shot.png', mediaType: 'image/png' })),
+    });
+    const file = new File(['png'], 'shot.png', { type: 'image/png' });
+    const paste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', {
+      value: { items: [], files: [file] },
+    });
+
+    document.dispatchEvent(paste);
+    await flushPromises();
+
+    await wrapper.find('.att-preview').trigger('click');
+
+    expect(wrapper.find('.att-lightbox').exists()).toBe(true);
+    expect(wrapper.find('.att-lightbox-media').attributes('src')).toBe('blob:preview');
+
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: originalCreateObjectURL,
+      configurable: true,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      value: originalRevokeObjectURL,
+      configurable: true,
+    });
   });
 });
 

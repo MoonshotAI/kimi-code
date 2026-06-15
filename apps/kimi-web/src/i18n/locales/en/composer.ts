@@ -10,6 +10,7 @@ export default {
   uploading: 'Uploading',
   uploadFailed: 'Upload failed',
   attachImage: 'Attach image',
+  previewAttachment: 'Preview {name}',
   interrupt: 'Interrupt',
   interruptTitle: 'Interrupt current operation',
   steerNow: 'Steer now ⌃S',
