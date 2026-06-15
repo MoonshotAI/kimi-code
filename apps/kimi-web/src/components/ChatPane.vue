@@ -946,6 +946,9 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
   min-height: 22px;
   box-sizing: border-box;
 }
+.u-meta .u-edit svg {
+  margin-top: -1px;
+}
 .u-meta .u-edit-text {
   max-width: 0;
   overflow: hidden;
