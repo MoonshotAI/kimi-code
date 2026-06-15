@@ -6,6 +6,12 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.14.3 (2026-06-14)
+
+### Polish
+
+- Refresh provider model metadata before opening the model picker.
+
 ## 0.14.2 (2026-06-12)
 
 ### Bug Fixes
