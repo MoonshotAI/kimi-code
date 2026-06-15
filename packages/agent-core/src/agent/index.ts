@@ -296,12 +296,17 @@ export class Agent {
 
   async resume(): Promise<{ warning?: string }> {
     const result = await this.records.replay();
-    this.goal.normalizeAfterReplay();
-    await this.background.loadFromDisk();
-    await this.background.reconcile();
-    await this.cron?.loadFromDisk();
-    this.context.finishResume();
-    this.turn.finishResume();
+    try {
+      this.replayBuilder.postRestoring = true;
+      this.goal.normalizeAfterReplay();
+      await this.background.loadFromDisk();
+      await this.background.reconcile();
+      await this.cron?.loadFromDisk();
+      this.context.finishResume();
+      this.turn.finishResume();
+    } finally {
+      this.replayBuilder.postRestoring = false;
+    }
     return result;
   }
 

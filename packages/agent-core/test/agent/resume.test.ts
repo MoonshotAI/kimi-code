@@ -490,6 +490,23 @@ describe('Agent resume', () => {
     expect(textContent(syntheticResult)).toContain(
       'Tool execution was interrupted before its result was recorded',
     );
+    const replayMessages = ctx.agent.replayBuilder
+      .buildResult()
+      .flatMap((record) => (record.type === 'message' ? [record.message] : []));
+    expect(replayMessages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+    ]);
+    expect(replayMessages.at(-1)).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_interrupted_two',
+      isError: true,
+    });
+    expect(textContent(replayMessages.at(-1))).toContain(
+      'Tool execution was interrupted before its result was recorded',
+    );
     expect(
       persistence.appended.filter(
         (record) =>
