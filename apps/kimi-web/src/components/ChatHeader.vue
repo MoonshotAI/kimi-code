@@ -33,6 +33,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   openInApp: [appId: string];
   copyAll: [];
+  copyFinalSummary: [];
   openChanges: [];
   openPr: [url: string];
   renameSession: [id: string, title: string];
@@ -113,6 +114,11 @@ onUnmounted(() => {
 
 function onCopyAll(): void {
   emit('copyAll');
+  closeMenu();
+}
+
+function onCopyFinalSummary(): void {
+  emit('copyFinalSummary');
   closeMenu();
 }
 
@@ -243,6 +249,9 @@ function startArchive(): void {
     >
       <button type="button" class="chm-item" @click.stop="onCopyAll">
         {{ copied ? t('header.copied') : t('header.copyAll') }}
+      </button>
+      <button type="button" class="chm-item" @click.stop="onCopyFinalSummary">
+        {{ t('header.copyFinalSummary') }}
       </button>
       <template v-if="sessionId">
         <div class="chm-divider" />

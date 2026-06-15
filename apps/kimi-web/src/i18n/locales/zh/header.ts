@@ -3,6 +3,7 @@ export default {
   openInEditorShort: '打开',
   chooseOpenApp: '选择应用',
   copyAll: '复制全部对话为 Markdown',
+  copyFinalSummary: '仅复制最终总结',
   copied: '已复制',
   copyPath: '复制路径',
   changed: '{n} 处改动',

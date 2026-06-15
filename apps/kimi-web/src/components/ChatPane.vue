@@ -211,26 +211,10 @@ function confirmEditMessage(turn: ChatTurn): void {
 const copiedConversation = ref(false);
 let copiedConversationTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Assemble the full content of a turn for copying — follows the ordered
-    blocks so thinking/text/tool output copy in the order they happened. */
-function turnPlainText(turn: ChatTurn): string {
-  const parts: string[] = [];
-  for (const blk of turnBlocks(turn)) {
-    if (blk.kind === 'thinking' && blk.thinking) parts.push(blk.thinking);
-    else if (blk.kind === 'text' && blk.text) parts.push(blk.text);
-    else if (blk.kind === 'tool' && blk.tool.output && blk.tool.output.length > 0) {
-      parts.push(`[${blk.tool.name}]\n${blk.tool.output.join('\n')}`);
-    } else if (blk.kind === 'agent') {
-      parts.push(`[agent] ${blk.member.name} - ${blk.member.phase}${blk.member.summary ? `\n${blk.member.summary}` : ''}`);
-    } else if (blk.kind === 'agentGroup') {
-      parts.push(
-        `[agents]\n${blk.members
-          .map((member) => `- ${member.name}: ${member.phase}${member.summary ? ` - ${member.summary}` : ''}`)
-          .join('\n')}`,
-      );
-    }
-  }
-  return parts.join('\n\n');
+function turnFinalText(turn: ChatTurn): string {
+  return turnBlocks(turn)
+    .flatMap((blk) => (blk.kind === 'text' && blk.text ? [blk.text] : []))
+    .join('\n\n');
 }
 
 /** Convert a single turn to Markdown. */
@@ -277,8 +261,6 @@ function copyConversation(): void {
   }).catch(() => {/* ignore */});
 }
 
-defineExpose({ copyConversation });
-
 function assistantRunEndingAt(index: number): ChatTurn[] {
   const run: ChatTurn[] = [];
   for (let i = index; i >= 0; i--) {
@@ -288,6 +270,36 @@ function assistantRunEndingAt(index: number): ChatTurn[] {
   }
   return run;
 }
+
+function assistantRunFinalText(index: number): string {
+  return assistantRunEndingAt(index)
+    .map((t) => turnFinalText(t))
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function finalSummaryText(): string {
+  for (let i = props.turns.length - 1; i >= 0; i -= 1) {
+    if (props.turns[i]?.role === 'assistant') return assistantRunFinalText(i);
+  }
+  return '';
+}
+
+function copyFinalSummary(): void {
+  const text = finalSummaryText();
+  if (!text.trim()) return;
+  navigator.clipboard.writeText(text).then(() => {
+    copiedConversation.value = true;
+    emit('copyConversationCopied');
+    if (copiedConversationTimer !== null) clearTimeout(copiedConversationTimer);
+    copiedConversationTimer = setTimeout(() => {
+      copiedConversationTimer = null;
+      copiedConversation.value = false;
+    }, 2000);
+  }).catch(() => {/* ignore */});
+}
+
+defineExpose({ copyConversation, copyFinalSummary });
 
 function isAssistantRunEnd(index: number): boolean {
   const turn = props.turns[index];
@@ -302,10 +314,8 @@ let copiedTimer: ReturnType<typeof setTimeout> | null = null;
 function copyAssistantRun(index: number): void {
   const turn = props.turns[index];
   if (!turn) return;
-  const text = assistantRunEndingAt(index)
-    .map((t) => turnPlainText(t))
-    .filter(Boolean)
-    .join('\n\n');
+  const text = assistantRunFinalText(index);
+  if (!text.trim()) return;
   navigator.clipboard.writeText(text).then(() => {
     copiedTurn.value = turn.id;
     if (copiedTimer !== null) clearTimeout(copiedTimer);
@@ -542,7 +552,7 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
           <AgentGroup v-else-if="blk.kind === 'agentGroup'" :members="blk.members" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" :mobile="childBubble" @open-media="emit('openMedia', $event)" />
         </template>
-        <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti)" class="a-msg-ft">
+        <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && assistantRunFinalText(ti).trim().length > 0" class="a-msg-ft">
           <button
             class="a-cpbtn"
             tabindex="-1"
@@ -635,7 +645,7 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
             </template>
 
             <!-- Per-message copy button (always visible, only when turn is complete) -->
-            <button v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti)" class="cpbtn" @click="copyAssistantRun(ti)" tabindex="-1">
+            <button v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && assistantRunFinalText(ti).trim().length > 0" class="cpbtn" @click="copyAssistantRun(ti)" tabindex="-1">
               <svg v-if="copiedTurn !== turn.id" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect x="3" y="3" width="9" height="9" rx="1.5"/>
                 <path d="M6 1h7a1 1 0 0 1 1 1v7"/>

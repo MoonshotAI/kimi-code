@@ -3,6 +3,7 @@ export default {
   openInEditorShort: 'Open',
   chooseOpenApp: 'Choose application',
   copyAll: 'Copy all as Markdown',
+  copyFinalSummary: 'Copy final summary',
   copied: 'Copied',
   copyPath: 'Copy path',
   changed: '{n} changed',

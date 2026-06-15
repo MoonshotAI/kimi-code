@@ -1057,6 +1057,7 @@ onUnmounted(() => {
       @open-in-app="(app) => emit('openInApp', app)"
       @open-changes="openChangedFiles"
       @copy-all="chatPaneRef?.copyConversation()"
+      @copy-final-summary="chatPaneRef?.copyFinalSummary()"
       @open-pr="pr && emit('openPr', pr.url)"
       @rename-session="(id, title) => emit('renameSession', id, title)"
       @fork-session="(id) => emit('forkSession', id)"
