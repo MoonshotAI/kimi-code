@@ -2,14 +2,17 @@ import type { StreamedMessagePart } from '#/message';
 import {
   DEEPSEEK_TOOL_CALLS_BEGIN,
   DeepSeekInlineToolCallFilter,
+  firstBlockStart,
   parseDeepSeekInlineToolCalls,
 } from '#/providers/deepseek-inline-tool-calls';
 import { OpenAILegacyStreamedMessage } from '#/providers/openai-legacy';
 import { describe, expect, it } from 'vitest';
 
 const SEP = '▁';
-const callBlock = (name: string, args: string) =>
-  `<|tool${SEP}call${SEP}begin|>function<|tool${SEP}sep|>${name}\n\`\`\`json\n${args}\n\`\`\`<|tool${SEP}call${SEP}end|>`;
+// `bar` lets the same helpers build both the ASCII (U+007C) form ollama emits and
+// the full-width (U+FF5C) form raw vLLM/SGLang leaks.
+const callBlock = (name: string, args: string, bar = '|') =>
+  `<${bar}tool${SEP}call${SEP}begin${bar}>function<${bar}tool${SEP}sep${bar}>${name}\n\`\`\`json\n${args}\n\`\`\`<${bar}tool${SEP}call${SEP}end${bar}>`;
 const wrap = (...blocks: string[]) =>
   `${DEEPSEEK_TOOL_CALLS_BEGIN}${blocks.join('')}<|tool${SEP}calls${SEP}end|>`;
 
@@ -43,6 +46,27 @@ describe('parseDeepSeekInlineToolCalls', () => {
       wrap(callBlock('Read', '{"path": broken'), callBlock('Grep', '{"pattern":"x"}')),
     );
     expect(calls.map((c) => c.name)).toEqual(['Grep']);
+  });
+
+  it('parses the full-width (U+FF5C) sentinel form raw vLLM leaks emit', () => {
+    const fw = `<｜tool${SEP}calls${SEP}begin｜>${callBlock('read_file', '{"path":"a.js"}', '｜')}<｜tool${SEP}calls${SEP}end｜>`;
+    const calls = parseDeepSeekInlineToolCalls(fw);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.name).toBe('read_file');
+  });
+
+  it('parses when the outer calls-begin wrapper is omitted (starts at call-begin)', () => {
+    const calls = parseDeepSeekInlineToolCalls(callBlock('read_file', '{"path":"a.js"}'));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.name).toBe('read_file');
+  });
+});
+
+describe('firstBlockStart', () => {
+  it('locates either boundary, both bars, and returns -1 otherwise', () => {
+    expect(firstBlockStart('plain text')).toBe(-1);
+    expect(firstBlockStart(`go ${DEEPSEEK_TOOL_CALLS_BEGIN}…`)).toBe(3);
+    expect(firstBlockStart(`go <｜tool${SEP}call${SEP}begin｜>…`)).toBe(3);
   });
 });
 
@@ -94,6 +118,62 @@ describe('DeepSeekInlineToolCallFilter', () => {
     expect(out).toBe('note ');
     expect(f.sawToolBlock).toBe(true);
     expect(parseDeepSeekInlineToolCalls(f.content)).toEqual([]);
+  });
+
+  it('releaseHoldback returns held text and then passes the rest through', () => {
+    const f = new DeepSeekInlineToolCallFilter();
+    expect(f.push('Hi. ')).toBe(''); // shorter than the holdback — held
+    expect(f.releaseHoldback()).toBe('Hi. ');
+    expect(f.push('more')).toBe('more'); // passthrough now
+  });
+
+  it('does not leak a block when a structured call arrives after suppression began', () => {
+    const f = new DeepSeekInlineToolCallFilter();
+    expect(f.push(`go ${DEEPSEEK_TOOL_CALLS_BEGIN}<|tool${SEP}call${SEP}begin|>`)).toBe('go ');
+    expect(f.sawToolBlock).toBe(true);
+    // A structured tool call arrives mid-block: releaseHoldback must NOT flip to
+    // passthrough, or the rest of the raw tokens would leak as visible text.
+    expect(f.releaseHoldback()).toBe('');
+    expect(f.push(`function<|tool${SEP}sep|>read_file`)).toBe('');
+    expect(f.flush()).toBe('');
+  });
+});
+
+describe('OpenAILegacyStreamedMessage inline-tool fallback (stream)', () => {
+  const streamed = (chunks: unknown[]) =>
+    new OpenAILegacyStreamedMessage(
+      (async function* () {
+        for (const c of chunks) yield c;
+      })() as never,
+      true,
+      undefined,
+    );
+
+  it('keeps a short text preamble before structured tool-call parts (no reorder)', async () => {
+    // "Hi. " (4 chars) is shorter than the holdback, so it is buffered; the
+    // structured tool_calls delta must release it first, not after.
+    const sm = streamed([
+      { id: 'c', choices: [{ index: 0, delta: { content: 'Hi. ' } }] },
+      {
+        id: 'c',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                { index: 0, id: 'call_1', function: { name: 'read_file', arguments: '{"path":"a.js"}' } },
+              ],
+            },
+          },
+        ],
+      },
+      { id: 'c', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+    const parts: StreamedMessagePart[] = [];
+    for await (const part of sm) parts.push(part);
+    const types = parts.map((p) => p.type);
+    expect(types.indexOf('text')).toBeLessThan(types.indexOf('function'));
+    expect(parts.find((p) => p.type === 'text')).toMatchObject({ text: 'Hi. ' });
   });
 });
 
