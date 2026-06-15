@@ -104,6 +104,7 @@ export async function runShell(
     startupNotice: configWarning,
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
+    defaultSwarmMode: config.defaultSwarmMode,
   });
 
   initializeCliTelemetry({

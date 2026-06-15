@@ -7,6 +7,7 @@ export interface CLIOptions {
   yolo: boolean;
   auto: boolean;
   plan: boolean;
+  swarm: boolean | undefined;
   model: string | undefined;
   outputFormat: PromptOutputFormat | undefined;
   prompt: string | undefined;
@@ -45,6 +46,9 @@ export function validateOptions(opts: CLIOptions): ValidatedOptions {
   }
   if (promptMode && opts.plan) {
     throw new OptionConflictError('Cannot combine --prompt with --plan.');
+  }
+  if (promptMode && opts.swarm) {
+    throw new OptionConflictError('Cannot combine --prompt with --swarm.');
   }
   if (promptMode && opts.session === '') {
     throw new OptionConflictError('Cannot use --session without an id in prompt mode.');

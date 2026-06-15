@@ -57,6 +57,7 @@ import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent } from './components/dialogs/session-picker';
+import { SwarmStartPermissionPromptComponent } from './components/dialogs/swarm-start-permission-prompt';
 import {
   FileMentionProvider,
   type SlashAutocompleteCommand,
@@ -70,6 +71,7 @@ import {
   GoalSetMessageComponent,
 } from './components/messages/goal-panel';
 import { SkillActivationComponent } from './components/messages/skill-activation';
+import { SwarmModeMarkerComponent } from './components/messages/swarm-markers';
 import {
   NoticeMessageComponent,
   StatusMessageComponent,
@@ -150,6 +152,8 @@ export interface KimiTUIStartupInput {
   readonly migrationPlan?: MigrationPlan | null;
   /** When true, run only the migration screen, then exit (the `kimi migrate` command). */
   readonly migrateOnly?: boolean;
+  /** Default swarm mode from config.toml; CLI flags override this. */
+  readonly defaultSwarmMode?: boolean;
 }
 
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
@@ -160,13 +164,14 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     : input.cliOptions.yolo
       ? 'yolo'
       : 'manual';
+  const startupSwarm = input.cliOptions.swarm ?? input.defaultSwarmMode ?? false;
   return {
     model: '',
     workDir: input.workDir,
     sessionId: '',
     permissionMode: startupPermission,
     planMode: input.cliOptions.plan,
-    swarmMode: false,
+    swarmMode: startupSwarm,
     thinking: false,
     contextUsage: 0,
     contextTokens: 0,
@@ -260,6 +265,7 @@ export class KimiTUI {
         yolo: startupInput.cliOptions.yolo,
         auto: startupInput.cliOptions.auto,
         plan: startupInput.cliOptions.plan,
+        swarm: startupInput.cliOptions.swarm,
         model: startupInput.cliOptions.model,
         startupNotice: startupInput.startupNotice,
       },
@@ -500,7 +506,7 @@ export class KimiTUI {
     }
     if (shouldReplayHistory) {
       await this.sessionReplay.hydrateFromReplay(this.requireSession());
-      this.applyStartupPermissionAndPlanToAppState();
+      this.applyStartupPermissionPlanAndSwarmToAppState();
     }
     const resumeState = this.session?.getResumeState();
     if (resumeState?.warning !== undefined) {
@@ -514,6 +520,58 @@ export class KimiTUI {
       this.updateTerminalTitle();
     }
     void this.refreshSkillCommands(this.session);
+    if (!shouldReplayHistory) {
+      void this.promptForSwarmPermissionIfNeeded();
+    }
+  }
+
+  private async promptForSwarmPermissionIfNeeded(): Promise<void> {
+    if (!this.state.appState.swarmMode || this.state.appState.permissionMode !== 'manual') {
+      return;
+    }
+    const session = this.session;
+    if (session === undefined) return;
+
+    this.deferUserMessages = true;
+    const restore = (): void => {
+      this.deferUserMessages = false;
+      this.restoreEditor();
+    };
+
+    this.mountEditorReplacement(
+      new SwarmStartPermissionPromptComponent({
+        onSelect: (choice) => {
+          restore();
+          if (choice === 'auto' || choice === 'yolo') {
+            void (async () => {
+              try {
+                await session.setPermission(choice);
+              } catch (error) {
+                this.showError(`Failed to set permission mode: ${formatErrorMessage(error)}`);
+                await this.disableStartupSwarmMode(session);
+                return;
+              }
+              this.setAppState({ permissionMode: choice });
+            })();
+          }
+        },
+        onCancel: () => {
+          restore();
+          void this.disableStartupSwarmMode(session);
+        },
+      }),
+    );
+  }
+
+  private async disableStartupSwarmMode(session: Session): Promise<void> {
+    try {
+      await session.setSwarmMode(false, 'manual');
+    } catch (error) {
+      this.showError(`Failed to disable swarm mode: ${formatErrorMessage(error)}`);
+    }
+    this.setAppState({ swarmMode: false });
+    this.state.transcriptContainer.addChild(new SwarmModeMarkerComponent('inactive'));
+    this.state.ui.requestRender();
   }
 
   private async showTmuxKeyboardWarningIfNeeded(): Promise<void> {
@@ -537,6 +595,7 @@ export class KimiTUI {
       model: startup.model,
       permission: startup.auto ? 'auto' : startup.yolo ? 'yolo' : undefined,
       planMode: startup.plan ? true : undefined,
+      swarmMode: this.state.appState.swarmMode,
     };
 
     try {
@@ -604,7 +663,7 @@ export class KimiTUI {
     }
     await this.setSession(session);
     await this.syncRuntimeState(session);
-    this.applyStartupPermissionAndPlanToAppState();
+    this.applyStartupPermissionPlanAndSwarmToAppState();
     this.state.startupState = 'ready';
     return shouldReplayHistory;
   }
@@ -1090,10 +1149,10 @@ export class KimiTUI {
     });
   }
 
-  // Apply --auto/--yolo/--plan startup flags to a resumed session. The resumed
-  // session may already be in plan mode from its persisted records, and
-  // re-entering plan mode throws, so only enable it when it is not active yet.
-  // setPermission is idempotent and needs no such guard.
+  // Apply --auto/--yolo/--plan/--swarm startup flags to a resumed session. The
+  // resumed session may already be in plan/swarm mode from its persisted
+  // records, and re-entering plan mode throws, so only enable it when it is not
+  // active yet. setPermission is idempotent and needs no such guard.
   private async applyStartupModesToResumedSession(session: Session): Promise<void> {
     const { startup } = this.options;
     if (startup.auto) {
@@ -1107,12 +1166,18 @@ export class KimiTUI {
         await session.setPlanMode(true);
       }
     }
+    if (startup.swarm) {
+      const status = await session.getStatus();
+      if (!status.swarmMode) {
+        await session.setSwarmMode(true, 'manual');
+      }
+    }
   }
 
   // Re-apply startup flags that the user explicitly passed on the command line.
   // syncRuntimeState and session-replay hydration can both read stale persisted
   // values, so this guarantees the footer reflects the CLI intent.
-  private applyStartupPermissionAndPlanToAppState(): void {
+  private applyStartupPermissionPlanAndSwarmToAppState(): void {
     const { startup } = this.options;
     if (startup.auto) {
       this.setAppState({ permissionMode: 'auto' });
@@ -1121,6 +1186,9 @@ export class KimiTUI {
     }
     if (startup.plan) {
       this.setAppState({ planMode: true });
+    }
+    if (startup.swarm) {
+      this.setAppState({ swarmMode: true });
     }
   }
 
@@ -1895,7 +1963,7 @@ export class KimiTUI {
               }
               if (options.applyStartupModes === true) {
                 await this.applyStartupModesToResumedSession(this.requireSession());
-                this.applyStartupPermissionAndPlanToAppState();
+                this.applyStartupPermissionPlanAndSwarmToAppState();
               }
               this.hideSessionPicker();
             })

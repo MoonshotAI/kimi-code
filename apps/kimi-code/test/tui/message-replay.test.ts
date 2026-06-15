@@ -45,6 +45,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       yolo: false,
       auto: false,
       plan: false,
+      swarm: undefined,
       model: undefined,
       outputFormat: undefined,
       prompt: undefined,

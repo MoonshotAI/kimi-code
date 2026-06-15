@@ -23,6 +23,7 @@ kimi <subcommand> [options]
 | `--yolo` | `-y` | 自动批准普通工具调用，跳过审批请求 |
 | `--auto` | | 以 auto 权限模式启动；工具审批自动处理，Agent 不会向用户提问 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
+| `--swarm` | | 以 Swarm 模式启动新会话。`--no-swarm` 可显式关闭，覆盖配置文件中的 `default_swarm_mode` |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
@@ -37,10 +38,10 @@ kimi <subcommand> [options]
 
 - `--continue` 与 `--session` 互斥——两者都表示"恢复历史会话"
 - `--yolo` 和 `--auto` 互斥——两种权限模式互斥
-- `--prompt` 不能与 `--yolo`、`--auto` 或 `--plan` 同时使用——非交互模式固定使用 `auto` 权限
+- `--prompt` 不能与 `--yolo`、`--auto`、`--plan` 或 `--swarm` 同时使用——非交互模式固定使用 `auto` 权限
 - `--output-format` 只能与 `--prompt` 一起使用
 
-恢复会话时，可以通过 `--auto`、`--yolo` 或 `--plan` 覆盖原会话保存的权限或计划模式。例如，`kimi --continue --auto` 会恢复最近会话并切换到 auto 权限模式。
+恢复会话时，可以通过 `--auto`、`--yolo`、`--plan` 或 `--swarm` 覆盖原会话保存的权限、计划模式或 Swarm 模式。例如，`kimi --continue --auto` 会恢复最近会话并切换到 auto 权限模式。
 
 ## 典型用法
 

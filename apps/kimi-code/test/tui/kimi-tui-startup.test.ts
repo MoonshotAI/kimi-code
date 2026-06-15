@@ -23,6 +23,7 @@ vi.mock('#/tui/commands/prompts', async (importOriginal) => {
 
 interface StartupDriver {
   state: TUIState;
+  deferUserMessages: boolean;
   init(): Promise<boolean>;
   handleLoginCommand(): Promise<void>;
   handleLogoutCommand(): Promise<void>;
@@ -60,6 +61,7 @@ const MIGRATION_PLAN: MigrationPlan = {
 function makeStartupInput(
   cliOptions: Partial<KimiTUIStartupInput['cliOptions']> = {},
   tuiConfig: Partial<KimiTUIStartupInput['tuiConfig']> = {},
+  overrides: Partial<Omit<KimiTUIStartupInput, 'cliOptions' | 'tuiConfig'>> = {},
 ): KimiTUIStartupInput {
   return {
     cliOptions: {
@@ -68,6 +70,7 @@ function makeStartupInput(
       yolo: false,
       auto: false,
       plan: false,
+      swarm: undefined,
       model: undefined,
       outputFormat: undefined,
       prompt: undefined,
@@ -83,6 +86,7 @@ function makeStartupInput(
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-a',
+    ...overrides,
   };
 }
 
@@ -106,6 +110,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     setThinking: vi.fn(async () => {}),
     setPermission: vi.fn(async () => {}),
     setPlanMode: vi.fn(async () => {}),
+    setSwarmMode: vi.fn(async () => {}),
     getGoal: vi.fn(async () => ({ goal: null })),
     onEvent: vi.fn(() => () => {}),
     getResumeState: vi.fn(() => null),
@@ -246,6 +251,7 @@ describe('KimiTUI startup', () => {
       workDir: '/tmp/proj-a',
       permission: 'yolo',
       planMode: true,
+      swarmMode: false,
     });
     expect(session.setApprovalHandler).toHaveBeenCalledOnce();
     expect(session.setQuestionHandler).toHaveBeenCalledOnce();
@@ -262,6 +268,115 @@ describe('KimiTUI startup', () => {
       contextUsage: 0.125,
       sessionTitle: 'Session title',
     });
+  });
+
+  it('passes --swarm to createSession on fresh startup', async () => {
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingLevel: 'off',
+        permission: 'auto',
+        planMode: false,
+        swarmMode: true,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
+      })),
+    });
+    const harness = makeHarness(session);
+    const driver = makeDriver(harness, makeStartupInput({ swarm: true }));
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(harness.createSession).toHaveBeenCalledWith({
+      workDir: '/tmp/proj-a',
+      permission: undefined,
+      planMode: undefined,
+      swarmMode: true,
+    });
+    expect(driver.state.appState.swarmMode).toBe(true);
+  });
+
+  it('applies config.defaultSwarmMode when CLI does not override', async () => {
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingLevel: 'off',
+        permission: 'auto',
+        planMode: false,
+        swarmMode: true,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
+      })),
+    });
+    const harness = makeHarness(session);
+    const driver = makeDriver(harness, makeStartupInput({}, {}, { defaultSwarmMode: true }));
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(harness.createSession).toHaveBeenCalledWith({
+      workDir: '/tmp/proj-a',
+      permission: undefined,
+      planMode: undefined,
+      swarmMode: true,
+    });
+    expect(driver.state.appState.swarmMode).toBe(true);
+  });
+
+  it('--no-swarm suppresses config.defaultSwarmMode', async () => {
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingLevel: 'off',
+        permission: 'auto',
+        planMode: false,
+        swarmMode: false,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
+      })),
+    });
+    const harness = makeHarness(session);
+    const driver = makeDriver(harness, makeStartupInput({ swarm: false }, {}, { defaultSwarmMode: true }));
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(harness.createSession).toHaveBeenCalledWith({
+      workDir: '/tmp/proj-a',
+      permission: undefined,
+      planMode: undefined,
+      swarmMode: false,
+    });
+    expect(driver.state.appState.swarmMode).toBe(false);
+  });
+
+  it('shows swarm permission prompt when default swarm is enabled with manual permission', async () => {
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingLevel: 'off',
+        permission: 'manual',
+        planMode: false,
+        swarmMode: true,
+        contextTokens: 10,
+        maxContextTokens: 100,
+        contextUsage: 0.1,
+      })),
+    });
+    const harness = makeHarness(session);
+    const driver = makeDriver(harness, makeStartupInput({ swarm: true }));
+
+    await expect(driver.init()).resolves.toBe(false);
+    await (
+      driver as unknown as {
+        finishStartup(shouldReplayHistory: boolean): Promise<void>;
+      }
+    ).finishStartup(false);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(driver.deferUserMessages).toBe(true);
+    expect(driver.state.editorContainer.children.length).toBeGreaterThan(0);
   });
 
   it('resumes the latest session for --continue and marks history for replay', async () => {
@@ -480,6 +595,27 @@ describe('KimiTUI startup', () => {
     expect(driver.state.appState.planMode).toBe(true);
   });
 
+  it('keeps --swarm in the footer after session replay hydration', async () => {
+    const session = makeSession({
+      id: 'ses-latest',
+      getResumeState: vi.fn(() => createResumeState({ permissionMode: 'manual', planMode: false })),
+    });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-latest' }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ continue: true, swarm: true }));
+
+    await expect(driver.init()).resolves.toBe(true);
+    await (
+      driver as unknown as {
+        finishStartup(shouldReplayHistory: boolean): Promise<void>;
+      }
+    ).finishStartup(true);
+
+    expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'manual');
+    expect(driver.state.appState.swarmMode).toBe(true);
+  });
+
   it('applies --auto permission when resuming an explicit session', async () => {
     let permission = 'manual';
     const session = makeSession({
@@ -569,6 +705,7 @@ describe('KimiTUI startup', () => {
       model: 'kimi-code/k2.5',
       permission: undefined,
       planMode: undefined,
+      swarmMode: false,
     });
   });
 
@@ -882,6 +1019,7 @@ describe('KimiTUI startup', () => {
       workDir: '/tmp/proj-a',
       permission: 'yolo',
       planMode: true,
+      swarmMode: false,
     });
     expect(createSession).toHaveBeenNthCalledWith(2, {
       workDir: '/tmp/proj-a',

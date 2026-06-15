@@ -27,6 +27,7 @@ default_model = "kimi-code/kimi-for-coding"
 default_thinking = true
 default_permission_mode = "manual"
 default_plan_mode = false
+default_swarm_mode = false
 merge_all_available_skills = true
 telemetry = true
 
@@ -79,6 +80,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `default_thinking` | `boolean` | `false` | Whether new sessions enable Thinking (deep reasoning) mode by default; can be toggled from the model menu inside a session. Even when set to `true`, `[thinking].mode = "off"` will still force Thinking off |
 | `default_permission_mode` | `string` | `manual` | Default permission mode for new sessions; one of `manual` (prompt each time), `auto` (auto-approve read operations), or `yolo` (auto-approve everything) |
 | `default_plan_mode` | `boolean` | `false` | Whether new sessions start in Plan mode (produce a plan before executing) by default |
+| `default_swarm_mode` | `boolean` | `false` | Whether new sessions start in Swarm mode (parallel subagent delegation) by default. When permission mode is `manual`, a startup prompt asks whether to switch to `auto`/`yolo` or keep manual approvals |
 | `merge_all_available_skills` | `boolean` | `true` | Whether to merge Agent Skills from all available directories |
 | `extra_skill_dirs` | `array<string>` | — | Extra skill search directories, layered on top of the default directories |
 | `telemetry` | `boolean` | `true` | Whether anonymous telemetry is enabled; disabled only when explicitly set to `false` |

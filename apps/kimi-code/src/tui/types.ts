@@ -192,6 +192,7 @@ export interface TUIStartupOptions {
   readonly yolo: boolean;
   readonly auto: boolean;
   readonly plan: boolean;
+  readonly swarm?: boolean;
   readonly model?: string;
   readonly startupNotice?: string;
 }

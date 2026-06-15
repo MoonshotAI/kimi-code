@@ -167,6 +167,26 @@ describe('CLI options parsing', () => {
     });
   });
 
+  describe('--swarm / --no-swarm', () => {
+    it('sets swarm mode flag with --swarm', () => {
+      expect(parse(['--swarm']).swarm).toBe(true);
+    });
+
+    it('clears swarm mode flag with --no-swarm', () => {
+      expect(parse(['--no-swarm']).swarm).toBe(false);
+    });
+
+    it('leaves swarm mode unspecified when the flag is absent', () => {
+      expect(parse([]).swarm).toBeUndefined();
+    });
+
+    it('rejects prompt mode with --swarm', () => {
+      const opts = parse(['-p', 'run this', '--swarm']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Cannot combine --prompt with --swarm.');
+    });
+  });
+
   describe('--auto / --yolo / --plan with --session / --continue', () => {
     it('allows --auto with --continue', () => {
       const opts = parse(['--auto', '--continue']);

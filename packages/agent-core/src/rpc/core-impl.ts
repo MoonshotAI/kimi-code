@@ -207,6 +207,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const id = options.id ?? createSessionId();
     const thinkingLevel = resolveThinkingLevel(options.thinking, config);
     const permissionMode = options.permission ?? config.defaultPermissionMode;
+    const swarmMode = options.swarmMode ?? config.defaultSwarmMode;
     const baseMcpConfig = await resolveSessionMcpConfig({
       cwd: workDir,
       homeDir: this.homeDir,
@@ -275,6 +276,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       // restore their own plan state from records and never re-apply this.
       if (config.defaultPlanMode === true) {
         await mainAgent.planMode.enter();
+      }
+      // Honor createSession swarmMode option or config.defaultSwarmMode for fresh
+      // sessions. Resumed sessions restore their own swarm state from records
+      // and never re-apply this.
+      if (swarmMode === true) {
+        mainAgent.swarmMode.enter('manual');
       }
       await session.writeMetadata();
       await session.flushMetadata();

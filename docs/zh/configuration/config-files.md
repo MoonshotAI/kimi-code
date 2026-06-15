@@ -27,6 +27,7 @@ default_model = "kimi-code/kimi-for-coding"
 default_thinking = true
 default_permission_mode = "manual"
 default_plan_mode = false
+default_swarm_mode = false
 merge_all_available_skills = true
 telemetry = true
 
@@ -79,6 +80,7 @@ timeout = 5
 | `default_thinking` | `boolean` | `false` | 新会话是否默认开启 Thinking（深度推理）模式；可在会话内从模型菜单切换。即使设为 `true`，`[thinking].mode = "off"` 也会强制关闭 |
 | `default_permission_mode` | `string` | `manual` | 新会话的默认权限模式，可选 `manual`（逐次询问）、`auto`（自动批准读操作）、`yolo`（全部自动批准） |
 | `default_plan_mode` | `boolean` | `false` | 新会话是否默认以 Plan 模式（先出计划再执行）启动 |
+| `default_swarm_mode` | `boolean` | `false` | 新会话是否默认以 Swarm 模式（并行子 Agent 委托）启动。当权限模式为 `manual` 时，启动会弹出提示，询问是否切换到 `auto`/`yolo` 或保留手动审批 |
 | `merge_all_available_skills` | `boolean` | `true` | 是否合并所有目录中的 Agent Skills |
 | `extra_skill_dirs` | `array<string>` | — | 额外 Skill 搜索目录，叠加到默认目录之上 |
 | `telemetry` | `boolean` | `true` | 是否启用匿名遥测；显式设为 `false` 时关闭 |
