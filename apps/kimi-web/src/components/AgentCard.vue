@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import type { AgentMember } from '../types';
 
 const props = defineProps<{ member: AgentMember; compact?: boolean }>();
 
-const expanded = ref(false);
+const emit = defineEmits<{
+  /** Open this subagent's full detail in the right-side panel. */
+  open: [memberId: string];
+}>();
+
 const progressLines = computed(() =>
   (props.member.outputLines ?? [])
     .map((line) => line.trimEnd())
@@ -26,29 +30,31 @@ function phaseLabel(phase: AgentMember['phase']): string {
   }
 }
 
-function toggle(): void {
-  if (hasDetail.value) expanded.value = !expanded.value;
+function open(): void {
+  if (hasDetail.value) emit('open', props.member.id);
 }
 </script>
 
 <template>
   <div class="agent-card" :class="[`phase-${member.phase}`, { compact }]">
-    <button class="agent-head" type="button" :disabled="!hasDetail" @click="toggle">
+    <button class="agent-head" type="button" :disabled="!hasDetail" @click="open">
       <span class="agent-dot" aria-hidden="true"></span>
       <span class="agent-main">
         <span class="agent-title-row">
           <span class="agent-name">{{ member.name }}</span>
           <span v-if="member.subagentType" class="agent-type">{{ member.subagentType }}</span>
-        </span>
-        <span v-if="latestProgress && (member.phase === 'queued' || member.phase === 'working' || member.phase === 'suspended')" class="agent-live">
-          {{ latestProgress }}
+          <!-- The "currently doing" line shares the title row, filling the blank
+               space to its right; it never wraps onto its own line. -->
+          <span
+            v-if="latestProgress && (member.phase === 'queued' || member.phase === 'working' || member.phase === 'suspended')"
+            class="agent-live"
+          >{{ latestProgress }}</span>
         </span>
       </span>
       <span class="agent-phase">{{ phaseLabel(member.phase) }}</span>
       <svg
         v-if="hasDetail"
         class="agent-chevron"
-        :class="{ open: expanded }"
         viewBox="0 0 16 16"
         fill="none"
         stroke="currentColor"
@@ -60,23 +66,6 @@ function toggle(): void {
         <path d="M6 4l4 4-4 4" />
       </svg>
     </button>
-    <div v-if="hasDetail && expanded" class="agent-detail">
-      <div v-if="member.suspendedReason" class="agent-reason">{{ member.suspendedReason }}</div>
-      <div v-if="member.prompt" class="agent-field">
-        <span class="agent-field-label">Task</span>
-        <div class="agent-field-body">{{ member.prompt }}</div>
-      </div>
-      <div v-if="progressLines.length > 0" class="agent-field">
-        <span class="agent-field-label">Progress</span>
-        <div class="agent-field-body agent-progress">
-          <span v-for="(line, index) in progressLines" :key="index">{{ line }}</span>
-        </div>
-      </div>
-      <div v-if="member.summary" class="agent-field">
-        <span class="agent-field-label">Result</span>
-        <div class="agent-field-body agent-summary">{{ member.summary }}</div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -120,9 +109,6 @@ function toggle(): void {
 .agent-main {
   min-width: 0;
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 .agent-title-row {
   min-width: 0;
@@ -131,6 +117,7 @@ function toggle(): void {
   gap: 7px;
 }
 .agent-name {
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -144,7 +131,8 @@ function toggle(): void {
   font-size: calc(var(--ui-font-size) - 3px);
 }
 .agent-live {
-  max-width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -167,47 +155,5 @@ function toggle(): void {
   width: 14px;
   height: 14px;
   color: var(--muted);
-  transition: transform 0.12s;
-}
-.agent-chevron.open {
-  transform: rotate(90deg);
-}
-.agent-detail {
-  border-top: 1px solid var(--line);
-  padding: 8px 10px 10px 26px;
-  color: var(--dim);
-  font-size: var(--ui-font-size-xs);
-  line-height: 1.5;
-}
-.agent-reason {
-  color: var(--warn);
-  margin-bottom: 4px;
-}
-.agent-field + .agent-field {
-  margin-top: 8px;
-}
-.agent-field-label {
-  display: block;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 2px;
-}
-.agent-field-body {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.agent-summary {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.agent-progress {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-family: var(--mono);
-  color: var(--text);
 }
 </style>

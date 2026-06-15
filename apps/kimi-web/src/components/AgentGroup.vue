@@ -5,6 +5,11 @@ import AgentCard from './AgentCard.vue';
 
 const props = defineProps<{ members: AgentMember[] }>();
 
+const emit = defineEmits<{
+  /** Forwarded from a child card: open that subagent's detail on the right. */
+  open: [memberId: string];
+}>();
+
 const expanded = ref(true);
 
 const done = computed(() =>
@@ -37,7 +42,7 @@ const running = computed(() =>
       </svg>
     </button>
     <div v-if="expanded" class="group-body">
-      <AgentCard v-for="member in members" :key="member.id" :member="member" compact />
+      <AgentCard v-for="member in members" :key="member.id" :member="member" compact @open="emit('open', $event)" />
     </div>
   </section>
 </template>
