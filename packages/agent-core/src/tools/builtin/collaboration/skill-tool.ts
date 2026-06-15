@@ -141,6 +141,7 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
             skillArgs,
             skillContent,
             skillSource: skill.source,
+            skillDir: skill.dir,
             trigger: promptTrigger,
           }),
         },
