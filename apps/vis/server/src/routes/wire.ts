@@ -6,7 +6,7 @@ import { isSafeAgentId, readSessionDetail } from '../lib/session-store';
 import { rehydrateWireEntries } from '../lib/blob-resolver';
 import { readAgentWire } from '../lib/wire-reader';
 
-export function wireRoute(): Hono {
+export function wireRoute(home: string = KIMI_CODE_HOME): Hono {
   const r = new Hono();
   r.get('/:id/wire', async (c) => {
     const id = c.req.param('id');
@@ -14,7 +14,7 @@ export function wireRoute(): Hono {
     if (!isSafeAgentId(agentId)) {
       return c.json({ error: 'invalid agent id', code: 'BAD_REQUEST' }, 400);
     }
-    const detail = await readSessionDetail(KIMI_CODE_HOME, id);
+    const detail = await readSessionDetail(home, id);
     if (!detail) {
       return c.json({ error: 'session not found', code: 'NOT_FOUND' }, 404);
     }

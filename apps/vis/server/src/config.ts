@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 /** Resolve KIMI_CODE_HOME (env > ~/.kimi-code). */
-function resolveKimiCodeHome(): string {
+export function resolveKimiCodeHome(): string {
   const envHome = process.env['KIMI_CODE_HOME'];
   if (envHome !== undefined && envHome.length > 0) {
     return envHome;

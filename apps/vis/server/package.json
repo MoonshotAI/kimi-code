@@ -10,6 +10,20 @@
       "./src/*/index.ts"
     ]
   },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./start": {
+      "types": "./src/start.ts",
+      "default": "./src/start.ts"
+    },
+    "./package.json": {
+      "types": "./package.json",
+      "default": "./package.json"
+    }
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsdown",
