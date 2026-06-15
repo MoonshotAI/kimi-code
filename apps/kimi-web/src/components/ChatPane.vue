@@ -9,6 +9,7 @@ import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
 import AgentCard from './AgentCard.vue';
 import AgentGroup from './AgentGroup.vue';
+import { formatMessageTime } from '../lib/formatMessageTime';
 
 const { t } = useI18n();
 
@@ -116,6 +117,8 @@ const emit = defineEmits<{
   openThinking: [target: { turnId: string; blockIndex: number }];
   /** Show a compaction divider's summary text in the right-side panel. */
   openCompaction: [target: { turnId: string }];
+  /** Show a subagent's full detail in the right-side panel. */
+  openAgent: [target: { turnId: string; blockIndex: number; memberId: string }];
   /** Edit + resend the last user message (parent undoes, then refills composer). */
   editMessage: [text: string];
 }>();
@@ -414,16 +417,25 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
            outside the bubble with an inline confirm step). -->
       <template v-if="turn.role === 'user'">
         <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
-          <!-- Image attachments -->
+          <!-- Image / video attachments -->
           <div v-if="turn.images && turn.images.length > 0" class="u-imgs">
-            <img
-              v-for="(img, ii) in turn.images"
-              :key="ii"
-              class="u-img"
-              :src="img.url"
-              :alt="img.alt || ''"
-              loading="lazy"
-            />
+            <template v-for="(img, ii) in turn.images" :key="ii">
+              <video
+                v-if="img.kind === 'video'"
+                class="u-img"
+                :src="img.url"
+                controls
+                playsinline
+                preload="metadata"
+              />
+              <img
+                v-else
+                class="u-img"
+                :src="img.url"
+                :alt="img.alt || ''"
+                loading="lazy"
+              />
+            </template>
           </div>
           <!-- Skill activation card (replaces raw XML) -->
           <div v-if="turn.skillActivation" class="skill-act">
@@ -435,6 +447,7 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
           </div>
           <!-- User input renders verbatim (pre-wrap), never through Markdown -->
           <div v-else class="u-text">{{ turn.text }}</div>
+          <div v-if="turn.createdAt" class="u-time">{{ formatMessageTime(turn.createdAt, t('conversation.yesterday')) }}</div>
         </div>
         <div v-if="canEditTurn(turn)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
           <button
@@ -495,8 +508,8 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
           <div v-else-if="blk.kind === 'tool-stack'" class="tool-stack">
             <ToolCall v-for="(item, si) in blk.tools" :key="toolStackKey(item)" :tool="item.tool" :mobile="childBubble" :stack-position="toolStackPosition(si, blk.tools.length)" @open-media="emit('openMedia', $event)" />
           </div>
-          <AgentCard v-else-if="blk.kind === 'agent'" :member="blk.member" />
-          <AgentGroup v-else-if="blk.kind === 'agentGroup'" :members="blk.members" />
+          <AgentCard v-else-if="blk.kind === 'agent'" :member="blk.member" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
+          <AgentGroup v-else-if="blk.kind === 'agentGroup'" :members="blk.members" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" :mobile="childBubble" @open-media="emit('openMedia', $event)" />
         </template>
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti)" class="a-msg-ft">
@@ -624,8 +637,8 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
               <div v-else-if="blk.kind === 'tool-stack'" class="tool-stack">
                 <ToolCall v-for="(item, si) in blk.tools" :key="toolStackKey(item)" :tool="item.tool" :stack-position="toolStackPosition(si, blk.tools.length)" @open-media="emit('openMedia', $event)" />
               </div>
-              <AgentCard v-else-if="blk.kind === 'agent'" :member="blk.member" />
-              <AgentGroup v-else-if="blk.kind === 'agentGroup'" :members="blk.members" />
+              <AgentCard v-else-if="blk.kind === 'agent'" :member="blk.member" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
+              <AgentGroup v-else-if="blk.kind === 'agentGroup'" :members="blk.members" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
               <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" @open-media="emit('openMedia', $event)" />
             </template>
           </template>
@@ -866,6 +879,14 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
   padding: 10px 14px;
   font-size: var(--ui-font-size);
   line-height: 1.55;
+}
+.u-bub .u-time {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
 }
 @keyframes undo-bubble-exit {
   0% {
