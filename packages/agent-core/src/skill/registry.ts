@@ -274,7 +274,7 @@ function formatCompactSkill(skill: SkillDefinition): readonly string[] {
   return [`- ${skill.name}: ${truncate(skill.description, 80)}`];
 }
 
-/** Minimal format: name only. Used for catalogues > 200 skills. */
+/** Minimal format: name only. Used for catalogues > 300 skills. */
 function formatNameOnlySkill(skill: SkillDefinition): readonly string[] {
   return [`- ${skill.name}`];
 }
