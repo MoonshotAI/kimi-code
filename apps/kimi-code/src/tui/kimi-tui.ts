@@ -1870,6 +1870,7 @@ export class KimiTUI {
     closeOnCancel: false,
     forwardEditorExit: false,
   };
+  private sessionPickerScopeRequestToken = 0;
 
   async showSessionPicker(): Promise<void> {
     await this.openSessionPicker({
@@ -1914,8 +1915,11 @@ export class KimiTUI {
   }
 
   private async toggleSessionPickerScope(selectedSessionId: string): Promise<void> {
+    const requestToken = ++this.sessionPickerScopeRequestToken;
     const nextScope = this.state.sessionsScope === 'cwd' ? 'all' : 'cwd';
     await this.fetchSessions(nextScope);
+    if (requestToken !== this.sessionPickerScopeRequestToken) return;
+    if (this.state.activeDialog !== 'session-picker') return;
     this.mountSessionPicker({
       initialSelectedSessionId: selectedSessionId,
       applyStartupModes: this.sessionPickerOptions.applyStartupModes,
@@ -1937,6 +1941,7 @@ export class KimiTUI {
   }
 
   hideSessionPicker(): void {
+    this.sessionPickerScopeRequestToken += 1;
     this.editorKeyboard.clearPendingExit();
     this.state.activeDialog = null;
     this.restoreEditor();
@@ -1984,6 +1989,7 @@ export class KimiTUI {
   ): Promise<void> {
     if (resolve(session.work_dir) !== resolve(this.state.appState.workDir)) {
       await this.showResumeOtherWorkDirHint(session);
+      if (applyStartupModes) await this.stop(0);
       return;
     }
 

@@ -769,6 +769,47 @@ describe('KimiTUI startup', () => {
     expect(driver.state.sessions.map((session) => session.id)).toEqual(['ses-cwd']);
   });
 
+  it('does not remount the session picker after it is closed while a scope toggle is pending', async () => {
+    const currentWorkDirSession = {
+      id: 'ses-cwd',
+      title: 'Current cwd session',
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now(),
+    };
+    const otherWorkDirSession = {
+      id: 'ses-other-cwd',
+      title: 'Other cwd session',
+      workDir: '/tmp/proj-b',
+      updatedAt: Date.now() - 1000,
+    };
+    let resolveAllSessions: ((value: unknown[]) => void) | undefined;
+    const listSessions = vi.fn((input: { workDir?: string } = {}) => {
+      if (input.workDir === '/tmp/proj-a') return Promise.resolve([currentWorkDirSession]);
+      return new Promise<unknown[]>((resolve) => {
+        resolveAllSessions = resolve;
+      });
+    });
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), { listSessions });
+    const driver = makeDriver(harness, makeStartupInput());
+    const mountSessionPicker = vi.spyOn(
+      driver as unknown as { mountSessionPicker(options: unknown): void },
+      'mountSessionPicker',
+    );
+    await expect(driver.init()).resolves.toBe(false);
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    expect(mountSessionPicker).toHaveBeenCalledTimes(1);
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\u0001');
+    (driver as unknown as { hideSessionPicker(): void }).hideSessionPicker();
+    resolveAllSessions?.([currentWorkDirSession, otherWorkDirSession]);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(driver.state.activeDialog).toBeNull();
+    expect(mountSessionPicker).toHaveBeenCalledTimes(1);
+  });
+
   it('clears the sessions picker search query when toggling scope with Ctrl+A', async () => {
     const currentWorkDirSession = {
       id: 'ses-cwd',
@@ -839,7 +880,7 @@ describe('KimiTUI startup', () => {
 
     await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
     const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
-    picker.handleInput('\u001b[B');
+    picker.handleInput('\u001B[B');
     picker.handleInput('\r');
     await new Promise((resolve) => setImmediate(resolve));
 
@@ -883,7 +924,7 @@ describe('KimiTUI startup', () => {
 
     await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
     const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
-    picker.handleInput('\u001b[B');
+    picker.handleInput('\u001B[B');
     picker.handleInput('\r');
     await new Promise((resolve) => setImmediate(resolve));
 
@@ -895,6 +936,44 @@ describe('KimiTUI startup', () => {
     expect(transcript).toContain(
       "To resume, run: cd '/tmp/proj$(touch /tmp/pwned)' && kimi --resume 'ses-other-cwd'",
     );
+  });
+
+  it('exits after picking another cwd from the startup picker', async () => {
+    const currentWorkDirSession = {
+      id: 'ses-cwd',
+      title: 'Current cwd session',
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now(),
+    };
+    const otherWorkDirSession = {
+      id: 'ses-other-cwd',
+      title: 'Other cwd session',
+      workDir: '/tmp/proj-b',
+      updatedAt: Date.now() - 1000,
+    };
+    const resumeSession = vi.fn(async () => makeSession({ id: 'ses-other-cwd' }));
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+      resumeSession,
+      listSessions: vi.fn(async () => [currentWorkDirSession, otherWorkDirSession]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: '' }));
+    const stop = vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
+    copyTextToClipboardMock.mockClear();
+
+    await expect((driver as unknown as MigrateExitDriver).initMainTui()).resolves.toBe(false);
+    await (driver as unknown as { bootstrapFromPicker(): Promise<void> }).bootstrapFromPicker();
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(resumeSession).not.toHaveBeenCalled();
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith(
+      "cd '/tmp/proj-b' && kimi --resume 'ses-other-cwd'",
+    );
+    expect(stop).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledWith(0);
   });
 
   it('does not apply startup flags when switching sessions via the /sessions picker', async () => {
