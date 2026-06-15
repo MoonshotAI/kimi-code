@@ -236,6 +236,18 @@ function updateSlashMenu(): void {
 
 function selectSlashCommand(item: SlashCommand): void {
   slashOpen.value = false;
+  if (item.acceptsInput) {
+    text.value = `${item.name} `;
+    void nextTick(() => {
+      const el = textareaRef.value;
+      if (!el) return;
+      const pos = text.value.length;
+      el.setSelectionRange(pos, pos);
+      el.focus();
+      autosize();
+    });
+    return;
+  }
   text.value = '';
   emit('command', item.name);
 }
@@ -519,12 +531,16 @@ function handleSubmit(): void {
 
   if (!trimmed && readyAttachments.length === 0) return;
 
-  // If it's a slash command (no space → treat as command trigger).
-  // /compact also accepts a free-text instruction after the command, so it
-  // stays a command instead of falling through as a chat message.
+  // If it's a known slash command, keep the optional tail as command input
+  // instead of submitting it as normal chat text. This covers `/goal <task>`,
+  // `/swarm <task>`, `/btw <question>`, slash skills with args, and bare
+  // commands such as `/model`.
   if (trimmed) {
     const parsed = parseSlash(trimmed);
-    if (parsed && (!parsed.arg || parsed.cmd === '/compact')) {
+    const known = parsed
+      ? buildSlashItems(props.skills).some((item) => item.name === parsed.cmd)
+      : false;
+    if (parsed && known) {
       text.value = '';
       slashOpen.value = false;
       emit('command', parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd);

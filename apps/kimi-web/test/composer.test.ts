@@ -20,8 +20,16 @@ function mountComposer(props: Record<string, unknown> = {}) {
           steerNow: 'Steer now',
           steerTitle: 'Steer now',
         },
+        commands: {
+          goal: { desc: 'Start a goal' },
+          swarm: { desc: 'Run with swarm' },
+          btw: { desc: 'Ask side chat' },
+          compact: { desc: 'Compact context' },
+        },
       },
     },
+    missingWarn: false,
+    fallbackWarn: false,
   });
 
   return mount(Composer, {
@@ -170,5 +178,40 @@ describe('Composer queue bubble', () => {
 
     expect(wrapper.find('.queue-popover').exists()).toBe(true);
     expect(wrapper.find('.queue-text-inner').text()).toBe('follow up after this');
+  });
+});
+
+describe('Composer slash command input', () => {
+  it('emits /goal with the typed objective instead of sending it as chat', async () => {
+    const wrapper = mountComposer();
+    const textarea = wrapper.get('textarea');
+
+    await textarea.setValue('/goal swarm review the changed files');
+    await textarea.trigger('keydown', { key: 'Enter' });
+
+    expect(wrapper.emitted('command')).toEqual([['/goal swarm review the changed files']]);
+    expect(wrapper.emitted('submit')).toBeUndefined();
+  });
+
+  it('emits /swarm with the typed task instead of sending it as chat', async () => {
+    const wrapper = mountComposer();
+    const textarea = wrapper.get('textarea');
+
+    await textarea.setValue('/swarm inspect flaky tests');
+    await textarea.trigger('keydown', { key: 'Enter' });
+
+    expect(wrapper.emitted('command')).toEqual([['/swarm inspect flaky tests']]);
+    expect(wrapper.emitted('submit')).toBeUndefined();
+  });
+
+  it('keeps input-capable slash commands in the composer when selected from the menu', async () => {
+    const wrapper = mountComposer();
+    const textarea = wrapper.get('textarea');
+
+    await textarea.setValue('/go');
+    await textarea.trigger('keydown', { key: 'Enter' });
+
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('/goal ');
+    expect(wrapper.emitted('command')).toBeUndefined();
   });
 });

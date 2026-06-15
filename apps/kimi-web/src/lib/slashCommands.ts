@@ -14,6 +14,11 @@ export interface SlashCommand {
    * the skill instead of running an app command, and its `desc` is raw text.
    */
   isSkill?: boolean;
+  /**
+   * Selecting the item should leave the command in the composer so the user can
+   * type the message/argument that follows it.
+   */
+  acceptsInput?: boolean;
 }
 
 export const SLASH_COMMANDS: SlashCommand[] = [
@@ -26,13 +31,13 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/login',      desc: 'commands.login.desc' },
   { name: '/permission', desc: 'commands.permission.desc' },
   { name: '/plan',       desc: 'commands.plan.desc' },
-  { name: '/swarm',      desc: 'commands.swarm.desc' },
-  { name: '/goal',       desc: 'commands.goal.desc' },
-  { name: '/btw',        desc: 'commands.btw.desc' },
+  { name: '/swarm',      desc: 'commands.swarm.desc', acceptsInput: true },
+  { name: '/goal',       desc: 'commands.goal.desc', acceptsInput: true },
+  { name: '/btw',        desc: 'commands.btw.desc', acceptsInput: true },
   { name: '/auto',       desc: 'commands.auto.desc' },
   { name: '/yolo',       desc: 'commands.yolo.desc' },
   { name: '/thinking',   desc: 'commands.thinking.desc' },
-  { name: '/compact',    desc: 'commands.compact.desc' },
+  { name: '/compact',    desc: 'commands.compact.desc', acceptsInput: true },
   { name: '/undo',       desc: 'commands.undo.desc' },
   { name: '/fork',       desc: 'commands.fork.desc' },
   { name: '/status',     desc: 'commands.status.desc' },
