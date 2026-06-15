@@ -428,6 +428,60 @@ describe('context-projector', () => {
     expect(proj.messages[2]!.message.content[0]).toMatchObject({ text: bigText });
   });
 
+  it('context.undo clamps the micro-compaction cutoff by history-entry count, not array length (surviving marker)', () => {
+    const bigText = 'x'.repeat(2000);
+    const toolMsg = (id: string, text: string) => ({
+      role: 'tool' as const, content: [{ type: 'text' as const, text }], toolCalls: [], toolCallId: id,
+    });
+    const userMsg = (text: string) => ({
+      role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [],
+      origin: { kind: 'user' as const },
+    });
+    // A PRIOR undo must leave a surviving marker so that, at a LATER undo's clamp,
+    // the array length exceeds the history-entry count by that marker. agent-core
+    // clamps against `_history.length` (NO markers); clamping against
+    // `messages.length` here would be one too high and wrongly blank a later
+    // tool result.
+    //
+    // Trace (model mode):
+    //   1. append u1, u2 → [u1, u2]
+    //   2. undo(1) removes u2 → [u1] then pushes marker → [u1, <undo#1>]
+    //   3. append u3 → [u1, <undo#1>, u3]
+    //   4. micro_compaction cutoff=5 (large) → microCutoff=5
+    //   5. undo(1) removes u3 (cutoff index 2); the <undo#1> marker at index 1
+    //      SURVIVES (1 < 2) → [u1, <undo#1>]. Clamp:
+    //        - buggy  min(5, messages.length=2) = 2
+    //        - fixed  min(5, historyCount=1)    = 1   (u1 is history; marker is not)
+    //      then push <undo#2> → [u1, <undo#1>, <undo#2>]
+    //   6. append big tool n0 → [u1, <undo#1>, <undo#2>, n0]
+    //
+    // Final blanking iterates history entries only (markers skipped). n0 is at
+    // history index 1 (only u1 precedes it as a history entry). It is blanked iff
+    // historyIndex(1) < microCutoff:
+    //   - buggy  microCutoff=2 → 1 < 2 → n0 WRONGLY blanked
+    //   - fixed  microCutoff=1 → 1 >= 1 → pass breaks → n0 preserved
+    // So this is RED (n0 blanked) under the messages.length clamp and GREEN under
+    // the history-count clamp.
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_message' as const, message: userMsg('u2') }, raw: {} },
+      { lineNo: 3, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
+      { lineNo: 4, data: { type: 'context.append_message' as const, message: userMsg('u3') }, raw: {} },
+      { lineNo: 5, data: { type: 'micro_compaction.apply' as const, cutoff: 5 }, raw: {} },
+      { lineNo: 6, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
+      // appended AFTER the second undo, at history index 1.
+      { lineNo: 7, data: { type: 'context.append_message' as const, message: toolMsg('n0', bigText) }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    expect(proj.messages.map((m) => m.source)).toEqual([
+      'append_message', 'undo', 'undo', 'append_message',
+    ]);
+    // u1 (history index 0 < cutoff) is blanked-eligible but is a user message, so
+    // unchanged. n0 (history index 1) must NOT be blanked: its original content
+    // is preserved, not replaced by the cleared marker.
+    expect(proj.messages[3]!.message.content).toEqual([{ type: 'text', text: bigText }]);
+  });
+
   it('accumulates goal state from goal.create/update and clears on goal.clear', () => {
     const base = [
       { lineNo: 1, data: { type: 'goal.create' as const, goalId: 'g1', objective: 'ship it', completionCriterion: 'tests green' }, raw: {} },

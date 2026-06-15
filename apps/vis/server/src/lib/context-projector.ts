@@ -338,11 +338,16 @@ export function projectContext(
           );
           openSteps = new Map();
           // Mirror agent-core undo() → microCompaction.reset(this._history.length):
-          // clamp the cutoff to the post-undo message count so a later append does
-          // not get blanked by a now-too-large stale cutoff. (Clamp before pushing
-          // the undo marker, which is a non-tool pseudo-message and unaffected by
-          // blanking regardless.)
-          microCutoff = Math.min(microCutoff, messages.length);
+          // clamp the cutoff to the post-undo HISTORY-entry count so a later append
+          // does not get blanked by a now-too-large stale cutoff. Count only history
+          // entries (`isHistoryEntry`) — `messages.length` would include any surviving
+          // synthetic undo/clear marker, which agent-core's `_history.length` does
+          // NOT, so an array-length clamp could be too high by the marker count.
+          // (Clamp before pushing the undo marker, which is a non-tool pseudo-message
+          // and unaffected by blanking regardless.) With no markers, historyCount ===
+          // messages.length, so this is a no-op then.
+          const historyCount = messages.reduce((n, pm) => (isHistoryEntry(pm) ? n + 1 : n), 0);
+          microCutoff = Math.min(microCutoff, historyCount);
         }
         // In 'full' mode: do NOT remove — keep the undone messages and openSteps
         // as-is, only push the undo marker. `removedMessageCount` still reflects

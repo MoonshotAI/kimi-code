@@ -15,9 +15,15 @@ const out = join(here, '..', 'src', 'generated', 'vis-web-asset.ts');
 
 console.log('[build-vis-asset] building vis web single-file bundle…');
 try {
-  execFileSync('pnpm', ['--filter', '@moonshot-ai/vis-web', 'build:single'], {
+  // Run vite directly with VIS_SINGLEFILE set on the spawn so the build is
+  // cross-platform (Node sets the env, not a POSIX-only inline-env shell
+  // prefix). `pnpm --filter X exec` runs in X's package dir, so vite picks up
+  // vis-web's vite.config.ts, which gates the single-file output on
+  // `process.env.VIS_SINGLEFILE === '1'`.
+  execFileSync('pnpm', ['--filter', '@moonshot-ai/vis-web', 'exec', 'vite', 'build'], {
     stdio: 'inherit',
     cwd: repoRoot,
+    env: { ...process.env, VIS_SINGLEFILE: '1' },
   });
 } catch (err) {
   throw new Error(
