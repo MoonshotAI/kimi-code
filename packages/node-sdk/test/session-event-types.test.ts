@@ -57,6 +57,7 @@ describe('Event public types', () => {
         case 'agent.status.updated':
         case 'session.meta.updated':
         case 'event.session.created':
+        case 'event.config.changed':
         case 'goal.updated':
         case 'skill.activated':
         case 'error':

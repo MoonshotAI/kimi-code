@@ -191,7 +191,7 @@ async function waitForTerminalText(
 }
 
 function toShellOctalEscapes(value: string): string {
-  return [...value]
+  return Array.from(value)
     .map((char) => `\\${char.codePointAt(0)!.toString(8).padStart(3, '0')}`)
     .join('');
 }

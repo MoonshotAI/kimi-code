@@ -124,7 +124,7 @@ export function sanitizeForTrace(value: unknown, depth = 0): unknown {
     if (s.length > MAX_STRING) return `${s.slice(0, MAX_STRING)}… [+${s.length - MAX_STRING} chars]`;
     return s;
   }
-  if (t !== 'object') return String(value);
+  if (t !== 'object') return String(value as bigint | symbol | (() => unknown));
   if (depth >= MAX_DEPTH) return '[max depth]';
   if (Array.isArray(value)) {
     const out: unknown[] = value
