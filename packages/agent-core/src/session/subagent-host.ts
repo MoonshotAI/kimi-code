@@ -110,6 +110,10 @@ export class SessionSubagentHost {
     private readonly ownerAgentId: string,
   ) {}
 
+  private resolveSubagentModel(parent: Agent): string | undefined {
+    return this.session.options.config?.subagentModel ?? parent.config.modelAlias;
+  }
+
   async spawn(options: SpawnSubagentOptions): Promise<SubagentHandle> {
     options.signal.throwIfAborted();
 
@@ -143,7 +147,7 @@ export class SessionSubagentHost {
     const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
       this.emitSubagentSpawned(parent, agentId, profileName, runOptions);
       try {
-        child.config.update({ modelAlias: parent.config.modelAlias });
+        child.config.update({ modelAlias: this.resolveSubagentModel(parent) });
         return await this.runPromptTurn(parent, agentId, child, profileName, runOptions);
       } catch (error) {
         this.emitSubagentFailed(parent, agentId, runOptions, error);
@@ -159,7 +163,7 @@ export class SessionSubagentHost {
     const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
       try {
         runOptions.signal.throwIfAborted();
-        child.config.update({ modelAlias: parent.config.modelAlias });
+        child.config.update({ modelAlias: this.resolveSubagentModel(parent) });
         this.emitSubagentStarted(parent, agentId);
         const turnId = child.turn.retry('agent-host');
         if (turnId === null) {
@@ -220,7 +224,7 @@ export class SessionSubagentHost {
     );
 
     child.config.update({
-      modelAlias: parent.config.modelAlias,
+      modelAlias: this.resolveSubagentModel(parent),
       thinkingLevel: parent.config.thinkingLevel,
       systemPrompt: parent.config.systemPrompt,
     });
@@ -355,10 +359,9 @@ export class SessionSubagentHost {
     child: Agent,
     profile: ResolvedAgentProfile,
   ): Promise<void> {
-    // A subagent always inherits the parent agent's model.
     child.config.update({
       cwd: parent.config.cwd,
-      modelAlias: parent.config.modelAlias,
+      modelAlias: this.resolveSubagentModel(parent),
       thinkingLevel: parent.config.thinkingLevel,
     });
 

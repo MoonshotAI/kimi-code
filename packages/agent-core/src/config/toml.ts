@@ -471,6 +471,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
     'defaultPermissionMode',
     'defaultPlanMode',
     'defaultSwarmMode',
+    'subagentModel',
     'mergeAllAvailableSkills',
     'extraSkillDirs',
     'telemetry',
