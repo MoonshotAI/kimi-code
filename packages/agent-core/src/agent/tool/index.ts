@@ -238,10 +238,10 @@ export class ToolManager {
     // server flipping to needs-auth means previous tokens were invalidated.
     this.unregisterMcpServer(entry.name);
     const oauthService = mcp.oauthService;
-    const serverUrl = mcp.getHttpServerUrl(entry.name);
+    const serverUrl = mcp.getRemoteServerUrl(entry.name);
     if (oauthService === undefined || serverUrl === undefined) {
       // Misconfiguration: a server reached needs-auth without the manager
-      // owning an OAuth service or being HTTP. Treat it as a no-op so the
+      // owning an OAuth service or being remote. Treat it as a no-op so the
       // existing failure error message keeps the user informed.
       return;
     }

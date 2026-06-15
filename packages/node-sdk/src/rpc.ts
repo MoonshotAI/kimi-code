@@ -22,6 +22,7 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import type { ApprovalHandler, QuestionHandler } from '#/events';
 import type {
   BackgroundTaskInfo,
+  ConfigDiagnostics,
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
@@ -195,6 +196,11 @@ export abstract class SDKRpcClientBase {
   async getConfig(input?: GetConfigOptions): Promise<KimiConfig> {
     const rpc = await this.getRpc();
     return rpc.getKimiConfig(input ?? {});
+  }
+
+  async getConfigDiagnostics(): Promise<ConfigDiagnostics> {
+    const rpc = await this.getRpc();
+    return rpc.getConfigDiagnostics({});
   }
 
   async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {

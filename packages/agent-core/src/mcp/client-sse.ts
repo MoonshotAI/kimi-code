@@ -1,7 +1,7 @@
-import type { McpServerHttpConfig } from '#/config/schema';
+import type { McpServerSseConfig } from '#/config/schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { SSEClientTransport, SseError } from '@modelcontextprotocol/sdk/client/sse.js';
 
 import {
   buildRequestOptions,
@@ -15,7 +15,7 @@ import {
 import { buildMcpRemoteHeaders } from './client-remote';
 import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 
-export interface HttpMcpClientOptions {
+export interface SseMcpClientOptions {
   readonly clientName?: string;
   readonly clientVersion?: string;
   readonly toolCallTimeoutMs?: number;
@@ -30,44 +30,37 @@ export interface HttpMcpClientOptions {
   readonly fetch?: typeof fetch;
   /**
    * OAuth client provider attached to the transport. Set only when the server
-   * has no static token configuration; the SDK uses this to handle 401s with
-   * RFC 9728 / RFC 8414 / DCR discovery and PKCE. The connection manager wires
-   * this in and surfaces `UnauthorizedError` as a `needs-auth` status.
+   * has no static token configuration; the connection manager wires this in
+   * and surfaces `UnauthorizedError` as a `needs-auth` status.
    */
   readonly oauthProvider?: OAuthClientProvider;
 }
 
 /**
- * Wraps the SDK streamable-HTTP transport as a kosong {@link MCPClient}.
- * Static bearer tokens are looked up from `process.env[bearerTokenEnvVar]`.
- * OAuth providers are attached separately by the connection manager.
+ * Wraps the SDK's deprecated HTTP+SSE transport as a kosong
+ * {@link MCPClient}. This exists for compatibility with older MCP servers;
+ * new remote servers should prefer streamable HTTP.
  */
-export class HttpMcpClient implements MCPClient {
+export class SseMcpClient implements MCPClient {
   private readonly client: Client;
-  private readonly transport: StreamableHTTPClientTransport;
+  private readonly transport: SSEClientTransport;
   private readonly toolCallTimeoutMs?: number;
   private started = false;
   private closed = false;
-  // See StdioMcpClient.ready — distinguishes handshake-phase failures (caller
-  // sees them via `connect()` throwing, no unexpectedClose) from post-ready
-  // disconnects (the case `onUnexpectedClose` is designed to surface).
+  // Mirrors HttpMcpClient: handshake failures surface through connect(), while
+  // post-ready terminal transport errors become unexpected closes.
   private ready = false;
   private hooksInstalled = false;
   private unexpectedCloseListener: UnexpectedCloseListener | undefined;
   private lastTransportError: Error | undefined;
-  // See StdioMcpClient — buffered when the listener has not been installed
-  // yet so an early close is replayed instead of dropped.
   private pendingUnexpectedClose: UnexpectedCloseReason | undefined;
-  // Latch so `onerror` and a (theoretical) `onclose` for the same transport
-  // failure do not double-fire. Once we have decided the connection is dead,
-  // additional SDK notifications are noise.
   private unexpectedCloseFired = false;
 
-  constructor(config: McpServerHttpConfig, options: HttpMcpClientOptions = {}) {
+  constructor(config: McpServerSseConfig, options: SseMcpClientOptions = {}) {
     const envLookup = options.envLookup ?? ((name) => process.env[name]);
-    const headers = buildMcpHttpHeaders(config, envLookup);
+    const headers = buildMcpRemoteHeaders(config, envLookup);
 
-    this.transport = new StreamableHTTPClientTransport(new URL(config.url), {
+    this.transport = new SSEClientTransport(new URL(config.url), {
       requestInit: headers !== undefined ? { headers } : undefined,
       fetch: options.fetch,
       authProvider: options.oauthProvider,
@@ -81,11 +74,10 @@ export class HttpMcpClient implements MCPClient {
 
   async connect(): Promise<void> {
     if (this.closed) {
-      throw new Error('MCP HTTP client is closed');
+      throw new Error('MCP SSE client is closed');
     }
     if (this.started) return;
     this.started = true;
-    // Install hooks BEFORE the SDK handshake; see StdioMcpClient.connect.
     this.installTransportHooks();
     try {
       await this.client.connect(this.transport);
@@ -95,7 +87,7 @@ export class HttpMcpClient implements MCPClient {
     }
     if (this.closed) {
       await this.closeStartedClient();
-      throw new Error('MCP HTTP client was closed during startup');
+      throw new Error('MCP SSE client was closed during startup');
     }
     this.ready = true;
   }
@@ -107,10 +99,9 @@ export class HttpMcpClient implements MCPClient {
   }
 
   /**
-   * Register a listener for unsolicited transport drops. See
-   * `StdioMcpClient.onUnexpectedClose` for semantics. If the transport
-   * already signalled a terminal failure, the buffered reason is replayed
-   * synchronously.
+   * Register a listener for unsolicited terminal transport drops. Brief SSE
+   * stream flaps are left to EventSource's retry loop; terminal HTTP status
+   * errors after startup remove the tools from the agent.
    */
   onUnexpectedClose(listener: UnexpectedCloseListener): void {
     this.unexpectedCloseListener = listener;
@@ -143,30 +134,18 @@ export class HttpMcpClient implements MCPClient {
   }
 
   private installTransportHooks(): void {
-    // Idempotent — see StdioMcpClient.installTransportHooks.
     if (this.hooksInstalled) return;
     this.hooksInstalled = true;
     this.client.onclose = () => {
       if (this.closed) return;
-      // Handshake-phase close surfaces via `client.connect()` throwing.
       if (!this.ready) return;
       this.fireUnexpectedClose({ error: this.lastTransportError });
     };
-    // streamable-http's transport only calls `onclose` on its own `close()`
-    // path, so 99% of remote disconnects (SSE flap → reconnect exhaustion,
-    // POST send failure on a dead session) arrive as `onerror` instead. Mirror
-    // the way the SDK exposes a "the transport is gone" signal there by
-    // mapping the known-terminal error messages back to an unexpected close;
-    // everything else is treated as transient and only cached for diagnostics.
     this.client.onerror = (error) => {
       this.lastTransportError = error;
       if (this.closed) return;
-      // During the handshake, terminal errors (Unauthorized, reconnect
-      // exhaustion) propagate through `client.connect()` and the manager's
-      // `shouldMarkNeedsAuth` / `formatStartupError`. Firing here would
-      // double-report.
       if (!this.ready) return;
-      if (isTerminalTransportError(error)) {
+      if (isTerminalSseTransportError(error)) {
         this.fireUnexpectedClose({ error });
       }
     };
@@ -184,32 +163,7 @@ export class HttpMcpClient implements MCPClient {
   }
 }
 
-/**
- * Returns true when an error reported via `Client.onerror` indicates the
- * underlying HTTP transport is dead. The streamable-http SDK does not call
- * `onclose` for remote disconnects; instead it surfaces them through
- * `onerror`, but only a few specific messages mean "give up" rather than
- * "we will retry":
- *
- * - `UnauthorizedError` — RFC 9728/8414 auth flow gave up; the SDK won't
- *   retry without a fresh provider call.
- * - "Maximum reconnection attempts ... exceeded." — emitted from
- *   `_scheduleReconnection` after the SSE reconnect budget is gone
- *   (`streamableHttp.js`, `_scheduleReconnection`).
- *
- * Transient signals (per-request fetch failures, single SSE flaps that the
- * SDK is about to reconnect from) MUST NOT match; otherwise a brief network
- * blip would tear down every HTTP MCP entry.
- */
-export function isTerminalTransportError(error: Error): boolean {
+export function isTerminalSseTransportError(error: Error): boolean {
   if (error.name === 'UnauthorizedError') return true;
-  if (/Maximum reconnection attempts/i.test(error.message)) return true;
-  return false;
-}
-
-export function buildMcpHttpHeaders(
-  config: McpServerHttpConfig,
-  envLookup: (name: string) => string | undefined,
-): Record<string, string> | undefined {
-  return buildMcpRemoteHeaders(config, envLookup);
+  return error instanceof SseError && error.code !== undefined;
 }

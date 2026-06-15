@@ -112,6 +112,9 @@ export async function runPrompt(
   try {
     await harness.ensureConfigFile();
     const config = await harness.getConfig();
+    for (const warning of (await harness.getConfigDiagnostics()).warnings) {
+      stderr.write(`Warning: ${warning}\n`);
+    }
     const { session, resumed, restorePermission, telemetryModel, goalModel } =
       await resolvePromptSession(
         harness,

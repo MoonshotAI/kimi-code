@@ -8,7 +8,6 @@ import {
   getCapabilities,
   Spacer,
 } from '@earendil-works/pi-tui';
-import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type {
   ApprovalRequest,
@@ -20,14 +19,17 @@ import type {
   PromptPart,
   Session,
 } from '@moonshot-ai/kimi-code-sdk';
+import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import { resolve } from 'pathe';
 
 import type { CLIOptions } from '#/cli/options';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
 import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
+import { openUrl } from '#/utils/open-url';
 import { getInputHistoryFile } from '#/utils/paths';
 import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
 
+import { BannerProvider } from './banner/banner-provider';
 import {
   BUILTIN_SLASH_COMMANDS,
   buildSkillSlashCommands,
@@ -37,9 +39,10 @@ import {
   type KimiSlashCommand,
   type SkillListSession,
 } from './commands';
+import * as slashCommands from './commands/dispatch';
+import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import { GutterContainer } from './components/chrome/gutter-container';
-import { CHROME_GUTTER } from './constant/rendering';
 import { MoonLoader, type SpinnerStyle } from './components/chrome/moon-loader';
 import { WelcomeComponent } from './components/chrome/welcome';
 import {
@@ -54,15 +57,6 @@ import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent } from './components/dialogs/session-picker';
-import { AuthFlowController } from './controllers/auth-flow';
-import { BtwPanelController } from './controllers/btw-panel';
-import { EditorKeyboardController } from './controllers/editor-keyboard';
-import { SessionEventHandler } from './controllers/session-event-handler';
-import * as slashCommands from './commands/dispatch';
-import { SessionReplayRenderer } from './controllers/session-replay';
-import { StreamingUIController } from './controllers/streaming-ui';
-import { TasksBrowserController } from './controllers/tasks-browser';
-import { installRainbowDance } from './easter-eggs/dance';
 import {
   FileMentionProvider,
   type SlashAutocompleteCommand,
@@ -92,19 +86,26 @@ import {
   NO_ACTIVE_SESSION_MESSAGE,
   PRODUCT_NAME,
 } from './constant/kimi-tui';
+import { CHROME_GUTTER } from './constant/rendering';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
-import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
+import { AuthFlowController } from './controllers/auth-flow';
+import { BtwPanelController } from './controllers/btw-panel';
+import { EditorKeyboardController } from './controllers/editor-keyboard';
+import { SessionEventHandler } from './controllers/session-event-handler';
+import { SessionReplayRenderer } from './controllers/session-replay';
+import { StreamingUIController } from './controllers/streaming-ui';
+import { TasksBrowserController } from './controllers/tasks-browser';
+import { installRainbowDance } from './easter-eggs/dance';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
 import { createApprovalRequestHandler } from './reverse-rpc/approval/handler';
-import { BannerProvider } from './banner/banner-provider';
-import { BannerComponent } from './components/chrome/banner';
 import { registerReverseRPCHandlers } from './reverse-rpc/index';
 import { QuestionController } from './reverse-rpc/question/controller';
 import { createQuestionAskHandler } from './reverse-rpc/question/handler';
 import type { ApprovalPanelData, QuestionPanelData } from './reverse-rpc/types';
 import { currentTheme, getColorPalette, getBuiltInPalette, isBuiltInTheme } from './theme';
 import type { ColorToken, ResolvedTheme, ThemeName } from './theme';
+import { createTUIState, type TUIState } from './tui-state';
 import {
   INITIAL_LIVE_PANE,
   type AppState,
@@ -116,15 +117,14 @@ import {
   type TUIStartupOptions,
   type TUIStartupState,
 } from './types';
-import { createTUIState, type TUIState } from './tui-state';
 import { isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
-import { openUrl } from '#/utils/open-url';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
+import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
@@ -246,10 +246,7 @@ export class KimiTUI {
 
   public onExit?: (exitCode?: number) => Promise<void>;
 
-  track(
-    event: string,
-    properties?: Parameters<KimiHarness['track']>[1],
-  ): void {
+  track(event: string, properties?: Parameters<KimiHarness['track']>[1]): void {
     this.harness.track(event, properties);
   }
 
@@ -377,8 +374,7 @@ export class KimiTUI {
         try {
           const migrationResult = await this.runMigrationScreen(this.migrationPlan);
           if (this.migrateOnly) {
-            const failed =
-              migrationResult.decision === 'now' && migrationResult.migrated === false;
+            const failed = migrationResult.decision === 'now' && migrationResult.migrated === false;
             this.disposeTerminalTracking();
             this.state.ui.stop();
             await this.onExit?.(failed ? 1 : 0);
@@ -424,11 +420,7 @@ export class KimiTUI {
     if (this.state.appState.banner === null || this.state.appState.banner === undefined) {
       return;
     }
-    if (
-      this.state.transcriptContainer.children.some(
-        (child) => child instanceof BannerComponent,
-      )
-    ) {
+    if (this.state.transcriptContainer.children.some((child) => child instanceof BannerComponent)) {
       return;
     }
     const welcomeIndex = this.state.transcriptContainer.children.findIndex(
@@ -483,16 +475,13 @@ export class KimiTUI {
     try {
       const result = await this.authFlow.refreshProviderModels();
       for (const c of result.changed) {
-        const parts: string[] = [c.providerName];
-        if (c.added > 0) parts.push(`+${String(c.added)} model${c.added > 1 ? 's' : ''}`);
-        if (c.removed > 0) parts.push(`-${String(c.removed)} model${c.removed > 1 ? 's' : ''}`);
-        this.showStatus(parts.join(' · ') + '.');
+        if (c.added <= 0) continue;
+        this.showStatus(
+          `${c.providerName} · +${String(c.added)} model${c.added > 1 ? 's' : ''}.`,
+        );
       }
       for (const f of result.failed) {
-        this.showStatus(
-          `Skipped refreshing ${f.provider}: ${f.reason}`,
-          'warning',
-        );
+        this.showStatus(`Skipped refreshing ${f.provider}: ${f.reason}`, 'warning');
       }
     } catch {
       // Best-effort: startup must not crash on background refresh failures.
@@ -511,6 +500,7 @@ export class KimiTUI {
     }
     if (shouldReplayHistory) {
       await this.sessionReplay.hydrateFromReplay(this.requireSession());
+      this.applyStartupPermissionAndPlanToAppState();
     }
     const resumeState = this.session?.getResumeState();
     if (resumeState?.warning !== undefined) {
@@ -568,7 +558,8 @@ export class KimiTUI {
           if (resolve(target.workDir) !== resolve(workDir)) {
             this.state.ui.stop();
             process.stderr.write(
-              `${currentTheme.fg('warning',
+              `${currentTheme.fg(
+                'warning',
                 `Session "${startup.sessionFlag}" was created under a different directory.\n` +
                   `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
               )}\n\n`,
@@ -596,8 +587,11 @@ export class KimiTUI {
       } else {
         session = await this.harness.createSession(createSessionOptions);
       }
-      if (session !== undefined && startup.model !== undefined && isResumeStartup) {
-        await session.setModel(startup.model);
+      if (session !== undefined && shouldReplayHistory) {
+        await this.applyStartupModesToResumedSession(session);
+        if (startup.model !== undefined) {
+          await session.setModel(startup.model);
+        }
       }
     } catch (error) {
       if (!isOAuthLoginRequiredError(error)) throw error;
@@ -610,6 +604,7 @@ export class KimiTUI {
     }
     await this.setSession(session);
     await this.syncRuntimeState(session);
+    this.applyStartupPermissionAndPlanToAppState();
     this.state.startupState = 'ready';
     return shouldReplayHistory;
   }
@@ -1079,10 +1074,7 @@ export class KimiTUI {
   }
 
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
-    const [status, goalResult] = await Promise.all([
-      session.getStatus(),
-      session.getGoal(),
-    ]);
+    const [status, goalResult] = await Promise.all([session.getStatus(), session.getGoal()]);
     this.setAppState({
       sessionId: session.id,
       model: status.model ?? '',
@@ -1096,6 +1088,40 @@ export class KimiTUI {
       sessionTitle: session.summary?.title ?? null,
       goal: goalResult.goal,
     });
+  }
+
+  // Apply --auto/--yolo/--plan startup flags to a resumed session. The resumed
+  // session may already be in plan mode from its persisted records, and
+  // re-entering plan mode throws, so only enable it when it is not active yet.
+  // setPermission is idempotent and needs no such guard.
+  private async applyStartupModesToResumedSession(session: Session): Promise<void> {
+    const { startup } = this.options;
+    if (startup.auto) {
+      await session.setPermission('auto');
+    } else if (startup.yolo) {
+      await session.setPermission('yolo');
+    }
+    if (startup.plan) {
+      const status = await session.getStatus();
+      if (!status.planMode) {
+        await session.setPlanMode(true);
+      }
+    }
+  }
+
+  // Re-apply startup flags that the user explicitly passed on the command line.
+  // syncRuntimeState and session-replay hydration can both read stale persisted
+  // values, so this guarantees the footer reflects the CLI intent.
+  private applyStartupPermissionAndPlanToAppState(): void {
+    const { startup } = this.options;
+    if (startup.auto) {
+      this.setAppState({ permissionMode: 'auto' });
+    } else if (startup.yolo) {
+      this.setAppState({ permissionMode: 'yolo' });
+    }
+    if (startup.plan) {
+      this.setAppState({ planMode: true });
+    }
   }
 
   // Plan mode is set by createSession — do not re-enter it here.
@@ -1298,6 +1324,19 @@ export class KimiTUI {
     this.sessionEventHandler.startSubscription();
     this.clearTranscriptAndRedraw();
     this.showStatus(`Started a new session (${session.id}).`);
+    void this.showConfigWarningsIfAny();
+  }
+
+  /** Surface config.toml load warnings (degraded or kept-previous config) in the status bar. */
+  private async showConfigWarningsIfAny(): Promise<void> {
+    try {
+      const { warnings } = await this.harness.getConfigDiagnostics();
+      for (const warning of warnings) {
+        this.showStatus(warning, 'warning');
+      }
+    } catch {
+      /* diagnostics are best-effort */
+    }
   }
 
   // =========================================================================
@@ -1336,10 +1375,7 @@ export class KimiTUI {
           return new GoalSetMessageComponent();
         }
         if (entry.goalData?.kind === 'lifecycle') {
-          return buildGoalMarker(
-            entry.goalData.change,
-            this.state.toolOutputExpanded,
-          );
+          return buildGoalMarker(entry.goalData.change, this.state.toolOutputExpanded);
         }
         return null;
       case 'assistant': {
@@ -1396,7 +1432,10 @@ export class KimiTUI {
     }
   }
 
-  private appendApprovalTranscriptEntry(request: ApprovalRequest, response: ApprovalResponse): void {
+  private appendApprovalTranscriptEntry(
+    request: ApprovalRequest,
+    response: ApprovalResponse,
+  ): void {
     if (request.toolName === 'ExitPlanMode' || request.display.kind === 'plan_review') return;
     const parts: string[] = [];
     switch (response.decision) {
@@ -1425,9 +1464,7 @@ export class KimiTUI {
 
   private renderWelcome(): void {
     if (
-      this.state.transcriptContainer.children.some(
-        (child) => child instanceof WelcomeComponent,
-      )
+      this.state.transcriptContainer.children.some((child) => child instanceof WelcomeComponent)
     ) {
       return;
     }
@@ -1457,16 +1494,12 @@ export class KimiTUI {
   }
 
   showStatus(message: string, color?: ColorToken): void {
-    this.state.transcriptContainer.addChild(
-      new StatusMessageComponent(message, color),
-    );
+    this.state.transcriptContainer.addChild(new StatusMessageComponent(message, color));
     this.state.ui.requestRender();
   }
 
   showNotice(title: string, detail?: string): void {
-    this.state.transcriptContainer.addChild(
-      new NoticeMessageComponent(title, detail),
-    );
+    this.state.transcriptContainer.addChild(new NoticeMessageComponent(title, detail));
     this.state.ui.requestRender();
   }
 
@@ -1641,9 +1674,7 @@ export class KimiTUI {
   }
 
   async applyTheme(themeName: ThemeName, resolved?: ResolvedTheme): Promise<void> {
-    const palette = await getColorPalette(
-      themeName === 'auto' ? (resolved ?? 'dark') : themeName,
-    );
+    const palette = await getColorPalette(themeName === 'auto' ? (resolved ?? 'dark') : themeName);
     currentTheme.setPalette(palette);
     this.setAppState({ theme: themeName });
     this.updateEditorBorderHighlight();
@@ -1689,7 +1720,9 @@ export class KimiTUI {
     );
   }
 
-  private shouldPlaceActivitySpinnerInAgentSwarm(effectiveMode: EffectiveActivityPaneMode): boolean {
+  private shouldPlaceActivitySpinnerInAgentSwarm(
+    effectiveMode: EffectiveActivityPaneMode,
+  ): boolean {
     return (
       this.sessionEventHandler.hasActiveAgentSwarmToolCall() &&
       (effectiveMode === 'waiting' || effectiveMode === 'tool')
@@ -1701,6 +1734,7 @@ export class KimiTUI {
   }
 
   private syncTerminalProgress(active: boolean): void {
+    if (!this.state.terminalState.supportsProgress) return;
     if (this.state.terminalState.progressActive === active) return;
     this.state.terminal.setProgress(active);
     this.state.terminalState.progressActive = active;
@@ -1781,11 +1815,7 @@ export class KimiTUI {
       // Persist the skip marker `detectPendingMigration` checks, so "Never ask
       // again" actually stops the prompt from reappearing every launch.
       try {
-        writeFileSync(
-          join(this.harness.homeDir, '.skip-migration-from-kimi-cli'),
-          '',
-          'utf-8',
-        );
+        writeFileSync(join(this.harness.homeDir, '.skip-migration-from-kimi-cli'), '', 'utf-8');
       } catch {
         // Non-blocking: a failed marker write must never crash startup.
       }
@@ -1812,27 +1842,28 @@ export class KimiTUI {
 
   async showSessionPicker(): Promise<void> {
     await this.fetchSessions();
-    this.mountSessionPicker(() => {
-      this.hideSessionPicker();
+    this.mountSessionPicker({
+      onCancel: () => {
+        this.hideSessionPicker();
+      },
     });
   }
 
   private async bootstrapFromPicker(): Promise<void> {
     await this.fetchSessions();
-    this.mountSessionPicker(
-      () => {
+    this.mountSessionPicker({
+      applyStartupModes: true,
+      onCancel: () => {
         this.hideSessionPicker();
         void this.stop();
       },
-      {
-        onCtrlC: () => {
-          this.state.editor.onCtrlC?.();
-        },
-        onCtrlD: () => {
-          this.state.editor.onCtrlD?.();
-        },
+      onCtrlC: () => {
+        this.state.editor.onCtrlC?.();
       },
-    );
+      onCtrlD: () => {
+        this.state.editor.onCtrlD?.();
+      },
+    });
   }
 
   hideSessionPicker(): void {
@@ -1841,10 +1872,15 @@ export class KimiTUI {
     this.restoreEditor();
   }
 
-  private mountSessionPicker(
-    onCancel: () => void,
-    shortcuts: { readonly onCtrlC?: () => void; readonly onCtrlD?: () => void } = {},
-  ): void {
+  private mountSessionPicker(options: {
+    readonly onCancel: () => void;
+    readonly onCtrlC?: () => void;
+    readonly onCtrlD?: () => void;
+    // CLI mode flags (--auto/--yolo/--plan) target the session picked at
+    // startup (bare --session); later /sessions switches keep the picked
+    // session's own persisted modes.
+    readonly applyStartupModes?: boolean;
+  }): void {
     this.state.activeDialog = 'session-picker';
     this.mountEditorReplacement(
       new SessionPickerComponent({
@@ -1852,15 +1888,24 @@ export class KimiTUI {
         loading: this.state.loadingSessions,
         currentSessionId: this.state.appState.sessionId,
         onSelect: (sessionId: string) => {
-          void this.resumeSession(sessionId).then((switched) => {
-            if (switched) {
+          void this.resumeSession(sessionId)
+            .then(async (switched) => {
+              if (!switched) {
+                return;
+              }
+              if (options.applyStartupModes === true) {
+                await this.applyStartupModesToResumedSession(this.requireSession());
+                this.applyStartupPermissionAndPlanToAppState();
+              }
               this.hideSessionPicker();
-            }
-          });
+            })
+            .catch((error) => {
+              this.showError(`Failed to apply startup flags: ${formatErrorMessage(error)}`);
+            });
         },
-        onCancel,
-        onCtrlC: shortcuts.onCtrlC,
-        onCtrlD: shortcuts.onCtrlD,
+        onCancel: options.onCancel,
+        onCtrlC: options.onCtrlC,
+        onCtrlD: options.onCtrlD,
       }),
     );
   }
@@ -1955,5 +2000,4 @@ export class KimiTUI {
     this.patchLivePane({ pendingQuestion: null });
     this.restoreEditor();
   }
-
 }

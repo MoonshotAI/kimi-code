@@ -7,8 +7,9 @@
  *
  * `add` writes the same `source = { kind: 'apiJson', url, apiKey }` blob the
  * TUI does; the next launch's `refreshAllProviderModels`
- * (apps/kimi-code/src/tui/utils/refresh-providers.ts) groups by `{url, apiKey}`
- * and re-fetches the model list, so periodic refresh is automatic.
+ * (apps/kimi-code/src/tui/utils/refresh-providers.ts) groups by URL, retries
+ * available API-key candidates, and re-fetches the model list, so periodic
+ * refresh is automatic.
  */
 
 import {
@@ -410,13 +411,26 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
     .command('provider')
     .description('Manage LLM providers non-interactively.');
 
+  // Last-resort boundary: handlers report expected failures themselves, but
+  // anything that escapes (e.g. a config write rejected because config.toml
+  // is invalid) must end as a one-line error + exit 1, not an unhandled
+  // rejection dumping a stack trace.
+  const runAction = async (resolved: ProviderDeps, run: () => Promise<void>): Promise<void> => {
+    try {
+      await run();
+    } catch (error) {
+      resolved.stderr.write(`${errorMessage(error)}\n`);
+      resolved.exit(1);
+    }
+  };
+
   provider
     .command('add <url>')
     .description('Import every provider listed in a custom registry (api.json).')
     .option('--api-key <key>', 'Registry API key. Falls back to KIMI_REGISTRY_API_KEY.')
     .action(async (url: string, options: { apiKey?: string }) => {
       const resolved = resolveDeps(deps);
-      await handleProviderAdd(resolved, url, { apiKey: options.apiKey });
+      await runAction(resolved, () => handleProviderAdd(resolved, url, { apiKey: options.apiKey }));
     });
 
   provider
@@ -424,7 +438,7 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
     .description('Remove a provider and every model alias that referenced it.')
     .action(async (providerId: string) => {
       const resolved = resolveDeps(deps);
-      await handleProviderRemove(resolved, providerId);
+      await runAction(resolved, () => handleProviderRemove(resolved, providerId));
     });
 
   provider
@@ -433,7 +447,7 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
     .option('--json', 'Emit the raw providers/models config as JSON.', false)
     .action(async (options: { json?: boolean }) => {
       const resolved = resolveDeps(deps);
-      await handleProviderList(resolved, { json: options.json === true });
+      await runAction(resolved, () => handleProviderList(resolved, { json: options.json === true }));
     });
 
   const catalog = provider
@@ -452,11 +466,13 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
         options: { filter?: string; url?: string; json?: boolean },
       ) => {
         const resolved = resolveDeps(deps);
-        await handleCatalogList(resolved, providerId, {
-          json: options.json === true,
-          ...(options.filter === undefined ? {} : { filter: options.filter }),
-          ...(options.url === undefined ? {} : { url: options.url }),
-        });
+        await runAction(resolved, () =>
+          handleCatalogList(resolved, providerId, {
+            json: options.json === true,
+            ...(options.filter === undefined ? {} : { filter: options.filter }),
+            ...(options.url === undefined ? {} : { url: options.url }),
+          }),
+        );
       },
     );
 
@@ -472,11 +488,13 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
         options: { apiKey?: string; defaultModel?: string; url?: string },
       ) => {
         const resolved = resolveDeps(deps);
-        await handleCatalogAdd(resolved, providerId, {
-          ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
-          ...(options.defaultModel === undefined ? {} : { defaultModel: options.defaultModel }),
-          ...(options.url === undefined ? {} : { url: options.url }),
-        });
+        await runAction(resolved, () =>
+          handleCatalogAdd(resolved, providerId, {
+            ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+            ...(options.defaultModel === undefined ? {} : { defaultModel: options.defaultModel }),
+            ...(options.url === undefined ? {} : { url: options.url }),
+          }),
+        );
       },
     );
 }
