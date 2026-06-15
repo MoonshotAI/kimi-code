@@ -28,7 +28,7 @@ import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
 import { useIsMobile } from './composables/useIsMobile';
-import type { ThinkingLevel } from './api/types';
+import type { AppConfig, ThinkingLevel } from './api/types';
 import type { FilePreviewRequest, ToolMedia } from './types';
 
 const client = useKimiWebClient();
@@ -421,6 +421,7 @@ const modelsLoading = ref(false);
 const modelsUnavailable = ref(false);
 const providersLoading = ref(false);
 const providersUnavailable = ref(false);
+const configSaving = ref(false);
 
 async function openModelPicker(): Promise<void> {
   modelsLoading.value = true;
@@ -468,6 +469,18 @@ async function handleDeleteProvider(id: string): Promise<void> {
 
 async function handleRefreshProvider(id: string): Promise<void> {
   await client.refreshProvider(id);
+}
+
+async function handleUpdateConfig(patch: Partial<AppConfig>): Promise<void> {
+  configSaving.value = true;
+  try {
+    const saved = await client.updateConfig(patch);
+    if (saved) {
+      await client.checkAuth();
+    }
+  } finally {
+    configSaving.value = false;
+  }
 }
 
 // LoginDialog callbacks — delegates to composable
@@ -878,11 +891,15 @@ function openPr(url: string): void {
       :notify="client.notifyOnComplete.value"
       :notify-permission="client.notifyPermission.value"
       :beta-toc="client.betaToc.value"
+      :config="client.config.value"
+      :models="client.models.value"
+      :config-saving="configSaving"
       @set-theme="client.setTheme($event)"
       @set-color-scheme="client.setColorScheme($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
       @set-notify="client.setNotifyOnComplete($event)"
       @set-beta-toc="client.setBetaToc($event)"
+      @update-config="handleUpdateConfig($event)"
       @login="() => { showSettings = false; openLogin(); }"
       @logout="client.logout"
       @open-onboarding="() => { showSettings = false; openOnboarding(); }"

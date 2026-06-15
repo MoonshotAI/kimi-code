@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
+  AppConfig,
   AppMessage,
   AppSession,
   KimiEventHandlers,
@@ -69,6 +70,7 @@ async function setup(messages: AppMessage[] = []) {
     close: vi.fn(),
   };
   const created = session('sess_1');
+  const initialConfig: AppConfig = { providers: {}, defaultModel: 'kimi/default' };
   const api = {
     createSession: vi.fn(async () => created),
     listMessages: vi.fn(async () => ({ items: messages, hasMore: false })),
@@ -94,6 +96,12 @@ async function setup(messages: AppMessage[] = []) {
       contextTokens: 0,
       maxContextTokens: 128_000,
       contextUsage: 0,
+    })),
+    getConfig: vi.fn(async () => initialConfig),
+    setConfig: vi.fn(async (patch: Partial<AppConfig>) => ({
+      ...initialConfig,
+      ...patch,
+      providers: patch.providers ?? initialConfig.providers,
     })),
     connectEvents: vi.fn((nextHandlers: KimiEventHandlers) => {
       handlers = nextHandlers;
@@ -329,5 +337,28 @@ describe('useKimiWebClient session memory cache', () => {
     const userTurns = client.turns.value.filter((turn) => turn.role === 'user');
     expect(userTurns).toHaveLength(1);
     expect(userTurns[0]!.id).toBe(optimisticId);
+  });
+
+  it('keeps daemon config writes and configChanged events in client state', async () => {
+    const { api, client, getHandlers } = await setup([]);
+
+    await client.updateConfig({ defaultModel: 'kimi/k2' });
+
+    expect(api.setConfig).toHaveBeenCalledWith({ defaultModel: 'kimi/k2' });
+    expect(client.config.value?.defaultModel).toBe('kimi/k2');
+    expect(client.defaultModel.value).toBe('kimi/k2');
+
+    await client.createSession('/repo');
+    getHandlers().onEvent(
+      {
+        type: 'configChanged',
+        changedFields: ['default_model'],
+        config: { providers: {}, defaultModel: 'openai/gpt-5' },
+      },
+      { sessionId: '__global__', seq: 8 },
+    );
+
+    expect(client.config.value?.defaultModel).toBe('openai/gpt-5');
+    expect(client.defaultModel.value).toBe('openai/gpt-5');
   });
 });

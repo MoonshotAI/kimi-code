@@ -212,7 +212,7 @@ async function copyPath(): Promise<void> {
       :class="{ open: menuOpen }"
       :disabled="!hasWorkDir"
       :title="t('header.chooseOpenApp')"
-      aria-label="t('header.chooseOpenApp')"
+      :aria-label="t('header.chooseOpenApp')"
       @click.stop="openMenu"
     >
       <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

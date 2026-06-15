@@ -3,12 +3,13 @@
      scattered in the sidebar account popover: appearance, language, account,
      connection, plus notifications and the troubleshooting-log export. -->
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
+import { computed, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import { serverEndpointLabel } from '../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../debug/trace';
 import type { ColorScheme, Theme } from '../composables/useKimiWebClient';
+import type { AppConfig, AppConfigProvider, AppModel } from '../api/types';
 
 const { t } = useI18n();
 
@@ -24,6 +25,12 @@ const props = defineProps<{
   notifyPermission?: string;
   /** Beta conversation TOC (proportional, viewport, hover tooltip). */
   betaToc?: boolean;
+  /** Global daemon config from GET /api/v1/config. Secrets are redacted server-side. */
+  config?: AppConfig | null;
+  /** Models from the daemon catalog, used to label default-model choices. */
+  models?: AppModel[];
+  /** True while POST /api/v1/config is saving. */
+  configSaving?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -35,11 +42,13 @@ const emit = defineEmits<{
   login: [];
   logout: [];
   openOnboarding: [];
+  updateConfig: [patch: Partial<AppConfig>];
   close: [];
 }>();
 
 const daemonEndpoint = serverEndpointLabel();
 const buildInfo = [__KIMI_WEB_VERSION__, __KIMI_WEB_COMMIT__].filter(Boolean).join(' · ');
+const permissionModes = ['manual', 'auto', 'yolo'] as const;
 
 function handleKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') emit('close');
@@ -49,6 +58,62 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 
 function exportLog(): void {
   downloadTraceLog();
+}
+
+type ModelOption = { id: string; label: string };
+
+const modelOptions = computed<ModelOption[]>(() => {
+  const byId = new Map<string, string>();
+  for (const model of props.models ?? []) {
+    byId.set(model.id, model.displayName ?? model.model ?? model.id);
+  }
+  for (const [id, raw] of Object.entries(props.config?.models ?? {})) {
+    if (byId.has(id)) continue;
+    byId.set(id, formatConfigModelLabel(id, raw));
+  }
+  return Array.from(byId, ([id, label]) => ({ id, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+});
+
+const providerEntries = computed<Array<{ id: string; provider: AppConfigProvider }>>(() =>
+  Object.entries(props.config?.providers ?? {})
+    .map(([id, provider]) => ({ id, provider }))
+    .sort((a, b) => a.id.localeCompare(b.id)),
+);
+
+const defaultPermissionMode = computed(() => {
+  const mode = props.config?.defaultPermissionMode;
+  return mode === 'auto' || mode === 'yolo' || mode === 'manual' ? mode : 'manual';
+});
+
+function formatConfigModelLabel(id: string, raw: unknown): string {
+  if (!raw || typeof raw !== 'object') return id;
+  const source = raw as Record<string, unknown>;
+  const model = typeof source['model'] === 'string' ? source['model'] : undefined;
+  const provider = typeof source['provider'] === 'string' ? source['provider'] : undefined;
+  if (model && provider) return `${id} (${provider}/${model})`;
+  if (model) return `${id} (${model})`;
+  return id;
+}
+
+function configBool(value: boolean | undefined): boolean {
+  return value === true;
+}
+
+function setDefaultModel(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value;
+  if (!value || value === props.config?.defaultModel) return;
+  emit('updateConfig', { defaultModel: value });
+}
+
+function setDefaultPermissionMode(mode: 'manual' | 'auto' | 'yolo'): void {
+  if (mode === defaultPermissionMode.value) return;
+  emit('updateConfig', { defaultPermissionMode: mode });
+}
+
+function toggleConfigBoolean(key: 'defaultThinking' | 'defaultPlanMode' | 'mergeAllAvailableSkills' | 'telemetry'): void {
+  const current = props.config?.[key];
+  emit('updateConfig', { [key]: !configBool(current) } as Partial<AppConfig>);
 }
 </script>
 
@@ -141,6 +206,146 @@ function exportLog(): void {
           </div>
         </section>
 
+        <!-- Daemon config -->
+        <section class="sec">
+          <div class="sec-head">
+            <h3 class="sec-title">{{ t('settings.agentDefaults') }}</h3>
+            <span v-if="configSaving" class="saving">{{ t('settings.saving') }}</span>
+          </div>
+
+          <template v-if="config">
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.defaultModel') }}
+                <span class="hint">{{ t('settings.defaultModelHint') }}</span>
+              </span>
+              <select
+                v-if="modelOptions.length > 0"
+                class="select-field"
+                :value="config.defaultModel ?? ''"
+                :disabled="configSaving"
+                :aria-label="t('settings.defaultModel')"
+                @change="setDefaultModel"
+              >
+                <option v-if="!config.defaultModel" value="" disabled>{{ t('settings.noDefaultModel') }}</option>
+                <option v-for="model in modelOptions" :key="model.id" :value="model.id">
+                  {{ model.label }}
+                </option>
+              </select>
+              <span v-else class="rvalue mono">{{ config.defaultModel ?? t('settings.noDefaultModel') }}</span>
+            </div>
+
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.defaultPermission') }}
+                <span class="hint">{{ t('settings.defaultPermissionHint') }}</span>
+              </span>
+              <div class="seg" role="group" :aria-label="t('settings.defaultPermission')">
+                <button
+                  v-for="mode in permissionModes"
+                  :key="mode"
+                  type="button"
+                  class="opt"
+                  :class="{ on: defaultPermissionMode === mode }"
+                  :aria-pressed="defaultPermissionMode === mode"
+                  :disabled="configSaving"
+                  @click="setDefaultPermissionMode(mode)"
+                >
+                  {{ t(`settings.permission.${mode}`) }}
+                </button>
+              </div>
+            </div>
+
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.defaultThinking') }}
+                <span class="hint">{{ t('settings.defaultThinkingHint') }}</span>
+              </span>
+              <button
+                type="button"
+                class="switch"
+                role="switch"
+                :class="{ on: configBool(config.defaultThinking) }"
+                :aria-checked="configBool(config.defaultThinking)"
+                :disabled="configSaving"
+                @click="toggleConfigBoolean('defaultThinking')"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.defaultPlanMode') }}
+                <span class="hint">{{ t('settings.defaultPlanModeHint') }}</span>
+              </span>
+              <button
+                type="button"
+                class="switch"
+                role="switch"
+                :class="{ on: configBool(config.defaultPlanMode) }"
+                :aria-checked="configBool(config.defaultPlanMode)"
+                :disabled="configSaving"
+                @click="toggleConfigBoolean('defaultPlanMode')"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.mergeSkills') }}
+                <span class="hint">{{ t('settings.mergeSkillsHint') }}</span>
+              </span>
+              <button
+                type="button"
+                class="switch"
+                role="switch"
+                :class="{ on: configBool(config.mergeAllAvailableSkills) }"
+                :aria-checked="configBool(config.mergeAllAvailableSkills)"
+                :disabled="configSaving"
+                @click="toggleConfigBoolean('mergeAllAvailableSkills')"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div v-if="config.telemetry !== undefined" class="row">
+              <span class="rlabel">{{ t('settings.telemetry') }}</span>
+              <button
+                type="button"
+                class="switch"
+                role="switch"
+                :class="{ on: configBool(config.telemetry) }"
+                :aria-checked="configBool(config.telemetry)"
+                :disabled="configSaving"
+                @click="toggleConfigBoolean('telemetry')"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div v-if="providerEntries.length > 0" class="provider-list">
+              <div v-for="{ id, provider } in providerEntries" :key="id" class="provider-row">
+                <div class="provider-main">
+                  <span class="provider-id">{{ id }}</span>
+                  <span class="provider-type">{{ provider.type }}</span>
+                </div>
+                <div class="provider-meta">
+                  <span :class="['provider-badge', provider.hasApiKey ? 'ok' : 'warn']">
+                    {{ provider.hasApiKey ? t('settings.credentialReady') : t('settings.credentialMissing') }}
+                  </span>
+                  <span v-if="provider.defaultModel" class="provider-model">{{ provider.defaultModel }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <div v-else class="empty-config">
+            {{ t('settings.configUnavailable') }}
+          </div>
+        </section>
+
         <!-- Connection + logs -->
         <section class="sec">
           <h3 class="sec-title">{{ t('settings.advanced') }}</h3>
@@ -198,7 +403,7 @@ function exportLog(): void {
   padding: 24px;
 }
 .dialog {
-  width: min(520px, 100%);
+  width: min(640px, 100%);
   max-height: min(82vh, 720px);
   display: flex;
   flex-direction: column;
@@ -233,6 +438,13 @@ function exportLog(): void {
 .body { overflow-y: auto; padding: 6px 16px 16px; }
 .sec { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .sec:last-child { border-bottom: none; }
+.sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
 .sec-title {
   margin: 0 0 10px;
   font-family: var(--mono);
@@ -240,6 +452,13 @@ function exportLog(): void {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  color: var(--muted);
+}
+.sec-head .sec-title { margin-bottom: 0; }
+.saving {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--ui-font-size-xs);
   color: var(--muted);
 }
 .row {
@@ -296,6 +515,92 @@ function exportLog(): void {
 .opt:first-child { border-left: none; }
 .opt:hover { color: var(--ink); }
 .opt.on { background: var(--soft); color: var(--blue2); font-weight: 600; }
+.opt:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.select-field {
+  min-width: 220px;
+  max-width: min(320px, 50vw);
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: calc(var(--ui-font-size) - 1.5px);
+  padding: 0 8px;
+}
+.select-field:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.empty-config {
+  font-family: var(--sans);
+  font-size: calc(var(--ui-font-size) - 1px);
+  color: var(--muted);
+  padding: 4px 0;
+}
+
+.provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.provider-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+}
+.provider-main,
+.provider-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.provider-main { flex: 1; }
+.provider-meta { flex: none; max-width: 45%; }
+.provider-id,
+.provider-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-id {
+  font-family: var(--mono);
+  font-size: var(--ui-font-size-xs);
+  color: var(--ink);
+}
+.provider-type {
+  flex: none;
+  font-family: var(--mono);
+  font-size: max(10px, calc(var(--ui-font-size) - 4px));
+  color: var(--muted);
+}
+.provider-model {
+  font-family: var(--mono);
+  font-size: max(10px, calc(var(--ui-font-size) - 4px));
+  color: var(--muted);
+}
+.provider-badge {
+  flex: none;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-family: var(--mono);
+  font-size: max(10px, calc(var(--ui-font-size) - 4px));
+}
+.provider-badge.ok {
+  background: color-mix(in srgb, var(--ok) 12%, var(--bg));
+  color: var(--ok);
+}
+.provider-badge.warn {
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg));
+  color: var(--warn);
+}
 
 .toggle-row { cursor: pointer; }
 .switch {
@@ -341,4 +646,25 @@ function exportLog(): void {
 .act.signin:hover { background: var(--blue2); }
 .act.danger { color: var(--err); border-color: color-mix(in srgb, var(--err) 30%, var(--line)); }
 .act.danger:hover { background: color-mix(in srgb, var(--err) 8%, var(--bg)); }
+
+@media (max-width: 640px) {
+  .backdrop { padding: 12px; }
+  .dialog { max-height: 92vh; }
+  .row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .select-field {
+    width: 100%;
+    max-width: none;
+  }
+  .provider-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .provider-meta {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+}
 </style>

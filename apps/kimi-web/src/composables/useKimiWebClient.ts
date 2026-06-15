@@ -814,6 +814,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     goalBySession: rawState.goalBySession,
     lastSeqBySession: rawState.lastSeqBySession,
     compactionBySession: rawState.compactionBySession,
+    config: rawState.config,
     warnings: rawState.warnings,
   };
   const next = reduceAppEvent(snapshot, event, { sessionId, seq });
@@ -827,7 +828,12 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   rawState.goalBySession = next.goalBySession;
   rawState.lastSeqBySession = next.lastSeqBySession;
   rawState.compactionBySession = next.compactionBySession;
+  rawState.config = next.config ?? null;
   rawState.warnings = next.warnings;
+
+  if (event.type === 'configChanged') {
+    rawState.defaultModel = event.config.defaultModel ?? null;
+  }
 
   if (event.type === 'sessionUsageUpdated' && event.sessionId === rawState.activeSessionId && event.swarmMode !== undefined) {
     rawState.swarmMode = event.swarmMode;
@@ -2497,9 +2503,17 @@ async function loadConfig(): Promise<void> {
 }
 
 /** Update global config via POST /api/v1/config. */
-async function updateConfig(patch: Partial<AppConfig>): Promise<void> {
-  const api = getKimiWebApi();
-  rawState.config = await api.setConfig(patch);
+async function updateConfig(patch: Partial<AppConfig>): Promise<boolean> {
+  try {
+    const api = getKimiWebApi();
+    const next = await api.setConfig(patch);
+    rawState.config = next;
+    rawState.defaultModel = next.defaultModel ?? null;
+    return true;
+  } catch (err) {
+    pushOperationFailure('setConfig', err);
+    return false;
+  }
 }
 
 // False until the very first load() settles (success OR failure). Gates the
