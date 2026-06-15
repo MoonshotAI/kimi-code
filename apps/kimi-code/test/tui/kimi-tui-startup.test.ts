@@ -846,17 +846,55 @@ describe('KimiTUI startup', () => {
     expect(resumeSession).not.toHaveBeenCalled();
     expect(driver.state.activeDialog).toBeNull();
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(
-      'cd "/tmp/proj-b" && kimi --resume ses-other-cwd',
+      "cd '/tmp/proj-b' && kimi --resume 'ses-other-cwd'",
     );
     const transcript = driver.state.transcriptContainer.render(160).join('\n');
     expect(transcript).toContain('Current session is in a different working directory.');
     expect(transcript).toContain(
-      'To resume, run: cd "/tmp/proj-b" && kimi --resume ses-other-cwd',
+      "To resume, run: cd '/tmp/proj-b' && kimi --resume 'ses-other-cwd'",
     );
     expect(transcript).toContain(
-      'To resume, run: cd "/tmp/proj-b" && kimi --resume ses-other-cwd',
+      "To resume, run: cd '/tmp/proj-b' && kimi --resume 'ses-other-cwd'",
     );
     expect(transcript).toContain('Command copied to clipboard');
+  });
+
+  it('copies a shell-safe resume command for another cwd with metacharacters', async () => {
+    const currentWorkDirSession = {
+      id: 'ses-cwd',
+      title: 'Current cwd session',
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now(),
+    };
+    const otherWorkDirSession = {
+      id: 'ses-other-cwd',
+      title: 'Other cwd session',
+      workDir: '/tmp/proj$(touch /tmp/pwned)',
+      updatedAt: Date.now() - 1000,
+    };
+    const resumeSession = vi.fn(async () => makeSession({ id: 'ses-other-cwd' }));
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+      resumeSession,
+      listSessions: vi.fn(async () => [currentWorkDirSession, otherWorkDirSession]),
+    });
+    const driver = makeDriver(harness, makeStartupInput());
+    await expect(driver.init()).resolves.toBe(false);
+    copyTextToClipboardMock.mockClear();
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\u001b[B');
+    picker.handleInput('\r');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(resumeSession).not.toHaveBeenCalled();
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith(
+      "cd '/tmp/proj$(touch /tmp/pwned)' && kimi --resume 'ses-other-cwd'",
+    );
+    const transcript = driver.state.transcriptContainer.render(160).join('\n');
+    expect(transcript).toContain(
+      "To resume, run: cd '/tmp/proj$(touch /tmp/pwned)' && kimi --resume 'ses-other-cwd'",
+    );
   });
 
   it('does not apply startup flags when switching sessions via the /sessions picker', async () => {

@@ -171,8 +171,7 @@ export class SessionPickerComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.ctrl('a'))) {
-      const session = this.list.selected();
-      if (session) this.onToggleScope?.(session.id);
+      this.onToggleScope?.(this.list.selected()?.id ?? this.currentSessionId);
       return;
     }
     if (matchesKey(data, Key.escape)) {

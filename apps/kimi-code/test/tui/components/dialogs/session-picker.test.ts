@@ -344,6 +344,24 @@ describe('SessionPickerComponent', () => {
     expect(onToggleScope).toHaveBeenCalledWith('ses_b');
   });
 
+  it('calls onToggleScope with the current session id when Ctrl+A is pressed with no sessions', () => {
+    const onToggleScope = vi.fn();
+    const component = new SessionPickerComponent({
+      sessions: [],
+      loading: false,
+      currentSessionId: 'ses_current',
+      scope: 'cwd',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onToggleScope,
+    });
+
+    component.handleInput('\u0001');
+
+    expect(onToggleScope).toHaveBeenCalledOnce();
+    expect(onToggleScope).toHaveBeenCalledWith('ses_current');
+  });
+
   it('renders all-sessions scope header and Ctrl+A current-cwd hint', () => {
     const component = new SessionPickerComponent({
       sessions: [

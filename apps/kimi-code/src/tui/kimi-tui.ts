@@ -29,6 +29,7 @@ import { appendInputHistory, loadInputHistory } from '#/utils/history/input-hist
 import { openUrl } from '#/utils/open-url';
 import { getInputHistoryFile } from '#/utils/paths';
 import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
+import { quoteShellArg } from '#/utils/shell-quote';
 
 import { BannerProvider } from './banner/banner-provider';
 import {
@@ -1218,7 +1219,7 @@ export class KimiTUI {
 
   private async showResumeOtherWorkDirHint(session: SessionRow): Promise<void> {
     this.hideSessionPicker();
-    const command = `cd "${session.work_dir}" && kimi --resume ${session.id}`;
+    const command = `cd ${quoteShellArg(session.work_dir)} && kimi --resume ${quoteShellArg(session.id)}`;
     const message = `Current session is in a different working directory.\n  To resume, run: ${command}`;
     try {
       await copyTextToClipboard(command);
