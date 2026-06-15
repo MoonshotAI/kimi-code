@@ -212,6 +212,9 @@ export class AgentRecords {
       this.persistence.rewrite(replayedRecords);
       await this.persistence.flush();
     }
+    if (this.agent.context.recoverIncompleteToolResultsAfterRestore()) {
+      await this.persistence.flush();
+    }
     if (this.agent.blobStore !== undefined) {
       for (const msg of this.agent.context.history) {
         await this.agent.blobStore.rehydrateParts(msg.content);

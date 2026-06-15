@@ -408,6 +408,98 @@ describe('Agent resume', () => {
     );
   });
 
+  it('repairs restored tool calls that were missing results after a crash', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'config.update',
+        cwd: process.cwd(),
+        modelAlias: MOCK_PROVIDER.model,
+        systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
+        thinkingLevel: 'off',
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Historical prompt before crash' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.begin',
+          uuid: 'crashed-step',
+          turnId: '0',
+          step: 1,
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          uuid: 'crashed-text',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'crashed-step',
+          part: { type: 'text', text: 'I will inspect the workspace.' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'crashed-call',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'crashed-step',
+          toolCallId: 'call_crashed_bash',
+          name: 'Bash',
+          args: { command: 'pwd' },
+        },
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(persistence.appended).toContainEqual(
+      expect.objectContaining({
+        type: 'context.append_loop_event',
+        event: expect.objectContaining({
+          type: 'tool.result',
+          toolCallId: 'call_crashed_bash',
+          result: expect.objectContaining({
+            isError: true,
+            output: expect.stringContaining('previous process exited before it was recorded'),
+          }),
+        }),
+      }),
+    );
+    expect(ctx.agent.context.messages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+    ]);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Recovered after crash.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue after crash' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmInputs()).toMatchInlineSnapshot(`
+      call 1:
+        system: <system-prompt>
+        tools: []
+        messages:
+          user: text "Historical prompt before crash"
+          assistant: text "I will inspect the workspace."  calls call_crashed_bash:Bash { "command": "pwd" }
+          tool[call_crashed_bash]: text "<system>ERROR: Tool execution failed.</system>\\nTool result missing because the previous process exited before it was recorded. Treat this tool call as interrupted and continue from the next user instruction."
+          user: text "Continue after crash"
+    `);
+    await ctx.expectResumeMatches();
+  });
+
   it('rebuilds goal completion replay cards without adding model-visible context', async () => {
     const persistence = new RecordingAgentPersistence([
       {
