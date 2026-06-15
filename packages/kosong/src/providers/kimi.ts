@@ -1,4 +1,3 @@
-import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/capability';
 import { normalizeKimiToolSchema } from './kimi-schema';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import type {
@@ -496,10 +495,6 @@ export class KimiChatProvider implements ChatProvider {
     } catch (error: unknown) {
       throw convertOpenAIError(error);
     }
-  }
-
-  getCapability(_model?: string): ModelCapability {
-    return UNKNOWN_CAPABILITY;
   }
 
   withThinking(effort: ThinkingEffort): KimiChatProvider {

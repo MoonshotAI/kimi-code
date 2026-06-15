@@ -25,7 +25,7 @@ export type {
 
 // Provider interfaces
 export * from './provider';
-export { createProvider } from './providers';
+export { createProvider, getModelCapability } from './providers';
 export type { ProviderConfig, ProviderType } from './providers';
 // Kimi provider: exported so callers can narrow a `ChatProvider` to the Kimi
 // backend (instanceof) and apply Kimi-specific request params (generation

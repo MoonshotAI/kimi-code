@@ -85,6 +85,12 @@ export class EditorKeyboardController {
 
       if (host.state.appState.streamingPhase !== 'idle') {
         this.clearPendingExit();
+
+        if (editor.getText().length > 0) {
+          editor.setText('');
+          return;
+        }
+
         this.cancelCurrentStream();
         return;
       }
