@@ -307,6 +307,7 @@ const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.statu
 const hasDockWork = computed(() => props.tasks.length > 0 || (props.todos?.length ?? 0) > 0);
 const dockPanel = ref<'bash' | 'subagent' | 'todos' | null>(null);
 const changesCount = computed(() => (props.gitInfo ? props.changes?.length ?? 0 : 0));
+const dockVisible = computed(() => active.value === 'chat' && !(props.turns.length === 0 && !props.sessionLoading));
 
 function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos'): void {
   dockPanel.value = dockPanel.value === panel ? null : panel;
@@ -785,8 +786,13 @@ watch(active, async (tab) => {
   if (tab !== 'chat') return;
   following.value = true;
   await nextTick();
+  ensureDockObserved();
   scheduleStableFollow();
   updateTocViewport();
+});
+
+watch(dockRef, () => {
+  ensureDockObserved();
 });
 
 // New session (reload key changes): reset the mobile files drill-down + clear
@@ -880,6 +886,7 @@ function handleQuestionAnswer(qid: string, resp: QuestionResponse): void {
 let contentObserver: MutationObserver | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let observedContent: Element | null = null;
+let observedDock: HTMLElement | null = null;
 let scrollRaf = 0;
 let pillEligible = false;
 
@@ -905,6 +912,15 @@ function ensureContentObserved(): void {
   if (el === observedContent) return;
   if (observedContent) resizeObserver.unobserve(observedContent);
   observedContent = el;
+  if (el) resizeObserver.observe(el);
+}
+
+function ensureDockObserved(): void {
+  if (!resizeObserver) return;
+  const el = dockRef.value;
+  if (el === observedDock) return;
+  if (observedDock) resizeObserver.unobserve(observedDock);
+  observedDock = el;
   if (el) resizeObserver.observe(el);
 }
 
@@ -968,7 +984,7 @@ onMounted(() => {
     if (typeof ResizeObserver === 'function') {
       resizeObserver = new ResizeObserver(() => scheduleFollow(false));
       if (panesRef.value) resizeObserver.observe(panesRef.value);
-      if (dockRef.value) resizeObserver.observe(dockRef.value);
+      ensureDockObserved();
       ensureContentObserved();
     }
     if (typeof document !== 'undefined') {
@@ -1450,7 +1466,7 @@ onUnmounted(() => {
          edge-to-edge on wide screens. The composer/input sits on top; the status
          line is a quiet footer BELOW it (model/thinking/plan/permission left,
          ctx far right). -->
-    <div ref="dockRef" class="dock" :class="[mobile ? 'align-mobile' : 'align-center']">
+    <div v-if="dockVisible" ref="dockRef" class="dock" :class="[mobile ? 'align-mobile' : 'align-center']">
       <Transition name="dock-panel">
         <div
           v-if="dockPanel"
@@ -1577,7 +1593,7 @@ onUnmounted(() => {
       />
       <Composer
         ref="dockedComposerRef"
-        v-else-if="!(turns.length === 0 && !sessionLoading)"
+        v-else
         :session-id="sessionId"
         :running="running"
         :queued="queued"

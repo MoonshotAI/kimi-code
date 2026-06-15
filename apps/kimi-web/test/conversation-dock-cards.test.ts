@@ -77,6 +77,22 @@ afterEach(() => {
 });
 
 describe('ConversationPane docked interrupt cards', () => {
+  it('keeps the docked composer scoped to the chat tab', async () => {
+    const wrapper = mountPane({});
+
+    expect(wrapper.find('composer-stub').exists()).toBe(true);
+
+    (wrapper.vm as unknown as { switchTab(tab: string): void }).switchTab('files');
+    await nextTick();
+
+    expect(wrapper.find('composer-stub').exists()).toBe(false);
+
+    (wrapper.vm as unknown as { switchTab(tab: string): void }).switchTab('chat');
+    await nextTick();
+
+    expect(wrapper.find('composer-stub').exists()).toBe(true);
+  });
+
   it('remounts the question card when the pending question changes', async () => {
     const wrapper = mountPane({ questions: [question('q1', 'First?')] });
 
