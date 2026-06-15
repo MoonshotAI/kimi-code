@@ -1,4 +1,3 @@
-import type { ModelCapability } from './capability';
 import type { Message, StreamedMessagePart, VideoURLPart } from './message';
 import type { Tool } from './tool';
 import type { TokenUsage } from './usage';
@@ -163,18 +162,4 @@ export interface ChatProvider {
   withMaxCompletionTokens?(maxCompletionTokens: number): ChatProvider;
   /** Upload a video and return a content part that can be sent to this provider. */
   uploadVideo?(input: string | VideoUploadInput, options?: GenerateOptions): Promise<VideoURLPart>;
-  /**
-   * Return declared capabilities for `model` (defaults to `modelName`).
-   *
-   * Unknown / uncatalogued models return {@link UNKNOWN_CAPABILITY} rather
-   * than throwing, so capability checks stay non-fatal and operators can
-   * point at private/custom deployments without crashing.
-   *
-   * Optional on the interface so pre-existing test mocks (which predate
-   * the capability matrix) still structurally satisfy `ChatProvider`
-   * without churn. Callers that gate on modalities should fall back to
-   * {@link UNKNOWN_CAPABILITY} when a provider does not expose it.
-   */
-  getCapability?(model?: string): ModelCapability;
-  getContextSizeLimit?(): number | undefined;
 }

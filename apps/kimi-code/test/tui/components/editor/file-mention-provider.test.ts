@@ -25,6 +25,30 @@ const GOAL_COMMAND = {
       : null,
 };
 
+const NEW_COMMAND = {
+  name: 'new',
+  aliases: ['clear'],
+  description: 'Start a fresh session in the current workspace',
+};
+
+const LARK_CALENDAR_COMMAND = {
+  name: 'skill:lark-calendar',
+  aliases: [],
+  description: 'Manage Lark calendars',
+};
+
+const HELP_COMMAND = {
+  name: 'help',
+  aliases: ['h'],
+  description: 'Show help',
+};
+
+const HELP_FULL_COMMAND = {
+  name: 'help',
+  aliases: ['h', '?'],
+  description: 'Show help',
+};
+
 describe('FileMentionProvider', () => {
   let workDir: string;
 
@@ -56,6 +80,121 @@ describe('FileMentionProvider', () => {
     expect(result).not.toBeNull();
     expect(result!.prefix).toBe('');
     expect(result!.items.map((item) => item.value)).toEqual(['status']);
+  });
+
+  it('searches slash command aliases and displays aliases in the command label', async () => {
+    const provider = new FileMentionProvider([NEW_COMMAND], workDir, NO_FD);
+    const line = '/clear';
+
+    const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.prefix).toBe('/clear');
+    expect(result!.items[0]).toMatchObject({
+      value: 'new',
+      label: 'new (clear)',
+    });
+  });
+
+  it('prefers exact alias matches over fuzzy skill matches', async () => {
+    const provider = new FileMentionProvider(
+      [NEW_COMMAND, LARK_CALENDAR_COMMAND],
+      workDir,
+      NO_FD,
+    );
+    const line = '/clear';
+
+    const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.items[0]).toMatchObject({
+      value: 'new',
+      label: 'new (clear)',
+    });
+    expect(result!.items[0]?.value).not.toBe('skill:lark-calendar');
+  });
+
+  it('does not show aliases when the primary name already matches', async () => {
+    const provider = new FileMentionProvider([HELP_COMMAND], workDir, NO_FD);
+    const line = '/h';
+
+    const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.items[0]).toMatchObject({
+      value: 'help',
+      label: 'help',
+    });
+  });
+
+  it('does not show aliases in labels when query is empty', async () => {
+    const provider = new FileMentionProvider([NEW_COMMAND], workDir, NO_FD);
+    const line = '/';
+
+    const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.items[0]).toMatchObject({
+      value: 'new',
+      label: 'new',
+    });
+  });
+
+  it('includes the argument hint in the description like the inner provider does', async () => {
+    const provider = new FileMentionProvider(
+      [{ name: 'goal', description: 'Start or manage a goal', argumentHint: '<objective>' }],
+      workDir,
+      NO_FD,
+    );
+
+    const result = await provider.getSuggestions(['/go'], 0, 3, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.items[0]).toMatchObject({
+      value: 'goal',
+      description: '<objective> — Start or manage a goal',
+    });
+  });
+
+  it('joins multiple aliases with an ASCII comma in the label', async () => {
+    const provider = new FileMentionProvider([HELP_FULL_COMMAND], workDir, NO_FD);
+    // '?' only matches the alias, not the primary name, so the label must
+    // list the aliases.
+    const result = await provider.getSuggestions(['/?'], 0, 2, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.items[0]).toMatchObject({
+      value: 'help',
+      label: 'help (h, ?)',
+    });
+  });
+
+  it('returns null for a bare slash when no commands are registered', async () => {
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+
+    const result = await provider.getSuggestions(['/'], 0, 1, { signal: ctrl() });
+
+    expect(result).toBeNull();
+  });
+
+  it('ranks primary-name matches above alias matches with equal scores', async () => {
+    const provider = new FileMentionProvider(
+      [
+        { name: 'bar', aliases: ['foo'], description: 'Bar command' },
+        { name: 'foo', aliases: [], description: 'Foo command' },
+      ],
+      workDir,
+      NO_FD,
+    );
+
+    const result = await provider.getSuggestions(['/foo'], 0, 4, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.items[0]?.value).toBe('foo');
+    expect(result!.items[1]).toMatchObject({
+      value: 'bar',
+      label: 'bar (foo)',
+    });
   });
 
   it('does not turn leading-whitespace slash into root path completion', async () => {

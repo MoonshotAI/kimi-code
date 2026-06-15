@@ -155,7 +155,78 @@ describe('filterModelsByPrefix', () => {
   });
 });
 
+describe('fetchOpenPlatformModels supports_thinking_type', () => {
+  it('parses supports_thinking_type from the models endpoint', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-k2-deep',
+                context_length: 256000,
+                supports_reasoning: true,
+                supports_thinking_type: 'only',
+              },
+              {
+                id: 'kimi-k2-lite',
+                context_length: 128000,
+                supports_reasoning: false,
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    const platform = getOpenPlatformById('moonshot-cn')!;
+
+    const models = await fetchOpenPlatformModels(platform, 'sk-test', fetchMock as unknown as typeof fetch);
+
+    expect(models[0]?.supportsThinkingType).toBe('only');
+    expect(models[1]?.supportsThinkingType).toBeUndefined();
+  });
+});
+
 describe('capabilitiesForModel', () => {
+  it("locks thinking on for 'only' models", () => {
+    const model = {
+      id: 'deep',
+      contextLength: 1000,
+      supportsReasoning: true,
+      supportsImageIn: false,
+      supportsVideoIn: false,
+      supportsToolUse: false,
+      supportsThinkingType: 'only' as const,
+    };
+    expect(capabilitiesForModel(model)).toEqual(['thinking', 'always_thinking']);
+  });
+
+  it("lets 'no' override the legacy supports_reasoning boolean", () => {
+    const model = {
+      id: 'plain',
+      contextLength: 1000,
+      supportsReasoning: true,
+      supportsImageIn: false,
+      supportsVideoIn: false,
+      supportsToolUse: false,
+      supportsThinkingType: 'no' as const,
+    };
+    expect(capabilitiesForModel(model)).toBeUndefined();
+  });
+
+  it("emits a plain toggleable thinking capability for 'both'", () => {
+    const model = {
+      id: 'toggle',
+      contextLength: 1000,
+      supportsReasoning: false,
+      supportsImageIn: false,
+      supportsVideoIn: false,
+      supportsToolUse: false,
+      supportsThinkingType: 'both' as const,
+    };
+    expect(capabilitiesForModel(model)).toEqual(['thinking']);
+  });
+
   it('returns undefined for a model with no capabilities', () => {
     const model = {
       id: 'plain',

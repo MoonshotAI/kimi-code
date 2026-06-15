@@ -184,7 +184,15 @@ describe('Session skills', () => {
         input: [
           {
             type: 'text',
-            text: '<system-reminder>\n<kimi-skill-loaded name="review" args="src/app.ts">\nReview the requested file.\n\nARGUMENTS: src/app.ts\n</kimi-skill-loaded>\n</system-reminder>',
+            text: [
+              'User activated the skill "review". Follow the loaded skill instructions.',
+              '',
+              '<kimi-skill-loaded name="review" trigger="user-slash" source="project" args="src/app.ts">',
+              'Review the requested file.',
+              '',
+              'ARGUMENTS: src/app.ts',
+              '</kimi-skill-loaded>',
+            ].join('\n'),
           },
         ],
         origin: {

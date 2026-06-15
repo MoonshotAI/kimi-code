@@ -1,5 +1,6 @@
 import type { AgentType } from '#/agent';
 import type { BackgroundTaskInfo } from '#/agent/background';
+import type { CompactionResult } from '#/agent/compaction';
 import type { AgentConfigData, AgentConfigUpdateData } from '#/agent/config';
 import type { AgentContextData, ContextMessage } from '#/agent/context';
 import type { GoalChange, GoalSnapshot } from '#/agent/goal';
@@ -14,8 +15,9 @@ import type { SessionSummary } from '#/rpc/core-api';
 import type { UsageStatus } from '#/rpc/events';
 import type { SessionMeta } from '#/session';
 
-export type AgentReplayRecord =
+export type AgentReplayRecordPayload =
   | { type: 'message'; message: ContextMessage }
+  | { type: 'compaction'; result?: CompactionResult | 'cancelled'; instruction?: string }
   | {
       type: 'goal_updated';
       snapshot: GoalSnapshot;
@@ -25,6 +27,8 @@ export type AgentReplayRecord =
   | { type: 'config_updated'; config: AgentConfigUpdateData }
   | { type: 'permission_updated'; mode: PermissionMode }
   | { type: 'approval_result'; record: PermissionApprovalResultRecord };
+
+export type AgentReplayRecord = { readonly time: number } & AgentReplayRecordPayload;
 
 export interface ResumedAgentState {
   readonly type: AgentType;

@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kimi-code",
-  "version": "0.13.0",
+  "version": "0.14.3",
   "description": "The Starting Point for Next-Gen Agents",
   "license": "MIT",
   "author": "Moonshot AI",
@@ -66,18 +66,12 @@
     "e2e:real": "pnpm -w run build:packages && KIMI_E2E_REAL=1 vitest run test/e2e/real-llm-smoke.e2e.test.ts",
     "postinstall": "node scripts/postinstall.mjs"
   },
-  "dependencies": {
-    "@earendil-works/pi-tui": "^0.74.0",
+  "optionalDependencies": {
     "@mariozechner/clipboard": "^0.3.2",
-    "chalk": "^5.4.1",
-    "cli-highlight": "^2.1.11",
-    "commander": "^13.1.0",
-    "pathe": "^2.0.3",
-    "semver": "^7.7.4",
-    "smol-toml": "^1.6.1",
-    "zod": "^4.3.6"
+    "koffi": "^2.16.0"
   },
   "devDependencies": {
+    "@earendil-works/pi-tui": "^0.74.0",
     "@moonshot-ai/acp-adapter": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-sdk": "workspace:^",
@@ -85,9 +79,16 @@
     "@moonshot-ai/migration-legacy": "workspace:^",
     "@types/semver": "^7.7.0",
     "@types/yazl": "^2.4.6",
+    "chalk": "^5.4.1",
+    "cli-highlight": "^2.1.11",
+    "commander": "^13.1.0",
+    "pathe": "^2.0.3",
     "postject": "1.0.0-alpha.6",
+    "semver": "^7.7.4",
+    "smol-toml": "^1.6.1",
     "tsx": "^4.21.0",
-    "yazl": "^3.3.1"
+    "yazl": "^3.3.1",
+    "zod": "^4.3.6"
   },
   "engines": {
     "node": ">=22.19.0"

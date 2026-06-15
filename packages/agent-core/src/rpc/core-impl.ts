@@ -13,13 +13,14 @@ import { resolveThinkingLevel } from '../agent/config/thinking';
 import { Agent } from '../agent';
 import {
   ensureKimiHome,
-  loadRuntimeConfig,
+  loadRuntimeConfigSafe,
   mergeConfigPatch,
-  readConfigFile,
+  readConfigFileForUpdate,
   resolveConfigPath,
   resolveKimiHome,
   writeConfigFile,
   type KimiConfig,
+  type McpServerConfig,
   type MoonshotServiceConfig,
 } from '../config';
 import {
@@ -36,7 +37,7 @@ import {
   type OAuthTokenProviderResolver
 } from '../session/provider-manager';
 import { SessionAPIImpl } from '../session/rpc';
-import { normalizeWorkDir, SessionStore } from '../session/store';
+import { normalizeWorkDir, SessionStore } from '../session/store/index';
 import { noopTelemetryClient, withTelemetryContext, type TelemetryClient } from '../telemetry';
 import type { CoreRPCClient } from './client';
 import type {
@@ -45,6 +46,7 @@ import type {
   CancelPayload,
   CancelPlanPayload,
   CloseSessionPayload,
+  ConfigDiagnostics,
   CoreAPI,
   CoreInfo,
   CreateGoalPayload,
@@ -98,6 +100,9 @@ import { KaosShellNotFoundError, LocalKaos, type Kaos } from '@moonshot-ai/kaos'
 import type { ToolServices } from '../tools/support/services';
 
 const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
+const KIMI_CODE_BASE_URL_ENV = 'KIMI_CODE_BASE_URL';
+const KIMI_CODE_OAUTH_HOST_ENV = 'KIMI_CODE_OAUTH_HOST';
+const KIMI_OAUTH_HOST_ENV = 'KIMI_OAUTH_HOST';
 type AgentScopedPayload<T> = T & { readonly agentId: string };
 type SessionScopedPayload<T> = T & { readonly sessionId: string };
 type SessionAgentPayload<T> = SessionScopedPayload<AgentScopedPayload<T>>;
@@ -125,6 +130,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private kaos: Promise<Kaos> | undefined;
   private runtime: ToolServices | undefined;
   private config: KimiConfig;
+  private configWarnings: readonly string[] = [];
   private readonly runtimeOverride: ToolServices | undefined;
   private readonly userHomeDir: string;
   private readonly kimiRequestHeaders: Record<string, string> | undefined;
@@ -155,7 +161,19 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.appVersion = options.appVersion;
     ensureKimiHome(this.homeDir);
-    this.config = loadRuntimeConfig(this.configPath);
+    // Schema errors degrade (invalid sections are dropped with warnings) so a
+    // typo cannot prevent startup, but a file that cannot be used at all —
+    // TOML syntax error, unreadable — fails fast: defaults-only would start
+    // the app looking logged out, which is worse than the parse error.
+    const loaded = loadRuntimeConfigSafe(this.configPath);
+    if (loaded.fileError !== undefined) {
+      throw loaded.fileError;
+    }
+    this.config = loaded.config;
+    this.configWarnings = [...loaded.fileWarnings, ...loaded.envWarnings];
+    if (this.configWarnings.length > 0) {
+      log.warn('config load degraded', { warnings: this.configWarnings });
+    }
     this.experimentalFlags = new FlagResolver(
       process.env,
       FLAG_DEFINITIONS,
@@ -375,6 +393,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {
     const source = await this.sessionStore.get(input.sessionId);
     const active = this.sessions.get(source.id);
+    if (active?.hasActiveTurn === true) {
+      throw new KimiError(
+        ErrorCodes.SESSION_FORK_ACTIVE_TURN,
+        `Session "${source.id}" cannot be forked while a turn is running`,
+        { details: { sessionId: source.id } },
+      );
+    }
+
     if (active !== undefined) {
       await active.flushMetadata();
     }
@@ -435,19 +461,23 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async getKimiConfig(input?: GetKimiConfigPayload): Promise<KimiConfig> {
     if (input?.reload) {
-      this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
+      this.reloadRuntimeConfig();
     }
     return this.config;
   }
 
+  async getConfigDiagnostics(_input?: EmptyPayload): Promise<ConfigDiagnostics> {
+    return { warnings: this.configWarnings };
+  }
+
   async setKimiConfig(input: SetKimiConfigPayload): Promise<KimiConfig> {
-    const config = mergeConfigPatch(readConfigFile(this.configPath), input);
+    const config = mergeConfigPatch(this.readConfigForWrite(), input);
     await writeConfigFile(this.configPath, config);
-    return this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
+    return this.reloadRuntimeConfig();
   }
 
   async removeKimiProvider(input: RemoveKimiProviderPayload): Promise<KimiConfig> {
-    const config = readConfigFile(this.configPath);
+    const config = this.readConfigForWrite();
     delete config.providers[input.providerId];
 
     let removedDefault = false;
@@ -474,7 +504,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
 
     await writeConfigFile(this.configPath, config);
-    return this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
+    return this.reloadRuntimeConfig();
   }
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
@@ -797,7 +827,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   private mergePluginMcpConfig(base: SessionMcpConfig | undefined): SessionMcpConfig | undefined {
-    const pluginServers = this.plugins.enabledMcpServers();
+    const pluginServers = this.withManagedKimiPluginEnv(this.plugins.enabledMcpServers());
     if (Object.keys(pluginServers).length === 0) return base;
     return {
       servers: {
@@ -805,6 +835,36 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         ...pluginServers,
       },
     };
+  }
+
+  private withManagedKimiPluginEnv(
+    pluginServers: Record<string, McpServerConfig>,
+  ): Record<string, McpServerConfig> {
+    const managedEnv = this.managedKimiCodeEnvForPlugins();
+    if (Object.keys(managedEnv).length === 0) return pluginServers;
+
+    const out: Record<string, McpServerConfig> = {};
+    for (const [name, server] of Object.entries(pluginServers)) {
+      out[name] =
+        server.transport === 'stdio'
+          ? { ...server, env: { ...server.env, ...managedEnv } }
+          : server;
+    }
+    return out;
+  }
+
+  private managedKimiCodeEnvForPlugins(): Record<string, string> {
+    const provider = this.config.providers[KIMI_CODE_PROVIDER_NAME];
+    const envBaseUrl = process.env[KIMI_CODE_BASE_URL_ENV];
+    const envOAuthHost = process.env[KIMI_CODE_OAUTH_HOST_ENV] ?? process.env[KIMI_OAUTH_HOST_ENV];
+    const hasEnvOverride = envBaseUrl !== undefined || envOAuthHost !== undefined;
+    const baseUrl =
+      envBaseUrl !== undefined ? envBaseUrl.replace(/\/+$/, '') : provider?.baseUrl;
+    const oauthHost = hasEnvOverride ? envOAuthHost : provider?.oauth?.oauthHost;
+    const env: Record<string, string> = {};
+    if (baseUrl !== undefined) env[KIMI_CODE_BASE_URL_ENV] = baseUrl;
+    if (oauthHost !== undefined) env[KIMI_CODE_OAUTH_HOST_ENV] = oauthHost;
+    return env;
   }
 
   private sessionApi(sessionId: string): SessionAPIImpl {
@@ -818,7 +878,30 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   private reloadProviderManager(): KimiConfig {
-    return this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
+    return this.reloadRuntimeConfig();
+  }
+
+  private readConfigForWrite(): KimiConfig {
+    return readConfigFileForUpdate(this.configPath);
+  }
+
+  private reloadRuntimeConfig(): KimiConfig {
+    const loaded = loadRuntimeConfigSafe(this.configPath);
+    if (loaded.fileWarnings.length > 0) {
+      // Keep the last good config: adopting a salvaged config mid-run could
+      // silently drop providers or models a live session depends on.
+      this.configWarnings = [
+        ...loaded.fileWarnings,
+        ...loaded.envWarnings,
+        'config.toml has errors; keeping the previously loaded configuration.',
+      ];
+      log.warn('config reload degraded; keeping previous config', {
+        warnings: loaded.fileWarnings,
+      });
+      return this.config;
+    }
+    this.configWarnings = loaded.envWarnings;
+    return this.setRuntimeConfig(loaded.config);
   }
 
   private setRuntimeConfig(config: KimiConfig): KimiConfig {

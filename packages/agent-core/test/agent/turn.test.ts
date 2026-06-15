@@ -16,6 +16,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { HookEngine } from '../../src/session/hooks';
+import { abortError } from '../../src/utils/abort';
 import type { AgentOptions } from '../../src/agent';
 import type { Logger, LogPayload } from '../../src/logging';
 import type {
@@ -808,6 +809,71 @@ describe('Agent turn flow', () => {
     expect(triggered).toEqual([['StopFailure', 'Error', 1]]);
   });
 
+  it('fires Interrupt when the user cancels an active turn', async () => {
+    const triggered: Array<[string, string, number]> = [];
+    const hookEngine = new HookEngine(
+      [
+        {
+          event: 'Interrupt',
+          command: 'exit 0',
+        },
+      ],
+      {
+        onTriggered: (event, target, count) => {
+          triggered.push([event, target, count]);
+        },
+      },
+    );
+    const ctx = testAgent({
+      hookEngine,
+      kaos: createCommandKaos('should-not-run'),
+    });
+    ctx.configure({ tools: ['Bash'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command' }] });
+    await ctx.untilApprovalRequest();
+
+    await ctx.rpc.cancel({ turnId: 0 });
+    await ctx.untilTurnEnd();
+
+    expect(triggered).toEqual([['Interrupt', '', 1]]);
+  });
+
+  it('does not fire Interrupt for a non-user (programmatic) abort', async () => {
+    const triggered: Array<[string, string, number]> = [];
+    const hookEngine = new HookEngine(
+      [
+        {
+          event: 'Interrupt',
+          command: 'exit 0',
+        },
+      ],
+      {
+        onTriggered: (event, target, count) => {
+          triggered.push([event, target, count]);
+        },
+      },
+    );
+    const ctx = testAgent({
+      hookEngine,
+      kaos: createCommandKaos('should-not-run'),
+    });
+    ctx.configure({ tools: ['Bash'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command' }] });
+    await ctx.untilApprovalRequest();
+
+    // A programmatic abort (e.g. a subagent deadline timeout) carries a plain
+    // AbortError as its reason, not a UserCancellationError, so it must not be
+    // reported as a user interrupt.
+    ctx.agent.turn.cancel(0, abortError());
+    await ctx.untilTurnEnd();
+
+    expect(triggered).toEqual([]);
+  });
+
   it('resolves the latest request-scoped OAuth auth before each generation', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
@@ -1499,6 +1565,7 @@ describe('Agent turn flow', () => {
       [wire] permission.record_approval_result   { "turnId": 0, "toolCallId": "call_bash", "toolName": "Bash", "action": "Running: printf approved", "result": { "decision": "approved", "selectedLabel": "approve" }, "time": "<time>" }
       [wire] context.append_loop_event           { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf approved", "timeout": 60 }, "description": "Running: printf approved", "display": { "kind": "command", "command": "printf approved", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started                   { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf approved", "timeout": 60 }, "description": "Running: printf approved", "display": { "kind": "command", "command": "printf approved", "cwd": "<cwd>", "language": "bash" } }
+      [emit] tool.progress                       { "turnId": 0, "toolCallId": "call_bash", "update": { "kind": "stdout", "text": "approved" } }
       [wire] context.append_loop_event           { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "approved" } }, "time": "<time>" }
       [emit] tool.result                         { "turnId": 0, "toolCallId": "call_bash", "output": "approved" }
       [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }

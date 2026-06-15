@@ -224,6 +224,89 @@ describe('Agent resume', () => {
     }
   });
 
+  it('projects restored compactions into replay records', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Historical prompt before compaction' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'full_compaction.begin',
+        source: 'manual',
+        instruction: 'preserve implementation notes',
+      },
+      {
+        type: 'full_compaction.complete',
+      },
+      {
+        type: 'context.apply_compaction',
+        summary: 'Compacted implementation notes.',
+        compactedCount: 1,
+        tokensBefore: 120,
+        tokensAfter: 24,
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Compacted implementation notes.' }],
+        origin: { kind: 'compaction_summary' },
+      }),
+    ]);
+    expect(ctx.agent.replayBuilder.buildResult()).toEqual([
+      expect.objectContaining({
+        type: 'message',
+        message: expect.objectContaining({
+          role: 'user',
+          content: [{ type: 'text', text: 'Historical prompt before compaction' }],
+        }),
+      }),
+      expect.objectContaining({
+        type: 'compaction',
+        result: {
+          summary: 'Compacted implementation notes.',
+          compactedCount: 1,
+          tokensBefore: 120,
+          tokensAfter: 24,
+        },
+        instruction: 'preserve implementation notes',
+      }),
+    ]);
+  });
+
+  it('projects restored cancelled compactions into replay records', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'full_compaction.begin',
+        source: 'manual',
+        instruction: 'preserve implementation notes',
+      },
+      {
+        type: 'full_compaction.cancel',
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.replayBuilder.buildResult()).toEqual([
+      expect.objectContaining({
+        type: 'compaction',
+        result: 'cancelled',
+        instruction: 'preserve implementation notes',
+      }),
+    ]);
+  });
+
   it('persists undelivered restored background notifications during resume', async () => {
     const persistence = new RecordingAgentPersistence([
       {
@@ -313,14 +396,196 @@ describe('Agent resume', () => {
 
     await ctx.agent.resume();
 
-    expect(ctx.agent.replayBuilder.buildResult()).toContainEqual({
-      type: 'message',
-      message: expect.objectContaining({
-        role: 'tool',
-        toolCallId: 'call_failed_bash',
-        isError: true,
+    expect(ctx.agent.replayBuilder.buildResult()).toContainEqual(
+      expect.objectContaining({
+        type: 'message',
+        message: expect.objectContaining({
+          role: 'tool',
+          toolCallId: 'call_failed_bash',
+          isError: true,
+        }),
       }),
+    );
+  });
+
+  it('closes interrupted trailing tool calls with synthetic error results after resume', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'config.update',
+        cwd: process.cwd(),
+        modelAlias: MOCK_PROVIDER.model,
+        systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
+        thinkingLevel: 'off',
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Run both lookups' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.begin',
+          uuid: 'interrupted-step',
+          turnId: '0',
+          step: 1,
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call-one',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'interrupted-step',
+          toolCallId: 'call_interrupted_one',
+          name: 'LookupOne',
+          args: { query: 'one' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call-two',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'interrupted-step',
+          toolCallId: 'call_interrupted_two',
+          name: 'LookupTwo',
+          args: { query: 'two' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: 'call-one',
+          toolCallId: 'call_interrupted_one',
+          result: { output: 'one result' },
+        },
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+    ]);
+    const syntheticResult = ctx.agent.context.history.at(-1);
+    expect(syntheticResult).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_interrupted_two',
+      isError: true,
     });
+    expect(textContent(syntheticResult)).toContain(
+      'Tool execution was interrupted before its result was recorded',
+    );
+    const replayMessages = ctx.agent.replayBuilder
+      .buildResult()
+      .flatMap((record) => (record.type === 'message' ? [record.message] : []));
+    expect(replayMessages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+    ]);
+    expect(replayMessages.at(-1)).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_interrupted_two',
+      isError: true,
+    });
+    expect(textContent(replayMessages.at(-1))).toContain(
+      'Tool execution was interrupted before its result was recorded',
+    );
+    expect(
+      persistence.appended.filter(
+        (record) =>
+          record.type === 'context.append_loop_event' &&
+          record.event.type === 'tool.result' &&
+          record.event.toolCallId === 'call_interrupted_two',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        type: 'context.append_loop_event',
+        event: expect.objectContaining({
+          type: 'tool.result',
+          parentUuid: 'call_interrupted_two',
+          toolCallId: 'call_interrupted_two',
+          result: {
+            output:
+              'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.',
+            isError: true,
+          },
+        }),
+      }),
+    ]);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Recovered after resume.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue after resume' }] });
+    await ctx.untilTurnEnd();
+
+    const syntheticRecordIndex = persistence.records.findIndex(
+      (record) =>
+        record.type === 'context.append_loop_event' &&
+        record.event.type === 'tool.result' &&
+        record.event.toolCallId === 'call_interrupted_two',
+    );
+    const freshUserRecordIndex = persistence.records.findIndex(
+      (record) =>
+        record.type === 'context.append_message' &&
+        record.message.role === 'user' &&
+        textContent(record.message) === 'continue after resume',
+    );
+    expect(syntheticRecordIndex).toBeGreaterThan(-1);
+    expect(freshUserRecordIndex).toBeGreaterThan(-1);
+    expect(syntheticRecordIndex).toBeLessThan(freshUserRecordIndex);
+
+    const llmHistory = ctx.llmCalls[0]?.history ?? [];
+    expect(llmHistory.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+      'user',
+    ]);
+    expect(textContent(llmHistory[3])).toContain(
+      '<system>ERROR: Tool execution failed.</system>',
+    );
+    expect(textContent(llmHistory[3])).toContain(
+      'Tool execution was interrupted before its result was recorded',
+    );
+    expect(textContent(llmHistory[4])).toBe('continue after resume');
+    expect(
+      ctx.agent.context.history.some(
+        (message) => message.role === 'user' && textContent(message) === 'continue after resume',
+      ),
+    ).toBe(true);
+
+    const resumedAgain = testAgent({ persistence });
+    await resumedAgain.agent.resume();
+
+    expect(resumedAgain.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+      'user',
+      'assistant',
+    ]);
+    expect(textContent(resumedAgain.agent.context.history[3])).toContain(
+      'Tool execution was interrupted before its result was recorded',
+    );
+    expect(textContent(resumedAgain.agent.context.history[4])).toBe('continue after resume');
   });
 
   it('rebuilds goal completion replay cards without adding model-visible context', async () => {
@@ -496,6 +761,18 @@ function withMetadata(events: readonly AgentRecord[]): readonly AgentRecord[] {
     },
     ...events,
   ];
+}
+
+function textContent(
+  message:
+    | { readonly content: readonly { readonly type: string; readonly text?: string }[] }
+    | undefined,
+): string {
+  return (
+    message?.content
+      .map((part) => (part.type === 'text' && typeof part.text === 'string' ? part.text : ''))
+      .join('') ?? ''
+  );
 }
 
 function resumeHistory(): AgentRecord[] {

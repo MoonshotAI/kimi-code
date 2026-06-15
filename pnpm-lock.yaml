@@ -4,12 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-catalogs:
-  default:
-    zod:
-      specifier: ^4.3.6
-      version: 4.3.6
-
 overrides:
   ssh2@1.17.0>cpu-features: '-'
   ssh2@1.17.0>nan: '-'
@@ -71,35 +65,10 @@ importers:
         version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
 
   apps/kimi-code:
-    dependencies:
+    devDependencies:
       '@earendil-works/pi-tui':
         specifier: ^0.74.0
         version: 0.74.0
-      '@mariozechner/clipboard':
-        specifier: ^0.3.2
-        version: 0.3.2
-      chalk:
-        specifier: ^5.4.1
-        version: 5.6.2
-      cli-highlight:
-        specifier: ^2.1.11
-        version: 2.1.11
-      commander:
-        specifier: ^13.1.0
-        version: 13.1.0
-      pathe:
-        specifier: ^2.0.3
-        version: 2.0.3
-      semver:
-        specifier: ^7.7.4
-        version: 7.7.4
-      smol-toml:
-        specifier: ^1.6.1
-        version: 1.6.1
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
-    devDependencies:
       '@moonshot-ai/acp-adapter':
         specifier: workspace:^
         version: link:../../packages/acp-adapter
@@ -121,15 +90,43 @@ importers:
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
+      chalk:
+        specifier: ^5.4.1
+        version: 5.6.2
+      cli-highlight:
+        specifier: ^2.1.11
+        version: 2.1.11
+      commander:
+        specifier: ^13.1.0
+        version: 13.1.0
+      pathe:
+        specifier: ^2.0.3
+        version: 2.0.3
       postject:
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6
+      semver:
+        specifier: ^7.7.4
+        version: 7.7.4
+      smol-toml:
+        specifier: ^1.6.1
+        version: 1.6.1
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
       yazl:
         specifier: ^3.3.1
         version: 3.3.1
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    optionalDependencies:
+      '@mariozechner/clipboard':
+        specifier: ^0.3.2
+        version: 0.3.2
+      koffi:
+        specifier: ^2.16.0
+        version: 2.16.0
 
   apps/vis:
     devDependencies:
@@ -241,6 +238,9 @@ importers:
       '@moonshot-ai/kosong':
         specifier: workspace:^
         version: link:../kosong
+      '@moonshot-ai/protocol':
+        specifier: workspace:^
+        version: link:../protocol
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
@@ -293,7 +293,7 @@ importers:
         specifier: ^3.3.0
         version: 3.3.0
       zod:
-        specifier: 'catalog:'
+        specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
       '@types/js-yaml':
@@ -352,7 +352,7 @@ importers:
         specifier: ^6.34.0
         version: 6.34.0(ws@8.20.0)(zod@4.3.6)
       zod:
-        specifier: 'catalog:'
+        specifier: ^4.3.6
         version: 4.3.6
       zod-to-json-schema:
         specifier: ^3.25.2
@@ -374,7 +374,7 @@ importers:
         specifier: ^1.6.1
         version: 1.6.1
       zod:
-        specifier: 'catalog:'
+        specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
       '@moonshot-ai/kaos':
@@ -393,7 +393,7 @@ importers:
         specifier: ^3.3.1
         version: 3.3.1
       zod:
-        specifier: 'catalog:'
+        specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
       '@moonshot-ai/agent-core':
@@ -421,6 +421,15 @@ importers:
       '@types/proper-lockfile':
         specifier: ^4.1.4
         version: 4.1.4
+
+  packages/protocol:
+    dependencies:
+      ulid:
+        specifier: ^3.0.1
+        version: 3.0.2
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
 
   packages/telemetry: {}
 
@@ -5155,6 +5164,10 @@ packages:
   uhyphen@0.2.0:
     resolution: {integrity: sha512-qz3o9CHXmJJPGBdqzab7qAYuW8kQGKNEuoHFYrBwV6hWIMcpAmxDLXojcHfFr9US1Pe6zUswEIJIbLI610fuqA==}
 
+  ulid@3.0.2:
+    resolution: {integrity: sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w==}
+    hasBin: true
+
   unbox-primitive@1.1.0:
     resolution: {integrity: sha512-nWJ91DjeOkej/TA8pXQ3myruKpKEYgqvpw9lz4OPHj/NWFNluYrjbz9j01CJ8yKQd2g4jFoOkINCTW2I5LEEyw==}
     engines: {node: '>= 0.4'}
@@ -6428,6 +6441,7 @@ snapshots:
       '@mariozechner/clipboard-linux-x64-musl': 0.3.2
       '@mariozechner/clipboard-win32-arm64-msvc': 0.3.2
       '@mariozechner/clipboard-win32-x64-msvc': 0.3.2
+    optional: true
 
   '@mermaid-js/mermaid-mindmap@9.3.0':
     dependencies:
@@ -10363,6 +10377,8 @@ snapshots:
   uc.micro@2.1.0: {}
 
   uhyphen@0.2.0: {}
+
+  ulid@3.0.2: {}
 
   unbox-primitive@1.1.0:
     dependencies:

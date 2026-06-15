@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../src/agent';
 import type { SkillActivationOrigin } from '../../src/agent/context';
-import { SkillRegistry, type SkillDefinition } from '../../src/skill';
+import type { SkillRegistry as AgentSkillRegistry } from '../../src/agent/skill';
+import { SessionSkillRegistry, type SkillDefinition } from '../../src/skill';
 import {
   MAX_SKILL_QUERY_DEPTH,
   NestedSkillTooDeepError,
@@ -24,8 +25,8 @@ function skill(name: string, metadata: SkillDefinition['metadata'] = {}): SkillD
   };
 }
 
-function registry(skills: readonly SkillDefinition[] = []): SkillRegistry {
-  const registry = new SkillRegistry();
+function registry(skills: readonly SkillDefinition[] = []): AgentSkillRegistry {
+  const registry = new SessionSkillRegistry();
   for (const item of skills) {
     registry.register(item);
   }
@@ -35,16 +36,21 @@ function registry(skills: readonly SkillDefinition[] = []): SkillRegistry {
 interface SkillToolMethods {
   readonly recordSkillActivation: (origin: SkillActivationOrigin) => void;
   readonly recordSystemReminder: (content: string, origin: SkillActivationOrigin) => void;
+  readonly recordUserMessage: (
+    content: readonly [{ readonly type: 'text'; readonly text: string }],
+    origin: SkillActivationOrigin,
+  ) => void;
 }
 
 function skillToolMethods() {
   return {
     recordSkillActivation: vi.fn<SkillToolMethods['recordSkillActivation']>(),
     recordSystemReminder: vi.fn<SkillToolMethods['recordSystemReminder']>(),
+    recordUserMessage: vi.fn<SkillToolMethods['recordUserMessage']>(),
   } satisfies SkillToolMethods;
 }
 
-function skillToolAgent(skills: SkillRegistry, methods: SkillToolMethods): Agent {
+function skillToolAgent(skills: AgentSkillRegistry, methods: SkillToolMethods): Agent {
   return {
     skills: {
       registry: skills,
@@ -52,12 +58,13 @@ function skillToolAgent(skills: SkillRegistry, methods: SkillToolMethods): Agent
     },
     context: {
       appendSystemReminder: methods.recordSystemReminder,
+      appendUserMessage: methods.recordUserMessage,
     },
   } as unknown as Agent;
 }
 
 function skillTool(
-  skills: SkillRegistry,
+  skills: AgentSkillRegistry,
   methods = skillToolMethods(),
   options?: ConstructorParameters<typeof SkillTool>[1],
 ): SkillTool {
@@ -82,7 +89,12 @@ describe('SkillTool dispatch edges', () => {
 
     expect(result.output).toContain('loaded inline');
     expect(result.output).not.toContain('body of prompt-skill');
-    expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain('body of prompt-skill');
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).toContain(
+      'body of prompt-skill',
+    );
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).not.toContain(
+      '<system-reminder>',
+    );
     expect(methods.recordSkillActivation).toHaveBeenCalledTimes(1);
   });
 
@@ -94,7 +106,10 @@ describe('SkillTool dispatch edges', () => {
 
     expect(result.output).toContain('loaded inline');
     expect(result.output).not.toContain('body of legacy');
-    expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain('body of legacy');
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).toContain('body of legacy');
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).not.toContain(
+      '<system-reminder>',
+    );
     expect(methods.recordSkillActivation).toHaveBeenCalledTimes(1);
   });
 

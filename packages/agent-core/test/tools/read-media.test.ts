@@ -318,6 +318,27 @@ describe('ReadMediaFileTool', () => {
     expect(parts[3]).toEqual({ type: 'text', text: '</video>' });
   });
 
+  it('falls back to a media extension when the header cannot be sniffed', async () => {
+    const data = Buffer.from([0x00, 0x00, 0x01, 0xba, 0x21, 0x00, 0x01, 0x00]);
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_mpg',
+      args: { path: '/workspace/sample.mpg' },
+      signal,
+    });
+
+    const parts = outputParts(result);
+    expect(parts[1]).toEqual({ type: 'text', text: '<video path="/workspace/sample.mpg">' });
+    expect((parts[2] as { videoUrl: { url: string } }).videoUrl.url).toBe(
+      `data:video/mpeg;base64,${data.toString('base64')}`,
+    );
+  });
+
   it('uses injected videoUploader for video files when available', async () => {
     const videoUploader = vi.fn().mockResolvedValue({
       type: 'video_url',

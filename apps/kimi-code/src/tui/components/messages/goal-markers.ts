@@ -7,7 +7,7 @@
  * the richer completion card (the `/goal` box), not this marker.
  */
 
-import type { Component } from '@earendil-works/pi-tui';
+import { truncateToWidth, type Component } from '@earendil-works/pi-tui';
 import type { GoalChange } from '@moonshot-ai/kimi-code-sdk';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
@@ -58,22 +58,29 @@ export class GoalMarkerComponent implements Component {
     const dot = currentTheme.fg(this.accentToken, this.marker);
     const head = currentTheme.fg(this.textToken, this.headline);
     const hasDetail = this.detail !== undefined && this.detail.length > 0;
-    if (!hasDetail) return this.withLeadingBlank([`${this.indent}${dot} ${head}`]);
+    if (!hasDetail) return this.clampToWidth([`${this.indent}${dot} ${head}`], width);
 
     if (!this.expandable) {
-      return this.withLeadingBlank([`${this.indent}${dot} ${head}`]);
+      return this.clampToWidth([`${this.indent}${dot} ${head}`], width);
     }
     if (!this.expanded) {
-      return this.withLeadingBlank([
-        `${this.indent}${dot} ${head} ${currentTheme.fg('textMuted', '(ctrl+o)')}`,
-      ]);
+      return this.clampToWidth(
+        [`${this.indent}${dot} ${head} ${currentTheme.fg('textMuted', '(ctrl+o)')}`],
+        width,
+      );
     }
     const out = [`${this.indent}${dot} ${head}`];
     const wrapWidth = Math.max(20, width - DETAIL_INDENT.length);
     for (const line of wrap(this.detail!, wrapWidth)) {
       out.push(DETAIL_INDENT + currentTheme.fg('textDim', line));
     }
-    return this.withLeadingBlank(out);
+    return this.clampToWidth(out, width);
+  }
+
+  private clampToWidth(lines: string[], width: number): string[] {
+    const withBlank = this.withLeadingBlank(lines);
+    if (width <= 0) return withBlank.map(() => '');
+    return withBlank.map((line) => truncateToWidth(line, width));
   }
 
   private withLeadingBlank(lines: string[]): string[] {
@@ -163,7 +170,7 @@ function lowercaseFirst(text: string): string {
 }
 
 function wrap(text: string, width: number): string[] {
-  const words = text.replace(/\s+/g, ' ').trim().split(' ');
+  const words = text.replaceAll(/\s+/g, ' ').trim().split(' ');
   const lines: string[] = [];
   let current = '';
   for (const word of words) {

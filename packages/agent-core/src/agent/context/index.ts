@@ -20,7 +20,13 @@ const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
 const TOOL_EMPTY_ERROR_STATUS =
   '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
 const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
+const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
+  'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
 
+// Invariant: _history must not contain an unresolved tool call exchange except
+// at the tail. When the tail is unresolved, pendingToolResultIds is exactly the
+// set of missing tool result ids for that tail exchange; appendMessage keeps
+// later messages in deferredMessages until those ids are resolved.
 export class ContextMemory {
   private _history: ContextMessage[] = [];
   private _tokenCount = 0;
@@ -133,31 +139,47 @@ export class ContextMemory {
     ) {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
-        'Nothing to undo in the active context.',
+        formatUndoUnavailableMessage(count, removedUserCount, stoppedAtBoundary),
+        {
+          details: {
+            reason: 'undo_limit',
+            requestedCount: count,
+            undoableCount: removedUserCount,
+            stoppedAtCompaction: stoppedAtBoundary,
+          },
+        },
       );
     }
   }
 
-  applyCompaction(summary: CompactionResult): void {
+  applyCompaction(result: CompactionResult): void {
     this.agent.records.logRecord({
       type: 'context.apply_compaction',
-      ...summary,
+      ...result,
+    });
+    this.agent.replayBuilder.patchLast('compaction', {
+      result: {
+        summary: result.summary,
+        compactedCount: result.compactedCount,
+        tokensBefore: result.tokensBefore,
+        tokensAfter: result.tokensAfter,
+      },
     });
     this._history = [
       {
         role: 'assistant',
-        content: [{ type: 'text', text: summary.summary }],
+        content: [{ type: 'text', text: result.summary }],
         toolCalls: [],
         origin: { kind: 'compaction_summary' },
       },
-      ...this._history.slice(summary.compactedCount),
+      ...this._history.slice(result.compactedCount),
     ];
     this.openSteps.clear();
     this.flushDeferredMessagesIfToolExchangeClosed();
-    this._tokenCount = summary.tokensAfter;
+    this._tokenCount = result.tokensAfter;
     this.tokenCountCoveredMessageCount = this._history.length;
     this.agent.microCompaction.reset();
-    this.agent.injection.onContextCompacted(summary.compactedCount);
+    this.agent.injection.onContextCompacted(result.compactedCount);
     this.agent.emitStatusUpdated();
   }
 
@@ -192,6 +214,24 @@ export class ContextMemory {
   useProjectedHistoryFrom(source: ContextMemory): void {
     this.clear();
     this.pushHistory(...trimTrailingOpenToolExchange(source.project(source.history)));
+  }
+
+  finishResume(): void {
+    const interruptedToolCallIds = [...this.pendingToolResultIds];
+    this.openSteps.clear();
+    if (interruptedToolCallIds.length === 0) return;
+
+    for (const toolCallId of interruptedToolCallIds) {
+      this.appendLoopEvent({
+        type: 'tool.result',
+        parentUuid: toolCallId,
+        toolCallId,
+        result: {
+          output: TOOL_INTERRUPTED_ON_RESUME_OUTPUT,
+          isError: true,
+        },
+      });
+    }
   }
 
   appendLoopEvent(event: LoopRecordedEvent): void {
@@ -344,4 +384,17 @@ function isRealUserPrompt(message: ContextMessage): boolean {
     return origin.trigger === 'user-slash';
   }
   return false;
+}
+
+function formatUndoUnavailableMessage(
+  requestedCount: number,
+  undoableCount: number,
+  stoppedAtCompaction: boolean,
+): string {
+  const reason = stoppedAtCompaction ? ' after the last compaction' : '';
+  return `Cannot undo ${formatPromptCount(requestedCount)}; only ${formatPromptCount(undoableCount)} can be undone in the active context${reason}.`;
+
+  function formatPromptCount(count: number): string {
+    return `${String(count)} ${count === 1 ? 'prompt' : 'prompts'}`;
+  }
 }

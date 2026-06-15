@@ -90,4 +90,16 @@ describe('skill slash commands', () => {
     expect(built.commands.map((command) => command.name)).toEqual(['mcp-config']);
     expect(built.commandMap.get('mcp-config')).toBe('mcp-config');
   });
+
+  it('keeps sub-skills slash-invocable', () => {
+    const built = buildSkillSlashCommands([
+      skill('outer.inner', 'prompt', {
+        isSubSkill: true,
+        source: 'project',
+      }),
+    ]);
+
+    expect(built.commands.map((command) => command.name)).toEqual(['outer.inner']);
+    expect(built.commandMap.get('outer.inner')).toBe('outer.inner');
+  });
 });

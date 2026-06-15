@@ -70,6 +70,7 @@ interface MockInnerKaos extends Kaos {
     getcwdCalls: number;
     chdirCalls: string[];
     withCwdCalls: string[];
+    withEnvCalls: Array<Record<string, string>>;
     statCalls: Array<{ path: string; options?: { followSymlinks?: boolean } }>;
     iterdirCalls: string[];
     globCalls: Array<{ path: string; pattern: string; options?: { caseSensitive?: boolean } }>;
@@ -82,7 +83,8 @@ interface MockInnerKaos extends Kaos {
   };
 }
 
-function makeMockInner(): MockInnerKaos {
+function makeMockInner(opts?: { pathClass?: 'posix' | 'win32' }): MockInnerKaos {
+  const pathClass = opts?.pathClass ?? 'posix';
   const spy = {
     pathClassCalls: 0,
     normpathCalls: [] as string[],
@@ -90,6 +92,7 @@ function makeMockInner(): MockInnerKaos {
     getcwdCalls: 0,
     chdirCalls: [] as string[],
     withCwdCalls: [] as string[],
+    withEnvCalls: [] as Array<Record<string, string>>,
     statCalls: [] as Array<{ path: string; options?: { followSymlinks?: boolean } }>,
     iterdirCalls: [] as string[],
     globCalls: [] as Array<{ path: string; pattern: string; options?: { caseSensitive?: boolean } }>,
@@ -107,7 +110,7 @@ function makeMockInner(): MockInnerKaos {
     osEnv: { os: 'linux', shell: 'bash' } as unknown as Environment,
     pathClass: () => {
       spy.pathClassCalls += 1;
-      return 'posix';
+      return pathClass;
     },
     normpath: (p: string) => {
       spy.normpathCalls.push(p);
@@ -128,6 +131,11 @@ function makeMockInner(): MockInnerKaos {
       spy.withCwdCalls.push(cwd);
       // Return a fresh inner stub so the wrapper test can verify the
       // returned AcpKaos still bridges through the same conn.
+      const child = makeMockInner();
+      return child;
+    },
+    withEnv: (env: Record<string, string>) => {
+      spy.withEnvCalls.push(env);
       const child = makeMockInner();
       return child;
     },
@@ -230,6 +238,31 @@ describe('AcpKaos', () => {
         expect((err as Error).message).toContain('acp: readTextFile failed for /x.ts');
         expect((err as Error).message).toContain('rpc died');
       }
+    });
+
+    it('uses win32-native separators for ACP file RPC paths', async () => {
+      const conn = makeMockConn({
+        readHandler: async () => ({ content: 'HELLO' }),
+      });
+      const inner = makeMockInner({ pathClass: 'win32' });
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
+
+      await kaos.readText('G:/python-code/render_with_mult_gpu/README.md');
+      await kaos.writeText('G:/python-code/render_with_mult_gpu/README.md', 'updated');
+
+      expect(conn.readCalls).toEqual([
+        {
+          sessionId: 's1',
+          path: 'G:\\python-code\\render_with_mult_gpu\\README.md',
+        },
+      ]);
+      expect(conn.writeCalls).toEqual([
+        {
+          sessionId: 's1',
+          path: 'G:\\python-code\\render_with_mult_gpu\\README.md',
+          content: 'updated',
+        },
+      ]);
     });
   });
 
@@ -421,6 +454,24 @@ describe('AcpKaos', () => {
       expect(text).toBe('BRIDGED');
       expect(conn.readCalls).toEqual([{ sessionId: 's1', path: '/foo.ts' }]);
       expect(inner.__spy.withCwdCalls).toEqual(['/new/cwd']);
+    });
+  });
+
+  describe('withEnv', () => {
+    it('returns an AcpKaos that delegates env to inner and keeps the ACP bridge', async () => {
+      const conn = makeMockConn({
+        readHandler: async () => ({ content: 'BRIDGED' }),
+      });
+      const inner = makeMockInner();
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
+      const env = { FOO: 'bar' };
+      const child = kaos.withEnv(env);
+
+      expect(child).toBeInstanceOf(AcpKaos);
+      const text = await child.readText('/foo.ts');
+      expect(text).toBe('BRIDGED');
+      expect(conn.readCalls).toEqual([{ sessionId: 's1', path: '/foo.ts' }]);
+      expect(inner.__spy.withEnvCalls).toEqual([env]);
     });
   });
 

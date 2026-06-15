@@ -341,6 +341,7 @@ describe('PluginManager', () => {
       mcpServers: {
         finance: { command: 'finance-mcp' },
         docs: { url: 'https://example.com/mcp' },
+        events: { transport: 'sse', url: 'https://example.com/sse' },
       },
     });
     const manager = new PluginManager({ kimiHomeDir: home });
@@ -356,10 +357,18 @@ describe('PluginManager', () => {
         command: 'finance-mcp',
       }),
     );
+    expect(manager.info('demo')?.mcpServers).toContainEqual(
+      expect.objectContaining({
+        name: 'events',
+        runtimeName: 'plugin-demo:events',
+        transport: 'sse',
+        url: 'https://example.com/sse',
+      }),
+    );
     expect(manager.summaries()[0]).toEqual(
       expect.objectContaining({
-        mcpServerCount: 2,
-        enabledMcpServerCount: 2,
+        mcpServerCount: 3,
+        enabledMcpServerCount: 3,
       }),
     );
 
@@ -373,6 +382,10 @@ describe('PluginManager', () => {
         'plugin-demo:docs': expect.objectContaining({
           url: 'https://example.com/mcp',
         }),
+        'plugin-demo:events': expect.objectContaining({
+          transport: 'sse',
+          url: 'https://example.com/sse',
+        }),
       }),
     );
 
@@ -381,8 +394,8 @@ describe('PluginManager', () => {
     expect(manager.enabledMcpServers()).not.toHaveProperty('plugin-demo:finance');
     expect(manager.summaries()[0]).toEqual(
       expect.objectContaining({
-        mcpServerCount: 2,
-        enabledMcpServerCount: 1,
+        mcpServerCount: 3,
+        enabledMcpServerCount: 2,
       }),
     );
 

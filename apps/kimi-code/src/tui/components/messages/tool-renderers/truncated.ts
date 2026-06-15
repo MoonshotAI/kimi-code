@@ -30,6 +30,7 @@ export class TruncatedOutputComponent implements Component {
   private readonly maxLines: number;
   private readonly indent: number;
   private readonly expandHint: boolean;
+  private readonly tail: boolean;
 
   constructor(
     output: string,
@@ -41,12 +42,16 @@ export class TruncatedOutputComponent implements Component {
       // When false, the truncation footer omits the "ctrl+o to expand" promise
       // (for contexts whose output is fixed-truncated and never expands).
       expandHint?: boolean;
+      // When true, collapsed rendering keeps the latest visual rows instead of
+      // the first rows. This is useful for live output from a running command.
+      tail?: boolean;
     },
   ) {
     this.expanded = options.expanded;
     this.maxLines = options.maxLines ?? PREVIEW_LINES;
     this.indent = options.indent ?? DEFAULT_INDENT;
     this.expandHint = options.expandHint ?? true;
+    this.tail = options.tail ?? false;
     const cleaned = trimTrailingEmptyLines(output.split('\n')).join('\n');
     this.textComponent = new Text(
       options.isError ? currentTheme.fg('error', cleaned) : currentTheme.dim(cleaned),
@@ -67,8 +72,16 @@ export class TruncatedOutputComponent implements Component {
       return contentLines;
     }
 
-    const shown = contentLines.slice(0, this.maxLines);
     const remaining = contentLines.length - this.maxLines;
+    if (this.tail) {
+      const shown = contentLines.slice(contentLines.length - this.maxLines);
+      return [
+        ' '.repeat(this.indent) + currentTheme.dim(`... (${String(remaining)} earlier lines)`),
+        ...shown,
+      ];
+    }
+
+    const shown = contentLines.slice(0, this.maxLines);
     const hint = this.expandHint
       ? `... (${String(remaining)} more lines, ctrl+o to expand)`
       : `... (${String(remaining)} more lines)`;

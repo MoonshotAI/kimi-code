@@ -2,6 +2,7 @@ import { expandSkillParameters, skillArgumentNames } from './parser';
 import { discoverSkills, type DiscoverSkillsOptions } from './scanner';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
 import { isInlineSkillType, normalizeSkillName } from './types';
+import type { SkillRegistry as AgentSkillRegistry } from '../agent/skill/types';
 import { escapeXmlAttr } from '../utils/xml-escape';
 
 const LISTING_DESC_MAX = 250;
@@ -22,7 +23,7 @@ export interface SkillRegistryOptions {
   readonly sessionId?: string;
 }
 
-export class SkillRegistry {
+export class SessionSkillRegistry implements AgentSkillRegistry {
   private readonly byName = new Map<string, SkillDefinition>();
   private readonly byPluginAndName = new Map<string, SkillDefinition>();
   private readonly roots: string[] = [];
@@ -131,7 +132,10 @@ export class SkillRegistry {
 
   getModelSkillListing(): string {
     const lines = ['DISREGARD any earlier skill listings. Current available skills:'];
-    const listing = renderGroupedSkills(this.listInvocableSkills(), formatModelSkill);
+    const listing = renderGroupedSkills(
+      this.listInvocableSkills().filter((skill) => skill.metadata.isSubSkill !== true),
+      formatModelSkill,
+    );
     if (listing.length > 0) {
       lines.push(listing);
     }

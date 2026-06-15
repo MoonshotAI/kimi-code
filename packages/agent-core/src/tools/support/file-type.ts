@@ -9,6 +9,8 @@ export interface FileType {
   readonly mimeType: string;
 }
 
+export type DetectFileTypeMode = 'text' | 'media';
+
 export const IMAGE_MIME_BY_SUFFIX: Readonly<Record<string, string>> = Object.freeze({
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -340,7 +342,11 @@ function getSuffix(path: string): string {
   return path.slice(idx).toLowerCase();
 }
 
-export function detectFileType(path: string, header?: Buffer | Uint8Array): FileType {
+export function detectFileType(
+  path: string,
+  header?: Buffer | Uint8Array,
+  type: DetectFileTypeMode = 'text',
+): FileType {
   const suffix = getSuffix(path);
   let mediaHint: FileType | null = null;
   if (suffix in TEXT_MIME_BY_SUFFIX) {
@@ -351,16 +357,15 @@ export function detectFileType(path: string, header?: Buffer | Uint8Array): File
     mediaHint = { kind: 'video', mimeType: VIDEO_MIME_BY_SUFFIX[suffix]! };
   }
 
-  // When a header is supplied, cross-validate against the ext hint —
-  // a mismatch reports `unknown` rather than blindly trusting the
-  // extension. When ext hint + sniff agree on kind, prefer the ext's
-  // mimeType so the reported MIME matches what the filename advertised.
-  // A disagreement on `kind` (e.g. `.mp4` with JPEG magic) still
-  // collapses to `unknown`.
+  // When a header is supplied, cross-validate against the ext hint by
+  // default: a kind mismatch reports `unknown` rather than blindly trusting
+  // either signal. Media readers treat bytes as authoritative and only fall
+  // back to media suffixes when the header cannot be sniffed.
   if (header !== undefined) {
     const buf = toBuffer(header);
     const sniffed = sniffMediaFromMagic(buf);
     if (sniffed) {
+      if (type === 'media') return sniffed;
       if (mediaHint) {
         if (sniffed.kind !== mediaHint.kind) {
           return { kind: 'unknown', mimeType: '' };
@@ -368,6 +373,13 @@ export function detectFileType(path: string, header?: Buffer | Uint8Array): File
         return mediaHint;
       }
       return sniffed;
+    }
+    if (
+      type === 'media' &&
+      mediaHint !== null &&
+      mediaHint.kind !== 'text'
+    ) {
+      return mediaHint;
     }
     if (buf.includes(0x00)) {
       return { kind: 'unknown', mimeType: '' };

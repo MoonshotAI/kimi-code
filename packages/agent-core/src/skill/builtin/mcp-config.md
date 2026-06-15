@@ -38,10 +38,25 @@ tools exist and the user didn't name one, ask which.
 ## Config edit
 
 Config lives in three files; on key collision, later entries in this
-precedence order override earlier ones:
+precedence order override earlier ones.
 
-- User-global: `~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json` if
-  set). Use for servers you want everywhere.
+The kimi-code runtime resolves the user-global directory as `KIMI_CODE_HOME`
+first, falling back to `~/.kimi-code`. Before touching the user-global file,
+resolve the actual directory with Bash so you don't read or write the wrong
+one. Check whether `KIMI_CODE_HOME` is set and fall back to `~/.kimi-code`
+when it is empty:
+
+```bash
+echo "$KIMI_CODE_HOME"
+echo "$HOME/.kimi-code"
+```
+
+Use the first line when it is non-empty; otherwise use the second line. In the
+rest of this skill, `<KIMI_CODE_HOME>` means that resolved data root —
+**never assume `~/.kimi-code`**.
+
+- User-global: `<KIMI_CODE_HOME>/mcp.json`. Use for servers you want
+  everywhere.
 - Project-root: `<project root>/.mcp.json`, where project root is found
   by walking up from `<cwd>` to the nearest `.git`. Use for
   Claude-compatible, repo-shared, or cross-agent servers.

@@ -119,6 +119,40 @@ describe('Session.cancel', () => {
   });
 });
 
+describe('KimiHarness.forkSession', () => {
+  it('rejects while the source session has an active turn', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-fork-active-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-fork-active-work-');
+    await writeFakeModelConfig(homeDir);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const session = await harness.createSession({ id: 'ses_fork_active_turn', workDir });
+      const started = waitForSDKEvent(session, (event) => event.type === 'turn.started');
+      const ended = waitForSDKEvent(session, (event) => event.type === 'turn.ended');
+
+      await session.prompt('keep this turn active');
+      await started;
+      try {
+        await expect(
+          harness.forkSession({
+            id: session.id,
+            forkId: 'ses_fork_active_child',
+          }),
+        ).rejects.toMatchObject({
+          name: 'KimiError',
+          code: 'session.fork_active_turn',
+        } satisfies Partial<KimiError>);
+      } finally {
+        await session.cancel().catch(() => undefined);
+        await ended.catch(() => undefined);
+      }
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
 async function writeFakeModelConfig(homeDir: string): Promise<void> {
   await writeFile(
     join(homeDir, 'config.toml'),

@@ -29,7 +29,7 @@ import {
   applyCompletionBudget,
   resolveCompletionBudget,
 } from '../../utils/completion-budget';
-import compactionInstructionTemplate from './compaction-instruction.md';
+import compactionInstructionTemplate from './compaction-instruction.md?raw';
 import { renderMessagesToText } from './render-messages';
 import { renderTodoList, type TodoItem } from '../../tools/builtin/state/todo-list';
 import type { CompactionBeginData, CompactionResult } from './types';
@@ -100,6 +100,10 @@ export class FullCompaction {
     }
     if (this.compactionCountInTurn > this.strategy.maxCompactionPerTurn) return;
     if (this.agent.records.restoring) {
+      this.agent.replayBuilder.push({
+        type: 'compaction',
+        instruction: data.instruction,
+      });
       return;
     }
     const compactedCount = this.strategy.computeCompactCount(this.agent.context.history, data.source);
@@ -139,6 +143,9 @@ export class FullCompaction {
   }
 
   private markCanceled(): void {
+    this.agent.replayBuilder.patchLast('compaction', {
+      result: 'cancelled',
+    });
     if (!this.compacting) return;
     this.agent.records.logRecord({
       type: 'full_compaction.cancel',

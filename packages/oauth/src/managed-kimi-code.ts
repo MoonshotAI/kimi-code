@@ -11,6 +11,15 @@ export const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 export const KIMI_CODE_OAUTH_KEY = 'oauth/kimi-code';
 const KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX = 'oauth/kimi-code-env-';
 
+/**
+ * Server-declared thinking toggle support from `/models`:
+ *  - 'only' — thinking cannot be turned off (always-thinking)
+ *  - 'no'   — thinking is not supported at all
+ *  - 'both' — thinking can be toggled on and off
+ * Absent on older servers — callers fall back to `supportsReasoning`.
+ */
+export type SupportsThinkingType = 'only' | 'no' | 'both';
+
 export interface ManagedKimiCodeModelInfo {
   readonly id: string;
   readonly contextLength: number;
@@ -18,6 +27,7 @@ export interface ManagedKimiCodeModelInfo {
   readonly supportsImageIn: boolean;
   readonly supportsVideoIn: boolean;
   readonly supportsToolUse?: boolean;
+  readonly supportsThinkingType?: SupportsThinkingType;
   readonly displayName?: string | undefined;
 }
 
@@ -171,7 +181,22 @@ interface SelectedDefaultModel {
 
 function capabilitiesForModel(model: ManagedKimiCodeModelInfo): string[] | undefined {
   const caps = new Set<string>();
-  if (model.supportsReasoning) caps.add('thinking');
+  // supports_thinking_type is the full three-state declaration and wins over
+  // the legacy supports_reasoning boolean; absent (older servers) falls back.
+  switch (model.supportsThinkingType) {
+    case 'only':
+      caps.add('thinking');
+      caps.add('always_thinking');
+      break;
+    case 'both':
+      caps.add('thinking');
+      break;
+    case 'no':
+      break;
+    case undefined:
+      if (model.supportsReasoning) caps.add('thinking');
+      break;
+  }
   if (model.supportsImageIn) caps.add('image_in');
   if (model.supportsVideoIn) caps.add('video_in');
   if (model.supportsToolUse ?? true) caps.add('tool_use');
@@ -357,8 +382,15 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
     supportsImageIn: Boolean(item['supports_image_in']),
     supportsVideoIn: Boolean(item['supports_video_in']),
     supportsToolUse,
+    supportsThinkingType: parseSupportsThinkingType(item['supports_thinking_type']),
     displayName: normalizedDisplayName,
   };
+}
+
+// Unknown or missing values resolve to undefined so callers fall back to the
+// legacy supports_reasoning boolean instead of guessing.
+export function parseSupportsThinkingType(value: unknown): SupportsThinkingType | undefined {
+  return value === 'only' || value === 'no' || value === 'both' ? value : undefined;
 }
 
 export async function fetchManagedKimiCodeModels(
@@ -496,6 +528,19 @@ export function applyManagedKimiCodeLogoutConfig(config: ManagedKimiConfigShape)
   }
 }
 
+// The server's three-state declaration overrides any stale defaultThinking
+// being preserved from an earlier config: an always-thinking model ('only')
+// must never end up with thinking off, and a non-thinking model ('no') must
+// never end up with thinking on.
+function forcedThinking(
+  model: ManagedKimiCodeModelInfo | undefined,
+  fallback: boolean,
+): boolean {
+  if (model?.supportsThinkingType === 'only') return true;
+  if (model?.supportsThinkingType === 'no') return false;
+  return fallback;
+}
+
 function selectDefaultModel(
   config: ManagedKimiConfigShape,
   models: readonly ManagedKimiCodeModelInfo[],
@@ -521,13 +566,16 @@ function selectDefaultModel(
     const preservedModel = managedModels.get(currentDefault);
     return {
       modelKey: currentDefault,
-      thinking: config.defaultThinking ?? preservedModel?.supportsReasoning ?? false,
+      thinking: forcedThinking(
+        preservedModel,
+        config.defaultThinking ?? preservedModel?.supportsReasoning ?? false,
+      ),
     };
   }
 
   return {
     modelKey: managedModelKey(firstModel.id),
-    thinking: config.defaultThinking ?? firstModel.supportsReasoning,
+    thinking: forcedThinking(firstModel, config.defaultThinking ?? firstModel.supportsReasoning),
   };
 }
 

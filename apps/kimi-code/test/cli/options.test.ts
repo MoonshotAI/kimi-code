@@ -47,7 +47,11 @@ describe('CLI options parsing', () => {
   describe('--version', () => {
     it('prints the version string and exits', () => {
       let output = '';
-      const program = createProgram('1.2.3', () => {}, () => {});
+      const program = createProgram(
+        '1.2.3',
+        () => {},
+        () => {},
+      );
       program.exitOverride();
       program.configureOutput({
         writeOut: (s) => {
@@ -61,7 +65,11 @@ describe('CLI options parsing', () => {
 
     it('supports -V as a short alias', () => {
       let output = '';
-      const program = createProgram('4.5.6', () => {}, () => {});
+      const program = createProgram(
+        '4.5.6',
+        () => {},
+        () => {},
+      );
       program.exitOverride();
       program.configureOutput({
         writeOut: (s) => {
@@ -103,9 +111,7 @@ describe('CLI options parsing', () => {
         '--flag',
       ]);
 
-      expect(pluginRunnerCalls).toEqual([
-        { entry: '/plugin/tool.mjs', args: ['query', '--flag'] },
-      ]);
+      expect(pluginRunnerCalls).toEqual([{ entry: '/plugin/tool.mjs', args: ['query', '--flag'] }]);
     });
   });
 
@@ -161,6 +167,50 @@ describe('CLI options parsing', () => {
     });
   });
 
+  describe('--auto / --yolo / --plan with --session / --continue', () => {
+    it('allows --auto with --continue', () => {
+      const opts = parse(['--auto', '--continue']);
+      expect(opts.auto).toBe(true);
+      expect(opts.continue).toBe(true);
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('allows --auto with an explicit session id', () => {
+      const opts = parse(['--auto', '--session', 'ses_123']);
+      expect(opts.auto).toBe(true);
+      expect(opts.session).toBe('ses_123');
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('allows --yolo with --continue', () => {
+      const opts = parse(['--yolo', '--continue']);
+      expect(opts.yolo).toBe(true);
+      expect(opts.continue).toBe(true);
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('allows --yolo with an explicit session id', () => {
+      const opts = parse(['--yolo', '--session', 'ses_123']);
+      expect(opts.yolo).toBe(true);
+      expect(opts.session).toBe('ses_123');
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('allows --plan with --continue', () => {
+      const opts = parse(['--plan', '--continue']);
+      expect(opts.plan).toBe(true);
+      expect(opts.continue).toBe(true);
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('allows --plan with an explicit session id', () => {
+      const opts = parse(['--plan', '--session', 'ses_123']);
+      expect(opts.plan).toBe(true);
+      expect(opts.session).toBe('ses_123');
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+  });
+
   describe('--model / -m', () => {
     it('parses -m as a model override', () => {
       expect(parse(['-m', 'kimi-code/k2']).model).toBe('kimi-code/k2');
@@ -211,7 +261,9 @@ describe('CLI options parsing', () => {
     it('rejects prompt mode with bare --session picker', () => {
       const opts = parse(['-p', 'resume here', '--session']);
       expect(() => validateOptions(opts)).toThrow(OptionConflictError);
-      expect(() => validateOptions(opts)).toThrow('Cannot use --session without an id in prompt mode.');
+      expect(() => validateOptions(opts)).toThrow(
+        'Cannot use --session without an id in prompt mode.',
+      );
     });
 
     it('rejects prompt mode with --yolo because prompt mode always uses auto permission', () => {
@@ -281,7 +333,11 @@ describe('CLI options parsing', () => {
     });
 
     it('registers the visible sub-commands', () => {
-      const program = createProgram('0.0.0', () => {}, () => {});
+      const program = createProgram(
+        '0.0.0',
+        () => {},
+        () => {},
+      );
       const commandNames: string[] = program.commands
         .filter((command) => !command.name().startsWith('__'))
         .map((command) => command.name());

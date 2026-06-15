@@ -55,7 +55,7 @@ Network requests only go through `github.com` redirects and `codeload.github.com
 
 ## Kimi Datasource
 
-Kimi Datasource is the official Kimi Code data plugin. It lets you query financial market data, macroeconomic indicators, corporate registration records, and academic literature in natural language — no manual API calls or data account registration required.
+Kimi Datasource is the official Kimi Code data plugin. It lets you query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language — no manual API calls or data account registration required.
 
 ### Installation
 
@@ -64,6 +64,8 @@ You must first complete OAuth login with a Kimi Code account via `/login`. The p
 1. Run `/plugins` and select **Marketplace**
 2. Find **Kimi Datasource** and press `Space` to install
 3. After installation completes, run `/reload` to activate the plugin
+
+The current latest version is v3.2.0. The plugin does not update automatically — to upgrade to a newer version, repeat the installation steps above.
 
 ### How to Use
 
@@ -79,6 +81,8 @@ Once installed, describe your need in natural language and Kimi Code will automa
 
 **Literature review acceleration**: Tracing the research arc of RLHF? Get the most-cited papers, key authors, and core findings in seconds, so your literature review outline takes shape in half the time.
 
+**On-the-spot legal lookup**: Stuck on which statute governs a residence-right contract dispute? Pinpoint the relevant Civil Code articles — full text, authority level, and validity — then pull a few comparable precedents to back them up, without digging through statute databases.
+
 ### Coverage
 
 | Category | Scope |
@@ -87,6 +91,7 @@ Once installed, describe your need in natural language and Kimi Code will automa
 | Macroeconomic data | World Bank data for 189 countries, 50+ years of time series (GDP, trade, population, climate, and more) |
 | Corporate data | Business registration, equity chain, legal risk, and related-entity graph for mainland Chinese companies |
 | Academic literature | Millions of papers across physics, mathematics, CS, quantitative finance, economics — including preprints |
+| Legal | Chinese laws, regulations, and judicial cases — semantic/keyword search and detail lookup for statutes across all authority levels (constitution, laws, judicial interpretations, departmental rules), plus ordinary and authoritative case search |
 
 ### Notes
 

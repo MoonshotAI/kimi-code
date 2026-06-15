@@ -1,4 +1,3 @@
-import type { ModelCapability } from '#/capability';
 import {
   APIConnectionError,
   APITimeoutError,
@@ -38,7 +37,6 @@ import type {
   ToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/messages/messages.js';
 
-import { getAnthropicModelCapability } from './capability-registry';
 import {
   mergeRequestHeaders,
   requireProviderApiKey,
@@ -132,6 +130,8 @@ const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
  * family's baseline rather than the generic fallback.
  */
 const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
+  // Claude Fable 5 documents a 128k output ceiling.
+  'fable-5': 128000,
   // Claude Opus per minor version. 4.6 and 4.7 raised the cap to 128k;
   // 4.5 ships at 64k; 4.1 and the dated 4.0 release stay at 32k.
   'opus-4-7': 128000,
@@ -162,7 +162,7 @@ const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
 
 const FALLBACK_MAX_TOKENS = 32000;
 
-type ClaudeFamily = 'opus' | 'sonnet' | 'haiku';
+type ClaudeFamily = 'opus' | 'sonnet' | 'haiku' | 'fable';
 
 interface ClaudeVersion {
   family: ClaudeFamily;
@@ -170,12 +170,13 @@ interface ClaudeVersion {
   minor: number | null;
 }
 
-// Family-first form: "opus-4-7", "sonnet-4.6", "haiku-4-5-20251001".
+// Family-first form: "opus-4-7", "sonnet-4.6", "haiku-4-5-20251001",
+// "fable-5" (single version component — Fable ids carry no minor).
 // Version numbers are capped at 1–2 digits with a non-digit lookahead so
 // 8-digit date suffixes (e.g. `-20251001`) don't get consumed as version
 // components.
 const FAMILY_FIRST_RE =
-  /(opus|sonnet|haiku)[-._](\d{1,2})(?!\d)(?:[-._](\d{1,2})(?!\d))?/;
+  /(opus|sonnet|haiku|fable)[-._](\d{1,2})(?!\d)(?:[-._](\d{1,2})(?!\d))?/;
 // Legacy version-first form: "3-5-sonnet", "3.7.opus" — used by older
 // Anthropic model ids and Bedrock variants of Claude 3.x.
 const VERSION_FIRST_RE = /(\d{1,2})[-._](\d{1,2})[-._](opus|sonnet|haiku)/;
@@ -292,11 +293,13 @@ function versionAtLeast(
 
 function supportsAdaptiveThinking(model: string): boolean {
   const version = parseClaudeAliasVersion(model);
-  if (version === null || version.minor === null) {
+  if (version === null) {
     return false;
   }
+  // A missing minor is a bare family-major id: "claude-fable-5" (5.0 ≥ 4.6,
+  // adaptive-only) or "claude-opus-4" (4.0 < 4.6, budget-based).
   return versionAtLeast(
-    { major: version.major, minor: version.minor },
+    { major: version.major, minor: version.minor ?? 0 },
     ADAPTIVE_MIN_VERSION,
   );
 }
@@ -308,6 +311,10 @@ function isOpus47(model: string): boolean {
   }
   const version = parseVersion(match);
   return version.major === 4 && version.minor === 7;
+}
+
+function isFableModel(model: string): boolean {
+  return parseClaudeAliasVersion(model)?.family === 'fable';
 }
 
 function supportsEffortParam(model: string, adaptive: boolean): boolean {
@@ -322,7 +329,7 @@ function clampEffort(effort: ThinkingEffort, model: string, adaptive: boolean): 
   if (effort === 'off') {
     return effort;
   }
-  if (effort === 'xhigh' && !isOpus47(model)) {
+  if (effort === 'xhigh' && !isOpus47(model) && !isFableModel(model)) {
     return 'high';
   }
   if (effort === 'max' && !adaptive) {
@@ -403,6 +410,15 @@ interface AnthropicImageBlock {
   cache_control?: { type: 'ephemeral' };
 }
 
+// The Messages API has no representation for audio or video input. Instead of
+// silently dropping such parts (the model would not even know an attachment
+// existed), emit a placeholder text block so it can acknowledge the gap.
+// Consecutive parts of the same kind collapse into a single placeholder.
+const OMITTED_MEDIA_PLACEHOLDER = {
+  audio_url: '(audio omitted: not supported by this provider)',
+  video_url: '(video omitted: not supported by this provider)',
+} as const;
+
 const SUPPORTED_B64_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 function imageUrlPartToAnthropic(url: string): AnthropicImageBlock {
@@ -449,8 +465,13 @@ function toolResultToBlock(toolCallId: string, content: ContentPart[]): ToolResu
       }
     } else if (part.type === 'image_url') {
       blocks.push(imageUrlPartToAnthropic(part.imageUrl.url));
+    } else if (part.type === 'audio_url' || part.type === 'video_url') {
+      const placeholder = OMITTED_MEDIA_PLACEHOLDER[part.type];
+      const last = blocks.at(-1);
+      if (!(last?.type === 'text' && last.text === placeholder)) {
+        blocks.push({ type: 'text', text: placeholder });
+      }
     }
-    // Other types not supported by Anthropic in tool results
   }
   return {
     type: 'tool_result',
@@ -513,8 +534,13 @@ function convertMessage(message: Message, model: string): MessageParam {
       } else if (part.think !== '' && shouldPreserveUnsignedThinking(model)) {
         blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
       }
+    } else if (part.type === 'audio_url' || part.type === 'video_url') {
+      const placeholder = OMITTED_MEDIA_PLACEHOLDER[part.type];
+      const last = blocks.at(-1);
+      if (!(last?.type === 'text' && last.text === placeholder)) {
+        blocks.push({ type: 'text', text: placeholder } satisfies TextBlockParam);
+      }
     }
-    // audio_url, video_url: not supported by Anthropic, skip
   }
 
   // Tool calls -> ToolUseBlockParam
@@ -903,10 +929,6 @@ export class AnthropicChatProvider implements ChatProvider {
     };
   }
 
-  getCapability(model?: string): ModelCapability {
-    return getAnthropicModelCapability(model ?? this._model);
-  }
-
   async generate(
     systemPrompt: string,
     tools: Tool[],
@@ -962,8 +984,13 @@ export class AnthropicChatProvider implements ChatProvider {
     if (this._generationKwargs.top_p !== undefined) {
       kwargs['top_p'] = this._generationKwargs.top_p;
     }
-    if (this._generationKwargs.thinking !== undefined) {
-      kwargs['thinking'] = this._generationKwargs.thinking;
+    // Fable rejects an explicit `disabled` thinking config (HTTP 400, unlike
+    // Opus 4.7/4.8 which accept it), so omit the field instead. Note thinking
+    // cannot actually be turned off on Fable: adaptive thinking is always on,
+    // and an omitted `thinking` field still runs with it.
+    const thinking = this._generationKwargs.thinking;
+    if (thinking !== undefined && !(thinking.type === 'disabled' && isFableModel(this._model))) {
+      kwargs['thinking'] = thinking;
     }
     if (this._generationKwargs.output_config !== undefined) {
       kwargs['output_config'] = this._generationKwargs.output_config;

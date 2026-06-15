@@ -2,10 +2,20 @@
  * Custom editor extending pi-tui Editor with app-level keybindings.
  */
 
-import { Editor, isKeyRelease, matchesKey, Key, type TUI } from '@earendil-works/pi-tui';
+import {
+  Editor,
+  isKeyRelease,
+  matchesKey,
+  Key,
+  SelectList,
+  type SelectItem,
+  type TUI,
+} from '@earendil-works/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
+
+import { WrappingSelectList } from './wrapping-select-list';
 
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
@@ -30,6 +40,17 @@ interface AutocompleteInternals {
   readonly autocompleteAbort?: AbortController;
   readonly autocompleteDebounceTimer?: ReturnType<typeof setTimeout>;
 }
+
+interface AutocompleteListFactoryInternals {
+  createAutocompleteList?: (prefix: string, items: SelectItem[]) => SelectList;
+}
+
+// Mirror pi-tui's private SLASH_COMMAND_SELECT_LIST_LAYOUT
+// (dist/components/editor.js); keep in sync when bumping pi-tui.
+const SLASH_COMMAND_SELECT_LIST_LAYOUT = {
+  minPrimaryColumnWidth: 12,
+  maxPrimaryColumnWidth: 32,
+} as const;
 
 /**
  * Workaround for a pi-tui bug that surfaces when Kitty keyboard protocol
@@ -129,7 +150,27 @@ export class CustomEditor extends Editor {
     // the `>` prompt token, and column 3 as the space between prompt and
     // content. The right side mirrors with 3 padding columns and the right
     // border at the last column.
-    super(tui, createEditorTheme(), { paddingX: 4 });
+    const theme = createEditorTheme();
+    super(tui, theme, { paddingX: 4 });
+
+    // pi-tui keeps `createAutocompleteList` private; shadow it with an
+    // instance property so slash command menus render descriptions wrapped
+    // to at most two lines. Non-slash completion (paths, @ mentions) keeps
+    // pi-tui's single-line list.
+    (this as unknown as AutocompleteListFactoryInternals).createAutocompleteList = (
+      prefix,
+      items,
+    ) => {
+      if (prefix.startsWith('/')) {
+        return new WrappingSelectList(
+          items,
+          this.getAutocompleteMaxVisible(),
+          theme.selectList,
+          SLASH_COMMAND_SELECT_LIST_LAYOUT,
+        );
+      }
+      return new SelectList(items, this.getAutocompleteMaxVisible(), theme.selectList);
+    };
   }
 
   private expandPasteMarkerAtCursor(): boolean {

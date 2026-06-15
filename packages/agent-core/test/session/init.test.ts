@@ -581,7 +581,7 @@ describe('AgentAPI.startBtw', () => {
     try {
       const disabledSkills = await disabledSession.listSkills();
       expect(disabledSkills.map((skill) => skill.name)).toContain('outer');
-      expect(disabledSkills.map((skill) => skill.name)).toContain('inner');
+      expect(disabledSkills.map((skill) => skill.name)).toContain('outer.inner');
       expect(disabledSkills.map((skill) => skill.name)).toContain('sub-skill.consolidate');
     } finally {
       await disabledSession.close();
@@ -598,7 +598,7 @@ describe('AgentAPI.startBtw', () => {
     try {
       const enabledSkills = await enabledSession.listSkills();
       expect(enabledSkills.map((skill) => skill.name)).toContain('outer');
-      expect(enabledSkills.map((skill) => skill.name)).toContain('inner');
+      expect(enabledSkills.map((skill) => skill.name)).toContain('outer.inner');
       expect(enabledSkills.map((skill) => skill.name)).toContain('sub-skill.consolidate');
     } finally {
       await enabledSession.close();

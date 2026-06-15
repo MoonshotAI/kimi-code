@@ -83,6 +83,64 @@ describe('KimiCore plugin RPCs', () => {
     );
   });
 
+  it('injects persisted managed Kimi Code environment into the datasource plugin MCP server', async () => {
+    const previousBaseUrl = process.env['KIMI_CODE_BASE_URL'];
+    const previousCodeOAuthHost = process.env['KIMI_CODE_OAUTH_HOST'];
+    const previousOAuthHost = process.env['KIMI_OAUTH_HOST'];
+    delete process.env['KIMI_CODE_BASE_URL'];
+    delete process.env['KIMI_CODE_OAUTH_HOST'];
+    delete process.env['KIMI_OAUTH_HOST'];
+
+    const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
+    const pluginRoot = await mkdtemp(path.join(tmpdir(), 'plugin-'));
+    try {
+      await writeFile(
+        path.join(home, 'config.toml'),
+        `
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "https://api.dev.example.test/coding/v1"
+api_key = ""
+oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "https://auth.dev.example.test" }
+`,
+        'utf8',
+      );
+      await writeFile(
+        path.join(pluginRoot, 'kimi.plugin.json'),
+        JSON.stringify({
+          name: 'kimi-datasource',
+          mcpServers: {
+            data: { command: 'node', args: ['./bin/kimi-datasource.mjs'] },
+          },
+        }),
+        'utf8',
+      );
+
+      const core = new KimiCore(async () => ({}) as never, { homeDir: home });
+      await new Promise((r) => setImmediate(r));
+      await core.installPlugin({ source: pluginRoot });
+
+      const mcpConfig = (
+        core as unknown as {
+          mergePluginMcpConfig(base: undefined): {
+            servers: Record<string, { env?: Record<string, string> }>;
+          };
+        }
+      ).mergePluginMcpConfig(undefined);
+
+      expect(mcpConfig.servers['plugin-kimi-datasource:data']?.env).toEqual(
+        expect.objectContaining({
+          KIMI_CODE_BASE_URL: 'https://api.dev.example.test/coding/v1',
+          KIMI_CODE_OAUTH_HOST: 'https://auth.dev.example.test',
+        }),
+      );
+    } finally {
+      restoreEnv('KIMI_CODE_BASE_URL', previousBaseUrl);
+      restoreEnv('KIMI_CODE_OAUTH_HOST', previousCodeOAuthHost);
+      restoreEnv('KIMI_OAUTH_HOST', previousOAuthHost);
+    }
+  });
+
   it('throws PLUGIN_LOAD_FAILED on every RPC when installed.json is corrupt', async () => {
     const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
     await mkdir(path.join(home, 'plugins'), { recursive: true });
@@ -149,3 +207,11 @@ describe('KimiCore plugin RPCs', () => {
     );
   });
 });
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}

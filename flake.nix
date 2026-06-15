@@ -69,6 +69,7 @@
         ./packages/migration-legacy
         ./packages/node-sdk
         ./packages/oauth
+        ./packages/protocol
         ./packages/telemetry
         ./apps/kimi-code
         ./apps/vis
@@ -85,6 +86,7 @@
         "@moonshot-ai/migration-legacy"
         "@moonshot-ai/kimi-code-sdk"
         "@moonshot-ai/kimi-code-oauth"
+        "@moonshot-ai/protocol"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/kimi-code"
         "@moonshot-ai/vis"
@@ -140,7 +142,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-x5O/+bDRoEW3juoxe3XyvTJxHitQ0hZ2nVXBItkBA5E=";
+              hash = "sha256-XwkLwxWZtOaw1N1GKR9G3z0yhXO/lDB5+O+VKtgxKWo=";
             };
 
             nativeBuildInputs = [

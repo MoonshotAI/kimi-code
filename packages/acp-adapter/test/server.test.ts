@@ -78,7 +78,7 @@ describe('AcpServer + AgentSideConnection', () => {
     expect(response.agentCapabilities?.promptCapabilities?.audio).toBe(false);
     expect(response.agentCapabilities?.promptCapabilities?.embeddedContext).toBe(true);
     expect(response.agentCapabilities?.mcpCapabilities?.http).toBe(true);
-    expect(response.agentCapabilities?.mcpCapabilities?.sse).toBe(false);
+    expect(response.agentCapabilities?.mcpCapabilities?.sse).toBe(true);
     expect(response.agentCapabilities?.sessionCapabilities?.list).toEqual({});
     expect(response.agentCapabilities?.sessionCapabilities?.resume).toEqual({});
   });

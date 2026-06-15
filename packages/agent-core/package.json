@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/agent-core",
-  "version": "0.12.0",
+  "version": "0.12.3",
   "private": true,
   "description": "The unified agent engine for Kimi",
   "license": "MIT",
@@ -37,13 +37,13 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
-    "./agent/records/migration": {
-      "types": "./src/agent/records/migration/index.ts",
-      "default": "./src/agent/records/migration/index.ts"
+    "./package.json": {
+      "types": "./package.json",
+      "default": "./package.json"
     },
-    "./session/store": {
-      "types": "./src/session/store/index.ts",
-      "default": "./src/session/store/index.ts"
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
     }
   },
   "scripts": {
@@ -58,6 +58,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@moonshot-ai/kaos": "workspace:^",
     "@moonshot-ai/kosong": "workspace:^",
+    "@moonshot-ai/protocol": "workspace:^",
     "@mozilla/readability": "^0.6.0",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
@@ -75,7 +76,7 @@
     "tar": "^7.5.13",
     "undici": "^7.27.1",
     "yauzl": "^3.3.0",
-    "zod": "catalog:"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

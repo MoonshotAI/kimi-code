@@ -14,8 +14,6 @@ import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult 
 export class SensitiveFileAccessAskPermissionPolicy implements PermissionPolicy {
   readonly name = 'sensitive-file-access-ask';
 
-  constructor(private readonly agent: Agent) {}
-
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
     const access = fileAccesses(context).find((fileAccess) =>
       isSensitiveFile(fileAccess.path),
@@ -59,26 +57,6 @@ export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy
     return {
       kind: 'ask',
       reason: fileAccessReason(access, { git_control_path: true }),
-    };
-  }
-}
-
-export class CwdOutsideFileWriteAskPermissionPolicy implements PermissionPolicy {
-  readonly name = 'cwd-outside-file-write-ask';
-
-  constructor(private readonly agent: Agent) {}
-
-  evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
-    const cwd = this.agent.config.cwd;
-    if (cwd.length === 0) return;
-    const pathClass = this.agent.kaos.pathClass();
-    const access = writeFileAccesses(context).find((fileAccess) => {
-      return !isWithinDirectory(fileAccess.path, cwd, pathClass);
-    });
-    if (access === undefined) return;
-    return {
-      kind: 'ask',
-      reason: fileAccessReason(access, { cwd_outside: true }),
     };
   }
 }

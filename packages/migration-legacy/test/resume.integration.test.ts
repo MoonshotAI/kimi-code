@@ -33,7 +33,7 @@ import {
   SessionStore,
   encodeWorkDirKey,
   normalizeWorkDir,
-} from '@moonshot-ai/agent-core/session/store';
+} from '@moonshot-ai/agent-core/session/store/index';
 import { Session, type SDKSessionRPC } from '@moonshot-ai/agent-core';
 import { LocalKaos } from '@moonshot-ai/kaos';
 

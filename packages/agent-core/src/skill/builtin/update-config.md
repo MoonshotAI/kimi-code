@@ -9,7 +9,16 @@ Help the user inspect, change, and validate kimi-code's configuration files. The
 
 ## The two config files
 
-kimi-code has two TOML config files, both under `~/.kimi-code/` (or under `KIMI_CODE_HOME` when set), both snake_case, but with different ownership — decide which one the user means before doing anything:
+kimi-code has two TOML config files, both under `<KIMI_CODE_HOME>/`, both snake_case, but with different ownership — decide which one the user means before doing anything.
+
+The runtime resolves the data directory as `KIMI_CODE_HOME` first, falling back to `~/.kimi-code`. Before doing anything, resolve the actual directory with Bash so you don't write to the wrong place. Check whether `KIMI_CODE_HOME` is set and fall back to `~/.kimi-code` when it is empty:
+
+```bash
+echo "$KIMI_CODE_HOME"
+echo "$HOME/.kimi-code"
+```
+
+Use the first line when it is non-empty; otherwise use the second line. In the rest of this skill, `<KIMI_CODE_HOME>` means that resolved root — **never assume `~/.kimi-code`**.
 
 - **`config.toml`** — agent / runtime settings: `default_model`, `providers`, `models`, `thinking`, `permission`, `hooks`, `loop_control`, etc.
 - **`tui.toml`** — terminal-UI / client preferences: `theme`, `[editor].command`, `[notifications]`, `[upgrade].auto_install` (auto-update). These can usually also be changed with the interactive commands `/config`, `/theme`, `/editor`, which is easier — prefer pointing the user at those.
@@ -31,7 +40,7 @@ https://moonshotai.github.io/kimi-code/en/configuration/config-files.html
 
 Before any modification, use **Read** on the target config file (decide whether it's `config.toml` or `tui.toml` per the above):
 
-- Location: `~/.kimi-code/config.toml` or `~/.kimi-code/tui.toml` (under `$KIMI_CODE_HOME/` when set). For other scopes/files, defer to the official docs.
+- Location: `<KIMI_CODE_HOME>/config.toml` or `<KIMI_CODE_HOME>/tui.toml`. For other scopes/files, defer to the official docs.
 - A missing or empty file is fine — you'll create a minimal skeleton later.
 - If the file exists but **fails to parse as TOML**, report the error verbatim and **stop** — never overwrite a broken file in place (it could destroy the user's existing config).
 
@@ -53,7 +62,7 @@ Don't edit the target file in place, and **don't rewrite it from scratch** — i
 1. **Clarify intent**: which key, what value, and which file (`config.toml` or `tui.toml`). Ask in one line if ambiguous; for discrete choices (e.g. scope) AskUserQuestion is fine, but use plain questions for free-form input.
 2. **Read the target file** (Prerequisite 2): Read it to understand the current state and confirm it parses.
 3. **Copy out a candidate (do not create from scratch)**: use **Bash** to copy the target verbatim — `cp config.toml config-new.toml` (same directory, `-new` suffix; for tui.toml, `cp tui.toml tui-new.toml`). **Leave the original untouched for now.**
-   - Only when the target doesn't exist (nothing to copy) should you use **Write** to create a minimal skeleton candidate (e.g. just the comment line `# ~/.kimi-code/config.toml`).
+   - Only when the target doesn't exist (nothing to copy) should you use **Write** to create a minimal skeleton candidate (e.g. just the comment line `# <KIMI_CODE_HOME>/config.toml`).
 4. **Edit the candidate**: use the **Edit** tool on the candidate to **change/add only the target key** — never rewrite the whole file. That way every existing section, entry, comment, and bit of formatting stays exactly as-is; only what should change changes. The candidate is identical to the original, so use the content you read in step 2 to locate the Edit anchor. Check the change against the official docs (key / section / value type / allowed values, snake_case).
 5. **Validate the candidate** (see Capability 3, via `kimi doctor`). **If anything fails, keep Editing the candidate and re-validate, looping until it all passes.**
 6. **Back up and overwrite** (only after validation fully passes):

@@ -1,6 +1,6 @@
 import { parseSkillText } from '../parser';
 import type { SkillDefinition } from '../types';
-import MCP_CONFIG_BODY from './mcp-config.md';
+import MCP_CONFIG_BODY from './mcp-config.md?raw';
 
 const PSEUDO_PATH = 'builtin://mcp-config';
 

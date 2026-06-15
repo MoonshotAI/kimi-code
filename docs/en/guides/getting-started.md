@@ -40,7 +40,7 @@ The script automatically downloads the latest release, verifies the checksum, an
 
 ### npm installation
 
-Requires Node.js 24.15.0 or later:
+Requires Node.js 22.19.0 or later:
 
 ```sh
 node --version

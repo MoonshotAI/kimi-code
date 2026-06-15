@@ -1,8 +1,8 @@
 ---
 name: kimi-datasource
 description: |
-  Universal data-source assistant. Use this skill when the user wants external structured data such as stocks, financial reports, technical indicators, A-share/HK/US markets, global macroeconomics, Chinese enterprise registry information, arXiv papers, or Google Scholar results.
-  This plugin exposes tools via MCP server `plugin-kimi-datasource-data`; call them in the flow `mcp__plugin-kimi-datasource-data__get_data_source_desc` → `mcp__plugin-kimi-datasource-data__call_data_source_tool`.
+  Universal data-source assistant. Use this skill when the user wants external structured data such as stocks, financial reports, technical indicators, A-share/HK/US markets, global macroeconomics, Chinese enterprise registry information, arXiv papers, Google Scholar results, or Chinese laws/regulations and judicial cases.
+  This plugin exposes tools via MCP server `plugin-kimi-datasource_data`; call them in the flow `mcp__plugin-kimi-datasource_data__get_data_source_desc` → `mcp__plugin-kimi-datasource_data__call_data_source_tool`.
 ---
 
 # kimi-datasource — 通用数据源助手
@@ -11,16 +11,16 @@ description: |
 
 本 skill 使用 datasource MCP server 注册的两个工具，不要通过 Bash 手动执行脚本：
 
-- `mcp__plugin-kimi-datasource-data__get_data_source_desc`
-- `mcp__plugin-kimi-datasource-data__call_data_source_tool`
+- `mcp__plugin-kimi-datasource_data__get_data_source_desc`
+- `mcp__plugin-kimi-datasource_data__call_data_source_tool`
 
 这两个工具由 Kimi Code 托管执行，参数直接按 tool schema 传 JSON。
 
-工具会读取 `$KIMI_CODE_HOME/credentials/kimi-code.json`。如果没有登录凭据，让用户先在 Kimi Code 里执行 `/login`。
+工具会读取当前 Kimi Code 环境对应的本地 OAuth 登录凭据；当设置了 `KIMI_CODE_OAUTH_HOST` / `KIMI_CODE_BASE_URL` 时，会使用对应环境的隔离凭据。如果没有登录凭据，让用户先在 Kimi Code 里执行 `/login`。
 
 ## 1. 这个 skill 提供什么能力
 
-本 plugin 后面挂了 6 个外部数据源。每一行的"数据源名"就是传给 `get_data_source_desc` 的 `name`。
+本 plugin 后面挂了 7 个外部数据源。每一行的"数据源名"就是传给 `get_data_source_desc` 的 `name`。
 
 | 能力域 | 数据源名 | 典型问题 |
 |---|---|---|
@@ -30,6 +30,7 @@ description: |
 | **中国企业工商信息** | `tianyancha` | "字节跳动股东"、"比亚迪司法风险"、"宁德时代专利" |
 | **arXiv 论文预印本** | `arxiv` | "找 RAG 综述"、"下载 2406.xxxxx" |
 | **Google Scholar 学术搜索** | `scholar` | "Hinton 最新论文"、"transformer 综述高引文献" |
+| **中国法律法规 / 司法案例** | `yuandian_law` | "民法典关于居住权的规定"、"帮我查劳动合同解除的相关法条"、"找几个不当得利的判例" |
 
 **不支持的能力**：通用 Web 搜索 / 实时新闻。问到这类问题，告诉用户当前数据源不覆盖。
 
@@ -51,16 +52,16 @@ description: |
 ### 例 1：用户问"茅台最近一年走势"
 
 1. 股票走势 → `stock_finance_data`
-2. 调用 `mcp__plugin-kimi-datasource-data__get_data_source_desc`，参数 `{"name":"stock_finance_data"}`
+2. 调用 `mcp__plugin-kimi-datasource_data__get_data_source_desc`，参数 `{"name":"stock_finance_data"}`
 
 3. 从文档里找到"获取历史价格"那个 API，看它要 `ticker / start_date / end_date / file_path` 等
 4. 用 web_search 核对 → 茅台 = `600519.SH`
-5. 调用 `mcp__plugin-kimi-datasource-data__call_data_source_tool`，参数形如 `{"data_source_name":"stock_finance_data","api_name":"<文档里写的 api>","params":{"ticker":"600519.SH","start_date":"...","end_date":"...","file_path":"/tmp/mao_1y.csv"}}`
+5. 调用 `mcp__plugin-kimi-datasource_data__call_data_source_tool`，参数形如 `{"data_source_name":"stock_finance_data","api_name":"<文档里写的 api>","params":{"ticker":"600519.SH","start_date":"...","end_date":"...","file_path":"/tmp/mao_1y.csv"}}`
 
 ### 例 2：用户问"找几篇 retrieval augmented generation 的综述"
 
 1. 论文搜索 → `arxiv`（或 `scholar`，arxiv 更适合预印本，scholar 引用更全）
-2. 调用 `mcp__plugin-kimi-datasource-data__get_data_source_desc`，参数 `{"name":"arxiv"}`
+2. 调用 `mcp__plugin-kimi-datasource_data__get_data_source_desc`，参数 `{"name":"arxiv"}`
 
 3. 从文档里找到搜索类 API，看它要 `query / file_path / max_results` 等
 4. 执行 `call_data_source_tool`
@@ -68,7 +69,7 @@ description: |
 ### 例 3：用户问"字节跳动有哪些股东"
 
 1. 企业工商 → `tianyancha`
-2. 调用 `mcp__plugin-kimi-datasource-data__get_data_source_desc`，参数 `{"name":"tianyancha"}`
+2. 调用 `mcp__plugin-kimi-datasource_data__get_data_source_desc`，参数 `{"name":"tianyancha"}`
 
 3. 注意：tianyancha 的 API 是动态注册的，文档会指引你**先用搜索类接口找到合适的 API 名，再调用**
 4. **必须使用企业全称**（"北京字节跳动科技有限公司"），不要用简称。不知道全称就先用 tianyancha 文档里的"公司搜索"接口查

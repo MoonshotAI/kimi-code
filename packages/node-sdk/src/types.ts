@@ -22,6 +22,7 @@ export type {
   BackgroundConfig,
   BackgroundTaskInfo,
   BackgroundTaskStatus,
+  ConfigDiagnostics,
   ContextMessage,
   ExperimentalFeatureState,
   ExperimentalFlagMap,

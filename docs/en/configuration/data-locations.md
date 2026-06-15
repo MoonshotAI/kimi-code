@@ -50,7 +50,8 @@ $KIMI_CODE_HOME  (default: ~/.kimi-code)
 ├── updates/
 │   ├── latest.json
 │   ├── install.json
-│   └── install.lock
+│   ├── install.lock
+│   └── rollout.log
 └── user-history/
     └── <md5(workDir)>.jsonl
 ```
@@ -93,7 +94,7 @@ The first time the `Grep` tool needs ripgrep, the CLI can automatically download
 
 When reporting a bug, prefer exporting the relevant session with `kimi export` (see [kimi command](../reference/kimi-command.md)); the session log is included in the export by default. Add `--no-include-global-log` if you do not want to share the global log.
 
-The three files under `updates/` (`latest.json`, `install.json`, `install.lock`) are maintained automatically by the auto-update mechanism and normally do not need manual editing.
+The files under `updates/` (`latest.json`, `install.json`, `install.lock`, `rollout.log`) are maintained automatically by the auto-update mechanism and normally do not need manual editing. `rollout.log` records which staged-rollout case each update check hit, which helps explain when a device will receive a new release.
 
 ## Input history
 

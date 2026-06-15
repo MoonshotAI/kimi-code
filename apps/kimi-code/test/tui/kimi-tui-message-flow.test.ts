@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,6 +21,7 @@ import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
+import { UndoSelectorComponent } from '#/tui/components/dialogs/undo-selector';
 import {
   PluginMcpSelectorComponent,
   PluginMarketplaceSelectorComponent,
@@ -198,6 +200,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
 }
 
 function makeHarness(session = makeSession(), overrides: Record<string, unknown> = {}) {
+  const interactiveAgentScope = new AsyncLocalStorage<string>();
   return {
     getConfig: vi.fn(async () => ({
       models: {
@@ -212,7 +215,12 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
-    interactiveAgentId: 'main',
+    get interactiveAgentId() {
+      return interactiveAgentScope.getStore() ?? 'main';
+    },
+    withInteractiveAgent: vi.fn((agentId: string, fn: () => unknown) => {
+      return interactiveAgentScope.run(agentId, fn);
+    }),
     getExperimentalFeatures: vi.fn(async () => []),
     auth: {
       status: vi.fn(),
@@ -248,6 +256,13 @@ async function makeDriver(
 
 function renderTranscript(driver: MessageDriver): string {
   return driver.state.transcriptContainer.render(120).join('\n');
+}
+
+async function confirmUndoSelection(driver: MessageDriver): Promise<void> {
+  await vi.waitFor(() => {
+    expect(driver.state.editorContainer.children[0]).toBeInstanceOf(UndoSelectorComponent);
+  });
+  (driver.state.editorContainer.children[0] as UndoSelectorComponent).handleInput('\r');
 }
 
 function renderActivity(driver: MessageDriver): string {
@@ -727,7 +742,7 @@ command = "vim"
     let resolveSnapshot: (
       servers: Array<{
         name: string;
-        transport: 'stdio' | 'http';
+        transport: 'stdio' | 'http' | 'sse';
         status: 'pending' | 'connected' | 'failed' | 'disabled';
         toolCount: number;
         error?: string;
@@ -802,6 +817,7 @@ command = "vim"
     driver.state.appState.streamingPhase = 'idle';
 
     driver.handleUserInput('/undo');
+    await confirmUndoSelection(driver);
 
     await vi.waitFor(() => {
       expect(session.undoHistory).toHaveBeenCalledWith(1);
@@ -829,6 +845,7 @@ command = "vim"
     driver.state.appState.streamingPhase = 'idle';
 
     driver.handleUserInput('/undo');
+    await confirmUndoSelection(driver);
 
     await vi.waitFor(() => {
       expect(driver.state.transcriptEntries).toEqual([]);
@@ -852,7 +869,15 @@ command = "vim"
       expect(stripSgr(renderTranscript(driver))).toContain('Auto mode: ON');
     });
 
+    driver.handleUserInput('/undo 10');
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Cannot undo 10 prompts; only 1 prompt can be undone in the active context.',
+      );
+    });
+
     driver.handleUserInput('/undo');
+    await confirmUndoSelection(driver);
 
     await vi.waitFor(() => {
       expect(session.undoHistory).toHaveBeenCalledWith(1);
@@ -860,6 +885,7 @@ command = "vim"
 
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).not.toContain('hello');
+    expect(transcript).not.toContain('Cannot undo 10 prompts');
     expect(transcript).toContain('Auto mode: ON');
     expect(driver.state.appState.permissionMode).toBe('auto');
   });
@@ -897,6 +923,7 @@ command = "vim"
     });
 
     driver.handleUserInput('/undo');
+    await confirmUndoSelection(driver);
 
     await vi.waitFor(() => {
       expect(session.undoHistory).toHaveBeenCalledWith(1);
@@ -943,6 +970,7 @@ command = "vim"
 
     driver.state.appState.streamingPhase = 'idle';
     driver.handleUserInput('/undo');
+    await confirmUndoSelection(driver);
 
     await vi.waitFor(() => {
       expect(session.undoHistory).toHaveBeenCalledWith(1);
@@ -986,6 +1014,7 @@ command = "vim"
     });
 
     driver.handleUserInput('/undo');
+    await confirmUndoSelection(driver);
 
     await vi.waitFor(() => {
       expect(session.undoHistory).toHaveBeenCalledWith(1);
@@ -1064,6 +1093,7 @@ command = "vim"
     driver.state.appState.streamingPhase = 'idle';
 
     driver.handleUserInput('/undo');
+    await confirmUndoSelection(driver);
 
     await vi.waitFor(() => {
       expect(driver.state.transcriptEntries).toEqual([]);
@@ -1092,6 +1122,7 @@ command = "vim"
     driver.state.appState.streamingPhase = 'idle';
 
     driver.handleUserInput('/undo');
+    await confirmUndoSelection(driver);
 
     await vi.waitFor(() => {
       expect(driver.state.transcriptEntries).toEqual([
@@ -1150,12 +1181,32 @@ command = "vim"
     const { driver, session } = await makeDriver();
 
     driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.setText('draft while streaming');
     driver.state.editor.onEscape?.();
 
     expect(session.cancel).toHaveBeenCalledTimes(1);
+    expect(driver.state.editor.getText()).toBe('draft while streaming');
 
     session.cancel.mockClear();
     driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.setText('');
+    driver.state.editor.onCtrlC?.();
+
+    expect(session.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears streaming editor text before cancelling the active turn on Ctrl-C', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.setText('draft while streaming');
+
+    driver.state.editor.onCtrlC?.();
+
+    expect(driver.state.editor.getText()).toBe('');
+    expect(session.cancel).not.toHaveBeenCalled();
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+
     driver.state.editor.onCtrlC?.();
 
     expect(session.cancel).toHaveBeenCalledTimes(1);
@@ -3331,8 +3382,10 @@ command = "vim"
 
     driver.handleUserInput('/model turbo');
 
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
     const picker = driver.state.editorContainer.children[0];
-    expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
     const pickerOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
     expect(pickerOutput).toMatch(/Kimi K2\s+Kimi Code ← current/);
     expect(pickerOutput).toMatch(/❯ Kimi Turbo\s+Kimi Code/);
@@ -3380,8 +3433,10 @@ command = "vim"
 
     driver.handleUserInput('/model k2');
 
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
     const picker = driver.state.editorContainer.children[0];
-    expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
     (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
@@ -3392,6 +3447,101 @@ command = "vim"
     });
     expect(session.setModel).not.toHaveBeenCalled();
     expect(session.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('refreshes only OAuth provider models before opening /model picker', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Old Kimi K2',
+            capabilities: ['thinking'],
+          },
+        },
+      })),
+    });
+    const tui = driver as unknown as KimiTUI;
+    const refreshProviderModels = vi
+      .spyOn(tui.authFlow, 'refreshProviderModels')
+      .mockRejectedValue(new Error('full provider refresh should not run'));
+    const refreshOAuthProviderModels = vi.fn(async () => {
+      await Promise.resolve();
+      tui.setAppState({
+        availableModels: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Fresh Kimi K2',
+            capabilities: ['thinking'],
+          },
+        },
+      });
+      return { changed: [], unchanged: ['managed:kimi-code'], failed: [] };
+    });
+    (
+      tui.authFlow as unknown as {
+        refreshOAuthProviderModels: typeof refreshOAuthProviderModels;
+      }
+    ).refreshOAuthProviderModels = refreshOAuthProviderModels;
+
+    driver.handleUserInput('/model');
+
+    await vi.waitFor(() => {
+      const picker = driver.state.editorContainer.children[0];
+      expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
+      const output = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
+      expect(output).toContain('Fresh Kimi K2');
+      expect(output).not.toContain('Old Kimi K2');
+    });
+    expect(refreshOAuthProviderModels).toHaveBeenCalledOnce();
+    expect(refreshProviderModels).not.toHaveBeenCalled();
+  });
+
+  it('opens /model picker after 2s when OAuth refresh is still pending', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+        },
+      })),
+    });
+    const tui = driver as unknown as KimiTUI;
+    const refreshOAuthProviderModels = vi.fn(() => new Promise<never>(() => {}));
+    (
+      tui.authFlow as unknown as {
+        refreshOAuthProviderModels: typeof refreshOAuthProviderModels;
+      }
+    ).refreshOAuthProviderModels = refreshOAuthProviderModels;
+
+    vi.useFakeTimers();
+    try {
+      driver.handleUserInput('/model');
+      await Promise.resolve();
+
+      expect(refreshOAuthProviderModels).toHaveBeenCalledOnce();
+      expect(driver.state.editorContainer.children[0]).not.toBeInstanceOf(TabbedModelSelectorComponent);
+
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(driver.state.editorContainer.children[0]).not.toBeInstanceOf(TabbedModelSelectorComponent);
+
+      await vi.advanceTimersByTimeAsync(1);
+      const picker = driver.state.editorContainer.children[0];
+      expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
+      const output = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
+      expect(output).toContain('Kimi K2');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('enables search in the shared model selector helper', async () => {

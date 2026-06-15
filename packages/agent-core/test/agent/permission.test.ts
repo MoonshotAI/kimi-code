@@ -17,6 +17,7 @@ import {
   parsePattern,
   type PermissionRuleMatchExecution,
 } from '../../src/agent/permission/matches-rule';
+import { AgentSwarmExclusiveDenyPermissionPolicy } from '../../src/agent/permission/policies/agent-swarm-exclusive-deny';
 import { AutoModeApprovePermissionPolicy } from '../../src/agent/permission/policies/auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicy } from '../../src/agent/permission/policies/auto-mode-ask-user-question-deny';
 import { FallbackAskPermissionPolicy } from '../../src/agent/permission/policies/fallback-ask';
@@ -57,6 +58,7 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "Running without asking." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf permission-output", "timeout": 60 }, "description": "Running: printf permission-output", "display": { "kind": "command", "command": "printf permission-output", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf permission-output", "timeout": 60 }, "description": "Running: printf permission-output", "display": { "kind": "command", "command": "printf permission-output", "cwd": "<cwd>", "language": "bash" } }
+      [emit] tool.progress               { "turnId": 0, "toolCallId": "call_bash", "update": { "kind": "stdout", "text": "auto-output" } }
       [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "auto-output" } }, "time": "<time>" }
       [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "auto-output" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
@@ -112,6 +114,7 @@ describe('Agent permission', () => {
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "Running in yolo mode." } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf permission-output", "timeout": 60 }, "description": "Running: printf permission-output", "display": { "kind": "command", "command": "printf permission-output", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf permission-output", "timeout": 60 }, "description": "Running: printf permission-output", "display": { "kind": "command", "command": "printf permission-output", "cwd": "<cwd>", "language": "bash" } }
+      [emit] tool.progress               { "turnId": 0, "toolCallId": "call_bash", "update": { "kind": "stdout", "text": "yolo-output" } }
       [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "yolo-output" } }, "time": "<time>" }
       [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "yolo-output" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 7, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
@@ -404,20 +407,16 @@ describe('Permission auto mode', () => {
     },
   );
 
-  it.each(
-    (['manual', 'yolo'] as const).flatMap((mode) =>
-      [
-        [mode, 'Write', { path: '/tmp/notes.md', content: 'x' }, 'write', 'write file'],
-        [mode, 'Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }, 'edit', 'edit file'],
-      ] as const,
-    ),
-  )(
-    'requests approval in %s mode for %s outside the cwd',
-    async (mode, toolName, args, operation, action) => {
-      const { manager, requestApproval } = makePermissionManager(async () => ({
+  it.each([
+    ['Write', { path: '/tmp/notes.md', content: 'x' }, 'write', 'write file'],
+    ['Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }, 'edit', 'edit file'],
+  ] as const)(
+    'requests approval in manual mode for %s outside the cwd',
+    async (toolName, args, operation, action) => {
+      const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
         decision: 'approved',
       }));
-      manager.setMode(mode);
+      manager.setMode('manual');
 
       await expect(
         manager.beforeToolCall(hookContext({ id: `call_${toolName}`, toolName, args })),
@@ -435,8 +434,42 @@ describe('Permission auto mode', () => {
         }),
         expect.any(Object),
       );
+      expect(telemetryTrack).toHaveBeenCalledWith(
+        'permission_policy_decision',
+        expect.objectContaining({
+          policy_name: 'fallback-ask',
+          tool_name: toolName,
+          permission_mode: 'manual',
+          decision: 'ask',
+        }),
+      );
     },
   );
+
+  it.each([
+    ['Write', { path: '/tmp/notes.md', content: 'x' }],
+    ['Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }],
+  ] as const)('approves %s outside the cwd in yolo mode', async (toolName, args) => {
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.setMode('yolo');
+
+    await expect(
+      manager.beforeToolCall(hookContext({ id: `call_${toolName}_yolo_outside`, toolName, args })),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({
+        policy_name: 'yolo-mode-approve',
+        tool_name: toolName,
+        permission_mode: 'yolo',
+        decision: 'approve',
+      }),
+    );
+  });
 
   it.each(
     (['manual', 'yolo'] as const).flatMap((mode) =>
@@ -638,7 +671,7 @@ describe('Permission auto mode', () => {
     );
   });
 
-  it('reuses approve-for-session for repeated outside-workspace writes in yolo mode', async () => {
+  it('approves repeated outside-workspace writes in yolo mode without session approval', async () => {
     const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
       scope: 'session',
@@ -657,8 +690,8 @@ describe('Permission auto mode', () => {
     await expect(call()).resolves.toBeUndefined();
     await expect(call()).resolves.toBeUndefined();
 
-    expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(manager.sessionApprovalRulePatterns).toEqual(['Write(/tmp/notes.md)']);
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(manager.sessionApprovalRulePatterns).toEqual([]);
     expect(manager.data().rules).toEqual([]);
   });
 });
@@ -667,6 +700,7 @@ describe('Permission policy chain', () => {
   it('keeps built-in policies in document order', () => {
     expect(createPermissionDecisionPolicies({} as Agent).map((policy) => policy.name)).toEqual([
       'pre-tool-call-hook',
+      'agent-swarm-exclusive-deny',
       'auto-mode-ask-user-question-deny',
       'plan-mode-guard-deny',
       'user-configured-deny',
@@ -678,7 +712,6 @@ describe('Permission policy chain', () => {
       'plan-mode-tool-approve',
       'sensitive-file-access-ask',
       'git-control-path-access-ask',
-      'cwd-outside-file-write-ask',
       'yolo-mode-approve',
       'swarm-mode-agent-swarm-approve',
       'default-tool-approve',
@@ -687,6 +720,42 @@ describe('Permission policy chain', () => {
     ]);
   });
 
+  it('denies invalid AgentSwarm batches before auto-mode approval', async () => {
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.mode = 'auto';
+    const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    const readCall = toolCall('call_read', 'Read', { path: 'src/a.ts' });
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_agent_swarm',
+          toolName: 'AgentSwarm',
+          toolCalls: [agentSwarmCall, readCall],
+        }),
+      ),
+    ).resolves.toMatchObject({
+      block: true,
+      reason: expect.stringContaining('AgentSwarm must be the only tool call'),
+    });
+
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({
+        policy_name: 'agent-swarm-exclusive-deny',
+        tool_name: 'AgentSwarm',
+        permission_mode: 'auto',
+        decision: 'deny',
+      }),
+    );
+  });
 });
 
 describe('Simple permission policy direct behavior', () => {
@@ -756,6 +825,99 @@ describe('Simple permission policy direct behavior', () => {
     ).toEqual({ kind: 'approve' });
     expect(
       policy.evaluate(hookContext({ id: 'call_agent_active', toolName: 'Agent' })),
+    ).toBeUndefined();
+  });
+
+  it('denies AgentSwarm mixed with other tool calls in the same response', () => {
+    const policy = new AgentSwarmExclusiveDenyPermissionPolicy();
+    const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    const readCall = toolCall('call_read', 'Read', { path: 'src/a.ts' });
+
+    expect(
+      policy.evaluate(
+        hookContext({
+          id: 'call_agent_swarm',
+          toolName: 'AgentSwarm',
+          toolCalls: [agentSwarmCall, readCall],
+        }),
+      ),
+    ).toMatchObject({
+      kind: 'deny',
+      message: expect.stringContaining('AgentSwarm must be the only tool call'),
+      reason: {
+        agent_swarm_tool_calls: 1,
+        tool_calls: 2,
+      },
+    });
+    expect(
+      policy.evaluate(
+        hookContext({
+          id: 'call_read',
+          toolName: 'Read',
+          args: { path: 'src/a.ts' },
+          toolCalls: [agentSwarmCall, readCall],
+        }),
+      ),
+    ).toMatchObject({ kind: 'deny' });
+  });
+
+  it('denies multiple AgentSwarm calls with one-at-a-time guidance', () => {
+    const policy = new AgentSwarmExclusiveDenyPermissionPolicy();
+    const first = toolCall('call_agent_swarm_1', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    const second = toolCall('call_agent_swarm_2', 'AgentSwarm', {
+      description: 'Review tests',
+      prompt_template: 'Review {{item}}',
+      items: ['test/a.ts', 'test/b.ts'],
+    });
+
+    const result = policy.evaluate(
+      hookContext({
+        id: 'call_agent_swarm_1',
+        toolName: 'AgentSwarm',
+        toolCalls: [first, second],
+      }),
+    );
+
+    expect(result).toMatchObject({
+      kind: 'deny',
+      message: expect.stringContaining('Multiple AgentSwarm calls are not forbidden'),
+      reason: {
+        agent_swarm_tool_calls: 2,
+        tool_calls: 2,
+      },
+    });
+    expect(result).toMatchObject({
+      message: expect.stringContaining('call one AgentSwarm, wait for its result'),
+    });
+    expect(result).toMatchObject({
+      message: expect.stringContaining('merge the work into a single AgentSwarm'),
+    });
+  });
+
+  it('allows a single AgentSwarm call for later permission policies', () => {
+    const policy = new AgentSwarmExclusiveDenyPermissionPolicy();
+    const agentSwarmCall = toolCall('call_agent_swarm', 'AgentSwarm', {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+
+    expect(
+      policy.evaluate(
+        hookContext({
+          id: 'call_agent_swarm',
+          toolName: 'AgentSwarm',
+          toolCalls: [agentSwarmCall],
+        }),
+      ),
     ).toBeUndefined();
   });
 
@@ -2303,10 +2465,12 @@ describe('Agent-local approve for session', () => {
 
     ctx.dispatch(event);
 
-    expect(ctx.agent.replayBuilder.buildResult()).toContainEqual({
-      type: 'approval_result',
-      record: event,
-    });
+    expect(ctx.agent.replayBuilder.buildResult()).toContainEqual(
+      expect.objectContaining({
+        type: 'approval_result',
+        record: event,
+      }),
+    );
     expect(ctx.agent.permission.data().rules).toEqual([]);
   });
 });
@@ -3301,7 +3465,7 @@ describe('Default git CWD Write/Edit permission', () => {
     expect(requestApproval).toHaveBeenCalledTimes(1);
     expect(telemetryTrack).toHaveBeenCalledWith(
       'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'cwd-outside-file-write-ask' }),
+      expect.objectContaining({ policy_name: 'fallback-ask' }),
     );
     expect(telemetryTrack).not.toHaveBeenCalledWith(
       'permission_policy_decision',
@@ -3354,146 +3518,6 @@ describe('Default git CWD Write/Edit permission', () => {
     expect(requestApproval).not.toHaveBeenCalled();
     const markerCalls = stat.mock.calls.filter(([path]) => path === '/workspace/.git');
     expect(markerCalls).toHaveLength(4);
-  });
-});
-
-describe('CWD outside file write permission policy', () => {
-  it('falls through when cwd is empty', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
-      async () => ({ decision: 'approved' }),
-      { cwd: '' },
-    );
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: 'call_empty_cwd_write',
-          toolName: 'Write',
-          args: { path: '/tmp/outside.ts', content: 'x' },
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'fallback-ask' }),
-    );
-  });
-
-  it('falls through when there are no file write accesses', async () => {
-    const args = { path: '/tmp/outside.ts', content: 'x' };
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
-      decision: 'approved',
-    }));
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: 'call_no_write_accesses',
-          toolName: 'Write',
-          args,
-          execution: {
-            ...testExecution('Write', args),
-            accesses: ToolAccesses.none(),
-          },
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'fallback-ask' }),
-    );
-  });
-
-  it('asks when any write access is outside the cwd', async () => {
-    const args = { path: '/workspace/src/a.ts', content: 'x' };
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
-      decision: 'approved',
-    }));
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: 'call_mixed_write_accesses',
-          toolName: 'Write',
-          args,
-          execution: {
-            ...testExecution('Write', args),
-            accesses: [
-              { kind: 'file', operation: 'write', path: '/workspace/src/a.ts' },
-              { kind: 'file', operation: 'readwrite', path: '/tmp/outside.ts' },
-            ],
-          },
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'cwd-outside-file-write-ask',
-        decision: 'ask',
-        cwd_outside: true,
-        file_access_operation: 'readwrite',
-      }),
-    );
-  });
-
-  it.each([
-    ['Read', { path: '/tmp/outside.ts' }],
-    ['Grep', { pattern: 'TODO', path: '/tmp' }],
-  ] as const)('does not ask for %s access outside cwd', async (toolName, args) => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
-      decision: 'approved',
-    }));
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: `call_${toolName}_outside_cwd`,
-          toolName,
-          args,
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'default-tool-approve' }),
-    );
-  });
-
-  it('uses Win32 path semantics for cwd containment', async () => {
-    const kaos = createFakeKaos({ pathClass: () => 'win32' });
-    const args = { path: 'c:\\repo\\src\\a.ts', content: 'x' };
-    const { manager, telemetryTrack } = makePermissionManager(
-      async () => ({ decision: 'approved' }),
-      { cwd: 'C:\\Repo', kaos },
-    );
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: 'call_win_inside_cwd',
-          toolName: 'Write',
-          args,
-          execution: {
-            ...testExecution('Write', args),
-            accesses: ToolAccesses.writeFile('c:\\repo\\src\\a.ts'),
-          },
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'cwd-outside-file-write-ask' }),
-    );
   });
 });
 
@@ -3766,6 +3790,7 @@ function hookContext(input: {
   readonly toolName?: string | undefined;
   readonly args?: Record<string, unknown> | undefined;
   readonly execution?: PermissionPolicyContext['execution'] | undefined;
+  readonly toolCalls?: readonly ToolCall[] | undefined;
 }): PermissionPolicyContext {
   const toolName = input.toolName ?? 'Bash';
   const args = input.args ?? { command: 'printf first', timeout: 60 };
@@ -3773,7 +3798,7 @@ function hookContext(input: {
     type: 'function',
     id: input.id,
     name: toolName,
-      arguments: JSON.stringify(args),
+    arguments: JSON.stringify(args),
   };
   return {
     turnId: '0',
@@ -3781,8 +3806,18 @@ function hookContext(input: {
     signal: new AbortController().signal,
     llm: {} as PermissionPolicyContext['llm'],
     toolCall,
+    toolCalls: input.toolCalls ?? [toolCall],
     args,
     execution: input.execution ?? testExecution(toolName, args),
+  };
+}
+
+function toolCall(id: string, name: string, args: Record<string, unknown>): ToolCall {
+  return {
+    type: 'function',
+    id,
+    name,
+    arguments: JSON.stringify(args),
   };
 }
 

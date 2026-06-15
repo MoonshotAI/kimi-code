@@ -96,16 +96,15 @@ const MUL_TOOL: Tool = {
 
 describe('OpenAIResponsesChatProvider', () => {
   describe('message conversion', () => {
-    it('simple user message with system prompt', async () => {
+    it('sends system prompt as top-level instructions', async () => {
       const provider = createProvider();
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Hello!' }], toolCalls: [] },
       ];
       const body = await captureRequestBody(provider, 'You are helpful.', [], history);
 
+      expect(body['instructions']).toBe('You are helpful.');
       expect(body['input']).toEqual([
-        // gpt-4.1 is an OpenAI model -> developer role
-        { role: 'developer', content: 'You are helpful.' },
         {
           content: [{ type: 'input_text', text: 'Hello!' }],
           role: 'user',
@@ -124,6 +123,7 @@ describe('OpenAIResponsesChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
+      expect(body).not.toHaveProperty('instructions');
       expect(body['input']).toEqual([
         {
           content: [{ type: 'input_text', text: 'What is 2+2?' }],
@@ -152,8 +152,8 @@ describe('OpenAIResponsesChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, 'You are a math tutor.', [], history);
 
+      expect(body['instructions']).toBe('You are a math tutor.');
       expect(body['input']).toEqual([
-        { role: 'developer', content: 'You are a math tutor.' },
         {
           content: [{ type: 'input_text', text: 'What is 2+2?' }],
           role: 'user',
@@ -202,19 +202,24 @@ describe('OpenAIResponsesChatProvider', () => {
       ]);
     });
 
-    it('OpenAI model name with date suffix matches the partial-prefix branch', async () => {
-      // gpt-4.1-2025-04-14 should be recognized as gpt-4.1, mapping system → developer.
+    it('OpenAI model name with date suffix maps history system message to developer', async () => {
+      // gpt-4.1-2025-04-14 should be recognized as gpt-4.1 for history messages.
       const provider = new OpenAIResponsesChatProvider({
         model: 'gpt-4.1-2025-04-14',
         apiKey: 'test-key',
       });
       const history: Message[] = [
+        { role: 'system', content: [{ type: 'text', text: 'Remember this.' }], toolCalls: [] },
         { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
       ];
-      const body = await captureRequestBody(provider, 'You are helpful.', [], history);
+      const body = await captureRequestBody(provider, '', [], history);
 
       expect(body['input']).toEqual([
-        { role: 'developer', content: 'You are helpful.' },
+        {
+          content: [{ type: 'input_text', text: 'Remember this.' }],
+          role: 'developer',
+          type: 'message',
+        },
         {
           content: [{ type: 'input_text', text: 'hi' }],
           role: 'user',
@@ -223,18 +228,23 @@ describe('OpenAIResponsesChatProvider', () => {
       ]);
     });
 
-    it('non-OpenAI model name keeps system role unchanged', async () => {
+    it('non-OpenAI model name keeps history system role unchanged', async () => {
       const provider = new OpenAIResponsesChatProvider({
         model: 'some-other-model',
         apiKey: 'test-key',
       });
       const history: Message[] = [
+        { role: 'system', content: [{ type: 'text', text: 'Remember this.' }], toolCalls: [] },
         { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
       ];
-      const body = await captureRequestBody(provider, 'You are helpful.', [], history);
+      const body = await captureRequestBody(provider, '', [], history);
 
       const input = body['input'] as Array<Record<string, unknown>>;
-      expect(input[0]).toEqual({ role: 'system', content: 'You are helpful.' });
+      expect(input[0]).toEqual({
+        content: [{ type: 'input_text', text: 'Remember this.' }],
+        role: 'system',
+        type: 'message',
+      });
     });
 
     it('user message with audio_url data URL (mp3) is encoded as input_file with base64', async () => {
@@ -292,7 +302,7 @@ describe('OpenAIResponsesChatProvider', () => {
       ]);
     });
 
-    it('user message with unsupported audio_url format drops the audio part silently', async () => {
+    it('user message with unsupported audio_url format degrades to placeholder text', async () => {
       const provider = createProvider();
       const history: Message[] = [
         {
@@ -307,8 +317,12 @@ describe('OpenAIResponsesChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       const input = body['input'] as Array<{ content: unknown[] }>;
-      // Only the text part survives; the unsupported ogg audio is dropped.
-      expect(input[0]!.content).toEqual([{ type: 'input_text', text: 'Bare text' }]);
+      // The unsupported ogg audio degrades to a placeholder instead of
+      // silently vanishing, so the model knows an attachment existed.
+      expect(input[0]!.content).toEqual([
+        { type: 'input_text', text: 'Bare text' },
+        { type: 'input_text', text: '(audio omitted: unsupported audio format)' },
+      ]);
     });
 
     it('multiple consecutive ThinkParts with the same encrypted value aggregate into one reasoning item with multiple summaries', async () => {
@@ -404,6 +418,102 @@ describe('OpenAIResponsesChatProvider', () => {
       });
       expect(fnOutput).toMatchObject({
         output: expect.stringContaining('body'),
+      });
+    });
+
+    it('toolMessageConversion=extract_text reattaches tool result media as a user message', async () => {
+      // extract_text flattens function_call_output to a plain string for
+      // backends that reject structured output. Media must not vanish with
+      // the flattening: the image-only result gets a placeholder string and
+      // the media items are reattached as a follow-up user message after
+      // the run of consecutive tool messages.
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'gpt-4.1',
+        apiKey: 'test-key',
+        toolMessageConversion: 'extract_text',
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Q' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            { type: 'function', id: 'call_shot', name: 'screenshot', arguments: '{}' },
+            { type: 'function', id: 'call_read', name: 'read', arguments: '{}' },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'image_url', imageUrl: { url: 'https://example.com/shot.png' } },
+          ],
+          toolCallId: 'call_shot',
+          toolCalls: [],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'file body' }],
+          toolCallId: 'call_read',
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const input = body['input'] as Array<Record<string, unknown>>;
+      expect(input).toEqual([
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Q' }] },
+        {
+          type: 'function_call',
+          call_id: 'call_shot',
+          name: 'screenshot',
+          arguments: '{}',
+        },
+        { type: 'function_call', call_id: 'call_read', name: 'read', arguments: '{}' },
+        {
+          type: 'function_call_output',
+          call_id: 'call_shot',
+          output: '(see attached media)',
+        },
+        { type: 'function_call_output', call_id: 'call_read', output: 'file body' },
+        {
+          type: 'message',
+          role: 'user',
+          content: [
+            { type: 'input_text', text: 'Attached media from tool result:' },
+            { type: 'input_image', image_url: 'https://example.com/shot.png' },
+          ],
+        },
+      ]);
+    });
+
+    it('video_url in tool result degrades to placeholder text in function_call_output', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Record it' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'call_rec', name: 'record', arguments: '{}' }],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'video_url', videoUrl: { url: 'https://example.com/rec.mp4' } },
+          ],
+          toolCallId: 'call_rec',
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const input = body['input'] as Array<Record<string, unknown>>;
+      const fnOutput = input.find((item) => item['type'] === 'function_call_output');
+      expect(fnOutput).toEqual({
+        type: 'function_call_output',
+        call_id: 'call_rec',
+        output: [
+          { type: 'input_text', text: '(video omitted: not supported by this provider)' },
+        ],
       });
     });
 
@@ -1120,7 +1230,7 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(body['max_output_tokens']).toBe(512);
     });
 
-    it('video_url in user content is silently skipped (Responses API has no video representation)', async () => {
+    it('video_url in user content degrades to placeholder text (no video input type)', async () => {
       const provider = createProvider();
       const history: Message[] = [
         {
@@ -1134,12 +1244,14 @@ describe('OpenAIResponsesChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      // Only the text part survives; video is dropped.
       const input = body['input'] as Array<{ content: unknown[] }>;
-      expect(input[0]!.content).toEqual([{ type: 'input_text', text: 'Watch this:' }]);
+      expect(input[0]!.content).toEqual([
+        { type: 'input_text', text: 'Watch this:' },
+        { type: 'input_text', text: '(video omitted: not supported by this provider)' },
+      ]);
     });
 
-    it('audio_url with unsupported scheme is silently dropped from user content', async () => {
+    it('audio_url with unsupported scheme degrades to placeholder text', async () => {
       const provider = createProvider();
       const history: Message[] = [
         {
@@ -1154,11 +1266,14 @@ describe('OpenAIResponsesChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       const input = body['input'] as Array<{ content: unknown[] }>;
-      // file:// URL is unsupported → drop
-      expect(input[0]!.content).toEqual([{ type: 'input_text', text: 'Hear:' }]);
+      // file:// URL cannot be encoded as input_file → placeholder
+      expect(input[0]!.content).toEqual([
+        { type: 'input_text', text: 'Hear:' },
+        { type: 'input_text', text: '(audio omitted: unsupported audio format)' },
+      ]);
     });
 
-    it('audio_url data URL with unknown subtype is silently dropped', async () => {
+    it('audio_url data URL with unknown subtype degrades to placeholder text', async () => {
       const provider = createProvider();
       const history: Message[] = [
         {
@@ -1173,8 +1288,11 @@ describe('OpenAIResponsesChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       const input = body['input'] as Array<{ content: unknown[] }>;
-      // ogg subtype is not mp3/wav → drop
-      expect(input[0]!.content).toEqual([{ type: 'input_text', text: 'OGG:' }]);
+      // ogg subtype is not mp3/wav → placeholder
+      expect(input[0]!.content).toEqual([
+        { type: 'input_text', text: 'OGG:' },
+        { type: 'input_text', text: '(audio omitted: unsupported audio format)' },
+      ]);
     });
   });
 
