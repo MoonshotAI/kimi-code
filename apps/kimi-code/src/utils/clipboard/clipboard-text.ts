@@ -36,14 +36,15 @@ async function copyWithPlatformCommand(text: string): Promise<void> {
     }
   }
 
-  throw lastError ?? new Error('No clipboard command is available.');
+  if (lastError instanceof Error) throw lastError;
+  throw new Error('No clipboard command is available.');
 }
 
 export async function copyTextToClipboard(text: string): Promise<void> {
-  const setText = clipboard?.setText;
-  if (setText !== undefined) {
+  const clipboardModule = clipboard;
+  if (clipboardModule?.setText !== undefined) {
     try {
-      await setText(text);
+      await clipboardModule.setText(text);
       return;
     } catch {
       // Fall back to platform clipboard commands below.
