@@ -3,4 +3,4 @@
 "@moonshot-ai/migration-legacy": patch
 ---
 
-Do not carry legacy `loop_control.max_steps_per_turn` values into migrated config files.
+Do not carry obsolete legacy loop, background, plan, yolo, or unknown experimental flags into migrated config files.

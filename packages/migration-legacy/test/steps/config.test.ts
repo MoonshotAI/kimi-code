@@ -430,22 +430,52 @@ base_url = "https://target.example/v1"
     expect(r.siblingContents.hooks).toBe(2);
   });
 
-  it('drops legacy loop_control.max_steps_per_turn but keeps other loop control fields', async () => {
+  it('drops legacy migration fields but keeps supported loop and background fields', async () => {
     await writeFile(
       join(src, 'config.toml'),
       'default_thinking = true\n' +
+        'plan_mode = true\n' +
+        'yolo = true\n' +
+        '[experimental]\n' +
+        'micro_compaction = false\n' +
+        'unknown_flag = true\n' +
         '[loop_control]\n' +
         'max_steps_per_turn = 1000\n' +
-        'max_retries_per_step = 2\n',
+        'max_steps_per_run = 42\n' +
+        'max_retries_per_step = 2\n' +
+        'max_ralph_iterations = 3\n' +
+        'reserved_context_size = 60000\n' +
+        'compaction_trigger_ratio = 0.7\n' +
+        '[background]\n' +
+        'max_running_tasks = 8\n' +
+        'keep_alive_on_exit = true\n' +
+        'kill_grace_period_ms = 2000\n' +
+        'print_wait_ceiling_s = 3600\n' +
+        'read_max_bytes = 30000\n',
     );
 
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
 
     expect(r.migrated).toBe(true);
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
+    expect(cfg).toContain('[experimental]');
+    expect(cfg).toContain('micro_compaction = false');
+    expect(cfg).not.toContain('unknown_flag');
     expect(cfg).toContain('[loop_control]');
     expect(cfg).toContain('max_retries_per_step = 2');
+    expect(cfg).toContain('reserved_context_size = 60000');
     expect(cfg).not.toContain('max_steps_per_turn');
+    expect(cfg).not.toContain('max_steps_per_run');
+    expect(cfg).not.toContain('max_ralph_iterations');
+    expect(cfg).not.toContain('compaction_trigger_ratio');
+    expect(cfg).toContain('[background]');
+    expect(cfg).toContain('max_running_tasks = 8');
+    expect(cfg).toContain('keep_alive_on_exit = true');
+    expect(cfg).not.toContain('kill_grace_period_ms');
+    expect(cfg).not.toContain('print_wait_ceiling_s');
+    expect(cfg).not.toContain('read_max_bytes');
+    expect(cfg).not.toContain('plan_mode = true');
+    expect(cfg).not.toContain('yolo = true');
   });
 
   it('maps default_yolo to default_permission_mode = "yolo"', async () => {
