@@ -364,6 +364,41 @@ describe('KeyringTokenStorage', () => {
     expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
   });
 
+  // CHARACTERIZATION/guard test: pins the deliberate keychain-authoritative
+  // tradeoff for the INVERSE of the no-un-revoke direction. It encodes CURRENT
+  // behavior (expected to pass on current code) — not a fix verification.
+  it('reconcileOnHit() keeps a valid keychain token authoritative over a file-side tombstone (no force-revoke from plaintext)', async () => {
+    // Inverse of the no-un-revoke test: keychain holds a VALID token; a file-side
+    // tombstone (a fallback run's token was 401-rejected) sits in the plaintext
+    // file. A tombstone is timestamp-less (issuedAt === 0), so it cannot order
+    // against the keychain token — and the less-trusted plaintext must NOT
+    // force-revoke the keychain. load() must return the keychain's VALID token,
+    // leave the keychain entry unchanged, and leave the file tombstone in place.
+    const valid = sampleToken({ accessToken: 'at-valid', refreshToken: 'rt-valid', expiresAt: 2000 });
+    const tombstone = revokedTombstone(valid);
+
+    await storage.save('kimi-code', valid); // keychain holds the VALID token
+    await legacy.save('kimi-code', tombstone); // file holds a revoked tombstone
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
+
+    const loaded = await storage.load('kimi-code');
+    // The keychain's VALID token wins — NOT a revoked/undefined result.
+    expect(loaded).toEqual(valid);
+    expect(classifyToken(loaded).kind).toBe('valid');
+    expect((loaded as TokenInfo).accessToken).toBe('at-valid');
+
+    // The keychain entry is UNCHANGED — it was not tombstoned or deleted.
+    const raw = keyring.createEntry(KEYRING_SERVICE, 'kimi-code').getPassword();
+    expect(JSON.parse(raw as string)).toEqual(tokenToWire(valid));
+
+    // The file tombstone is LEFT IN PLACE (conservative "leave differing file"):
+    // its bytes differ from the authoritative keychain value, so it is not pruned,
+    // and the plaintext is never allowed to force-revoke the keychain.
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
+    const fileRaw = await legacy.load('kimi-code');
+    expect(classifyToken(fileRaw).kind).toBe('revoked');
+  });
+
   it('keychain HIT reconcile: prunes a plaintext duplicate equal after canonical re-serialization', async () => {
     // Keychain and file hold the SAME token (a just-migrated state observed by a
     // concurrent peer, or a redundant copy). load() returns the keychain value

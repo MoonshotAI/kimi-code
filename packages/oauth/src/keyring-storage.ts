@@ -247,6 +247,21 @@ export class KeyringTokenStorage implements TokenStorage {
     // up (this branch only prunes the redundant-duplicate case), so it lingers
     // until the next explicit `remove()` / logout. Deliberate — we never delete a
     // token we did not make authoritative.
+    //
+    // Inverse of the no-un-revoke invariant above: a file-side TOMBSTONE (a
+    // fallback run's token was 401-rejected) does NOT force-revoke a VALID
+    // keychain token — the keychain stays authoritative and we return its valid
+    // token here. Correct because that returned token carries its OWN
+    // refresh_token: if it too is revoked, the next refresh 401 tombstones the
+    // KEYCHAIN and it self-heals; if it is still valid, honoring it is right (the
+    // file tombstone revoked a DIFFERENT, older fallback token). We can't do
+    // better: a tombstone is timestamp-less (`issuedAt === 0`, all fields empty),
+    // so it is unorderable against the keychain token. Letting the file tombstone
+    // WIN would (a) invert the plaintext-is-less-trusted trust model — the mirror
+    // of the no-un-revoke invariant — and (b) let a stale leftover tombstone
+    // repeatedly force-logout a fresh keychain token. A correct ordering-based fix
+    // would need a wire-format change the design deliberately avoids (see the
+    // `expiresIn` / wire-format note above).
     if (this.serialize(fileToken) === raw) {
       await this.removeIfBytesMatch(name, raw);
     }
