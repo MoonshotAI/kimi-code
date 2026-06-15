@@ -136,6 +136,7 @@ describe('ToolManager SkillTool registration', () => {
       listInvocableSkills: () => [skill],
       getSkillRoots: () => ['/skills/review'],
       getModelSkillListing: () => '- review: desc for review',
+      searchSkills: () => [],
     };
 
     const agent = makeAgent(skills);
