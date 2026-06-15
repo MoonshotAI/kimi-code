@@ -56,6 +56,7 @@ The feature type decides the landing spot:
 - reverse-rpc tests → `test/tui/reverse-rpc/`.
 - Pure utility tests → next to the corresponding utils tests.
 - Do not create a generic `some-feature.test.ts` just to land a small feature; extend the nearest existing test file.
+- Every component that builds lines manually should have a narrow-width test that verifies all returned lines fit within the requested `width`.
 
 ## Theme system mechanics
 
@@ -83,3 +84,4 @@ Apply / switch flow:
 - Run lint / format / test on the files you changed.
 - For any dialog/selector/input/toggle list, walk the self-check list at the end of [DESIGN.md](./DESIGN.md).
 - Keep `printableChar()` for printable-key comparisons (CI guard) and `chalk.hex(colors.<token>)` for color (CI guard).
+- **Width safety**: if your component builds lines manually in `render(width)`, ensure every returned line fits within `width`. The safest pattern is a final `lines.map(line => truncateToWidth(line, width, '…'))`. Add a narrow-width test case (e.g. `width` of `5`, `2`, or `1`) asserting `visibleWidth(line) <= width` for every line. See the Width Safety Rules in `apps/kimi-code/AGENTS.md`.

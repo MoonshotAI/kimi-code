@@ -191,4 +191,15 @@ describe('GoalCompletionMessageComponent', () => {
       '  Worked 1 turn over 2m28s, using 766.9k tokens.',
     );
   });
+
+  it('keeps every line within the requested render width, even when very narrow', () => {
+    const message = '✓ Goal complete.\nWorked 1 turn over 2m28s, using 766.9k tokens.';
+    const component = new GoalCompletionMessageComponent(message);
+
+    for (const width of [80, 40, 20, 10, 5, 2, 1]) {
+      for (const line of component.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
 });

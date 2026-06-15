@@ -1,5 +1,5 @@
 import type { Component } from '@earendil-works/pi-tui';
-import { Spacer, Text, visibleWidth } from '@earendil-works/pi-tui';
+import { Spacer, Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
@@ -64,7 +64,7 @@ export class CronMessageComponent implements Component {
       lines.push(`${continuationIndent}${line}`);
     }
 
-    return lines;
+    return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
   }
 }
 

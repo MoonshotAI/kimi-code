@@ -51,6 +51,16 @@ Main directories:
 - Constants must live in the corresponding `constant` directory; they must not be scattered through component or logic code.
 - Inside `handleInput(data)`, when comparing a printable character (letter, digit, space, punctuation), it is **forbidden** to write literal comparisons such as `data === 'q'`. With the Kitty keyboard protocol enabled in terminals like VSCode, these keys are sent as CSI-u sequences (e.g. `\x1b[113u`), and a bare comparison will never match. Decode with `printableChar(data)` from `src/tui/utils/printable-key.ts` first, then compare; function keys continue to use `matchesKey(data, Key.*)`; control characters (codepoint < 32) may still be compared against the raw `data`. `test/tui/printable-key-guard.test.ts` enforces this in CI.
 
+## Width Safety Rules (normative)
+
+pi-tui requires every line returned by `Component.render(width)` to fit within the requested `width`. When a line overflows, pi-tui throws a hard crash and writes `~/.pi/agent/pi-crash.log`. The following rules prevent this:
+
+- If a component builds lines manually (not just returning the output of pi-tui `Text`, `Markdown`, `Container`, `Input`, `SelectList`, etc.), it must ensure every emitted line is `<= width`.
+- The simplest and recommended final guard is to map the result through `truncateToWidth(line, width, '…')` before returning.
+- Prefer `Text` or `Markdown` for large blocks of plain text / formatted text; they handle wrapping and truncation automatically.
+- When using prefixes, bullets, or indentation, account for their visible width (`visibleWidth`) when computing the content width, and still apply a final truncation guard.
+- New or modified TUI components must include a test that renders at very narrow widths (e.g. `width` of `5`, `2`, or `1`) and asserts `visibleWidth(line) <= width` for every returned line.
+
 ## Color Rules (normative)
 
 The theme apply/switch mechanics live in the `write-tui` skill. The following rules are hard and guard-enforced:
