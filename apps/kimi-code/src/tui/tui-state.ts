@@ -46,6 +46,7 @@ export interface TUIState {
   toolOutputExpanded: boolean;
   sessions: SessionRow[];
   loadingSessions: boolean;
+  sessionsScope: 'cwd' | 'all';
   activeDialog: 'session-picker' | 'help' | null;
   tasksBrowser: TasksBrowserState | undefined;
   externalEditorRunning: boolean;
@@ -94,6 +95,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     toolOutputExpanded: false,
     sessions: [],
     loadingSessions: false,
+    sessionsScope: 'cwd',
     activeDialog: null,
     tasksBrowser: undefined,
     externalEditorRunning: false,
