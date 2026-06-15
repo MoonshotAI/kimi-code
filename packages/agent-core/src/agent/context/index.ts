@@ -222,21 +222,16 @@ export class ContextMemory {
     if (interruptedToolCallIds.length === 0) return;
 
     for (const toolCallId of interruptedToolCallIds) {
-      const message = createToolMessage(
+      this.appendLoopEvent({
+        type: 'tool.result',
+        parentUuid: toolCallId,
         toolCallId,
-        toolResultOutputForModel({
+        result: {
           output: TOOL_INTERRUPTED_ON_RESUME_OUTPUT,
           isError: true,
-        }),
-      );
-      this.pushHistory({
-        ...message,
-        role: 'tool',
-        isError: true,
+        },
       });
-      this.pendingToolResultIds.delete(toolCallId);
     }
-    this.flushDeferredMessagesIfToolExchangeClosed();
   }
 
   appendLoopEvent(event: LoopRecordedEvent): void {

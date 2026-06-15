@@ -490,10 +490,48 @@ describe('Agent resume', () => {
     expect(textContent(syntheticResult)).toContain(
       'Tool execution was interrupted before its result was recorded',
     );
+    expect(
+      persistence.appended.filter(
+        (record) =>
+          record.type === 'context.append_loop_event' &&
+          record.event.type === 'tool.result' &&
+          record.event.toolCallId === 'call_interrupted_two',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        type: 'context.append_loop_event',
+        event: expect.objectContaining({
+          type: 'tool.result',
+          parentUuid: 'call_interrupted_two',
+          toolCallId: 'call_interrupted_two',
+          result: {
+            output:
+              'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.',
+            isError: true,
+          },
+        }),
+      }),
+    ]);
 
     ctx.mockNextResponse({ type: 'text', text: 'Recovered after resume.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue after resume' }] });
     await ctx.untilTurnEnd();
+
+    const syntheticRecordIndex = persistence.records.findIndex(
+      (record) =>
+        record.type === 'context.append_loop_event' &&
+        record.event.type === 'tool.result' &&
+        record.event.toolCallId === 'call_interrupted_two',
+    );
+    const freshUserRecordIndex = persistence.records.findIndex(
+      (record) =>
+        record.type === 'context.append_message' &&
+        record.message.role === 'user' &&
+        textContent(record.message) === 'continue after resume',
+    );
+    expect(syntheticRecordIndex).toBeGreaterThan(-1);
+    expect(freshUserRecordIndex).toBeGreaterThan(-1);
+    expect(syntheticRecordIndex).toBeLessThan(freshUserRecordIndex);
 
     const llmHistory = ctx.llmCalls[0]?.history ?? [];
     expect(llmHistory.map((message) => message.role)).toEqual([
@@ -515,6 +553,22 @@ describe('Agent resume', () => {
         (message) => message.role === 'user' && textContent(message) === 'continue after resume',
       ),
     ).toBe(true);
+
+    const resumedAgain = testAgent({ persistence });
+    await resumedAgain.agent.resume();
+
+    expect(resumedAgain.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+      'user',
+      'assistant',
+    ]);
+    expect(textContent(resumedAgain.agent.context.history[3])).toContain(
+      'Tool execution was interrupted before its result was recorded',
+    );
+    expect(textContent(resumedAgain.agent.context.history[4])).toBe('continue after resume');
   });
 
   it('rebuilds goal completion replay cards without adding model-visible context', async () => {
