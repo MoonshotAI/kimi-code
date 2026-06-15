@@ -9,8 +9,8 @@ import { BUILT_IN_CATALOG_DEFINE, builtInCatalogDefine } from './scripts/built-i
 const appRoot = import.meta.dirname;
 const packageJson = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf-8'),
-) as { dependencies?: Record<string, string> };
-const runtimeDependencies = new Set(Object.keys(packageJson.dependencies ?? {}));
+) as { devDependencies?: Record<string, string> };
+const runtimeDependencies = new Set(Object.keys(packageJson.devDependencies ?? {}));
 
 function shouldAlwaysBundle(id: string): boolean {
   if (id.startsWith('@moonshot-ai/')) return true;
