@@ -18,6 +18,12 @@ const artifactsDir = resolve(appRoot, 'dist-native/artifacts');
 const target = 'test-zip-artifact';
 const executableName = process.platform === 'win32' ? 'kimi.exe' : 'kimi';
 const fakeBinary = resolve(appRoot, 'dist-native/bin', target, executableName);
+const fakeNativeFile = resolve(
+  appRoot,
+  'dist-native/bin',
+  target,
+  'native/darwin/prebuilds/darwin-arm64/darwin-modifiers.node',
+);
 
 function sha256(bytes: Buffer | string): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -98,8 +104,11 @@ describe('native release artifacts', () => {
 
   it('packages the native binary as a zip archive and checksums the archive', async () => {
     const binaryContent = 'native binary payload\n';
+    const nativeContent = 'native helper payload\n';
     mkdirSync(resolve(appRoot, 'dist-native/bin', target), { recursive: true });
     writeFileSync(fakeBinary, binaryContent, { mode: 0o755 });
+    mkdirSync(resolve(fakeNativeFile, '..'), { recursive: true });
+    writeFileSync(fakeNativeFile, nativeContent);
 
     await execFileAsync(process.execPath, [packageScript], {
       cwd: appRoot,
@@ -110,8 +119,17 @@ describe('native release artifacts', () => {
     const checksumPath = `${archivePath}.sha256`;
     expect(existsSync(archivePath)).toBe(true);
     expect(existsSync(checksumPath)).toBe(true);
-    expect(zipEntryNames(archivePath)).toEqual([executableName]);
+    expect(zipEntryNames(archivePath)).toEqual([
+      executableName,
+      'native/darwin/prebuilds/darwin-arm64/darwin-modifiers.node',
+    ]);
     expect(readZipEntry(archivePath, executableName).toString('utf-8')).toBe(binaryContent);
+    expect(
+      readZipEntry(
+        archivePath,
+        'native/darwin/prebuilds/darwin-arm64/darwin-modifiers.node',
+      ).toString('utf-8'),
+    ).toBe(nativeContent);
     expect(readFileSync(checksumPath, 'utf-8')).toBe(
       `${sha256(readFileSync(archivePath))}  kimi-code-${target}.zip\n`,
     );

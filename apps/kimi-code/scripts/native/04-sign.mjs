@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { stat, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 
 import { run } from './exec.mjs';
-import { nativeBinPath, targetTriple } from './paths.mjs';
+import { resolveExecutableFileRelatives } from './native-deps.mjs';
+import { nativeBinDir, nativeBinPath, targetTriple } from './paths.mjs';
 
 const ENTITLEMENTS_PATH = resolve(import.meta.dirname, 'entitlements.plist');
 
@@ -28,6 +29,18 @@ export function buildCodesignArgs({ identity, executable, entitlementsPath, keyc
   return args;
 }
 
+export function buildCodesignNativeHelperArgs({ identity, file, keychainPath }) {
+  if (identity === '-') {
+    return ['--sign', '-', file];
+  }
+  const args = ['--sign', identity, '--options', 'runtime', '--timestamp'];
+  if (keychainPath) {
+    args.push('--keychain', keychainPath);
+  }
+  args.push('--force', file);
+  return args;
+}
+
 async function sha256(path) {
   return await new Promise((resolveHash, reject) => {
     const hash = createHash('sha256');
@@ -48,6 +61,19 @@ export async function runSignStep({ identity = '-', keychainPath = null } = {}) 
   const executable = nativeBinPath(target);
 
   if (process.platform === 'darwin') {
+    for (const relativePath of resolveExecutableFileRelatives(target)) {
+      const file = resolve(nativeBinDir(target), relativePath);
+      await stat(file);
+      await run(
+        'codesign',
+        buildCodesignNativeHelperArgs({
+          identity,
+          file,
+          keychainPath,
+        }),
+      );
+    }
+
     const args = buildCodesignArgs({
       identity,
       executable,

@@ -21,12 +21,10 @@ const optionalRuntimeRequires = new Set([
   'utf-8-validate',
 ]);
 const optionalRelativeRuntimeRequires = new Set(['./crypto/build/Release/sshcrypto.node']);
-const handledNativeRuntimeRequires = new Set(['koffi']);
 
 function isAllowedSpecifier(specifier) {
   if (builtins.has(specifier) || specifier.startsWith('node:')) return true;
   if (optionalRuntimeRequires.has(specifier)) return true;
-  if (handledNativeRuntimeRequires.has(specifier)) return true;
   return false;
 }
 

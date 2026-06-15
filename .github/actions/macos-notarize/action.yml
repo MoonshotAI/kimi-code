@@ -1,8 +1,8 @@
 name: macOS notarize
 description: |
-  Submit a signed binary to Apple notary service via notarytool, wait for
-  result, and run Gatekeeper online check (spctl). Fails the job with the
-  notarytool log on rejection.
+  Submit a signed binary and sibling native helpers to Apple notary service via
+  notarytool, wait for result, and run Gatekeeper online check (spctl). Fails
+  the job with the notarytool log on rejection.
 
 inputs:
   binary-path:
@@ -47,10 +47,18 @@ runs:
 
         # 2. Pack with ditto (--norsrc avoids ._AppleDouble files)
         binary_name=$(basename "$BINARY_PATH")
+        binary_dir=$(dirname "$BINARY_PATH")
+        package_root="${RUNNER_TEMP}/${binary_name}-notarize-root"
         zip_path="${RUNNER_TEMP}/${binary_name}.notarize.zip"
-        ditto -c -k --norsrc --keepParent "$BINARY_PATH" "$zip_path"
+        rm -rf "$package_root"
+        mkdir -p "$package_root"
+        cp "$BINARY_PATH" "$package_root/$binary_name"
+        if [[ -d "$binary_dir/native" ]]; then
+          cp -R "$binary_dir/native" "$package_root/native"
+        fi
+        ditto -c -k --norsrc "$package_root" "$zip_path"
 
-        echo "==> Submitting $binary_name for notarization..."
+        echo "==> Submitting $binary_name and sibling native helpers for notarization..."
 
         # 3. Submit and capture log
         log_path="${RUNNER_TEMP}/notarize-${binary_name}.log"
@@ -74,14 +82,14 @@ runs:
               --key-id "$APPLE_NOTARIZATION_KEY_ID" \
               --issuer "$APPLE_NOTARIZATION_ISSUER_ID" || true
           fi
-          rm -f "$key_path" "$zip_path"
+          rm -rf "$key_path" "$zip_path" "$package_root"
           exit 1
         fi
 
         echo "==> Notarization accepted"
 
         # 5. Cleanup
-        rm -f "$key_path" "$zip_path"
+        rm -rf "$key_path" "$zip_path" "$package_root"
 
     - name: Verify with Gatekeeper online check
       shell: bash
@@ -91,5 +99,14 @@ runs:
         set -euo pipefail
         echo "==> codesign -dv $BINARY_PATH"
         codesign -dv --verbose=2 "$BINARY_PATH"
+        binary_dir=$(dirname "$BINARY_PATH")
+        if [[ -d "$binary_dir/native" ]]; then
+          while IFS= read -r -d '' helper; do
+            echo "==> codesign --verify $helper"
+            codesign --verify --strict --verbose=2 "$helper"
+            echo "==> codesign -dv $helper"
+            codesign -dv --verbose=2 "$helper"
+          done < <(find "$binary_dir/native" -type f -name '*.node' -print0)
+        fi
         echo "==> spctl -a -vvv -t install $BINARY_PATH"
         spctl -a -vvv -t install "$BINARY_PATH"

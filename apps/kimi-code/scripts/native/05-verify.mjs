@@ -1,5 +1,8 @@
+import { resolve } from 'node:path';
+
 import { run } from './exec.mjs';
-import { nativeBinPath, targetTriple } from './paths.mjs';
+import { resolveExecutableFileRelatives } from './native-deps.mjs';
+import { nativeBinDir, nativeBinPath, targetTriple } from './paths.mjs';
 
 export async function runVerifyStep({ requireGatekeeper = false } = {}) {
   if (process.platform !== 'darwin') {
@@ -12,6 +15,14 @@ export async function runVerifyStep({ requireGatekeeper = false } = {}) {
 
   console.log(`==> codesign -dv ${executable}`);
   await run('codesign', ['-dv', '--verbose=2', executable]);
+
+  for (const relativePath of resolveExecutableFileRelatives(target)) {
+    const file = resolve(nativeBinDir(target), relativePath);
+    console.log(`==> codesign --verify ${file}`);
+    await run('codesign', ['--verify', '--strict', '--verbose=2', file]);
+    console.log(`==> codesign -dv ${file}`);
+    await run('codesign', ['-dv', '--verbose=2', file]);
+  }
 
   if (requireGatekeeper) {
     // spctl in 'install' mode simulates the Gatekeeper online check — only a

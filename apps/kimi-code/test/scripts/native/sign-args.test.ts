@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildCodesignArgs } from '../../../scripts/native/04-sign.mjs';
+import {
+  buildCodesignArgs,
+  buildCodesignNativeHelperArgs,
+} from '../../../scripts/native/04-sign.mjs';
 
 describe('buildCodesignArgs', () => {
   it('returns ad-hoc args for identity "-"', () => {
@@ -44,5 +47,37 @@ describe('buildCodesignArgs', () => {
     });
     expect(args).toContain('--entitlements');
     expect(args).not.toContain('--keychain');
+  });
+});
+
+describe('buildCodesignNativeHelperArgs', () => {
+  it('returns ad-hoc args for identity "-"', () => {
+    expect(
+      buildCodesignNativeHelperArgs({
+        identity: '-',
+        file: '/path/native/helper.node',
+        keychainPath: null,
+      }),
+    ).toEqual(['--sign', '-', '/path/native/helper.node']);
+  });
+
+  it('returns hardened-runtime args without app entitlements for Developer ID identity', () => {
+    expect(
+      buildCodesignNativeHelperArgs({
+        identity: 'Developer ID Application: Moonshot AI (ABCD1234)',
+        file: '/path/native/helper.node',
+        keychainPath: '/tmp/sign.keychain-db',
+      }),
+    ).toEqual([
+      '--sign',
+      'Developer ID Application: Moonshot AI (ABCD1234)',
+      '--options',
+      'runtime',
+      '--timestamp',
+      '--keychain',
+      '/tmp/sign.keychain-db',
+      '--force',
+      '/path/native/helper.node',
+    ]);
   });
 });

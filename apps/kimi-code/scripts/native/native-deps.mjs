@@ -27,13 +27,11 @@ const clipboardSubpackageByTarget = Object.freeze({
   'win32-x64': '@mariozechner/clipboard-win32-x64-msvc',
 });
 
-const koffiTripletByTarget = Object.freeze({
-  'darwin-arm64': 'darwin_arm64',
-  'darwin-x64': 'darwin_x64',
-  'linux-arm64': 'linux_arm64',
-  'linux-x64': 'linux_x64',
-  'win32-arm64': 'win32_arm64',
-  'win32-x64': 'win32_x64',
+const piTuiExecutableFilesByTarget = Object.freeze({
+  'darwin-arm64': ['native/darwin/prebuilds/darwin-arm64/darwin-modifiers.node'],
+  'darwin-x64': ['native/darwin/prebuilds/darwin-x64/darwin-modifiers.node'],
+  'win32-arm64': ['native/win32/prebuilds/win32-arm64/win32-console-mode.node'],
+  'win32-x64': ['native/win32/prebuilds/win32-x64/win32-console-mode.node'],
 });
 
 export function isSupportedTarget(target) {
@@ -52,6 +50,9 @@ export function isSupportedTarget(target) {
  * @property {(target: string) => string[]} [nativeFileRelatives]
  *           — explicit list of .node files relative to package root
  *           (used by 'js-and-native-file'; native-files mode auto-scans *.node)
+ * @property {(target: string) => string[]} [executableFileRelatives]
+ *           — files copied next to the native executable, preserving the
+ *           package-relative path
  */
 
 /** @type {readonly NativeDepDescriptor[]} */
@@ -71,19 +72,20 @@ export const nativeDeps = Object.freeze([
   {
     id: 'pi-tui',
     name: () => '@earendil-works/pi-tui',
-    // pi-tui is bundled into main.cjs at build time — we don't collect it as
-    // a native dep, only register it so koffi can declare it as parent.
+    // pi-tui is bundled into main.cjs. Its native helpers are loaded from
+    // native/... beside the executable instead of from the native asset cache.
     collect: 'virtual',
     parent: null,
-  },
-  {
-    id: 'koffi',
-    name: () => 'koffi',
-    collect: 'js-and-native-file',
-    parent: 'pi-tui',
-    nativeFileRelatives: (target) => [`build/koffi/${koffiTripletByTarget[target]}/koffi.node`],
+    executableFileRelatives: (target) => piTuiExecutableFilesByTarget[target] ?? [],
   },
 ]);
+
+export function resolveExecutableFileRelatives(target) {
+  if (!isSupportedTarget(target)) {
+    throw new Error(`Unsupported native executable target: ${target}`);
+  }
+  return nativeDeps.flatMap((d) => d.executableFileRelatives?.(target) ?? []);
+}
 
 /**
  * Resolve which deps need collecting for a given build target, with concrete names.

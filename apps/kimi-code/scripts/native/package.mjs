@@ -1,12 +1,18 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
-import { basename, resolve } from 'node:path';
+import { mkdir, readdir, stat, writeFile } from 'node:fs/promises';
+import { basename, relative, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
 import { ZipFile } from 'yazl';
 
-import { executableName, nativeArtifactsDir, nativeBinPath, targetTriple } from './paths.mjs';
+import {
+  executableName,
+  nativeArtifactsDir,
+  nativeBinDir,
+  nativeBinPath,
+  targetTriple,
+} from './paths.mjs';
 
 const target = targetTriple();
 const execName = executableName();
@@ -33,6 +39,38 @@ async function sha256(path) {
   });
 }
 
+function toPosixPath(path) {
+  return path.split('\\').join('/');
+}
+
+async function listFiles(root) {
+  const files = [];
+
+  async function walk(dir) {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === 'ENOENT') return;
+      throw error;
+    }
+
+    for (const entry of entries) {
+      const path = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(path);
+        continue;
+      }
+      if (entry.isFile()) {
+        files.push(path);
+      }
+    }
+  }
+
+  await walk(root);
+  return files.sort((a, b) => a.localeCompare(b));
+}
+
 try {
   await stat(sourceBinary);
 } catch {
@@ -43,6 +81,9 @@ await mkdir(artifactsDir, { recursive: true });
 
 const zip = new ZipFile();
 zip.addFile(sourceBinary, execName, { mode: 0o100755 });
+for (const file of await listFiles(resolve(nativeBinDir(target), 'native'))) {
+  zip.addFile(file, toPosixPath(relative(nativeBinDir(target), file)));
+}
 zip.end();
 await pipeline(zip.outputStream, createWriteStream(artifactPath));
 

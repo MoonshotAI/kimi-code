@@ -11,8 +11,8 @@
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
   <true/>
 
-  <!-- We dlopen koffi.node / clipboard.node at runtime; they're built by
-       third parties and aren't signed by our Team. Without this they'd be
+  <!-- We dlopen native helper modules at runtime; some are built by
+       third parties and are not signed by our Team. Without this they'd be
        rejected by hardened runtime. -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>

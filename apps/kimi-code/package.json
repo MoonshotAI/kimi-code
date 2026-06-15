@@ -67,7 +67,7 @@
     "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "^0.74.0",
+    "@earendil-works/pi-tui": "^0.79.3",
     "@mariozechner/clipboard": "^0.3.2",
     "chalk": "^5.4.1",
     "cli-highlight": "^2.1.11",

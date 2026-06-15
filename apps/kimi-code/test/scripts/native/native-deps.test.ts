@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   nativeDeps,
+  resolveExecutableFileRelatives,
   resolveTargetDeps,
   isSupportedTarget,
   SUPPORTED_TARGETS,
 } from '../../../scripts/native/native-deps.mjs';
+import { resolveExecutableNativeFiles } from '../../../scripts/native/assets.mjs';
+import { appRoot } from '../../../scripts/native/paths.mjs';
 
 describe('SUPPORTED_TARGETS', () => {
   it('contains the six published targets', () => {
@@ -41,7 +44,7 @@ describe('resolveTargetDeps', () => {
     const names = deps.map((d) => d.resolvedName);
     expect(names).toContain('@mariozechner/clipboard');
     expect(names).toContain('@mariozechner/clipboard-darwin-arm64');
-    expect(names).toContain('koffi');
+    expect(names).not.toContain('@earendil-works/pi-tui');
   });
 
   it('picks the right clipboard subpackage per target', () => {
@@ -54,15 +57,6 @@ describe('resolveTargetDeps', () => {
     expect(
       resolveTargetDeps('win32-arm64').map((d) => d.resolvedName),
     ).toContain('@mariozechner/clipboard-win32-arm64-msvc');
-  });
-
-  it('encodes koffi native file path with target triplet', () => {
-    const linuxKoffi = resolveTargetDeps('linux-arm64').find((d) => d.resolvedName === 'koffi');
-    expect(linuxKoffi?.nativeFileRelatives).toEqual(['build/koffi/linux_arm64/koffi.node']);
-    const macKoffi = resolveTargetDeps('darwin-x64').find((d) => d.resolvedName === 'koffi');
-    expect(macKoffi?.nativeFileRelatives).toEqual(['build/koffi/darwin_x64/koffi.node']);
-    const winArmKoffi = resolveTargetDeps('win32-arm64').find((d) => d.resolvedName === 'koffi');
-    expect(winArmKoffi?.nativeFileRelatives).toEqual(['build/koffi/win32_arm64/koffi.node']);
   });
 
   it('throws on unsupported target', () => {
@@ -82,9 +76,28 @@ describe('nativeDeps registry shape', () => {
     expect(target?.parent).toBe('clipboard-host');
   });
 
-  it('has koffi (collect=js-and-native-file, parent=pi-tui)', () => {
-    const koffi = nativeDeps.find((d) => d.id === 'koffi');
-    expect(koffi?.collect).toBe('js-and-native-file');
-    expect(koffi?.parent).toBe('pi-tui');
+  it('keeps pi-tui as an executable helper dependency', () => {
+    const piTui = nativeDeps.find((d) => d.id === 'pi-tui');
+    expect(piTui?.collect).toBe('virtual');
+    expect(piTui?.executableFileRelatives?.('darwin-arm64')).toEqual([
+      'native/darwin/prebuilds/darwin-arm64/darwin-modifiers.node',
+    ]);
+    expect(piTui?.executableFileRelatives?.('win32-x64')).toEqual([
+      'native/win32/prebuilds/win32-x64/win32-console-mode.node',
+    ]);
+    expect(piTui?.executableFileRelatives?.('linux-x64')).toEqual([]);
+    expect(resolveExecutableFileRelatives('darwin-x64')).toEqual([
+      'native/darwin/prebuilds/darwin-x64/darwin-modifiers.node',
+    ]);
+  });
+
+  it('resolves pi-tui helper files copied next to the executable', () => {
+    expect(resolveExecutableNativeFiles({ appRoot, target: 'darwin-arm64' })).toEqual([
+      expect.objectContaining({
+        packageName: '@earendil-works/pi-tui',
+        relativePath: 'native/darwin/prebuilds/darwin-arm64/darwin-modifiers.node',
+      }),
+    ]);
+    expect(resolveExecutableNativeFiles({ appRoot, target: 'linux-x64' })).toEqual([]);
   });
 });
