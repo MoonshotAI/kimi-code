@@ -50,14 +50,7 @@ export default defineConfig({
   },
   deps: {
     alwaysBundle: shouldAlwaysBundle,
-    neverBundle: [
-      '@mariozechner/clipboard',
-      'koffi',
-      'bufferutil',
-      'utf-8-validate',
-      'canvas',
-      'chokidar',
-    ],
+    neverBundle: ['@mariozechner/clipboard', 'koffi'],
     onlyBundle: false,
   },
   outputOptions: {
