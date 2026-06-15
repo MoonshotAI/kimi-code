@@ -322,10 +322,6 @@ function normalizeProperty(node: unknown): void {
       try {
         const inferred = inferTypeFromValues(enumValues);
         if (node['type'] !== inferred) {
-          // eslint-disable-next-line no-console
-          console.warn(
-            `[kimi-schema] repaired mismatched type: changed "${String(node['type'])}" to "${inferred}" for enum (${enumValues.length} values)`,
-          );
           node['type'] = inferred;
           removeIrrelevantStructureKeys(node, inferred);
         }
@@ -337,10 +333,6 @@ function normalizeProperty(node: unknown): void {
       try {
         const inferred = inferTypeFromValues([node['const']]);
         if (node['type'] !== inferred) {
-          // eslint-disable-next-line no-console
-          console.warn(
-            `[kimi-schema] repaired mismatched type: changed "${String(node['type'])}" to "${inferred}" for const value`,
-          );
           node['type'] = inferred;
           removeIrrelevantStructureKeys(node, inferred);
         }

@@ -1,5 +1,5 @@
 import { derefJsonSchema, normalizeKimiToolSchema } from '#/providers/kimi-schema';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 describe('derefJsonSchema', () => {
   it('returns schema unchanged when there are no $ref', () => {
@@ -377,6 +377,7 @@ describe('normalizeKimiToolSchema', () => {
     // generates schemas where String-backed Swift enums incorrectly carry
     // type: 'object' alongside string enum values. We overwrite the contradictory
     // type and strip object/array structure keys that are no longer relevant.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const schema = {
       type: 'object',
       properties: {
@@ -391,17 +392,22 @@ describe('normalizeKimiToolSchema', () => {
       },
     };
 
-    const result = normalizeKimiToolSchema(schema);
+    try {
+      const result = normalizeKimiToolSchema(schema);
 
-    expect(result).toEqual({
-      type: 'object',
-      properties: {
-        operation: {
-          type: 'string',
-          enum: ['move', 'copy'],
+      expect(result).toEqual({
+        type: 'object',
+        properties: {
+          operation: {
+            type: 'string',
+            enum: ['move', 'copy'],
+          },
         },
-      },
-    });
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('repairs mismatched explicit type when const value contradicts it', () => {
