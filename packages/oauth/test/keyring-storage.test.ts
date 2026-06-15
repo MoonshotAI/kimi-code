@@ -629,6 +629,67 @@ describe('resolveTokenStorage', () => {
     expect(await storage.list()).toEqual([]);
   });
 
+  it('falls back to FileTokenStorage when the keyring can set/read but cannot DELETE', () => {
+    // The keychain is the AUTHORITATIVE store once selected — logout/revocation
+    // and load()'s migrate-then-delete depend on delete working. A backend that
+    // stores+reads fine but whose deleteCredential() fails (returns false AND
+    // leaves the entry present) would trap migrated tokens it can never remove
+    // and make logout throw. The probe must treat that as unusable and fall back
+    // to the plaintext file store, NOT migrate into a one-way keychain.
+    class NoDeleteKeyring extends FakeKeyring {
+      override createEntry(service: string, account: string): KeyringEntry {
+        const base = super.createEntry(service, account);
+        return {
+          getPassword: () => base.getPassword(),
+          setPassword(p: string): void {
+            base.setPassword(p);
+          },
+          // Genuine delete failure: returns false and the entry SURVIVES, so a
+          // follow-up getPassword() still sees the sentinel.
+          deleteCredential: () => false,
+        };
+      }
+    }
+    const storage = resolveTokenStorage(dir, { loadKeyring: () => new NoDeleteKeyring() });
+    expect(storage).toBeInstanceOf(FileTokenStorage);
+    expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
+  });
+
+  it('rejects a keyring whose delete returns true but the entry SURVIVES (lying boolean)', () => {
+    // The native binding maps a failed delete to `false`, but the probe does NOT
+    // trust the boolean — it confirms removal via a re-read (getPassword() ===
+    // null), mirroring remove()'s own disambiguation. A backend that LIES (delete
+    // reports true while the entry persists) must still be rejected, proving the
+    // probe relies on the authoritative re-read, not the return value.
+    class LyingDeleteKeyring extends FakeKeyring {
+      override createEntry(service: string, account: string): KeyringEntry {
+        const base = super.createEntry(service, account);
+        return {
+          getPassword: () => base.getPassword(),
+          setPassword(p: string): void {
+            base.setPassword(p);
+          },
+          // Lies: claims success while the entry remains present.
+          deleteCredential: () => true,
+        };
+      }
+    }
+    const storage = resolveTokenStorage(dir, { loadKeyring: () => new LyingDeleteKeyring() });
+    expect(storage).toBeInstanceOf(FileTokenStorage);
+    expect(storage).not.toBeInstanceOf(KeyringTokenStorage);
+  });
+
+  it('selects KeyringTokenStorage and leaves NO probe sentinel behind on the healthy path', () => {
+    // The healthy fake deletes properly (Map.delete mutates the backing store),
+    // so the probe's delete-and-re-read confirms removal → keyring is selected.
+    // Assert via instanceof AND that the isolated probe service has zero accounts
+    // afterward, proving the probe's own cleanup ran (no leaked sentinel).
+    const keyring = new FakeKeyring();
+    const storage = resolveTokenStorage(dir, { loadKeyring: () => keyring });
+    expect(storage).toBeInstanceOf(KeyringTokenStorage);
+    expect(keyring.findAccounts(KEYRING_PROBE_SERVICE)).toEqual([]);
+  });
+
   it('the probe uses a unique, non-constant account per attempt', () => {
     const a = new RecordingKeyring();
     const b = new RecordingKeyring();

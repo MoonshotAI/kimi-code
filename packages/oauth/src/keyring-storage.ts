@@ -381,8 +381,14 @@ function loadNativeKeyring(): KeyringApi | undefined {
 
 /**
  * Round-trip a sentinel under an isolated service to prove the keychain has a
- * live backend. Any throw, or a read-back mismatch, means the keychain is not
- * usable on this host.
+ * live backend. Any throw, a read-back mismatch, or an inability to DELETE the
+ * sentinel means the keychain is not usable on this host. Delete capability is
+ * part of the usability contract: once selected the keychain is the
+ * authoritative store, so logout/revocation (`remove`) and `load`'s
+ * migrate-then-delete both depend on it being able to remove entries. A backend
+ * that can set/read but not delete would trap migrated tokens it can never
+ * remove and make logout throw — so we reject it here and fall back to the file
+ * store instead of migrating plaintext into a one-way keychain.
  */
 function probeKeyring(keyring: KeyringApi): boolean {
   // A UNIQUE account per attempt: two CLI processes probing concurrently must
@@ -394,16 +400,27 @@ function probeKeyring(keyring: KeyringApi): boolean {
   const entry = keyring.createEntry(KEYRING_PROBE_SERVICE, account);
   try {
     entry.setPassword(sentinel);
-    const readBack = entry.getPassword();
-    return readBack === sentinel;
+    if (entry.getPassword() !== sentinel) return false;
+    // The keychain is the AUTHORITATIVE store once selected, so it MUST also be
+    // able to DELETE — logout/revocation and load()'s migrate-then-delete all
+    // depend on it. The native binding never throws and maps a failed delete to
+    // `false`, so we do NOT trust the boolean: delete the sentinel and confirm it
+    // is actually gone via a re-read (mirrors remove()'s own disambiguation). A
+    // backend that stores+reads but cannot delete would trap migrated tokens it
+    // can never remove and make logout throw — reject it here so we fall back to
+    // the plaintext file store instead of migrating into a one-way keychain.
+    entry.deleteCredential();
+    return entry.getPassword() === null;
   } catch {
     return false;
   } finally {
-    // Always remove our own sentinel, even if the round-trip threw mid-way.
+    // Safety-net cleanup for the early-return-mismatch and throw paths, and a
+    // harmless idempotent no-op on the success path: never leave a sentinel
+    // behind, and never let cleanup mask the probe result.
     try {
       entry.deleteCredential();
     } catch {
-      // best-effort cleanup; a failed delete must not mask the probe result
+      /* best-effort */
     }
   }
 }
