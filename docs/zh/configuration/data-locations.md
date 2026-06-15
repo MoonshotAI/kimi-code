@@ -50,7 +50,8 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 ├── updates/
 │   ├── latest.json
 │   ├── install.json
-│   └── install.lock
+│   ├── install.lock
+│   └── rollout.log
 └── user-history/
     └── <md5(workDir)>.jsonl
 ```
@@ -93,7 +94,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 
 报 bug 时，优先用 `kimi export` 导出相关会话（详见 [kimi 命令](../reference/kimi-command.md)）；会话日志默认包含在导出包里。不想分享全局日志时加 `--no-include-global-log`。
 
-`updates/` 下的三个文件（`latest.json`、`install.json`、`install.lock`）由自动更新机制维护，通常无需手动编辑。
+`updates/` 下的文件（`latest.json`、`install.json`、`install.lock`、`rollout.log`）由自动更新机制维护，通常无需手动编辑。`rollout.log` 记录每次更新检查命中的灰度分批情况，可用于排查设备何时能收到新版本。
 
 ## 输入历史
 

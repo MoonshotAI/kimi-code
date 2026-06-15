@@ -1,4 +1,3 @@
-import type { ModelCapability } from '#/capability';
 import {
   APIConnectionError,
   APITimeoutError,
@@ -38,7 +37,6 @@ import type {
   ToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/messages/messages.js';
 
-import { getAnthropicModelCapability } from './capability-registry';
 import {
   mergeRequestHeaders,
   requireProviderApiKey,
@@ -929,10 +927,6 @@ export class AnthropicChatProvider implements ChatProvider {
       model: this._model,
       ...this._generationKwargs,
     };
-  }
-
-  getCapability(model?: string): ModelCapability {
-    return getAnthropicModelCapability(model ?? this._model);
   }
 
   async generate(

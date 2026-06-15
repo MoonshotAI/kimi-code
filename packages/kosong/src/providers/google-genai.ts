@@ -1,4 +1,3 @@
-import type { ModelCapability } from '#/capability';
 import {
   APIConnectionError,
   APITimeoutError,
@@ -18,7 +17,6 @@ import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import { ApiError as GoogleApiError, GoogleGenAI as GenAIClient } from '@google/genai';
 
-import { getGoogleGenAIModelCapability } from './capability-registry';
 import { requireProviderApiKey, resolveAuthBackedClient } from './request-auth';
 
 /**
@@ -747,10 +745,6 @@ export class GoogleGenAIChatProvider implements ChatProvider {
       model: this._model,
       ...this._generationKwargs,
     };
-  }
-
-  getCapability(model?: string): ModelCapability {
-    return getGoogleGenAIModelCapability(model ?? this._model);
   }
 
   async generate(
