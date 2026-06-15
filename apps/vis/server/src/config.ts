@@ -39,6 +39,15 @@ export function isLoopbackHost(host: string): boolean {
   );
 }
 
+/** Format a host for embedding in a URL authority. Bare IPv6 literals (which
+ *  contain ':') must be bracketed, e.g. `::1` → `[::1]`, otherwise
+ *  `http://::1:3001/` is an invalid URL. Already-bracketed literals, IPv4
+ *  addresses, and hostnames are returned unchanged. */
+export function hostForUrl(host: string): string {
+  if (host.includes(':') && !host.startsWith('[')) return `[${host}]`;
+  return host;
+}
+
 export function resolveVisAuthToken(host: string = resolveHost()): string | undefined {
   const raw = process.env['VIS_AUTH_TOKEN'];
   const token = raw?.trim();

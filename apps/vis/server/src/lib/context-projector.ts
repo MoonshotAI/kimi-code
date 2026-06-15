@@ -48,9 +48,11 @@ export interface GoalSnapshot {
 export interface ContextProjection {
   messages: ProjectedMessage[];
   usage: UsageTotals;
-  /** Absolute current context-window fill from the latest step.end.usage,
-   *  mirroring agent-core ContextMemory._tokenCount. Distinct from the
-   *  cumulative `usage` totals. */
+  /** Absolute current context-window fill, mirroring agent-core
+   *  ContextMemory._tokenCount. Updated from the latest step.end.usage, and
+   *  also reset on the lifecycle events agent-core touches: context.clear → 0,
+   *  context.apply_compaction → tokensAfter. Distinct from the cumulative
+   *  `usage` totals. */
   contextTokens: number;
   config: ConfigSnapshot;
   permission: { mode: PermissionMode | null };
@@ -223,6 +225,9 @@ export function projectContext(
             toolStepUuids: [],
           });
         }
+        // Mirror agent-core clear() → _tokenCount = 0: the context-window fill is
+        // wiped. Derived state, so it is mode-INDEPENDENT (applied for both modes).
+        contextTokens = 0;
         break;
       case 'context.apply_compaction': {
         openSteps = new Map();
@@ -251,7 +256,24 @@ export function projectContext(
           },
         };
         if (mode === 'model') {
-          messages = [summaryBubble, ...messages.slice(rec.compactedCount)];
+          // Drop the first `rec.compactedCount` HISTORY entries (NOT array
+          // entries): agent-core's `compactedCount` indexes into `_history`,
+          // which never contains our synthetic 'undo'/'clear' markers. Walk the
+          // array counting only history entries (`isHistoryEntry`) until
+          // `compactedCount` are passed, then slice there — any UI-only markers
+          // in the dropped region go with it (correct: they precede the
+          // compaction). With no markers this is exactly `slice(compactedCount)`.
+          let sliceAt = messages.length;
+          let passed = 0;
+          for (let i = 0; i < messages.length; i++) {
+            if (passed >= rec.compactedCount) {
+              sliceAt = i;
+              break;
+            }
+            if (isHistoryEntry(messages[i]!)) passed++;
+          }
+          if (passed < rec.compactedCount) sliceAt = messages.length;
+          messages = [summaryBubble, ...messages.slice(sliceAt)];
         } else {
           // Full history: keep ALL preceding messages, just append the summary
           // marker inline so the compacted prefix stays visible.
@@ -262,6 +284,10 @@ export function projectContext(
         // index-based cutoff no longer points at the same messages. (In full
         // mode the blanking pass does not run, so this is a no-op there.)
         microCutoff = 0;
+        // Mirror agent-core applyCompaction() → _tokenCount = result.tokensAfter:
+        // the live context-window fill is now the post-compaction count. Derived
+        // state, so it is mode-INDEPENDENT.
+        contextTokens = rec.tokensAfter;
         break;
       }
       case 'usage.record': {
@@ -396,15 +422,20 @@ export function projectContext(
   }
 
   // Micro-compaction blanking (mirrors agent-core MicroCompaction.compact):
-  // blank any message at index < cutoff that is a `role: 'tool'` result with a
-  // defined toolCallId and content large enough (≥ the min-content gate),
-  // replacing its content with the truncation marker. This rewrite is the
+  // blank any message whose HISTORY index < cutoff that is a `role: 'tool'`
+  // result with a defined toolCallId and content large enough (≥ the
+  // min-content gate), replacing its content with the truncation marker. The
+  // cutoff is an agent-core `_history` index, which never includes our synthetic
+  // 'undo'/'clear' markers, so we count only history entries (`isHistoryEntry`)
+  // — array indices would be offset by any preceding marker. This rewrite is the
   // model's-eye view, so it runs ONLY in 'model' mode — in 'full' mode the
   // original tool results are shown un-blanked.
   if (mode === 'model' && microCutoff > 0) {
-    for (let i = 0; i < messages.length && i < microCutoff; i++) {
-      const pm = messages[i];
-      if (pm === undefined) continue;
+    let historyIndex = 0;
+    for (const pm of messages) {
+      if (!isHistoryEntry(pm)) continue;
+      if (historyIndex >= microCutoff) break;
+      historyIndex++;
       const m = pm.message;
       if (
         m.role === 'tool' &&
@@ -465,6 +496,15 @@ function estimateContentTokens(content: readonly ContentPart[]): number {
     else if (p.type === 'think') total += estimateTokens(p.think);
   }
   return total;
+}
+
+/** True for messages that correspond to a real agent-core `_history` entry —
+ *  i.e. `append_message` and `compaction_summary` (the summary IS in `_history`).
+ *  The synthetic UI-only markers (`undo` / `clear`) are NOT in `_history`, so
+ *  index-based operations that mirror agent-core (compaction slice, micro-
+ *  compaction cutoff) must skip them to stay aligned with agent-core indices. */
+function isHistoryEntry(pm: ProjectedMessage): boolean {
+  return pm.source !== 'undo' && pm.source !== 'clear';
 }
 
 /** Mirrors agent-core `isRealUserPrompt` (`agent/context/index.ts`): a message

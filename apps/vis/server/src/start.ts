@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server';
 
 import { createApp } from './app';
-import { resolveHost, resolveKimiCodeHome, resolvePort, resolveVisAuthToken } from './config';
+import { hostForUrl, resolveHost, resolveKimiCodeHome, resolvePort, resolveVisAuthToken } from './config';
 import type { WebAsset } from './lib/web-asset';
 
 export interface StartVisServerOptions {
@@ -35,7 +35,7 @@ export async function startVisServer(
       resolveStarted({
         port: info.port,
         host,
-        url: `http://${host}:${info.port}/`,
+        url: `http://${hostForUrl(host)}:${info.port}/`,
         close: () =>
           new Promise<void>((done, fail) => {
             server.close((err?: Error) => (err ? fail(err) : done()));

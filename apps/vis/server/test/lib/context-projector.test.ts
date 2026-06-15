@@ -174,6 +174,78 @@ describe('context-projector', () => {
     expect(proj.messages[1]!.lineNo).toBe(3);
   });
 
+  // ---- Fix ④: UI-only markers must not offset agent-core history indices ------
+  // agent-core computes compactedCount (and the micro-compaction cutoff) as
+  // indices into _history, which NEVER contains the synthetic 'undo'/'clear'
+  // markers we push into our messages array. So index-based ops must count ONLY
+  // real history entries (append_message + compaction_summary), skipping
+  // 'undo'/'clear' markers.
+
+  it('apply_compaction slices by history index, skipping a preceding undo marker (model)', () => {
+    const userMsg = (text: string) => ({
+      role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [],
+      origin: { kind: 'user' as const },
+    });
+    // Step 1: append u1, u2 then undo(1) → removes u2, leaves [u1, <undo marker>].
+    // Step 2: append u3, u4 → array is [u1, <undo marker>, u3, u4].
+    // History entries (agent-core _history, which has NO marker) are the three
+    // real messages [u1, u3, u4]. A compaction with compactedCount=2 drops the
+    // first 2 HISTORY entries (u1, u3) — and the undo marker that sits within
+    // that compacted prefix is dropped with it — keeping exactly [summary, u4].
+    //
+    // The naive `messages.slice(compactedCount=2)` would instead cut the ARRAY at
+    // index 2, yielding [summary, u3, u4] — it WRONGLY retains the already-
+    // compacted u3 because the undo marker offset the index by one. This test
+    // pins the correct history-aware behaviour and FAILS against the naive slice.
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_message' as const, message: userMsg('u2') }, raw: {} },
+      { lineNo: 3, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
+      { lineNo: 4, data: { type: 'context.append_message' as const, message: userMsg('u3') }, raw: {} },
+      { lineNo: 5, data: { type: 'context.append_message' as const, message: userMsg('u4') }, raw: {} },
+      { lineNo: 6, data: { type: 'context.apply_compaction' as const,
+          summary: 'sum', compactedCount: 2, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    // Correct: [summary, u4]. The marker and the first 2 history entries are gone.
+    expect(proj.messages.map((m) => m.source)).toEqual(['compaction_summary', 'append_message']);
+    expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'u4' });
+  });
+
+  it('micro-blanking uses the history index, skipping a preceding undo marker (model)', () => {
+    const bigText = 'x'.repeat(2000);
+    const toolMsg = (id: string, text: string) => ({
+      role: 'tool' as const, content: [{ type: 'text' as const, text }], toolCalls: [], toolCallId: id,
+    });
+    const userMsg = (text: string) => ({
+      role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [],
+      origin: { kind: 'user' as const },
+    });
+    // Step 1: append tool c0, user u1 then undo(1) → removes u1, leaves
+    //   [c0, <undo marker>].
+    // Step 2: append tool c1 → array is [c0, <undo marker>, c1].
+    // History entries (no marker) are [c0, c1]. A micro cutoff=2 means "blank the
+    // first 2 HISTORY entries" → both c0 AND c1 must be blanked.
+    //
+    // The naive array-index pass (i < cutoff=2 over the messages array) would
+    // blank array index 0 (c0) and index 1 (the undo marker — a no-op since it is
+    // not a tool message), then STOP before reaching c1 at array index 2, leaving
+    // c1 WRONGLY un-blanked. This pins the history-aware behaviour and FAILS
+    // against the naive array-index pass.
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const, message: toolMsg('c0', bigText) }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
+      { lineNo: 3, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
+      { lineNo: 4, data: { type: 'context.append_message' as const, message: toolMsg('c1', bigText) }, raw: {} },
+      { lineNo: 5, data: { type: 'micro_compaction.apply' as const, cutoff: 2 }, raw: {} },
+    ];
+    const proj = projectContext(entries as any);
+    expect(proj.messages.map((m) => m.source)).toEqual(['append_message', 'undo', 'append_message']);
+    // Both real tool results are within the first 2 history entries → both blanked.
+    expect(proj.messages[0]!.message.content).toEqual([{ type: 'text', text: '[Old tool result content cleared]' }]);
+    expect(proj.messages[2]!.message.content).toEqual([{ type: 'text', text: '[Old tool result content cleared]' }]);
+  });
+
   it('context.undo removes back to the Nth real user prompt and leaves an undo marker', () => {
     const userMsg = (text: string) => ({
       role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [],
@@ -389,6 +461,43 @@ describe('context-projector', () => {
     const proj = projectContext(entries as any);
     expect(proj.contextTokens).toBe(20); // 10+5+2+3, absolute (not summed across usage.record)
   });
+
+  // ---- Fix ②: contextTokens updates on clear / compaction lifecycle events ---
+  // agent-core ContextMemory sets _tokenCount on clear() (→ 0) and
+  // applyCompaction(result) (→ result.tokensAfter), not only on step.end. These
+  // are derived state, so they apply identically in both projection modes.
+
+  for (const mode of ['model', 'full'] as const) {
+    it(`resets contextTokens to 0 after a context.clear (mode=${mode})`, () => {
+      const entries = [
+        { lineNo: 1, data: { type: 'context.append_loop_event' as const,
+            event: { type: 'step.begin' as const, uuid: 's1', turnId: 't1', step: 0 } }, raw: {} },
+        { lineNo: 2, data: { type: 'context.append_loop_event' as const,
+            event: { type: 'step.end' as const, uuid: 's1', turnId: 't1', step: 0,
+              usage: { inputOther: 10, output: 5, inputCacheRead: 2, inputCacheCreation: 3 } } }, raw: {} },
+        // clear() is the last token-affecting event → contextTokens must be 0.
+        { lineNo: 3, data: { type: 'context.clear' as const }, raw: {} },
+      ];
+      const proj = projectContext(entries as any, mode);
+      expect(proj.contextTokens).toBe(0);
+    });
+
+    it(`sets contextTokens to tokensAfter after a context.apply_compaction (mode=${mode})`, () => {
+      const entries = [
+        { lineNo: 1, data: { type: 'context.append_loop_event' as const,
+            event: { type: 'step.begin' as const, uuid: 's1', turnId: 't1', step: 0 } }, raw: {} },
+        { lineNo: 2, data: { type: 'context.append_loop_event' as const,
+            event: { type: 'step.end' as const, uuid: 's1', turnId: 't1', step: 0,
+              usage: { inputOther: 100, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } } }, raw: {} },
+        // applyCompaction is the last token-affecting event → contextTokens must
+        // be tokensAfter (30), not the pre-compaction step.end snapshot (100).
+        { lineNo: 3, data: { type: 'context.apply_compaction' as const,
+            summary: 'sum', compactedCount: 0, tokensBefore: 100, tokensAfter: 30 }, raw: {} },
+      ];
+      const proj = projectContext(entries as any, mode);
+      expect(proj.contextTokens).toBe(30);
+    });
+  }
 
   // ---- Full-history mode (Unit 6) -------------------------------------------
   // In 'full' mode the four destructive lifecycle events insert an inline
