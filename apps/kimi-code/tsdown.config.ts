@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { defineConfig } from 'tsdown';
@@ -6,12 +7,25 @@ import { rawTextPlugin } from '../../build/raw-text-plugin.mjs';
 import { BUILT_IN_CATALOG_DEFINE, builtInCatalogDefine } from './scripts/built-in-catalog.mjs';
 
 const appRoot = import.meta.dirname;
+const packageJson = JSON.parse(
+  readFileSync(new URL('./package.json', import.meta.url), 'utf-8'),
+) as { dependencies?: Record<string, string> };
+const runtimeDependencies = new Set(Object.keys(packageJson.dependencies ?? {}));
+
+function shouldAlwaysBundle(id: string): boolean {
+  if (id.startsWith('@moonshot-ai/')) return true;
+  for (const dependency of runtimeDependencies) {
+    if (id === dependency || id.startsWith(`${dependency}/`)) return true;
+  }
+  return false;
+}
 
 export default defineConfig({
   entry: ['./src/main.ts'],
   format: ['esm'],
   outDir: 'dist',
   clean: true,
+  hash: false,
   banner: {
     js: [
       '#!/usr/bin/env node',
@@ -29,7 +43,19 @@ export default defineConfig({
     [BUILT_IN_CATALOG_DEFINE]: builtInCatalogDefine(),
   },
   deps: {
-    alwaysBundle: [/^@moonshot-ai\//],
-    neverBundle: [],
+    alwaysBundle: shouldAlwaysBundle,
+    neverBundle: [
+      '@mariozechner/clipboard',
+      'koffi',
+      'bufferutil',
+      'utf-8-validate',
+      'canvas',
+      'chokidar',
+    ],
+    onlyBundle: false,
+  },
+  outputOptions: {
+    codeSplitting: false,
+    entryFileNames: 'main.mjs',
   },
 });

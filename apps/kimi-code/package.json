@@ -41,10 +41,13 @@
   },
   "publishConfig": {
     "access": "public",
-    "provenance": true
+    "provenance": true,
+    "directory": "dist/npm-package"
   },
   "scripts": {
+    "prepublishOnly": "pnpm run build:npm-package",
     "build": "tsdown",
+    "build:npm-package": "pnpm run build && node scripts/prepare-npm-package.mjs",
     "catalog:update": "node scripts/update-catalog.mjs --out dist/built-in-catalog.json",
     "smoke": "node scripts/smoke.mjs",
     "build:native:js": "node scripts/native/01-bundle.mjs",
@@ -68,7 +71,6 @@
   },
   "dependencies": {
     "@earendil-works/pi-tui": "^0.74.0",
-    "@mariozechner/clipboard": "^0.3.2",
     "chalk": "^5.4.1",
     "cli-highlight": "^2.1.11",
     "commander": "^13.1.0",
@@ -76,6 +78,9 @@
     "semver": "^7.7.4",
     "smol-toml": "^1.6.1",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "@mariozechner/clipboard": "^0.3.2"
   },
   "devDependencies": {
     "@moonshot-ai/acp-adapter": "workspace:^",

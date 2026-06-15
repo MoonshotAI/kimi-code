@@ -69,9 +69,6 @@ importers:
       '@earendil-works/pi-tui':
         specifier: ^0.74.0
         version: 0.74.0
-      '@mariozechner/clipboard':
-        specifier: ^0.3.2
-        version: 0.3.2
       chalk:
         specifier: ^5.4.1
         version: 5.6.2
@@ -124,6 +121,10 @@ importers:
       yazl:
         specifier: ^3.3.1
         version: 3.3.1
+    optionalDependencies:
+      '@mariozechner/clipboard':
+        specifier: ^0.3.2
+        version: 0.3.2
 
   apps/vis:
     devDependencies:
@@ -6438,6 +6439,7 @@ snapshots:
       '@mariozechner/clipboard-linux-x64-musl': 0.3.2
       '@mariozechner/clipboard-win32-arm64-msvc': 0.3.2
       '@mariozechner/clipboard-win32-x64-msvc': 0.3.2
+    optional: true
 
   '@mermaid-js/mermaid-mindmap@9.3.0':
     dependencies:
