@@ -139,6 +139,11 @@ function latestProgress(member: SwarmMember): string | undefined {
 .member-phase,
 .member-type {
   flex: none;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
   font-family: var(--mono);
   font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
@@ -158,6 +163,7 @@ function latestProgress(member: SwarmMember): string | undefined {
 .phase-suspended .member-bar { color: var(--warn); }
 .phase-queued .member-bar { color: var(--muted); }
 .member-bottom {
+  min-width: 0;
   margin-top: 7px;
   color: var(--dim);
   font-size: calc(var(--ui-font-size) - 2.5px);

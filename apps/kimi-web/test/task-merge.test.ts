@@ -8,6 +8,7 @@
 // is what carries them across the refresh.
 
 import { describe, expect, it } from 'vitest';
+import { createInitialState, reduceAppEvent } from '../src/api/daemon/eventReducer';
 import { keepLiveSubagents } from '../src/lib/taskMerge';
 import type { AppTask } from '../src/api/types';
 
@@ -61,5 +62,36 @@ describe('keepLiveSubagents', () => {
     const merged = keepLiveSubagents(restBased, existing);
 
     expect(merged.filter((t) => t.id === 'agent_1')).toHaveLength(1);
+  });
+
+  it('deduplicates repeated progress and keeps only the recent tail', () => {
+    let state = createInitialState();
+    state.tasksBySession['ses_1'] = [task('agent_1', 'subagent')];
+
+    state = reduceAppEvent(
+      state,
+      { type: 'taskProgress', sessionId: 'ses_1', taskId: 'agent_1', outputChunk: 'same progress', stream: 'stdout' },
+      { sessionId: 'ses_1', seq: 1 },
+    );
+    state = reduceAppEvent(
+      state,
+      { type: 'taskProgress', sessionId: 'ses_1', taskId: 'agent_1', outputChunk: 'same progress', stream: 'stdout' },
+      { sessionId: 'ses_1', seq: 2 },
+    );
+
+    expect(state.tasksBySession['ses_1']?.[0]?.outputLines).toEqual(['same progress']);
+
+    for (let i = 0; i < 45; i += 1) {
+      state = reduceAppEvent(
+        state,
+        { type: 'taskProgress', sessionId: 'ses_1', taskId: 'agent_1', outputChunk: `line ${i}`, stream: 'stdout' },
+        { sessionId: 'ses_1', seq: 3 + i },
+      );
+    }
+
+    const lines = state.tasksBySession['ses_1']?.[0]?.outputLines ?? [];
+    expect(lines).toHaveLength(40);
+    expect(lines[0]).toBe('line 5');
+    expect(lines.at(-1)).toBe('line 44');
   });
 });

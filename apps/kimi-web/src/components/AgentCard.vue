@@ -16,6 +16,9 @@ const progressLines = computed(() =>
     .slice(-8),
 );
 const latestProgress = computed(() => progressLines.value.at(-1));
+const livePhase = computed(() =>
+  props.member.phase === 'queued' || props.member.phase === 'working' || props.member.phase === 'suspended',
+);
 const hasDetail = computed(() =>
   Boolean(props.member.summary || props.member.suspendedReason || props.member.prompt || progressLines.value.length > 0),
 );
@@ -46,8 +49,9 @@ function open(): void {
           <!-- The "currently doing" line shares the title row, filling the blank
                space to its right; it never wraps onto its own line. -->
           <span
-            v-if="latestProgress && (member.phase === 'queued' || member.phase === 'working' || member.phase === 'suspended')"
+            v-if="livePhase"
             class="agent-live"
+            :class="{ empty: !latestProgress }"
           >{{ latestProgress }}</span>
         </span>
       </span>
@@ -115,6 +119,7 @@ function open(): void {
   display: flex;
   align-items: baseline;
   gap: 7px;
+  overflow: hidden;
 }
 .agent-name {
   flex: 0 1 auto;
@@ -131,14 +136,18 @@ function open(): void {
   font-size: calc(var(--ui-font-size) - 3px);
 }
 .agent-live {
-  flex: 1 1 auto;
+  flex: 1 1 120px;
   min-width: 0;
+  max-width: min(55%, 520px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
   font-family: var(--mono);
   font-size: calc(var(--ui-font-size) - 2.5px);
+}
+.agent-live.empty {
+  visibility: hidden;
 }
 .agent-phase {
   flex: none;

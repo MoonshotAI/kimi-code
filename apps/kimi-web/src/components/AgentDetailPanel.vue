@@ -188,5 +188,11 @@ watch(
   gap: 3px;
   font-family: var(--mono);
   color: var(--text);
+  min-width: 0;
+}
+.ap-progress span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 </style>

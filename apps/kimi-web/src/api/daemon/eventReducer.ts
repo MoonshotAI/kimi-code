@@ -493,9 +493,11 @@ export function reduceAppEvent(
       const list = next.tasksBySession[sid] ?? [];
       next.tasksBySession[sid] = list.map((t) => {
         if (t.id !== event.taskId) return t;
+        const outputLines = t.outputLines ?? [];
+        if (outputLines.at(-1) === event.outputChunk) return t;
         return {
           ...t,
-          outputLines: [...(t.outputLines ?? []), event.outputChunk],
+          outputLines: [...outputLines, event.outputChunk].slice(-40),
         };
       });
       break;
