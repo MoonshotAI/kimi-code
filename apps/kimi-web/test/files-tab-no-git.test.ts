@@ -7,7 +7,7 @@
 
 import { mount } from '@vue/test-utils';
 import { createI18n } from 'vue-i18n';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { nextTick } from 'vue';
 
 import ConversationPane from '../src/components/ConversationPane.vue';
@@ -56,8 +56,15 @@ function mountFilesTab(gitInfo: { branch: string; ahead: number; behind: number 
   return wrapper;
 }
 
+beforeEach(() => {
+  localStorage.removeItem('kimi-web.layout');
+  localStorage.removeItem('kimi-web.changed-layout');
+});
+
 afterEach(() => {
   document.body.innerHTML = '';
+  localStorage.removeItem('kimi-web.layout');
+  localStorage.removeItem('kimi-web.changed-layout');
 });
 
 describe('files tab in a non-git workspace', () => {
@@ -79,5 +86,44 @@ describe('files tab in a non-git workspace', () => {
     expect(wrapper.findAll('.seg-btn').length).toBe(2);
     expect(wrapper.find('changed-tree-stub').exists() || wrapper.find('diff-view-stub').exists()).toBe(true);
     expect(wrapper.find('file-tree-stub').exists()).toBe(false);
+  });
+
+  it('opens Files > Changed from the header git area', async () => {
+    const i18n = createI18n({
+      legacy: false,
+      locale: 'en',
+      messages: { en: {} },
+      missingWarn: false,
+      fallbackWarn: false,
+    });
+    const wrapper = mount(ConversationPane, {
+      props: {
+        turns,
+        tasks: [],
+        status,
+        gitInfo: { branch: 'main', ahead: 0, behind: 0 },
+        changes: [{ path: 'a.ts', status: 'modified' }],
+      },
+      global: { plugins: [i18n], stubs },
+    });
+
+    expect(wrapper.find('.files-nav').exists()).toBe(false);
+
+    await wrapper.find('.ch-git').trigger('click');
+    await nextTick();
+
+    expect(wrapper.find('.files-nav').exists()).toBe(true);
+    expect(wrapper.find('changed-tree-stub').exists() || wrapper.find('diff-view-stub').exists()).toBe(true);
+  });
+
+  it('emits refreshGitStatus from the Changed refresh button', async () => {
+    const wrapper = mountFilesTab({ branch: 'main', ahead: 0, behind: 0 }, [
+      { path: 'a.ts', status: 'modified' },
+    ]);
+    await nextTick();
+
+    await wrapper.find('.nav-tools .layout-toggle').trigger('click');
+
+    expect(wrapper.emitted('refreshGitStatus')).toHaveLength(1);
   });
 });

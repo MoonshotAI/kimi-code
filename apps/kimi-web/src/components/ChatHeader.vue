@@ -33,6 +33,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   openInApp: [appId: string];
   copyAll: [];
+  openChanges: [];
   openPr: [url: string];
   renameSession: [id: string, title: string];
   forkSession: [id: string];
@@ -265,7 +266,13 @@ function startArchive(): void {
     <!-- Git branch + status — plain text with semantic colors. Renders for any
          git repo, even a detached HEAD (empty branch → "detached" label), so the
          diff counter below is never hidden just because there's no branch name. -->
-    <div v-if="isGitRepo" class="ch-git" :title="t('header.gitTooltip')">
+    <button
+      v-if="isGitRepo"
+      type="button"
+      class="ch-git"
+      :title="t('header.gitTooltip')"
+      @click="emit('openChanges')"
+    >
       <span class="ch-branch" :class="{ 'ch-detached': !branch }">{{ branch || t('header.detached') }}</span>
       <span v-if="ahead > 0 || behind > 0" class="ch-pill ch-sync-pill">
         <span v-if="ahead > 0" class="ch-ahead">↑{{ ahead }}</span>
@@ -275,7 +282,7 @@ function startArchive(): void {
         <span v-if="adds > 0" class="ch-add">+{{ adds }}</span>
         <span v-if="dels > 0" class="ch-del">-{{ dels }}</span>
       </span>
-    </div>
+    </button>
 
     <!-- GitHub PR status -->
     <button
@@ -343,11 +350,16 @@ function startArchive(): void {
   display: flex;
   align-items: center;
   gap: 3px;
+  border: none;
+  background: transparent;
+  padding: 0;
   color: var(--muted);
   font-family: var(--mono);
   font-size: calc(var(--ui-font-size) - 2.5px);
   min-width: 0;
+  cursor: pointer;
 }
+.ch-git:hover .ch-branch { color: var(--ink); }
 .ch-branch { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; margin-right: 4px; }
 .ch-detached { color: var(--muted); font-style: italic; }
 .ch-pill {

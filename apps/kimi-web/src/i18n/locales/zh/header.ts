@@ -6,7 +6,7 @@ export default {
   copied: '已复制',
   copyPath: '复制路径',
   changed: '{n} 处改动',
-  gitTooltip: 'Git 分支与状态',
+  gitTooltip: '打开「文件 > 改动」',
   detached: 'detached',
   openPr: '打开 Pull Request',
   options: '选项',

@@ -785,6 +785,7 @@ function openPr(url: string): void {
       @open-btw="openSideChatPanel()"
       @create-goal="client.createGoal($event)"
       @control-goal="client.controlGoal($event)"
+      @refresh-git-status="client.activeSessionId.value && client.loadGitStatus(client.activeSessionId.value)"
       @rename-session="(id, title) => client.renameSession(id, title)"
       @fork-session="(id) => client.forkSession(id)"
       @archive-session="(id) => client.deleteSession(id)"

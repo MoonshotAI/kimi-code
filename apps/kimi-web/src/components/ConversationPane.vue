@@ -147,6 +147,8 @@ const emit = defineEmits<{
   addWorkspace: [];
   /** Chat header: open the workspace in an external application. */
   openInApp: [appId: string];
+  /** Chat header / files pane: focus Files -> Changed and refresh git status. */
+  refreshGitStatus: [];
   /** Chat header: open the GitHub PR in a new tab. */
   openPr: [url: string];
   /** Chat header / session row: rename current session. */
@@ -263,6 +265,27 @@ function firstGroupId(node: PaneLayout): string | undefined {
 function selectGroupPane(group: PaneGroup, pane: PaneKey): void {
   active.value = pane;
   paneLayout.setActive(group.id, pane);
+}
+
+function findGroupIdByActive(node: PaneLayout, pane: PaneKey): string | undefined {
+  if (node.type === 'group') return node.active === pane ? node.id : undefined;
+  return node.children.map((child) => findGroupIdByActive(child, pane)).find((id): id is string => id !== undefined);
+}
+
+function openChangedFiles(): void {
+  changedView.value = 'changed';
+  filesShowPreview.value = false;
+  selectedFile.value = null;
+  props.clearFileDiff?.();
+  active.value = 'files';
+  const root = paneLayout.layout.value;
+  const groupId = findGroupIdByActive(root, 'chat') ?? firstGroupId(root);
+  if (groupId) paneLayout.setActive(groupId, 'files');
+}
+
+function refreshChanges(): void {
+  changedView.value = 'changed';
+  emit('refreshGitStatus');
 }
 
 function handleCopyConversationCopied(): void {
@@ -1032,6 +1055,7 @@ onUnmounted(() => {
       :pr="pr"
       :copied="copyConversationCopied"
       @open-in-app="(app) => emit('openInApp', app)"
+      @open-changes="openChangedFiles"
       @copy-all="chatPaneRef?.copyConversation()"
       @open-pr="pr && emit('openPr', pr.url)"
       @rename-session="(id, title) => emit('renameSession', id, title)"
@@ -1174,6 +1198,9 @@ onUnmounted(() => {
                   </div>
                 </div>
                 <div v-if="filesView === 'changed'" class="nav-tools">
+                  <button type="button" class="layout-toggle" :title="t('fileTree.refreshChanged')" :aria-label="t('fileTree.refreshChanged')" @click="refreshChanges">
+                    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 6a5 5 0 1 0 1 3"/><path d="M13 2v4h-4"/></svg>
+                  </button>
                   <button type="button" class="layout-toggle" :title="changedLayout === 'tree' ? t('fileTree.listView') : t('fileTree.treeView')" :aria-label="changedLayout === 'tree' ? t('fileTree.listView') : t('fileTree.treeView')" @click="toggleChangedLayout">
                     <svg v-if="changedLayout === 'list'" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 4h2M3 8h2M3 12h2"/><path d="M7.5 4l1.5 1.5L7.5 7"/><path d="M9 5.5h4M9 9.5h3.5M9 12.5h3"/></svg>
                     <svg v-else viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h10"/></svg>
@@ -1378,6 +1405,15 @@ onUnmounted(() => {
           </div>
           <!-- list/tree layout toggle for the Changed view -->
           <div v-if="filesView === 'changed'" class="nav-tools">
+            <button
+              type="button"
+              class="layout-toggle"
+              :title="t('fileTree.refreshChanged')"
+              :aria-label="t('fileTree.refreshChanged')"
+              @click="refreshChanges"
+            >
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 6a5 5 0 1 0 1 3"/><path d="M13 2v4h-4"/></svg>
+            </button>
             <button
               type="button"
               class="layout-toggle"

@@ -6,7 +6,7 @@ export default {
   copied: 'Copied',
   copyPath: 'Copy path',
   changed: '{n} changed',
-  gitTooltip: 'Git branch & status',
+  gitTooltip: 'Open Files > Changed',
   detached: 'detached',
   openPr: 'Open pull request',
   options: 'Options',

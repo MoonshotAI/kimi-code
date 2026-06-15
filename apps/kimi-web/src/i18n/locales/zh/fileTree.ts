@@ -9,6 +9,7 @@ export default {
   segLabel: '显示改动文件或全部文件',
   selectChanged: '选择一个改动文件查看 diff。',
   selectFile: '选择一个文件查看内容。',
+  refreshChanged: '刷新改动',
   listView: '列表视图',
   treeView: '树状视图',
 } as const;

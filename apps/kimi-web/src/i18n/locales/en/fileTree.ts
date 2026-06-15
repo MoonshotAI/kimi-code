@@ -9,6 +9,7 @@ export default {
   segLabel: 'Show changed files or all files',
   selectChanged: 'Select a changed file to view its diff.',
   selectFile: 'Select a file to view its content.',
+  refreshChanged: 'Refresh changes',
   listView: 'List view',
   treeView: 'Tree view',
 } as const;
