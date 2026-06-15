@@ -557,21 +557,60 @@ describe('KeyringTokenStorage', () => {
     expect(failingKeyring.createEntry(KEYRING_SERVICE, 'kimi-code').getPassword()).not.toBeNull();
   });
 
-  it('remove() treats deleteCredential()=false with a null re-read as a no-op success (absent entry)', async () => {
+  it('remove() treats deleteCredential()=false with the name absent from the service listing as a no-op success', async () => {
     // A bare `false` from deleteCredential() is overloaded: it means "delete
-    // failed" OR "no such entry". When the re-read getPassword() returns null the
-    // entry is genuinely gone (deleted or never existed), so logging out an absent
-    // entry must RESOLVE without throwing.
+    // failed" OR "no such entry". getPassword() cannot disambiguate (the binding
+    // collapses every read error to null), so absence is proven via the
+    // service-scoped findAccounts() listing: when the reachable store does NOT
+    // list `name`, the entry is genuinely gone, so logging out must RESOLVE
+    // without throwing (mirrors FileTokenStorage's ENOENT no-op).
     class AbsentDeleteKeyring extends FakeKeyring {
       override createEntry(service: string, account: string): KeyringEntry {
         const base = super.createEntry(service, account);
         return {
-          // Always reports the entry as absent.
+          getPassword: () => base.getPassword(),
+          setPassword(p: string): void {
+            base.setPassword(p);
+          },
+          // Mirrors the native binding's "did not exist" → false; never touches
+          // the backing store, so findAccounts() does NOT list the name.
+          deleteCredential(): boolean {
+            return false;
+          },
+        };
+      }
+      // The store is reachable and the name is absent from the listing.
+      override findAccounts(service: string): string[] {
+        return super.findAccounts(service);
+      }
+    }
+
+    const absentStorage = new KeyringTokenStorage({ keyring: new AbsentDeleteKeyring(), legacy });
+    await expect(absentStorage.remove('never-existed')).resolves.toBeUndefined();
+  });
+
+  it('remove() surfaces a denied delete when the entry survives AND the read is denied (getPassword null)', async () => {
+    // FAILS on pre-fix code, PASSES on the fix. The v1.3.0 binding collapses
+    // every read error to null, so a denied/locked read returns null EVEN THOUGH
+    // the entry still exists. Here getPassword() returns null (read denied) while
+    // the entry STILL lives in the backing store (so findAccounts lists it) and
+    // deleteCredential() returns false without removing it. The OLD code keyed off
+    // `getPassword() !== null` → saw null → silently no-op'd → keychain credential
+    // SURVIVES while the plaintext is wiped and logout reports success. The NEW
+    // code proves absence via the service listing, sees `name` still present, and
+    // surfaces the failure — after still clearing the plaintext copy.
+    const token = sampleToken();
+
+    class DeniedReadSurvivingKeyring extends FakeKeyring {
+      override createEntry(service: string, account: string): KeyringEntry {
+        const base = super.createEntry(service, account);
+        return {
+          // Read is DENIED: collapses to null even though the entry exists.
           getPassword: () => null,
           setPassword(p: string): void {
             base.setPassword(p);
           },
-          // Mirrors the native binding's "did not exist" → false.
+          // Denied delete: returns false and the entry SURVIVES in the store.
           deleteCredential(): boolean {
             return false;
           },
@@ -579,8 +618,96 @@ describe('KeyringTokenStorage', () => {
       }
     }
 
-    const absentStorage = new KeyringTokenStorage({ keyring: new AbsentDeleteKeyring(), legacy });
-    await expect(absentStorage.remove('never-existed')).resolves.toBeUndefined();
+    const deniedKeyring = new DeniedReadSurvivingKeyring();
+    const deniedStorage = new KeyringTokenStorage({ keyring: deniedKeyring, legacy });
+
+    // Seed the keychain (entry persists through the denied delete) and a lingering
+    // plaintext copy that must still be cleared.
+    deniedKeyring.store.set(`${KEYRING_SERVICE}\x00kimi-code`, JSON.stringify(tokenToWire(token)));
+    await legacy.save('kimi-code', token);
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
+
+    // The surviving entry must be surfaced as a failure...
+    await expect(deniedStorage.remove('kimi-code')).rejects.toThrow(
+      /failed to delete keyring credential/,
+    );
+    // ...but the legacy plaintext cleanup must still have run.
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+    // The keychain credential genuinely survived (the bug being guarded against).
+    expect(deniedKeyring.findAccounts(KEYRING_SERVICE)).toContain('kimi-code');
+  });
+
+  it('remove() surfaces an unreachable store (deleteCredential false, findAccounts throws)', async () => {
+    // FAILS on pre-fix code, PASSES on the fix. A locked / no-access store: the
+    // binding collapses the delete to false and a read to null, but the
+    // service-scoped enumeration THROWS (findCredentials throws on an unreachable
+    // store). The OLD code saw `getPassword() === null` → silently no-op'd
+    // (success), leaving the OS credential behind. The NEW code lets the
+    // findAccounts throw propagate to the catch → plaintext cleared → re-thrown,
+    // so logout fails loud (mirrors FileTokenStorage's EACCES throw).
+    const token = sampleToken();
+
+    class UnreachableStoreKeyring extends FakeKeyring {
+      override createEntry(service: string, account: string): KeyringEntry {
+        const base = super.createEntry(service, account);
+        return {
+          getPassword: () => null,
+          setPassword(p: string): void {
+            base.setPassword(p);
+          },
+          deleteCredential: () => false,
+        };
+      }
+      override findAccounts(): string[] {
+        throw new Error('keychain store unreachable (locked / no-access)');
+      }
+    }
+
+    const unreachableStorage = new KeyringTokenStorage({
+      keyring: new UnreachableStoreKeyring(),
+      legacy,
+    });
+    await legacy.save('kimi-code', token); // lingering plaintext to clear
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
+
+    // The unreachable store must surface as a failure...
+    await expect(unreachableStorage.remove('kimi-code')).rejects.toThrow(/unreachable/);
+    // ...but the legacy plaintext cleanup must still have run.
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
+  });
+
+  it('remove() resolves for a genuinely-missing entry (deleteCredential false, findAccounts lacks name)', async () => {
+    // FAILS-guard: pins missing⇒no-op parity with FileTokenStorage's ENOENT path
+    // and guards against over-throwing. deleteCredential() returns false (no such
+    // entry), getPassword() returns null, and the reachable store's findAccounts()
+    // returns a list WITHOUT `name`, so remove() must RESOLVE (no throw) while
+    // still clearing any plaintext copy. (On the pre-fix code this also resolved,
+    // so this is a parity guard; the two throwing tests above are the fix proofs.)
+    const token = sampleToken();
+
+    class MissingEntryKeyring extends FakeKeyring {
+      override createEntry(service: string, account: string): KeyringEntry {
+        const base = super.createEntry(service, account);
+        return {
+          getPassword: () => null,
+          setPassword(p: string): void {
+            base.setPassword(p);
+          },
+          deleteCredential: () => false,
+        };
+      }
+      // Reachable store that lists OTHER accounts but not the one being removed.
+      override findAccounts(): string[] {
+        return ['some-other-account'];
+      }
+    }
+
+    const missingStorage = new KeyringTokenStorage({ keyring: new MissingEntryKeyring(), legacy });
+    await legacy.save('kimi-code', token); // a plaintext copy that must still clear
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(true);
+
+    await expect(missingStorage.remove('kimi-code')).resolves.toBeUndefined();
+    expect(existsSync(join(dir, 'kimi-code.json'))).toBe(false);
   });
 
   it('list() unions keyring accounts and un-migrated legacy names, deduped', async () => {

@@ -69,7 +69,9 @@ export interface KeyringEntry {
    * Returns true when a credential was deleted. The native binding NEVER throws
    * and maps EVERY failure (locked/no-access/ambiguous/platform error) to the
    * SAME `false` it returns for "no such entry", so `false` is ambiguous —
-   * "did not exist" OR "delete failed". Disambiguate by re-reading `getPassword()`.
+   * "did not exist" OR "delete failed". `getPassword()` cannot disambiguate it
+   * (the binding likewise collapses every read error to `null`); prove absence
+   * with the service-scoped `findAccounts()` listing instead (see `remove`).
    */
   deleteCredential(): boolean;
 }
@@ -330,14 +332,21 @@ export class KeyringTokenStorage implements TokenStorage {
     try {
       const entry = this.keyring.createEntry(this.service, name);
       const deleted = entry.deleteCredential();
-      // The native binding maps EVERY failure (locked/no-access/ambiguous/platform)
-      // to `false` — the same value as "no such entry" — and never throws. So a bare
-      // `false` is ambiguous; disambiguate by re-reading: if the credential is still
-      // present, the delete genuinely failed and must be surfaced (the file backend's
-      // unlink would have thrown). `getPassword()` also swallows errors to null, so a
-      // null re-read is the strongest lock-free signal that the entry is gone.
-      if (!deleted && entry.getPassword() !== null) {
-        throw new Error(`failed to delete keyring credential "${name}"`);
+      if (!deleted) {
+        // deleteCredential() returns false for BOTH a missing entry AND a failed/denied
+        // delete: the v1.3.0 binding collapses every error to false, and getPassword()
+        // likewise collapses every error to null, so a null re-read CANNOT prove the
+        // entry is gone (equally "deleted" or "read denied"). Prove absence the only
+        // non-error-ambiguous way this binding allows — enumerate the service:
+        // findAccounts() THROWS when the store is unreachable (locked / no-access) and
+        // returns the account list (incl. empty) when reachable. So an entry that
+        // survives a denied delete, or a store we cannot even reach, is surfaced as a
+        // failure; only a reachable store that does NOT list `name` is a true no-op
+        // (mirrors FileTokenStorage: ENOENT no-op, EACCES throw). A thrown
+        // findAccounts propagates to the catch below → plaintext cleared → re-thrown.
+        if (this.keyring.findAccounts(this.service).includes(name)) {
+          throw new Error(`failed to delete keyring credential "${name}"`);
+        }
       }
     } catch (error) {
       // Keyring delete failed — still clear the plaintext copy, then re-throw.
