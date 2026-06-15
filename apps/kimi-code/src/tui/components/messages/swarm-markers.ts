@@ -1,4 +1,4 @@
-import type { Component } from '@earendil-works/pi-tui';
+import { truncateToWidth, type Component } from '@earendil-works/pi-tui';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
@@ -10,11 +10,14 @@ export class SwarmModeMarkerComponent implements Component {
 
   invalidate(): void {}
 
-  render(_width: number): string[] {
+  render(width: number): string[] {
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [''];
+
     const token = this.state === 'inactive' ? 'textDim' : 'success';
     const marker = currentTheme.boldFg(token, STATUS_BULLET);
     const label = currentTheme.boldFg(token, swarmMarkerLabel(this.state));
-    return ['', marker + label];
+    return ['', truncateToWidth(marker + label, safeWidth, '…')];
   }
 }
 

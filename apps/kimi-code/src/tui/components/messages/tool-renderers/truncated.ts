@@ -1,5 +1,4 @@
-import type { Component } from '@earendil-works/pi-tui';
-import { Text } from '@earendil-works/pi-tui';
+import { Text, truncateToWidth, type Component } from '@earendil-works/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 
@@ -65,6 +64,12 @@ export class TruncatedOutputComponent implements Component {
     this.textComponent.invalidate();
   }
 
+  private renderHint(width: number, hint: string): string {
+    const indentWidth = Math.min(this.indent, Math.max(0, width));
+    const hintWidth = Math.max(0, width - indentWidth);
+    return ' '.repeat(indentWidth) + currentTheme.dim(truncateToWidth(hint, hintWidth, '…'));
+  }
+
   render(width: number): string[] {
     const contentLines = this.textComponent.render(width);
 
@@ -76,7 +81,7 @@ export class TruncatedOutputComponent implements Component {
     if (this.tail) {
       const shown = contentLines.slice(contentLines.length - this.maxLines);
       return [
-        ' '.repeat(this.indent) + currentTheme.dim(`... (${String(remaining)} earlier lines)`),
+        this.renderHint(width, `... (${String(remaining)} earlier lines)`),
         ...shown,
       ];
     }
@@ -85,7 +90,7 @@ export class TruncatedOutputComponent implements Component {
     const hint = this.expandHint
       ? `... (${String(remaining)} more lines, ctrl+o to expand)`
       : `... (${String(remaining)} more lines)`;
-    return [...shown, ' '.repeat(this.indent) + currentTheme.dim(hint)];
+    return [...shown, this.renderHint(width, hint)];
   }
 }
 

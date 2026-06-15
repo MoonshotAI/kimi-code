@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../src/agent';
 import type { SkillActivationOrigin } from '../../src/agent/context';
-import { SkillRegistry, type SkillDefinition } from '../../src/skill';
+import type { SkillRegistry as AgentSkillRegistry } from '../../src/agent/skill';
+import { SessionSkillRegistry, type SkillDefinition } from '../../src/skill';
 import {
   MAX_SKILL_QUERY_DEPTH,
   NestedSkillTooDeepError,
@@ -32,8 +33,8 @@ function skill(
 function registry(
   skills: readonly SkillDefinition[] = [],
   options: { readonly sessionId?: string } = {},
-): SkillRegistry {
-  const registry = new SkillRegistry(options);
+): AgentSkillRegistry {
+  const registry = new SessionSkillRegistry(options);
   for (const item of skills) {
     registry.register(item);
   }
@@ -57,7 +58,7 @@ function skillToolMethods() {
   } satisfies SkillToolMethods;
 }
 
-function skillToolAgent(skills: SkillRegistry, methods: SkillToolMethods): Agent {
+function skillToolAgent(skills: AgentSkillRegistry, methods: SkillToolMethods): Agent {
   return {
     skills: {
       registry: skills,
@@ -71,7 +72,7 @@ function skillToolAgent(skills: SkillRegistry, methods: SkillToolMethods): Agent
 }
 
 function skillTool(
-  skills: SkillRegistry,
+  skills: AgentSkillRegistry,
   methods = skillToolMethods(),
   options?: ConstructorParameters<typeof SkillTool>[1],
 ): SkillTool {

@@ -3,13 +3,14 @@ import type { AgentReplayRecord, AgentReplayRecordPayload } from '../..';
 import type { ContextMessage } from '../context';
 
 export class ReplayBuilder {
+  postRestoring = false;
   captureLiveRecords = false;
   protected readonly records: AgentReplayRecord[] = [];
 
   constructor(public readonly agent: Agent) {}
 
   push(record: AgentReplayRecordPayload): void {
-    if (this.captureLiveRecords || this.agent.records.restoring) {
+    if (this.captureLiveRecords || this.agent.records.restoring || this.postRestoring) {
       this.records.push({
         ...record,
         time: this.agent.records.restoring?.time ?? Date.now(),

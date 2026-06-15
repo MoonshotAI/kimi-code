@@ -244,4 +244,47 @@ describe('listDirectory', () => {
     const tree = await listDirectory(kaos, '/w');
     expect(tree).toBe('└── only_dir/\n    └── child.txt');
   });
+
+  it('collapses hidden directories without hiding hidden files when requested', async () => {
+    const seenDirs: string[] = [];
+    const kaos = createFakeKaos({
+      iterdir: async function* (p: string) {
+        seenDirs.push(p);
+        if (p === '/w') {
+          yield '/w/.git';
+          yield '/w/.gitignore';
+          yield '/w/src';
+        } else if (p === '/w/.git') {
+          yield '/w/.git/HEAD';
+        } else if (p === '/w/src') {
+          yield '/w/src/index.ts';
+        }
+      } as unknown as Kaos['iterdir'],
+      stat: (async (p: string) => ({
+        stMode: p.endsWith('.git') || p.endsWith('src') ? 0o040_755 : 0o100_644,
+        stIno: 1,
+        stDev: 1,
+        stNlink: 1,
+        stUid: 0,
+        stGid: 0,
+        stSize: 1,
+        stAtime: 0,
+        stMtime: 0,
+        stCtime: 0,
+      })) as unknown as Kaos['stat'],
+    });
+
+    const expanded = await listDirectory(kaos, '/w');
+    expect(expanded).toContain('.git/');
+    expect(expanded).toContain('HEAD');
+
+    seenDirs.length = 0;
+    const collapsed = await listDirectory(kaos, '/w', { collapseHiddenDirs: true });
+    expect(collapsed).toContain('.git/');
+    expect(collapsed).toContain('.gitignore');
+    expect(collapsed).toContain('src/');
+    expect(collapsed).toContain('index.ts');
+    expect(collapsed).not.toContain('HEAD');
+    expect(seenDirs).toEqual(['/w', '/w/src']);
+  });
 });

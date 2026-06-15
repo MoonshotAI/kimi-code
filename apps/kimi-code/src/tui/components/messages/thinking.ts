@@ -5,8 +5,7 @@
  * Supports expand/collapse via Ctrl+O (shared with tool output).
  */
 
-import type { Component, TUI } from '@earendil-works/pi-tui';
-import { Text } from '@earendil-works/pi-tui';
+import { Text, truncateToWidth, type Component, type TUI } from '@earendil-works/pi-tui';
 
 import {
   BRAILLE_SPINNER_FRAMES,
@@ -110,8 +109,11 @@ export class ThinkingComponent implements Component {
     // Leading blank + first PREVIEW_LINES content lines + hint line.
     const truncated = rendered.slice(0, 1 + THINKING_PREVIEW_LINES);
     const remaining = contentLines.length - THINKING_PREVIEW_LINES;
+    const hint = `... (${String(remaining)} more lines, ctrl+o to expand)`;
+    const indentWidth = Math.min(MESSAGE_INDENT.length, Math.max(0, width));
+    const hintWidth = Math.max(0, width - indentWidth);
     truncated.push(
-      MESSAGE_INDENT + currentTheme.dim(`... (${String(remaining)} more lines, ctrl+o to expand)`),
+      ' '.repeat(indentWidth) + currentTheme.dim(truncateToWidth(hint, hintWidth, '…')),
     );
     return truncated;
   }

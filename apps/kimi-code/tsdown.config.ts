@@ -12,6 +12,8 @@ export default defineConfig({
   format: ['esm'],
   outDir: 'dist',
   clean: true,
+  dts: false,
+  hash: false,
   banner: {
     js: [
       '#!/usr/bin/env node',
@@ -35,5 +37,10 @@ export default defineConfig({
     // self-contained and never `import`s them at runtime.
     alwaysBundle: [/^@moonshot-ai\//, 'hono', '@hono/node-server'],
     neverBundle: [],
+    onlyBundle: false,
+  },
+  outputOptions: {
+    codeSplitting: false,
+    entryFileNames: 'main.mjs',
   },
 });

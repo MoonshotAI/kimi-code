@@ -1,5 +1,7 @@
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 
+import { CronMessageComponent } from '#/tui/components/messages/cron-message';
 import { NoticeMessageComponent } from '#/tui/components/messages/status-message';
 
 function strip(text: string): string {
@@ -17,5 +19,23 @@ describe('NoticeComponent', () => {
     expect(lines[0]).toBe('');
     expect(lines[1]).toContain('Plan mode: ON');
     expect(lines[2]).toContain('Plan will be created here: /tmp/plans/test-plan.md');
+  });
+});
+
+describe('CronMessageComponent', () => {
+  it('keeps title, detail, and prompt within narrow widths', () => {
+    const component = new CronMessageComponent('Please investigate the reminder payload and report back.', {
+      cron: '*/15 * * * *',
+      jobId: 'job-with-a-very-long-identifier-for-width-testing',
+      recurring: true,
+      missedCount: 3,
+      stale: true,
+    });
+
+    for (const width of [39, 20, 10, 4]) {
+      for (const line of component.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 });
