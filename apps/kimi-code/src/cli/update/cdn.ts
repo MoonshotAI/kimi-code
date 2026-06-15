@@ -5,6 +5,8 @@ import { KIMI_CODE_CDN_LATEST_JSON_URL, KIMI_CODE_CDN_LATEST_URL } from '#/const
 
 import type { UpdateManifest } from './types';
 
+const CDN_FETCH_TIMEOUT_MS = 3_000;
+
 const RolloutBatchSchema = z.object({
   percent: z.number().int().min(0).max(100),
   delaySeconds: z.number().int().min(0),
@@ -31,6 +33,18 @@ export interface FetchLatestResult {
   readonly manifest: UpdateManifest | null;
 }
 
+async function fetchWithTimeout(fetchImpl: typeof fetch, input: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, CDN_FETCH_TIMEOUT_MS);
+  try {
+    return await fetchImpl(input, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Fetch the latest published Kimi Code version from the CDN.
  *
@@ -44,7 +58,7 @@ export interface FetchLatestResult {
 export async function fetchLatestVersionFromCdn(
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
-  const response = await fetchImpl(KIMI_CODE_CDN_LATEST_URL);
+  const response = await fetchWithTimeout(fetchImpl, KIMI_CODE_CDN_LATEST_URL);
   if (!response.ok) {
     throw new Error(`CDN /latest returned HTTP ${response.status}`);
   }
@@ -56,7 +70,7 @@ export async function fetchLatestVersionFromCdn(
 }
 
 async function fetchUpdateManifestFromCdn(fetchImpl: typeof fetch): Promise<UpdateManifest> {
-  const response = await fetchImpl(KIMI_CODE_CDN_LATEST_JSON_URL);
+  const response = await fetchWithTimeout(fetchImpl, KIMI_CODE_CDN_LATEST_JSON_URL);
   if (!response.ok) {
     throw new Error(`CDN /latest.json returned HTTP ${response.status}`);
   }

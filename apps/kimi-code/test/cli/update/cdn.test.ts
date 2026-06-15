@@ -53,7 +53,10 @@ describe('fetchLatestVersionFromCdn', () => {
   it('returns the trimmed semver returned by CDN /latest', async () => {
     const f = mockFetchOk('  0.5.0\n');
     await expect(fetchLatestVersionFromCdn(f)).resolves.toBe('0.5.0');
-    expect(f).toHaveBeenCalledWith(KIMI_CODE_CDN_LATEST_URL);
+    expect(f).toHaveBeenCalledWith(
+      KIMI_CODE_CDN_LATEST_URL,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it('throws when response is non-2xx', async () => {
@@ -93,7 +96,10 @@ describe('fetchLatestFromCdn', () => {
         ],
       },
     });
-    expect(f).toHaveBeenCalledWith(KIMI_CODE_CDN_LATEST_JSON_URL);
+    expect(f).toHaveBeenCalledWith(
+      KIMI_CODE_CDN_LATEST_JSON_URL,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(f).toHaveBeenCalledTimes(1);
   });
 
@@ -173,5 +179,55 @@ describe('fetchLatestFromCdn', () => {
       [KIMI_CODE_CDN_LATEST_URL]: { body: 'not-a-version' },
     });
     await expect(fetchLatestFromCdn(f)).rejects.toThrow(/invalid semver/);
+  });
+
+  it('falls back to plain /latest when latest.json hangs past the request timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = vi.fn(async (input: string | URL, init?: RequestInit) => {
+        if (String(input) === KIMI_CODE_CDN_LATEST_JSON_URL) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(new Error('aborted'));
+            }, { once: true });
+          });
+        }
+        if (String(input) === KIMI_CODE_CDN_LATEST_URL) {
+          return { ok: true, status: 200, text: async () => '1.9.0\n' };
+        }
+        return { ok: false, status: 404, text: async () => '' };
+      }) as unknown as typeof fetch;
+
+      const result = fetchLatestFromCdn(f);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      await expect(result).resolves.toEqual({
+        latest: '1.9.0',
+        manifest: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects when plain /latest also hangs past the request timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new Error('aborted'));
+          }, { once: true });
+        });
+      }) as unknown as typeof fetch;
+
+      const result = fetchLatestFromCdn(f);
+      const expectation = expect(result).rejects.toThrow(/aborted/);
+      await vi.advanceTimersByTimeAsync(6_000);
+
+      await expectation;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
