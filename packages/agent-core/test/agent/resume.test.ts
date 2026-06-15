@@ -408,6 +408,115 @@ describe('Agent resume', () => {
     );
   });
 
+  it('closes interrupted trailing tool calls with synthetic error results after resume', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'config.update',
+        cwd: process.cwd(),
+        modelAlias: MOCK_PROVIDER.model,
+        systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
+        thinkingLevel: 'off',
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Run both lookups' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.begin',
+          uuid: 'interrupted-step',
+          turnId: '0',
+          step: 1,
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call-one',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'interrupted-step',
+          toolCallId: 'call_interrupted_one',
+          name: 'LookupOne',
+          args: { query: 'one' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call-two',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'interrupted-step',
+          toolCallId: 'call_interrupted_two',
+          name: 'LookupTwo',
+          args: { query: 'two' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: 'call-one',
+          toolCallId: 'call_interrupted_one',
+          result: { output: 'one result' },
+        },
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+    ]);
+    const syntheticResult = ctx.agent.context.history.at(-1);
+    expect(syntheticResult).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_interrupted_two',
+      isError: true,
+    });
+    expect(textContent(syntheticResult)).toContain(
+      'Tool execution was interrupted before its result was recorded',
+    );
+
+    ctx.mockNextResponse({ type: 'text', text: 'Recovered after resume.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue after resume' }] });
+    await ctx.untilTurnEnd();
+
+    const llmHistory = ctx.llmCalls[0]?.history ?? [];
+    expect(llmHistory.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+      'user',
+    ]);
+    expect(textContent(llmHistory[3])).toContain(
+      '<system>ERROR: Tool execution failed.</system>',
+    );
+    expect(textContent(llmHistory[3])).toContain(
+      'Tool execution was interrupted before its result was recorded',
+    );
+    expect(textContent(llmHistory[4])).toBe('continue after resume');
+    expect(
+      ctx.agent.context.history.some(
+        (message) => message.role === 'user' && textContent(message) === 'continue after resume',
+      ),
+    ).toBe(true);
+  });
+
   it('rebuilds goal completion replay cards without adding model-visible context', async () => {
     const persistence = new RecordingAgentPersistence([
       {
@@ -581,6 +690,18 @@ function withMetadata(events: readonly AgentRecord[]): readonly AgentRecord[] {
     },
     ...events,
   ];
+}
+
+function textContent(
+  message:
+    | { readonly content: readonly { readonly type: string; readonly text?: string }[] }
+    | undefined,
+): string {
+  return (
+    message?.content
+      .map((part) => (part.type === 'text' && typeof part.text === 'string' ? part.text : ''))
+      .join('') ?? ''
+  );
 }
 
 function resumeHistory(): AgentRecord[] {

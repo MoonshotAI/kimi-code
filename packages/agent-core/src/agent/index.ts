@@ -300,6 +300,7 @@ export class Agent {
     await this.background.loadFromDisk();
     await this.background.reconcile();
     await this.cron?.loadFromDisk();
+    this.context.finishResume();
     this.turn.finishResume();
     return result;
   }
