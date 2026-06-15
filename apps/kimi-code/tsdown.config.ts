@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { defineConfig } from 'tsdown';
@@ -7,14 +6,20 @@ import { rawTextPlugin } from '../../build/raw-text-plugin.mjs';
 import { BUILT_IN_CATALOG_DEFINE, builtInCatalogDefine } from './scripts/built-in-catalog.mjs';
 
 const appRoot = import.meta.dirname;
-const packageJson = JSON.parse(
-  readFileSync(new URL('./package.json', import.meta.url), 'utf-8'),
-) as { devDependencies?: Record<string, string> };
-const runtimeDependencies = new Set(Object.keys(packageJson.devDependencies ?? {}));
+const bundledRuntimeDependencies = new Set([
+  '@earendil-works/pi-tui',
+  'chalk',
+  'cli-highlight',
+  'commander',
+  'pathe',
+  'semver',
+  'smol-toml',
+  'zod',
+]);
 
 function shouldAlwaysBundle(id: string): boolean {
   if (id.startsWith('@moonshot-ai/')) return true;
-  for (const dependency of runtimeDependencies) {
+  for (const dependency of bundledRuntimeDependencies) {
     if (id === dependency || id.startsWith(`${dependency}/`)) return true;
   }
   return false;
