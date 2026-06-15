@@ -608,6 +608,41 @@ describe('KeyringTokenStorage', () => {
   it('remove() does not throw when nothing exists', async () => {
     await expect(storage.remove('never-existed')).resolves.toBeUndefined();
   });
+
+  // Invalid-name rejection — strict drop-in parity with FileTokenStorage
+  // (storage.test.ts:146-166): same rule, same /Invalid token name/ error, and
+  // the guard must run BEFORE any keychain op so save() can't orphan a
+  // credential under an invalid account (file backend's fail-before-write).
+  describe('rejects invalid token names (file-backend parity)', () => {
+    const badNames = ['../../etc/passwd', '../etc/passwd', '.hidden', ''];
+
+    for (const bad of badNames) {
+      it(`save() rejects ${JSON.stringify(bad)}`, async () => {
+        await expect(storage.save(bad, sampleToken())).rejects.toThrow(/Invalid token name/);
+      });
+
+      it(`load() rejects ${JSON.stringify(bad)}`, async () => {
+        await expect(storage.load(bad)).rejects.toThrow(/Invalid token name/);
+      });
+
+      it(`remove() rejects ${JSON.stringify(bad)}`, async () => {
+        await expect(storage.remove(bad)).rejects.toThrow(/Invalid token name/);
+      });
+    }
+
+    it('save() with an invalid name writes NOTHING to the keychain (no orphan)', async () => {
+      // This is the assertion that proves the orphan bug is fixed: the pre-fix
+      // save() called setPassword BEFORE the legacy name check threw, leaving a
+      // credential orphaned under the invalid account. With the guard first, the
+      // FakeKeyring backing store stays empty after the rejection.
+      await expect(storage.save('../../etc/passwd', sampleToken())).rejects.toThrow(
+        /Invalid token name/,
+      );
+      expect(keyring.store.size).toBe(0);
+      expect(keyring.findAccounts(KEYRING_SERVICE)).toEqual([]);
+      expect(keyring.createEntry(KEYRING_SERVICE, '../../etc/passwd').getPassword()).toBeNull();
+    });
+  });
 });
 
 describe('resolveTokenStorage', () => {

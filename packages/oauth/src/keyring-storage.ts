@@ -49,7 +49,7 @@ import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { FileTokenStorage } from './storage';
+import { assertValidTokenName, FileTokenStorage } from './storage';
 import type { TokenStorage } from './storage';
 import { classifyToken } from './token-state';
 import type { TokenInfo, TokenInfoWire } from './types';
@@ -115,6 +115,7 @@ export class KeyringTokenStorage implements TokenStorage {
   }
 
   async load(name: string): Promise<TokenInfo | undefined> {
+    assertValidTokenName(name);
     const raw = this.keyring.createEntry(this.service, name).getPassword();
     if (raw !== null) {
       return this.reconcileOnHit(name, raw);
@@ -285,6 +286,10 @@ export class KeyringTokenStorage implements TokenStorage {
   }
 
   async save(name: string, token: TokenInfo): Promise<void> {
+    // Reject invalid names BEFORE the keychain write to preserve the file
+    // backend's fail-before-write contract — otherwise setPassword would orphan
+    // a credential under an invalid account before the legacy name check threw.
+    assertValidTokenName(name);
     this.keyring.createEntry(this.service, name).setPassword(this.serialize(token));
     // The keychain is now authoritative for `name`. Drop any plaintext copy so a
     // later FILE-backend run (KIMI_DISABLE_KEYRING=1, probe/native-load failure) —
@@ -312,6 +317,7 @@ export class KeyringTokenStorage implements TokenStorage {
   }
 
   async remove(name: string): Promise<void> {
+    assertValidTokenName(name);
     // Clear both stores so a pre-migration plaintext copy can never linger
     // (e.g. logout before the token was ever migrated). Missing credentials
     // are a no-op, not an error.

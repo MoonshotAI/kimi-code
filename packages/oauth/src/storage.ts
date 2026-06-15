@@ -38,6 +38,23 @@ export interface TokenStorage {
   list(): Promise<string[]>;
 }
 
+/**
+ * Guard against path traversal: caller-provided names (from config.toml or
+ * slash commands) must not escape the credentials dir. `basename` strips any
+ * `..` or `/` segments; if the sanitized value differs from the input we refuse
+ * the request entirely rather than silently writing to a different file than the
+ * caller asked for. Leading-dot names (hidden files) are also rejected.
+ *
+ * Shared so non-file backends (e.g. KeyringTokenStorage) enforce the identical
+ * name-rejection rule, error text, and fail-before-write timing.
+ */
+export function assertValidTokenName(name: string): void {
+  const safe = basename(name);
+  if (safe.length === 0 || safe !== name || safe.startsWith('.')) {
+    throw new Error(`Invalid token name: "${name}"`);
+  }
+}
+
 export class FileTokenStorage implements TokenStorage {
   private readonly dir: string;
 
@@ -57,16 +74,8 @@ export class FileTokenStorage implements TokenStorage {
   }
 
   private pathFor(name: string): string {
-    // Guard against path traversal: caller-provided names (from config.toml
-    // or slash commands) must not escape the credentials dir. `basename`
-    // strips any `..` or `/` segments; if the sanitized value differs from
-    // the input we refuse the request entirely rather than silently
-    // writing to a different file than the caller asked for.
-    const safe = basename(name);
-    if (safe.length === 0 || safe !== name || safe.startsWith('.')) {
-      throw new Error(`Invalid token name: "${name}"`);
-    }
-    return join(this.dir, `${safe}.json`);
+    assertValidTokenName(name);
+    return join(this.dir, `${name}.json`);
   }
 
   async load(name: string): Promise<TokenInfo | undefined> {
