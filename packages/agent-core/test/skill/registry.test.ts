@@ -142,6 +142,53 @@ describe('skill registry search', () => {
     expect(after.length).toBe(1);
     expect(after[0]!.name).toBe('added-later');
   });
+
+  it('searchSkills ranks name matches above description-only matches', () => {
+    const registry = makeRegistry([
+      makeSkill('playwright-e2e', 'user', 'End-to-end testing toolkit'),
+      makeSkill('generic-browser', 'user', 'Browser automation with Playwright and Selenium'),
+    ]);
+
+    const results = registry.searchSkills('playwright');
+    expect(results[0]!.name).toBe('playwright-e2e');
+  });
+
+  it('searchSkills expands synonyms bidirectionally', () => {
+    const registry = makeRegistry([
+      makeSkill('container-build', 'user', 'Docker container build optimization'),
+      makeSkill('api-design', 'user', 'REST API design patterns'),
+    ]);
+
+    // "docker" is a synonym of "container", and the reverse mapping is now automatic.
+    const results = registry.searchSkills('docker image build');
+    expect(results.some((r) => r.name === 'container-build')).toBe(true);
+  });
+
+  it('searchSkills ignores stopwords in the query', () => {
+    const registry = makeRegistry([
+      makeSkill('docker-expert', 'user', 'Docker containerization and deployment'),
+      makeSkill('react-ui', 'user', 'React component patterns and hooks'),
+    ]);
+
+    const results = registry.searchSkills('the docker container');
+    expect(results[0]!.name).toBe('docker-expert');
+  });
+
+  it('getModelSkillListing caches the result and invalidates on register()', () => {
+    const skills = Array.from({ length: 100 }, (_, i) =>
+      makeSkill(`skill-${String(i)}`, 'user', `Description ${String(i)}`),
+    );
+    const registry = makeRegistry(skills);
+
+    const first = registry.getModelSkillListing();
+    const second = registry.getModelSkillListing();
+    expect(second).toBe(first);
+
+    registry.register(makeSkill('new-skill', 'user', 'A newly added skill'));
+    const after = registry.getModelSkillListing();
+    expect(after).not.toBe(first);
+    expect(after).toContain('101 registered skills');
+  });
 });
 
 describe('getModelSkillListing tiers', () => {

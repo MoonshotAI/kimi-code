@@ -79,7 +79,7 @@ describe('SMOKE: end-to-end skill search', () => {
       ['github actions CI/CD pipeline', 'github-actions'],
       ['REST API endpoint design', 'rest-api'],
       ['machine learning model training', 'machine-learning'],
-    ];
+    ] as const;
 
     console.log('\n✅ BM25 search results:');
     let allCorrect = true;

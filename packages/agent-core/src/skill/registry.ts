@@ -51,6 +51,7 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
   private readonly searchIndex = new SkillSearchIndex();
 
   private indexDirty = false;
+  private modelSkillListingCache: string | undefined;
 
   constructor(options: SkillRegistryOptions = {}) {
     this.discoverImpl = options.discover ?? discoverSkills;
@@ -59,6 +60,7 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
   }
 
   async loadRoots(roots: readonly SkillRoot[]): Promise<void> {
+    this.modelSkillListingCache = undefined;
     for (const root of roots) {
       if (!this.roots.includes(root.path)) this.roots.push(root.path);
     }
@@ -95,6 +97,7 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     if (options.replace === true || !this.byName.has(key)) {
       this.byName.set(key, skill);
       this.indexDirty = true;
+      this.modelSkillListingCache = undefined;
     }
     this.indexPluginSkill(skill, options);
   }
@@ -187,34 +190,42 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
   }
 
   getModelSkillListing(): string {
+    if (this.modelSkillListingCache !== undefined) {
+      return this.modelSkillListingCache;
+    }
+
     const invocable = this.listInvocableSkills().filter(
       (skill) => skill.metadata.isSubSkill !== true,
     );
 
     // Auto-detect: small catalogue → legacy full listing.
     // Large catalogue → compact/names-only + search-first.
+    let listing: string;
     if (invocable.length <= COMPACT_LISTING_THRESHOLD) {
       const lines = ['DISREGARD any earlier skill listings. Current available skills:'];
-      const listing = renderGroupedSkills(invocable, formatModelSkill);
-      if (listing.length > 0) lines.push(listing);
-      return lines.length === 1 ? '' : lines.join('\n');
+      const rendered = renderGroupedSkills(invocable, formatModelSkill);
+      if (rendered.length > 0) lines.push(rendered);
+      listing = lines.length === 1 ? '' : lines.join('\n');
+    } else {
+      // Tier 2+3: Large catalogue — search-first.
+      const count = invocable.length;
+      const format = count > NAMES_ONLY_LISTING_THRESHOLD
+        ? formatNameOnlySkill
+        : formatCompactSkill;
+      const lines = [
+        `You have access to ${String(count)} registered skills.`,
+        'To find relevant skills, call the `Skill` tool with `action: "search"` and keywords from the user\'s request.',
+        'Do NOT guess skill names — always search first, then load with `action: "load"`.',
+        '',
+        'Skill names by scope:',
+      ];
+      const rendered = renderGroupedSkills(invocable, format);
+      if (rendered.length > 0) lines.push(rendered);
+      listing = lines.join('\n');
     }
 
-    // Tier 2+3: Large catalogue — search-first.
-    const count = invocable.length;
-    const format = count > NAMES_ONLY_LISTING_THRESHOLD
-      ? formatNameOnlySkill
-      : formatCompactSkill;
-    const lines = [
-      `You have access to ${String(count)} registered skills.`,
-      'To find relevant skills, call the `Skill` tool with `action: "search"` and keywords from the user\'s request.',
-      'Do NOT guess skill names — always search first, then load with `action: "load"`.',
-      '',
-      'Skill names by scope:',
-    ];
-    const listing = renderGroupedSkills(invocable, format);
-    if (listing.length > 0) lines.push(listing);
-    return lines.join('\n');
+    this.modelSkillListingCache = listing;
+    return listing;
   }
 }
 
