@@ -104,6 +104,8 @@ Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and
 | `/mcp` | — | List MCP servers and their connection status in the current session | Yes |
 | `/plugins` | — | Open the interactive plugin manager | Yes |
 | `/version` | — | Display the Kimi Code CLI version number | Yes |
+| `/check-update` | — | Check for available updates without installing | Yes |
+| `/update` | `/upgrade` | Check and install the latest version if available | Yes |
 | `/feedback` | — | Submit feedback to help improve Kimi Code CLI | Yes |
 
 ## Exit

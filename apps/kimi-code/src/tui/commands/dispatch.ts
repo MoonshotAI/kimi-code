@@ -55,6 +55,7 @@ import {
   handleInitCommand,
   handleTitleCommand,
 } from './session';
+import { handleCheckUpdateCommand, handleUpdateCommand } from './update';
 import { handleUndoCommand } from './undo';
 
 // ---------------------------------------------------------------------------
@@ -96,6 +97,7 @@ export {
   handleInitCommand,
   handleTitleCommand,
 } from './session';
+export { handleCheckUpdateCommand, handleUpdateCommand } from './update';
 export { handleUndoCommand } from './undo';
 
 // ---------------------------------------------------------------------------
@@ -334,6 +336,12 @@ async function handleBuiltInSlashCommand(
       return;
     case 'logout':
       await handleLogoutCommand(host);
+      return;
+    case 'check-update':
+      await handleCheckUpdateCommand(host);
+      return;
+    case 'update':
+      await handleUpdateCommand(host);
       return;
     case 'undo':
       await handleUndoCommand(host, args);
