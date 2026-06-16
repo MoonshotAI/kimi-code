@@ -338,6 +338,10 @@ onBeforeUnmount(() => {
 // the idle look/blink loop resumes.
 const logoRef = ref<SVGSVGElement | null>(null);
 let blinkTimer: ReturnType<typeof setTimeout> | undefined;
+
+// Temporarily hide the new-workspace button while we evaluate the entry point.
+const showNewWorkspaceButton = false;
+
 function blinkOnce(): void {
   const el = logoRef.value;
   if (!el) return;
@@ -407,6 +411,7 @@ function blinkOnce(): void {
           <span>{{ t('sidebar.newChat') }}</span>
         </button>
         <button
+          v-if="showNewWorkspaceButton"
           type="button"
           class="btn-new-ws"
           :title="t('sidebar.newWorkspace')"
