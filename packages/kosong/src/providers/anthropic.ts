@@ -1110,6 +1110,15 @@ export class AnthropicChatProvider implements ChatProvider {
     return defaultHeaders;
   }
 
+  // We use the Anthropic SDK purely as a transport to arbitrary
+  // anthropic-compatible endpoints (`baseUrl` may point anywhere). Left to its
+  // defaults the SDK auto-discovers credentials from the shell environment
+  // (ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS), which
+  // would leak an out-of-band bearer/headers to a third-party endpoint even when
+  // an explicit apiKey is set. So we hard-disable every auto-discovery channel.
+  // These `null`s — and the nulled headers in _buildDefaultHeaders — are NOT
+  // redundant: removing them reintroduces credential leakage. Regression cover:
+  // test/e2e/anthropic-adapter.test.ts.
   private _buildClient(apiKey: string): Anthropic {
     return new Anthropic({
       apiKey,
