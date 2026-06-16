@@ -607,13 +607,19 @@ export class KimiTUI {
               `Session "${startup.sessionFlag}" was created under a different directory.`,
             );
           }
-          session = await this.harness.resumeSession({ id: startup.sessionFlag });
+          session = await this.harness.resumeSession({
+            id: startup.sessionFlag,
+            additionalDirs: createSessionOptions.additionalDirs,
+          });
           shouldReplayHistory = true;
         } else {
           const sessions = await this.harness.listSessions({ workDir });
           const target = sessions[0];
           if (target !== undefined) {
-            session = await this.harness.resumeSession({ id: target.id });
+            session = await this.harness.resumeSession({
+              id: target.id,
+              additionalDirs: createSessionOptions.additionalDirs,
+            });
             shouldReplayHistory = true;
           } else {
             session = await this.harness.createSession(createSessionOptions);

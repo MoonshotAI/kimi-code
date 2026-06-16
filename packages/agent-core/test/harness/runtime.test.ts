@@ -405,6 +405,51 @@ max_context_size = 100000
     expect(mainAgent?.getAdditionalDirs()).toEqual([extraDir]);
   });
 
+  it('merges caller additionalDirs when resuming a closed session', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const localDir = join(workDir, 'local');
+    const callerDir = join(workDir, 'caller');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await mkdir(localDir, { recursive: true });
+    await mkdir(callerDir, { recursive: true });
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    await writeFile(
+      join(workDir, '.kimi-code', 'local.toml'),
+      `[workspace]\nadditional_dir = ["local"]\n`,
+    );
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_additional_dirs_resume_caller',
+      workDir,
+      model: 'default-mock',
+    });
+    await rpc.closeSession({ sessionId: created.id });
+
+    const resumed = await rpc.resumeSession({
+      sessionId: created.id,
+      additionalDirs: ['caller'],
+    });
+    const session = core.sessions.get(created.id);
+    const mainAgent = session?.getReadyAgent('main');
+
+    expect(resumed.additionalDirs).toEqual([localDir, callerDir]);
+    expect(session?.getAdditionalDirs()).toEqual([localDir, callerDir]);
+    expect(mainAgent?.getAdditionalDirs()).toEqual([localDir, callerDir]);
+  });
+
   it('deduplicates project local and caller relative additionalDirs after resolving them', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');
@@ -474,6 +519,38 @@ max_context_size = 100000
     });
 
     expect(created.additionalDirs).toEqual([localDir, callerDir]);
+  });
+
+  it('resolves caller relative additionalDirs against workDir rather than projectRoot', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const projectRoot = join(tmp, 'repo');
+    const workDir = join(projectRoot, 'apps', 'foo');
+    const sharedDir = join(workDir, 'shared');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(join(projectRoot, '.git'), { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await mkdir(sharedDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_additional_dirs_workdir_relative',
+      workDir,
+      model: 'default-mock',
+      additionalDirs: ['shared'],
+    });
+
+    expect(created.additionalDirs).toEqual([sharedDir]);
+    expect(core.sessions.get(created.id)?.getAdditionalDirs()).toEqual([sharedDir]);
   });
 
   it('does not record an add-dir system reminder through the session RPC', async () => {

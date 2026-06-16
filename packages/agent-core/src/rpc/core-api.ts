@@ -58,6 +58,7 @@ export interface CloseSessionPayload {
 export interface ResumeSessionPayload {
   readonly sessionId: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly additionalDirs?: readonly string[];
 }
 
 export interface ReloadSessionPayload {

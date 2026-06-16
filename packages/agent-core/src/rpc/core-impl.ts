@@ -222,7 +222,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const localWorkspaceDirs = await readWorkspaceAdditionalDirs(parentKaos, workDir);
     const callerAdditionalDirs = await resolveWorkspaceAdditionalDirs(
       parentKaos,
-      localWorkspaceDirs.projectRoot,
+      workDir,
       options.additionalDirs ?? [],
     );
     const additionalDirs = normalizeAdditionalDirs([
@@ -329,12 +329,21 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const summary = await this.sessionStore.get(input.sessionId);
     const parentKaosForRead = overrides.kaos ?? (await this.getKaos());
     const localWorkspaceDirs = await readWorkspaceAdditionalDirs(parentKaosForRead, summary.workDir);
+    const callerAdditionalDirs = await resolveWorkspaceAdditionalDirs(
+      parentKaosForRead,
+      summary.workDir,
+      input.additionalDirs ?? [],
+    );
+    const additionalDirs = normalizeAdditionalDirs([
+      ...localWorkspaceDirs.additionalDirs,
+      ...callerAdditionalDirs,
+    ]);
     const active = this.sessions.get(summary.id);
     if (active !== undefined) {
       if (overrides.kaos !== undefined) {
         active.setToolKaos(overrides.kaos.withCwd(summary.workDir));
       }
-      await active.setAdditionalDirs(localWorkspaceDirs.additionalDirs);
+      await active.setAdditionalDirs(additionalDirs);
       return withAdditionalDirs(await resumeSessionResult(summary, active), active);
     }
 
@@ -370,7 +379,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       initializeMainAgent: false,
       pluginSessionStarts,
       appVersion: this.appVersion,
-      additionalDirs: localWorkspaceDirs.additionalDirs,
+      additionalDirs,
     });
     let warning: string | undefined;
     try {

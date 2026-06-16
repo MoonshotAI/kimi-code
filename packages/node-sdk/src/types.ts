@@ -112,6 +112,7 @@ export interface ResumeSessionInput {
   readonly id: string;
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
+  readonly additionalDirs?: readonly string[];
 }
 
 export interface AddAdditionalDirInput {
