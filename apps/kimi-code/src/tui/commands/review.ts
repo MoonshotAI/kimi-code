@@ -131,13 +131,19 @@ async function handleReviewExport(host: SlashCommandHost, idArg: string | undefi
     host.showError(`Review ${String(id)} was not found.`);
     return;
   }
-  const file = uniqueExportPath(artifact.slug);
   try {
-    await writeFile(file, formatReviewArtifactMarkdown(artifact), 'utf8');
+    const file = await exportReviewArtifact(artifact);
     host.showStatus(`Exported review to ${file}.`);
   } catch (error) {
     host.showError(`Could not export review: ${formatErrorMessage(error)}`);
   }
+}
+
+/** Write a review artifact to a unique `review-<slug>.md` file and return its path. */
+async function exportReviewArtifact(artifact: ReviewArtifact): Promise<string> {
+  const file = uniqueExportPath(artifact.slug);
+  await writeFile(file, formatReviewArtifactMarkdown(artifact), 'utf8');
+  return file;
 }
 
 /** Pick a `review-<slug>.md` path in the cwd that does not already exist. */
@@ -239,6 +245,7 @@ function openReviewReaderFullscreen(
     initialIndex: index,
     terminal: host.state.terminal,
     ...reviewMutationCallbacks(host, artifact),
+    onExport: (current) => exportReviewArtifact(current),
     onClose: (updated) => {
       ui.clear();
       for (const child of saved) ui.addChild(child);

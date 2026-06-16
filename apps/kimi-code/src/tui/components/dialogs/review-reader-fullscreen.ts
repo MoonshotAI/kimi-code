@@ -42,6 +42,8 @@ export interface ReviewReaderFullscreenProps {
   readonly onReject: (commentId: string) => Promise<ReviewArtifact | undefined>;
   readonly onRestore: (commentId: string) => Promise<ReviewArtifact | undefined>;
   readonly onClose: (artifact: ReviewArtifact) => void;
+  /** Export the review to a file; resolves to the written path (undefined on failure). */
+  readonly onExport?: (artifact: ReviewArtifact) => Promise<string | undefined>;
   readonly requestRender: () => void;
 }
 
@@ -84,6 +86,8 @@ export class ReviewReaderFullscreenApp extends Container implements Focusable {
       this.verdict('keep');
     } else if (char === 'n') {
       this.verdict('reject');
+    } else if (char === 'e') {
+      this.exportReview();
     }
   }
 
@@ -126,6 +130,22 @@ export class ReviewReaderFullscreenApp extends Container implements Focusable {
     });
   }
 
+  private exportReview(): void {
+    if (this.props.onExport === undefined) return;
+    this.flash = 'Exporting…';
+    this.props.requestRender();
+    void this.props.onExport(this.artifact).then(
+      (path) => {
+        this.flash = path === undefined ? 'Export failed.' : `Exported to ${path}`;
+        this.props.requestRender();
+      },
+      () => {
+        this.flash = 'Export failed.';
+        this.props.requestRender();
+      },
+    );
+  }
+
   override render(width: number): string[] {
     const rows = Math.max(1, this.props.terminal.rows);
     if (width < MIN_WIDTH || rows < MIN_HEIGHT) {
@@ -161,7 +181,8 @@ export class ReviewReaderFullscreenApp extends Container implements Focusable {
   }
 
   private renderFooter(width: number): string {
-    const hint = '↑/↓ comment · j/k scroll · y keep · n reject · q close';
+    const exportHint = this.props.onExport === undefined ? '' : 'e export · ';
+    const hint = `↑/↓ comment · j/k scroll · y keep · n reject · ${exportHint}q close`;
     const flash = this.flash === undefined ? '' : currentTheme.fg('success', `  ${this.flash}`);
     return cell(currentTheme.fg('primary', ` ${hint}`) + flash, width);
   }
