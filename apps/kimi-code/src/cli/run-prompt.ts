@@ -31,6 +31,7 @@ import {
 } from './goal-prompt';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
+import { quoteShellArg } from '#/utils/shell-quote';
 
 interface PromptOutput {
   readonly columns?: number | undefined;
@@ -601,7 +602,9 @@ function writeResumeHint(
   workDir?: string,
 ): void {
   const command =
-    workDir !== undefined ? `cd "${workDir}" && kimi -r ${sessionId}` : `kimi -r ${sessionId}`;
+    workDir !== undefined
+      ? `cd ${quoteShellArg(workDir)} && kimi -r ${sessionId}`
+      : `kimi -r ${sessionId}`;
   const content = `To resume this session: ${command}`;
   if (outputFormat === 'stream-json') {
     const message: PromptJsonResumeMetaMessage = {

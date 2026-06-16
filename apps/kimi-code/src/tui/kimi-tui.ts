@@ -1014,6 +1014,7 @@ export class KimiTUI {
 
   pushTranscriptEntry(entry: TranscriptEntry): void {
     this.state.transcriptEntries.push(entry);
+    this.recordSessionContent();
   }
 
   setExternalEditorRunning(running: boolean): void {
@@ -1039,9 +1040,13 @@ export class KimiTUI {
   hasSessionContent(): boolean {
     const hasContent = this.state.transcriptEntries.length > 0;
     if (hasContent) {
-      this.everHadSessionContent = true;
+      this.recordSessionContent();
     }
     return hasContent;
+  }
+
+  private recordSessionContent(): void {
+    this.everHadSessionContent = true;
   }
 
   /**
@@ -1496,6 +1501,7 @@ export class KimiTUI {
 
   appendTranscriptEntry(entry: TranscriptEntry): void {
     this.state.transcriptEntries.push(entry);
+    this.recordSessionContent();
     const component = this.createTranscriptComponent(entry);
     if (component) {
       markTranscriptComponent(component, entry);
@@ -1550,6 +1556,7 @@ export class KimiTUI {
   }
 
   private clearTranscriptAndRedraw(): void {
+    this.recordSessionContent();
     this.streamingUI.discardPending();
     this.state.transcriptEntries = [];
     this.streamingUI.disposeActiveCompactionBlock();
