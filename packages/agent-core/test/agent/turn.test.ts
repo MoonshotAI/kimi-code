@@ -1372,11 +1372,13 @@ describe('Agent turn flow', () => {
       callbacks,
       options,
     ) => {
+      options?.onRequestStart?.();
       authKeys.push(options?.auth?.apiKey ?? '<missing>');
       if (authKeys.length === 1) {
         throw new APIConnectionError('socket hang up');
       }
       await callbacks?.onMessagePart?.({ type: 'text', text: 'Recovered after retry' });
+      options?.onStreamEnd?.();
       return textResult('Recovered after retry');
     };
     const ctx = testAgent({ ...oauthOptions, generate, log: logger });

@@ -87,15 +87,13 @@ function paramsForAttempt(
   attempt: number,
   maxAttempts: number,
 ): LLMChatParams {
+  const turnStep = `${input.turnId}.${String(input.currentStep)}`;
   return {
     ...input.params,
-    requestLogContext: {
-      turnId: input.turnId,
-      step: input.currentStep,
-      stepUuid: input.stepUuid,
-      attempt,
-      maxAttempts,
-    },
+    requestLogFields:
+      attempt === 1
+        ? { turnStep }
+        : { turnStep, attempt: `${String(attempt)}/${String(maxAttempts)}` },
   };
 }
 
