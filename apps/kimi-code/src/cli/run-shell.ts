@@ -144,8 +144,9 @@ export async function runShell(
     if (!hasContent && opts.worktreePath !== undefined && opts.parentRepoPath !== undefined) {
       try {
         removeWorktree(opts.parentRepoPath, opts.worktreePath);
-      } catch {
-        // Best-effort cleanup only.
+      } catch (cleanupError) {
+        // Best-effort cleanup only; do not let cleanup failures prevent a clean exit.
+        log.warn('Failed to clean up git worktree on exit', cleanupError);
       }
     }
 
