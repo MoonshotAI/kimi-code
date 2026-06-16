@@ -57,6 +57,8 @@ const props = withDefaults(defineProps<{
   starredIds?: string[];
   /** Session skills shown in the `/` menu (after the built-in commands). */
   skills?: AppSkill[];
+  /** Hide the context-usage indicator (used on the empty-session landing page). */
+  hideContext?: boolean;
 }>(), {
   running: false,
   queued: () => [],
@@ -1226,7 +1228,7 @@ function selectModel(modelId: string): void {
           <button v-if="showCompact" class="compact-chip" @click.stop="emit('compact')">/compact</button>
 
           <!-- Context meter — circular ring + token count -->
-          <span v-if="status" class="ctx-group" :title="ctxTooltip">
+          <span v-if="status && !hideContext" class="ctx-group" :title="ctxTooltip">
             <svg class="ctx-ring" viewBox="0 0 20 20" aria-hidden="true">
               <circle
                 class="ctx-ring-track"

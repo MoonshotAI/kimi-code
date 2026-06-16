@@ -336,3 +336,25 @@ describe('Composer model dropdown', () => {
     expect(wrapper.emitted('selectModel')).toEqual([['openai/gpt-5']]);
   });
 });
+
+describe('Composer context indicator', () => {
+  const status = { model: 'Kimi K2', modelId: 'kimi/k2', ctxUsed: 0, ctxMax: 128000, permission: 'manual' };
+
+  it('shows the ctx-group by default when status is available', () => {
+    const wrapper = mountComposer({ status });
+
+    expect(wrapper.find('.ctx-group').exists()).toBe(true);
+  });
+
+  it('hides the ctx-group when hideContext is true', () => {
+    const wrapper = mountComposer({ status, hideContext: true });
+
+    expect(wrapper.find('.ctx-group').exists()).toBe(false);
+  });
+
+  it('still shows the model pill when ctx-group is hidden', () => {
+    const wrapper = mountComposer({ status, hideContext: true });
+
+    expect(wrapper.find('.model-pill').exists()).toBe(true);
+  });
+});

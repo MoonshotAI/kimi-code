@@ -2,28 +2,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ActivityState, ActivationBadges, ApprovalBlock, ChatTurn, ConnectionState, ConversationStatus, DiffViewLine, FilePreviewRequest, PaneKey, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../types';
-import type { AppGoal, AppModel, AppSkill, FsEntry, QuestionResponse, ThinkingLevel } from '../api/types';
+import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../types';
+import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../api/types';
 import type { SwarmGroup } from '../composables/swarmGroups';
-import { usePaneLayout } from '../composables/usePaneLayout';
-import type { PaneGroup, PaneLayout } from '../composables/usePaneLayout';
 import type { FileItem } from './MentionMenu.vue';
-import type { FileData } from './FilePreview.vue';
-import TabBar from './TabBar.vue';
 import ChatPane from './ChatPane.vue';
 import ChatHeader from './ChatHeader.vue';
-import DiffView from './DiffView.vue';
-import ChangedTree from './ChangedTree.vue';
-import TasksPane from './TasksPane.vue';
-import TodoCard from './TodoCard.vue';
-import FileTree from './FileTree.vue';
-import FilePreview from './FilePreview.vue';
 import Composer from './Composer.vue';
-import Terminal from './Terminal.vue';
 import SwarmCard from './SwarmCard.vue';
-import ViewGroup from './ViewGroup.vue';
-import SplitLayout from './SplitLayout.vue';
-import SideChatPanel from './SideChatPanel.vue';
 import ChatDock from './ChatDock.vue';
 import { getVisibleWorkspaces } from '../lib/workspacePicker';
 
@@ -31,14 +17,7 @@ const props = defineProps<{
   turns: ChatTurn[];
   sessionId?: string;
   approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string }[];
-  changes?: { path: string; status: string }[];
   gitInfo?: { branch: string; ahead: number; behind: number } | null;
-  // ~/diff line-by-line view
-  fileDiff?: DiffViewLine[];
-  selectedDiffPath?: string | null;
-  fileDiffLoading?: boolean;
-  loadFileDiff?: (path: string) => Promise<void> | void;
-  clearFileDiff?: () => void;
   tasks: TaskItem[];
   /** Model-maintained todo list (TodoList tool) — shown as a floating card. */
   todos?: TodoView[];
@@ -55,16 +34,13 @@ const props = defineProps<{
   queued?: QueuedPromptView[];
   searchFiles?: (q: string) => Promise<FileItem[]>;
   uploadImage?: (file: Blob, name?: string) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
-  connection?: ConnectionState;
-  activity?: ActivityState;
+  /** Git changed files (only used for the header diff counter dot). */
+  changes?: { path: string; status: string }[];
+  /** Cache-buster that remounts the chat pane when the active session changes. */
+  fileReloadKey?: string | number;
   sending?: boolean;
   fastMoon?: boolean;
-  // File browser props
-  loadDir?: (path: string) => Promise<FsEntry[]>;
-  readFile?: (path: string) => Promise<FileData | null>;
-  changesByPath?: Record<string, string>;
-  fileReloadKey?: string | number;
-  /** Mobile shell: compact chrome + give the TabBar bigger taps. */
+  /** Mobile shell: compact chrome. */
   mobile?: boolean;
   /** Bubble themes (Modern/Kimi): render chat bubbles at all widths (desktop included). */
   modern?: boolean;
@@ -92,22 +68,8 @@ const props = defineProps<{
   sessionTitle?: string;
   /** GitHub PR for the current branch, when known (shown in the chat header). */
   pr?: { number: number; state: string; url: string } | null;
-  // ---- Global preview pane (file/media opened from chat links) ------------
-  // Owned by App; rendered here as a split pane (a peer of chat/files) so the
-  // preview lives at the same level as the other views, not in a separate panel.
-  previewFile?: FileData | null;
-  previewLoading?: boolean;
-  previewError?: string | null;
-  previewLine?: number;
-  previewDownloadUrl?: string | null;
-  previewExternalActions?: boolean;
   /** Beta conversation outline: proportional bubbles, viewport indicator, hover tooltip. */
   betaToc?: boolean;
-  // ---- Per-session BTW side chat --------------------------------------------
-  sideChatTurns?: ChatTurn[];
-  sideChatRunning?: boolean;
-  sideChatSending?: boolean;
-  sideChatVisible?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -126,7 +88,6 @@ const emit = defineEmits<{
   togglePlan: [];
   toggleSwarm: [];
   toggleGoal: [];
-  openBtw: [];
   createGoal: [objective: string];
   controlGoal: [action: 'pause' | 'resume' | 'cancel'];
   compact: [];
@@ -137,24 +98,15 @@ const emit = defineEmits<{
   openThinking: [target: { turnId: string; blockIndex: number }];
   openCompaction: [target: { turnId: string }];
   openAgent: [target: { turnId: string; blockIndex: number; memberId: string }];
+  /** Chat header / files pane: focus the diff detail layer and refresh git status. */
+  openChanges: [];
+  refreshGitStatus: [];
   /** Edit + resend the last user message (App undoes, then refills composer). */
   editMessage: [text: string];
-  /** Preview pane: close it (App clears the preview state). */
-  closePreview: [];
-  /** Preview pane: open the previewed file in the external editor. */
-  openPreviewExternal: [];
-  /** Preview pane: reveal the previewed file in the OS file manager. */
-  revealPreview: [];
-  /** BTW side chat: send a follow-up prompt to the side-channel agent. */
-  sendSideChat: [text: string];
-  /** BTW side chat: close the side chat for the current session. */
-  closeSideChat: [];
   /** Empty-composer workspace picker: start a new conversation elsewhere. */
   selectWorkspace: [workspaceId: string];
   /** Empty-composer workspace picker: create a new workspace. */
   addWorkspace: [];
-  /** Chat header / files pane: focus Files -> Changed and refresh git status. */
-  refreshGitStatus: [];
   /** Chat header: open the GitHub PR in a new tab. */
   openPr: [url: string];
   /** Chat header / session row: rename current session. */
@@ -216,9 +168,6 @@ try {
   // localStorage unavailable
 }
 
-// expose a way for App.vue to imperatively switch to tasks tab
-const active = ref<PaneKey>('chat');
-const paneLayout = usePaneLayout();
 const chatPaneRef = ref<InstanceType<typeof ChatPane> | null>(null);
 const emptyComposerRef = ref<{ loadForEdit: (v: string) => void } | null>(null);
 const dockedComposerRef = ref<{ loadForEdit: (v: string) => void } | null>(null);
@@ -226,147 +175,10 @@ const copyConversationCopied = ref(false);
 const goalExpandSignal = ref(0);
 let copyConversationCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Called by App.vue via command routing to switch to a specific tab */
-function switchTab(tab: PaneKey): void {
-  active.value = tab;
-  const root = paneLayout.layout.value;
-  const groupId = root.type === 'group' ? root.id : firstGroupId(root);
-  if (groupId) paneLayout.setActive(groupId, tab);
-}
-
 /** Load text into whichever composer is currently mounted (docked vs the
     empty-session composer). Used by App for "edit & resend the last message". */
 function loadComposerForEdit(value: string): void {
   (dockedComposerRef.value ?? emptyComposerRef.value)?.loadForEdit(value);
-}
-
-/** Open (or focus) the preview pane — App calls this when a file/media preview
-    is requested, so the preview shows as a split pane at the chat/files level. */
-function openPreviewPane(): void {
-  paneLayout.openPreview();
-}
-
-/** Close the preview pane and tell App to clear the preview state. */
-function closePreviewPane(): void {
-  paneLayout.closePreview();
-  emit('closePreview');
-}
-
-/** Open the BTW side-chat as a split pane (mobile falls back to a tab). */
-function openBtwPane(): void {
-  if (props.mobile) {
-    switchTab('btw');
-    return;
-  }
-  paneLayout.openBtw();
-}
-
-/** Remove the BTW pane from the layout without touching App state. */
-function cleanupBtwPane(): void {
-  paneLayout.closeBtw();
-  if (active.value === 'btw') active.value = 'chat';
-}
-
-/** Close the BTW side-chat pane and tell App to clear the side-chat state. */
-function closeSideChatPane(): void {
-  emit('closeSideChat');
-  cleanupBtwPane();
-}
-
-// When App clears the preview (e.g. on a session switch), drop the now-empty
-// preview pane. Watcher batching means the transient null state while a preview
-// is opening (loading already true by then) never triggers this.
-watch(
-  () => [props.previewFile, props.previewLoading, props.previewError] as const,
-  ([file, loading, error]) => {
-    if (!file && !loading && !error) paneLayout.closePreview();
-  },
-);
-
-// If the side chat is closed (or the active session switches to one without a
-// side chat), make sure no pane group is stuck on the BTW pane.
-watch(
-  () => props.sideChatVisible,
-  (visible) => {
-    if (!visible) cleanupBtwPane();
-  },
-);
-defineExpose({ switchTab, loadComposerForEdit, openPreviewPane, openWorkspaceFileInFiles, openBtwPane });
-
-function firstGroupId(node: PaneLayout): string | undefined {
-  if (node.type === 'group') return node.id;
-  return node.children.map(firstGroupId).find((id): id is string => id !== undefined);
-}
-
-function selectGroupPane(group: PaneGroup, pane: PaneKey): void {
-  // Only update the top-level/mobile active tab for real conversation tabs.
-  // Transient side panes (preview / btw) are split groups and should not steal
-  // the composer / mobile tab state.
-  if (pane !== 'preview' && pane !== 'btw') {
-    active.value = pane;
-  }
-  paneLayout.setActive(group.id, pane);
-}
-
-function findGroupIdByActive(node: PaneLayout, pane: PaneKey): string | undefined {
-  if (node.type === 'group') return node.active === pane ? node.id : undefined;
-  return node.children.map((child) => findGroupIdByActive(child, pane)).find((id): id is string => id !== undefined);
-}
-
-function focusFilesPane(): void {
-  active.value = 'files';
-  const root = paneLayout.layout.value;
-  const groupId = findGroupIdByActive(root, 'chat') ?? firstGroupId(root);
-  if (groupId) paneLayout.setActive(groupId, 'files');
-}
-
-function openChangedFiles(): void {
-  changedView.value = 'changed';
-  filesShowPreview.value = false;
-  selectedFile.value = null;
-  selectedFileLine.value = undefined;
-  props.clearFileDiff?.();
-  focusFilesPane();
-}
-
-async function openWorkspaceFileInFiles(target: FilePreviewRequest): Promise<void> {
-  focusFilesPane();
-  if (isChanged(target.path)) {
-    changedView.value = 'changed';
-    pickChanged(target.path);
-    return;
-  }
-  changedView.value = 'all';
-  filesShowPreview.value = true;
-  props.clearFileDiff?.();
-  previewLoading.value = true;
-  selectedFile.value = null;
-  selectedFileLine.value = target.line;
-  try {
-    const result = await props.readFile?.(target.path);
-    if (result) {
-      selectedFile.value = {
-        ...result,
-        path: result.path || target.path,
-      };
-    } else {
-      selectedFile.value = {
-        path: target.path,
-        content: '',
-        encoding: 'utf-8',
-        mime: 'text/plain',
-        isBinary: false,
-        size: 0,
-      };
-    }
-  } finally {
-    previewLoading.value = false;
-  }
-}
-
-function refreshChanges(): void {
-  changedView.value = 'changed';
-  emit('refreshGitStatus');
 }
 
 function handleCopyConversationCopied(): void {
@@ -383,25 +195,12 @@ function focusGoal(): void {
 }
 
 function focusSwarm(): void {
-  active.value = 'chat';
   void nextTick(() => {
     const first = panesRef.value?.querySelector<HTMLElement>('.swarm-card');
     first?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
 }
 
-// The TabBar is hidden for an empty session (the centred quick-start composer
-// takes the whole pane) — if the user was parked on tasks/todo/files when the
-// session emptied out, they'd be trapped with no tabs AND no composer. Snap
-// back to chat whenever the tab chrome disappears.
-watch(
-  () => props.turns.length === 0 && !props.sessionLoading,
-  (chromeHidden) => {
-    if (chromeHidden && active.value !== 'chat') active.value = 'chat';
-  },
-);
-
-// Bubble chat layout: always on mobile, and on desktop under Modern/Kimi.
 const bubble = computed(() => props.mobile === true || props.modern === true);
 
 const bashTasks = computed(() => props.tasks.filter((t) => t.kind !== 'subagent'));
@@ -541,19 +340,8 @@ function hideTooltip(): void {
   tooltip.value.visible = false;
 }
 
-// Desktop renders chat per split-group (`group.active`), not via the top-level
-// `active` ref (which only tracks the mobile single-pane tab). Drive the TOC off
-// "is a chat pane actually visible in the layout" so splitting another group to
-// files/terminal doesn't wrongly hide the whole outline.
-function layoutHasChatGroup(node: PaneLayout): boolean {
-  return node.type === 'group'
-    ? node.active === 'chat'
-    : node.children.some(layoutHasChatGroup);
-}
-
 const showConversationToc = computed(() =>
   !props.mobile &&
-  layoutHasChatGroup(paneLayout.layout.value) &&
   !props.sessionLoading &&
   conversationTocItems.value.length > 1,
 );
@@ -571,120 +359,8 @@ const pendingApproval = computed(() =>
   props.approvals && props.approvals.length > 0 ? props.approvals[0] : undefined,
 );
 
-
 // ---------------------------------------------------------------------------
-// File browser state (local to this pane, lives here so re-mounting the pane
-// doesn't reset it unless the session changes)
-// ---------------------------------------------------------------------------
-
-const selectedFile = ref<FileData | null>(null);
-const selectedFileLine = ref<number | undefined>(undefined);
-const previewLoading = ref(false);
-// Mobile drill-down: false = showing the tree, true = showing the preview with a
-// Back affordance. Desktop ignores this (the split shows both at once).
-const filesShowPreview = ref(false);
-
-async function handleFileSelect(entry: FsEntry): Promise<void> {
-  if (!props.readFile) return;
-  // On mobile, drill into the preview view immediately (even while loading).
-  if (props.mobile) filesShowPreview.value = true;
-  previewLoading.value = true;
-  selectedFile.value = null;
-  selectedFileLine.value = undefined;
-  try {
-    const result = await props.readFile(entry.path);
-    if (result) {
-      selectedFile.value = result;
-    }
-  } finally {
-    previewLoading.value = false;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Merged ~/files tab: a navigator (left/full-width) with a Changed|All toggle,
-// and an adaptive content pane (right/drill-down) — a changed file shows its
-// line-by-line diff, an unchanged file shows its content preview.
-// ---------------------------------------------------------------------------
-const changedView = ref<'changed' | 'all'>('changed');
-
-// Non-git workspace (gitInfo is null): there is no Changed view to offer —
-// the Changed|All toggle is hidden and the full file tree shows directly.
-const hasGit = computed(() => (props.gitInfo ?? null) !== null);
-const filesView = computed<'changed' | 'all'>(() => (hasGit.value ? changedView.value : 'all'));
-
-// The "Changed" navigator can show a flat list or a directory tree (persisted).
-const CHANGED_LAYOUT_KEY = 'kimi-web.changed-layout';
-function loadChangedLayout(): 'list' | 'tree' {
-  try {
-    const v = localStorage.getItem(CHANGED_LAYOUT_KEY);
-    if (v === 'tree' || v === 'list') return v;
-  } catch {
-    // ignore
-  }
-  return 'tree';
-}
-const changedLayout = ref<'list' | 'tree'>(loadChangedLayout());
-function toggleChangedLayout(): void {
-  changedLayout.value = changedLayout.value === 'tree' ? 'list' : 'tree';
-  try {
-    localStorage.setItem(CHANGED_LAYOUT_KEY, changedLayout.value);
-  } catch {
-    // ignore
-  }
-}
-
-function isChanged(path: string): boolean {
-  return props.changesByPath?.[path] !== undefined;
-}
-
-/** Pick a changed file → show its diff. Clears any file-content preview first. */
-function pickChanged(path: string): void {
-  selectedFile.value = null;
-  selectedFileLine.value = undefined;
-  if (props.mobile) filesShowPreview.value = true;
-  void props.loadFileDiff?.(path);
-}
-
-/** Pick a tree entry → diff if it's a changed file, else its content preview. */
-async function pickEntry(entry: FsEntry): Promise<void> {
-  if (entry.kind === 'directory') return;
-  if (isChanged(entry.path)) {
-    pickChanged(entry.path);
-    return;
-  }
-  props.clearFileDiff?.();
-  await handleFileSelect(entry);
-}
-
-/** Mobile: return from the content pane back to the navigator; clear selections. */
-function handleFilesBack(): void {
-  filesShowPreview.value = false;
-  props.clearFileDiff?.();
-  selectedFile.value = null;
-  selectedFileLine.value = undefined;
-}
-
-// No-op loadDir fallback so FileTree never receives undefined
-function defaultLoadDir(): Promise<FsEntry[]> {
-  return Promise.resolve([]);
-}
-
-// ---------------------------------------------------------------------------
-// Auto-scroll: "following" state machine + "new messages" pill (chat tab only)
-//
-// `following` is an INTENT flag, not a position snapshot. While true, every
-// content/layout change re-pins the view to the bottom. It only turns off
-// when the USER scrolls up out of the bottom zone — our own scrolls only ever
-// move down, so an upward scrollTop move is always user intent. It turns back
-// on when the user returns to the bottom zone, clicks the pill, sends a
-// prompt, answers a question, or switches session/tab.
-//
-// The previous design gated on an `atBottom` snapshot updated by scroll
-// events, which broke under streaming: the scroll event fired by our own
-// scrollToBottom could observe a view that had ALREADY grown past the
-// threshold and flip the gate off mid-stream (thinking/tool phases), leaving
-// the view stuck above the newest content.
+// Auto-scroll: "following" state machine + "new messages" pill
 // ---------------------------------------------------------------------------
 
 const panesRef = ref<HTMLElement | null>(null);
@@ -695,20 +371,6 @@ const chatDockStyle = computed(() => ({
 }));
 type ComposerHandle = { loadForEdit: (value: string) => void };
 type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
-
-// A desktop split can show more than one chat group at once. Each chat group
-// registers its scroll container + dock here, keyed by group id; the mobile /
-// empty single pane registers under SINGLE_PANE_KEY. resolveScrollTarget() then
-// drives auto-follow at ONE deterministic target — the first chat group in the
-// layout — instead of whichever ref callback happened to fire last (which, in
-// DOM order, is the last group). Extra chat panes render as mirrors and simply
-// don't drive auto-follow.
-const SINGLE_PANE_KEY = '__single__';
-const chatPaneEls = new Map<string, HTMLElement>();
-const chatDockEls = new Map<string, HTMLElement>();
-const chatComposers = new Map<string, ComposerHandle>();
-const paneBinderCache = new Map<string, (el: RefArg) => void>();
-const dockBinderCache = new Map<string, (el: RefArg) => void>();
 
 function toHtmlEl(el: RefArg): HTMLElement | null {
   if (el instanceof HTMLElement) return el;
@@ -721,84 +383,26 @@ function updatePanesScrollbarWidth(): void {
   panesScrollbarWidth.value = el ? Math.max(0, el.offsetWidth - el.clientWidth) : 0;
 }
 
-/** First group whose active tab is chat, depth-first. Determines the follow
-    target when several chat groups are open in a split. */
-function firstChatGroupId(node: PaneLayout): string | null {
-  if (node.type === 'group') return node.active === 'chat' ? node.id : null;
-  for (const child of node.children) {
-    const id = firstChatGroupId(child);
-    if (id) return id;
-  }
-  return null;
+function bindChatPane(el: RefArg): void {
+  const node = toHtmlEl(el);
+  panesRef.value = node;
+  if (node) rebindScrollObservers();
 }
 
-// The registered pane that currently owns auto-follow. The single-pane branch
-// (mobile, or the empty composer before a session loads) always wins; otherwise
-// the first chat group in the layout.
-const followPaneKey = computed<string>(() => {
-  if (props.mobile || (props.turns.length === 0 && !props.sessionLoading)) return SINGLE_PANE_KEY;
-  return firstChatGroupId(paneLayout.layout.value) ?? SINGLE_PANE_KEY;
-});
-
-function bindChatPane(key: string, el: RefArg): void {
+function bindChatDock(el: RefArg): void {
   const node = toHtmlEl(el);
-  if (node) chatPaneEls.set(key, node);
-  else chatPaneEls.delete(key);
-  resolveScrollTarget();
-}
-
-function bindChatDock(key: string, el: RefArg): void {
-  const node = toHtmlEl(el);
-  if (node) chatDockEls.set(key, node);
-  else chatDockEls.delete(key);
+  dockRef.value = node ?? null;
   if (el && 'loadForEdit' in el && typeof el.loadForEdit === 'function') {
-    chatComposers.set(key, { loadForEdit: el.loadForEdit.bind(el) });
+    dockedComposerRef.value = { loadForEdit: el.loadForEdit.bind(el) };
   } else {
-    chatComposers.delete(key);
+    dockedComposerRef.value = null;
   }
-  resolveScrollTarget();
+  ensureDockObserved();
 }
 
-// Stable per-key ref callbacks: Vue only invokes them on a real mount/unmount of
-// that group's element (never on every re-render), so the registry stays
-// authoritative regardless of child patch ordering.
-function panesBinderFor(key: string): (el: RefArg) => void {
-  let fn = paneBinderCache.get(key);
-  if (!fn) {
-    fn = (el) => bindChatPane(key, el);
-    paneBinderCache.set(key, fn);
-  }
-  return fn;
-}
-function dockBinderFor(key: string): (el: RefArg) => void {
-  let fn = dockBinderCache.get(key);
-  if (!fn) {
-    fn = (el) => bindChatDock(key, el);
-    dockBinderCache.set(key, fn);
-  }
-  return fn;
-}
-// The mobile / empty single pane + its dock.
-const setPanesRef = panesBinderFor(SINGLE_PANE_KEY);
-const setChatDockRef = dockBinderFor(SINGLE_PANE_KEY);
-
-/** Point panesRef / dockRef / the docked composer at the current follow target,
-    and re-attach the scroll observers + re-pin when the target element changes
-    (tab switch, session reload, or the active chat group changing in a split). */
-function resolveScrollTarget(): void {
-  const key = followPaneKey.value;
-  const pane = chatPaneEls.get(key) ?? null;
-  dockRef.value = chatDockEls.get(key) ?? null;
-  dockedComposerRef.value = chatComposers.get(key) ?? null;
-  updatePanesScrollbarWidth();
-  if (pane === panesRef.value) return;
-  panesRef.value = pane;
-  updatePanesScrollbarWidth();
-  rebindScrollObservers();
-  if (active.value === 'chat' && (following.value || hasUserActionFollowLock())) {
-    scheduleStableFollow();
-  }
-}
+// Silence noUnusedLocals: both are used as :ref callbacks in the template.
+void bindChatPane;
+void bindChatDock;
 
 const following = ref(true);
 const showPill = ref(false);
@@ -816,8 +420,6 @@ function distanceFromBottom(): number {
 
 let lastScrollTop = 0;
 let userActionFollowUntil = 0;
-// Timestamp of the last SMOOTH programmatic scroll (the only async multi-event
-// path). The synchronous streaming scrolls are intentionally NOT recorded here.
 let lastSmoothScroll = 0;
 let stableFollowRaf = 0;
 let stableFollowToken = 0;
@@ -831,15 +433,6 @@ function onPanesScroll(): void {
   if (!el) return;
   const top = el.scrollTop;
 
-  // Treat scroll events within 100 ms of a SMOOTH programmatic scroll as
-  // non-user; just sync lastScrollTop so the next real user scroll compares
-  // correctly. This window only covers the async, multi-event smooth path (the
-  // pill). The streaming follow uses the synchronous scrollTop setter, which
-  // updates lastScrollTop immediately — its async echo event lands at
-  // top === lastScrollTop and is a harmless no-op. Gating streaming on this
-  // window was the bug: during the thinking phase the view re-pins every
-  // ~120 ms, so a user's upward scroll almost always fell inside a fresh window
-  // and was swallowed, yanking them back to the bottom.
   if (performance.now() - lastSmoothScroll < 100) {
     lastScrollTop = top;
     return;
@@ -853,23 +446,8 @@ function onPanesScroll(): void {
     return;
   }
   if (top < lastScrollTop - 1 && dist > 1) {
-    // ANY upward move is user intent — stop following immediately, even inside
-    // the bottom zone. Content that mutates on a fast cadence (e.g. the moon
-    // spinner re-renders every 120ms) re-pins on every change; if upward moves
-    // inside the zone didn't break the follow, each wheel tick (~20-60px, less
-    // than the 80px zone) would be yanked back before the user could escape.
-    // `dist > 1` exempts the browser CLAMPING scrollTop when content shrinks
-    // (e.g. a turn auto-folding) — that lands exactly at the bottom and is not
-    // a user scroll.
     following.value = false;
   } else if (dist <= BOTTOM_THRESHOLD && top > lastScrollTop + 1) {
-    // STRICTLY downward arrival in the bottom zone → follow again. Equal
-    // positions must not re-arm the follow: browsers re-fire scroll events at
-    // an unchanged position (coalesced/synthetic scrolls), and treating those
-    // as "downward" would re-enable the follow right after the user scrolled
-    // up inside the zone — the next content mutation then yanks them back to
-    // the bottom. Our own scrollToBottom sets `following` itself, so it does
-    // not depend on this branch.
     following.value = true;
     showPill.value = false;
   }
@@ -880,10 +458,6 @@ function onPanesScroll(): void {
 function scrollToBottom(smooth = false): void {
   const el = panesRef.value;
   if (!el) return;
-  // Use the synchronous scrollTop setter for instant scrolling to avoid race
-  // conditions where a delayed scroll event from el.scrollTo() sees a stale
-  // lastScrollTop and incorrectly treats the scroll as upward user intent.
-  // Only the smooth path emits delayed events, so only it records the window.
   if (smooth && typeof el.scrollTo === 'function') {
     lastSmoothScroll = performance.now();
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
@@ -930,14 +504,7 @@ function cancelRaf(id: number): void {
   else clearTimeout(id);
 }
 
-/**
- * Re-pin until the tail layout is stable for a few consecutive frames. A page
- * refresh can rebuild the transcript before the working moon, copy footer,
- * markdown images, or code highlighting have their final height; this waits for
- * those late tail elements instead of trusting one early scroll.
- */
 function scheduleStableFollow(maxFrames = 36): void {
-  if (active.value !== 'chat') return;
   if (!following.value && !hasUserActionFollowLock()) return;
   const token = ++stableFollowToken;
   let lastKey = '';
@@ -951,7 +518,6 @@ function scheduleStableFollow(maxFrames = 36): void {
   const tick = () => {
     stableFollowRaf = 0;
     if (token !== stableFollowToken) return;
-    if (active.value !== 'chat') return;
     if (!following.value && !hasUserActionFollowLock()) return;
     scrollToBottom(false);
     const key = currentLayoutKey();
@@ -966,14 +532,7 @@ function scheduleStableFollow(maxFrames = 36): void {
   stableFollowRaf = raf(tick);
 }
 
-// Scroll key: reacts to new turns AND to ANY streaming content on the last turn —
-// thinking deltas, text deltas, and tool output all grow the view, so all must
-// trigger the follow-to-bottom (previously only text was tracked, so the view
-// stopped following during the thinking phase).
 const scrollKey = computed(() => {
-  if (active.value !== 'chat') return '';
-  // Include approvals so the view scrolls when a new approval card appears
-  // (e.g. a tool call waiting for user confirmation at the end of the stream).
   const approvalIds = (props.approvals ?? []).map((a) => a.approvalId).join(',');
   const t = props.turns;
   if (t.length === 0) return `0|${approvalIds}`;
@@ -987,38 +546,15 @@ const scrollKey = computed(() => {
   return `${t.length}:${last.text.length}:${thinkingLen}:${toolsLen}|${approvalIds}`;
 });
 
-// Vue-tracked content changes (redundant with the observers below, kept as a
-// cheap safety net + the pill trigger for data-driven updates).
 watch(scrollKey, async () => {
-  if (active.value !== 'chat') return;
   await nextTick();
   if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
   else showPill.value = true;
   updateTocViewport();
 });
 
-// When switching to the chat tab, scroll to bottom immediately. Leaving the
-// files tab resets the mobile drill-down back to the tree so re-entering it
-// never lands on a stale preview.
-watch(active, async (tab) => {
-  if (tab !== 'files') filesShowPreview.value = false;
-  if (tab !== 'chat') return;
-  following.value = true;
-  await nextTick();
-  ensureDockObserved();
-  scheduleStableFollow();
-  updateTocViewport();
-});
-
 watch(dockRef, () => {
   ensureDockObserved();
-});
-
-// The follow target moves when the layout's first chat group changes (a group
-// switched to/from chat, closed, or reordered) without that exact element
-// mounting/unmounting. Re-resolve so panesRef tracks the deterministic target.
-watch(followPaneKey, () => {
-  resolveScrollTarget();
 });
 
 watch(
@@ -1029,20 +565,10 @@ watch(
   },
 );
 
-// New session (reload key changes): reset the mobile files drill-down + clear
-// any previously-opened preview, and land at the bottom of the newly-selected
-// session. `following` stays on afterwards, so the markdown/code-highlighting
-// that keeps growing the content after the load is followed automatically.
 watch(
   () => props.fileReloadKey,
   async () => {
-    filesShowPreview.value = false;
-    selectedFile.value = null;
     following.value = true;
-    // Reset the scroll tracking baseline so the browser clamping scroll event
-    // that fires when the new (usually shorter) session renders is not mistaken
-    // for a user upward scroll, which would flip following back off before the
-    // stable-follow loop can pin the view to the bottom.
     lastScrollTop = 0;
     await nextTick();
     scheduleStableFollow();
@@ -1050,13 +576,10 @@ watch(
   },
 );
 
-// Re-pin when a freshly-opened session finishes its async message load (the
-// fileReloadKey watch above fires BEFORE the REST load completes).
 watch(
   () => props.sessionLoading,
   async (loading, was) => {
-    if (loading || !was) return; // only on the load-finished (true -> false) edge
-    if (active.value !== 'chat') return;
+    if (loading || !was) return;
     following.value = true;
     await nextTick();
     scheduleStableFollow();
@@ -1064,18 +587,10 @@ watch(
   },
 );
 
-// Re-pin when a turn finishes (running true -> false). The end of a stream is the
-// one moment the content keeps changing height AFTER the last delta the observers
-// saw: the moon/working footer is removed, the streamed Markdown re-renders in
-// its final (non-streaming) form, late syntax highlighting reflows code blocks,
-// and the copy-button footer appears. Each can leave the view a hair short of the
-// bottom. Re-pin across the next few frames + once more after highlighting likely
-// settled, but only while still following (never yank a user who scrolled up).
 watch(
   () => props.running,
   async (now, was) => {
-    if (now || !was) return; // only on the run-finished edge
-    if (active.value !== 'chat') return;
+    if (now || !was) return;
     if (!following.value && !hasUserActionFollowLock()) return;
     await nextTick();
     scheduleStableFollow(48);
@@ -1083,8 +598,6 @@ watch(
   },
 );
 
-// The user sent a prompt (or answered an agent question): always jump to the
-// bottom, even if they were scrolled up reading history.
 function followAfterUserAction(): void {
   following.value = true;
   showPill.value = false;
@@ -1113,18 +626,6 @@ function handleApproval(
   emit('approval', id, response);
 }
 
-// ---------------------------------------------------------------------------
-// Follow triggers.
-// - MutationObserver on the scroller subtree: streaming text, thinking deltas,
-//   tool output, markdown, new cards. May raise the pill when not following.
-// - ResizeObservers: (a) the bottom dock — QuestionCard replacing the
-//   Composer, the queue strip or attachment chips growing the dock all shrink
-//   the scroll viewport WITHOUT any scroll/mutation event, which used to
-//   leave the newest content hidden behind the dock; (b) the scroller itself
-//   (window resizes); (c) the content column (image loads etc. that change
-//   size without DOM mutations). Resizes re-pin but never raise the pill —
-//   nothing new arrived.
-// ---------------------------------------------------------------------------
 let contentObserver: MutationObserver | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let observedContent: Element | null = null;
@@ -1133,7 +634,6 @@ let scrollRaf = 0;
 let pillEligible = false;
 
 function scheduleFollow(allowPill: boolean): void {
-  if (active.value !== 'chat') return;
   pillEligible = pillEligible || allowPill;
   if (scrollRaf) return;
   const schedule = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 16) as unknown as number;
@@ -1146,8 +646,6 @@ function scheduleFollow(allowPill: boolean): void {
   }) as unknown as number;
 }
 
-/** Keep the ResizeObserver attached to the scroller's current content column
-    (it is destroyed/recreated on tab switches and session changes). */
 function ensureContentObserved(): void {
   if (!resizeObserver) return;
   const el = panesRef.value?.firstElementChild ?? null;
@@ -1166,11 +664,6 @@ function ensureDockObserved(): void {
   if (el) resizeObserver.observe(el);
 }
 
-/** Re-point the Mutation + Resize observers at the CURRENT scroll target. The
-    scroll container is recreated on tab switches and session reloads, and in a
-    desktop split the followed chat group can change — without this, the
-    observers would keep watching a detached or non-followed scroller and stop
-    driving the follow. */
 function rebindScrollObservers(): void {
   const el = panesRef.value;
   updatePanesScrollbarWidth();
@@ -1193,11 +686,9 @@ function onContentMutated(): void {
   scheduleFollow(true);
 }
 
-// Background tabs freeze rAF, so a stream that ran while the tab was hidden
-// may leave the view above the bottom; re-pin when the tab becomes visible.
 function onVisibilityChange(): void {
   if (typeof document === 'undefined') return;
-  if (document.visibilityState === 'visible' && following.value && active.value === 'chat') {
+  if (document.visibilityState === 'visible' && following.value) {
     scheduleStableFollow();
   }
 }
@@ -1217,9 +708,6 @@ function showAbortToast(): void {
   }, ABORT_TOAST_DURATION);
 }
 
-// Single entry point for manual interrupt so the Escape key and the composer's
-// stop button give the SAME feedback (the toast). Previously only Escape showed
-// it, so clicking stop aborted silently.
 function handleInterrupt(): void {
   showAbortToast();
   emit('interrupt');
@@ -1233,7 +721,6 @@ function onKeyDown(event: KeyboardEvent): void {
 }
 
 onMounted(() => {
-  // Initial scroll to bottom on first load.
   nextTick(() => {
     if (typeof MutationObserver === 'function') {
       contentObserver = new MutationObserver(onContentMutated);
@@ -1244,8 +731,6 @@ onMounted(() => {
         scheduleFollow(false);
       });
     }
-    // Attach both observers to whatever the current follow target is (the ref
-    // callbacks already ran during mount and registered it).
     rebindScrollObservers();
     scheduleStableFollow(48);
     updateTocViewport();
@@ -1271,6 +756,8 @@ onUnmounted(() => {
     document.removeEventListener('keydown', onKeyDown);
   }
 });
+
+defineExpose({ loadComposerForEdit });
 </script>
 
 <template>
@@ -1291,7 +778,7 @@ onUnmounted(() => {
       :is-git-repo="!!gitInfo"
       :pr="pr"
       :copied="copyConversationCopied"
-      @open-changes="openChangedFiles"
+      @open-changes="emit('openChanges')"
       @copy-all="chatPaneRef?.copyConversation()"
       @copy-final-summary="chatPaneRef?.copyFinalSummary()"
       @open-pr="pr && emit('openPr', pr.url)"
@@ -1338,545 +825,199 @@ onUnmounted(() => {
       </Transition>
     </nav>
 
-    <TabBar
-      v-if="mobile && !(turns.length === 0 && !sessionLoading)"
-      :active="active"
-      :changes-count="changesCount"
-      :mobile="mobile"
-      :has-btw="props.sideChatVisible"
-      @select="active = $event"
-    />
-
-    <SplitLayout
-      v-if="!mobile && !(turns.length === 0 && !sessionLoading)"
-      class="layout-root"
-      :layout="paneLayout.layout.value"
-      @resize="paneLayout.resize"
-    >
-      <template #group="{ group }">
-        <ViewGroup
-          :active="group.active"
-          :group-id="group.id"
-          :changes-count="changesCount"
-          :can-close="paneLayout.layout.value.type !== 'group'"
-          :has-preview="group.views.includes('preview')"
-          :has-btw="group.views.includes('btw')"
-          @select="selectGroupPane(group, $event)"
-          @split="paneLayout.split(group.id, $event)"
-          @close="group.active === 'preview' ? closePreviewPane() : group.active === 'btw' ? closeSideChatPane() : paneLayout.close(group.id)"
-        >
-          <div
-            class="group-panes"
-            :class="{
-              panes: group.active !== 'chat',
-              'files-layout': group.active === 'files',
-              'terminal-layout': group.active === 'terminal',
-            }"
-            @click="closeDockPanel"
-          >
-            <template v-if="group.active === 'chat'">
-              <div class="chat-layout">
-                <div
-                  :ref="panesBinderFor(group.id)"
-                  class="panes chat-scroll"
-                  @scroll.passive="onPanesScroll"
-                >
-                  <div class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
-                    <ChatPane
-                      ref="chatPaneRef"
-                      :key="fileReloadKey ?? 'no-session'"
-                      :turns="turns"
-                      :approvals="approvals"
-                      :bubble="bubble"
-                      :mobile="mobile"
-                      :running="running"
-                      :sending="sending"
-                      :fast-moon="fastMoon"
-                      :session-loading="sessionLoading"
-                      :compaction="compaction"
-                      @open-file="emit('openFile', $event)"
-                      @open-media="emit('openMedia', $event)"
-                      @copy-conversation-copied="handleCopyConversationCopied"
-                      @open-thinking="emit('openThinking', $event)"
-                      @open-agent="emit('openAgent', $event)"
-                      @open-compaction="emit('openCompaction', $event)"
-                      @edit-message="emit('editMessage', $event)"
-                    />
-                    <div v-if="activeSwarms.length > 0" class="swarm-stack">
-                      <SwarmCard v-for="groupItem in activeSwarms" :key="groupItem.id" :group="groupItem" />
-                    </div>
-                  </div>
-                </div>
-                <ChatDock
-                  v-if="!(turns.length === 0 && !sessionLoading)"
-                  :ref="dockBinderFor(group.id)"
-                  :style="chatDockStyle"
-                  :session-id="sessionId"
-                  :running="running"
-                  :queued="queued"
-                  :search-files="searchFiles"
-                  :upload-image="uploadImage"
-                  :status="status"
-                  :thinking="thinking"
-                  :plan-mode="planMode"
-                  :swarm-mode="swarmMode"
-                  :goal-mode="goalMode"
-                  :activation-badges="activationBadges"
-                  :models="models"
-                  :starred-ids="starredIds"
-                  :skills="skills"
-                  :goal="goal"
-                  :goal-expand-signal="goalExpandSignal"
-                  :dock-panel="dockPanel"
-                  :bash-tasks="bashTasks"
-                  :subagent-tasks="subagentTasks"
-                  :bash-running="bashRunning"
-                  :subagent-running="subagentRunning"
-                  :todo-done-count="todoDoneCount"
-                  :has-dock-work="hasDockWork"
-                  :todos="todos"
-                  :pending-question="pendingQuestion"
-                  :pending-approval="pendingApproval"
-                  :mobile="mobile"
-                  @toggle-dock-panel="toggleDockPanel($event)"
-                  @close-dock-panel="closeDockPanel()"
-                  @answer="handleQuestionAnswer"
-                  @dismiss="emit('dismiss', $event)"
-                  @approval="handleApproval"
-                  @cancel-task="emit('cancelTask', $event)"
-                  @control-goal="emit('controlGoal', $event)"
-                  @submit="handleComposerSubmit"
-                  @steer="emit('steer', $event)"
-                  @command="emit('command', $event)"
-                  @interrupt="handleInterrupt"
-                  @unqueue="emit('unqueue', $event)"
-                  @edit-queued="emit('editQueued', $event)"
-                  @set-permission="emit('setPermission', $event)"
-                  @set-thinking="emit('setThinking', $event)"
-                  @toggle-plan="emit('togglePlan')"
-                  @toggle-swarm="emit('toggleSwarm')"
-                  @toggle-goal="emit('toggleGoal')"
-                  @open-btw="emit('openBtw')"
-                  @create-goal="emit('createGoal', $event)"
-                  @focus-goal="focusGoal"
-                  @focus-swarm="focusSwarm"
-                  @compact="emit('compact')"
-                  @pick-model="emit('pickModel')"
-                  @select-model="emit('selectModel', $event)"
-                />
-              </div>
-            </template>
-            <TasksPane
-              v-else-if="group.active === 'tasks'"
-              :tasks="tasks"
-              @cancel="emit('cancelTask', $event)"
-            />
-            <TodoCard
-              v-else-if="group.active === 'todo'"
-              :todos="todos ?? []"
-              inline
-            />
-            <Terminal
-              v-else-if="group.active === 'terminal' && sessionId"
-              :session-id="sessionId"
-            />
-            <!-- Preview pane: a file/media preview opened from a chat link, shown
-                 here as a peer of chat/files instead of a separate side panel. -->
-            <FilePreview
-              v-else-if="group.active === 'preview'"
-              :file="previewFile ?? null"
-              :loading="previewLoading ?? false"
-              :error="previewError ?? null"
-              :line="previewLine"
-              :download-url="previewDownloadUrl ?? null"
-              closable
-              :external-actions="previewExternalActions"
-              @close="closePreviewPane"
-              @open-external="emit('openPreviewExternal')"
-              @reveal="emit('revealPreview')"
-            />
-            <SideChatPanel
-              v-else-if="group.active === 'btw'"
-              :turns="props.sideChatTurns ?? []"
-              :running="props.sideChatRunning ?? false"
-              :sending="props.sideChatSending ?? false"
-              @send="emit('sendSideChat', $event)"
-              @close="closeSideChatPane"
-            />
-            <template v-else-if="group.active === 'files'">
-              <div v-show="!mobile || !filesShowPreview" class="files-nav">
-                <div v-if="hasGit" class="nav-seg">
-                  <div class="seg-group" role="group" :aria-label="t('fileTree.segLabel')">
-                    <button type="button" class="seg-btn" :class="{ on: changedView === 'changed' }" :aria-pressed="changedView === 'changed'" @click="changedView = 'changed'">
-                      {{ t('fileTree.changed') }}
-                      <span v-if="(changesCount ?? 0) > 0" class="seg-n">{{ changesCount }}</span>
-                    </button>
-                    <button type="button" class="seg-btn" :class="{ on: changedView === 'all' }" :aria-pressed="changedView === 'all'" @click="changedView = 'all'">{{ t('fileTree.all') }}</button>
-                  </div>
-                </div>
-                <div v-if="filesView === 'changed'" class="nav-tools">
-                  <button type="button" class="layout-toggle" :title="t('fileTree.refreshChanged')" :aria-label="t('fileTree.refreshChanged')" @click="refreshChanges">
-                    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 6a5 5 0 1 0 1 3"/><path d="M13 2v4h-4"/></svg>
-                  </button>
-                  <button type="button" class="layout-toggle" :title="changedLayout === 'tree' ? t('fileTree.listView') : t('fileTree.treeView')" :aria-label="changedLayout === 'tree' ? t('fileTree.listView') : t('fileTree.treeView')" @click="toggleChangedLayout">
-                    <svg v-if="changedLayout === 'list'" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 4h2M3 8h2M3 12h2"/><path d="M7.5 4l1.5 1.5L7.5 7"/><path d="M9 5.5h4M9 9.5h3.5M9 12.5h3"/></svg>
-                    <svg v-else viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h10"/></svg>
-                  </button>
-                </div>
-                <div class="files-nav-body">
-                  <template v-if="filesView === 'changed'">
-                    <DiffView v-if="changedLayout === 'list'" mode="list" :changes="changes ?? []" :git-info="gitInfo ?? null" @open="pickChanged" />
-                    <ChangedTree v-else :changes="changes ?? []" @open="pickChanged" />
-                  </template>
-                  <FileTree v-else :load-dir="loadDir ?? defaultLoadDir" :changes-by-path="changesByPath ?? {}" :reload-key="fileReloadKey" @select="pickEntry" />
-                </div>
-              </div>
-              <div v-if="!mobile" class="files-divider" aria-hidden="true"></div>
-              <div v-show="!mobile || filesShowPreview" class="files-content">
-                <button v-if="mobile" type="button" class="files-back" @click="handleFilesBack">
-                  <span aria-hidden="true">&#8592;</span>
-                  <span class="files-back-label">{{ t('fileTree.backToTree') }}</span>
-                </button>
-                <DiffView v-if="selectedDiffPath" mode="detail" :hide-back="true" :changes="changes ?? []" :git-info="gitInfo ?? null" :file-diff="fileDiff ?? []" :selected-diff-path="selectedDiffPath ?? null" :file-diff-loading="fileDiffLoading ?? false" />
-                <FilePreview v-else-if="selectedFile || previewLoading" :file="selectedFile" :loading="previewLoading" :line="selectedFileLine" />
-                <div v-else class="files-empty">{{ filesView === 'changed' ? t('fileTree.selectChanged') : t('fileTree.selectFile') }}</div>
-              </div>
-            </template>
-          </div>
-        </ViewGroup>
-      </template>
-    </SplitLayout>
-
-    <div
-      v-else
-      class="panes"
-      :class="{ 'files-layout': active === 'files', 'terminal-layout': active === 'terminal' }"
-      @click="closeDockPanel"
-    >
-      <!-- Chat reading column: constrained to a comfortable max width and
-           aligned left or centered within the pane. -->
-      <template v-if="active === 'chat'">
-        <div class="chat-layout">
-          <div
-            :ref="setPanesRef"
-            class="panes chat-scroll"
-            @scroll.passive="onPanesScroll"
-          >
-            <div class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
-              <template v-if="turns.length === 0 && !sessionLoading">
-          <!-- Empty session: Composer rendered in the centre of the pane -->
-          <div class="empty-spacer" />
-          <div class="empty-hint">
-            <span class="empty-hint-title">{{ t('composer.emptyConversationTitle') }}</span>
-            <span class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
-            <!-- Workspace picker: choose where this new conversation starts. -->
-            <div v-if="(workspaces?.length ?? 0) > 0" class="ws-pick">
-              <button type="button" class="ws-pick-btn" :title="t('conversation.switchWorkspace')" @click.stop="wsPickOpen = !wsPickOpen">
-                <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
-                  <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
-                  <path d="M1 5.5h12"/>
-                </svg>
-                <span class="ws-pick-name">{{ activeWorkspaceLabel }}</span>
-                <svg class="ws-pick-chev" :class="{ open: wsPickOpen }" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="4,6 8,10 12,6" />
-                </svg>
-              </button>
-              <div v-if="wsPickOpen" class="ws-pick-backdrop" @click="wsPickOpen = false" />
-              <div v-if="wsPickOpen" class="ws-pick-menu">
-                <button
-                  v-for="w in visibleWorkspaces"
-                  :key="w.id"
-                  type="button"
-                  class="ws-pick-item"
-                  :class="{ on: w.id === activeWorkspaceId }"
-                  @click.stop="pickWorkspace(w.id)"
-                >
-                  <span class="ws-pick-item-name">{{ w.name }}</span>
-                  <span class="ws-pick-item-path">{{ w.shortPath }}</span>
-                </button>
-                <button
-                  v-if="hiddenWorkspaceCount > 0"
-                  type="button"
-                  class="ws-pick-item ws-pick-more"
-                  @click.stop="wsPickExpanded = !wsPickExpanded"
-                >
-                  <span>{{ t('conversation.moreWorkspaces', { count: hiddenWorkspaceCount }) }}</span>
-                </button>
-                <div class="ws-pick-divider" />
-                <button
-                  type="button"
-                  class="ws-pick-action"
-                  @click.stop="wsPickOpen = false; emit('addWorkspace')"
-                >
-                  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
-                    <path d="M8 3v10M3 8h10"/>
+    <div class="chat-layout">
+      <div
+        :ref="bindChatPane"
+        class="panes chat-scroll"
+        @scroll.passive="onPanesScroll"
+      >
+        <div class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
+          <template v-if="turns.length === 0 && !sessionLoading">
+            <!-- Empty session: Composer rendered in the centre of the pane -->
+            <div class="empty-spacer" />
+            <div class="empty-hint">
+              <span class="empty-hint-title">{{ t('composer.emptyConversationTitle') }}</span>
+              <span class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
+              <!-- Workspace picker: choose where this new conversation starts. -->
+              <div v-if="(workspaces?.length ?? 0) > 0" class="ws-pick">
+                <button type="button" class="ws-pick-btn" :title="t('conversation.switchWorkspace')" @click.stop="wsPickOpen = !wsPickOpen">
+                  <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+                    <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
+                    <path d="M1 5.5h12"/>
                   </svg>
-                  <span>{{ t('conversation.addWorkspace') }}</span>
+                  <span class="ws-pick-name">{{ activeWorkspaceLabel }}</span>
+                  <svg class="ws-pick-chev" :class="{ open: wsPickOpen }" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="4,6 8,10 12,6" />
+                  </svg>
                 </button>
+                <div v-if="wsPickOpen" class="ws-pick-backdrop" @click="wsPickOpen = false" />
+                <div v-if="wsPickOpen" class="ws-pick-menu">
+                  <button
+                    v-for="w in visibleWorkspaces"
+                    :key="w.id"
+                    type="button"
+                    class="ws-pick-item"
+                    :class="{ on: w.id === activeWorkspaceId }"
+                    @click.stop="pickWorkspace(w.id)"
+                  >
+                    <span class="ws-pick-item-name">{{ w.name }}</span>
+                    <span class="ws-pick-item-path">{{ w.shortPath }}</span>
+                  </button>
+                  <button
+                    v-if="hiddenWorkspaceCount > 0"
+                    type="button"
+                    class="ws-pick-item ws-pick-more"
+                    @click.stop="wsPickExpanded = !wsPickExpanded"
+                  >
+                    <span>{{ t('conversation.moreWorkspaces', { count: hiddenWorkspaceCount }) }}</span>
+                  </button>
+                  <div class="ws-pick-divider" />
+                  <button
+                    type="button"
+                    class="ws-pick-action"
+                    @click.stop="wsPickOpen = false; emit('addWorkspace')"
+                  >
+                    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+                      <path d="M8 3v10M3 8h10"/>
+                    </svg>
+                    <span>{{ t('conversation.addWorkspace') }}</span>
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-          <Composer
-            ref="emptyComposerRef"
-            class="empty-composer"
-            :session-id="sessionId"
-            :running="running"
-            :queued="queued"
-            :search-files="searchFiles"
-            :upload-image="uploadImage"
-            :status="status"
-            :thinking="thinking"
-            :plan-mode="planMode"
-            :swarm-mode="swarmMode"
-            :goal-mode="goalMode"
-            :activation-badges="activationBadges"
-            :models="models"
-            :starred-ids="starredIds"
-            :skills="skills"
-            @submit="handleComposerSubmit"
-            @steer="emit('steer', $event)"
-            @command="emit('command', $event)"
-            @interrupt="handleInterrupt"
-            @unqueue="emit('unqueue', $event)"
-            @edit-queued="emit('editQueued', $event)"
-            @set-permission="emit('setPermission', $event)"
-            @set-thinking="emit('setThinking', $event)"
-            @toggle-plan="emit('togglePlan')"
-            @toggle-swarm="emit('toggleSwarm')"
-            @toggle-goal="emit('toggleGoal')"
-            @open-btw="emit('openBtw')"
-            @create-goal="emit('createGoal', $event)"
-            @control-goal="emit('controlGoal', $event)"
-            @focus-goal="focusGoal"
-            @focus-swarm="focusSwarm"
-            @compact="emit('compact')"
-            @pick-model="emit('pickModel')"
-            @select-model="emit('selectModel', $event)"
-          />
-          <div class="empty-spacer" />
-        </template>
-        <template v-else>
-          <ChatPane
-            ref="chatPaneRef"
-            :key="fileReloadKey ?? 'no-session'"
-            :turns="turns"
-            :approvals="approvals"
-            :bubble="bubble"
-            :mobile="mobile"
-            :running="running"
-            :sending="sending"
-            :fast-moon="fastMoon"
-            :session-loading="sessionLoading"
-            :compaction="compaction"
-            @open-file="emit('openFile', $event)"
-            @open-media="emit('openMedia', $event)"
-            @copy-conversation-copied="handleCopyConversationCopied"
-            @open-thinking="emit('openThinking', $event)"
-            @open-compaction="emit('openCompaction', $event)"
-            @edit-message="emit('editMessage', $event)"
-          />
-          <div v-if="activeSwarms.length > 0" class="swarm-stack">
-            <SwarmCard v-for="group in activeSwarms" :key="group.id" :group="group" />
-          </div>
-        </template>
-            </div>
-          </div>
-          <ChatDock
-            v-if="!(turns.length === 0 && !sessionLoading)"
-            :ref="setChatDockRef"
-            :style="chatDockStyle"
-            :session-id="sessionId"
-            :running="running"
-            :queued="queued"
-            :search-files="searchFiles"
-            :upload-image="uploadImage"
-            :status="status"
-            :thinking="thinking"
-            :plan-mode="planMode"
-            :swarm-mode="swarmMode"
-            :goal-mode="goalMode"
-            :activation-badges="activationBadges"
-            :models="models"
-            :starred-ids="starredIds"
-            :skills="skills"
-            :goal="goal"
-            :goal-expand-signal="goalExpandSignal"
-            :dock-panel="dockPanel"
-            :bash-tasks="bashTasks"
-            :subagent-tasks="subagentTasks"
-            :bash-running="bashRunning"
-            :subagent-running="subagentRunning"
-            :todo-done-count="todoDoneCount"
-            :has-dock-work="hasDockWork"
-            :todos="todos"
-            :pending-question="pendingQuestion"
-            :pending-approval="pendingApproval"
-            :mobile="mobile"
-            @toggle-dock-panel="toggleDockPanel($event)"
-            @close-dock-panel="closeDockPanel()"
-            @answer="handleQuestionAnswer"
-            @dismiss="emit('dismiss', $event)"
-            @approval="handleApproval"
-            @cancel-task="emit('cancelTask', $event)"
-            @control-goal="emit('controlGoal', $event)"
-            @submit="handleComposerSubmit"
-            @steer="emit('steer', $event)"
-            @command="emit('command', $event)"
-            @interrupt="handleInterrupt"
-            @unqueue="emit('unqueue', $event)"
-            @edit-queued="emit('editQueued', $event)"
-            @set-permission="emit('setPermission', $event)"
-            @set-thinking="emit('setThinking', $event)"
-            @toggle-plan="emit('togglePlan')"
-            @toggle-swarm="emit('toggleSwarm')"
-            @toggle-goal="emit('toggleGoal')"
-            @open-btw="emit('openBtw')"
-            @create-goal="emit('createGoal', $event)"
-            @focus-goal="focusGoal"
-            @focus-swarm="focusSwarm"
-            @compact="emit('compact')"
-            @pick-model="emit('pickModel')"
-            @select-model="emit('selectModel', $event)"
-          />
-        </div>
-      </template>
-      <TasksPane
-        v-else-if="active === 'tasks'"
-        :tasks="tasks"
-        @cancel="emit('cancelTask', $event)"
-      />
-
-      <!-- ~/todo tab: inline todo list. -->
-      <TodoCard
-        v-else-if="active === 'todo'"
-        :todos="todos ?? []"
-        inline
-      />
-
-      <Terminal
-        v-else-if="active === 'terminal' && sessionId"
-        :session-id="sessionId"
-      />
-
-      <!-- ~/btw tab: per-session side-channel agent conversation. -->
-      <SideChatPanel
-        v-else-if="active === 'btw'"
-        :turns="props.sideChatTurns ?? []"
-        :running="props.sideChatRunning ?? false"
-        :sending="props.sideChatSending ?? false"
-        @send="emit('sendSideChat', $event)"
-        @close="closeSideChatPane"
-      />
-
-      <!-- Merged ~/files tab: a navigator (Changed-first list / full tree via the
-           Changed|All toggle) on the left, an adaptive content pane on the right
-           (diff for changed files, content preview for unchanged ones). Desktop =
-           side-by-side split; mobile = single-column drill-down (v-show gates which
-           half is visible; the divider only exists on desktop). -->
-      <template v-else-if="active === 'files'">
-        <div v-show="!mobile || !filesShowPreview" class="files-nav">
-          <div v-if="hasGit" class="nav-seg">
-            <div class="seg-group" role="group" :aria-label="t('fileTree.segLabel')">
-              <button
-                type="button"
-                class="seg-btn"
-                :class="{ on: changedView === 'changed' }"
-                :aria-pressed="changedView === 'changed'"
-                @click="changedView = 'changed'"
-              >
-                {{ t('fileTree.changed') }}
-                <span v-if="(changesCount ?? 0) > 0" class="seg-n">{{ changesCount }}</span>
-              </button>
-              <button
-                type="button"
-                class="seg-btn"
-                :class="{ on: changedView === 'all' }"
-                :aria-pressed="changedView === 'all'"
-                @click="changedView = 'all'"
-              >{{ t('fileTree.all') }}</button>
-            </div>
-          </div>
-          <!-- list/tree layout toggle for the Changed view -->
-          <div v-if="filesView === 'changed'" class="nav-tools">
-            <button
-              type="button"
-              class="layout-toggle"
-              :title="t('fileTree.refreshChanged')"
-              :aria-label="t('fileTree.refreshChanged')"
-              @click="refreshChanges"
-            >
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 6a5 5 0 1 0 1 3"/><path d="M13 2v4h-4"/></svg>
-            </button>
-            <button
-              type="button"
-              class="layout-toggle"
-              :title="changedLayout === 'tree' ? t('fileTree.listView') : t('fileTree.treeView')"
-              :aria-label="changedLayout === 'tree' ? t('fileTree.listView') : t('fileTree.treeView')"
-              @click="toggleChangedLayout"
-            >
-              <svg v-if="changedLayout === 'list'" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 4h2M3 8h2M3 12h2"/><path d="M7.5 4l1.5 1.5L7.5 7"/><path d="M9 5.5h4M9 9.5h3.5M9 12.5h3"/></svg>
-              <svg v-else viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h10"/></svg>
-            </button>
-          </div>
-          <div class="files-nav-body">
-            <template v-if="filesView === 'changed'">
-              <DiffView
-                v-if="changedLayout === 'list'"
-                mode="list"
-                :changes="changes ?? []"
-                :git-info="gitInfo ?? null"
-                @open="pickChanged"
-              />
-              <ChangedTree v-else :changes="changes ?? []" @open="pickChanged" />
-            </template>
-            <FileTree
-              v-else
-              :load-dir="loadDir ?? defaultLoadDir"
-              :changes-by-path="changesByPath ?? {}"
-              :reload-key="fileReloadKey"
-              @select="pickEntry"
+            <Composer
+              ref="emptyComposerRef"
+              class="empty-composer"
+              :session-id="sessionId"
+              :running="running"
+              :queued="queued"
+              :search-files="searchFiles"
+              :upload-image="uploadImage"
+              :status="status"
+              :thinking="thinking"
+              :plan-mode="planMode"
+              :swarm-mode="swarmMode"
+              :goal-mode="goalMode"
+              :activation-badges="activationBadges"
+              :models="models"
+              :starred-ids="starredIds"
+              :skills="skills"
+              hide-context
+              @submit="handleComposerSubmit"
+              @steer="emit('steer', $event)"
+              @command="emit('command', $event)"
+              @interrupt="handleInterrupt"
+              @unqueue="emit('unqueue', $event)"
+              @edit-queued="emit('editQueued', $event)"
+              @set-permission="emit('setPermission', $event)"
+              @set-thinking="emit('setThinking', $event)"
+              @toggle-plan="emit('togglePlan')"
+              @toggle-swarm="emit('toggleSwarm')"
+              @toggle-goal="emit('toggleGoal')"
+              @open-btw="emit('command', '/btw')"
+              @create-goal="emit('createGoal', $event)"
+              @control-goal="emit('controlGoal', $event)"
+              @focus-goal="focusGoal"
+              @focus-swarm="focusSwarm"
+              @compact="emit('compact')"
+              @pick-model="emit('pickModel')"
+              @select-model="emit('selectModel', $event)"
             />
-          </div>
+            <div class="empty-spacer" />
+          </template>
+          <template v-else>
+            <ChatPane
+              ref="chatPaneRef"
+              :key="fileReloadKey ?? 'no-session'"
+              :turns="turns"
+              :approvals="approvals"
+              :bubble="bubble"
+              :mobile="mobile"
+              :running="running"
+              :sending="sending"
+              :fast-moon="fastMoon"
+              :session-loading="sessionLoading"
+              :compaction="compaction"
+              @open-file="emit('openFile', $event)"
+              @open-media="emit('openMedia', $event)"
+              @copy-conversation-copied="handleCopyConversationCopied"
+              @open-thinking="emit('openThinking', $event)"
+              @open-compaction="emit('openCompaction', $event)"
+              @open-agent="emit('openAgent', $event)"
+              @edit-message="emit('editMessage', $event)"
+            />
+            <div v-if="activeSwarms.length > 0" class="swarm-stack">
+              <SwarmCard v-for="group in activeSwarms" :key="group.id" :group="group" />
+            </div>
+          </template>
         </div>
-
-        <div v-if="!mobile" class="files-divider" aria-hidden="true"></div>
-
-        <div v-show="!mobile || filesShowPreview" class="files-content">
-          <button v-if="mobile" type="button" class="files-back" @click="handleFilesBack">
-            <span aria-hidden="true">&#8592;</span>
-            <span class="files-back-label">{{ t('fileTree.backToTree') }}</span>
-          </button>
-          <DiffView
-            v-if="selectedDiffPath"
-            mode="detail"
-            :hide-back="true"
-            :changes="changes ?? []"
-            :git-info="gitInfo ?? null"
-            :file-diff="fileDiff ?? []"
-            :selected-diff-path="selectedDiffPath ?? null"
-            :file-diff-loading="fileDiffLoading ?? false"
-          />
-          <FilePreview
-            v-else-if="selectedFile || previewLoading"
-            :file="selectedFile"
-            :loading="previewLoading"
-            :line="selectedFileLine"
-          />
-          <div v-else class="files-empty">
-            {{ filesView === 'changed' ? t('fileTree.selectChanged') : t('fileTree.selectFile') }}
-          </div>
-        </div>
-      </template>
+      </div>
+      <ChatDock
+        v-if="!(turns.length === 0 && !sessionLoading)"
+        :ref="bindChatDock"
+        :style="chatDockStyle"
+        :session-id="sessionId"
+        :running="running"
+        :queued="queued"
+        :search-files="searchFiles"
+        :upload-image="uploadImage"
+        :status="status"
+        :thinking="thinking"
+        :plan-mode="planMode"
+        :swarm-mode="swarmMode"
+        :goal-mode="goalMode"
+        :activation-badges="activationBadges"
+        :models="models"
+        :starred-ids="starredIds"
+        :skills="skills"
+        :goal="goal"
+        :goal-expand-signal="goalExpandSignal"
+        :dock-panel="dockPanel"
+        :bash-tasks="bashTasks"
+        :subagent-tasks="subagentTasks"
+        :bash-running="bashRunning"
+        :subagent-running="subagentRunning"
+        :todo-done-count="todoDoneCount"
+        :has-dock-work="hasDockWork"
+        :todos="todos"
+        :pending-question="pendingQuestion"
+        :pending-approval="pendingApproval"
+        :mobile="mobile"
+        @toggle-dock-panel="toggleDockPanel($event)"
+        @close-dock-panel="closeDockPanel()"
+        @answer="handleQuestionAnswer"
+        @dismiss="emit('dismiss', $event)"
+        @approval="handleApproval"
+        @cancel-task="emit('cancelTask', $event)"
+        @control-goal="emit('controlGoal', $event)"
+        @submit="handleComposerSubmit"
+        @steer="emit('steer', $event)"
+        @command="emit('command', $event)"
+        @interrupt="handleInterrupt"
+        @unqueue="emit('unqueue', $event)"
+        @edit-queued="emit('editQueued', $event)"
+        @set-permission="emit('setPermission', $event)"
+        @set-thinking="emit('setThinking', $event)"
+        @toggle-plan="emit('togglePlan')"
+        @toggle-swarm="emit('toggleSwarm')"
+        @toggle-goal="emit('toggleGoal')"
+          @open-btw="emit('command', '/btw')"
+          @create-goal="emit('createGoal', $event)"
+          @focus-goal="focusGoal"
+          @focus-swarm="focusSwarm"
+          @compact="emit('compact')"
+          @pick-model="emit('pickModel')"
+          @select-model="emit('selectModel', $event)"
+      />
     </div>
 
-    <!-- "New messages" pill — only visible on chat tab when the user has
-         scrolled up and new content has arrived. -->
+    <!-- "New messages" pill — only visible when scrolled up and new content arrives. -->
     <Transition name="pill">
       <button
-        v-if="showPill && active === 'chat'"
+        v-if="showPill"
         class="newmsg-pill"
-        @click="scrollToBottom(true)"
         :aria-label="t('conversation.jumpToLatestAria')"
+        @click="scrollToBottom(true)"
       >
         <svg
           class="pill-chevron"
@@ -1922,21 +1063,8 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* The pane manages its own follow-to-bottom; native scroll anchoring would
-     otherwise pin content BELOW an expanding fold and make it open upward. */
   overflow-anchor: none;
-  /* Reserve the scrollbar gutter permanently. The composer growing (e.g. a
-     multi-line paste) shrinks this viewport and can flip the scrollbar
-     in/out of existence — without a stable gutter every flip shifts the
-     centered reading column sideways. */
   scrollbar-gutter: stable;
-}
-.layout-root {
-  flex: 1;
-  min-height: 0;
-}
-.group-panes {
-  height: 100%;
 }
 
 /* Chat tab layout: the message list scrolls, while the dock stays as the
@@ -1954,14 +1082,10 @@ onUnmounted(() => {
   position: relative;
 }
 
-/* Chat reading column max-width + alignment. The max-width applies in both
-   modes; align-left hugs the left gutter, align-center centers in the pane. */
+/* Chat reading column max-width + alignment. */
 .content-wrap {
   width: 100%;
   max-width: var(--read-max);
-  /* Fill the scroll viewport so an empty conversation can vertically center its
-     hint (ChatPane grows via flex:1). With messages it grows past 100% and the
-     .panes scrolls as usual. */
   min-height: 100%;
   display: flex;
   flex-direction: column;
@@ -1990,11 +1114,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   padding: 0;
-  top: 74px;
+  top: 86px;
   bottom: auto;
   left: calc(50% + (var(--read-max) / 2) + 8px);
   width: 46px;
-  max-height: calc(100% - 74px - 130px);
+  max-height: calc(100% - 86px - 130px);
   opacity: 0.45;
   transition: opacity 0.18s ease;
 }
@@ -2151,7 +1275,6 @@ onUnmounted(() => {
   display: inline-block;
   font-size: calc(var(--ui-font-size) + 2px);
   color: var(--dim);
-  /* Long workspace names must not wrap into a multi-line hint. */
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2263,242 +1386,32 @@ onUnmounted(() => {
   scrollbar-gutter: auto;
 }
 
-/* Merged files pane: horizontal split (navigator | divider | content), no outer scroll */
-.panes.files-layout {
-  display: flex;
-  flex-direction: row;
-  overflow: hidden;
-}
-.panes.terminal-layout {
-  overflow: hidden;
-}
-
-/* Left navigator: the Changed|All toggle + (changed list / full tree). */
-.files-nav {
-  width: 38%;
-  min-width: 180px;
-  max-width: 340px;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.files-nav-body {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Changed | All segmented toggle (+ list/tree layout toggle on the right). */
-.nav-seg {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
-.seg-group {
-  flex: 1;
-  display: flex;
-  min-width: 0;
-}
-.layout-toggle {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 24px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--muted);
-  cursor: pointer;
-}
-.layout-toggle:hover { color: var(--blue); border-color: var(--bd); }
-.seg-btn {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  padding: 4px 8px;
-  cursor: pointer;
-  transition: background 0.14s, color 0.14s;
-}
-.seg-btn:first-child { border-radius: 6px 0 0 6px; border-right: none; }
-.seg-btn:last-child { border-radius: 0 6px 6px 0; }
-.seg-btn:hover { color: var(--ink); }
-.seg-btn.on {
-  background: var(--soft);
-  color: var(--blue2);
-  font-weight: 600;
-  border-color: var(--bd);
-}
-.seg-n {
-  font-size: max(9px, calc(var(--ui-font-size) - 4.5px));
-  background: var(--blue);
-  color: var(--bg); /* on-accent text */
-  border-radius: 8px;
-  padding: 0 5px;
-  line-height: 1.5;
-}
-.seg-btn.on .seg-n { background: var(--blue); }
-
-/* Layout toggle bar (tree/list) sits on its own row below the Changed|All toggle. */
-.nav-tools {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 4px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
-
-.files-divider {
-  width: 1px;
-  background: var(--line);
-  flex: none;
-  align-self: stretch;
-}
-
-/* Right content: adaptive (diff detail / file preview / empty). */
-.files-content {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-.files-empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 24px;
-  color: var(--muted);
-  font-size: calc(var(--ui-font-size) - 1.5px);
-  text-align: center;
-}
-
-/* Make the child components (DiffView list/detail, FileTree, FilePreview) fill
-   their pane and scroll internally. */
-.files-nav-body :deep(.changes-pane),
-.files-content :deep(.changes-pane),
-.files-content :deep(.file-preview) {
-  flex: 1;
-  min-height: 0;
-}
-
-/* ---------------------------------------------------------------------------
-   Merged files pane MOBILE drill-down: a single full-width column. The navigator
-   fills the pane; picking a file swaps to a full-width content pane with its own
-   Back row. v-show hides the inactive half. No side-by-side split.
-   --------------------------------------------------------------------------- */
-@media (max-width: 640px) {
-  .nav-seg {
-    gap: 6px;
-    padding: 6px 8px;
-  }
-  .seg-btn {
-    min-width: 0;
-    padding: 6px 6px;
-    font-size: var(--ui-font-size-xs);
-  }
-  .seg-n {
-    flex: none;
-    padding: 0 4px;
-  }
-
-  .panes.files-layout {
-    flex-direction: column;
-  }
-  .files-nav,
-  .files-content {
-    width: 100%;
-    max-width: none;
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .files-content :deep(.file-preview) { flex: 1; min-height: 0; }
-
-  .files-back {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    min-height: 44px;
-    padding: 8px 14px;
-    background: var(--panel);
-    border: none;
-    border-bottom: 1px solid var(--line);
-    color: var(--dim);
-    font-family: var(--mono);
-    font-size: var(--ui-font-size-lg);
-    cursor: pointer;
-    text-align: left;
-  }
-  .files-back:active { background: var(--panel2); }
-  .files-back-label { font-weight: 600; }
-}
-
-/* "New messages" floating pill */
 .newmsg-pill {
   position: absolute;
-  bottom: 112px; /* above the Composer toolbar */
   left: 50%;
+  bottom: 12px;
   transform: translateX(-50%);
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 14px 6px 10px;
-  background: var(--blue);
-  color: var(--bg); /* on-accent text */
-  border: none;
-  border-radius: 20px;
-  font-size: var(--ui-font-size);
-  font-family: var(--mono);
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--ui-font-size-sm);
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
   z-index: 10;
-  white-space: nowrap;
 }
-.newmsg-pill:hover {
-  background: var(--blue2);
-}
-@media (max-width: 640px) {
-  .newmsg-pill {
-    bottom: max(98px, calc(env(safe-area-inset-bottom) + 88px));
-    max-width: calc(100vw - 28px);
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-}
+.newmsg-pill:hover { background: var(--panel2); }
 .pill-chevron {
-  width: 14px;
-  height: 14px;
-  flex: none;
+  width: 12px;
+  height: 12px;
 }
-
-/* Pill enter/leave transition */
 .pill-enter-active,
 .pill-leave-active {
-  transition: opacity 0.15s, transform 0.15s;
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 .pill-enter-from,
 .pill-leave-to {
@@ -2506,43 +1419,27 @@ onUnmounted(() => {
   transform: translateX(-50%) translateY(8px);
 }
 
-/* Manual-abort toast: centered near the top of the conversation pane */
 .abort-toast {
-  position: fixed;
-  top: 56px;
+  position: absolute;
   left: 50%;
+  top: 60px;
   transform: translateX(-50%);
-  z-index: 50;
-  padding: 8px 18px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.12);
-  font-size: var(--ui-font-size);
-  font-family: var(--sans);
-  color: var(--ink);
-  white-space: nowrap;
-  pointer-events: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: #fff;
+  font-size: var(--ui-font-size-sm);
+  z-index: 20;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
 }
 .abort-toast-text {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
-.abort-toast-text::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--muted);
-  flex: none;
-}
-
-/* Abort-toast enter/leave transition */
 .abort-toast-enter-active,
 .abort-toast-leave-active {
-  transition: opacity 0.2s, transform 0.2s;
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 .abort-toast-enter-from,
 .abort-toast-leave-to {
