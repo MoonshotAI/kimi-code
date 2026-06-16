@@ -47,6 +47,7 @@ export async function readSessionIndex(
       sessionId: entry.sessionId,
       sessionDir,
       workDir: resolve(entry.workDir),
+      archived: entry.archived,
     });
   }
   return result;

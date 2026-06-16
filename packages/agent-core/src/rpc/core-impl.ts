@@ -422,11 +422,23 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   async archiveSession({ sessionId }: ArchiveSessionPayload): Promise<SessionSummary> {
-    return this.sessionStore.archive(sessionId);
+    const summary = await this.sessionStore.archive(sessionId);
+    // Keep the active session's in-memory metadata in sync so a later
+    // metadata write does not clobber the archived flag in state.json.
+    const active = this.sessions.get(sessionId);
+    if (active !== undefined) {
+      active.metadata.archived = true;
+    }
+    return summary;
   }
 
   async unarchiveSession({ sessionId }: UnarchiveSessionPayload): Promise<SessionSummary> {
-    return this.sessionStore.unarchive(sessionId);
+    const summary = await this.sessionStore.unarchive(sessionId);
+    const active = this.sessions.get(sessionId);
+    if (active !== undefined) {
+      active.metadata.archived = false;
+    }
+    return summary;
   }
 
   async renameSession({ sessionId, ...payload }: RenameSessionRequest): Promise<void> {
