@@ -79,4 +79,28 @@ describe('SkillSearchIndex tokenization', () => {
     const results = index.search('jwt');
     expect(results.some((r) => r.name === 'auth-skill')).toBe(true);
   });
+
+  it('ranks name matches above description-only matches', () => {
+    const index = new SkillSearchIndex();
+    index.build([
+      makeSkill('playwright-e2e', 'End-to-end testing toolkit'),
+      makeSkill('generic-browser', 'Browser automation with Playwright and Selenium'),
+    ]);
+    const results = index.search('playwright');
+    expect(results[0]?.name).toBe('playwright-e2e');
+  });
+
+  it('expands synonyms bidirectionally', () => {
+    const index = new SkillSearchIndex();
+    index.build([makeSkill('container-build', 'Docker container build optimization')]);
+    const results = index.search('docker image build');
+    expect(results.some((r) => r.name === 'container-build')).toBe(true);
+  });
+
+  it('ignores stopwords in the query', () => {
+    const index = new SkillSearchIndex();
+    index.build([makeSkill('docker-expert', 'Docker containerization and deployment')]);
+    const results = index.search('the docker container');
+    expect(results[0]?.name).toBe('docker-expert');
+  });
 });
