@@ -29,4 +29,18 @@ describe('SkillSearchIndex tokenization', () => {
     expect(results).toHaveLength(1);
     expect(results[0]?.name).toBe('pt-skill');
   });
+
+  it('returns empty when no result meets the minimum score threshold', () => {
+    const index = new SkillSearchIndex();
+    index.build([makeSkill('docker-expert', 'Docker containerization')]);
+    const results = index.search('react component', 10, 0.1);
+    expect(results).toHaveLength(0);
+  });
+
+  it('returns low-relevance results when threshold is zero', () => {
+    const index = new SkillSearchIndex();
+    index.build([makeSkill('docker-expert', 'Docker containerization')]);
+    const results = index.search('react container', 10, 0);
+    expect(results.length).toBeGreaterThan(0);
+  });
 });

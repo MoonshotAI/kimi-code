@@ -192,12 +192,12 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
    * Search skills by free-text query. Delegates to the BM25 index.
    * Lazily rebuilds the index if skills were registered since the last build.
    */
-  searchSkills(query: string, limit?: number): readonly SkillSearchResult[] {
+  searchSkills(query: string, limit?: number, minScore?: number): readonly SkillSearchResult[] {
     if (this.indexDirty) {
       this.searchIndex.build(this.listSearchableSkills());
       this.indexDirty = false;
     }
-    return this.searchIndex.search(query, limit);
+    return this.searchIndex.search(query, limit, minScore);
   }
 
   getModelSkillListing(): string {

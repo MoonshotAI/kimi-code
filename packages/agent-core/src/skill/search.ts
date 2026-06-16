@@ -230,7 +230,7 @@ export class SkillSearchIndex {
       this.entries.reduce((sum, e) => sum + e.length, 0) / (this.totalDocs || 1);
   }
 
-  search(query: string, limit = 10): readonly SkillSearchResult[] {
+  search(query: string, limit = 10, minScore = 0): readonly SkillSearchResult[] {
     if (this.totalDocs === 0) return [];
 
     const baseQueryTokens = tokenize(query, { removeStopwords: true });
@@ -272,7 +272,7 @@ export class SkillSearchIndex {
     const candidates: Array<{ index: number; score: number }> = [];
     for (let i = 0; i < this.totalDocs; i++) {
       const s = scores[i] ?? 0;
-      if (s > 0) {
+      if (s > minScore) {
         candidates.push({ index: i, score: s });
       }
     }
