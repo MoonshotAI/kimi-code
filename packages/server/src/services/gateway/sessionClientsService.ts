@@ -23,7 +23,7 @@ export class SessionClientsService extends Disposable implements ISessionClients
       this._bySession.set(sessionId, set);
     }
     set.add(connection);
-    this._logger.info(
+    this._logger.debug(
       {
         sessionId,
         subscriberCount: set.size,
@@ -43,7 +43,7 @@ export class SessionClientsService extends Disposable implements ISessionClients
 
   getConnections(sessionId: string): Iterable<WsConnection> {
     const set = this._bySession.get(sessionId);
-    this._logger.info(
+    this._logger.debug(
       {
         sessionId,
         found: set ? set.size : 0,
