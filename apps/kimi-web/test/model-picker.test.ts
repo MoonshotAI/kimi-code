@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils';
+import { nextTick } from 'vue';
 import { createI18n } from 'vue-i18n';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -72,5 +73,35 @@ describe('ModelPicker provider tabs', () => {
     await wrapper.findAll('.tab-btn').find((button) => button.text() === 'All')!.trigger('click');
 
     expect(wrapper.findAll('.model-row')).toHaveLength(2);
+  });
+});
+
+describe('ModelPicker dialog focus', () => {
+  it('is a modal that focuses the search box and restores focus on close', async () => {
+    // An opener that "owns" focus before the dialog appears.
+    const opener = document.createElement('button');
+    document.body.appendChild(opener);
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+
+    const wrapper = mount(ModelPicker, {
+      props: { models, current: 'kimi/k2' },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    });
+
+    const dialog = wrapper.find('.dialog');
+    expect(dialog.attributes('aria-modal')).toBe('true');
+
+    await nextTick();
+    // Opening moves focus into the dialog (the search field).
+    expect(document.activeElement).toBe(wrapper.find('.search-input').element);
+
+    wrapper.unmount();
+    await nextTick();
+    // Closing returns focus to whoever opened it.
+    expect(document.activeElement).toBe(opener);
+
+    opener.remove();
   });
 });

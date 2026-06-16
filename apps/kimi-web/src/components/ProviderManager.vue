@@ -2,11 +2,16 @@
 <!-- Modal overlay for managing providers: list, add, refresh, delete. -->
 <!-- Light only, monospace-forward, Kimi blue #1565C0, no emoji. -->
 <script setup lang="ts">
-import { onUnmounted, reactive, ref } from 'vue';
+import { onMounted, onUnmounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppProvider } from '../api/types';
+import { useDialogFocus } from '../composables/useDialogFocus';
 
 const { t } = useI18n();
+
+const dialogRef = ref<HTMLElement | null>(null);
+// Move focus into the dialog on open; restore it to the opener on close.
+useDialogFocus(dialogRef);
 
 const props = defineProps<{
   providers: AppProvider[];
@@ -96,7 +101,6 @@ function handleKeydown(e: KeyboardEvent): void {
   }
 }
 
-import { onMounted } from 'vue';
 onMounted(() => document.addEventListener('keydown', handleKeydown));
 onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 
@@ -119,7 +123,7 @@ function statusLabel(status: AppProvider['status']): string {
 <template>
   <!-- Backdrop -->
   <div class="backdrop" @click.self="emit('close')">
-    <div class="dialog" role="dialog" :aria-label="t('providers.dialogLabel')">
+    <div ref="dialogRef" class="dialog" role="dialog" aria-modal="true" tabindex="-1" :aria-label="t('providers.dialogLabel')">
 
       <!-- Header -->
       <div class="dh">

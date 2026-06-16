@@ -4,8 +4,13 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useDialogFocus } from '../composables/useDialogFocus';
 
 const { t } = useI18n();
+
+const dialogRef = ref<HTMLElement | null>(null);
+// Move focus into the dialog on open; restore it to the opener on close.
+useDialogFocus(dialogRef);
 
 // -------------------------------------------------------------------------
 // Emits
@@ -193,7 +198,7 @@ function formatSeconds(s: number): string {
 
 <template>
   <div class="backdrop" @click.self="close">
-    <div class="dialog" role="dialog" :aria-label="t('login.title')">
+    <div ref="dialogRef" class="dialog" role="dialog" aria-modal="true" tabindex="-1" :aria-label="t('login.title')">
 
       <!-- Header -->
       <div class="dh">

@@ -2,9 +2,10 @@
 <!-- Modal overlay for switching the active session's model. -->
 <!-- Light only, monospace-forward, Kimi blue #1565C0, no emoji. -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppModel } from '../api/types';
+import { useDialogFocus } from '../composables/useDialogFocus';
 
 const { t } = useI18n();
 
@@ -27,7 +28,11 @@ const emit = defineEmits<{
 
 const query = ref('');
 const searchRef = ref<HTMLInputElement | null>(null);
+const dialogRef = ref<HTMLElement | null>(null);
 const activeTab = ref('all');
+
+// Focus the search box on open; restore focus to the opener on close.
+useDialogFocus(dialogRef, searchRef);
 
 const providerTabs = computed(() => {
   const seen = new Set<string>();
@@ -88,7 +93,6 @@ function handleKeydown(e: KeyboardEvent): void {
 
 onMounted(() => {
   document.addEventListener('keydown', handleKeydown);
-  nextTick(() => searchRef.value?.focus());
 });
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeydown);
@@ -111,7 +115,7 @@ function selectTab(tabId: string): void {
   <!-- Backdrop -->
   <div class="backdrop" @click.self="emit('close')">
     <!-- Dialog -->
-    <div class="dialog" role="dialog" :aria-label="t('model.dialogLabel')">
+    <div ref="dialogRef" class="dialog" role="dialog" aria-modal="true" tabindex="-1" :aria-label="t('model.dialogLabel')">
       <!-- Header -->
       <div class="dh">
         <span class="dtitle">{{ t('model.title') }}</span>
