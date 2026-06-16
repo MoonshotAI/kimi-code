@@ -1159,7 +1159,6 @@ function openPr(url: string): void {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-top: 2px solid var(--ink);
   box-sizing: border-box;
 }
 .app {
