@@ -29,7 +29,6 @@ import {
   resolveCompletionBudget,
 } from '../../utils/completion-budget';
 import compactionInstructionTemplate from './compaction-instruction.md?raw';
-import { renderMessagesToText } from './render-messages';
 import { renderTodoList, type TodoItem } from '../../tools/builtin/state/todo-list';
 import type { CompactionBeginData, CompactionResult } from './types';
 import {
@@ -37,10 +36,6 @@ import {
   DefaultCompactionStrategy,
   type CompactionStrategy,
 } from './strategy';
-
-export interface CompactedHistory {
-  text: string;
-}
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 
@@ -56,8 +51,8 @@ export class FullCompaction {
   protected compacting: {
     abortController: AbortController;
     promise: Promise<void>;
+    blockedByTurn: boolean;
   } | null = null;
-  protected _compactedHistory: CompactedHistory[] = [];
   protected readonly strategy: CompactionStrategy;
 
   constructor(
@@ -79,10 +74,6 @@ export class FullCompaction {
 
   get isCompacting(): boolean {
     return this.compacting !== null;
-  }
-
-  get compactedHistory(): readonly CompactedHistory[] {
-    return this._compactedHistory;
   }
 
   begin(data: Readonly<CompactionBeginData>): void {
@@ -117,6 +108,7 @@ export class FullCompaction {
     this.compacting = {
       abortController,
       promise: this.compactionWorker(abortController.signal, data, compactedCount),
+      blockedByTurn: false,
     };
   }
 
@@ -138,9 +130,6 @@ export class FullCompaction {
       type: 'full_compaction.complete',
     });
     this.compacting = null;
-    this._compactedHistory.push({
-      text: renderMessagesToText(this.agent.context.history),
-    });
   }
 
   private get tokenCountWithPending(): number {
@@ -196,6 +185,7 @@ export class FullCompaction {
   private async block(signal: AbortSignal): Promise<void> {
     const active = this.compacting;
     if (active) {
+      active.blockedByTurn = true;
       signal.addEventListener('abort', () => {
         if (this.compacting === active) {
           this.cancel();
@@ -220,7 +210,7 @@ export class FullCompaction {
         compactedCount: 1,
         tokensBefore: 0,
         tokensAfter: 0,
-      }
+      };
 
       for (let round = 1; ; round++) {
         const result = await this.compactionRound(round, signal, data, compactedCount);
@@ -242,13 +232,16 @@ export class FullCompaction {
       this.triggerPostCompactHook(data, finalResult);
     } catch (error) {
       if (isAbortError(error)) return;
+      const blockedByTurn = this.compacting?.blockedByTurn === true;
       this.cancel();
       this.agent.log.error('compaction failed', { error });
+      if (blockedByTurn) {
+        throw error;
+      }
       this.agent.emitEvent({
         type: 'error',
         ...toKimiErrorPayload(error),
       });
-      throw error;
     }
   }
 

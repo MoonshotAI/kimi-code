@@ -186,10 +186,12 @@ describe('FullCompaction', () => {
         resolve();
       });
     });
+    const completed = ctx.once('compaction.completed');
 
     ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
     await ctx.rpc.beginCompaction({ instruction: 'Keep the important test facts.' });
     await compacted;
+    await completed;
 
     expect(ctx.newEvents()).toMatchInlineSnapshot(`
       [wire] context.append_message     { "message": { "role": "user", "content": [ { "type": "text", "text": "old user one" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
@@ -199,10 +201,10 @@ describe('FullCompaction', () => {
       [emit] compaction.started         { "trigger": "manual", "instruction": "Keep the important test facts." }
       [wire] usage.record               { "model": "kimi-code", "usage": { "inputOther": 495, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
       [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 120, "maxContextTokens": 256000, "contextUsage": 0.00046875, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 495, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 495, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] full_compaction.complete   { "time": "<time>" }
-      [emit] compaction.completed       { "result": { "summary": "Compacted summary.", "compactedCount": 6, "tokensBefore": 39, "tokensAfter": 5 } }
       [wire] context.apply_compaction   { "summary": "Compacted summary.", "compactedCount": 6, "tokensBefore": 39, "tokensAfter": 5, "time": "<time>" }
       [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 5, "maxContextTokens": 256000, "contextUsage": 0.00001953125, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 495, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 495, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] full_compaction.complete   { "time": "<time>" }
+      [emit] compaction.completed       { "result": { "summary": "Compacted summary.", "compactedCount": 6, "tokensBefore": 39, "tokensAfter": 5 } }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
@@ -224,49 +226,21 @@ describe('FullCompaction', () => {
         },
       ]
     `);
-    expect(ctx.agent.fullCompaction.compactedHistory).toMatchInlineSnapshot(`
-      [
-        {
-          "text": "--- message 1 role=user ---
-      text:
-        old user one
-
-      --- message 2 role=assistant ---
-      text:
-        old assistant one
-
-      --- message 3 role=user ---
-      text:
-        old user two
-
-      --- message 4 role=assistant ---
-      text:
-        old assistant two
-
-      --- message 5 role=user ---
-      text:
-        recent user three
-
-      --- message 6 role=assistant ---
-      text:
-        recent assistant three",
-        },
-      ]
-    `);
     expect(records).toContainEqual({
       event: 'compaction_finished',
-      properties: {
-        trigger_type: 'manual-with-prompt',
-        before_tokens: 39,
-        after_tokens: 5,
-        duration_ms: expect.any(Number),
-        compacted_count: 6,
-        retry_count: 0,
+      properties: expect.objectContaining({
+        source: 'manual',
+        instruction: 'Keep the important test facts.',
+        tokensBefore: 39,
+        tokensAfter: 5,
+        duration: expect.any(Number),
+        compactedCount: 6,
+        retryCount: 0,
         inputOther: 495,
         output: 8,
         inputCacheRead: 0,
         inputCacheCreation: 0,
-      },
+      }),
     });
     await ctx.expectResumeMatches();
   });
@@ -399,10 +373,12 @@ describe('FullCompaction', () => {
     ]);
 
     const retryOutcome = ctx.onceAny(['context.apply_compaction', 'error']);
+    const completed = ctx.once('compaction.completed');
 
     await ctx.rpc.beginCompaction({});
 
     expect(await retryOutcome).toBe('context.apply_compaction');
+    await completed;
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token', 'fresh-token']);
     expect(tokenCalls).toEqual([undefined, true, undefined]);
     expect(ctx.compactHistory()).toEqual([
@@ -521,17 +497,19 @@ describe('FullCompaction', () => {
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
     const compacted = ctx.once('context.apply_compaction');
+    const completed = ctx.once('compaction.completed');
 
     await ctx.rpc.beginCompaction({});
     await compacted;
+    await completed;
 
     expect(attempts).toBe(2);
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
-        trigger_type: 'manual',
-        before_tokens: 25,
-        retry_count: 1,
+        source: 'manual',
+        tokensBefore: 25,
+        retryCount: 1,
       }),
     });
     await ctx.expectResumeMatches();
@@ -557,11 +535,13 @@ describe('FullCompaction', () => {
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
     const compacted = ctx.once('context.apply_compaction');
+    const completed = ctx.once('compaction.completed');
 
     await ctx.rpc.beginCompaction({});
     await firstEmptySummary.promise;
     await vi.advanceTimersByTimeAsync(10_000);
     await compacted;
+    await completed;
 
     expect(attempts).toBe(3);
     expect(ctx.compactHistory()).toEqual([
@@ -678,17 +658,18 @@ describe('FullCompaction', () => {
     ]);
     expect(records).toContainEqual({
       event: 'compaction_failed',
-      properties: {
-        trigger_type: 'manual',
-        before_tokens: 25,
-        duration_ms: expect.any(Number),
-        retry_count: 0,
-        error_type: 'Error',
-      },
+      properties: expect.objectContaining({
+        source: 'manual',
+        tokensBefore: 25,
+        duration: expect.any(Number),
+        round: 1,
+        retryCount: 0,
+        errorType: 'Error',
+      }),
     });
     expect(
       records.find((record) => record.event === 'compaction_failed')?.properties,
-    ).not.toHaveProperty('after_tokens');
+    ).not.toHaveProperty('tokensAfter');
     await ctx.expectResumeMatches();
   });
 
@@ -791,13 +772,13 @@ describe('FullCompaction', () => {
     expect(attempts).toBe(5);
     expect(records).toContainEqual({
       event: 'compaction_failed',
-      properties: {
-        trigger_type: 'manual',
-        before_tokens: 25,
-        duration_ms: expect.any(Number),
-        retry_count: 4,
-        error_type: 'APIConnectionError',
-      },
+      properties: expect.objectContaining({
+        source: 'manual',
+        tokensBefore: 25,
+        duration: expect.any(Number),
+        retryCount: 4,
+        errorType: 'APIConnectionError',
+      }),
     });
     await ctx.expectResumeMatches();
   });
@@ -817,45 +798,11 @@ describe('FullCompaction', () => {
     });
 
     ctx.mockNextResponse({ type: 'text', text: 'Rich summary.' });
+    const completed = ctx.once('compaction.completed');
     await ctx.rpc.beginCompaction({});
     await compacted;
+    await completed;
 
-    expect(ctx.agent.fullCompaction.compactedHistory).toMatchInlineSnapshot(`
-      [
-        {
-          "text": "--- message 1 role=user ---
-      text:
-        old user one
-
-      --- message 2 role=assistant ---
-      text:
-        old assistant one
-
-      --- message 3 role=user ---
-      text:
-        inspect this image
-      image_url: ms://image-1 (id=image-1)
-
-      --- message 4 role=assistant ---
-      think:
-        checking metadata
-      text:
-        I will call Lookup.
-      tool calls:
-      - call_lookup: Lookup
-      arguments:
-        {
-          "query": "moon",
-          "limit": 2
-        }
-
-      --- message 5 role=tool toolCallId="call_lookup" ---
-      text:
-        lookup result
-      video_url: ms://video-1 (id=video-1)",
-        },
-      ]
-    `);
     await ctx.expectResumeMatches();
   });
 
@@ -868,10 +815,12 @@ describe('FullCompaction', () => {
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendPartiallyResolvedParallelToolExchange();
     const compacted = ctx.once('context.apply_compaction');
+    const completed = ctx.once('compaction.completed');
 
     ctx.mockNextResponse({ type: 'text', text: 'Compacted before open tools.' });
     await ctx.rpc.beginCompaction({ instruction: 'Keep stable facts.' });
     await compacted;
+    await completed;
 
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
@@ -899,11 +848,13 @@ describe('FullCompaction', () => {
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
     const compacted = ctx.once('context.apply_compaction');
+    const completed = ctx.once('compaction.completed');
 
     ctx.mockNextResponse({ type: 'text', text: 'Compacted prefix.' });
     await ctx.rpc.beginCompaction({});
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'new user while compacting' }]);
     await compacted;
+    await completed;
 
     expect(ctx.newEvents()).toMatchInlineSnapshot(`
       [wire] context.append_message     { "message": { "role": "user", "content": [ { "type": "text", "text": "old user one" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
@@ -913,10 +864,10 @@ describe('FullCompaction', () => {
       [wire] context.append_message     { "message": { "role": "user", "content": [ { "type": "text", "text": "new user while compacting" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] usage.record               { "model": "kimi-code", "usage": { "inputOther": 473, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
       [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 80, "maxContextTokens": 256000, "contextUsage": 0.0003125, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 473, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 473, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] full_compaction.complete   { "time": "<time>" }
-      [emit] compaction.completed       { "result": { "summary": "Compacted prefix.", "compactedCount": 4, "tokensBefore": 25, "tokensAfter": 5 } }
       [wire] context.apply_compaction   { "summary": "Compacted prefix.", "compactedCount": 4, "tokensBefore": 25, "tokensAfter": 5, "time": "<time>" }
       [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 5, "maxContextTokens": 256000, "contextUsage": 0.00001953125, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 473, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 473, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] full_compaction.complete   { "time": "<time>" }
+      [emit] compaction.completed       { "result": { "summary": "Compacted prefix.", "compactedCount": 4, "tokensBefore": 25, "tokensAfter": 5 } }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
@@ -952,7 +903,12 @@ describe('FullCompaction', () => {
         max_context_tokens: 4_000,
       },
     });
-    ctx.appendExchange(1, 'old user one', 'old assistant one', 6_000);
+    ctx.appendExchange(
+      1,
+      `old user one ${'u'.repeat(14_000)}`,
+      `old assistant one ${'a'.repeat(14_000)}`,
+      6_000,
+    );
     const firstSummary = `large manual summary ${'x'.repeat(14_000)}`;
     let appliedCount = 0;
     const secondCompacted = new Promise<void>((resolve) => {
@@ -968,9 +924,11 @@ describe('FullCompaction', () => {
 
     ctx.mockNextResponse({ type: 'text', text: firstSummary });
     ctx.mockNextResponse({ type: 'text', text: 'Second manual summary.' });
+    const completed = ctx.once('compaction.completed');
     await ctx.rpc.beginCompaction({});
     ctx.appendExchange(2, 'new user while compacting', 'new assistant while compacting', 6_000);
     await secondCompacted;
+    await completed;
 
     const events = ctx.newEvents();
     expect(countEvents(events, 'context.apply_compaction')).toBe(2);
@@ -1059,10 +1017,10 @@ describe('FullCompaction', () => {
       [emit] compaction.blocked          { "turnId": 0 }
       [wire] usage.record                { "model": "kimi-code", "usage": { "inputOther": 472, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
       [emit] agent.status.updated        { "model": "kimi-code", "contextTokens": 950000, "maxContextTokens": 256000, "contextUsage": 3.7109375, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 472, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 472, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] full_compaction.complete    { "time": "<time>" }
-      [emit] compaction.completed        { "result": { "summary": "Auto compacted summary.", "compactedCount": 4, "tokensBefore": 46, "tokensAfter": 28 } }
       [wire] context.apply_compaction    { "summary": "Auto compacted summary.", "compactedCount": 4, "tokensBefore": 46, "tokensAfter": 28, "time": "<time>" }
       [emit] agent.status.updated        { "model": "kimi-code", "contextTokens": 28, "maxContextTokens": 256000, "contextUsage": 0.000109375, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 472, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 472, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] full_compaction.complete    { "time": "<time>" }
+      [emit] compaction.completed        { "result": { "summary": "Auto compacted summary.", "compactedCount": 4, "tokensBefore": 46, "tokensAfter": 28 } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "I can answer after compaction." }
@@ -1094,11 +1052,11 @@ describe('FullCompaction', () => {
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
-        trigger_type: 'auto',
-        before_tokens: 46,
-        after_tokens: 28,
-        compacted_count: 4,
-        retry_count: 0,
+        source: 'auto',
+        tokensBefore: 46,
+        tokensAfter: 28,
+        compactedCount: 4,
+        retryCount: 0,
       }),
     });
     await ctx.expectResumeMatches();
@@ -1267,10 +1225,12 @@ describe('FullCompaction', () => {
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
     const compacted = ctx.once('context.apply_compaction');
+    const completed = ctx.once('compaction.completed');
 
     ctx.mockNextResponse({ type: 'text', text: 'Compacted after no-op cancel.' });
     await ctx.rpc.beginCompaction({});
     await compacted;
+    await completed;
 
     expect(ctx.llmCalls).toHaveLength(1);
     expect(ctx.compactHistory()).toEqual([
@@ -1720,10 +1680,10 @@ describe('FullCompaction', () => {
       [emit] compaction.blocked          { "turnId": 0 }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 456, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
       [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 456, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 456, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] full_compaction.complete    { "time": "<time>" }
-      [emit] compaction.completed        { "result": { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 6 } }
       [wire] context.apply_compaction    { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 6, "time": "<time>" }
       [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 6, "maxContextTokens": 1000000, "contextUsage": 0.000006, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 456, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 456, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] full_compaction.complete    { "time": "<time>" }
+      [emit] compaction.completed        { "result": { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 6 } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "I need a tool." }
@@ -1777,10 +1737,12 @@ describe('FullCompaction', () => {
         resolve();
       });
     });
+    const completed = ctx.once('compaction.completed');
 
     ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
     await ctx.rpc.beginCompaction({});
     await compacted;
+    await completed;
 
     const history = ctx.compactHistory();
     expect(history).toHaveLength(1);
