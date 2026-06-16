@@ -3,7 +3,7 @@
 <!-- pending question/approval cards, and the composer. Only rendered inside a -->
 <!-- chat-pane group so it never leaks into files/tasks/preview/btw panes. -->
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ConversationStatus, PermissionMode, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../api/types';
@@ -75,10 +75,37 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const composerRef = ref<{ loadForEdit: (value: string) => void } | null>(null);
+const workPanelRef = ref<HTMLElement | null>(null);
+const workbarRef = ref<HTMLElement | null>(null);
 
 function loadForEdit(value: string): void {
   composerRef.value?.loadForEdit(value);
 }
+
+function onDocumentMouseDown(event: MouseEvent): void {
+  if (!props.dockPanel) return;
+  const target = event.target as Node | null;
+  if (!target) return;
+  if (workPanelRef.value?.contains(target)) return;
+  if (workbarRef.value?.contains(target)) return;
+  emit('close-dock-panel');
+}
+
+watch(
+  () => props.dockPanel,
+  (panel) => {
+    if (typeof document === 'undefined') return;
+    document.removeEventListener('mousedown', onDocumentMouseDown, true);
+    if (panel) document.addEventListener('mousedown', onDocumentMouseDown, true);
+  },
+  { immediate: true },
+);
+
+onUnmounted(() => {
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('mousedown', onDocumentMouseDown, true);
+  }
+});
 
 defineExpose({ loadForEdit });
 </script>
@@ -87,6 +114,7 @@ defineExpose({ loadForEdit });
   <div class="chat-dock" :class="[mobile ? 'align-mobile' : 'align-center']" @click.stop>
     <Transition name="dock-panel">
       <div
+        ref="workPanelRef"
         v-if="dockPanel"
         class="dock-work-panel"
         @click.stop
@@ -110,11 +138,6 @@ defineExpose({ loadForEdit });
           >
             {{ t('tasks.dockTodos') }} · {{ todoDoneCount }}/{{ todos?.length ?? 0 }}
           </span>
-          <button type="button" class="dock-work-close" :aria-label="t('tasks.closePanel')" @click="emit('close-dock-panel')">
-            <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
-              <path d="M2 2l8 8M10 2l-8 8" />
-            </svg>
-          </button>
         </div>
         <div class="dock-work-body">
           <TasksPane
@@ -142,7 +165,7 @@ defineExpose({ loadForEdit });
       :force-expanded="goalExpandSignal"
       @control-goal="emit('controlGoal', $event)"
     />
-    <div v-if="hasDockWork" class="dock-workbar">
+    <div v-if="hasDockWork" ref="workbarRef" class="dock-workbar">
       <button
         v-if="bashTasks.length > 0"
         type="button"
@@ -298,23 +321,6 @@ defineExpose({ loadForEdit });
   background: transparent;
   border-color: transparent;
   padding-left: 2px;
-}
-.dock-work-close {
-  margin-left: auto;
-  width: 22px;
-  height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 5px;
-  color: var(--muted);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-}
-.dock-work-close:hover {
-  background: var(--hover-bg);
-  color: var(--ink);
 }
 .dock-work-body {
   padding: 8px 10px;

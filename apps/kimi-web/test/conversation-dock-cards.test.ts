@@ -195,6 +195,28 @@ describe('ConversationPane dock work panel', () => {
     await chips[2]!.trigger('click');
     expect(wrapper.find('todo-card-stub').exists()).toBe(true);
   });
+
+  it('closes the dock work panel when the user clicks outside it', async () => {
+    const tasks: TaskItem[] = [
+      {
+        id: 'task_1',
+        name: 'Review code',
+        kind: 'subagent',
+        state: 'run',
+        timing: 'Running',
+      },
+    ];
+    const wrapper = mountPane({ tasks });
+
+    await wrapper.find('.dock-work-chip').trigger('click');
+    expect(wrapper.find('.dock-work-panel').exists()).toBe(true);
+    expect(wrapper.find('.dock-work-close').exists()).toBe(false);
+
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await nextTick();
+
+    expect(wrapper.find('.dock-work-panel').exists()).toBe(false);
+  });
 });
 
 function swarmGroup(members: { phase: SwarmGroup['members'][number]['phase']; id?: string }[]): SwarmGroup {
