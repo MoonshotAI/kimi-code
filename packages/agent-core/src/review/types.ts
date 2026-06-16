@@ -181,6 +181,12 @@ export interface ReviewCommit {
   readonly title: string;
   readonly author?: string;
   readonly date?: string;
+  /** Files changed by this commit (from `--shortstat`); undefined for merges. */
+  readonly filesChanged?: number;
+  readonly additions?: number;
+  readonly deletions?: number;
+  /** True when the commit message has a body beyond the subject line. */
+  readonly hasBody?: boolean;
 }
 
 export interface ReviewFinalComment {

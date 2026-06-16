@@ -71,21 +71,54 @@ export async function listReviewBaseRefs(kaos: Kaos): Promise<readonly ReviewBas
 export async function listReviewCommits(kaos: Kaos): Promise<readonly ReviewCommit[]> {
   await ensureGitRepository(kaos);
 
-  const raw = await runGitOrEmpty(kaos, ['log', '-50', '--format=%H%x09%an%x09%aI%x09%s']);
+  // RS separates commits, US separates fields. `--shortstat` appends a
+  // "N files changed, …" line after each record's body.
+  const raw = await runGitOrEmpty(kaos, [
+    'log',
+    '-50',
+    '--shortstat',
+    `--format=${COMMIT_RS}%H${COMMIT_FS}%an${COMMIT_FS}%aI${COMMIT_FS}%s${COMMIT_FS}%b`,
+  ]);
   return raw
-    .split('\n')
-    .map((line) => line.trimEnd())
+    .split(COMMIT_RS)
+    .map((record) => record.trim())
     .filter(Boolean)
-    .map((line): ReviewCommit => {
-      const [sha = '', author = '', date = '', ...titleParts] = line.split('\t');
-      return {
-        sha,
-        title: titleParts.join('\t'),
-        author: author || undefined,
-        date: date || undefined,
-      };
-    })
+    .map((record): ReviewCommit => parseReviewCommitRecord(record))
     .filter((commit) => commit.sha.length > 0);
+}
+
+const COMMIT_RS = '\u001E'; // ASCII record separator (RS)
+const COMMIT_FS = '\u001F'; // ASCII unit/field separator (US)
+const SHORTSTAT_RE =
+  /^\s*(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/;
+
+function parseReviewCommitRecord(record: string): ReviewCommit {
+  const [sha = '', author = '', date = '', subject = '', ...rest] = record.split(COMMIT_FS);
+  // Everything after the subject is the body, with the shortstat line trailing.
+  const bodyLines: string[] = [];
+  let stats: { filesChanged: number; additions: number; deletions: number } | undefined;
+  for (const line of rest.join(COMMIT_FS).split('\n')) {
+    const match = SHORTSTAT_RE.exec(line);
+    if (match !== null) {
+      stats = {
+        filesChanged: Number(match[1]),
+        additions: Number(match[2] ?? 0),
+        deletions: Number(match[3] ?? 0),
+      };
+    } else {
+      bodyLines.push(line);
+    }
+  }
+  return {
+    sha: sha.trim(),
+    title: subject,
+    author: author || undefined,
+    date: date || undefined,
+    filesChanged: stats?.filesChanged,
+    additions: stats?.additions,
+    deletions: stats?.deletions,
+    hasBody: bodyLines.join('\n').trim().length > 0,
+  };
 }
 
 export async function getReviewScopeSummary(kaos: Kaos): Promise<ReviewScopeSummary> {

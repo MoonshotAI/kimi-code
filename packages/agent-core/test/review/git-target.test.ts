@@ -224,6 +224,35 @@ describe('review git target resolver', () => {
     });
   });
 
+  it('includes per-commit shortstat and body presence in the commit list', async () => {
+    await withGitRepo(async (repo) => {
+      await writeFile(join(repo, 'a.ts'), 'a\n');
+      await git(repo, 'add', '.');
+      await git(repo, 'commit', '-m', 'base commit');
+
+      await writeFile(join(repo, 'a.ts'), 'a\nb\nc\n');
+      await writeFile(join(repo, 'b.ts'), 'new\n');
+      await git(repo, 'add', '.');
+      await git(repo, 'commit', '-m', 'second commit', '-m', 'with an explanatory body');
+
+      const commits = await listReviewCommits(testKaos.withCwd(repo));
+
+      expect(commits[0]).toMatchObject({
+        title: 'second commit',
+        filesChanged: 2,
+        additions: 3,
+        deletions: 0,
+        hasBody: true,
+      });
+      expect(commits[1]).toMatchObject({
+        title: 'base commit',
+        filesChanged: 1,
+        additions: 1,
+        hasBody: false,
+      });
+    });
+  });
+
   it('summarizes review scope context for the first selector', async () => {
     await withGitRepo(async (repo) => {
       await writeFile(join(repo, 'a.ts'), 'base\n');
