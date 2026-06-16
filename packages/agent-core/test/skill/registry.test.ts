@@ -237,6 +237,18 @@ describe('getModelSkillListing tiers', () => {
     expect(listing).not.toContain('Description for skill');
     expect(listing).toContain('skill-0');
   });
+
+  it('respects custom compact listing threshold', () => {
+    const skills = Array.from({ length: 50 }, (_, i) =>
+      makeSkill(`skill-${String(i)}`, 'user', `Description ${String(i)}`),
+    );
+    const registry = new SessionSkillRegistry({ compactListingThreshold: 30 });
+    for (const skill of skills) registry.register(skill);
+
+    const listing = registry.getModelSkillListing();
+    expect(listing).toContain('50 registered skills');
+    expect(listing).not.toContain('DISREGARD');
+  });
 });
 
 function makeRegistry(skills: readonly SkillDefinition[]): SkillRegistry {

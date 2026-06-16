@@ -38,6 +38,8 @@ export interface SkillRegistryOptions {
   readonly discover?: typeof discoverSkills;
   readonly onWarning?: (message: string, cause?: unknown) => void;
   readonly sessionId?: string;
+  readonly compactListingThreshold?: number;
+  readonly namesOnlyListingThreshold?: number;
 }
 
 export class SessionSkillRegistry implements AgentSkillRegistry {
@@ -49,6 +51,8 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
   private readonly onWarning: (message: string, cause?: unknown) => void;
   readonly sessionId?: string;
   private readonly searchIndex = new SkillSearchIndex();
+  private readonly compactListingThreshold: number;
+  private readonly namesOnlyListingThreshold: number;
 
   private indexDirty = false;
   private modelSkillListingCache: string | undefined;
@@ -57,6 +61,8 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     this.discoverImpl = options.discover ?? discoverSkills;
     this.onWarning = options.onWarning ?? (() => {});
     this.sessionId = options.sessionId;
+    this.compactListingThreshold = options.compactListingThreshold ?? COMPACT_LISTING_THRESHOLD;
+    this.namesOnlyListingThreshold = options.namesOnlyListingThreshold ?? NAMES_ONLY_LISTING_THRESHOLD;
   }
 
   async loadRoots(roots: readonly SkillRoot[]): Promise<void> {
@@ -212,7 +218,7 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     // Auto-detect: small catalogue → legacy full listing.
     // Large catalogue → compact/names-only + search-first.
     let listing: string;
-    if (invocable.length <= COMPACT_LISTING_THRESHOLD) {
+    if (invocable.length <= this.compactListingThreshold) {
       const lines = ['DISREGARD any earlier skill listings. Current available skills:'];
       const rendered = renderGroupedSkills(invocable, formatModelSkill);
       if (rendered.length > 0) lines.push(rendered);
@@ -220,7 +226,7 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     } else {
       // Tier 2+3: Large catalogue — search-first.
       const count = invocable.length;
-      const format = count > NAMES_ONLY_LISTING_THRESHOLD
+      const format = count > this.namesOnlyListingThreshold
         ? formatNameOnlySkill
         : formatCompactSkill;
       const lines = [
