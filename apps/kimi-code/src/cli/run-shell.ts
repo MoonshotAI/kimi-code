@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { removeWorktree } from '#/utils/git/worktree';
+import { quoteShellArg } from '#/utils/shell-quote';
 
 import {
   createKimiHarness,
@@ -224,7 +225,7 @@ export async function runShell(
     if (sessionId !== '' && hasContent) {
       const resumeCommand =
         opts.worktreePath !== undefined
-          ? `cd "${process.cwd()}" && kimi -r ${sessionId}`
+          ? `cd ${quoteShellArg(process.cwd())} && kimi -r ${sessionId}`
           : `kimi -r ${sessionId}`;
       hints.push(`${gutter}To resume this session: ${resumeCommand}`);
     }

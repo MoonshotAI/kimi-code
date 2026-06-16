@@ -32,6 +32,7 @@ import type { PromptHarness, PromptSession } from './prompt-session';
 import { PromptJsonWriter, PromptTranscriptWriter, writeResumeHint } from './prompt-render';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
+import { quoteShellArg } from '#/utils/shell-quote';
 
 /**
  * Await `promise`, but stop waiting after `timeoutMs`.

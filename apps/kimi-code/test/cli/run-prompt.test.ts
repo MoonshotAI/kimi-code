@@ -377,7 +377,7 @@ describe('runPrompt', () => {
       { stdout, stderr },
     );
 
-    expect(stderr.text()).toBe(`To resume this session: cd "${process.cwd()}" && kimi -r ses_prompt\n`);
+    expect(stderr.text()).toBe(`To resume this session: cd '${process.cwd()}' && kimi -r ses_prompt\n`);
   });
 
   it('stops prompt startup when session creation fails', async () => {
