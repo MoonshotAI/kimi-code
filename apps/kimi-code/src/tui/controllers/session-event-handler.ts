@@ -700,7 +700,15 @@ export class SessionEventHandler {
   private scheduleQuotaRefresh(): void {
     this.clearQuotaRefreshTimer();
     const providerKey = this.host.state.appState.availableModels[this.host.state.appState.model]?.provider;
-    if (!isManagedUsageProvider(providerKey)) return;
+    if (!isManagedUsageProvider(providerKey)) {
+      // Switched away from (or never used) a managed provider: drop stale
+      // quota rows so the footer does not keep showing limits that no longer
+      // apply to the active model.
+      if (this.host.state.appState.quotas !== undefined) {
+        this.host.setAppState({ quotas: undefined });
+      }
+      return;
+    }
 
     void this.refreshQuota();
     this.quotaRefreshTimer = setInterval(() => {

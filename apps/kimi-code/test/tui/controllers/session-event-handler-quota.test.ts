@@ -149,4 +149,22 @@ describe('SessionEventHandler quotas', () => {
     expect(host.fetchManagedQuotas).toHaveBeenCalled();
     expect(host.state.appState.quotas).toEqual(quotas);
   });
+
+  it('clears stale quotas when the active model switches away from a managed provider', async () => {
+    const quotas: QuotaInfo[] = [{ label: 'Weekly limit', used: 10, limit: 100 }];
+    const { host } = makeHost({ quotas });
+    const handler = new SessionEventHandler(host);
+
+    (handler as any).scheduleQuotaRefresh();
+    await vi.runOnlyPendingTimersAsync();
+    expect(host.state.appState.quotas).toEqual(quotas);
+
+    handler.handleEvent(
+      { type: 'agent.status.updated', agentId: 'main', model: 'openai' } as any,
+      () => {},
+    );
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(host.state.appState.quotas).toBeUndefined();
+  });
 });
