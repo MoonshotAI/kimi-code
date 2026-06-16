@@ -433,21 +433,23 @@ function onBack(): void {
   min-width: 0;
 }
 
-/* Added lines — green tint that adapts to the active theme background. */
+/* Added / removed lines: a faint background plus a left accent bar mark the
+   change, while the code TEXT keeps the normal ink colour. Washing the whole
+   line in green/red competed with reading the code itself; the sign (+/-) and
+   the accent carry the colour so the content stays legible. */
 .dl-add {
-  background: color-mix(in srgb, var(--ok) 12%, var(--bg));
+  background: color-mix(in srgb, var(--ok) 7%, var(--bg));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
 }
-.dl-add .dl-sign,
-.dl-add .dl-text {
+.dl-add .dl-sign {
   color: var(--ok, #0e7a38);
 }
 
-/* Removed lines — red tint. */
 .dl-del {
-  background: color-mix(in srgb, var(--err) 12%, var(--bg));
+  background: color-mix(in srgb, var(--err) 7%, var(--bg));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--err) 55%, transparent);
 }
-.dl-del .dl-sign,
-.dl-del .dl-text {
+.dl-del .dl-sign {
   color: var(--err, #b91c1c);
 }
 
