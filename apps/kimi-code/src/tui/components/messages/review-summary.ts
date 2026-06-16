@@ -79,7 +79,9 @@ export class ReviewSummaryComponent implements Component {
       lines.push('   ' + currentTheme.fg('textDim', `• ${comment.path}:${String(comment.line)} — ${comment.title}`));
     }
     if (this.data.comments.length > 0) {
-      lines.push('  ' + currentTheme.fg('textDim', 'Tips: Ask Kimi to fix these comments, or discuss them here in chat.'));
+      // Breathe between the rejected list and the tip so it doesn't look cramped.
+      if (rejected.length > 0) lines.push('');
+      lines.push('  ' + currentTheme.dim('Tips: Ask Kimi to fix these comments, or discuss them here in chat.'));
     }
     return lines.map((line) => truncateToWidth(line, width));
   }

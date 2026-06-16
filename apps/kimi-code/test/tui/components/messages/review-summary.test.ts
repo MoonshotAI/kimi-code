@@ -117,7 +117,10 @@ describe('ReviewSummaryComponent', () => {
 
   it('shows a gray follow-up tip on the browsed note when there are comments', () => {
     const out = lines(data([comment({ rejected: true })], { variant: 'browsed' }));
-    expect(out).toContain('  Tips: Ask Kimi to fix these comments, or discuss them here in chat.');
+    const tip = out.findIndex((line) => line.includes('Tips: Ask Kimi to fix these comments'));
+    expect(tip).toBeGreaterThan(0);
+    // A blank line separates the rejected list above from the tip.
+    expect(out[tip - 1]).toBe('');
   });
 
   it('omits the follow-up hint on the browsed note when there are no comments', () => {
