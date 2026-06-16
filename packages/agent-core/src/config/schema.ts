@@ -191,7 +191,10 @@ const McpServerConfigDiscriminatedSchema = z.discriminatedUnion('transport', [
 
 export const McpServerConfigSchema = z.preprocess((raw) => {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return raw;
-  const obj = raw as Record<string, unknown>;
+  let obj = { ...raw } as Record<string, unknown>;
+  if ('disabled' in obj && typeof obj['disabled'] === 'boolean') {
+    obj['enabled'] = !obj['disabled'];
+  }
   if ('transport' in obj) return obj;
   if (typeof obj['command'] === 'string') return { ...obj, transport: 'stdio' };
   if (typeof obj['url'] === 'string') return { ...obj, transport: 'http' };

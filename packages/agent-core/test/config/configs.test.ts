@@ -453,6 +453,28 @@ hooks = [{ type = "pre-tool-call", command = "echo hi" }]
       ErrorCodes.CONFIG_INVALID,
     );
   });
+
+  it('maps deprecated max_tokens and max_output_tokens to maxOutputSize', () => {
+    const tomlWithMaxTokens = `
+[models.test]
+provider = "managed:kimi-code"
+model = "test-model"
+max_context_size = 128000
+max_tokens = 4096
+`;
+    const configWithMaxTokens = parseConfigString(tomlWithMaxTokens, 'config.toml');
+    expect(configWithMaxTokens.models?.['test']?.maxOutputSize).toBe(4096);
+
+    const tomlWithMaxOutputTokens = `
+[models.test]
+provider = "managed:kimi-code"
+model = "test-model"
+max_context_size = 128000
+max_output_tokens = 8192
+`;
+    const configWithMaxOutputTokens = parseConfigString(tomlWithMaxOutputTokens, 'config.toml');
+    expect(configWithMaxOutputTokens.models?.['test']?.maxOutputSize).toBe(8192);
+  });
 });
 
 describe('harness config schema and patch merge', () => {
