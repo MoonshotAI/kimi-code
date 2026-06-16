@@ -106,7 +106,7 @@ describe('ConversationPane session switch scroll', () => {
     mockPaneGeometry(panesEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 1500 });
 
     // Simulate the user having scrolled the long session to the bottom.
-    await panesEl.dispatchEvent(new Event('scroll'));
+    panesEl.dispatchEvent(new Event('scroll'));
     await nextTick();
 
     // Switch to a much shorter session. The fileReloadKey watcher resets the
@@ -120,7 +120,7 @@ describe('ConversationPane session switch scroll', () => {
 
     // Transient geometry: scrollHeight still large, scrollTop clamped to 0.
     mockPaneGeometry(panesEl, { scrollHeight: 2000, clientHeight: 500, scrollTop: 0 });
-    await panesEl.dispatchEvent(new Event('scroll'));
+    panesEl.dispatchEvent(new Event('scroll'));
 
     // Now let the async watcher ticks run.
     await nextTick();

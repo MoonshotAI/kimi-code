@@ -382,6 +382,7 @@ describe('fsGitStatusResponseSchema (W11.2)', () => {
       entries: {},
       additions: 0,
       deletions: 0,
+      pullRequest: null,
     };
     expect(fsGitStatusResponseSchema.parse(r)).toEqual(r);
   });
@@ -398,6 +399,11 @@ describe('fsGitStatusResponseSchema (W11.2)', () => {
       },
       additions: 42,
       deletions: 7,
+      pullRequest: {
+        number: 625,
+        state: 'open' as const,
+        url: 'https://github.com/MoonshotAI/kimi-code/pull/625',
+      },
     };
     expect(fsGitStatusResponseSchema.parse(r)).toEqual(r);
   });
@@ -411,6 +417,7 @@ describe('fsGitStatusResponseSchema (W11.2)', () => {
         entries: {},
         additions: 0,
         deletions: 0,
+        pullRequest: null,
       }).branch,
     ).toBe('');
   });

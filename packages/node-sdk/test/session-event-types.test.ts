@@ -94,7 +94,6 @@ describe('Event public types', () => {
         case 'background.task.terminated':
         case 'cron.fired':
         case 'prompt.submitted':
-        case 'event.config.changed':
           return;
         default:
           assertNever(event);

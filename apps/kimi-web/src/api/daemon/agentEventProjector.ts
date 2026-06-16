@@ -218,7 +218,7 @@ function shortJson(value: unknown): string {
     const text = typeof value === 'string' ? value : JSON.stringify(value);
     return text.length > 120 ? `${text.slice(0, 117)}...` : text;
   } catch {
-    return String(value);
+    return '';
   }
 }
 
