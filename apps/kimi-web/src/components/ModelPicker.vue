@@ -218,7 +218,7 @@ function selectTab(tabId: string): void {
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 8px;
-  width: 620px;
+  width: 760px;
   height: min(680px, calc(100vh - 80px));
   max-width: calc(100vw - 32px);
   display: flex;
@@ -236,7 +236,6 @@ function selectTab(tabId: string): void {
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   gap: 8px;
-  box-shadow: inset 0 2px 0 var(--blue);
 }
 .dtitle {
   font-size: calc(var(--ui-font-size) - 1.5px);
