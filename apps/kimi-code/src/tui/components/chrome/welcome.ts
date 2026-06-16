@@ -21,8 +21,25 @@ export class WelcomeComponent implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
+    const safeWidth = Math.max(0, width);
     const primary = (s: string): string => chalk.hex(currentTheme.palette.primary)(s);
-    const innerWidth = Math.max(10, width - 4);
+    const isLoggedOut = !this.state.model;
+    const activeModel = this.state.availableModels[this.state.model];
+
+    if (safeWidth < 24) {
+      const title = chalk.bold.hex(currentTheme.palette.primary)('Welcome to Kimi Code!');
+      const prompt = isLoggedOut
+        ? chalk.hex(currentTheme.palette.warning)('Run /login or /provider to get started.')
+        : chalk.hex(currentTheme.palette.textDim)('Send /help for help information.');
+      const model = isLoggedOut
+        ? chalk.hex(currentTheme.palette.warning)('not set, run /login or /provider')
+        : (activeModel?.displayName ?? activeModel?.model ?? this.state.model);
+      return ['', title, prompt, `Model: ${model}`].map((line) =>
+        truncateToWidth(line, safeWidth, '…'),
+      );
+    }
+
+    const innerWidth = Math.max(1, safeWidth - 4);
     const pad = '  ';
 
     // Logo + side-by-side text.
@@ -36,7 +53,6 @@ export class WelcomeComponent implements Component {
       textWidth,
       '…',
     );
-    const isLoggedOut = !this.state.model;
     const dim = chalk.hex(currentTheme.palette.textDim);
     const labelStyle = chalk.bold.hex(currentTheme.palette.textDim);
     const rightRow1 = truncateToWidth(
@@ -53,7 +69,6 @@ export class WelcomeComponent implements Component {
       renderedHeaderLines = renderDanceWelcomeHeader(logo, textWidth, rightRow1);
     }
 
-    const activeModel = this.state.availableModels[this.state.model];
     const modelValue = isLoggedOut
       ? chalk.hex(currentTheme.palette.warning)('not set, run /login or /provider')
       : (activeModel?.displayName ?? activeModel?.model ?? this.state.model);
@@ -73,8 +88,8 @@ export class WelcomeComponent implements Component {
 
     const lines: string[] = [
       '',
-      primary('╭' + '─'.repeat(width - 2) + '╮'),
-      primary('│') + ' '.repeat(width - 2) + primary('│'),
+      primary('╭' + '─'.repeat(safeWidth - 2) + '╮'),
+      primary('│') + ' '.repeat(safeWidth - 2) + primary('│'),
     ];
 
     for (const content of contentLines) {
@@ -84,10 +99,10 @@ export class WelcomeComponent implements Component {
       lines.push(primary('│') + pad + truncated + ' '.repeat(rightPad) + primary('│'));
     }
 
-    lines.push(primary('│') + ' '.repeat(width - 2) + primary('│'));
-    lines.push(primary('╰' + '─'.repeat(width - 2) + '╯'));
+    lines.push(primary('│') + ' '.repeat(safeWidth - 2) + primary('│'));
+    lines.push(primary('╰' + '─'.repeat(safeWidth - 2) + '╯'));
     lines.push('');
 
-    return lines;
+    return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
   }
 }

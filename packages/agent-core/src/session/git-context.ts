@@ -10,7 +10,7 @@
 
 import type { Readable } from 'node:stream';
 
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
 
 const GIT_TIMEOUT_MS = 5_000;
 const MAX_DIRTY_FILES = 20;
@@ -26,6 +26,14 @@ const ALLOWED_HOSTS = [
   'codeberg.org',
   'git.sr.ht',
 ] as const;
+
+async function disposeProcess(proc: KaosProcess): Promise<void> {
+  try {
+    await proc.dispose();
+  } catch {
+    /* best-effort cleanup */
+  }
+}
 
 /**
  * Collect git context for the explore agent.
@@ -145,7 +153,7 @@ function tryUrlPath(remoteUrl: string): string | null {
  * `git -C` form runs in the target directory regardless of the Kaos backend.
  */
 async function runGit(kaos: Kaos, cwd: string, args: readonly string[]): Promise<string | null> {
-  let proc;
+  let proc: KaosProcess | undefined;
   try {
     proc = await kaos.exec('git', '-C', cwd, ...args);
   } catch {
@@ -185,6 +193,7 @@ async function runGit(kaos: Kaos, cwd: string, args: readonly string[]): Promise
     return null;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (proc !== undefined) await disposeProcess(proc);
   }
 }
 

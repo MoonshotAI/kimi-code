@@ -38,7 +38,7 @@ export function applyKimiEnvSamplingParams(
 
 /**
  * Apply the Moonshot preserved-thinking passthrough (`KIMI_MODEL_THINKING_KEEP`
- * -> `thinking.keep`) to a chat provider. Applied in `Agent.llm` after
+ * -> `thinking.keep`) to a chat provider. Applied in `ConfigState.provider` after
  * `withThinking`, and only while thinking is on — otherwise the API would
  * receive a `thinking.keep` with no accompanying `thinking.type` it honors.
  * (Compaction uses a raw provider with thinking off, so it correctly skips this.)

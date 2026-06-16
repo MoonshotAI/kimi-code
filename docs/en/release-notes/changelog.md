@@ -6,6 +6,69 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.16.0 (2026-06-16)
+
+### Features
+
+- Add a built-in `kimi vis` command that launches the session visualizer in your browser, pointed at your local sessions. Supports `--port`/`--host`, `--no-open`, and `kimi vis <sessionId>` deep-links.
+
+### Bug Fixes
+
+- Stop Anthropic-compatible providers from reading ambient Anthropic shell credentials and custom headers.
+- Fix repeated compaction handling when context remains over the blocking threshold.
+- Prevent session shutdown from resuming the agent when stopping background tasks.
+- Project session replay ranges over rendered replay records instead of raw persisted records.
+- Close wrapped output streams when buffered readers are destroyed.
+
+### Polish
+
+- Reduce the maximum height of the `/btw` side panel from half to one-third of the terminal.
+- Polish queue pane styling.
+- Add configurable banner display frequencies with local display state.
+
+### Refactors
+
+- Remove redundant LLM request logging context plumbing.
+
+## 0.15.0 (2026-06-15)
+
+### Features
+
+- Add an all-sessions picker view with name search, paginated browsing, and clipboard-ready resume commands for sessions in other working directories.
+- Add support for legacy SSE MCP servers alongside stdio and streamable HTTP transports.
+
+### Bug Fixes
+
+- Recover resumed sessions when an interrupted tool call result was not recorded.
+- Stop writing resume version markers into persisted agent metadata.
+- Do not carry obsolete legacy loop, background, plan, yolo, or unknown experimental flags into migrated config files.
+- Repair mismatched JSON Schema types emitted by Xcode 26.5 MCP server for Moonshot compatibility.
+
+### Polish
+
+- Keep TUI components within narrow terminal widths by wrapping, compacting, or truncating lines that could exceed the render width.
+- Prompt the CLI to show one brief same-language status sentence before non-trivial tool calls.
+- Extend the same-language rule to the model's reasoning, so thinking follows the user's language while keeping code and technical terms in their original form.
+- Read media files using header-detected types before falling back to media extensions.
+- Prioritize clearing draft editor text before Ctrl-C cancels an active stream.
+- Collapse hidden directories in the workspace prompt and explain how to inspect them.
+- Include the skill's directory on the loaded-skill context block so the agent can locate a skill's bundled resources (scripts, templates) after it is invoked.
+- Show the all-sessions toggle hint when the current working directory has no sessions.
+- Clarify that compaction summaries must be emitted in the final answer.
+- Clarify AGENTS.md prompt guidance and mark truncated instruction files.
+
+### Refactors
+
+- Resolve model capabilities through a static lookup instead of instantiating a temporary provider.
+- Decouple agent skill access from session-specific registry implementations.
+- Optimize the npm packaging system.
+
+## 0.14.3 (2026-06-14)
+
+### Polish
+
+- Refresh provider model metadata before opening the model picker.
+
 ## 0.14.2 (2026-06-12)
 
 ### Bug Fixes

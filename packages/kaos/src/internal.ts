@@ -267,6 +267,7 @@ export class BufferedReadable extends Readable {
     this._source.off('end', this._onEnd);
     this._source.off('close', this._onClose);
     this._source.off('error', this._onError);
+    this._source.destroy();
     callback(error);
   }
 

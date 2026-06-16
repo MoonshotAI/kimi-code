@@ -224,7 +224,7 @@ export class AcpServer implements Agent {
       },
       mcpCapabilities: {
         http: true,
-        sse: false,
+        sse: true,
       },
       sessionCapabilities: {
         list: {},
@@ -255,7 +255,7 @@ export class AcpServer implements Agent {
     // similar fields are wired in Phase 8 (per PLAN D3) — Phase 3.2 keeps
     // the surface minimal. Phase 10.1 adds `mcpServers` forwarding so
     // ACP-supplied servers (Zed config, JetBrains config) are passed
-    // alongside the on-disk config; unsupported transports (sse/acp)
+    // alongside the on-disk config; unsupported ACP-transport servers
     // are warn-dropped inside the conversion. `mcpServers` is NOT a
     // declared field on `CreateSessionOptions` — the SDK is a
     // transparent passthrough for unknown fields (see

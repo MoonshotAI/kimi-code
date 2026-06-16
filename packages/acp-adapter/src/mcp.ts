@@ -10,9 +10,8 @@
  *
  *  - `http`  → kimi `transport: 'http'` with headers projected from
  *              `Array<{name, value}>` to `Record<string, string>`.
+ *  - `sse`   → kimi `transport: 'sse'` with headers projected the same way.
  *  - `stdio` → kimi `transport: 'stdio'` with env projected similarly.
- *  - `sse`   → dropped with a `log.warn` (PLAN D3 declares
- *              `mcp_capabilities: sse=false`).
  *  - `acp`   → dropped with a `log.warn` (experimental ACP-transport MCP
  *              is not yet supported).
  *
@@ -33,7 +32,7 @@ import { log } from '@moonshot-ai/kimi-code-sdk';
 /**
  * Convert an ACP `McpServer[]` into the kernel-native
  * `Record<string, McpServerConfig>` keyed by server name. Unsupported
- * transports (`sse`, `acp`) are warn-dropped — the caller never has to
+ * transports (`acp`) are warn-dropped — the caller never has to
  * filter them out.
  *
  * Caveat (ACP schema 0.23): the `McpServer` union types stdio as a
@@ -79,7 +78,14 @@ function acpMcpServerToConfig(
       };
       return { name: server.name, config };
     }
-    case 'sse':
+    case 'sse': {
+      const config: McpServerConfig = {
+        transport: 'sse',
+        url: server.url,
+        headers: headersArrayToRecord(server.headers),
+      };
+      return { name: server.name, config };
+    }
     case 'acp':
     default: {
       // Defensive: future ACP transports land here too. The cast is the

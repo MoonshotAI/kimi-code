@@ -12,6 +12,9 @@ const promptContext = {
   },
   cwd: '/workspace',
   now: '2026-05-09T00:00:00.000Z',
+  cwdListing: 'LISTING_SNAPSHOT',
+  agentsMd: 'AGENTS_MD_BODY',
+  skills: '- test-skill: does things\n  Path: /skills/test/SKILL.md',
 } as const;
 
 describe('default agent profiles', () => {
@@ -21,6 +24,20 @@ describe('default agent profiles', () => {
     expect(prompt).toContain('You are Kimi Code CLI');
     expect(prompt).toContain('Available skills');
     expect(prompt).toContain('/workspace');
+  });
+
+  it('keeps static instructions before dynamic prompt context', () => {
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
+
+    expect(prompt.indexOf('Use this as your basic understanding of the project structure.')).toBeLessThan(
+      prompt.indexOf('LISTING_SNAPSHOT'),
+    );
+    expect(prompt.indexOf('User instructions given directly in the conversation')).toBeLessThan(
+      prompt.indexOf('AGENTS_MD_BODY'),
+    );
+    expect(prompt.indexOf('Only read skill details when needed')).toBeLessThan(
+      prompt.indexOf('- test-skill: does things'),
+    );
   });
 
   it('lists the goal tools on the agent profile but not on subagent profiles', () => {

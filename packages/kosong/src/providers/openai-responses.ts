@@ -1,4 +1,3 @@
-import type { ModelCapability } from '#/capability';
 import {
   APIContextOverflowError,
   APIProviderRateLimitError,
@@ -19,10 +18,7 @@ import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import OpenAI from 'openai';
 
-import {
-  getOpenAIResponsesModelCapability,
-  usesOpenAIResponsesDeveloperRole,
-} from './capability-registry';
+import { usesOpenAIResponsesDeveloperRole } from './capability-registry';
 import {
   convertOpenAIError,
   isMediaPart,
@@ -1027,10 +1023,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
       baseUrl: this._baseUrl,
       ...this._generationKwargs,
     };
-  }
-
-  getCapability(model?: string): ModelCapability {
-    return getOpenAIResponsesModelCapability(model ?? this._model);
   }
 
   async generate(

@@ -7,8 +7,7 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
-import { Markdown, visibleWidth } from '@earendil-works/pi-tui';
+import { Markdown, truncateToWidth, visibleWidth, type Component, type MarkdownTheme } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
@@ -53,6 +52,12 @@ export class PlanBoxComponent implements Component {
   }
 
   render(width: number): string[] {
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [''];
+    if (safeWidth < LEFT_MARGIN + 4) {
+      return this.markdown.render(Math.max(1, safeWidth)).map((line) => truncateToWidth(line, safeWidth, '…'));
+    }
+
     if (this.cachedLines !== undefined && this.cachedWidth === width) {
       return this.cachedLines;
     }
@@ -62,7 +67,7 @@ export class PlanBoxComponent implements Component {
     //             "  └──...──┘"
     // width = LEFT_MARGIN + 1 + horzLen + 1 ⇒ horzLen = width - 4
     // content width = horzLen - 2 * SIDE_PADDING = width - 6
-    const horzLen = Math.max(2, width - LEFT_MARGIN - 2);
+    const horzLen = Math.max(2, safeWidth - LEFT_MARGIN - 2);
     const contentWidth = Math.max(1, horzLen - 2 * SIDE_PADDING);
 
     const paint = (s: string): string => chalk.hex(this.borderHex)(s);
@@ -83,17 +88,22 @@ export class PlanBoxComponent implements Component {
     }
     lines.push(bottom);
 
+    const fitted = lines.map((line) => truncateToWidth(line, safeWidth, '…'));
     this.cachedWidth = width;
-    this.cachedLines = lines;
-    return lines;
+    this.cachedLines = fitted;
+    return fitted;
   }
 
   private buildTitle(horzLen: number): string {
     const fallback = ' plan ';
     const statusSuffix = this.buildStatusSuffix();
     const fallbackWithStatus = ` plan${statusSuffix} `;
-    const budget = horzLen - 1;
-    const fallbackTitle = visibleWidth(fallbackWithStatus) <= budget ? fallbackWithStatus : fallback;
+    const budget = Math.max(0, horzLen - 1);
+    const fallbackTitle = truncateToWidth(
+      visibleWidth(fallbackWithStatus) <= budget ? fallbackWithStatus : fallback,
+      budget,
+      '…',
+    );
     const planPath = this.planPath;
     if (planPath === undefined || planPath.length === 0) return fallbackTitle;
     const basename = path.basename(planPath);

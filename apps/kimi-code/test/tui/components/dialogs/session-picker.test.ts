@@ -11,6 +11,9 @@ function renderPlain(component: SessionPickerComponent, width = 120): string {
   return stripAnsi(component.render(width).join('\n'));
 }
 
+const BACKSPACE = String.fromCodePoint(127);
+const ESC = String.fromCodePoint(27);
+
 describe('SessionPickerComponent', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -307,5 +310,403 @@ describe('SessionPickerComponent', () => {
         );
       }
     }
+  });
+
+  it('calls onToggleScope with the selected session id when Ctrl+A is pressed', () => {
+    const onToggleScope = vi.fn();
+    const component = new SessionPickerComponent({
+      sessions: [
+        {
+          id: 'ses_a',
+          title: 'Session A',
+          work_dir: '/tmp/project-a',
+          updated_at: 1,
+        },
+        {
+          id: 'ses_b',
+          title: 'Session B',
+          work_dir: '/tmp/project-b',
+          updated_at: 2,
+        },
+      ],
+      loading: false,
+      currentSessionId: '',
+      scope: 'cwd',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onToggleScope,
+    });
+
+    component.handleInput('\u001B[B');
+    component.handleInput('\u0001');
+
+    expect(onToggleScope).toHaveBeenCalledOnce();
+    expect(onToggleScope).toHaveBeenCalledWith('ses_b');
+  });
+
+  it('calls onToggleScope with the current session id when Ctrl+A is pressed with no sessions', () => {
+    const onToggleScope = vi.fn();
+    const component = new SessionPickerComponent({
+      sessions: [],
+      loading: false,
+      currentSessionId: 'ses_current',
+      scope: 'cwd',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onToggleScope,
+    });
+
+    component.handleInput('\u0001');
+
+    expect(onToggleScope).toHaveBeenCalledOnce();
+    expect(onToggleScope).toHaveBeenCalledWith('ses_current');
+  });
+
+  it('renders the Ctrl+A all-sessions hint when the current cwd has no sessions', () => {
+    const component = new SessionPickerComponent({
+      sessions: [],
+      loading: false,
+      currentSessionId: 'ses_current',
+      scope: 'cwd',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onToggleScope: vi.fn(),
+    });
+
+    const output = renderPlain(component);
+
+    expect(output).toContain('No sessions found.');
+    expect(output).toContain('Ctrl+A all');
+  });
+
+  it('renders all-sessions scope header and Ctrl+A current-cwd hint', () => {
+    const component = new SessionPickerComponent({
+      sessions: [
+        {
+          id: 'ses_all',
+          title: 'All scope session',
+          work_dir: '/tmp/project',
+          updated_at: 1,
+        },
+      ],
+      loading: false,
+      currentSessionId: '',
+      scope: 'all',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onToggleScope: vi.fn(),
+    });
+
+    const output = renderPlain(component);
+
+    expect(output).toContain('All sessions');
+    expect(output).toContain('↑↓ navigate · Ctrl+A current cwd · Enter select · Esc cancel');
+  });
+
+  it('selects the full session row on Enter', () => {
+    const onSelect = vi.fn();
+    const session = {
+      id: 'ses_row',
+      title: 'Row session',
+      work_dir: '/tmp/project-row',
+      updated_at: 1,
+    };
+    const component = new SessionPickerComponent({
+      sessions: [session],
+      loading: false,
+      currentSessionId: '',
+      scope: 'cwd',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    component.handleInput('\r');
+
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(onSelect).toHaveBeenCalledWith(session);
+  });
+
+  it('loads the next 50 sessions after moving past the loaded page', () => {
+    const now = new Date('2026-05-11T12:00:00.000Z').getTime();
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const component = new SessionPickerComponent({
+      sessions: Array.from({ length: 120 }, (_, index) => ({
+        id: `ses_${String(index).padStart(4, '0')}`,
+        title: `Session ${String(index).padStart(4, '0')}`,
+        work_dir: '/tmp/project',
+        updated_at: now - index * 1000,
+      })),
+      loading: false,
+      currentSessionId: '',
+      scope: 'all',
+      pageSize: 50,
+      maxVisibleSessions: 4,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    for (let i = 0; i < 50; i++) {
+      component.handleInput('\u001B[B');
+    }
+
+    const output = renderPlain(component);
+
+    expect(output).toContain('Session 0050');
+    expect(output).toContain('Showing 49-52 of 100 loaded / 120 sessions');
+  });
+
+  it('keeps initial selected session id and loads enough pages for it', () => {
+    const component = new SessionPickerComponent({
+      sessions: Array.from({ length: 80 }, (_, index) => ({
+        id: `ses_${String(index).padStart(4, '0')}`,
+        title: `Session ${String(index).padStart(4, '0')}`,
+        work_dir: '/tmp/project',
+        updated_at: index,
+      })),
+      loading: false,
+      currentSessionId: '',
+      scope: 'all',
+      initialSelectedSessionId: 'ses_0070',
+      pageSize: 50,
+      maxVisibleSessions: 4,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const output = renderPlain(component);
+
+    expect(output).toContain('Session 0070');
+    expect(output).toContain('Showing 69-72 of 80 sessions');
+  });
+
+  it('shows type-to-search copy only when the query is empty', () => {
+    const component = new SessionPickerComponent({
+      sessions: [
+        {
+          id: 'ses_search_copy',
+          title: 'Search copy session',
+          work_dir: '/tmp/project',
+          updated_at: 1,
+        },
+      ],
+      loading: false,
+      currentSessionId: '',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const output = renderPlain(component);
+
+    expect(output).toContain('Sessions  (type to search)');
+    expect(output).not.toContain('Search:');
+
+    component.handleInput('x');
+    const searchOutput = renderPlain(component);
+
+    expect(searchOutput).toContain('Search: x');
+    expect(searchOutput).not.toContain('Sessions  (type to search)');
+  });
+
+  it('fuzzy-filters by session name only when typing', () => {
+    const component = new SessionPickerComponent({
+      sessions: [
+        {
+          id: 'ses_alpha',
+          title: 'Alpha session',
+          last_prompt: 'needleprompt do not match',
+          work_dir: '/tmp/needleprompt',
+          updated_at: 1,
+        },
+        {
+          id: 'ses_beta',
+          title: 'Beta session',
+          last_prompt: 'other prompt',
+          work_dir: '/tmp/other',
+          updated_at: 2,
+        },
+        {
+          id: 'ses_fuzzy',
+          title: 'N1e2e3d4l5e session',
+          last_prompt: 'prompt only',
+          work_dir: '/tmp/project',
+          updated_at: 3,
+        },
+      ],
+      loading: false,
+      currentSessionId: '',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    component.handleInput('n');
+    component.handleInput('e');
+    component.handleInput('e');
+    component.handleInput('d');
+    component.handleInput('l');
+    component.handleInput('e');
+
+    const output = renderPlain(component);
+
+    expect(output).toContain('Search: needle');
+    expect(output).toContain('N1e2e3d4l5e session');
+    expect(output).not.toContain('Alpha session');
+    expect(output).not.toContain('Beta session');
+  });
+
+  it('clears the query on Backspace and cancels on Esc only after the query is empty', () => {
+    const onCancel = vi.fn();
+    const component = new SessionPickerComponent({
+      sessions: [
+        {
+          id: 'ses_alpha',
+          title: 'Alpha session',
+          work_dir: '/tmp/project',
+          updated_at: 1,
+        },
+        {
+          id: 'ses_beta',
+          title: 'Beta session',
+          work_dir: '/tmp/project',
+          updated_at: 2,
+        },
+      ],
+      loading: false,
+      currentSessionId: '',
+      onSelect: vi.fn(),
+      onCancel,
+    });
+
+    component.handleInput('z');
+    expect(renderPlain(component)).toContain('Search: z');
+
+    component.handleInput(BACKSPACE);
+    expect(renderPlain(component)).not.toContain('Search:');
+    expect(onCancel).not.toHaveBeenCalled();
+
+    component.handleInput('z');
+    expect(renderPlain(component)).toContain('Search: z');
+
+    component.handleInput(ESC);
+    expect(renderPlain(component)).not.toContain('Search:');
+    expect(onCancel).not.toHaveBeenCalled();
+
+    component.handleInput(ESC);
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it('selects the filtered session row on Enter', () => {
+    const onSelect = vi.fn();
+    const target = {
+      id: 'ses_gamma',
+      title: 'Gamma session',
+      work_dir: '/tmp/project-gamma',
+      updated_at: 3,
+    };
+    const component = new SessionPickerComponent({
+      sessions: [
+        {
+          id: 'ses_alpha',
+          title: 'Alpha session',
+          work_dir: '/tmp/project-alpha',
+          updated_at: 1,
+        },
+        {
+          id: 'ses_beta',
+          title: 'Beta session',
+          work_dir: '/tmp/project-beta',
+          updated_at: 2,
+        },
+        target,
+      ],
+      loading: false,
+      currentSessionId: '',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    component.handleInput('g');
+    component.handleInput('a');
+    component.handleInput('m');
+    component.handleInput('\r');
+
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(onSelect).toHaveBeenCalledWith(target);
+  });
+
+  it('loads the next 50 matching sessions after moving past the filtered page', () => {
+    const now = new Date('2026-05-11T12:00:00.000Z').getTime();
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const component = new SessionPickerComponent({
+      sessions: [
+        ...Array.from({ length: 80 }, (_, index) => ({
+          id: `ses_needle_${String(index).padStart(4, '0')}`,
+          title: `Needle ${String(index).padStart(4, '0')}`,
+          work_dir: '/tmp/project',
+          updated_at: now - index * 1000,
+        })),
+        ...Array.from({ length: 40 }, (_, index) => ({
+          id: `ses_other_${String(index).padStart(4, '0')}`,
+          title: `Other ${String(index).padStart(4, '0')}`,
+          work_dir: '/tmp/project',
+          updated_at: now - (80 + index) * 1000,
+        })),
+      ],
+      loading: false,
+      currentSessionId: '',
+      pageSize: 50,
+      maxVisibleSessions: 4,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    component.handleInput('n');
+    component.handleInput('e');
+    component.handleInput('e');
+    component.handleInput('d');
+    component.handleInput('l');
+    component.handleInput('e');
+    for (let i = 0; i < 50; i++) {
+      component.handleInput('\u001B[B');
+    }
+
+    const output = renderPlain(component);
+
+    expect(output).toContain('Needle 0050');
+    expect(output).toContain('Showing 49-52 of 80 loaded / 80 matches');
+  });
+
+  it('calls onToggleScope with the selected filtered session id when Ctrl+A is pressed', () => {
+    const onToggleScope = vi.fn();
+    const component = new SessionPickerComponent({
+      sessions: [
+        {
+          id: 'ses_alpha',
+          title: 'Alpha session',
+          work_dir: '/tmp/project-a',
+          updated_at: 1,
+        },
+        {
+          id: 'ses_beta',
+          title: 'Beta session',
+          work_dir: '/tmp/project-b',
+          updated_at: 2,
+        },
+      ],
+      loading: false,
+      currentSessionId: '',
+      scope: 'cwd',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onToggleScope,
+    });
+
+    component.handleInput('b');
+    component.handleInput('e');
+    component.handleInput('t');
+    component.handleInput('a');
+    component.handleInput('\u0001');
+
+    expect(onToggleScope).toHaveBeenCalledOnce();
+    expect(onToggleScope).toHaveBeenCalledWith('ses_beta');
   });
 });

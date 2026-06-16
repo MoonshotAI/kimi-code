@@ -1,7 +1,7 @@
 /**
  * Synthetic `mcp__<server>__authenticate` tool.
  *
- * When an MCP HTTP server lands in the `needs-auth` state — i.e. its
+ * When a remote MCP server lands in the `needs-auth` state — i.e. its
  * initial connection failed with a 401 / `UnauthorizedError` and no static
  * bearer token is configured — the {@link ToolManager} swaps the real MCP
  * tool list for this single tool. Calling it:

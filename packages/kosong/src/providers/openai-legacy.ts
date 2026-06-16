@@ -1,4 +1,3 @@
-import type { ModelCapability } from '#/capability';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import type {
   ChatProvider,
@@ -12,7 +11,6 @@ import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import OpenAI from 'openai';
 
-import { getOpenAILegacyModelCapability } from './capability-registry';
 import {
   convertContentPart,
   convertOpenAIError,
@@ -492,10 +490,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       baseUrl: this._baseUrl,
       ...normalizeGenerationKwargs(this._model, this._generationKwargs),
     };
-  }
-
-  getCapability(model?: string): ModelCapability {
-    return getOpenAILegacyModelCapability(model ?? this._model);
   }
 
   async generate(

@@ -192,16 +192,18 @@ describe('acpMcpServersToConfigs', () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it('warn-drops sse servers (PLAN D3 — sse capability is false)', () => {
+  it('converts an SSE server with headers to a Record keyed by name', () => {
     const out = acpMcpServersToConfigs([
       sseServer('events', 'https://stream.example.com', [{ name: 'X-K', value: 'V' }]),
     ]);
-    expect(out).toEqual({});
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy).toHaveBeenCalledWith(
-      'acp: dropping unsupported MCP server transport',
-      expect.objectContaining({ name: 'events', type: 'sse' }),
-    );
+    expect(out).toEqual({
+      events: {
+        transport: 'sse',
+        url: 'https://stream.example.com',
+        headers: { 'X-K': 'V' },
+      },
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it('warn-drops acp servers (experimental, not supported)', () => {
@@ -218,10 +220,12 @@ describe('acpMcpServersToConfigs', () => {
     const out = acpMcpServersToConfigs([
       httpServer('docs', 'https://h', [{ name: 'X', value: 'v' }]),
       sseServer('events', 'https://s', [{ name: 'X', value: 'v' }]),
+      acpServer('inner', 'opaque-id'),
       stdioServer('fs', '/bin/fs', [], []),
     ]);
-    expect(Object.keys(out)).toEqual(['docs', 'fs']);
+    expect(Object.keys(out)).toEqual(['docs', 'events', 'fs']);
     expect(out['docs']).toMatchObject({ transport: 'http' });
+    expect(out['events']).toMatchObject({ transport: 'sse' });
     expect(out['fs']).toMatchObject({ transport: 'stdio' });
     expect(warnSpy).toHaveBeenCalledTimes(1);
   });
@@ -260,6 +264,11 @@ describe('AcpServer session/new MCP forwarding', () => {
         transport: 'http',
         url: 'https://mcp.example.com',
         headers: { Auth: 'tok' },
+      },
+      events: {
+        transport: 'sse',
+        url: 'https://s',
+        headers: { X: 'v' },
       },
     });
     void _agentConn;

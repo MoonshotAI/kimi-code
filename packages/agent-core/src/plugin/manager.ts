@@ -417,12 +417,12 @@ function pluginMcpServerInfo(
   name: string,
   config: McpServerConfig,
 ): PluginMcpServerInfo {
-  if (config.transport === 'http') {
+  if (config.transport === 'http' || config.transport === 'sse') {
     return {
       name,
       runtimeName: pluginMcpRuntimeName(record.id, name),
       enabled: isMcpServerEnabled(record, name, config),
-      transport: 'http',
+      transport: config.transport,
       url: config.url,
       headerKeys: config.headers === undefined ? undefined : Object.keys(config.headers).toSorted(),
     };
@@ -454,7 +454,7 @@ function withPluginMcpRuntime(
   pluginRoot: string,
   kimiHomeDir: string,
 ): McpServerConfig {
-  if (config.transport === 'http') return config;
+  if (config.transport === 'http' || config.transport === 'sse') return config;
 
   const env = {
     ...config.env,

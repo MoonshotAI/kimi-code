@@ -12,6 +12,8 @@ export default defineConfig({
   format: ['esm'],
   outDir: 'dist',
   clean: true,
+  dts: false,
+  hash: false,
   banner: {
     js: [
       '#!/usr/bin/env node',
@@ -29,7 +31,10 @@ export default defineConfig({
     [BUILT_IN_CATALOG_DEFINE]: builtInCatalogDefine(),
   },
   deps: {
-    alwaysBundle: [/^@moonshot-ai\//],
-    neverBundle: [],
+    onlyBundle: false,
+  },
+  outputOptions: {
+    codeSplitting: false,
+    entryFileNames: 'main.mjs',
   },
 });

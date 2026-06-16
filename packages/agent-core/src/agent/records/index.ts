@@ -127,6 +127,10 @@ export interface RestoringContext {
   time?: number;
 }
 
+export interface AgentRecordsReplayOptions {
+  readonly rewriteMigratedRecords?: boolean;
+}
+
 export class AgentRecords {
   private _restoring: RestoringContext | null = null;
   private metadataInitialized = false;
@@ -153,7 +157,6 @@ export class AgentRecords {
         type: 'metadata',
         protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
         created_at: Date.now(),
-        app_version: this.agent.appVersion,
       });
       this.metadataInitialized = true;
     }
@@ -163,22 +166,25 @@ export class AgentRecords {
     this.persistence?.append(stamped);
   }
 
-  restore(record: AgentRecord): void {
+  restore(record: AgentRecord): boolean {
     this._restoring = { time: record.time ?? Date.now() };
     try {
       restoreAgentRecord(this.agent, record);
+      return this.agent.replayBuilder.finishRestoringRecord(record.type);
     } finally {
       this._restoring = null;
     }
   }
 
-  async replay(): Promise<{ warning?: string }> {
+  async replay(options: AgentRecordsReplayOptions = {}): Promise<{ warning?: string }> {
     if (!this.persistence) throw new Error('No persistence provided for AgentRecords');
+    const rewriteMigratedRecords = options.rewriteMigratedRecords ?? true;
     let migrations: readonly WireMigration[] = [];
     let hasMetadata = false;
     let shouldRewrite = false;
     let warning: string | undefined;
-    const replayedRecords: AgentRecord[] = [];
+    const replayedRecords: AgentRecord[] | undefined = rewriteMigratedRecords ? [] : undefined;
+    let completed = true;
     for await (const record of this.persistence.read()) {
       if (!hasMetadata) {
         if (record.type !== 'metadata') {
@@ -205,31 +211,20 @@ export class AgentRecords {
           protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
         };
       }
-      replayedRecords.push(migratedRecord);
-      this.restore(migratedRecord);
+      replayedRecords?.push(migratedRecord);
+      if (this.restore(migratedRecord)) {
+        completed = false;
+        break;
+      }
     }
-    if (shouldRewrite) {
+    if (completed && shouldRewrite && replayedRecords !== undefined) {
       this.persistence.rewrite(replayedRecords);
       await this.persistence.flush();
     }
-    if (this.agent.blobStore !== undefined) {
+    if (completed && this.agent.blobStore !== undefined) {
       for (const msg of this.agent.context.history) {
         await this.agent.blobStore.rehydrateParts(msg.content);
       }
-    }
-    const firstRecord = replayedRecords[0];
-    if (
-      firstRecord?.type === 'metadata' &&
-      firstRecord.app_version !== this.agent.appVersion
-    ) {
-      this.persistence.append({
-        type: 'metadata',
-        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-        created_at: Date.now(),
-        app_version: this.agent.appVersion,
-        resumed: true,
-      });
-      await this.persistence.flush();
     }
     return { warning };
   }

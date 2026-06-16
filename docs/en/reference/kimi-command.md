@@ -214,6 +214,32 @@ kimi upgrade
 
 For global npm, pnpm, yarn, bun, and macOS / Linux native installations, `kimi upgrade` shows update options; selecting `Install update now` runs the corresponding foreground install command. When the current installation method cannot be upgraded automatically (e.g., Windows native installation), the manual update command is printed instead.
 
+### `kimi vis`
+
+Launch the session visualizer in your browser to inspect a session as it unfolds. The command starts an in-process server pointed at your local sessions, prints the URL, opens your browser, and keeps running until you press `Ctrl-C`.
+
+```sh
+kimi vis [sessionId] [options]
+```
+
+| Parameter / Option | Description |
+| --- | --- |
+| `sessionId` | Open the visualizer directly to this session. When omitted, it opens the home view listing your sessions |
+| `--port <number>` | Port to bind. By default an available port is picked automatically |
+| `--host <host>` | Host to bind. Default: `127.0.0.1` |
+| `--no-open` | Do not open the browser automatically; just print the URL |
+
+```sh
+# Start the visualizer and open the browser at the home view
+kimi vis
+
+# Open directly to a specific session
+kimi vis 01HZ...XYZ
+
+# Bind a fixed port and host without opening a browser (e.g. on a remote host)
+kimi vis --host 0.0.0.0 --port 8123 --no-open
+```
+
 ### `kimi provider`
 
 Manage providers in the shell — the non-interactive equivalent of `/provider` in the TUI. Suitable for scripted deployments, CI initialization, and one-line setup on a new machine.

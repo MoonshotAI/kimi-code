@@ -20,6 +20,7 @@ import {
   createBackgroundManager,
   registerProcess,
   waitForOutput,
+  waitForTerminal,
 } from './helpers';
 
 function immediateProcess(exitCode: number, stdoutText = ''): KaosProcess {
@@ -31,6 +32,7 @@ function immediateProcess(exitCode: number, stdoutText = ''): KaosProcess {
     exitCode,
     wait: vi.fn().mockResolvedValue(exitCode) as KaosProcess['wait'],
     kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
   };
 }
 
@@ -43,6 +45,7 @@ function rejectedProcess(error: Error): KaosProcess {
     exitCode: null,
     wait: vi.fn().mockRejectedValue(error) as KaosProcess['wait'],
     kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
   };
 }
 
@@ -70,6 +73,7 @@ function pendingProcess(exitOnKill = 143): {
     },
     wait: () => waitPromise,
     kill: killSpy as unknown as KaosProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
   };
   return { proc, killSpy };
 }
@@ -95,6 +99,7 @@ function manuallyResolvedProcess(): {
     },
     wait: () => waitPromise,
     kill: killSpy as unknown as KaosProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
   };
   return {
     proc,
@@ -122,6 +127,7 @@ function processWithVisibleExitCodeBeforeWait(exitCode = 143): {
     },
     wait: () => new Promise<number>(() => {}),
     kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
   };
   return {
     proc,
@@ -218,6 +224,22 @@ describe('BackgroundManager', () => {
     expect(await manager.readOutput(taskId)).toContain('captured output');
   });
 
+  it('disposes process resources after a process task completes', async () => {
+    const { manager } = createBackgroundManager();
+    const dispose = vi.fn();
+    const proc = {
+      ...immediateProcess(0, 'hello'),
+      dispose,
+    } as unknown as KaosProcess;
+    const taskId = registerProcess(manager, proc, 'echo hello', 'test echo');
+
+    await waitForTerminal(manager, taskId);
+
+    await vi.waitFor(() => {
+      expect(dispose).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('transitions process status from exit code', async () => {
     const { manager } = createBackgroundManager();
     const successId = registerProcess(manager, immediateProcess(0), 'echo done', 'ok');
@@ -286,6 +308,22 @@ describe('BackgroundManager', () => {
       exitCode: 143,
     });
     expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('disposes process resources after a stopped process task settles', async () => {
+    const { manager } = createBackgroundManager();
+    const { proc, killSpy } = pendingProcess(143);
+    const dispose = vi.fn();
+    const disposableProc = {
+      ...proc,
+      dispose,
+    } as unknown as KaosProcess;
+    const taskId = registerProcess(manager, disposableProc, 'sleep 60', 'kill test');
+
+    await manager.stop(taskId, 'user requested');
+
+    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 
   it('stop normalizes blank reasons', async () => {
@@ -496,10 +534,15 @@ describe('BackgroundManager', () => {
           child.on('exit', (code) => {
             resolve(code ?? 0);
           });
-        }),
+      }),
       kill: vi.fn(async (signal?: NodeJS.Signals) => {
         child.kill(signal ?? 'SIGTERM');
       }) as unknown as KaosProcess['kill'],
+      dispose: vi.fn(async () => {
+        child.stdin?.destroy();
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }) as KaosProcess['dispose'],
     };
 
     const taskId = registerProcess(manager, proc, 'node -e <stdout bg-ok>', 'real worker');

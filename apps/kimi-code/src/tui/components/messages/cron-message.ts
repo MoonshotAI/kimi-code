@@ -32,27 +32,36 @@ export class CronMessageComponent implements Component {
   }
 
   render(width: number): string[] {
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [''];
+
     const missed = this.data.missedCount !== undefined;
     const titleToken: keyof ColorPalette = this.data.stale === true || missed ? 'warning' : 'accent';
     const bullet = currentTheme.boldFg(titleToken, STATUS_BULLET);
     const bulletWidth = visibleWidth(bullet);
-    const contentWidth = Math.max(1, width - bulletWidth);
+    const contentWidth = Math.max(1, safeWidth - bulletWidth);
+    const continuationIndent = ' '.repeat(bulletWidth);
     const lines: string[] = [];
 
-    for (const line of this.spacer.render(width)) {
+    for (const line of this.spacer.render(safeWidth)) {
       lines.push(line);
     }
 
-    const title = currentTheme.boldFg(titleToken, this.title);
-    lines.push(`${bullet}${title}`);
+    const titleLines = new Text(currentTheme.boldFg(titleToken, this.title), 0, 0).render(contentWidth);
+    for (let i = 0; i < titleLines.length; i += 1) {
+      lines.push(`${i === 0 ? bullet : continuationIndent}${titleLines[i]}`);
+    }
 
     if (this.detail !== undefined) {
-      lines.push(`${' '.repeat(bulletWidth)}${currentTheme.fg('textDim', this.detail)}`);
+      const detailLines = new Text(currentTheme.fg('textDim', this.detail), 0, 0).render(contentWidth);
+      for (const line of detailLines) {
+        lines.push(`${continuationIndent}${line}`);
+      }
     }
 
     const promptLines = this.promptText.render(contentWidth);
     for (const line of promptLines) {
-      lines.push(`${' '.repeat(bulletWidth)}${line}`);
+      lines.push(`${continuationIndent}${line}`);
     }
 
     return lines;

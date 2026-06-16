@@ -4,7 +4,7 @@ import path from 'pathe';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { discoverSkills, resolveSkillRoots, SkillRegistry, type SkillRoot } from '../../src/skill';
+import { discoverSkills, resolveSkillRoots, SessionSkillRegistry, type SkillRoot } from '../../src/skill';
 
 const tempDirs: string[] = [];
 
@@ -138,7 +138,7 @@ describe('skill discovery', () => {
       '```',
     ]);
 
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
     await registry.loadRoots([{ path: projectRoot, source: 'project' }]);
 
     expect(registry.listSkills().map((skill) => skill.name)).toEqual(['review-flow']);
@@ -854,7 +854,7 @@ describe('resolveSkillRoots extra dirs', () => {
       '',
       'plugin body',
     ]);
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
 
     await registry.loadRoots([
       { path: projectRoot, source: 'project' },

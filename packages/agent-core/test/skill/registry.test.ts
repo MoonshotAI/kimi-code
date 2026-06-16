@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SkillRegistry } from '../../src/skill';
+import { SessionSkillRegistry } from '../../src/skill';
 import type { SkillDefinition, SkillSource } from '../../src/skill';
 
 describe('skill registry prompt rendering', () => {
@@ -47,7 +47,7 @@ describe('skill registry prompt rendering', () => {
   });
 
   it('renders a "No skills" placeholder for an empty registry', () => {
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
 
     const rendered = registry.getKimiSkillsDescription();
 
@@ -96,8 +96,8 @@ describe('skill registry prompt rendering', () => {
   });
 });
 
-function makeRegistry(skills: readonly SkillDefinition[]): SkillRegistry {
-  const registry = new SkillRegistry();
+function makeRegistry(skills: readonly SkillDefinition[]): SessionSkillRegistry {
+  const registry = new SessionSkillRegistry();
   for (const skill of skills) registry.register(skill);
   return registry;
 }

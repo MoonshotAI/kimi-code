@@ -30,8 +30,9 @@ export class DeviceCodeBoxComponent implements Component {
   render(width: number): string[] {
     const { title, url, code, hint } = this.params;
     const border = (s: string): string => currentTheme.fg('primary', s);
-    const safeWidth = Math.max(28, width);
-    const innerWidth = Math.max(10, safeWidth - 4);
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [''];
+    const innerWidth = Math.max(1, safeWidth - 4);
     const pad = '  ';
 
     const titleLine = truncateToWidth(currentTheme.boldFg('textStrong', title), innerWidth, '…');
@@ -52,6 +53,10 @@ export class DeviceCodeBoxComponent implements Component {
       contentLines.push(truncateToWidth(currentTheme.fg('textDim', hint), innerWidth, '…'));
     }
 
+    if (safeWidth < 4) {
+      return ['', ...contentLines.map((line) => truncateToWidth(line, safeWidth, '…'))];
+    }
+
     const lines: string[] = [
       '',
       border('╭' + '─'.repeat(safeWidth - 2) + '╮'),
@@ -69,6 +74,6 @@ export class DeviceCodeBoxComponent implements Component {
     lines.push(border('╰' + '─'.repeat(safeWidth - 2) + '╯'));
     lines.push('');
 
-    return lines;
+    return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
   }
 }

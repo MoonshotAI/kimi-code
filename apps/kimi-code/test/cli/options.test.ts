@@ -348,6 +348,7 @@ describe('CLI options parsing', () => {
         'login',
         'doctor',
         'session',
+        'vis',
         'migrate',
         'upgrade',
       ]);
