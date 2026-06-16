@@ -50,6 +50,7 @@ const emit = defineEmits<{
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
   openSettings: [];
+  collapse: [];
 }>();
 
 
@@ -372,6 +373,19 @@ function blinkOnce(): void {
         </div>
         <button
           type="button"
+          class="collapse-btn"
+          :title="t('sidebar.collapseSidebar')"
+          :aria-label="t('sidebar.collapseSidebar')"
+          @click.stop="emit('collapse')"
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M9 3v18" />
+            <path d="M15 8l-4 4 4 4" />
+          </svg>
+        </button>
+        <button
+          type="button"
           class="settings-btn"
           :title="t('settings.title')"
           :aria-label="t('settings.title')"
@@ -650,7 +664,8 @@ function blinkOnce(): void {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
 }
-.settings-btn {
+.settings-btn,
+.collapse-btn {
   flex: none;
   width: 28px;
   height: 28px;
@@ -664,8 +679,10 @@ function blinkOnce(): void {
   cursor: pointer;
   padding: 0;
 }
-.settings-btn:hover { background: var(--soft); color: var(--ink); }
-.settings-btn:focus-visible {
+.settings-btn:hover,
+.collapse-btn:hover { background: var(--soft); color: var(--ink); }
+.settings-btn:focus-visible,
+.collapse-btn:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: -2px;
 }

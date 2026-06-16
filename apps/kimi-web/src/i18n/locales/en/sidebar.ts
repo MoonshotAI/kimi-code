@@ -32,4 +32,6 @@ export default {
   tablistLabel: 'Workspace views',
   noSessions: 'No conversations yet',
   showMore: 'Show more ({count})',
+  collapseSidebar: 'Collapse sidebar',
+  expandSidebar: 'Expand sidebar',
 } as const;

@@ -32,4 +32,6 @@ export default {
   tablistLabel: '工作区视图',
   noSessions: '暂无对话',
   showMore: '展开更多 ({count})',
+  collapseSidebar: '收起侧边栏',
+  expandSidebar: '展开侧边栏',
 };

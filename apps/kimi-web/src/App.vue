@@ -75,6 +75,7 @@ function openOnboarding(): void {
 
 onMounted(() => {
   void client.load();
+  loadSidebarCollapsed();
   // Capture-phase so Escape closes the side detail layer BEFORE the
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
@@ -107,12 +108,38 @@ function onGlobalKeydown(e: KeyboardEvent): void {
 // localStorage persistence); we mirror it here to drive the App grid.
 // ---------------------------------------------------------------------------
 const SIDEBAR_WIDTH_KEY = 'kimi-web.sidebar-width';
+const SIDEBAR_COLLAPSED_KEY = 'kimi-web.sidebar-collapsed';
 const SIDEBAR_DEFAULT = 270;
 const SIDEBAR_MIN = 170;
 const SIDEBAR_MAX = 420;
+const SIDEBAR_COLLAPSED_WIDTH = 36;
 
 const sessionColWidth = ref(SIDEBAR_DEFAULT);
-const sideWidth = computed(() => sessionColWidth.value);
+const sidebarCollapsed = ref(false);
+const sideWidth = computed(() =>
+  sidebarCollapsed.value ? SIDEBAR_COLLAPSED_WIDTH : sessionColWidth.value,
+);
+
+function loadSidebarCollapsed(): void {
+  try {
+    sidebarCollapsed.value = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+  } catch {
+    sidebarCollapsed.value = false;
+  }
+}
+
+function saveSidebarCollapsed(): void {
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed.value));
+  } catch {
+    // ignore
+  }
+}
+
+function toggleSidebarCollapse(): void {
+  sidebarCollapsed.value = !sidebarCollapsed.value;
+  saveSidebarCollapsed();
+}
 
 // ---------------------------------------------------------------------------
 // Global file preview panel. Chat path links open here; the existing ~/files
@@ -697,12 +724,13 @@ function openPr(url: string): void {
     </div>
     <div
       class="app"
-      :class="{ mobile: isMobile }"
+      :class="{ mobile: isMobile, 'sidebar-collapsed': sidebarCollapsed && !isMobile }"
       :style="{ '--side-w': sideWidth + 'px', '--preview-w': previewWidth + 'px' }"
     >
     <!-- Desktop navigation: workspace rail + resizable session column. -->
     <template v-if="!isMobile">
       <Sidebar
+        v-show="!sidebarCollapsed"
         :col-width="sessionColWidth"
         :active-workspace="client.visibleWorkspace.value"
         :active-workspace-id="client.activeWorkspaceId.value"
@@ -724,14 +752,31 @@ function openPr(url: string): void {
         @delete-workspace="(id) => client.deleteWorkspace(id)"
         @select-workspaces="handleSelectWorkspaces"
         @open-settings="showSettings = true"
+        @collapse="toggleSidebarCollapse"
       />
       <ResizeHandle
+        v-show="!sidebarCollapsed"
         :storage-key="SIDEBAR_WIDTH_KEY"
         :default-width="SIDEBAR_DEFAULT"
         :min="SIDEBAR_MIN"
         :max="SIDEBAR_MAX"
         @update:width="sessionColWidth = $event"
       />
+      <div v-if="sidebarCollapsed" class="sidebar-rail">
+        <button
+          type="button"
+          class="sidebar-expand-btn"
+          :title="t('sidebar.expandSidebar')"
+          :aria-label="t('sidebar.expandSidebar')"
+          @click="toggleSidebarCollapse"
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M15 3v18" />
+            <path d="M9 8l4 4-4 4" />
+          </svg>
+        </button>
+      </div>
     </template>
 
     <!-- Mobile navigation: slim top bar (switcher + settings sheets). -->
@@ -1116,6 +1161,46 @@ function openPr(url: string): void {
 .app > * {
   min-height: 0;
   min-width: 0;
+}
+
+/* Collapsed sidebar rail: keeps a slim, dedicated grid track so the expand
+   button never overlaps the conversation header or squeezes the main pane. */
+.sidebar-rail {
+  grid-column: 1;
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+.sidebar-expand-btn {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.sidebar-expand-btn:hover {
+  background: var(--soft);
+  color: var(--ink);
+}
+.sidebar-expand-btn:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+/* The collapsed rail occupies track 1; keep the main pane pinned to the
+   conversation track even though the sidebar/handle are display:none. */
+.app.sidebar-collapsed > .con,
+.app.sidebar-collapsed > .coming-soon {
+  grid-column: 3;
 }
 
 /* Mobile single-column shell: slim top bar (auto) over the full-width
