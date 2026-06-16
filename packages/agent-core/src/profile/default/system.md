@@ -85,6 +85,10 @@ The current date and time in ISO format is `{{ KIMI_NOW }}`. This is only a refe
 
 The current working directory is `{{ KIMI_WORK_DIR }}`. This should be considered as the project root if you are instructed to perform tasks on the project. Every file system operation will be relative to the working directory if you do not explicitly specify the absolute path. Tools may require absolute paths for some parameters, IF SO, YOU MUST use absolute paths for these parameters.
 
+{% if KIMI_WORKTREE_INFO %}
+{{ KIMI_WORKTREE_INFO }}
+
+{% endif %}
 Use this as your basic understanding of the project structure. The tree only shows the first two levels for normal directories; entries marked "... and N more" indicate additional contents. Hidden directories are shown as entries only; their contents are intentionally omitted to reduce noise.
 
 If the task requires inspecting hidden paths, use `Glob` to discover them (for example `.*`, `.github/**`, `.agents/**`, or `.git/**`), use `Read` for known non-sensitive hidden files, and use `Grep` to search hidden file contents. `Grep` searches hidden files by default but excludes VCS metadata and sensitive files such as `.env`, credential stores, and SSH keys. Use `Bash` only for raw listings like `ls -A` when a dedicated tool is not appropriate.

@@ -3,7 +3,9 @@ import { dirname, join } from 'pathe';
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import { listDirectory } from '../tools/support/list-directory';
-import type { SystemPromptContext } from './types';
+import type { SystemPromptContext, WorktreeInfo } from './types';
+
+export type { WorktreeInfo };
 
 const AGENTS_MD_MAX_BYTES = 32 * 1024;
 const AGENTS_MD_TRUNCATION_MARKER =
@@ -11,7 +13,10 @@ const AGENTS_MD_TRUNCATION_MARKER =
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
-export type PreparedSystemPromptContext = Pick<SystemPromptContext, 'cwdListing' | 'agentsMd'>;
+export type PreparedSystemPromptContext = Pick<
+  SystemPromptContext,
+  'cwdListing' | 'agentsMd' | 'worktreeInfo'
+>;
 
 export async function prepareSystemPromptContext(
   kaos: Kaos,
@@ -22,6 +27,18 @@ export async function prepareSystemPromptContext(
     loadAgentsMd(kaos, brandHome),
   ]);
   return { cwdListing, agentsMd };
+}
+
+export function getWorktreeInfoFromSessionMetadata(metadata: {
+  readonly custom: Record<string, unknown>;
+}): WorktreeInfo | undefined {
+  const custom = metadata.custom;
+  const worktreePath = custom?.['worktreePath'];
+  const parentRepoPath = custom?.['parentRepoPath'];
+  if (typeof worktreePath === 'string' && typeof parentRepoPath === 'string') {
+    return { worktreePath, parentRepoPath };
+  }
+  return undefined;
 }
 
 export async function loadAgentsMd(kaos: Kaos, brandHome?: string): Promise<string> {
