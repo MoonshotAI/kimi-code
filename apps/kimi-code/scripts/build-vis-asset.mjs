@@ -2,7 +2,7 @@
 // TS module that embeds it as base64 so tsdown can later bundle it into
 // dist/main.mjs (works identically for the npm package and the native SEA
 // binary).
-import { execFileSync } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -15,12 +15,18 @@ const out = join(here, '..', 'src', 'generated', 'vis-web-asset.ts');
 
 console.log('[build-vis-asset] building vis web single-file bundle…');
 try {
-  // Run vite directly with VIS_SINGLEFILE set on the spawn so the build is
+  // Run vite with VIS_SINGLEFILE set on the spawn so the build is
   // cross-platform (Node sets the env, not a POSIX-only inline-env shell
   // prefix). `pnpm --filter X exec` runs in X's package dir, so vite picks up
   // vis-web's vite.config.ts, which gates the single-file output on
   // `process.env.VIS_SINGLEFILE === '1'`.
-  execFileSync('pnpm', ['--filter', '@moonshot-ai/vis-web', 'exec', 'vite', 'build'], {
+  // execSync runs through the platform shell, which is required on Windows:
+  // pnpm's launcher is `pnpm.cmd`, which a bare argv exec cannot resolve (no
+  // PATHEXT without a shell). The win32 native binary IS built on Windows
+  // runners (.github/workflows/_native-build.yml), which run this generator.
+  // A single command string (not an args array) avoids the args+shell
+  // deprecation; the command is static (no injection surface).
+  execSync('pnpm --filter @moonshot-ai/vis-web exec vite build', {
     stdio: 'inherit',
     cwd: repoRoot,
     env: { ...process.env, VIS_SINGLEFILE: '1' },
