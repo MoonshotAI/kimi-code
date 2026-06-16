@@ -181,7 +181,22 @@ function selectTab(tabId: string): void {
           @click="choose(m.id)"
           @mouseenter="selectedIdx = flatIdx(m)"
         >
-          <span class="check">{{ m.id === current ? '✓' : '' }}</span>
+          <span class="check">
+            <svg
+              v-if="m.id === current"
+              viewBox="0 0 16 16"
+              width="13"
+              height="13"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 8.5l3.5 3.5L13 4.5"/>
+            </svg>
+          </span>
           <span class="model-main">
             <span class="model-name">{{ m.displayName ?? m.model }}</span>
             <span class="model-id">{{ m.id }}</span>
@@ -334,10 +349,8 @@ function selectTab(tabId: string): void {
 .check {
   width: 14px;
   height: 14px;
-  font-size: calc(var(--ui-font-size) - 3px);
   color: var(--blue);
   flex: none;
-  font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;

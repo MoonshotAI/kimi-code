@@ -3,4 +3,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Remove the top blue accent bar from the model switcher dialog and widen its default size.
+Remove the top blue accent bar from the model switcher dialog, widen its default size, and replace the current-model checkmark with an icon.
