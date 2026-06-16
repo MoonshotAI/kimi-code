@@ -222,10 +222,8 @@ function stepEndProviderDiagnostics(
   }
 
   return {
-    ...(providerFinishReason !== undefined ? { providerFinishReason } : {}),
-    ...(response.rawFinishReason !== undefined
-      ? { rawFinishReason: response.rawFinishReason }
-      : {}),
+    providerFinishReason,
+    rawFinishReason: response.rawFinishReason,
   };
 }
 
