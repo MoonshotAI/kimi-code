@@ -5,17 +5,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import OpenInMenu from './OpenInMenu.vue';
 
 const { t } = useI18n();
 
 const props = defineProps<{
   sessionId?: string;
   workspaceName?: string;
-  /** Absolute path to the active workspace root (shown in the Open menu). */
+  /** Absolute path to the active workspace root. */
   workspaceRoot?: string;
-  /** Installed app IDs from the daemon; passed through to the Open menu. */
-  availableOpenInApps?: string[];
   sessionTitle?: string;
   branch?: string;
   ahead?: number;
@@ -31,7 +28,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  openInApp: [appId: string];
   copyAll: [];
   copyFinalSummary: [];
   openChanges: [];
@@ -312,12 +308,6 @@ function startArchive(): void {
       <span>PR #{{ pr.number }} · {{ pr.state }}</span>
     </button>
 
-    <OpenInMenu
-      v-if="sessionId && (availableOpenInApps?.length ?? 0) > 0"
-      :work-dir="workspaceRoot"
-      :available-apps="availableOpenInApps"
-      @open-in-app="(app) => emit('openInApp', app)"
-    />
   </header>
 </template>
 

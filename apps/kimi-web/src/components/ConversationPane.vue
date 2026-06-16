@@ -26,6 +26,7 @@ import SwarmCard from './SwarmCard.vue';
 import GoalStrip from './GoalStrip.vue';
 import ViewGroup from './ViewGroup.vue';
 import SplitLayout from './SplitLayout.vue';
+import SideChatPanel from './SideChatPanel.vue';
 import { getVisibleWorkspaces } from '../lib/workspacePicker';
 
 const props = defineProps<{
@@ -79,10 +80,8 @@ const props = defineProps<{
   skills?: AppSkill[];
   /** Workspace name shown in the empty-session hint above the centred composer. */
   workspaceName?: string;
-  /** Absolute workspace root path shown by the Open menu. */
+  /** Absolute workspace root path. */
   workspaceRoot?: string;
-  /** Installed app IDs from the daemon; passed through to the Open menu. */
-  availableOpenInApps?: string[];
   /** Git diff line stats for the header diff counter (mirrors kimi-cli/web). */
   gitDiffStats?: { totalAdditions: number; totalDeletions: number } | null;
   /** Workspaces for the empty-composer picker (start a conversation elsewhere). */
@@ -104,6 +103,11 @@ const props = defineProps<{
   previewExternalActions?: boolean;
   /** Beta conversation outline: proportional bubbles, viewport indicator, hover tooltip. */
   betaToc?: boolean;
+  // ---- Per-session BTW side chat --------------------------------------------
+  sideChatTurns?: ChatTurn[];
+  sideChatRunning?: boolean;
+  sideChatSending?: boolean;
+  sideChatVisible?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -141,12 +145,14 @@ const emit = defineEmits<{
   openPreviewExternal: [];
   /** Preview pane: reveal the previewed file in the OS file manager. */
   revealPreview: [];
+  /** BTW side chat: send a follow-up prompt to the side-channel agent. */
+  sendSideChat: [text: string];
+  /** BTW side chat: close the side chat for the current session. */
+  closeSideChat: [];
   /** Empty-composer workspace picker: start a new conversation elsewhere. */
   selectWorkspace: [workspaceId: string];
   /** Empty-composer workspace picker: create a new workspace. */
   addWorkspace: [];
-  /** Chat header: open the workspace in an external application. */
-  openInApp: [appId: string];
   /** Chat header / files pane: focus Files -> Changed and refresh git status. */
   refreshGitStatus: [];
   /** Chat header: open the GitHub PR in a new tab. */
@@ -246,6 +252,26 @@ function closePreviewPane(): void {
   emit('closePreview');
 }
 
+/** Close the BTW side-chat tab and tell App to clear the side-chat state. */
+function closeSideChatPane(): void {
+  emit('closeSideChat');
+  if (active.value === 'btw') active.value = 'chat';
+  removeBtwFromAllGroups();
+}
+
+function removeBtwFromAllGroups(): void {
+  const ids: string[] = [];
+  function collect(node: PaneLayout): void {
+    if (node.type === 'group') {
+      if (node.views.includes('btw')) ids.push(node.id);
+    } else {
+      node.children.forEach(collect);
+    }
+  }
+  collect(paneLayout.layout.value);
+  for (const id of ids) paneLayout.removeView(id, 'btw');
+}
+
 // When App clears the preview (e.g. on a session switch), drop the now-empty
 // preview pane. Watcher batching means the transient null state while a preview
 // is opening (loading already true by then) never triggers this.
@@ -253,6 +279,15 @@ watch(
   () => [props.previewFile, props.previewLoading, props.previewError] as const,
   ([file, loading, error]) => {
     if (!file && !loading && !error) paneLayout.closePreview();
+  },
+);
+
+// If the side chat is closed (or the active session switches to one without a
+// side chat), make sure no pane group is stuck on the BTW tab.
+watch(
+  () => props.sideChatVisible,
+  (visible) => {
+    if (!visible) closeSideChatPane();
   },
 );
 defineExpose({ switchTab, loadComposerForEdit, openPreviewPane, openWorkspaceFileInFiles });
@@ -1088,7 +1123,6 @@ onUnmounted(() => {
       :session-id="sessionId"
       :workspace-name="workspaceName"
       :workspace-root="workspaceRoot"
-      :available-open-in-apps="availableOpenInApps"
       :session-title="sessionTitle"
       :branch="gitInfo?.branch"
       :ahead="gitInfo?.ahead"
@@ -1098,7 +1132,6 @@ onUnmounted(() => {
       :is-git-repo="!!gitInfo"
       :pr="pr"
       :copied="copyConversationCopied"
-      @open-in-app="(app) => emit('openInApp', app)"
       @open-changes="openChangedFiles"
       @copy-all="chatPaneRef?.copyConversation()"
       @copy-final-summary="chatPaneRef?.copyFinalSummary()"
@@ -1151,6 +1184,7 @@ onUnmounted(() => {
       :active="active"
       :changes-count="changesCount"
       :mobile="mobile"
+      :has-btw="props.sideChatVisible"
       @select="active = $event"
     />
 
@@ -1166,6 +1200,7 @@ onUnmounted(() => {
           :changes-count="changesCount"
           :can-close="paneLayout.layout.value.type !== 'group'"
           :has-preview="group.views.includes('preview')"
+          :has-btw="props.sideChatVisible"
           @select="selectGroupPane(group, $event)"
           @split="paneLayout.split(group.id, $event)"
           @close="group.active === 'preview' ? closePreviewPane() : paneLayout.close(group.id)"
@@ -1230,6 +1265,14 @@ onUnmounted(() => {
               @close="closePreviewPane"
               @open-external="emit('openPreviewExternal')"
               @reveal="emit('revealPreview')"
+            />
+            <SideChatPanel
+              v-else-if="group.active === 'btw'"
+              :turns="props.sideChatTurns ?? []"
+              :running="props.sideChatRunning ?? false"
+              :sending="props.sideChatSending ?? false"
+              @send="emit('sendSideChat', $event)"
+              @close="closeSideChatPane"
             />
             <template v-else-if="group.active === 'files'">
               <div v-show="!mobile || !filesShowPreview" class="files-nav">
@@ -1418,6 +1461,16 @@ onUnmounted(() => {
       <Terminal
         v-else-if="active === 'terminal' && sessionId"
         :session-id="sessionId"
+      />
+
+      <!-- ~/btw tab: per-session side-channel agent conversation. -->
+      <SideChatPanel
+        v-else-if="active === 'btw'"
+        :turns="props.sideChatTurns ?? []"
+        :running="props.sideChatRunning ?? false"
+        :sending="props.sideChatSending ?? false"
+        @send="emit('sendSideChat', $event)"
+        @close="closeSideChatPane"
       />
 
       <!-- Merged ~/files tab: a navigator (Changed-first list / full tree via the

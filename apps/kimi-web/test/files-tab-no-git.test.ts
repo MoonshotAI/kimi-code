@@ -117,36 +117,6 @@ describe('files tab in a non-git workspace', () => {
     expect(wrapper.find('changed-tree-stub').exists() || wrapper.find('diff-view-stub').exists()).toBe(true);
   });
 
-  it('shows the Open-in menu when the daemon reports available apps', async () => {
-    const i18n = createI18n({
-      legacy: false,
-      locale: 'en',
-      messages: { en: {} },
-      missingWarn: false,
-      fallbackWarn: false,
-    });
-    const wrapper = mount(ConversationPane, {
-      props: {
-        turns,
-        tasks: [],
-        status,
-        sessionId: 'sess_1',
-        workspaceRoot: '/repo',
-        availableOpenInApps: ['vscode'],
-        gitInfo: { branch: 'main', ahead: 0, behind: 0 },
-        changes: [],
-      },
-      global: { plugins: [i18n], stubs },
-    });
-
-    const openButton = wrapper.find('.open-fallback, .open-quick');
-    expect(openButton.exists()).toBe(true);
-
-    await openButton.trigger('click');
-
-    expect(wrapper.emitted('openInApp')?.[0]).toEqual(['vscode']);
-  });
-
   it('emits refreshGitStatus from the Changed refresh button', async () => {
     const wrapper = mountFilesTab({ branch: 'main', ahead: 0, behind: 0 }, [
       { path: 'a.ts', status: 'modified' },

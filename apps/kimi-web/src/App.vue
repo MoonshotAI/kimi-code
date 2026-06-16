@@ -8,7 +8,6 @@ import ConversationPane from './components/ConversationPane.vue';
 import FilePreview, { type FileData } from './components/FilePreview.vue';
 import ThinkingPanel from './components/ThinkingPanel.vue';
 import AgentDetailPanel from './components/AgentDetailPanel.vue';
-import SideChatPanel from './components/SideChatPanel.vue';
 import type { AgentMember } from './types';
 import ModelPicker from './components/ModelPicker.vue';
 import ProviderManager from './components/ProviderManager.vue';
@@ -342,14 +341,12 @@ function closeAgentPanel(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Side chat (BTW side-channel agent) — also shares the right-side slot.
+// Side chat (BTW side-channel agent) — rendered as a tab inside the active
+// ConversationPane, not in the global right-side panel.
 // ---------------------------------------------------------------------------
-function openSideChatPanel(prompt?: string): void {
-  closeFilePreview();
-  thinkingTarget.value = null;
-  compactionTarget.value = null;
-  agentTarget.value = null;
-  void client.openSideChat(prompt);
+async function openSideChatTab(prompt?: string): Promise<void> {
+  await client.openSideChat(prompt);
+  conversationPaneRef.value?.switchTab('btw');
 }
 
 /** Any occupant of the shared right-side slot. */
@@ -362,8 +359,7 @@ const sidePanelVisible = computed(
     sidePreviewVisible.value ||
     thinkingVisible.value ||
     compactionPanelVisible.value ||
-    agentPanelVisible.value ||
-    client.sideChatVisible.value,
+    agentPanelVisible.value,
 );
 
 /** True while the panel's resize handle is being dragged — the width
@@ -539,11 +535,14 @@ function handleCommand(cmd: string): void {
     return;
   }
   // `/btw <question>` opens (creating if needed) the side chat and asks it; bare
-  // `/btw` toggles the panel.
+  // `/btw` toggles the side-chat tab for the active session.
   if (cmd === '/btw' || cmd.startsWith('/btw ')) {
     const arg = cmd.slice('/btw'.length).trim();
-    if (!arg && client.sideChatVisible.value) client.closeSideChat();
-    else openSideChatPanel(arg || undefined);
+    if (!arg && client.sideChatVisible.value) {
+      client.closeSideChat();
+    } else {
+      void openSideChatTab(arg || undefined);
+    }
     return;
   }
   switch (cmd) {
@@ -749,7 +748,6 @@ function openPr(url: string): void {
       :compaction="client.compaction.value"
       :workspace-name="client.visibleWorkspace.value?.name"
       :workspace-root="client.visibleWorkspace.value?.root ?? client.status.value.cwd"
-      :available-open-in-apps="client.availableOpenInApps.value"
       :git-diff-stats="client.gitDiffStats.value"
       :workspaces="client.workspacesView.value"
       :active-workspace-id="client.activeWorkspaceId.value"
@@ -762,11 +760,16 @@ function openPr(url: string): void {
       :preview-download-url="previewDownloadUrl"
       :preview-external-actions="previewExternalActions"
       :beta-toc="client.betaToc.value"
+      :side-chat-turns="client.sideChatTurns.value"
+      :side-chat-running="client.sideChatRunning.value"
+      :side-chat-sending="client.sideChatSending.value"
+      :side-chat-visible="client.sideChatVisible.value"
       @close-preview="closeFilePreview"
+      @send-side-chat="client.sendSideChatPrompt($event)"
+      @close-side-chat="client.closeSideChat()"
       @open-preview-external="openPreviewInEditor"
       @reveal-preview="revealPreviewFile"
       @select-workspace="handleCreateSessionInWorkspace($event)"
-      @open-in-app="(app) => client.openInApp(app)"
       @add-workspace="showAddWorkspace = true"
       @open-pr="openPr"
       @submit="handleSubmit($event)"
@@ -784,7 +787,7 @@ function openPr(url: string): void {
       @toggle-plan="client.togglePlanMode()"
       @toggle-swarm="client.toggleSwarmMode()"
       @toggle-goal="client.toggleGoalMode()"
-      @open-btw="openSideChatPanel()"
+      @open-btw="openSideChatTab()"
       @create-goal="client.createGoal($event)"
       @control-goal="client.controlGoal($event)"
       @refresh-git-status="client.activeSessionId.value && client.loadGitStatus(client.activeSessionId.value)"
@@ -845,14 +848,6 @@ function openPr(url: string): void {
         v-else-if="agentPanelVisible && agentPanelMember"
         :member="agentPanelMember"
         @close="closeAgentPanel"
-      />
-      <SideChatPanel
-        v-else-if="client.sideChatVisible.value"
-        :turns="client.sideChatTurns.value"
-        :running="client.sideChatRunning.value"
-        :sending="client.sideChatSending.value"
-        @send="client.sendSideChatPrompt($event)"
-        @close="client.closeSideChat()"
       />
       <FilePreview
         v-else-if="sidePreviewVisible"
