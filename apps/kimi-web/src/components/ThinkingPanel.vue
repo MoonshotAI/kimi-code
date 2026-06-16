@@ -41,7 +41,7 @@ watch(
     <div class="tp-header">
       <span class="tp-title">{{ t('common.preview') }}</span>
       <span class="tp-sub">{{ subtitle ?? t('thinking.panelTitle') }}</span>
-      <button type="button" class="tp-close" :title="t('thinking.close')" @click="emit('close')">
+      <button type="button" class="tp-close" :title="t('thinking.close')" :aria-label="t('thinking.close')" @click="emit('close')">
         <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
       </button>
     </div>
@@ -95,8 +95,8 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   background: none;
   border: none;
   border-radius: 5px;
@@ -106,6 +106,10 @@ watch(
 .tp-close:hover {
   background: var(--hover);
   color: var(--ink);
+}
+.tp-close:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
 }
 
 .tp-body {

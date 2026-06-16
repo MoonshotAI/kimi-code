@@ -439,7 +439,7 @@ function truncatePath(path: string, maxLen = 55): string {
           <svg v-if="!copied" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="9" height="9" rx="1.5"/><path d="M6 1h7a1 1 0 0 1 1 1v7"/></svg>
           <svg v-else viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3,8 6.5,11.5 13,5"/></svg>
         </button>
-        <button v-if="closable" type="button" class="fp-close" :title="t('filePreview.close')" @click="emit('close')">
+        <button v-if="closable" type="button" class="fp-close" :title="t('filePreview.close')" :aria-label="t('filePreview.close')" @click="emit('close')">
           ×
         </button>
       </div>
@@ -684,6 +684,13 @@ function truncatePath(path: string, maxLen = 55): string {
   background: var(--soft);
   color: var(--blue2);
   border-color: var(--bd);
+}
+.fp-action:focus-visible,
+.fp-icon-btn:focus-visible,
+.fp-close:focus-visible,
+.fp-seg-btn:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -1px;
 }
 .fp-action.copied {
   color: var(--ok);

@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/App.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, provide, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Sidebar from './components/Sidebar.vue';
 import ResizeHandle from './components/ResizeHandle.vue';
@@ -75,7 +75,32 @@ function openOnboarding(): void {
 
 onMounted(() => {
   void client.load();
+  // Capture-phase so Escape closes the side detail layer BEFORE the
+  // conversation pane's bubble-phase handler interrupts a running prompt.
+  document.addEventListener('keydown', onGlobalKeydown, true);
 });
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onGlobalKeydown, true);
+});
+
+// Escape closes whichever transient right-side detail panel is open (thinking,
+// compaction summary, subagent detail, or the mobile file/media preview).
+function closeOpenSidePanel(): boolean {
+  if (thinkingVisible.value) { closeThinkingPanel(); return true; }
+  if (compactionPanelVisible.value) { closeCompactionPanel(); return true; }
+  if (agentPanelVisible.value) { closeAgentPanel(); return true; }
+  if (sidePreviewVisible.value) { closeFilePreview(); return true; }
+  return false;
+}
+
+function onGlobalKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'Escape') return;
+  if (closeOpenSidePanel()) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Layout: resizable session column. ResizeHandle owns the column width (with
@@ -849,6 +874,9 @@ function openPr(url: string): void {
       v-if="!isMobile || sidePanelVisible"
       class="global-preview"
       :class="{ open: sidePanelVisible, mobile: isMobile, 'no-anim': panelDragging }"
+      role="complementary"
+      :aria-label="t('layout.detailPanelAria')"
+      :aria-hidden="!sidePanelVisible"
     >
       <ThinkingPanel
         v-if="thinkingVisible"
