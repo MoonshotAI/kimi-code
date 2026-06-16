@@ -154,6 +154,27 @@ describe('createWorktree', () => {
     expect(exclude).toContain('.git/info/exclude');
     expect(exclude).toContain('.kimi/');
   });
+
+  it('excludes .kimi/ via the common git dir when repoRoot is a linked worktree', () => {
+    const dir = makeTempDir('kimi-exclude-mainwt-');
+    initRepo(dir);
+    // From a linked worktree, `git rev-parse --git-dir` points at
+    // `.git/worktrees/<name>`, but Git reads info/exclude from the common dir.
+    const linked = join(makeTempDir('kimi-linkedwt-'), 'linked');
+    execSync(`git worktree add ${linked}`, { cwd: dir, stdio: 'ignore' });
+
+    createWorktree(linked, 'feature-x');
+
+    // check-ignore from inside the linked worktree only matches if .kimi/ was
+    // written to the common info/exclude (not the per-worktree git dir).
+    const exclude = execSync('git check-ignore -v .kimi/', {
+      cwd: linked,
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    expect(exclude).toContain('info/exclude');
+    expect(exclude).toContain('.kimi/');
+  });
 });
 
 describe('normalizeWorktreeName', () => {
