@@ -294,6 +294,11 @@ async function resolvePromptSession(
     opts.worktreePath !== undefined && opts.parentRepoPath !== undefined
       ? { worktreePath: opts.worktreePath, parentRepoPath: opts.parentRepoPath }
       : undefined;
+  // Note: --prompt mode intentionally does not auto-remove the worktree on
+  // exit. Unlike the TUI, a prompt session always produces at least a user
+  // prompt and assistant response, so the "empty session" cleanup rule does
+  // not apply; leaving the worktree makes the non-interactive output
+  // inspectable after the fact.
   const session = await harness.createSession({ workDir, model, permission: 'auto', metadata });
   installHeadlessHandlers(session);
   return {

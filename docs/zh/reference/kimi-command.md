@@ -23,7 +23,7 @@ kimi <subcommand> [options]
 | `--yolo` | `-y` | 自动批准普通工具调用，跳过审批请求 |
 | `--auto` | | 以 auto 权限模式启动；工具审批自动处理，Agent 不会向用户提问 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
-| `--worktree [name]` | `-w` | 为本次会话创建一个新的 git worktree。省略名称时自动生成 `kimi-<timestamp>`；工作区以 detached HEAD 方式基于当前 commit 创建 |
+| `--worktree [name]` | `-w` | 为本次会话创建一个新的 git worktree。省略名称时从内置名称库自动生成一个三词 slug（如 `amber-drifting-cloud`）；工作区以 detached HEAD 方式基于当前 commit 创建 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
@@ -88,14 +88,18 @@ kimi --plan
 在全新的 git worktree 中启动会话，避免干扰主工作区或其他正在运行的会话：
 
 ```sh
-# 自动生成 kimi-<timestamp> 名称的 worktree
+# 自动生成类似 amber-drifting-cloud 的三词 slug
 kimi -w
 
-# 指定自定义 worktree 名称
-kimi --worktree refactor-auth
+# 指定自定义 worktree 名称（建议用 = 避免下一个参数被误读为名称）
+kimi --worktree=refactor-auth
 ```
 
 工作区创建在 `<repo-root>/.kimi/worktrees/<name>`，以 detached HEAD 方式基于当前 commit 检出。空的 worktree 会话在退出时会自动清理；包含内容的会话会保留，以免丢失工作成果。
+
+Worktree 名称是受限的 slug：最多 64 个字符，不能包含 `/`，每个分段只能包含字母、数字、`.`、`_` 和 `-`。`.` 和 `..` 被禁用。以 `#123` 开头的名称会被规范化为 `pr-123`。
+
+由于 `--worktree` 的名称是可选的，末尾的位置参数可能会被误解析为 worktree 名称。建议优先使用 `--worktree=<name>`，或在 flag 后紧跟名称。
 
 ### 自定义 Skills 目录
 

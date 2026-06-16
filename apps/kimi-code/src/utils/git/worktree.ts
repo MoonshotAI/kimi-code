@@ -3,16 +3,25 @@
  *
  * Mirrors the upstream kimi-cli worktree feature:
  *   - Worktrees are created under <repo-root>/.kimi/worktrees/<name>
- *   - Default name is kimi-<timestamp>
+ *   - Default name is a random three-word slug from the worktree name database
+ *     (e.g. amber-drifting-cloud, moyu-qianshui-xiongmao)
  *   - Default checkout is detached HEAD at current HEAD
  */
 
+import { randomInt } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import ADJECTIVES_RAW from './worktree-adjectives.txt?raw';
+import VERBS_RAW from './worktree-verbs.txt?raw';
+import NOUNS_RAW from './worktree-nouns.txt?raw';
 
 const GIT_TIMEOUT_MS = 30_000;
 const WORKTREE_SUBDIR = '.kimi/worktrees';
+const MAX_SLUG_LENGTH = 64;
+const VALID_SLUG_SEGMENT = /^[A-Za-z0-9._-]+$/;
+const PR_REF_PREFIX = /^#(\d+)$/;
+const NAME_RETRY_ATTEMPTS = 10;
 
 export class WorktreeError extends Error {
   constructor(
@@ -54,15 +63,112 @@ function isInsideGitRepo(cwd: string): boolean {
   return status === 0 && stdout === 'true';
 }
 
+function parseWordList(raw: string): readonly string[] {
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'));
+}
+
+const ADJECTIVES = parseWordList(ADJECTIVES_RAW);
+const VERBS = parseWordList(VERBS_RAW);
+const NOUNS = parseWordList(NOUNS_RAW);
+
+function pick<T>(list: readonly T[]): T {
+  if (list.length === 0) {
+    throw new WorktreeError('Worktree name word list is empty.');
+  }
+  return list[randomInt(list.length)]!;
+}
+
 function generateDefaultWorktreeName(): string {
-  const now = new Date();
-  const yyyy = String(now.getUTCFullYear());
-  const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(now.getUTCDate()).padStart(2, '0');
-  const hh = String(now.getUTCHours()).padStart(2, '0');
-  const min = String(now.getUTCMinutes()).padStart(2, '0');
-  const ss = String(now.getUTCSeconds()).padStart(2, '0');
-  return `kimi-${yyyy}${mm}${dd}-${hh}${min}${ss}`;
+  return `${pick(ADJECTIVES)}-${pick(VERBS)}-${pick(NOUNS)}`;
+}
+
+/**
+ * Validates and normalizes a user-supplied worktree name.
+ *
+ * Rules:
+ *   - Non-empty after trimming.
+ *   - At most 64 characters.
+ *   - No forward slashes.
+ *   - May contain only letters, digits, '.', '_', and '-'.
+ *   - The names '.' and '..' are rejected.
+ *   - A leading '#' followed by digits is normalized to "pr-<digits>".
+ */
+export function normalizeWorktreeName(input: string): string {
+  const trimmed = input.trim();
+
+  if (trimmed.length === 0) {
+    throw new WorktreeError('Worktree name cannot be empty.');
+  }
+
+  const prMatch = PR_REF_PREFIX.exec(trimmed);
+  const name = prMatch !== null ? `pr-${prMatch[1]}` : trimmed;
+
+  if (name.length > MAX_SLUG_LENGTH) {
+    throw new WorktreeError(`Worktree name must be ${MAX_SLUG_LENGTH} characters or fewer.`);
+  }
+
+  if (name === '.' || name === '..') {
+    throw new WorktreeError(`Worktree name cannot be "." or "..": ${name}`);
+  }
+
+  if (name.includes('/')) {
+    throw new WorktreeError(`Worktree name cannot contain "/": ${name}`);
+  }
+
+  if (!VALID_SLUG_SEGMENT.test(name)) {
+    throw new WorktreeError(
+      `Worktree name contains invalid characters (allowed: letters, digits, '.', '_', '-'): ${name}`,
+    );
+  }
+
+  return name;
+}
+
+function generateUniqueWorktreeName(worktreesDir: string): string {
+  for (let attempt = 0; attempt < NAME_RETRY_ATTEMPTS; attempt++) {
+    const name = generateDefaultWorktreeName();
+    const worktreePath = resolve(worktreesDir, name);
+    if (!existsSync(worktreePath)) {
+      return name;
+    }
+  }
+  throw new WorktreeError(
+    `Failed to generate a unique worktree name after ${NAME_RETRY_ATTEMPTS} attempts.`,
+  );
+}
+
+function realpathOrNull(filePath: string): string | null {
+  try {
+    return realpathSync(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function isRegisteredWorktree(repoRoot: string, worktreePath: string): boolean | null {
+  const worktrees = listWorktrees(repoRoot);
+  if (worktrees === null) {
+    return null;
+  }
+  const target = realpathOrNull(worktreePath);
+  if (target === null) {
+    return false;
+  }
+  return worktrees.some((info) => {
+    const registeredPath = realpathOrNull(info.path);
+    return registeredPath !== null && registeredPath === target;
+  });
+}
+
+function ensureWorktreeStorageIgnored(worktreesDir: string): void {
+  const gitignorePath = resolve(worktreesDir, '.gitignore');
+  if (existsSync(gitignorePath)) {
+    return;
+  }
+  writeFileSync(gitignorePath, '*\n', { encoding: 'utf8' });
 }
 
 export function createWorktree(repoRoot: string, name?: string): string {
@@ -70,8 +176,11 @@ export function createWorktree(repoRoot: string, name?: string): string {
     throw new WorktreeError(`Not a git repository: ${repoRoot}`);
   }
 
-  const worktreeName = name && name.trim().length > 0 ? name.trim() : generateDefaultWorktreeName();
   const worktreesDir = resolve(repoRoot, WORKTREE_SUBDIR);
+  const worktreeName =
+    name !== undefined && name.trim().length > 0
+      ? normalizeWorktreeName(name)
+      : generateUniqueWorktreeName(worktreesDir);
   const worktreePath = resolve(worktreesDir, worktreeName);
 
   if (resolve(worktreePath) === resolve(repoRoot)) {
@@ -89,6 +198,7 @@ export function createWorktree(repoRoot: string, name?: string): string {
 
   // Ensure parent directory exists; git does not create nested parent dirs.
   mkdirSync(worktreesDir, { recursive: true });
+  ensureWorktreeStorageIgnored(worktreesDir);
 
   const { stderr, status } = runGit(repoRoot, ['worktree', 'add', '--detach', worktreePath]);
   if (status !== 0) {
@@ -113,27 +223,34 @@ export function removeWorktree(repoRoot: string, worktreePath: string): void {
     return;
   }
 
+  const registered = isRegisteredWorktree(canonicalRepoRoot, worktreePath);
+
+  // Only fall back to rm for worktrees that are proven not to be registered
+  // with git. If registration status is unknown (list failed) or the worktree
+  // is registered, run git worktree remove, which fails safe on dirty/locked
+  // worktrees instead of bypassing the safety check with force-rm.
+  if (registered === false) {
+    rmSync(worktreePath, { recursive: true, force: true });
+    runGit(canonicalRepoRoot, ['worktree', 'prune']);
+    return;
+  }
+
   const { stderr, status } = runGit(canonicalRepoRoot, ['worktree', 'remove', worktreePath]);
   if (status !== 0) {
-    // Git may complain if the worktree is not registered; fall back to rm.
-    rmSync(worktreePath, { recursive: true, force: true });
-    // Only surface an error if the directory is still there after fallback.
-    if (existsSync(worktreePath)) {
-      throw new WorktreeError(
-        `Failed to remove worktree at ${worktreePath}${stderr ? `\n${stderr}` : ''}`,
-        stderr,
-      );
-    }
+    throw new WorktreeError(
+      `Failed to remove worktree at ${worktreePath}${stderr ? `\n${stderr}` : ''}`,
+      stderr,
+    );
   }
 
   // Prune stale worktree metadata (best-effort).
   runGit(canonicalRepoRoot, ['worktree', 'prune']);
 }
 
-export function listWorktrees(repoRoot: string): WorktreeInfo[] {
+export function listWorktrees(repoRoot: string): WorktreeInfo[] | null {
   const { stdout, status } = runGit(repoRoot, ['worktree', 'list', '--porcelain']);
   if (status !== 0) {
-    return [];
+    return null;
   }
 
   const worktrees: WorktreeInfo[] = [];
