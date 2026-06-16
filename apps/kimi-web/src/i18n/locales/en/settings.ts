@@ -1,5 +1,11 @@
 export default {
   title: 'Settings',
+  tabs: {
+    general: 'General',
+    agent: 'Agent',
+    advanced: 'Advanced',
+    experimental: 'Experimental',
+  },
   appearance: 'Appearance',
   notifications: 'Notifications',
   notifyOnComplete: 'Notify when a turn completes',

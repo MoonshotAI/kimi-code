@@ -1,5 +1,11 @@
 export default {
   title: '设置',
+  tabs: {
+    general: '通用',
+    agent: 'Agent',
+    advanced: '高级',
+    experimental: '实验性',
+  },
   appearance: '外观',
   notifications: '通知',
   notifyOnComplete: '会话完成时通知',

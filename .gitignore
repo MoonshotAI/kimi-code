@@ -22,3 +22,4 @@ docker-compose.yml
 
 # Runtime daemon event logs (not source)
 reports/latest/
+.superpowers/

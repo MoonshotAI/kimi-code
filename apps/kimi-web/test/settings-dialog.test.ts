@@ -104,9 +104,45 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+describe('SettingsDialog tabs', () => {
+  it('renders side tabs and switches panels', async () => {
+    const wrapper = mountDialog();
+
+    expect(wrapper.text()).toContain('General');
+
+    const generalTab = wrapper.findAll('.tab').find((button) => button.text() === 'General');
+    const agentTab = wrapper.findAll('.tab').find((button) => button.text() === 'Agent');
+    const advancedTab = wrapper.findAll('.tab').find((button) => button.text() === 'Advanced');
+    const experimentalTab = wrapper.findAll('.tab').find((button) => button.text() === 'Experimental');
+
+    expect(generalTab!.classes('on')).toBe(true);
+    expect(agentTab!.classes('on')).toBe(false);
+
+    await agentTab!.trigger('click');
+    expect(generalTab!.classes('on')).toBe(false);
+    expect(agentTab!.classes('on')).toBe(true);
+
+    const agentPanel = wrapper.find('#settings-panel-agent');
+    expect(agentPanel.isVisible()).toBe(true);
+    const generalPanel = wrapper.find('#settings-panel-general');
+    expect(generalPanel.isVisible()).toBe(false);
+
+    await advancedTab!.trigger('click');
+    expect(advancedTab!.classes('on')).toBe(true);
+    expect(agentTab!.classes('on')).toBe(false);
+
+    await experimentalTab!.trigger('click');
+    expect(experimentalTab!.classes('on')).toBe(true);
+    expect(advancedTab!.classes('on')).toBe(false);
+  });
+});
+
 describe('SettingsDialog config controls', () => {
   it('renders redacted daemon config and emits partial config patches', async () => {
     const wrapper = mountDialog();
+
+    const agentTab = wrapper.findAll('.tab').find((button) => button.text() === 'Agent');
+    await agentTab!.trigger('click');
 
     expect(wrapper.text()).toContain('Agent defaults');
     expect(wrapper.text()).toContain('Kimi K2');
