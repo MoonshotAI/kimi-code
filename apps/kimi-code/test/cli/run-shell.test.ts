@@ -645,7 +645,7 @@ describe('runShell', () => {
       );
 
       expect(stderr.text()).toContain(
-        ` To resume this session: cd "${process.cwd()}" && kimi -r ses-wt`,
+        ` To resume this session: cd '${process.cwd()}' && kimi -r ses-wt`,
       );
     } finally {
       exitSpy.mockRestore();

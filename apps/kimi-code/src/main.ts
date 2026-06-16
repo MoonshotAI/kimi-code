@@ -27,6 +27,7 @@ import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
 import { runShell } from './cli/run-shell';
+import { existsSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { createWorktree, findGitRoot, removeWorktree, WorktreeError } from './utils/git/worktree';
 import { formatStartupError } from './cli/startup-error';
@@ -52,7 +53,20 @@ function prepareWorktree(worktreeName: string): { worktreePath: string; parentRe
     relativeCwd.length > 0 && relativeCwd !== '.'
       ? resolve(worktreePath, relativeCwd)
       : worktreePath;
-  process.chdir(targetCwd);
+
+  // If the caller was inside an ignored or untracked subdirectory, the
+  // mirrored path may not exist in the detached worktree. Fall back to the
+  // worktree root rather than fail after git has already registered the
+  // worktree.
+  const effectiveCwd = existsSync(targetCwd) ? targetCwd : worktreePath;
+  try {
+    process.chdir(effectiveCwd);
+  } catch (error) {
+    removeWorktree(repoRoot, worktreePath);
+    throw new WorktreeError(
+      `Failed to enter worktree directory: ${effectiveCwd}. The worktree has been removed.`,
+    );
+  }
   return { worktreePath, parentRepoPath: repoRoot };
 }
 
