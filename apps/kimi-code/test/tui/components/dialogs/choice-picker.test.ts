@@ -212,4 +212,28 @@ describe('ChoicePickerComponent', () => {
     picker.handleInput(' ');
     expect(onSelect).toHaveBeenCalledWith('a');
   });
+
+  it('renders a custom option row via render() with the pointer prepended', () => {
+    const picker = new ChoicePickerComponent({
+      title: 'Select a commit',
+      options: [
+        {
+          value: 'sha1',
+          label: 'sha1 first',
+          render: (selected) => [`HASH ${selected ? 'sel' : 'unsel'}`, 'meta line'],
+        },
+      ],
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = picker.render(80).map(strip);
+    const head = lines.find((line) => line.includes('HASH'));
+    const meta = lines.find((line) => line.includes('meta line'));
+    expect(head).toBeDefined();
+    expect(meta).toBeDefined();
+    // First (selected) row carries the pointer; the meta line is indented.
+    expect(head).toContain('❯');
+    expect(head).toContain('HASH sel');
+    expect(meta!.startsWith('    ')).toBe(true);
+  });
 });

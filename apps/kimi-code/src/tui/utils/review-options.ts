@@ -1,3 +1,4 @@
+import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type {
   ReviewArtifact,
   ReviewBaseRef,
@@ -9,6 +10,7 @@ import type {
   ReviewScopeSummary,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import { currentTheme } from '#/tui/theme';
 import type { ReviewSummaryTranscriptData } from '#/tui/types';
 
 export type ReviewScopeChoice = 'working_tree' | 'current_branch' | 'ahead_of_upstream' | 'single_commit';
@@ -17,6 +19,8 @@ export interface ReviewChoice {
   readonly value: string;
   readonly label: string;
   readonly description?: string;
+  /** Custom row renderer (content lines); the picker adds the pointer. */
+  readonly render?: (selected: boolean, width: number) => readonly string[];
 }
 
 export const REVIEW_SCOPE_CHOICES: readonly ReviewChoice[] = [
@@ -104,11 +108,62 @@ export function reviewBaseRefChoice(ref: ReviewBaseRef): ReviewChoice {
 }
 
 export function reviewCommitChoice(commit: ReviewCommit): ReviewChoice {
+  const shortSha = commit.sha.slice(0, 8);
   return {
     value: commit.sha,
-    label: `${commit.sha.slice(0, 12)}  ${commit.title}`,
-    description: [commit.author, commit.date].filter(Boolean).join(' · ') || undefined,
+    // Plain text used for search; the visible row is drawn by `render`.
+    label: `${shortSha} ${commit.title}`,
+    render: (selected, width) => renderCommitRow(commit, selected, width),
   };
+}
+
+/** Two-line commit row: orange hash + bold one-line title, then stats + relative time. */
+function renderCommitRow(commit: ReviewCommit, selected: boolean, width: number): readonly string[] {
+  const shortSha = commit.sha.slice(0, 8);
+  const hash = currentTheme.fg('warning', shortSha);
+  // A `↵` marks a commit message with a body; `…` (from truncateToWidth) marks
+  // a subject that did not fit on the line.
+  const bodyMark = commit.hasBody === true ? ' ↵' : '';
+  const titleBudget = Math.max(1, width - visibleWidth(shortSha) - 1 - visibleWidth(bodyMark));
+  const title = currentTheme.boldFg(selected ? 'primary' : 'text', truncateToWidth(commit.title, titleBudget, '…'));
+  const head = `${hash} ${title}${currentTheme.fg('textDim', bodyMark)}`;
+
+  const meta: string[] = [];
+  if (commit.filesChanged !== undefined) {
+    meta.push(
+      currentTheme.fg('textDim', formatCount(commit.filesChanged, 'file')) +
+        ' ' + currentTheme.fg('diffAdded', `+${String(commit.additions ?? 0)}`) +
+        ' ' + currentTheme.fg('diffRemoved', `-${String(commit.deletions ?? 0)}`),
+    );
+  }
+  if (commit.date !== undefined) {
+    const relative = formatRelativeTime(commit.date, Date.now());
+    if (relative.length > 0) meta.push(currentTheme.fg('textDim', relative));
+  }
+  return meta.length > 0 ? [head, meta.join(currentTheme.fg('textDim', '  ·  '))] : [head];
+}
+
+/** Format an ISO timestamp as relative time (e.g. "2 hours ago") via Intl. */
+export function formatRelativeTime(iso: string, nowMs: number): string {
+  const time = Date.parse(iso);
+  if (Number.isNaN(time)) return '';
+  const diffSeconds = Math.round((time - nowMs) / 1000);
+  const formatter = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  const units: readonly (readonly [Intl.RelativeTimeFormatUnit, number])[] = [
+    ['year', 31_536_000],
+    ['month', 2_592_000],
+    ['week', 604_800],
+    ['day', 86_400],
+    ['hour', 3_600],
+    ['minute', 60],
+    ['second', 1],
+  ];
+  for (const [unit, seconds] of units) {
+    if (Math.abs(diffSeconds) >= seconds || unit === 'second') {
+      return formatter.format(Math.round(diffSeconds / seconds), unit);
+    }
+  }
+  return formatter.format(0, 'second');
 }
 
 const SEVERITY_ORDER: readonly ReviewCommentSeverity[] = ['critical', 'important', 'minor'];

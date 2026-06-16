@@ -31,6 +31,12 @@ export interface ChoiceOption {
   readonly labelAnimation?: 'wave';
   /** Optional explanatory text shown below the label. */
   readonly description?: string | undefined;
+  /**
+   * Fully custom row renderer. When set, the picker renders these lines for the
+   * option (first line follows the pointer, the rest are indented) instead of
+   * the default styled label + description. `width` is the content width.
+   */
+  readonly render?: (selected: boolean, width: number) => readonly string[];
 }
 
 export interface ChoicePickerOptions {
@@ -174,8 +180,18 @@ export class ChoicePickerComponent extends Container implements Focusable {
       const isSelected = i === view.selectedIndex;
       const isCurrent = opt.value === this.opts.currentValue;
       const pointer = isSelected ? SELECT_POINTER : ' ';
+      const prefix = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
+      if (opt.render !== undefined) {
+        const rendered = opt.render(isSelected, Math.max(1, width - 4));
+        let first = prefix + (rendered[0] ?? '');
+        if (isCurrent) first += ' ' + currentTheme.fg('success', CURRENT_MARK);
+        lines.push(first);
+        for (const extra of rendered.slice(1)) lines.push('    ' + extra);
+        if (this.opts.optionSpacing === 'relaxed' && i < view.page.end - 1) lines.push('');
+        continue;
+      }
       const labelStyle = optionLabelStyle(opt, isSelected, this.animationPhase);
-      let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
+      let line = prefix;
       line += labelStyle(opt.label);
       if (isCurrent) {
         line += ' ' + currentTheme.fg('success', CURRENT_MARK);
