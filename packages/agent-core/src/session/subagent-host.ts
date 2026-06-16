@@ -101,7 +101,7 @@ export class SessionSubagentHost {
     string,
     {
       readonly controller: AbortController;
-      readonly runInBackground: boolean;
+      runInBackground: boolean;
     }
   >();
 
@@ -244,6 +244,11 @@ export class SessionSubagentHost {
       // subagent's in-flight tools report the cause accurately to the model.
       child.controller.abort(reason);
     }
+  }
+
+  markActiveChildDetached(agentId: string): void {
+    const child = this.activeChildren.get(agentId);
+    if (child !== undefined) child.runInBackground = true;
   }
 
   async getProfileName(agentId: string): Promise<string | undefined> {

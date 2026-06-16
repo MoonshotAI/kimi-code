@@ -4,6 +4,7 @@ import type { Environment, KaosProcess } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BashTool } from '../../src/tools/builtin/shell/bash';
+import { createBackgroundManager } from '../agent/background/helpers';
 import { executeTool } from './fixtures/execute-tool';
 import { createFakeKaos } from './fixtures/fake-kaos';
 
@@ -35,7 +36,11 @@ describe('BashTool cancellation contract', () => {
     };
     const execWithEnv = vi.fn().mockResolvedValue(proc);
     const controller = new AbortController();
-    const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace');
+    const tool = new BashTool(
+      createFakeKaos({ execWithEnv, osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+    );
 
     const running = executeTool(tool, {
       turnId: '0',

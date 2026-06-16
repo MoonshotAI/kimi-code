@@ -402,6 +402,7 @@ export class Agent {
       stopBackground: (payload) => {
         void this.background.stop(payload.taskId, payload.reason);
       },
+      detachBackground: (payload) => this.background.detach(payload.taskId),
       clearContext: () => {
         this.context.clear();
       },

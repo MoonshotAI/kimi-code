@@ -12,11 +12,11 @@ import type { KaosProcess } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  AgentBackgroundTask,
   BackgroundTaskPersistence,
   type BackgroundTaskInfo,
 } from '../../../src/agent/background';
 import {
+  agentTask,
   createBackgroundManager,
   registerProcess,
 } from './helpers';
@@ -114,7 +114,7 @@ describe('BackgroundManager — event emission', () => {
   it('emits background.task.started for agent tasks', () => {
     const { agent, manager } = createBackgroundManager();
     const taskId = manager.registerTask(
-      new AgentBackgroundTask(new Promise(() => {}), 'agent task'),
+      agentTask(new Promise(() => {}), 'agent task'),
     );
 
     expect(agent.emittedEvents).toContainEqual({
@@ -155,15 +155,19 @@ describe('BackgroundManager — event emission', () => {
   });
 
   it('tracks failed and timed-out terminal statuses', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { agent, manager } = createBackgroundManager();
     const failedId = registerProcess(manager, immediateProcess(1), 'false', 'failed');
     const timedOutId = manager.registerTask(
-      new AgentBackgroundTask(new Promise(() => {}), 'slow agent', { timeoutMs: 1 }),
+      agentTask(new Promise(() => {}), 'slow agent'),
+      { timeoutMs: 1 },
     );
     agent.telemetry.track.mockClear();
 
     await manager.wait(failedId);
-    await manager.wait(timedOutId);
+    const timedOut = manager.wait(timedOutId);
+    await vi.advanceTimersByTimeAsync(5_010);
+    await timedOut;
 
     expect(agent.telemetry.track).toHaveBeenCalledWith(
       'background_task_completed',
@@ -229,7 +233,7 @@ describe('BackgroundManager — notification delivery', () => {
   it('steers completed agent task notifications into the turn flow', async () => {
     const { agent, manager } = createBackgroundManager();
     const taskId = manager.registerTask(
-      new AgentBackgroundTask(
+      agentTask(
         Promise.resolve({ result: 'final subagent summary' }),
         'agent task',
       ),
@@ -453,7 +457,7 @@ describe('BackgroundManager — notification delivery', () => {
       hooks: { fireAndForgetTrigger },
     });
     const taskId = manager.registerTask(
-      new AgentBackgroundTask(
+      agentTask(
         Promise.resolve({ result: 'final agent output' }),
         'inspect repository',
       ),
@@ -487,7 +491,7 @@ describe('BackgroundManager — notification delivery', () => {
       hooks: { fireAndForgetTrigger },
     });
     const taskId = manager.registerTask(
-      new AgentBackgroundTask(
+      agentTask(
         Promise.resolve({ result: 'final agent output' }),
         'inspect repository',
       ),
@@ -533,7 +537,7 @@ describe('BackgroundManager — agent recovery notification bodies', () => {
   it('failed agent task body includes resume instructions with the correct agent_id', async () => {
     const { agent, manager } = createBackgroundManager();
     const taskId = manager.registerTask(
-      new AgentBackgroundTask(
+      agentTask(
         Promise.reject(new Error('subagent crashed')),
         'inspect repository',
         { agentId: 'agent-7' },
@@ -555,7 +559,7 @@ describe('BackgroundManager — agent recovery notification bodies', () => {
   it('completed agent task body does not add resume instructions', async () => {
     const { agent, manager } = createBackgroundManager();
     const taskId = manager.registerTask(
-      new AgentBackgroundTask(
+      agentTask(
         Promise.resolve({ result: 'all good' }),
         'inspect repository',
         { agentId: 'agent-8' },

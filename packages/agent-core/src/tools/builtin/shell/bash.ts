@@ -8,23 +8,19 @@
  *   - `Kaos`        — shell execution abstraction (exec / execWithEnv)
  *   - `cwd`         — default working directory for commands
  *   - `Environment` — cross-platform probe (shellName / shellPath)
- *   - `BackgroundManager?` — optional: required iff run_in_background=true
+ *   - `BackgroundManager` — task lifecycle manager for foreground/background commands
  *
  * Execution goes through Kaos, never directly via node:child_process.
  *
  * Hardening:
- *   - `args.timeout` (seconds) and the ambient `signal` both drive
- *     `Promise.race`; fire-a-kill on either edge.
+ *   - `args.timeout` (seconds) and the ambient `signal` both stop the
+ *     manager-owned process task on either edge.
  *   - stdin is closed immediately so interactive commands (`cat`, `read`,
  *     `python -c 'input()'`) receive EOF instead of hanging.
- *   - Two-phase kill: SIGTERM → 5s grace → SIGKILL (Kaos honours this
- *     contract cross-platform).
- *   - stdout/stderr stream into ToolResultBuilder; excess is replaced with a
- *     truncation marker so a runaway command cannot OOM the host.
+ *   - Two-phase kill is owned by BackgroundManager: SIGTERM → grace → SIGKILL.
+ *   - stdout/stderr are captured by ProcessBackgroundTask for task output;
+ *     foreground runs pass a callback to collect chunks for this call.
  */
-
-import type { Readable } from 'node:stream';
-import { StringDecoder } from 'node:string_decoder';
 
 import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
 import { z } from 'zod';
@@ -43,7 +39,7 @@ const DEFAULT_TIMEOUT_S = 60;
 const MAX_TIMEOUT_S = 5 * 60;
 const DEFAULT_BACKGROUND_TIMEOUT_S = 10 * 60;
 const MAX_BACKGROUND_TIMEOUT_S = 24 * 60 * 60;
-const SIGTERM_GRACE_MS = 5_000;
+const USER_INTERRUPT_REASON = 'Interrupted by user';
 
 export const BashInputSchema = z
   .object({
@@ -155,13 +151,13 @@ export class BashTool implements BuiltinTool<BashInput> {
   constructor(
     private readonly kaos: Kaos,
     private readonly cwd: string,
-    private readonly backgroundManager?: BackgroundManager,
+    private readonly backgroundManager: BackgroundManager,
     options?: {
       allowBackground?: boolean | undefined;
     },
   ) {
     this.isWindowsBash = this.kaos.osEnv.osKind === 'Windows';
-    this.allowBackground = options?.allowBackground ?? this.backgroundManager !== undefined;
+    this.allowBackground = options?.allowBackground ?? true;
     const rendered = renderBashDescription(this.kaos.osEnv.shellName);
     this.description = this.allowBackground ? rendered : withoutBackgroundDescription(rendered);
   }
@@ -217,30 +213,23 @@ export class BashTool implements BuiltinTool<BashInput> {
     signal: AbortSignal,
     onUpdate?: ((update: ToolUpdate) => void) | undefined,
   ): Promise<ExecutableToolResult> {
-    if (signal.aborted) {
-      return { isError: true, output: 'Aborted before command started' };
-    }
-    if (args.command.length === 0) {
-      return { isError: true, output: 'Command cannot be empty.' };
-    }
+    const validationError = this.validateRunRequest(args, signal);
+    if (validationError !== undefined) return validationError;
 
-    if (args.run_in_background) {
-      if (!this.allowBackground) {
-        return {
-          isError: true,
-          output:
-            'Background execution is not available for this agent because TaskOutput and TaskStop are not enabled.',
-        };
-      }
-      return this.executeInBackground(args);
-    }
-
-    const timeoutMs = normalizeTimeoutMs(args.timeout, false);
-
-    let proc: KaosProcess;
+    const startsInBackground = args.run_in_background === true;
+    const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
     const command = this.isWindowsBash ? rewriteWindowsNullRedirect(args.command) : args.command;
+    const effectiveCwd = args.cwd ?? this.cwd;
+    const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
+    const timeoutMs = startsInBackground
+      ? args.disable_timeout
+        ? undefined
+        : normalizeTimeoutMs(args.timeout, true)
+      : foregroundTimeoutMs;
+
+    const builder = new ToolResultBuilder();
+    let proc: KaosProcess;
     try {
-      const effectiveCwd = args.cwd ?? this.cwd;
       proc = await this.spawn(effectiveCwd, command);
     } catch (error) {
       return {
@@ -248,187 +237,138 @@ export class BashTool implements BuiltinTool<BashInput> {
         output: error instanceof Error ? error.message : String(error),
       };
     }
+    closeProcessStdin(proc);
 
+    let collectForegroundOutput = !startsInBackground;
+    const onProcessOutput = startsInBackground
+      ? undefined
+      : (kind: 'stdout' | 'stderr', text: string): void => {
+          if (!collectForegroundOutput) return;
+          onUpdate?.({ kind, text });
+          builder.write(text);
+        };
+
+    let taskId: string;
     try {
-      proc.stdin.end();
-    } catch {
-      // Closing stdin on a process that has already exited is a no-op on
-      // some platforms and throws on others — either is safe to ignore.
-    }
-
-    let timedOut = false;
-    let aborted = false;
-    let killed = false;
-
-    const killProc = async (): Promise<void> => {
-      if (killed) return;
-      killed = true;
-      try {
-        await proc.kill('SIGTERM');
-      } catch {
-        /* process already gone */
-      }
-      const exited = proc
-        .wait()
-        .then(() => true)
-        .catch(() => true);
-      const raced = await Promise.race([
-        exited,
-        new Promise<false>((resolve) => {
-          setTimeout(() => {
-            resolve(false);
-          }, SIGTERM_GRACE_MS);
-        }),
-      ]);
-      if (!raced && proc.exitCode === null) {
-        try {
-          await proc.kill('SIGKILL');
-        } catch {
-          /* ignore */
-        }
-      }
-
-      try {
-        proc.stdout.destroy();
-      } catch {
-        /* ignore */
-      }
-      try {
-        proc.stderr.destroy();
-      } catch {
-        /* ignore */
-      }
-    };
-
-    const onAbort = (): void => {
-      aborted = true;
-      void killProc();
-    };
-    signal.addEventListener('abort', onAbort);
-
-    const timeoutHandle = setTimeout(() => {
-      timedOut = true;
-      void killProc();
-    }, timeoutMs);
-
-    try {
-      const builder = new ToolResultBuilder();
-      const isTerminating = (): boolean => timedOut || aborted || killed;
-      const [, exitCode] = await Promise.all([
-        Promise.all([
-          readStreamIntoBuilder(proc.stdout, builder, 'stdout', onUpdate, isTerminating),
-          readStreamIntoBuilder(proc.stderr, builder, 'stderr', onUpdate, isTerminating),
-        ]),
-        proc.wait(),
-      ]);
-
-      if (timedOut) {
-        const timeoutLabel =
-          timeoutMs % 1000 === 0 ? `${String(timeoutMs / 1000)}s` : `${String(timeoutMs)}ms`;
-        return builder.error(`Command killed by timeout (${timeoutLabel})`, {
-          brief: `Killed by timeout (${timeoutLabel})`,
-        });
-      }
-      if (aborted) {
-        return builder.error('Interrupted by user', { brief: 'Interrupted by user' });
-      }
-
-      const isError = exitCode !== 0;
-      if (isError && builder.nChars === 0) {
-        builder.write(`Process exited with code ${String(exitCode)}`);
-      }
-
-      if (!isError) {
-        return builder.ok('Command executed successfully.');
-      }
-      return builder.error(`Command failed with exit code: ${String(exitCode)}.`, {
-        brief: `Failed with exit code: ${String(exitCode)}`,
-      });
+      taskId = this.backgroundManager.registerTask(
+        new ProcessBackgroundTask(proc, command, description, onProcessOutput),
+        {
+          detached: startsInBackground,
+          timeoutMs,
+          signal: startsInBackground ? undefined : signal,
+        },
+      );
     } catch (error) {
+      collectForegroundOutput = false;
+      await killSpawnedProcess(proc);
       return {
         isError: true,
         output: error instanceof Error ? error.message : String(error),
       };
+    }
+
+    if (startsInBackground) {
+      return this.backgroundStartedResult(taskId, proc, description, {
+        title: 'Background task started',
+        brief: `Started ${taskId}`,
+      });
+    }
+
+    try {
+      const release = await this.backgroundManager.waitForForegroundRelease(taskId);
+      if (release === 'detached') {
+        collectForegroundOutput = false;
+        return this.backgroundStartedResult(
+          taskId,
+          proc,
+          description,
+          {
+            title: 'Task moved to background',
+            brief: `Backgrounded ${taskId}`,
+          },
+          builder,
+        );
+      }
+
+      return this.foregroundCompletionResult(taskId, proc, builder, foregroundTimeoutMs);
     } finally {
-      clearTimeout(timeoutHandle);
-      signal.removeEventListener('abort', onAbort);
+      collectForegroundOutput = false;
     }
   }
 
-  private async executeInBackground(args: BashInput): Promise<ExecutableToolResult> {
-    if (!this.backgroundManager) {
+  private validateRunRequest(
+    args: BashInput,
+    signal: AbortSignal,
+  ): ExecutableToolResult | undefined {
+    if (signal.aborted) return { isError: true, output: 'Aborted before command started' };
+    if (args.command.length === 0) return { isError: true, output: 'Command cannot be empty.' };
+    if (args.run_in_background !== true) return undefined;
+    if (!this.allowBackground) {
       return {
         isError: true,
-        output: 'Background execution is not available (no BackgroundManager configured).',
+        output:
+          'Background execution is not available for this agent because TaskOutput and TaskStop are not enabled.',
       };
     }
-    const backgroundManager = this.backgroundManager;
-
     if (!args.description?.trim()) {
       return {
         isError: true,
         output: 'description is required when run_in_background is true.',
       };
     }
+    return undefined;
+  }
 
-    const timeoutMs = args.disable_timeout ? undefined : normalizeTimeoutMs(args.timeout, true);
-
-    let proc: KaosProcess;
-    const command = this.isWindowsBash ? rewriteWindowsNullRedirect(args.command) : args.command;
-    try {
-      const effectiveCwd = args.cwd ?? this.cwd;
-      proc = await this.spawn(effectiveCwd, command);
-    } catch (error) {
-      return {
-        isError: true,
-        output: error instanceof Error ? error.message : String(error),
-      };
+  private foregroundCompletionResult(
+    taskId: string,
+    proc: KaosProcess,
+    builder: ToolResultBuilder,
+    foregroundTimeoutMs: number,
+  ): ExecutableToolResult {
+    const current = this.backgroundManager.getTask(taskId);
+    const exitCode = current?.kind === 'process' ? current.exitCode : proc.exitCode;
+    if (current?.status === 'timed_out') {
+      const timeoutLabel = formatTimeoutLabel(foregroundTimeoutMs);
+      return builder.error(`Command killed by timeout (${timeoutLabel})`, {
+        brief: `Killed by timeout (${timeoutLabel})`,
+      });
+    }
+    if (current?.status === 'killed' && current.stopReason === USER_INTERRUPT_REASON) {
+      return builder.error(USER_INTERRUPT_REASON, { brief: USER_INTERRUPT_REASON });
+    }
+    if (
+      (current?.status === 'failed' || current?.status === 'killed') &&
+      current.stopReason !== undefined
+    ) {
+      return builder.error(current.stopReason, { brief: current.stopReason });
     }
 
-    try {
-      proc.stdin.end();
-    } catch {
-      /* process already gone */
+    const isError = exitCode !== 0;
+    if (isError && builder.nChars === 0) {
+      builder.write(`Process exited with code ${String(exitCode)}`);
     }
 
-    let taskId: string;
-    try {
-      taskId = backgroundManager.registerTask(
-        new ProcessBackgroundTask(proc, command, args.description.trim()),
-      );
-    } catch (error) {
-      try {
-        await proc.kill('SIGTERM');
-      } catch {
-        /* process already gone */
-      }
-      return {
-        isError: true,
-        output: error instanceof Error ? error.message : String(error),
-      };
+    if (!isError) {
+      return builder.ok('Command executed successfully.');
     }
+    return builder.error(`Command failed with exit code: ${String(exitCode)}.`, {
+      brief: `Failed with exit code: ${String(exitCode)}`,
+    });
+  }
 
-    if (timeoutMs !== undefined) {
-      const timeoutHandle = setTimeout(() => {
-        void (async (): Promise<void> => {
-          if (proc.exitCode !== null) return;
-          const info = backgroundManager.getTask(taskId);
-          if (info && info.status === 'running') {
-            void backgroundManager.stop(taskId, 'Timed out');
-          }
-        })();
-      }, timeoutMs);
-      timeoutHandle.unref?.();
-    }
-
-    // registerTask() synchronously inserts taskId into the manager's Map, so
-    // this lookup in the same tick cannot return undefined.
-    const status = backgroundManager.getTask(taskId)!.status;
-    const builder = new ToolResultBuilder();
+  private backgroundStartedResult(
+    taskId: string,
+    proc: KaosProcess,
+    description: string,
+    labels: { title: string; brief: string },
+    builder = new ToolResultBuilder(),
+  ): ExecutableToolResult {
+    const status = this.backgroundManager.getTask(taskId)?.status ?? 'running';
+    if (builder.nChars > 0) builder.write('\n');
     builder.write(
       `task_id: ${taskId}\n` +
         `pid: ${String(proc.pid)}\n` +
-        `description: ${args.description.trim()}\n` +
+        `description: ${description}\n` +
         `status: ${status}\n` +
         `automatic_notification: true\n` +
         'next_step: You will be automatically notified when it completes.\n' +
@@ -436,41 +376,35 @@ export class BashTool implements BuiltinTool<BashInput> {
         'next_step: Use TaskStop only if the task must be cancelled.\n' +
         'human_shell_hint: Tell the human to run /tasks to open the interactive background-task panel.',
     );
-    return builder.ok('Background task started', { brief: `Started ${taskId}` });
+    return builder.ok(labels.title, { brief: labels.brief });
   }
 }
 
-async function readStreamIntoBuilder(
-  stream: Readable,
-  builder: ToolResultBuilder,
-  kind: 'stdout' | 'stderr',
-  onUpdate?: ((update: ToolUpdate) => void) | undefined,
-  suppressPrematureClose?: () => boolean,
-): Promise<void> {
-  const decoder = new StringDecoder('utf8');
+function formatTimeoutLabel(timeoutMs: number): string {
+  return timeoutMs % 1000 === 0 ? `${String(timeoutMs / 1000)}s` : `${String(timeoutMs)}ms`;
+}
+
+function foregroundDescription(args: BashInput): string {
+  const explicit = args.description?.trim();
+  if (explicit !== undefined && explicit.length > 0) return explicit;
+  const preview = args.command.length > 60 ? `${args.command.slice(0, 60)}…` : args.command;
+  return `Bash: ${preview}`;
+}
+
+function closeProcessStdin(proc: KaosProcess): void {
   try {
-    for await (const chunk of stream) {
-      const buf: Buffer =
-        typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : (chunk as Buffer);
-      const text = decoder.write(buf);
-      if (text.length > 0) onUpdate?.({ kind, text });
-      builder.write(text);
-    }
-  } catch (error) {
-    if (!isPrematureCloseError(error) || suppressPrematureClose?.() !== true) {
-      throw error;
-    }
+    proc.stdin.end();
+  } catch {
+    /* process already gone */
   }
-  const trailing = decoder.end();
-  if (trailing.length > 0) onUpdate?.({ kind, text: trailing });
-  builder.write(trailing);
 }
 
-function isPrematureCloseError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error as NodeJS.ErrnoException).code === 'ERR_STREAM_PREMATURE_CLOSE'
-  );
+async function killSpawnedProcess(proc: KaosProcess): Promise<void> {
+  try {
+    await proc.kill('SIGTERM');
+  } catch {
+    /* process already gone */
+  }
 }
 
 function shellQuote(s: string): string {

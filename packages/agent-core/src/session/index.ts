@@ -302,7 +302,7 @@ export class Session {
     const agentIds = new Set<string>();
     for (const agent of this.readyAgents()) {
       for (const task of agent.background.list(true)) {
-        if (task.kind === 'agent' && task.agentId !== undefined) {
+        if (task.kind === 'agent' && task.agentId !== undefined && task.detached !== false) {
           agentIds.add(task.agentId);
         }
       }

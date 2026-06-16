@@ -4,6 +4,7 @@ import type { Environment, KaosProcess } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BashTool } from '../../src/tools/builtin/shell/bash';
+import { createBackgroundManager } from '../agent/background/helpers';
 import { executeTool } from './fixtures/execute-tool';
 import { createFakeKaos } from './fixtures/fake-kaos';
 
@@ -31,7 +32,11 @@ const signal = new AbortController().signal;
 
 async function captureSpawnEnv(): Promise<Record<string, string>> {
   const execWithEnv = vi.fn().mockResolvedValue(fakeProcess());
-  const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace');
+  const tool = new BashTool(
+    createFakeKaos({ execWithEnv, osEnv: posixEnv }),
+    '/workspace',
+    createBackgroundManager().manager,
+  );
   await executeTool(tool, {
     turnId: '0',
     toolCallId: 'tc_env',
@@ -72,7 +77,7 @@ describe('BashTool noninteractive env semantics', () => {
       KIMI_CODE_ENV: 'initial',
     };
     const kaos = createFakeKaos({ execWithEnv, osEnv: posixEnv }).withEnv(sessionEnv);
-    const tool = new BashTool(kaos, '/workspace');
+    const tool = new BashTool(kaos, '/workspace', createBackgroundManager().manager);
 
     await executeTool(tool, {
       turnId: '0',

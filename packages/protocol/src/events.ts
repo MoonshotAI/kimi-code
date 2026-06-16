@@ -231,6 +231,7 @@ export interface BackgroundTaskInfoBase {
   readonly taskId: string;
   readonly description: string;
   readonly status: AgentCoreBackgroundTaskStatus;
+  readonly detached?: boolean;
   readonly startedAt: number;
   readonly endedAt: number | null;
   readonly stopReason?: string;

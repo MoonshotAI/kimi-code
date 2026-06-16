@@ -79,6 +79,10 @@ function mockSubagentHost<T extends Partial<SessionSubagentHost>>(
   } as unknown as T & SessionSubagentHost;
 }
 
+function agentTool(host: SessionSubagentHost): AgentTool {
+  return new AgentTool(host, createBackgroundManager().manager);
+}
+
 function mockSwarmMode(): SwarmMode {
   return { enter: vi.fn() } as unknown as SwarmMode;
 }
@@ -231,6 +235,7 @@ describe('current builtin file and shell tools', () => {
         },
       }),
       '/workspace',
+      createBackgroundManager().manager,
     );
 
     expect(BashInputSchema.safeParse({ command: 'printf ok' }).success).toBe(true);
@@ -287,7 +292,7 @@ describe('current builtin collaboration tools', () => {
         completion: Promise.resolve({ result: 'child result' }),
       }),
     });
-    const tool = new AgentTool(host);
+    const tool = agentTool(host);
 
     const input = { prompt: 'Investigate', description: 'Find cause' };
     expect(AgentToolInputSchema.safeParse(input).success).toBe(true);
