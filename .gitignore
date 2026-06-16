@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-single/
 dist-native/
 .tmp-api-extractor/
 coverage/

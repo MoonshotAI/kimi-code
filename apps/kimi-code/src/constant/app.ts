@@ -18,6 +18,7 @@ export const NPM_PACKAGE_NAME = '@moonshot-ai/kimi-code';
 export const KIMI_CODE_HOME_ENV = 'KIMI_CODE_HOME';
 export const KIMI_CODE_DATA_DIR_NAME = '.kimi-code';
 export const KIMI_CODE_LOG_DIR_NAME = 'logs';
+export const KIMI_CODE_CACHE_DIR_NAME = 'cache';
 export const KIMI_CODE_UPDATE_DIR_NAME = 'updates';
 export const KIMI_CODE_BIN_DIR_NAME = 'bin';
 export const KIMI_CODE_UPDATE_STATE_FILE_NAME = 'latest.json';
@@ -25,6 +26,8 @@ export const KIMI_CODE_UPDATE_INSTALL_STATE_FILE_NAME = 'install.json';
 export const KIMI_CODE_UPDATE_INSTALL_LOCK_FILE_NAME = 'install.lock';
 export const KIMI_CODE_UPDATE_ROLLOUT_LOG_FILE_NAME = 'rollout.log';
 export const KIMI_CODE_INPUT_HISTORY_DIR_NAME = 'user-history';
+export const KIMI_CODE_BANNER_DIR_NAME = 'banner';
+export const KIMI_CODE_BANNER_STATE_FILE_NAME = 'state.json';
 
 // Managed Kimi auth provider key shared with OAuth/SDK config.
 export const DEFAULT_OAUTH_PROVIDER_NAME = 'managed:kimi-code';

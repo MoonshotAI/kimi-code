@@ -424,6 +424,10 @@ export class ToolManager {
     );
   }
 
+  refreshBuiltinTools(): void {
+    this.initializeBuiltinTools();
+  }
+
   private createVideoUploader(provider: ChatProvider): b.VideoUploader | undefined {
     const uploadVideo = provider.uploadVideo?.bind(provider);
     if (uploadVideo === undefined) return undefined;

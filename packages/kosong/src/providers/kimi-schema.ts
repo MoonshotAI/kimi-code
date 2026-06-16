@@ -309,9 +309,56 @@ function normalizeProperty(node: unknown): void {
     } else {
       node['type'] = inferTypeFromStructure(node);
     }
+  } else if (!hasAnyKey(node, TYPE_COMPLETION_SKIP_KEYS) && typeof node['type'] === 'string') {
+    // Some MCP servers emit schemas where a $ref merge or a generator bug
+    // leaves an explicit type that contradicts the enum/const values (e.g.
+    // type: 'object' alongside string enum values). Moonshot rejects these
+    // as invalid, so repair the type when it disagrees with the values.
+    //
+    // Known trigger: Xcode MCP (xcrun mcpbridge) starting with
+    // Version 26.5 (17F42) generates this bug for String-backed Swift enums.
+    const enumValues = node['enum'];
+    if (Array.isArray(enumValues) && enumValues.length > 0) {
+      try {
+        const inferred = inferTypeFromValues(enumValues);
+        if (node['type'] !== inferred) {
+          node['type'] = inferred;
+          removeIrrelevantStructureKeys(node, inferred);
+        }
+      } catch {
+        // Mixed or uninferable enum types — leave the explicit type as-is
+        // and let the provider validator surface the error.
+      }
+    } else if (hasOwn(node, 'const')) {
+      try {
+        const inferred = inferTypeFromValues([node['const']]);
+        if (node['type'] !== inferred) {
+          node['type'] = inferred;
+          removeIrrelevantStructureKeys(node, inferred);
+        }
+      } catch {
+        // Same as above.
+      }
+    }
   }
 
   recurseSchema(node);
+}
+
+function removeIrrelevantStructureKeys(
+  node: Record<string, unknown>,
+  newType: JsonSchemaType,
+): void {
+  if (newType !== 'object') {
+    for (const key of OBJECT_STRUCTURE_KEYS) {
+      delete node[key];
+    }
+  }
+  if (newType !== 'array') {
+    for (const key of ARRAY_STRUCTURE_KEYS) {
+      delete node[key];
+    }
+  }
 }
 
 function inferTypeFromStructure(schema: Record<string, unknown>): JsonSchemaType {

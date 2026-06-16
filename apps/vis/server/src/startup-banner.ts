@@ -1,3 +1,5 @@
+import { hostForUrl } from './config';
+
 export interface StartupBannerOptions {
   readonly authToken?: string;
   readonly host: string;
@@ -11,9 +13,4 @@ export function formatStartupBanner(options: StartupBannerOptions): string {
     `[vis-server] listening on http://${hostForUrl(options.host)}:${String(options.port)} ` +
     `(${authStatus}, KIMI_CODE_HOME=${options.kimiCodeHome})\n`
   );
-}
-
-function hostForUrl(host: string): string {
-  if (host.includes(':') && !host.startsWith('[')) return `[${host}]`;
-  return host;
 }

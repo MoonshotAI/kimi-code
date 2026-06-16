@@ -1,5 +1,4 @@
-import type { Component } from '@earendil-works/pi-tui';
-import { Text } from '@earendil-works/pi-tui';
+import { Text, truncateToWidth, type Component } from '@earendil-works/pi-tui';
 
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { FAILURE_MARK, STATUS_BULLET } from '#/tui/constant/symbols';
@@ -13,6 +12,9 @@ export class BackgroundAgentStatusComponent implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [''];
+
     const tone: keyof ColorPalette =
       this.data.phase === 'started'
         ? 'primary'
@@ -29,11 +31,11 @@ export class BackgroundAgentStatusComponent implements Component {
         : '');
 
     const textComponent = new Text(text, 0, 0);
-    const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
+    const contentWidth = Math.max(1, safeWidth - MESSAGE_INDENT.length);
     const contentLines = textComponent.render(contentWidth);
     return [
       '',
       ...contentLines.map((line, index) => (index === 0 ? bullet : MESSAGE_INDENT) + line),
-    ];
+    ].map((line) => truncateToWidth(line, safeWidth, '…'));
   }
 }

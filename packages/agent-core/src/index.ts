@@ -7,6 +7,7 @@ export * from './session/export';
 export * from './telemetry';
 export * from './errors';
 export * from './plugin';
+export { buildReplay } from './agent/replay/build';
 export {
   flushDiagnosticLogs,
   getRootLogger,

@@ -65,35 +65,10 @@ importers:
         version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
 
   apps/kimi-code:
-    dependencies:
+    devDependencies:
       '@earendil-works/pi-tui':
         specifier: ^0.74.0
         version: 0.74.0
-      '@mariozechner/clipboard':
-        specifier: ^0.3.2
-        version: 0.3.2
-      chalk:
-        specifier: ^5.4.1
-        version: 5.6.2
-      cli-highlight:
-        specifier: ^2.1.11
-        version: 2.1.11
-      commander:
-        specifier: ^13.1.0
-        version: 13.1.0
-      pathe:
-        specifier: ^2.0.3
-        version: 2.0.3
-      semver:
-        specifier: ^7.7.4
-        version: 7.7.4
-      smol-toml:
-        specifier: ^1.6.1
-        version: 1.6.1
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
-    devDependencies:
       '@moonshot-ai/acp-adapter':
         specifier: workspace:^
         version: link:../../packages/acp-adapter
@@ -109,21 +84,55 @@ importers:
       '@moonshot-ai/migration-legacy':
         specifier: workspace:^
         version: link:../../packages/migration-legacy
+      '@moonshot-ai/vis-server':
+        specifier: workspace:^
+        version: link:../vis/server
+      '@moonshot-ai/vis-web':
+        specifier: workspace:*
+        version: link:../vis/web
       '@types/semver':
         specifier: ^7.7.0
         version: 7.7.1
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
+      chalk:
+        specifier: ^5.4.1
+        version: 5.6.2
+      cli-highlight:
+        specifier: ^2.1.11
+        version: 2.1.11
+      commander:
+        specifier: ^13.1.0
+        version: 13.1.0
+      pathe:
+        specifier: ^2.0.3
+        version: 2.0.3
       postject:
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6
+      semver:
+        specifier: ^7.7.4
+        version: 7.7.4
+      smol-toml:
+        specifier: ^1.6.1
+        version: 1.6.1
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
       yazl:
         specifier: ^3.3.1
         version: 3.3.1
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    optionalDependencies:
+      '@mariozechner/clipboard':
+        specifier: ^0.3.2
+        version: 0.3.2
+      koffi:
+        specifier: ^2.16.0
+        version: 2.16.0
 
   apps/vis:
     devDependencies:
@@ -139,6 +148,9 @@ importers:
       '@moonshot-ai/agent-core':
         specifier: workspace:^
         version: link:../../../packages/agent-core
+      '@moonshot-ai/kosong':
+        specifier: workspace:^
+        version: link:../../../packages/kosong
       hono:
         specifier: ^4.7.7
         version: 4.12.14
@@ -189,6 +201,9 @@ importers:
       vite:
         specifier: ^6.3.3
         version: 6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
+      vite-plugin-singlefile:
+        specifier: ^2.3.3
+        version: 2.3.3(rollup@4.60.2)(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
 
   docs:
     dependencies:
@@ -5253,6 +5268,16 @@ packages:
   vfile@6.0.3:
     resolution: {integrity: sha512-KzIbH/9tXat2u30jf+smMwFCsno4wHVdNmzFyL+T/L3UGqqk6JKfVqOFOZEpZSHADH1k40ab6NUIXZq422ov3Q==}
 
+  vite-plugin-singlefile@2.3.3:
+    resolution: {integrity: sha512-XVnGH0QzbOa8fxRSsHdCarVN1BSBXNi7uLMQYlrGRN5apdHkk62XQWRJhVever0lnfuyBkwn+kvVChdm/OoOUg==}
+    engines: {node: '>18.0.0'}
+    peerDependencies:
+      rollup: ^4.59.0
+      vite: ^5.4.21 || ^6.0.0 || ^7.0.0 || ^8.0.0
+    peerDependenciesMeta:
+      rollup:
+        optional: true
+
   vite@5.4.21:
     resolution: {integrity: sha512-o5a9xKjbtuhY6Bi5S3+HvbRERmouabWbyUcpXXUA1u+GNUKoROi9byOJ8M0nHbHYHkYICiMlqxkg1KkYmm25Sw==}
     engines: {node: ^18.0.0 || >=20.0.0}
@@ -6438,6 +6463,7 @@ snapshots:
       '@mariozechner/clipboard-linux-x64-musl': 0.3.2
       '@mariozechner/clipboard-win32-arm64-msvc': 0.3.2
       '@mariozechner/clipboard-win32-x64-msvc': 0.3.2
+    optional: true
 
   '@mermaid-js/mermaid-mindmap@9.3.0':
     dependencies:
@@ -10470,6 +10496,13 @@ snapshots:
     dependencies:
       '@types/unist': 3.0.3
       vfile-message: 4.0.3
+
+  vite-plugin-singlefile@2.3.3(rollup@4.60.2)(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)):
+    dependencies:
+      micromatch: 4.0.8
+      vite: 6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
+    optionalDependencies:
+      rollup: 4.60.2
 
   vite@5.4.21(@types/node@22.19.17)(lightningcss@1.32.0):
     dependencies:

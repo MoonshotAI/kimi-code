@@ -1,7 +1,7 @@
 import type { Environment } from '@moonshot-ai/kaos';
 import { z } from 'zod';
 
-import type { SkillRegistry } from '../skill';
+import type { SkillRegistry } from '../agent/skill/types';
 
 export const RawSubagentProfileSchema = z.object({
   description: z.string().optional(),

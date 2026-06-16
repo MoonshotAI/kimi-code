@@ -89,8 +89,9 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
   override render(width: number): string[] {
     this.input.focused = this.focused && !this.done;
 
-    const safeWidth = Math.max(28, width);
-    const innerWidth = Math.max(10, safeWidth - 4);
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [''];
+    const innerWidth = Math.max(1, safeWidth - 4);
     const pad = '  ';
 
     const border = (s: string): string => currentTheme.fg('primary', s);
@@ -116,6 +117,10 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
       footerLine,
     ];
 
+    if (safeWidth < 4) {
+      return ['', ...contentLines.map((line) => truncateToWidth(line, safeWidth, '…'))];
+    }
+
     const lines: string[] = [
       '',
       border('╭' + '─'.repeat(safeWidth - 2) + '╮'),
@@ -132,7 +137,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     lines.push(border('╰' + '─'.repeat(safeWidth - 2) + '╯'));
     lines.push('');
 
-    return lines;
+    return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
   }
 
   private submit(value: string): void {

@@ -1,3 +1,4 @@
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -66,5 +67,15 @@ describe('CustomRegistryImportDialogComponent', () => {
       kind: 'ok',
       value: { url: 'https://example.com/api.json', apiKey: 'sk-tok' },
     });
+  });
+
+  it('keeps every line within narrow widths', () => {
+    const { dialog } = makeDialog('https://example.com/very/long/registry/path.json');
+
+    for (const width of [39, 35, 20, 10]) {
+      for (const line of dialog.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 });

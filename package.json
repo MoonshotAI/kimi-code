@@ -11,7 +11,7 @@
     "build:plugin-marketplace": "pnpm -C apps/kimi-code run build:plugin-marketplace",
     "vis": "pnpm -C apps/vis run dev",
     "dev:docs": "pnpm -C docs install --ignore-workspace && pnpm -C docs run dev",
-    "typecheck": "pnpm run build:packages && pnpm -r --filter './packages/*' run typecheck && pnpm --filter @moonshot-ai/kimi-code run typecheck",
+    "typecheck": "pnpm run build:packages && pnpm -r --filter './packages/*' run typecheck && pnpm --filter @moonshot-ai/kimi-code run typecheck && pnpm --filter @moonshot-ai/vis-server run typecheck && pnpm --filter @moonshot-ai/vis-web run typecheck",
     "lint": "oxlint --type-aware",
     "lint:fix": "pnpm run lint --fix",
     "lint:pkg": "pnpm -r --filter '!@moonshot-ai/monorepo' exec publint && pnpm -r --filter './packages/*' exec attw --pack . --profile node16",

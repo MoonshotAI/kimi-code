@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SkillRegistry, UPDATE_CONFIG_SKILL, registerBuiltinSkills } from '../../src/skill';
+import { SessionSkillRegistry, UPDATE_CONFIG_SKILL, registerBuiltinSkills } from '../../src/skill';
 
 describe('builtin skill: update-config', () => {
   it('has the expected identity and inline metadata', () => {
@@ -23,7 +23,7 @@ describe('builtin skill: update-config', () => {
   });
 
   it('registers through registerBuiltinSkills and shows up as model-invocable', () => {
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
     registerBuiltinSkills(registry);
 
     expect(registry.getSkill('update-config')).toBeDefined();

@@ -19,7 +19,7 @@ import type { ColorToken } from '#/tui/theme';
 
 const LEFT_MARGIN = 2;
 const SIDE_PADDING = 1;
-const MIN_INTERIOR_WIDTH = 20;
+const BOX_OVERHEAD = LEFT_MARGIN + 2 + 2 * SIDE_PADDING;
 
 type Colorize = (text: string) => string;
 
@@ -219,23 +219,30 @@ export class UsagePanelComponent implements Component {
   }
 
   render(width: number): string[] {
-    const paint = (s: string): string => currentTheme.fg(this.borderToken, s);
-    const indent = ' '.repeat(LEFT_MARGIN);
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [''];
 
-    const availableInterior = Math.max(
-      MIN_INTERIOR_WIDTH,
-      width - LEFT_MARGIN - 2 - 2 * SIDE_PADDING,
-    );
+    const paint = (s: string): string => currentTheme.fg(this.borderToken, s);
+    const availableInterior = safeWidth - BOX_OVERHEAD;
+    if (availableInterior < 1) {
+      return [
+        truncateToWidth(this.title.trim(), safeWidth, '…'),
+        ...this.lines.map((line) => truncateToWidth(line, safeWidth, '…')),
+      ];
+    }
+
+    const indent = ' '.repeat(LEFT_MARGIN);
     const longestLine = this.lines.reduce((max, line) => Math.max(max, visibleWidth(line)), 0);
     const contentWidth = Math.max(
-      MIN_INTERIOR_WIDTH,
-      Math.min(availableInterior, longestLine, Math.max(longestLine, this.title.length)),
+      1,
+      Math.min(availableInterior, Math.max(longestLine, visibleWidth(this.title))),
     );
     const horzLen = contentWidth + 2 * SIDE_PADDING;
+    const title = truncateToWidth(this.title, horzLen, '…');
 
-    const trailingDashLen = Math.max(0, horzLen - this.title.length);
+    const trailingDashLen = Math.max(0, horzLen - visibleWidth(title));
     const top =
-      indent + paint('╭') + paint(this.title) + paint('─'.repeat(trailingDashLen)) + paint('╮');
+      indent + paint('╭') + paint(title) + paint('─'.repeat(trailingDashLen)) + paint('╮');
     const bottom = indent + paint('╰' + '─'.repeat(horzLen) + '╯');
 
     const out: string[] = [top];
@@ -245,6 +252,6 @@ export class UsagePanelComponent implements Component {
       out.push(indent + paint('│') + ' ' + clipped + ' '.repeat(pad) + ' ' + paint('│'));
     }
     out.push(bottom);
-    return out;
+    return out.map((line) => truncateToWidth(line, safeWidth, '…'));
   }
 }

@@ -1,6 +1,6 @@
 import type { AgentRecord } from '../../types';
 import { Pill } from '../shared/Pill';
-import { TYPE_LABEL, TYPE_TONE } from './typeMeta';
+import { rendererFor } from './renderers';
 
 type RecordType = AgentRecord['type'];
 
@@ -9,8 +9,9 @@ interface TypeBadgeProps {
 }
 
 export function TypeBadge({ type }: TypeBadgeProps) {
-  const label = TYPE_LABEL[type] ?? type;
-  const tone = TYPE_TONE[type] ?? 'neutral';
+  const renderer = rendererFor(type);
+  const label = renderer?.label ?? type;
+  const tone = renderer?.tone ?? 'neutral';
   return (
     <Pill tone={tone} variant="soft" title={type}>
       {label}
