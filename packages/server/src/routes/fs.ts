@@ -9,6 +9,7 @@ import {
   fsGrepRequestSchema,
   fsListManyRequestSchema,
   fsListRequestSchema,
+  fsMkdirRequestSchema,
   fsOpenInRequestSchema,
   fsOpenRequestSchema,
   fsReadRequestSchema,
@@ -21,6 +22,7 @@ import {
   type FsGrepRequest,
   type FsListManyRequest,
   type FsListRequest,
+  type FsMkdirRequest,
   type FsOpenInRequest,
   type FsOpenRequest,
   type FsReadRequest,
@@ -37,6 +39,7 @@ import type { IInstantiationService } from '@moonshot-ai/agent-core';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import {
+  FsAlreadyExistsError,
   FsIsBinaryError,
   FsIsDirectoryError,
   FsPathNotFoundError,
@@ -103,6 +106,7 @@ const FS_ACTIONS = [
   'list_many',
   'stat',
   'stat_many',
+  'mkdir',
   'search',
   'grep',
   'git_status',
@@ -135,9 +139,10 @@ export function registerFsRoutes(
         [ErrorCode.FS_PATH_ESCAPES_SESSION]: {},
         [ErrorCode.FS_GREP_TIMEOUT]: {},
         [ErrorCode.FS_GIT_UNAVAILABLE]: {},
+        [ErrorCode.FS_ALREADY_EXISTS]: {},
       },
       description:
-        'Filesystem action dispatcher. Supported actions: list, read, list_many, stat, stat_many, search, grep, git_status, diff, open, reveal.',
+        'Filesystem action dispatcher. Supported actions: list, read, list_many, stat, stat_many, mkdir, search, grep, git_status, diff, open, reveal.',
       tags: ['fs'],
       operationId: 'fsAction',
     },
@@ -185,6 +190,9 @@ export function registerFsRoutes(
             return;
           case 'stat_many':
             await handleStatMany(ix, session_id, req, reply);
+            return;
+          case 'mkdir':
+            await handleMkdir(ix, session_id, req, reply);
             return;
           case 'search':
             await handleSearch(ix, session_id, req, reply);
@@ -422,6 +430,24 @@ async function handleStatMany(
   reply.send(okEnvelope(data, req.id));
 }
 
+async function handleMkdir(
+  ix: IInstantiationService,
+  sessionId: string,
+  req: { id: string; body: unknown },
+  reply: { send(payload: unknown): unknown },
+): Promise<void> {
+  const parsed = fsMkdirRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
+    return;
+  }
+  const body: FsMkdirRequest = parsed.data;
+  const data = await ix.invokeFunction((a) =>
+    a.get(IFsService).mkdir(sessionId, body),
+  );
+  reply.send(okEnvelope(data, req.id));
+}
+
 async function handleSearch(
   ix: IInstantiationService,
   sessionId: string,
@@ -582,6 +608,10 @@ function sendMappedError(
   }
   if (err instanceof FsIsDirectoryError) {
     reply.send(errEnvelope(ErrorCode.FS_IS_DIRECTORY, err.message, requestId));
+    return;
+  }
+  if (err instanceof FsAlreadyExistsError) {
+    reply.send(errEnvelope(ErrorCode.FS_ALREADY_EXISTS, err.message, requestId));
     return;
   }
   if (err instanceof FsIsBinaryError) {

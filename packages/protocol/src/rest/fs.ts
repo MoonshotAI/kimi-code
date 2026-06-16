@@ -55,6 +55,12 @@
  *   POST /v1/sessions/{sid}/fs:reveal
  *     Body: FsRevealRequest
  *     Response data: FsRevealResponse
+ *
+ *   POST /v1/sessions/{sid}/fs:mkdir
+ *     Body: FsMkdirRequest  { path, recursive? }
+ *     Response data: FsEntry (the created directory)
+ *     Errors: 40401, 40409 (parent missing), 40919 (already exists),
+ *             41304 (path escapes cwd)
  */
 
 import { z } from 'zod';
@@ -140,6 +146,15 @@ export const fsRevealResponseSchema = z.object({
   revealed: z.literal(true),
 });
 export type FsRevealResponse = z.infer<typeof fsRevealResponseSchema>;
+
+export const fsMkdirRequestSchema = z.object({
+  path: z.string().min(1),
+  recursive: z.boolean().default(false),
+});
+export type FsMkdirRequest = z.infer<typeof fsMkdirRequestSchema>;
+
+export const fsMkdirResponseSchema = fsEntrySchema;
+export type FsMkdirResponse = z.infer<typeof fsMkdirResponseSchema>;
 
 export const fsOpenInAppIdSchema = z.enum([
   'finder',

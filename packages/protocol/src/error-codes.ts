@@ -95,6 +95,8 @@ export const ErrorCode = {
   GOAL_OBJECTIVE_EMPTY: 40917,
   /** goal objective 超过长度限制 */
   GOAL_OBJECTIVE_TOO_LONG: 40918,
+  /** fs.mkdir 目标路径已存在（文件或目录） */
+  FS_ALREADY_EXISTS: 40919,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,
@@ -188,6 +190,7 @@ export const ErrorCodeReason: Readonly<Record<ErrorCode, string>> = {
   [ErrorCode.GOAL_NOT_RESUMABLE]: 'goal.not_resumable',
   [ErrorCode.GOAL_OBJECTIVE_EMPTY]: 'goal.objective_empty',
   [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: 'goal.objective_too_long',
+  [ErrorCode.FS_ALREADY_EXISTS]: 'fs.already_exists',
 
   [ErrorCode.APPROVAL_EXPIRED]: 'approval.expired',
   [ErrorCode.QUESTION_EXPIRED]: 'question.expired',

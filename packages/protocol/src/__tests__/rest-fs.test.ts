@@ -10,6 +10,8 @@ import {
   fsListManyResponseSchema,
   fsListRequestSchema,
   fsListResponseSchema,
+  fsMkdirRequestSchema,
+  fsMkdirResponseSchema,
   fsReadRequestSchema,
   fsReadResponseSchema,
   fsSearchRequestSchema,
@@ -432,5 +434,42 @@ describe('fsDownloadParamsSchema (W11.3)', () => {
 
   it('rejects empty path', () => {
     expect(fsDownloadParamsSchema.safeParse({ path: '' }).success).toBe(false);
+  });
+});
+
+describe('fsMkdirRequestSchema', () => {
+  it('applies recursive default', () => {
+    expect(fsMkdirRequestSchema.parse({ path: 'a' })).toEqual({
+      path: 'a',
+      recursive: false,
+    });
+  });
+
+  it('accepts recursive:true', () => {
+    expect(fsMkdirRequestSchema.parse({ path: 'a/b', recursive: true })).toEqual({
+      path: 'a/b',
+      recursive: true,
+    });
+  });
+
+  it('rejects empty path', () => {
+    expect(fsMkdirRequestSchema.safeParse({ path: '' }).success).toBe(false);
+  });
+
+  it('rejects missing path', () => {
+    expect(fsMkdirRequestSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('fsMkdirResponseSchema', () => {
+  it('round-trips a directory entry', () => {
+    const entry = {
+      path: 'a',
+      name: 'a',
+      kind: 'directory' as const,
+      modified_at: '2026-06-16T08:00:00.000Z',
+      etag: 'deadbeef',
+    };
+    expect(fsMkdirResponseSchema.parse(entry)).toEqual(entry);
   });
 });
