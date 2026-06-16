@@ -6,7 +6,7 @@ import { syncDir } from '#/utils/fs';
 
 export const PENDING_MAX = 1000;
 const STDERR_NOTICE_INTERVAL_MS = 30_000;
-const TRANSIENT_ROTATION_ERROR_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
+const TRANSIENT_ROTATION_ERROR_CODES = new Set(['EBUSY', 'EPERM']);
 
 class AsyncSerialQueue {
   private tail: Promise<unknown> = Promise.resolve();

@@ -130,6 +130,30 @@ describe('RotatingFileSink', () => {
     }
   });
 
+  it('surfaces permanent EACCES rotation failures', async () => {
+    const path = join(workDir, 'app.log');
+    await writeFile(path, 'seed\n', 'utf-8');
+    fsMockState.blockedRename = {
+      from: path,
+      to: `${path}.1`,
+      code: 'EACCES',
+    };
+
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const sink = new RotatingFileSink({ path, maxBytes: 8, files: 2 });
+      sink.enqueue('after\n');
+
+      expect(await sink.flush()).toBe(false);
+      expect(await readFile(path, 'utf-8')).toBe('seed\n');
+      expect(stderrSpy.mock.calls.some((c) => String(c[0]).includes('[logger] write failed'))).toBe(
+        true,
+      );
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
   it('drops oldest when pending overflows', async () => {
     const path = join(workDir, 'app.log');
     const sink = new RotatingFileSink({ path, maxBytes: 1_000_000, files: 2 });
