@@ -21,6 +21,7 @@ const FIELD_WEIGHTS = {
   name: 3.0,
   whenToUse: 1.5,
   description: 1.0,
+  bodySnippet: 0.5,
 };
 
 // Bonus added when a query token directly matches a token in the skill name.
@@ -172,6 +173,7 @@ export class SkillSearchIndex {
       const nameTokens = tokenize(skill.name, { removeStopwords: true });
       const descriptionTokens = tokenize(skill.description, { removeStopwords: true });
       const whenToUseTokens = tokenize(skill.metadata.whenToUse ?? '', { removeStopwords: true });
+      const bodySnippetTokens = tokenize(skill.bodySnippet ?? '', { removeStopwords: true });
 
       // Weighted term frequency: a term appearing in the name contributes
       // more than the same term appearing only in the description.
@@ -184,6 +186,7 @@ export class SkillSearchIndex {
       addTokens(nameTokens, FIELD_WEIGHTS.name);
       addTokens(whenToUseTokens, FIELD_WEIGHTS.whenToUse);
       addTokens(descriptionTokens, FIELD_WEIGHTS.description);
+      addTokens(bodySnippetTokens, FIELD_WEIGHTS.bodySnippet);
 
       // Expand synonyms after field weighting so synonyms inherit the source
       // field's weight and avoid double-counting.

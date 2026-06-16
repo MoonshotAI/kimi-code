@@ -18,6 +18,7 @@ export interface SkillDefinition {
   readonly path: string;
   readonly dir: string;
   readonly content: string;
+  readonly bodySnippet?: string;
   readonly metadata: SkillMetadata;
   readonly source: SkillSource;
   readonly plugin?: SkillPluginContext;

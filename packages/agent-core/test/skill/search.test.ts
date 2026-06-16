@@ -43,4 +43,16 @@ describe('SkillSearchIndex tokenization', () => {
     const results = index.search('react container', 10, 0);
     expect(results.length).toBeGreaterThan(0);
   });
+
+  it('finds skills by body snippet keywords', () => {
+    const index = new SkillSearchIndex();
+    index.build([
+      {
+        ...makeSkill('api-skill', 'API design patterns'),
+        bodySnippet: 'Covers graphql and rest endpoints.',
+      },
+    ]);
+    const results = index.search('graphql');
+    expect(results.some((r) => r.name === 'api-skill')).toBe(true);
+  });
 });

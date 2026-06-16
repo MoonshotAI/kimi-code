@@ -138,8 +138,11 @@ export async function parseSkillMetaFromFile(options: ParseSkillOptions): Promis
   }
 
   const frontmatterOnly = buffer.slice(0, offset + fenceLineLength);
+  const bodyStart = offset + fenceLineLength;
+  const bodySnippet = buffer.slice(bodyStart, bodyStart + 1024).trim() || undefined;
+
   const result = parseSkillText({ ...options, text: frontmatterOnly });
-  const definition = { ...result, content: LAZY_CONTENT_SENTINEL };
+  const definition = { ...result, content: LAZY_CONTENT_SENTINEL, bodySnippet };
 
   // Flat .md skills are allowed to omit description and derive it from the
   // first body line. The frontmatter-only parse has no body, so re-parse the

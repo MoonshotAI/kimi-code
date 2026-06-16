@@ -173,6 +173,23 @@ describe('skill parser', () => {
     expect(skill?.description).toBe('Body headline for the skill.');
     expect(skill?.content).toBe('\u0000LAZY');
   });
+
+  it('captures a body snippet during lazy frontmatter parsing', async () => {
+    const root = await makeSkillsRoot();
+    const dir = path.join(root, 'snippet-skill');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, 'SKILL.md'),
+      ['---', 'name: snippet-skill', 'description: A skill', '---', '', '# Overview', '', 'Use this for graphql and rest endpoints.'].join('\n'),
+    );
+
+    const registry = new SessionSkillRegistry();
+    await registry.loadRoots([userRoot(root)]);
+
+    const skill = registry.getSkill('snippet-skill');
+    expect(skill).toBeDefined();
+    expect(skill?.bodySnippet).toContain('graphql');
+  });
 });
 
 describe('skill parameter expansion', () => {
