@@ -144,6 +144,10 @@ export class StreamingUIController {
     return this._activeToolCalls.has(id);
   }
 
+  hasAnyActiveToolCall(): boolean {
+    return this._activeToolCalls.size > 0;
+  }
+
   setActiveToolCall(id: string, toolCall: ToolCallBlockData): void {
     this._activeToolCalls.set(id, toolCall);
   }

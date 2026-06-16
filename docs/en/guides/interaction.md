@@ -6,7 +6,7 @@ Kimi Code CLI runs as an interactive TUI (terminal user interface) built around 
 
 The input box accepts free-form text. Press `Enter` to send, or `Shift-Enter` / `Ctrl-J` to insert a newline. When the input box is empty, press `↑` / `↓` to browse the input history for the current working directory.
 
-**Exiting the CLI**: press `Ctrl-D` with the input box empty, press `Ctrl-C` twice while idle, or type `/exit`. Pressing `Ctrl-C` or `Esc` during streaming output interrupts the current turn — it does not exit the program.
+**Exiting the CLI**: press `Ctrl-D` with the input box empty, press `Ctrl-C` twice while idle, or type `/exit`. Pressing `Ctrl-C` or `Esc` during streaming output interrupts the current turn — it does not exit the program. If the model has not produced any output yet when interrupted, the prompt is automatically withdrawn from the context and its text is restored to the input box.
 
 ## Pasting images and video
 
@@ -69,7 +69,7 @@ YOLO mode skips confirmation for file writes and command execution. Only use it 
 The input box remains usable while the agent is thinking or calling tools, and supports the following extra actions:
 
 - **`Ctrl-S`**: inject the content in the input box into the running turn immediately, without waiting for it to finish
-- **`Esc` / `Ctrl-C`**: interrupt the current turn
+- **`Esc` / `Ctrl-C`**: interrupt the current turn. If the model has not produced any output yet, the prompt is automatically withdrawn and its text is restored to the input box.
 - **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output
 
 ## External editor

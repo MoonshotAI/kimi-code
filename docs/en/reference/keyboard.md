@@ -53,8 +53,8 @@ While streaming output is active, the input box can still receive input and supp
 | Shortcut | Function |
 | --- | --- |
 | `Ctrl-S` | Steer: inject the current input directly into the running turn |
-| `Esc` | Interrupt the current streaming output |
-| `Ctrl-C` | Interrupt the current streaming output |
+| `Esc` | Interrupt the current streaming output. If no output has been produced yet, the prompt is automatically withdrawn and its text is restored to the input box. |
+| `Ctrl-C` | Interrupt the current streaming output. If no output has been produced yet, the prompt is automatically withdrawn and its text is restored to the input box. |
 
 Pressing `Ctrl-S` causes the model to see your message at the next interruptible point, without waiting for the current turn to finish.
 

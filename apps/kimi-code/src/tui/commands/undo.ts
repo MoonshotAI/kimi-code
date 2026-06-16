@@ -103,6 +103,21 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
     return false;
   }
 
+  applyUndoToTranscriptState(host, count, entries, lastUserIndex);
+}
+
+export interface UndoTranscriptHost {
+  state: SlashCommandHost['state'];
+}
+
+export function applyUndoToTranscriptState(
+  host: UndoTranscriptHost,
+  count: number,
+  entries: TranscriptEntry[] = host.state.transcriptEntries,
+  lastUserIndex: number | undefined = findUndoAnchorEntryIndex(entries, count),
+): void {
+  if (lastUserIndex === undefined) return;
+
   const children = host.state.transcriptContainer.children;
   const lastUserComponentIndex = findUndoAnchorComponentIndex(children, count);
   if (lastUserComponentIndex !== undefined) {
@@ -464,7 +479,7 @@ function isUndoContextComponent(child: Component): boolean {
   );
 }
 
-function renderWelcome(host: SlashCommandHost): void {
+function renderWelcome(host: UndoTranscriptHost): void {
   if (
     host.state.transcriptContainer.children.some(
       (child) => child instanceof WelcomeComponent,

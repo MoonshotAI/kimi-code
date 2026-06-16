@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import {
   deleteAllKittyImages,
@@ -1142,6 +1142,95 @@ command = "vim"
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('hello');
     expect(transcript).not.toContain('review');
+  });
+
+  it('auto-undoes a cancelled turn that produced no output and refills the editor', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('write me a poem');
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 1, reason: 'cancelled' } as Event,
+      vi.fn(),
+    );
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries).toEqual([]);
+    });
+    expect(driver.state.editor.getText()).toBe('write me a poem');
+  });
+
+  it('does not auto-undo when the cancelled turn already streamed text', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('write me a poem');
+    driver.state.appState.streamingPhase = 'waiting';
+    // simulate assistant text arriving
+    driver.sessionEventHandler.handleEvent(
+      { type: 'assistant.delta', agentId: 'main', sessionId: 'ses-1', turnId: 1, delta: 'Once upon' } as Event,
+      vi.fn(),
+    );
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 1, reason: 'cancelled' } as Event,
+      vi.fn(),
+    );
+
+    await Promise.resolve();
+    expect(session.undoHistory).not.toHaveBeenCalled();
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({ kind: 'user', content: 'write me a poem' }),
+      expect.objectContaining({ kind: 'assistant' }),
+    ]);
+  });
+
+  it('does not auto-undo when the cancelled turn already issued a tool_call', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('read the README');
+    driver.state.appState.streamingPhase = 'waiting';
+    // directly push a tool_call entry to simulate a tool call having started
+    driver.state.transcriptEntries.push({
+      id: 'tc-entry-1',
+      kind: 'tool_call',
+      turnId: '1',
+      renderMode: 'plain',
+      content: 'Read file',
+    });
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 1, reason: 'cancelled' } as Event,
+      vi.fn(),
+    );
+
+    await Promise.resolve();
+    expect(session.undoHistory).not.toHaveBeenCalled();
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({ kind: 'user', content: 'read the README' }),
+      expect.objectContaining({ kind: 'tool_call' }),
+    ]);
+  });
+
+  it('does not auto-undo when the turn ended with reason completed', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 1, reason: 'completed' } as Event,
+      vi.fn(),
+    );
+
+    await Promise.resolve();
+    expect(session.undoHistory).not.toHaveBeenCalled();
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({ kind: 'user', content: 'hello' }),
+    ]);
   });
 
   it('sends pasted image placeholders as image content parts', async () => {
@@ -3076,7 +3165,7 @@ command = "vim"
     driver.handleUserInput('/plugins install ./plugins/kimi-datasource');
 
     await vi.waitFor(() => {
-      expect(session.installPlugin).toHaveBeenCalledWith('/tmp/proj-a/plugins/kimi-datasource');
+      expect(session.installPlugin).toHaveBeenCalledWith(resolve('/tmp/proj-a', 'plugins/kimi-datasource'));
     });
   });
 
