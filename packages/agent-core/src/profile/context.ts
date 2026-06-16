@@ -29,7 +29,7 @@ export async function prepareSystemPromptContext(
   const additionalDirs = normalizeAdditionalDirs(options?.additionalDirs ?? []);
   const [cwdListing, agentsMd, additionalDirsInfo] = await Promise.all([
     listDirectory(kaos, undefined, { collapseHiddenDirs: true }),
-    loadAgentsMdForRoots(kaos, brandHome, [kaos.getcwd(), ...additionalDirs]),
+    loadAgentsMd(kaos, brandHome),
     loadAdditionalDirsInfo(kaos, additionalDirs),
   ]);
   return { cwdListing, agentsMd, additionalDirsInfo };
