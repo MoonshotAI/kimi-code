@@ -20,11 +20,15 @@ async function collectParts(
   return parts;
 }
 
-function makeAnthropicProvider(baseUrl?: string): AnthropicChatProvider {
+function makeAnthropicProvider(
+  baseUrl?: string,
+  defaultHeaders?: Record<string, string>,
+): AnthropicChatProvider {
   return new AnthropicChatProvider({
     model: 'k25',
     apiKey: 'test-key',
     baseUrl,
+    defaultHeaders,
     defaultMaxTokens: 1024,
     stream: true,
   });
@@ -65,7 +69,7 @@ describe('e2e: Anthropic adapter bridge', () => {
     try {
       process.env['ANTHROPIC_AUTH_TOKEN'] = 'env-auth-token';
       process.env['ANTHROPIC_CUSTOM_HEADERS'] =
-        'Authorization: Bearer env-token\nX-Api-Key: env-key';
+        'Authorization: Bearer env-token\nX-Api-Key: env-key\nX-Leak: shell';
 
       harness.route('POST', '/v1/messages', async (request, reply) => {
         const body = request.bodyJson as Record<string, unknown>;
@@ -175,7 +179,7 @@ describe('e2e: Anthropic adapter bridge', () => {
         });
       });
 
-      const provider = makeAnthropicProvider(harness.baseUrl);
+      const provider = makeAnthropicProvider(harness.baseUrl, { 'X-Configured': 'yes' });
 
       const history: Message[] = [
         {
@@ -213,6 +217,8 @@ describe('e2e: Anthropic adapter bridge', () => {
 
       expect(harness.requests).toHaveLength(1);
       expect(harness.requests[0]!.headers['authorization']).toBeUndefined();
+      expect(harness.requests[0]!.headers['x-leak']).toBeUndefined();
+      expect(harness.requests[0]!.headers['x-configured']).toBe('yes');
     } finally {
       if (previousAuthToken === undefined) {
         delete process.env['ANTHROPIC_AUTH_TOKEN'];

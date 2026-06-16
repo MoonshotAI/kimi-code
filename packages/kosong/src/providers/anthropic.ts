@@ -1083,8 +1083,26 @@ export class AnthropicChatProvider implements ChatProvider {
     return apiKey;
   }
 
+  private _anthropicCustomHeaderEnvNames(): string[] {
+    const customHeaders = process.env['ANTHROPIC_CUSTOM_HEADERS'];
+    if (customHeaders === undefined || customHeaders.length === 0) return [];
+
+    const names: string[] = [];
+    for (const line of customHeaders.split('\n')) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex < 0) continue;
+
+      const name = line.slice(0, colonIndex).trim().toLowerCase();
+      if (name.length > 0) names.push(name);
+    }
+    return names;
+  }
+
   private _buildDefaultHeaders(apiKey: string): Record<string, string | null> {
     const defaultHeaders: Record<string, string | null> = { authorization: null };
+    for (const name of this._anthropicCustomHeaderEnvNames()) {
+      defaultHeaders[name] = null;
+    }
     for (const [name, value] of Object.entries(this._defaultHeaders ?? {})) {
       defaultHeaders[name.toLowerCase()] = value;
     }
