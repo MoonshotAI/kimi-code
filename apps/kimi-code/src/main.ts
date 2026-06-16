@@ -27,6 +27,7 @@ import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
 import { runShell } from './cli/run-shell';
+import { createWorktree, findGitRoot, WorktreeError } from './utils/git/worktree';
 import { formatStartupError } from './cli/startup-error';
 import { runPluginNodeEntry } from './cli/sub/plugin-run-node';
 import { handleUpgrade } from './cli/sub/upgrade';
@@ -38,6 +39,21 @@ import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
 
+// Defensive guard: if handleMainCommand is ever re-entered (e.g. reload),
+// do not create a nested worktree.
+let worktreeCreated = false;
+
+async function prepareWorktree(worktreeName: string): Promise<{ worktreePath: string; parentRepoPath: string }> {
+  const cwd = process.cwd();
+  const repoRoot = findGitRoot(cwd);
+  if (repoRoot === null) {
+    throw new WorktreeError('--worktree requires the working directory to be inside a git repository.');
+  }
+  const worktreePath = createWorktree(repoRoot, worktreeName || undefined);
+  process.chdir(worktreePath);
+  return { worktreePath, parentRepoPath: repoRoot };
+}
+
 export async function handleMainCommand(opts: CLIOptions, version: string): Promise<void> {
   let validated: ReturnType<typeof validateOptions>;
   try {
@@ -48,6 +64,21 @@ export async function handleMainCommand(opts: CLIOptions, version: string): Prom
       process.exit(1);
     }
     throw error;
+  }
+
+  if (opts.worktree !== undefined && !worktreeCreated) {
+    try {
+      const { worktreePath, parentRepoPath } = await prepareWorktree(opts.worktree);
+      opts.worktreePath = worktreePath;
+      opts.parentRepoPath = parentRepoPath;
+      worktreeCreated = true;
+    } catch (error) {
+      if (error instanceof WorktreeError) {
+        process.stderr.write(`error: ${error.message}\n`);
+        process.exit(1);
+      }
+      throw error;
+    }
   }
 
   const preflightResult = await runUpdatePreflight(

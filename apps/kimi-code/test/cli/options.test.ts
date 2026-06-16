@@ -41,6 +41,7 @@ describe('CLI options parsing', () => {
       expect(opts.outputFormat).toBeUndefined();
       expect(opts.prompt).toBeUndefined();
       expect(opts.skillsDirs).toEqual([]);
+      expect(opts.worktree).toBeUndefined();
     });
   });
 
@@ -164,6 +165,45 @@ describe('CLI options parsing', () => {
   describe('--plan', () => {
     it('sets plan mode flag', () => {
       expect(parse(['--plan']).plan).toBe(true);
+    });
+  });
+
+  describe('--worktree', () => {
+    it('parses --worktree with an explicit name', () => {
+      const opts = parse(['--worktree', 'my-fix']);
+      expect(opts.worktree).toBe('my-fix');
+    });
+
+    it('parses --worktree=value with an explicit name', () => {
+      const opts = parse(['--worktree=my-fix']);
+      expect(opts.worktree).toBe('my-fix');
+    });
+
+    it('parses -w with an explicit name', () => {
+      const opts = parse(['-w', 'my-fix']);
+      expect(opts.worktree).toBe('my-fix');
+    });
+
+    it('bare --worktree yields empty string for auto-naming', () => {
+      const opts = parse(['--worktree']);
+      expect(opts.worktree).toBe('');
+    });
+
+    it('bare -w yields empty string for auto-naming', () => {
+      const opts = parse(['-w']);
+      expect(opts.worktree).toBe('');
+    });
+
+    it('rejects --worktree combined with --session', () => {
+      const opts = parse(['--worktree', 'my-fix', '--session', 'ses_123']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Cannot combine --worktree with --session.');
+    });
+
+    it('rejects --worktree combined with --continue', () => {
+      const opts = parse(['--worktree', 'my-fix', '--continue']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Cannot combine --worktree with --continue.');
     });
   });
 
