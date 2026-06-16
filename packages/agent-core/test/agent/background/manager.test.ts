@@ -526,6 +526,18 @@ describe('BackgroundManager', () => {
     expect(await manager.wait(runningId, 0)).toMatchObject({ status: 'running' });
   });
 
+  it('clears task deadline timers when completion wins the race', async () => {
+    vi.useFakeTimers();
+    const { manager } = createBackgroundManager();
+    const taskId = manager.registerTask(
+      agentTask(Promise.resolve({ result: 'done' }), 'fast deadline task'),
+      { timeoutMs: 60_000 },
+    );
+
+    await expect(manager.wait(taskId, 60_000)).resolves.toMatchObject({ status: 'completed' });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('returns undefined or empty output for unknown task ids', async () => {
     const { manager } = createBackgroundManager();
 

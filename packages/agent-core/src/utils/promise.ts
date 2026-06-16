@@ -1,11 +1,29 @@
-import { sleep } from '@antfu/utils';
-
 const NEVER = new Promise<never>(() => {});
+
+export type TimeoutOutcomePromise<Outcome> = Promise<Outcome> & {
+  clear(): void;
+};
 
 export function timeoutOutcome<Outcome>(
   timeoutMs: number | undefined,
   outcome: Outcome,
-): Promise<Outcome> {
-  if (timeoutMs === undefined || timeoutMs <= 0) return NEVER;
-  return sleep(timeoutMs).then(() => outcome);
+): TimeoutOutcomePromise<Outcome> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const promise: Promise<Outcome> =
+    timeoutMs === undefined || timeoutMs <= 0
+      ? NEVER
+      : new Promise((resolve) => {
+          timeout = setTimeout(() => {
+            timeout = undefined;
+            resolve(outcome);
+          }, timeoutMs);
+        });
+
+  return Object.assign(promise, {
+    clear() {
+      if (timeout === undefined) return;
+      clearTimeout(timeout);
+      timeout = undefined;
+    },
+  });
 }

@@ -12,7 +12,7 @@
 
 import { randomBytes } from 'node:crypto';
 
-import { createControlledPromise, sleep, type ControlledPromise } from '@antfu/utils';
+import { createControlledPromise, type ControlledPromise } from '@antfu/utils';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../..';
@@ -446,7 +446,11 @@ export class BackgroundManager {
       return this.toInfo(entry);
     }
 
-    await Promise.race([entry.terminal, sleep(timeoutMs)]);
+    if (timeoutMs <= 0) {
+      return this.toInfo(entry);
+    }
+    const timeout = timeoutOutcome(timeoutMs, undefined);
+    await Promise.race([entry.terminal, timeout]).finally(() => timeout.clear());
 
     if (TERMINAL_STATUSES.has(entry.status)) {
       await entry.persistWriteQueue;
@@ -677,12 +681,13 @@ export class BackgroundManager {
         });
       });
 
+    const timeout = timeoutOutcome(entry.options.timeoutMs, { kind: 'timeout' as const });
     const outcome = await Promise.race([
       worker.then((settlement): TerminalOutcome => ({ kind: 'worker', settlement })),
-      timeoutOutcome(entry.options.timeoutMs, { kind: 'timeout' as const }),
+      timeout,
       entry.stop.then((request): TerminalOutcome => ({ kind: 'stop', request })),
       this.signalOutcome(entry),
-    ]);
+    ]).finally(() => timeout.clear());
     const settlement = await this.settlementForOutcome(entry, outcome, worker);
     await this.finalizeTask(entry, settlement);
   }
@@ -718,10 +723,11 @@ export class BackgroundManager {
     entry.stopReason = stopReason;
     entry.abortController.abort(timedOut ? 'Timed out' : stopReason);
 
+    const graceTimeout = timeoutOutcome(SIGTERM_GRACE_MS, undefined);
     const workerAfterAbort = await Promise.race([
       worker,
-      sleep(SIGTERM_GRACE_MS).then(() => undefined),
-    ]);
+      graceTimeout,
+    ]).finally(() => graceTimeout.clear());
 
     if (
       outcome.kind === 'stop' &&
