@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => {
     tuiGetStartupMcpMs: vi.fn(async () => 0),
     tuiGetCurrentSessionId: vi.fn(() => ''),
     tuiHasSessionContent: vi.fn(() => false),
+    tuiHasEverHadSessionContent: vi.fn(() => false),
     createKimiDeviceId: vi.fn<CreateKimiDeviceId>(() => 'device-1'),
     initializeTelemetry: vi.fn(),
     setCrashPhase: vi.fn(),
@@ -128,6 +129,7 @@ vi.mock('../../src/tui/index', () => ({
     getStartupMcpMs = mocks.tuiGetStartupMcpMs;
     getCurrentSessionId = mocks.tuiGetCurrentSessionId;
     hasSessionContent = mocks.tuiHasSessionContent;
+    hasEverHadSessionContent = mocks.tuiHasEverHadSessionContent;
   },
 }));
 
@@ -154,6 +156,7 @@ describe('runShell', () => {
     mocks.tuiGetStartupMcpMs.mockResolvedValue(0);
     mocks.tuiGetCurrentSessionId.mockReturnValue('');
     mocks.tuiHasSessionContent.mockReturnValue(false);
+    mocks.tuiHasEverHadSessionContent.mockReturnValue(false);
     mocks.createKimiDeviceId.mockImplementation(() => 'device-1');
     mocks.resolveKimiHome.mockImplementation(
       (homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home',
@@ -557,6 +560,7 @@ describe('runShell', () => {
     mocks.tuiStart.mockResolvedValue(undefined);
     mocks.tuiGetCurrentSessionId.mockReturnValue('ses-1');
     mocks.tuiHasSessionContent.mockReturnValue(true);
+    mocks.tuiHasEverHadSessionContent.mockReturnValue(true);
 
     const stdout = captureProcessWrite('stdout');
     const stderr = captureProcessWrite('stderr');
@@ -595,6 +599,54 @@ describe('runShell', () => {
       expect(mocks.shutdownTelemetry).toHaveBeenCalledOnce();
       expect(stdout.text()).toBe(' Bye!\n');
       expect(stderr.text()).toContain(' To resume this session: kimi -r ses-1');
+    } finally {
+      exitSpy.mockRestore();
+      stdout.restore();
+      stderr.restore();
+    }
+  });
+
+  it('includes cd in the resume hint for worktree sessions', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+    mocks.tuiGetCurrentSessionId.mockReturnValue('ses-wt');
+    mocks.tuiHasSessionContent.mockReturnValue(true);
+    mocks.tuiHasEverHadSessionContent.mockReturnValue(true);
+
+    const stdout = captureProcessWrite('stdout');
+    const stderr = captureProcessWrite('stderr');
+    const exitSpy = mockProcessExit();
+
+    try {
+      await runShell(
+        {
+          session: undefined,
+          continue: false,
+          yolo: false,
+          auto: false,
+          plan: false,
+          model: undefined,
+          outputFormat: undefined,
+          prompt: undefined,
+          skillsDirs: [],
+          worktreePath: '/repo/.kimi/worktrees/wt',
+          parentRepoPath: '/repo',
+        },
+        '1.2.3-test',
+      );
+      const [tui] = mocks.kimiTuiConstructor.mock.calls[0]!;
+
+      await expect((tui as { onExit: () => Promise<void> }).onExit()).rejects.toBeInstanceOf(
+        ExitCalled,
+      );
+
+      expect(stderr.text()).toContain(
+        ` To resume this session: cd "${process.cwd()}" && kimi -r ses-wt`,
+      );
     } finally {
       exitSpy.mockRestore();
       stdout.restore();

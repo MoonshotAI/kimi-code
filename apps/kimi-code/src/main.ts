@@ -27,6 +27,7 @@ import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
 import { runShell } from './cli/run-shell';
+import { relative, resolve } from 'node:path';
 import { createWorktree, findGitRoot, removeWorktree, WorktreeError } from './utils/git/worktree';
 import { formatStartupError } from './cli/startup-error';
 import { runPluginNodeEntry } from './cli/sub/plugin-run-node';
@@ -46,7 +47,12 @@ function prepareWorktree(worktreeName: string): { worktreePath: string; parentRe
     throw new WorktreeError('--worktree requires the working directory to be inside a git repository.');
   }
   const worktreePath = createWorktree(repoRoot, worktreeName || undefined);
-  process.chdir(worktreePath);
+  const relativeCwd = relative(repoRoot, cwd);
+  const targetCwd =
+    relativeCwd.length > 0 && relativeCwd !== '.'
+      ? resolve(worktreePath, relativeCwd)
+      : worktreePath;
+  process.chdir(targetCwd);
   return { worktreePath, parentRepoPath: repoRoot };
 }
 
@@ -60,6 +66,14 @@ export async function handleMainCommand(opts: CLIOptions, version: string): Prom
       process.exit(1);
     }
     throw error;
+  }
+
+  const preflightResult = await runUpdatePreflight(
+    version,
+    validated.uiMode === 'print' ? { track, isTTY: false } : { track },
+  );
+  if (preflightResult === 'exit') {
+    process.exit(0);
   }
 
   if (opts.worktree !== undefined) {
@@ -76,14 +90,6 @@ export async function handleMainCommand(opts: CLIOptions, version: string): Prom
     }
   }
 
-  const preflightResult = await runUpdatePreflight(
-    version,
-    validated.uiMode === 'print' ? { track, isTTY: false } : { track },
-  );
-  if (preflightResult === 'exit') {
-    process.exit(0);
-  }
-
   try {
     if (validated.uiMode === 'print') {
       await runPrompt(validated.options, version);
@@ -92,9 +98,15 @@ export async function handleMainCommand(opts: CLIOptions, version: string): Prom
 
     await runShell(validated.options, version);
   } catch (error) {
-    // If the runner failed during startup after we created a worktree, the
-    // worktree is still empty (no session ran), so clean it up to avoid leaks.
-    if (opts.worktreePath !== undefined && opts.parentRepoPath !== undefined) {
+    // If the shell runner failed during startup after we created a worktree,
+    // the worktree is still empty (no session ran), so clean it up to avoid
+    // leaks. Print mode intentionally leaves the worktree inspectable even on
+    // failure, so we do not clean it up here.
+    if (
+      validated.uiMode !== 'print' &&
+      opts.worktreePath !== undefined &&
+      opts.parentRepoPath !== undefined
+    ) {
       try {
         removeWorktree(opts.parentRepoPath, opts.worktreePath);
       } catch (cleanupError) {

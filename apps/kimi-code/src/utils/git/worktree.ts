@@ -10,7 +10,7 @@
 
 import { randomInt } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ADJECTIVES_RAW from './worktree-adjectives.txt?raw';
 import VERBS_RAW from './worktree-verbs.txt?raw';
@@ -171,6 +171,41 @@ function ensureWorktreeStorageIgnored(worktreesDir: string): void {
   writeFileSync(gitignorePath, '*\n', { encoding: 'utf8' });
 }
 
+/**
+ * Ensures the parent `.kimi/` directory does not dirty the repository checkout.
+ *
+ * We add `.kimi/` to `.git/info/exclude` (local to this clone) rather than
+ * modifying any tracked `.gitignore` file. This keeps the worktree storage
+ * entirely out of `git status` without polluting the repo with untracked
+ * ignore rules.
+ */
+function ensureKimiDirIgnored(repoRoot: string): void {
+  const gitDirResult = runGit(repoRoot, ['rev-parse', '--git-dir']);
+  if (gitDirResult.status !== 0 || gitDirResult.stdout.length === 0) {
+    return;
+  }
+  const excludePath = resolve(repoRoot, gitDirResult.stdout, 'info', 'exclude');
+  const marker = '.kimi/';
+
+  let existing = '';
+  if (existsSync(excludePath)) {
+    try {
+      existing = readFileSync(excludePath, { encoding: 'utf8' });
+      const lines = existing.split('\n');
+      if (lines.some((line) => line.trim() === marker)) {
+        return;
+      }
+    } catch {
+      // Fall through to best-effort append.
+    }
+  }
+
+  mkdirSync(resolve(excludePath, '..'), { recursive: true });
+  writeFileSync(excludePath, `${existing}${existing.length > 0 && !existing.endsWith('\n') ? '\n' : ''}${marker}\n`, {
+    encoding: 'utf8',
+  });
+}
+
 export function createWorktree(repoRoot: string, name?: string): string {
   if (!isInsideGitRepo(repoRoot)) {
     throw new WorktreeError(`Not a git repository: ${repoRoot}`);
@@ -199,6 +234,7 @@ export function createWorktree(repoRoot: string, name?: string): string {
   // Ensure parent directory exists; git does not create nested parent dirs.
   mkdirSync(worktreesDir, { recursive: true });
   ensureWorktreeStorageIgnored(worktreesDir);
+  ensureKimiDirIgnored(repoRoot);
 
   const { stderr, status } = runGit(repoRoot, ['worktree', 'add', '--detach', worktreePath]);
   if (status !== 0) {

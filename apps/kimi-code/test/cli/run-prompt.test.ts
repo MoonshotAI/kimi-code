@@ -216,6 +216,19 @@ describe('runPrompt', () => {
     expect(mocks.harnessClose).toHaveBeenCalled();
   });
 
+  it('includes cd in the resume hint for worktree sessions', async () => {
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(
+      opts({ worktreePath: '/repo/.kimi/worktrees/wt', parentRepoPath: '/repo' }),
+      '1.2.3-test',
+      { stdout, stderr },
+    );
+
+    expect(stderr.text()).toBe(`To resume this session: cd "${process.cwd()}" && kimi -r ses_prompt\n`);
+  });
+
   it('stops prompt startup when session creation fails', async () => {
     const stdout = writer();
     const stderr = writer();
