@@ -238,8 +238,9 @@ function selectTab(tabId: string): void {
   border: 1px solid var(--line);
   border-radius: 8px;
   width: 760px;
-  height: min(680px, calc(100vh - 80px));
   max-width: calc(100vw - 32px);
+  height: 680px;
+  max-height: calc(100vh - 80px);
   display: flex;
   flex-direction: column;
   font-family: var(--mono);
@@ -439,8 +440,9 @@ function selectTab(tabId: string): void {
   }
   .dialog {
     width: 100%;
-    height: min(640px, calc(100vh - 24px));
     max-width: none;
+    height: 640px;
+    max-height: calc(100vh - 24px);
   }
   .model-provider,
   .caps {

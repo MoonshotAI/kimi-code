@@ -360,6 +360,8 @@ function formatSeconds(s: number): string {
   border-radius: 4px;
   width: 480px;
   max-width: calc(100vw - 32px);
+  height: 420px;
+  max-height: calc(100vh - 80px);
   display: flex;
   flex-direction: column;
   font-family: var(--mono);

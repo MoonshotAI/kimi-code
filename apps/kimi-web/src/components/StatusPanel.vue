@@ -128,6 +128,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown));
   border-radius: 4px;
   width: 420px;
   max-width: calc(100vw - 32px);
+  height: 320px;
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
   font-family: var(--mono);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.14);
 }
@@ -161,6 +165,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown));
 .rows {
   margin: 0;
   padding: 6px 0;
+  flex: 1;
 }
 .row {
   display: flex;

@@ -369,6 +369,8 @@ onUnmounted(() => {
   border-radius: 4px;
   width: 540px;
   max-width: calc(100vw - 32px);
+  height: 520px;
+  max-height: calc(100vh - 80px);
   display: flex;
   flex-direction: column;
   font-family: var(--mono);
@@ -495,8 +497,8 @@ onUnmounted(() => {
 
 /* Folder list */
 .folder-list {
-  max-height: 280px;
-  min-height: 120px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 4px 0;
 }

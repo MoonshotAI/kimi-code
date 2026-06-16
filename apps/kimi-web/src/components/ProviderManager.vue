@@ -291,6 +291,7 @@ function statusLabel(status: AppProvider['status']): string {
   border-radius: 4px;
   width: 580px;
   max-width: calc(100vw - 32px);
+  height: 520px;
   max-height: calc(100vh - 80px);
   display: flex;
   flex-direction: column;

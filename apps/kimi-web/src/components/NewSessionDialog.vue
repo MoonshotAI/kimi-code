@@ -168,6 +168,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   border-radius: 4px;
   width: 520px;
   max-width: calc(100vw - 32px);
+  height: 360px;
+  max-height: calc(100vh - 80px);
   display: flex;
   flex-direction: column;
   font-family: var(--mono);
@@ -207,6 +209,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: 1;
 }
 
 .form-row {

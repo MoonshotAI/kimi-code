@@ -474,7 +474,8 @@ function setTab(tab: SettingsTab): void {
 }
 .dialog {
   width: min(720px, 100%);
-  height: min(82vh, 720px);
+  height: 640px;
+  max-height: calc(100vh - 80px);
   display: flex;
   flex-direction: column;
   background: var(--bg);
