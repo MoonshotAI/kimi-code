@@ -125,4 +125,26 @@ describe('status panel report lines', () => {
     expect(output).toContain('Warning      No active session');
     expect(output).toContain('No context window data available.');
   });
+
+  it('reads swarm mode from runtime status over stale app state', () => {
+    const lines = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinking: false,
+      permissionMode: 'manual',
+      planMode: false,
+      swarmMode: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+      availableProviders: {},
+      status: { swarmMode: true },
+    }).map(strip);
+
+    expect(lines.join('\n')).toContain('Swarm        on');
+  });
 });

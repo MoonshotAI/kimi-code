@@ -120,6 +120,7 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
 
   const permission = options.status?.permission ?? options.permissionMode;
   const planMode = options.status?.planMode ?? options.planMode;
+  const swarmMode = options.status?.swarmMode ?? options.swarmMode;
   const sessionId = options.sessionId.trim().length > 0 ? options.sessionId : 'none';
   const modelCount = Object.keys(options.availableModels).length;
   const providerCount = Object.keys(options.availableProviders).length;
@@ -131,7 +132,7 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
     { label: 'Directory', value: options.workDir },
     { label: 'Permissions', value: formatPermissionMode(permission, value, errorStyle) },
     { label: 'Plan mode', value: formatPlanMode(planMode, value, muted) },
-    { label: 'Swarm', value: formatSwarmMode(options.swarmMode, value, muted) },
+    { label: 'Swarm', value: formatSwarmMode(swarmMode, value, muted) },
     { label: 'Session', value: sessionId },
   ];
   const title = options.sessionTitle?.trim();
