@@ -87,7 +87,7 @@ interface ModelSelectorDriver extends MessageDriver {
   ): Promise<{ alias: string; thinking: boolean } | undefined>;
 }
 
-function makeStartupInput(): KimiTUIStartupInput {
+function makeStartupInput(overrides: Partial<KimiTUIStartupInput> = {}): KimiTUIStartupInput {
   return {
     cliOptions: {
       session: undefined,
@@ -108,6 +108,7 @@ function makeStartupInput(): KimiTUIStartupInput {
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-a',
+    ...overrides,
   };
 }
 
@@ -240,13 +241,14 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
 async function makeDriver(
   session = makeSession(),
   harnessOverrides: Record<string, unknown> = {},
+  startupInputOverrides: Partial<KimiTUIStartupInput> = {},
 ): Promise<{
   driver: MessageDriver;
   session: ReturnType<typeof makeSession>;
   harness: ReturnType<typeof makeHarness>;
 }> {
   const harness = makeHarness(session, harnessOverrides);
-  const driver = new KimiTUI(harness as never, makeStartupInput()) as unknown as MessageDriver;
+  const driver = new KimiTUI(harness as never, makeStartupInput(startupInputOverrides)) as unknown as MessageDriver;
   vi.spyOn(driver.state.ui, 'requestRender').mockImplementation(() => {});
   vi.spyOn(driver.state.terminal, 'setProgress').mockImplementation(() => {});
   driver.persistInputHistory = vi.fn(async () => {});
@@ -592,6 +594,41 @@ command = "vim"
     });
     expect(session.setPlanMode).not.toHaveBeenCalled();
     expect(stripSgr(renderTranscript(driver))).not.toContain('Post-create setup failed');
+  });
+
+  it('preserves worktree metadata when /new creates a replacement session', async () => {
+    const session = makeSession({ id: 'ses-1' });
+    const nextSession = makeSession({ id: 'ses-2' });
+    const { driver, harness } = await makeDriver(session, {}, {
+      cliOptions: {
+        session: undefined,
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: [],
+        worktreePath: '/repo/.kimi/worktrees/wt',
+        parentRepoPath: '/repo',
+      },
+    });
+    harness.createSession.mockResolvedValueOnce(nextSession);
+    harness.createSession.mockClear();
+
+    driver.handleUserInput('/new');
+
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: {
+            worktreePath: '/repo/.kimi/worktrees/wt',
+            parentRepoPath: '/repo',
+          },
+        }),
+      );
+    });
   });
 
   it('keeps the new session subscribed when post-create setup fails', async () => {
