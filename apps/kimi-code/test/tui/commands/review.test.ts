@@ -2,7 +2,6 @@ import type {
   ReviewBaseRef,
   ReviewCommit,
   ReviewIntensity,
-  ReviewPlanPreview,
   ReviewResult,
   ReviewScopeSummary,
   ReviewTargetPreview,
@@ -59,50 +58,6 @@ function result(
   };
 }
 
-function plan(intensity: ReviewIntensity): ReviewPlanPreview {
-  if (intensity === 'deep') {
-    return {
-      intensity,
-      reviewerCount: 4,
-      perspectives: [
-        'Correctness and regressions',
-        'Security and data safety',
-        'Reliability and edge cases',
-        'Maintainability and tests',
-      ],
-      fileGroups: [
-        {
-          label: 'Files 1-1',
-          files: ['src/a.ts'],
-          perspectives: [
-            'Correctness and regressions',
-            'Security and data safety',
-            'Reliability and edge cases',
-            'Maintainability and tests',
-          ],
-        },
-      ],
-      reconciliationGroups: [
-        'Correctness and regressions',
-        'Security and data safety',
-        'Reliability and edge cases',
-        'Maintainability and tests',
-      ],
-    };
-  }
-  return {
-    intensity,
-    reviewerCount: intensity === 'thorough' ? 3 : 1,
-    perspectives: intensity === 'thorough'
-      ? [
-        'Correctness and regressions',
-        'Security and data safety',
-        'Maintainability and tests',
-      ]
-      : ['standard'],
-  };
-}
-
 const defaultScopeSummary = {
   workingTree: {
     stagedCount: 0,
@@ -132,8 +87,7 @@ function makeHost(input: {
     listReviewBaseRefs: vi.fn(async () => input.refs ?? [{ name: 'main', kind: 'branch' }]),
     listReviewCommits: vi.fn(async () => input.commits ?? [{ sha: 'abc123', title: 'change' }]),
     previewReviewTarget: vi.fn(async (target) => preview(target)),
-    previewReviewPlan: vi.fn(async (reviewInput) => plan(reviewInput.intensity)),
-    startReview: vi.fn(async (reviewInput) => result(reviewInput.target, reviewInput.intensity)),
+    runPilotedReview: vi.fn(async (reviewInput) => result(reviewInput.target, reviewInput.intensity)),
   };
   const spinnerStop = vi.fn();
   const transientStatusClear = vi.fn();
@@ -196,7 +150,7 @@ describe('handleReviewCommand', () => {
     await task;
 
     expect(session.previewReviewTarget).toHaveBeenCalledWith({ scope: 'working_tree' });
-    expect(session.startReview).toHaveBeenCalledWith({
+    expect(session.runPilotedReview).toHaveBeenCalledWith({
       target: workingTreePreview.target,
       intensity: 'standard',
       focus: 'focus on security',
@@ -216,7 +170,7 @@ describe('handleReviewCommand', () => {
   it('marks the command review result as pending while the review is running', async () => {
     const { host, session } = makeHost();
     let pendingDuringStart: boolean | undefined;
-    session.startReview.mockImplementationOnce(async (reviewInput) => {
+    session.runPilotedReview.mockImplementationOnce(async (reviewInput) => {
       pendingDuringStart = host.state.reviewResultPending;
       return result(reviewInput.target, reviewInput.intensity);
     });
@@ -245,28 +199,12 @@ describe('handleReviewCommand', () => {
 
     expect(host.showTransientStatus).toHaveBeenCalledWith('Reviewing 1 file: +2 -1.');
     expect(transientStatusClear).toHaveBeenCalledTimes(1);
-    expect(session.startReview).not.toHaveBeenCalled();
-  });
-
-  it('removes the preview status when plan preview fails', async () => {
-    const { host, session, transientStatusClear } = makeHost();
-    session.previewReviewPlan.mockRejectedValueOnce(new Error('plan failed'));
-    const task = handleReviewCommand(host, '');
-
-    await waitForPicker(host, 1);
-    mountedPicker(host, 0).handleInput(ENTER);
-    await waitForPicker(host, 2);
-    mountedPicker(host, 1).handleInput(DOWN);
-    mountedPicker(host, 1).handleInput(ENTER);
-
-    await expect(task).rejects.toThrow('plan failed');
-    expect(transientStatusClear).toHaveBeenCalledTimes(1);
-    expect(session.startReview).not.toHaveBeenCalled();
+    expect(session.runPilotedReview).not.toHaveBeenCalled();
   });
 
   it('does not show a duplicate command error after a review failure event', async () => {
     const { host, session } = makeHost();
-    session.startReview.mockImplementationOnce(async () => {
+    session.runPilotedReview.mockImplementationOnce(async () => {
       host.state.reviewActive = false;
       throw new Error('Rate limited');
     });
@@ -449,7 +387,7 @@ describe('handleReviewCommand', () => {
       scope: 'current_branch',
       baseRef: 'main',
     });
-    expect(session.startReview).toHaveBeenCalledWith(
+    expect(session.runPilotedReview).toHaveBeenCalledWith(
       expect.objectContaining({
         target: expect.objectContaining({ scope: 'current_branch', baseRef: 'main' }),
         intensity: 'standard',
@@ -493,7 +431,7 @@ describe('handleReviewCommand', () => {
       scope: 'current_branch',
       baseRef: 'origin/main',
     });
-    expect(session.startReview).toHaveBeenCalledWith(
+    expect(session.runPilotedReview).toHaveBeenCalledWith(
       expect.objectContaining({
         target: expect.objectContaining({ scope: 'current_branch', baseRef: 'origin/main' }),
         intensity: 'standard',
@@ -501,7 +439,7 @@ describe('handleReviewCommand', () => {
     );
   });
 
-  it('starts a Thorough review after showing the focused reviewers', async () => {
+  it('starts a Thorough review straight after the intensity selection', async () => {
     const { host, session, workingTreePreview } = makeHost();
     const task = handleReviewCommand(host, '');
 
@@ -510,42 +448,14 @@ describe('handleReviewCommand', () => {
     await waitForPicker(host, 2);
     mountedPicker(host, 1).handleInput(DOWN);
     mountedPicker(host, 1).handleInput(ENTER);
-    await waitForPicker(host, 3);
-    const confirmationLines = strippedPickerLines(host, 2);
-    expect(confirmationLines.join('\n')).toContain('Correctness and regressions');
-    expect(confirmationLines.join('\n')).toContain('3 reviewer agents');
-    mountedPicker(host, 2).handleInput(ENTER);
     await task;
 
     expect(host.showNotice).not.toHaveBeenCalled();
-    expect(session.previewReviewPlan).toHaveBeenCalledWith({
+    expect(session.runPilotedReview).toHaveBeenCalledWith({
       target: workingTreePreview.target,
       intensity: 'thorough',
       focus: undefined,
     });
-    expect(session.startReview).toHaveBeenCalledWith({
-      target: workingTreePreview.target,
-      intensity: 'thorough',
-      focus: undefined,
-    });
-  });
-
-  it('cancels at the perspective confirmation before starting review', async () => {
-    const { host, session, transientStatusClear } = makeHost();
-    const task = handleReviewCommand(host, '');
-
-    await waitForPicker(host, 1);
-    mountedPicker(host, 0).handleInput(ENTER);
-    await waitForPicker(host, 2);
-    mountedPicker(host, 1).handleInput(DOWN);
-    mountedPicker(host, 1).handleInput(ENTER);
-    await waitForPicker(host, 3);
-    mountedPicker(host, 2).handleInput(ESC);
-    await task;
-
-    expect(session.previewReviewPlan).toHaveBeenCalled();
-    expect(session.startReview).not.toHaveBeenCalled();
-    expect(transientStatusClear).toHaveBeenCalledTimes(1);
   });
 
   it('selects a single commit and starts a Deep Review without the duplicate command spinner', async () => {
@@ -564,11 +474,6 @@ describe('handleReviewCommand', () => {
     mountedPicker(host, 2).handleInput(DOWN);
     mountedPicker(host, 2).handleInput(DOWN);
     mountedPicker(host, 2).handleInput(ENTER);
-    await waitForPicker(host, 4);
-    const confirmationLines = strippedPickerLines(host, 3);
-    expect(confirmationLines.join('\n')).toContain('Reliability and edge cases');
-    expect(confirmationLines.join('\n')).toContain('4 reviewer agents');
-    mountedPicker(host, 3).handleInput(ENTER);
     await task;
 
     expect(session.listReviewCommits).toHaveBeenCalled();
@@ -577,13 +482,7 @@ describe('handleReviewCommand', () => {
       commit: 'abc123def456',
     });
     expect(host.showNotice).not.toHaveBeenCalled();
-    expect(session.previewReviewPlan).toHaveBeenCalledWith(
-      expect.objectContaining({
-        target: expect.objectContaining({ scope: 'single_commit', commit: 'abc123def456' }),
-        intensity: 'deep',
-      }),
-    );
-    expect(session.startReview).toHaveBeenCalledWith(
+    expect(session.runPilotedReview).toHaveBeenCalledWith(
       expect.objectContaining({
         target: expect.objectContaining({ scope: 'single_commit', commit: 'abc123def456' }),
         intensity: 'deep',

@@ -396,6 +396,7 @@ export interface SessionAPI extends AgentAPIWithId {
   previewReviewTarget: (payload: PreviewReviewTargetPayload) => ReviewTargetPreview;
   previewReviewPlan: (payload: PreviewReviewPlanPayload) => ReviewPlanPreview;
   startReview: (payload: StartReviewPayload) => ReviewResult;
+  runPilotedReview: (payload: StartReviewPayload) => ReviewResult | undefined;
   cancelReview: (payload: EmptyPayload) => void;
   listReviews: (payload: EmptyPayload) => readonly ReviewArtifactSummary[];
   readReview: (payload: ReadReviewPayload) => ReviewArtifact | undefined;

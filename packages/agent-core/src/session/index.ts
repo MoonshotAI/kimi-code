@@ -42,6 +42,8 @@ import type { ToolServices } from '../tools/support/services';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import {
   buildReviewArtifact,
+  buildReviewFanOutPrompt,
+  buildReviewPilotPrompt,
   getReviewScopeSummary,
   listReviewBaseRefs,
   listReviewCommits,
@@ -171,6 +173,8 @@ export class Session {
   readonly review = new SessionReviewRuntime();
   private reviewStartInFlight = false;
   private activeReviewOrchestrator: ReviewOrchestrator | undefined;
+  /** Result of the most recent RunCodeReview fan-out, read back by {@link runPilotedReview}. */
+  private lastPilotedReviewResult: ReviewResult | undefined;
   private reviewStoreCache: ReviewArtifactStore | undefined;
   private toolKaos: Kaos;
   private persistenceKaos: Kaos;
@@ -571,7 +575,54 @@ export class Session {
       },
     });
     const result = await orchestrator.start(input);
-    return this.persistReviewResult(mainAgent.kaos, result);
+    const persisted = await this.persistReviewResult(mainAgent.kaos, result);
+    this.lastPilotedReviewResult = persisted;
+    return persisted;
+  }
+
+  /**
+   * Drives the two-turn piloted review: turn 1 has the main agent study the
+   * changes and write a background briefing + directions; turn 2 has it call
+   * RunCodeReview to fan out the reviewers. Both turns are ordinary, persisted
+   * conversation turns. Returns the fan-out result, or undefined if the pilot
+   * turn did not complete or the agent never ran the review.
+   */
+  async runPilotedReview(input: ReviewStartInput): Promise<ReviewResult | undefined> {
+    this.assertCodeReviewEnabled();
+    if (this.hasActiveTurn || this.reviewStartInFlight || this.review.getActiveRun() !== null) {
+      throw new KimiError(
+        ErrorCodes.TURN_AGENT_BUSY,
+        'Cannot start a review while another turn is running',
+      );
+    }
+    const mainAgent = await this.ensureAgentResumed('main');
+    const preview = await previewReviewOrchestratorTarget(mainAgent.kaos, input.target);
+
+    mainAgent.turn.prompt(
+      [{
+        type: 'text',
+        text: buildReviewPilotPrompt({
+          target: preview.target,
+          stats: preview.stats,
+          intensity: input.intensity,
+          focus: input.focus,
+        }),
+      }],
+      { kind: 'system_trigger', name: 'review_pilot' },
+    );
+    const pilotEnd = await mainAgent.turn.waitForCurrentTurn();
+    if (pilotEnd.event.reason !== 'completed') return undefined;
+
+    this.lastPilotedReviewResult = undefined;
+    mainAgent.turn.prompt(
+      [{
+        type: 'text',
+        text: buildReviewFanOutPrompt({ target: preview.target, intensity: input.intensity }),
+      }],
+      { kind: 'system_trigger', name: 'review_fanout' },
+    );
+    await mainAgent.turn.waitForCurrentTurn();
+    return this.lastPilotedReviewResult;
   }
 
   cancelReview(): void {

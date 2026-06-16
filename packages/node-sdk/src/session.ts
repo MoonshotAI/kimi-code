@@ -273,6 +273,11 @@ export class Session {
     return this.rpc.previewReviewPlan({ sessionId: this.id, ...input });
   }
 
+  async runPilotedReview(input: ReviewStartInput): Promise<ReviewResult | undefined> {
+    this.ensureOpen();
+    return this.rpc.runPilotedReview({ sessionId: this.id, ...input });
+  }
+
   async startReview(input: ReviewStartInput): Promise<ReviewResult> {
     this.ensureOpen();
     return this.rpc.startReview({ sessionId: this.id, ...input });

@@ -500,6 +500,16 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async runPilotedReview(input: StartReviewRpcInput): Promise<ReviewResult | undefined> {
+    const rpc = await this.getRpc();
+    return rpc.runPilotedReview({
+      sessionId: input.sessionId,
+      target: input.target,
+      intensity: input.intensity,
+      focus: input.focus,
+    });
+  }
+
   async cancelReview(input: SessionIdRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.cancelReview({ sessionId: input.sessionId });

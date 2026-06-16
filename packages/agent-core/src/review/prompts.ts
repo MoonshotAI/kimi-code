@@ -4,6 +4,7 @@ import type {
   ReviewComment,
   ReviewDiffStats,
   ReviewFinalComment,
+  ReviewIntensity,
   ReviewMergedComment,
   ReviewResult,
   ReviewStartInput,
@@ -33,6 +34,85 @@ export function buildReviewBackground(input: BuildReviewBackgroundInput): Review
     changeType: nonEmpty(input.input.changeType),
     briefing: nonEmpty(input.input.background),
   };
+}
+
+/**
+ * Turn-1 prompt: the main agent acts as the review pilot. It studies the
+ * selected changes and writes a background briefing plus the review directions,
+ * but does not modify files or run the review yet.
+ */
+export function buildReviewPilotPrompt(input: {
+  readonly target: ReviewTarget;
+  readonly stats: ReviewDiffStats;
+  readonly intensity: ReviewIntensity;
+  readonly focus?: string;
+}): string {
+  const { target, stats, intensity, focus } = input;
+  const trimmedFocus = focus?.trim();
+  const hasFocus = trimmedFocus !== undefined && trimmedFocus.length > 0;
+  const lines = [
+    'You are the code review pilot. A review has been requested; in this step, study the selected changes and plan the review. Do not modify any files, and do not call RunCodeReview yet.',
+    '',
+    `Scope: ${describeReviewTarget(target)}.`,
+    `Intensity: ${intensity}.`,
+    `Changed (${formatStats(stats)}):`,
+    ...stats.files.map(
+      (file) => `- ${file.path} (${file.status}, +${String(file.additions)} -${String(file.deletions)})`,
+    ),
+    '',
+  ];
+  if (hasFocus) {
+    lines.push(`The user asked you to focus the review on: ${trimmedFocus}`, '');
+  }
+  lines.push(
+    'Inspect the actual changes (read the diff and the relevant code), then write:',
+    '1. A background briefing for the reviewers — what this change is, its intent, and the context they need to judge it. Keep it factual orientation; do not state whether the code is correct.',
+    hasFocus
+      ? '2. The review directions to pursue. Lead with the user\'s requested focus, then add the angles the change most warrants.'
+      : '2. The review directions to pursue — the distinct angles the change most warrants (e.g. correctness, security, edge cases, tests, compatibility).',
+    intensity === 'deep'
+      ? 'Plan at least two directions; deep review needs overlapping coverage.'
+      : intensity === 'thorough'
+        ? 'Plan a few focused directions; each becomes one reviewer.'
+        : 'One overall direction is enough for a standard review, though you may note a couple of priorities.',
+    '',
+    'Write the background and directions in your reply. Do not call any review tool yet — the next message will ask you to run the review.',
+  );
+  return lines.join('\n');
+}
+
+/**
+ * Turn-2 prompt: tell the pilot to run the review by calling RunCodeReview with
+ * the background and directions it just decided.
+ */
+export function buildReviewFanOutPrompt(input: {
+  readonly target: ReviewTarget;
+  readonly intensity: ReviewIntensity;
+}): string {
+  const { target, intensity } = input;
+  return [
+    'Now run the review. Call RunCodeReview exactly once, using the background and directions you just decided:',
+    `- target: ${JSON.stringify(target)}`,
+    `- intensity: ${intensity}`,
+    '- background: the briefing you wrote (factual orientation for the reviewers, not a verdict)',
+    `- directions: the directions you decided${intensity === 'deep' ? ' (at least two)' : ''}; lead with the user's focus if one was given`,
+    '- change_type: a short one-line label for the change',
+    '',
+    'The reviewers are read-only and independent — each only sees your background, its assigned files, and its direction. After RunCodeReview returns, give the user a brief summary of the outcome.',
+  ].join('\n');
+}
+
+function describeReviewTarget(target: ReviewTarget): string {
+  switch (target.scope) {
+    case 'working_tree':
+      return target.baseRef === undefined
+        ? 'the working tree (staged, unstaged, and untracked changes)'
+        : `the working tree against ${target.baseRef}`;
+    case 'current_branch':
+      return `the current branch${target.headRef === undefined ? '' : ` (${target.headRef})`} against ${target.baseRef}`;
+    case 'single_commit':
+      return `the single commit ${target.commit}`;
+  }
 }
 
 export function buildStandardReviewerPrompt(input: {

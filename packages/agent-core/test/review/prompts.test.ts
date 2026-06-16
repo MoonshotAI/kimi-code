@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildReconciliatorPrompt,
+  buildReviewFanOutPrompt,
+  buildReviewPilotPrompt,
   buildStandardReviewerPrompt,
   type ReviewAssignment,
   type ReviewBackground,
+  type ReviewDiffStats,
 } from '../../src/review';
 import { buildReviewWorkerContinuationPrompt } from '../../src/review/worker-driver';
 
@@ -18,6 +21,55 @@ const background: ReviewBackground = {
     files: [{ path: 'src/a.ts', status: 'modified', additions: 2, deletions: 1 }],
   },
 };
+
+const pilotStats: ReviewDiffStats = {
+  fileCount: 2,
+  additions: 10,
+  deletions: 3,
+  files: [
+    { path: 'src/a.ts', status: 'modified', additions: 7, deletions: 3 },
+    { path: 'src/b.ts', status: 'added', additions: 3, deletions: 0 },
+  ],
+};
+
+describe('review pilot prompts', () => {
+  it('asks the pilot to plan without running the review, and lists the changed files', () => {
+    const prompt = buildReviewPilotPrompt({
+      target: { scope: 'working_tree' },
+      stats: pilotStats,
+      intensity: 'thorough',
+    });
+
+    expect(prompt).toContain('code review pilot');
+    expect(prompt).toContain('do not call RunCodeReview yet');
+    expect(prompt).toContain('src/a.ts');
+    expect(prompt).toContain('src/b.ts');
+  });
+
+  it('leads the directions with the user focus when one is given', () => {
+    const prompt = buildReviewPilotPrompt({
+      target: { scope: 'working_tree' },
+      stats: pilotStats,
+      intensity: 'deep',
+      focus: 'auth regressions',
+    });
+
+    expect(prompt).toContain('auth regressions');
+    expect(prompt).toContain("Lead with the user's requested focus");
+    expect(prompt).toContain('at least two directions');
+  });
+
+  it('tells the fan-out turn to call RunCodeReview with the resolved target', () => {
+    const prompt = buildReviewFanOutPrompt({
+      target: { scope: 'single_commit', commit: 'abc123' },
+      intensity: 'standard',
+    });
+
+    expect(prompt).toContain('Call RunCodeReview');
+    expect(prompt).toContain('"scope":"single_commit"');
+    expect(prompt).toContain('"commit":"abc123"');
+  });
+});
 
 describe('review prompts', () => {
   it('asks reviewers for review-quality findings instead of generic summaries', () => {

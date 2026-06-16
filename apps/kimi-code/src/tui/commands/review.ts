@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import type {
   ReviewArtifact,
   ReviewIntensity,
-  ReviewPlanPreview,
   ReviewResult,
   ReviewScopeSummary,
   ReviewStartInput,
@@ -67,18 +66,6 @@ export async function handleReviewCommand(host: SlashCommandHost, args: string):
   try {
     const intensity = await promptReviewIntensity(host);
     if (intensity === undefined) return;
-    const plan = intensity === 'standard'
-      ? undefined
-      : await session.previewReviewPlan({
-        target: preview.target,
-        intensity,
-        focus,
-      });
-    if (plan !== undefined) {
-      const confirmed = await promptReviewPerspectiveConfirmation(host, plan);
-      if (!confirmed) return;
-    }
-
     await startReview(host, {
       target: preview.target,
       intensity,
@@ -353,29 +340,6 @@ function promptReviewIntensity(host: SlashCommandHost): Promise<ReviewIntensity 
   });
 }
 
-function promptReviewPerspectiveConfirmation(
-  host: SlashCommandHost,
-  plan: ReviewPlanPreview,
-): Promise<boolean> {
-  return promptChoice(host, {
-    title: 'Review perspectives',
-    notice: plan.perspectives.join(' · '),
-    options: [
-      {
-        value: 'start',
-        label: 'Start review',
-        description: reviewPlanSummary(plan),
-      },
-      {
-        value: 'cancel',
-        label: 'Cancel',
-        description: 'Return to chat without starting review.',
-      },
-    ],
-    optionSpacing: 'relaxed',
-  }).then((value) => value === 'start');
-}
-
 async function startReview(
   host: SlashCommandHost,
   input: ReviewStartInput,
@@ -386,15 +350,17 @@ async function startReview(
   host.state.reviewResultPending = true;
   let result: ReviewResult | undefined;
   try {
-    result = await host.requireSession().startReview(input);
+    result = await host.requireSession().runPilotedReview(input);
     host.setReviewActive(false);
-    host.appendTranscriptEntry({
-      id: nextTranscriptId(),
-      kind: 'review-summary',
-      renderMode: 'plain',
-      content: result.summary,
-      reviewSummaryData: buildReviewSummaryData(result),
-    });
+    if (result !== undefined) {
+      host.appendTranscriptEntry({
+        id: nextTranscriptId(),
+        kind: 'review-summary',
+        renderMode: 'plain',
+        content: result.summary,
+        reviewSummaryData: buildReviewSummaryData(result),
+      });
+    }
   } catch (error) {
     const message = formatErrorMessage(error);
     const reviewEventHandled = !host.state.reviewActive;
@@ -445,18 +411,6 @@ function promptChoice(
       }),
     );
   });
-}
-
-function reviewPlanSummary(plan: ReviewPlanPreview): string {
-  const reviewers = `${String(plan.reviewerCount)} ${plan.reviewerCount === 1 ? 'reviewer agent' : 'reviewer agents'}`;
-  const parts = [reviewers, `Perspectives: ${plan.perspectives.join('; ')}`];
-  if (plan.fileGroups !== undefined && plan.fileGroups.length > 0) {
-    parts.push(`${String(plan.fileGroups.length)} file ${plan.fileGroups.length === 1 ? 'group' : 'groups'}`);
-  }
-  if (plan.reconciliationGroups !== undefined && plan.reconciliationGroups.length > 0) {
-    parts.push(`${String(plan.reconciliationGroups.length)} reconciliation ${plan.reconciliationGroups.length === 1 ? 'group' : 'groups'}`);
-  }
-  return parts.join(' · ');
 }
 
 function toChoiceOption(choice: ReviewChoice): ChoiceOption {

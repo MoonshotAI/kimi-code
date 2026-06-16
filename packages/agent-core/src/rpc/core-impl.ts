@@ -707,6 +707,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).startReview(payload);
   }
 
+  runPilotedReview({ sessionId, ...payload }: SessionScopedPayload<StartReviewPayload>) {
+    return this.sessionApi(sessionId).runPilotedReview(payload);
+  }
+
   cancelReview({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): void {
     return this.sessionApi(sessionId).cancelReview(payload);
   }

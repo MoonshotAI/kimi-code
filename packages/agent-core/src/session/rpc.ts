@@ -120,6 +120,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return this.session.startReview(payload);
   }
 
+  runPilotedReview(payload: StartReviewPayload) {
+    return this.session.runPilotedReview(payload);
+  }
+
   cancelReview(_payload: EmptyPayload): void {
     this.session.cancelReview();
   }
