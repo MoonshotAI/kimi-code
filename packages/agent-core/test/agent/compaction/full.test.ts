@@ -943,6 +943,54 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('continues a manual compaction run when the first pass still exceeds the trigger', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 4_000,
+      },
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 6_000);
+    const firstSummary = `large manual summary ${'x'.repeat(14_000)}`;
+    let appliedCount = 0;
+    const secondCompacted = new Promise<void>((resolve) => {
+      const handler = () => {
+        appliedCount += 1;
+        if (appliedCount === 2) {
+          ctx.emitter.off('context.apply_compaction', handler);
+          resolve();
+        }
+      };
+      ctx.emitter.on('context.apply_compaction', handler);
+    });
+
+    ctx.mockNextResponse({ type: 'text', text: firstSummary });
+    ctx.mockNextResponse({ type: 'text', text: 'Second manual summary.' });
+    await ctx.rpc.beginCompaction({});
+    ctx.appendExchange(2, 'new user while compacting', 'new assistant while compacting', 6_000);
+    await secondCompacted;
+
+    const events = ctx.newEvents();
+    expect(countEvents(events, 'context.apply_compaction')).toBe(2);
+    expect(countEvents(events, 'compaction.started')).toBe(1);
+    expect(countEvents(events, 'compaction.completed')).toBe(1);
+    expect(ctx.llmCalls).toHaveLength(2);
+    const [firstCompactionCall, secondCompactionCall] = ctx.llmCalls;
+    expect(firstCompactionCall?.history.map(messageText)).not.toContain('new user while compacting');
+    expect(secondCompactionCall?.history.map(messageText)).toContain(firstSummary);
+    expect(secondCompactionCall?.history.map(messageText)).toContain('new user while compacting');
+    expect(secondCompactionCall?.history.map(messageText)).toContain('new assistant while compacting');
+    expect(ctx.compactHistory()).toEqual([
+      {
+        role: 'assistant',
+        text: 'Second manual summary.',
+      },
+    ]);
+    await ctx.expectResumeMatches();
+  });
+
   it('cancels when the compacted prefix changes before completion', async () => {
     const ctx = testAgent();
     ctx.configure({
@@ -1777,6 +1825,13 @@ function eventIndex(events: ReturnType<TestAgentContext['newEvents']>, type: str
     if (typeof event !== 'object' || event === null) return false;
     return (event as { readonly event?: unknown }).event === type;
   });
+}
+
+function countEvents(events: ReturnType<TestAgentContext['newEvents']>, type: string): number {
+  return events.filter((event) => {
+    if (typeof event !== 'object' || event === null) return false;
+    return (event as { readonly event?: unknown }).event === type;
+  }).length;
 }
 
 function oauthTestAgentOptions(
