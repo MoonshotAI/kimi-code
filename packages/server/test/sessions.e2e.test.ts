@@ -30,7 +30,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { pino } from 'pino';
-import { ErrorCode, sessionSchema, undoSessionResponseSchema } from '@moonshot-ai/protocol';
+import { ErrorCode, sessionSchema, sessionStatusResponseSchema, undoSessionResponseSchema } from '@moonshot-ai/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
@@ -326,6 +326,38 @@ describe('GET /api/v1/sessions/{session_id}/profile — fetch profile', () => {
   });
 });
 
+describe('GET /api/v1/sessions/{session_id}/status — fetch live status', () => {
+  it('returns the live status envelope for a fresh session', async () => {
+    const r = await bootDaemon();
+    const cwd = join(tmpDir, 'workspace-status-get');
+    const createRes = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/sessions',
+      payload: { metadata: { cwd } },
+    });
+    const created = envelopeOf<{ id: string }>(createRes.json()).data!;
+
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${created.id}/status`,
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(0);
+    const status = sessionStatusResponseSchema.parse(env.data);
+    expect(status.status).toBe('idle');
+  });
+
+  it('returns 40401 for unknown id', async () => {
+    const r = await bootDaemon();
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: '/api/v1/sessions/sess_missing/status',
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(40401);
+  });
+});
+
 describe('POST /api/v1/sessions/{session_id}/profile — update profile', () => {
   it('updates the title and returns the post-update Session', async () => {
     const r = await bootDaemon();
@@ -512,6 +544,7 @@ describe('POST /api/v1/sessions/{session_id}:undo — undo history', () => {
       undoSessionResponseSchema.parse({
         messages: { items: [], has_more: false },
         status: {
+          status: 'idle',
           thinking_level: 'auto',
           permission: 'manual',
           plan_mode: false,

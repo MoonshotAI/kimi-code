@@ -285,6 +285,7 @@ describe('listSessionChildrenResponseSchema', () => {
 describe('sessionStatusResponseSchema', () => {
   it('accepts a full valid shape', () => {
     const parsed = sessionStatusResponseSchema.parse({
+      status: 'running',
       model: 'moonshot-v1-128k',
       thinking_level: 'on',
       permission: 'ask',
@@ -294,6 +295,7 @@ describe('sessionStatusResponseSchema', () => {
       max_context_tokens: 128000,
       context_usage: 0.008,
     });
+    expect(parsed.status).toBe('running');
     expect(parsed.model).toBe('moonshot-v1-128k');
     expect(parsed.plan_mode).toBe(true);
     expect(parsed.context_usage).toBe(0.008);
@@ -301,6 +303,7 @@ describe('sessionStatusResponseSchema', () => {
 
   it('accepts minimal shape without model', () => {
     const parsed = sessionStatusResponseSchema.parse({
+      status: 'idle',
       thinking_level: 'off',
       permission: 'auto',
       plan_mode: false,
@@ -309,12 +312,43 @@ describe('sessionStatusResponseSchema', () => {
       max_context_tokens: 0,
       context_usage: 0,
     });
+    expect(parsed.status).toBe('idle');
     expect(parsed.model).toBeUndefined();
+  });
+
+  it('rejects missing status', () => {
+    expect(
+      sessionStatusResponseSchema.safeParse({
+        thinking_level: 'off',
+        permission: 'auto',
+        plan_mode: false,
+        swarm_mode: false,
+        context_tokens: 0,
+        max_context_tokens: 0,
+        context_usage: 0,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects invalid status', () => {
+    expect(
+      sessionStatusResponseSchema.safeParse({
+        status: 'unknown',
+        thinking_level: 'off',
+        permission: 'auto',
+        plan_mode: false,
+        swarm_mode: false,
+        context_tokens: 0,
+        max_context_tokens: 0,
+        context_usage: 0,
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects negative context_tokens', () => {
     expect(
       sessionStatusResponseSchema.safeParse({
+        status: 'idle',
         thinking_level: 'off',
         permission: 'auto',
         plan_mode: false,
@@ -329,6 +363,7 @@ describe('sessionStatusResponseSchema', () => {
   it('rejects context_usage > 1', () => {
     expect(
       sessionStatusResponseSchema.safeParse({
+        status: 'idle',
         thinking_level: 'off',
         permission: 'auto',
         plan_mode: false,
@@ -401,6 +436,7 @@ describe('undoSessionResponseSchema', () => {
         has_more: false,
       },
       status: {
+        status: 'idle',
         model: 'kimi-k2',
         thinking_level: 'auto',
         permission: 'manual',

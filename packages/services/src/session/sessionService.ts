@@ -17,22 +17,26 @@ import type {
 import {
   type CompactSessionRequest,
   type CompactSessionResponse,
+  type Event,
   type Message,
   type PageResponse,
   type Session,
   type SessionChildCreate,
   type SessionCreate,
   type SessionFork,
+  type SessionStatus,
   type SessionStatusResponse,
   type SessionUpdate,
   type UndoSessionRequest,
   type UndoSessionResponse,
 } from '@moonshot-ai/protocol';
 
+import { IApprovalService } from '../approval/approval';
 import { ICoreProcessService } from '../coreProcess/coreProcess';
 import { IEventService } from '../event/event';
 import { toProtocolMessage } from '../message/message';
 import { IPromptService, type AgentStatePatch } from '../prompt/prompt';
+import { IQuestionService } from '../question/question';
 import {
   ISessionService,
   SessionNotFoundError,
@@ -106,13 +110,133 @@ export class SessionService extends Disposable implements ISessionService {
   private readonly _onDidClose = this._register(new Emitter<{ sessionId: string }>());
   readonly onDidClose = this._onDidClose.event;
 
+  private readonly _statusBySession = new Map<string, SessionStatus>();
+  private readonly _activeTurns = new Set<string>();
+  private readonly _abortedTurns = new Set<string>();
+  private _promptService: IPromptService | undefined;
+
   constructor(
     @ICoreProcessService private readonly core: ICoreProcessService,
     @IEventService private readonly eventService: IEventService,
-    @IInstantiationService
-    private readonly instantiation: IInstantiationService,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
+    @IApprovalService private readonly approvalService: IApprovalService,
+    @IQuestionService private readonly questionService: IQuestionService,
   ) {
     super();
+    this._register(
+      this.eventService.onDidPublish((event) => {
+        this._handleBusEvent(event);
+      }),
+    );
+  }
+
+  private get promptService(): IPromptService {
+    return (this._promptService ??= this.instantiation.invokeFunction((a) => a.get(IPromptService)));
+  }
+
+  /**
+   * Compute the session lifecycle status from live daemon state.
+   *
+   * Priority:
+   *   1. awaiting_approval — pending approvals exist
+   *   2. awaiting_question — pending questions exist
+   *   3. running           — active prompt or active turn
+   *   4. aborted           — last turn ended as cancelled/failed and no new work started
+   *   5. idle              — everything else
+   */
+  private _computeStatus(sessionId: string): SessionStatus {
+    if (this.approvalService.listPending(sessionId).length > 0) {
+      return 'awaiting_approval';
+    }
+    if (this.questionService.listPending(sessionId).length > 0) {
+      return 'awaiting_question';
+    }
+    if (
+      this.promptService.getCurrentPromptId(sessionId) !== undefined ||
+      this._activeTurns.has(sessionId)
+    ) {
+      return 'running';
+    }
+    if (this._abortedTurns.has(sessionId)) {
+      return 'aborted';
+    }
+    return 'idle';
+  }
+
+  /**
+   * Overwrite the placeholder status on a protocol Session with the live value,
+   * and remember the last status we returned so status-change events can be
+   * emitted only when the live state actually moves.
+   */
+  private _patchSessionStatus(session: Session): Session {
+    const status = this._computeStatus(session.id);
+    session.status = status;
+    this._statusBySession.set(session.id, status);
+    return session;
+  }
+
+  /**
+   * Publish `event.session.status_changed` when the computed status for a
+   * session differs from the last one we announced. Called after every relevant
+   * lifecycle event so the session list stays in sync.
+   */
+  private _emitStatusChanged(sessionId: string): void {
+    const previous = this._statusBySession.get(sessionId) ?? 'idle';
+    const next = this._computeStatus(sessionId);
+    if (previous === next) return;
+
+    this._statusBySession.set(sessionId, next);
+    this.eventService.publish({
+      type: 'event.session.status_changed',
+      agentId: 'main',
+      sessionId,
+      status: next,
+      previous_status: previous,
+      current_prompt_id: this.promptService.getCurrentPromptId(sessionId),
+    } as unknown as Event);
+  }
+
+  private _handleBusEvent(event: Event): void {
+    const type = (event as { type?: string }).type;
+    const sessionId = (event as { sessionId?: string }).sessionId;
+    if (sessionId === undefined || sessionId === '' || type === undefined) return;
+
+    switch (type) {
+      case 'turn.started': {
+        this._activeTurns.add(sessionId);
+        this._abortedTurns.delete(sessionId);
+        this._emitStatusChanged(sessionId);
+        break;
+      }
+      case 'turn.ended': {
+        this._activeTurns.delete(sessionId);
+        const reason = (event as { reason?: string }).reason;
+        if (reason === 'cancelled' || reason === 'failed') {
+          this._abortedTurns.add(sessionId);
+        } else {
+          this._abortedTurns.delete(sessionId);
+        }
+        this._emitStatusChanged(sessionId);
+        break;
+      }
+      case 'prompt.submitted': {
+        this._abortedTurns.delete(sessionId);
+        this._emitStatusChanged(sessionId);
+        break;
+      }
+      case 'prompt.completed':
+      case 'prompt.aborted':
+      case 'event.approval.requested':
+      case 'event.approval.resolved':
+      case 'event.approval.expired':
+      case 'event.question.requested':
+      case 'event.question.answered':
+      case 'event.question.dismissed':
+      case 'event.question.expired': {
+        this._emitStatusChanged(sessionId);
+        break;
+      }
+    }
   }
 
   async create(input: SessionCreate): Promise<Session> {
@@ -132,7 +256,7 @@ export class SessionService extends Disposable implements ISessionService {
       }
     }
     const meta = await this.tryGetMeta(summary.id);
-    const session = toProtocolSession(summary, meta);
+    const session = this._patchSessionStatus(toProtocolSession(summary, meta));
     this.emitCreated(session);
     return session;
   }
@@ -166,7 +290,9 @@ export class SessionService extends Disposable implements ISessionService {
     const hasMore = slice.length > pageSize;
 
     const items = await Promise.all(
-      pageSummaries.map(async (s) => toProtocolSession(s, await this.tryGetMeta(s.id))),
+      pageSummaries.map(async (s) =>
+        this._patchSessionStatus(toProtocolSession(s, await this.tryGetMeta(s.id)))
+      ),
     );
 
     const filtered =
@@ -182,7 +308,7 @@ export class SessionService extends Disposable implements ISessionService {
       throw new SessionNotFoundError(id);
     }
     const meta = await this.tryGetMeta(id);
-    return toProtocolSession(summary, meta);
+    return this._patchSessionStatus(toProtocolSession(summary, meta));
   }
 
   async update(id: string, input: SessionUpdate): Promise<Session> {
@@ -223,17 +349,14 @@ export class SessionService extends Disposable implements ISessionService {
         patch.goal_objective !== undefined ||
         patch.goal_control !== undefined
       ) {
-        const promptService = this.instantiation.invokeFunction((a) =>
-          a.get(IPromptService),
-        );
-        await promptService.applyAgentState(id, patch, 'meta');
+        await this.promptService.applyAgentState(id, patch, 'meta');
       }
     }
 
     const allAfter = await this.core.rpc.listSessions({});
     const summaryAfter = allAfter.find((s) => s.id === id) ?? summary;
     const meta = await this.tryGetMeta(id);
-    return toProtocolSession(summaryAfter, meta);
+    return this._patchSessionStatus(toProtocolSession(summaryAfter, meta));
   }
 
   async fork(id: string, input: SessionFork): Promise<Session> {
@@ -246,7 +369,7 @@ export class SessionService extends Disposable implements ISessionService {
       metadata,
     });
     const meta = await this.tryGetMeta(summary.id);
-    const session = toProtocolSession(summary, meta);
+    const session = this._patchSessionStatus(toProtocolSession(summary, meta));
     this.emitCreated(session);
     return session;
   }
@@ -281,7 +404,9 @@ export class SessionService extends Disposable implements ISessionService {
     const pageSize = Math.min(Math.max(requestedSize, 1), MAX_PAGE_SIZE);
     const pageSummaries = slice.slice(0, pageSize);
     const items = await Promise.all(
-      pageSummaries.map(async (s) => toProtocolSession(s, await this.tryGetMeta(s.id))),
+      pageSummaries.map(async (s) =>
+        this._patchSessionStatus(toProtocolSession(s, await this.tryGetMeta(s.id)))
+      ),
     );
     const filtered =
       query.status !== undefined
@@ -308,7 +433,7 @@ export class SessionService extends Disposable implements ISessionService {
       metadata,
     });
     const meta = await this.tryGetMeta(summary.id);
-    const session = toProtocolSession(summary, meta);
+    const session = this._patchSessionStatus(toProtocolSession(summary, meta));
     this.emitCreated(session);
     return session;
   }
@@ -341,12 +466,10 @@ export class SessionService extends Disposable implements ISessionService {
     const contextTokens = context.tokenCount;
     const contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
 
-    const promptService = this.instantiation.invokeFunction((a) =>
-      a.get(IPromptService),
-    );
-    const agentState = promptService.getAgentStateSnapshot(id);
+    const agentState = this.promptService.getAgentStateSnapshot(id);
 
     return {
+      status: this._computeStatus(id),
       model: config.modelAlias ?? config.provider?.model,
       thinking_level: config.thinkingLevel,
       permission: permission.mode,
@@ -415,6 +538,9 @@ export class SessionService extends Disposable implements ISessionService {
     }
     await this.core.rpc.closeSession({ sessionId: id });
     this._onDidClose.fire({ sessionId: id });
+    this._statusBySession.delete(id);
+    this._activeTurns.delete(id);
+    this._abortedTurns.delete(id);
     return { deleted: true };
   }
 

@@ -90,6 +90,9 @@ class FakeApprovalService implements IApprovalService {
   resolve(id: string, response: ApprovalResponse): void {
     this.resolveCalls.push({ id, response });
   }
+  listPending(): ReturnType<IApprovalService['listPending']> {
+    return [];
+  }
 }
 
 class FakeQuestionService implements IQuestionService {
@@ -109,6 +112,9 @@ class FakeQuestionService implements IQuestionService {
   }
   dismiss(id: string): void {
     this.dismissCalls.push(id);
+  }
+  listPending(): ReturnType<IQuestionService['listPending']> {
+    return [];
   }
 }
 

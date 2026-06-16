@@ -82,6 +82,7 @@ export const createSessionChildResponseSchema = sessionSchema;
 export type CreateSessionChildResponse = z.infer<typeof createSessionChildResponseSchema>;
 
 export const sessionStatusResponseSchema = z.object({
+  status: sessionStatusSchema,
   model: z.string().optional(),
   thinking_level: z.string(),
   permission: z.string(),

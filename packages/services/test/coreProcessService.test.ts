@@ -53,6 +53,9 @@ class RecordingApprovalService implements IApprovalService {
   resolve(id: string, response: ApprovalResponse): void {
     this.resolveCalls.push({ id, response });
   }
+  listPending(): ReturnType<IApprovalService['listPending']> {
+    return [];
+  }
 }
 
 class RecordingQuestionService implements IQuestionService {
@@ -72,6 +75,9 @@ class RecordingQuestionService implements IQuestionService {
   }
   dismiss(id: string): void {
     this.dismissCalls.push(id);
+  }
+  listPending(): ReturnType<IQuestionService['listPending']> {
+    return [];
   }
 }
 

@@ -152,4 +152,32 @@ describe('events / display re-exports', () => {
     expect(parsed.type).toBe('event.session.created');
     expect((parsed as { session: { id: string } }).session.id).toBe('sess_1');
   });
+
+  it('validates event.session.status_changed events', () => {
+    const parsed = eventSchema.parse({
+      type: 'event.session.status_changed',
+      agentId: 'main',
+      sessionId: 'sess_1',
+      status: 'running',
+      previous_status: 'idle',
+      current_prompt_id: 'prompt_1',
+    });
+
+    expect(parsed.type).toBe('event.session.status_changed');
+    expect((parsed as { status: string }).status).toBe('running');
+    expect((parsed as { previous_status: string }).previous_status).toBe('idle');
+    expect((parsed as { current_prompt_id: string }).current_prompt_id).toBe('prompt_1');
+  });
+
+  it('rejects event.session.status_changed with invalid status', () => {
+    expect(
+      eventSchema.safeParse({
+        type: 'event.session.status_changed',
+        agentId: 'main',
+        sessionId: 'sess_1',
+        status: 'unknown',
+        previous_status: 'idle',
+      }).success,
+    ).toBe(false);
+  });
 });
