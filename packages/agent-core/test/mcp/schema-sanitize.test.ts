@@ -194,6 +194,75 @@ describe('sanitizeMcpSchema — $ref dereferencing', () => {
       }),
     ).toThrow(/Unable to resolve reference path/);
   });
+
+  it('preserves recursive (cyclic) refs instead of infinite-looping', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        node: { $ref: '#/$defs/Node' },
+      },
+      $defs: {
+        Node: {
+          type: 'object',
+          properties: {
+            value: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $ref: '#/$defs/Node' },
+            },
+          },
+        },
+      },
+    });
+    // The top-level ref resolves; the cycle lives deeper in children.items.
+    // Cyclic ref is preserved there and $defs is retained so the schema is valid.
+    expect('$defs' in result).toBe(true);
+    const nodeProp = prop(result, 'node');
+    expect(nodeProp['type']).toBe('object');
+    const children = props(nodeProp)['children']!;
+    const items = children['items'] as Schema;
+    expect(items['$ref']).toBe('#/$defs/Node');
+  });
+
+  it('resolves local refs nested inside sibling fields of a $ref', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        outer: {
+          $ref: '#/$defs/Outer',
+          properties: {
+            address: { $ref: '#/$defs/Address' },
+          },
+        },
+      },
+      $defs: {
+        Outer: { type: 'object' },
+        Address: { type: 'object', properties: { city: {} } },
+      },
+    });
+    expect('$defs' in result).toBe(false);
+    const outer = prop(result, 'outer');
+    expect(outer['type']).toBe('object');
+    const address = props(outer)['address']!;
+    expect(address['type']).toBe('object');
+    expect(props(address)['city']!['type']).toBe('string');
+  });
+
+  it('decodes JSON Pointer escape sequences (~1, ~0) in $ref paths', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        slash: { $ref: '#/$defs/a~1b' },
+        tilde: { $ref: '#/$defs/c~0d' },
+      },
+      $defs: {
+        'a/b': { type: 'string' },
+        'c~d': { type: 'integer' },
+      },
+    });
+    expect(prop(result, 'slash')['type']).toBe('string');
+    expect(prop(result, 'tilde')['type']).toBe('integer');
+  });
 });
 
 describe('sanitizeMcpSchema — nested arrays and items', () => {

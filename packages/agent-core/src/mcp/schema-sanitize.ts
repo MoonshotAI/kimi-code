@@ -92,25 +92,36 @@ const NUMERIC_KEYWORDS = [
  */
 function derefJsonSchema(schema: JsonRecord): JsonRecord {
   const root = structuredClone(schema);
+  // Set when a recursive (cyclic) local $ref is encountered. In that case we
+  // cannot fully inline the reference without recursing forever, so we keep
+  // the $ref intact and retain the $defs bucket so the schema stays valid.
+  let hasCyclicRef = false;
 
+  // Decode a JSON Pointer fragment into the list of path tokens.
+  // `#/$defs/a~1b` -> ['\$defs', 'a/b'] (~1 -> /, ~0 -> ~).
   function resolvePointer(pointer: string): Json {
-    const parts = pointer.replace(/^#\/?/, '').split('/');
+    const parts = pointer
+      .replace(/^#\/?/, '')
+      .split('/')
+      .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'));
     let current: Json = root;
     for (const part of parts) {
+      if (part === '') continue;
       if (typeof current !== 'object' || current === null || Array.isArray(current)) {
         throw new Error(`Unable to resolve reference path: ${pointer}`);
       }
-      current = (current as JsonRecord)[part] ?? null;
-      if (current === undefined) {
+      const next = (current as JsonRecord)[part];
+      if (next === undefined || next === null) {
         throw new Error(`Unable to resolve reference path: ${pointer}`);
       }
+      current = next;
     }
     return current;
   }
 
-  function traverse(node: Json): Json {
+  function traverse(node: Json, resolving: Set<string>): Json {
     if (Array.isArray(node)) {
-      return node.map(traverse);
+      return node.map((child) => traverse(child, resolving));
     }
     if (typeof node !== 'object' || node === null) {
       return node;
@@ -119,26 +130,40 @@ function derefJsonSchema(schema: JsonRecord): JsonRecord {
     if (typeof record['$ref'] === 'string') {
       const ref = record['$ref'];
       if (ref.startsWith('#')) {
-        const target = traverse(resolvePointer(ref));
+        const { $ref: _, ...rest } = record;
+        if (resolving.has(ref)) {
+          // Recursive reference: preserve the $ref and keep $defs so the
+          // later provider normalizer can still resolve it.
+          hasCyclicRef = true;
+          return record;
+        }
+        const target = traverse(resolvePointer(ref), new Set(resolving).add(ref));
         if (typeof target !== 'object' || target === null || Array.isArray(target)) {
           throw new Error('Local $ref must resolve to a JSON object');
         }
-        const { $ref: _, ...rest } = record;
-        return { ...(target as JsonRecord), ...rest };
+        // Traverse sibling schema fields so their own local refs are resolved
+        // before merging (otherwise a sibling $ref is left dangling).
+        const mergedRest: JsonRecord = {};
+        for (const [key, value] of Object.entries(rest)) {
+          mergedRest[key] = traverse(value, resolving);
+        }
+        return { ...(target as JsonRecord), ...mergedRest };
       }
       // Remote reference — leave as-is.
       return record;
     }
     const result: JsonRecord = {};
     for (const [key, value] of Object.entries(record)) {
-      result[key] = traverse(value);
+      result[key] = traverse(value, resolving);
     }
     return result;
   }
 
-  const resolved = traverse(root) as JsonRecord;
-  delete resolved['$defs'];
-  delete resolved['definitions'];
+  const resolved = traverse(root, new Set()) as JsonRecord;
+  if (!hasCyclicRef) {
+    delete resolved['$defs'];
+    delete resolved['definitions'];
+  }
   return resolved;
 }
 
