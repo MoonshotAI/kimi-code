@@ -60,8 +60,9 @@ export class ReplayBuilder {
     if (range === undefined) return false;
     if (this.frozen) return true;
     if (!UNDO_BOUNDARY_RECORD_TYPES.has(type)) return false;
+    if (range.start === undefined) return false;
 
-    const start = range.start ?? 0;
+    const start = range.start;
     const nextSegmentStart = this.segmentStart + this.records.length;
     if (nextSegmentStart > start) {
       this.frozen = true;
@@ -76,6 +77,10 @@ export class ReplayBuilder {
   buildResult(): readonly AgentReplayRecord[] {
     const range = this.options.range;
     if (range !== undefined) {
+      if (range.start === undefined && range.count !== undefined) {
+        const offset = Math.max(0, this.records.length - range.count);
+        return this.records.slice(offset);
+      }
       const start = range.start ?? 0;
       const offset = Math.max(0, start - this.segmentStart);
       const count = range.count;
