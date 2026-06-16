@@ -2,7 +2,6 @@ import type { Message, StreamedMessagePart, ToolCall } from '#/message';
 import { AnthropicChatProvider } from '#/providers/anthropic';
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
-import Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
 
 import { createFakeProviderHarness } from './fake-provider-harness';
@@ -21,10 +20,15 @@ async function collectParts(
   return parts;
 }
 
-function makeAnthropicProvider(): AnthropicChatProvider {
+function makeAnthropicProvider(
+  baseUrl?: string,
+  defaultHeaders?: Record<string, string>,
+): AnthropicChatProvider {
   return new AnthropicChatProvider({
     model: 'k25',
     apiKey: 'test-key',
+    baseUrl,
+    defaultHeaders,
     defaultMaxTokens: 1024,
     stream: true,
   });
@@ -58,8 +62,15 @@ const MUL_TOOL: Tool = {
 
 describe('e2e: Anthropic adapter bridge', () => {
   it('sends the adapter request body and parses streamed text, tool use, and usage', async () => {
+    const previousAuthToken = process.env['ANTHROPIC_AUTH_TOKEN'];
+    const previousCustomHeaders = process.env['ANTHROPIC_CUSTOM_HEADERS'];
     const harness = await createFakeProviderHarness();
+
     try {
+      process.env['ANTHROPIC_AUTH_TOKEN'] = 'env-auth-token';
+      process.env['ANTHROPIC_CUSTOM_HEADERS'] =
+        'Authorization: Bearer env-token\nX-Api-Key: env-key\nX-Leak: shell';
+
       harness.route('POST', '/v1/messages', async (request, reply) => {
         const body = request.bodyJson as Record<string, unknown>;
         expect(request.pathname).toBe('/v1/messages');
@@ -168,11 +179,7 @@ describe('e2e: Anthropic adapter bridge', () => {
         });
       });
 
-      const provider = makeAnthropicProvider();
-      (provider as any)._client = new Anthropic({
-        apiKey: 'test-key',
-        baseURL: harness.baseUrl,
-      });
+      const provider = makeAnthropicProvider(harness.baseUrl, { 'X-Configured': 'yes' });
 
       const history: Message[] = [
         {
@@ -209,7 +216,20 @@ describe('e2e: Anthropic adapter bridge', () => {
       } satisfies TokenUsage);
 
       expect(harness.requests).toHaveLength(1);
+      expect(harness.requests[0]!.headers['authorization']).toBeUndefined();
+      expect(harness.requests[0]!.headers['x-leak']).toBeUndefined();
+      expect(harness.requests[0]!.headers['x-configured']).toBe('yes');
     } finally {
+      if (previousAuthToken === undefined) {
+        delete process.env['ANTHROPIC_AUTH_TOKEN'];
+      } else {
+        process.env['ANTHROPIC_AUTH_TOKEN'] = previousAuthToken;
+      }
+      if (previousCustomHeaders === undefined) {
+        delete process.env['ANTHROPIC_CUSTOM_HEADERS'];
+      } else {
+        process.env['ANTHROPIC_CUSTOM_HEADERS'] = previousCustomHeaders;
+      }
       await harness.close();
     }
   });

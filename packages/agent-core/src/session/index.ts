@@ -346,9 +346,15 @@ export class Session {
     });
     if (keepAliveOnExit) return;
     await Promise.all(
-      Array.from(this.readyAgents(), (agent) =>
-        agent.background.stopAll('Session closed'),
-      ),
+      Array.from(this.readyAgents(), async (agent) => {
+        const activeTasks = agent.background.list(true);
+        await Promise.all(
+          activeTasks.map((task) =>
+            agent.background.suppressTerminalNotification(task.taskId),
+          ),
+        );
+        await agent.background.stopAll('Session closed');
+      }),
     );
   }
 
