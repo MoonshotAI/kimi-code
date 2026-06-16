@@ -8,6 +8,9 @@ import {
   SUB_SKILL_REVIEW,
 } from './sub-skill';
 import { UPDATE_CONFIG_SKILL } from './update-config';
+import { DEEP_RESEARCH_SKILL } from './deep-research';
+import { DEBUG_SKILL } from './debug';
+import { ARCHITECT_SKILL } from './architect';
 
 export function registerBuiltinSkills(registry: SkillRegistry): void {
   registry.registerBuiltinSkill(MCP_CONFIG_SKILL);
@@ -17,6 +20,9 @@ export function registerBuiltinSkills(registry: SkillRegistry): void {
   registry.registerBuiltinSkill(SUB_SKILL_PARENT);
   registry.registerBuiltinSkill(SUB_SKILL_REVIEW);
   registry.registerBuiltinSkill(SUB_SKILL_CONSOLIDATE);
+  registry.registerBuiltinSkill(DEEP_RESEARCH_SKILL);
+  registry.registerBuiltinSkill(DEBUG_SKILL);
+  registry.registerBuiltinSkill(ARCHITECT_SKILL);
 }
 
 export {
@@ -27,4 +33,7 @@ export {
   SUB_SKILL_PARENT,
   SUB_SKILL_REVIEW,
   UPDATE_CONFIG_SKILL,
+  DEEP_RESEARCH_SKILL,
+  DEBUG_SKILL,
+  ARCHITECT_SKILL,
 };
