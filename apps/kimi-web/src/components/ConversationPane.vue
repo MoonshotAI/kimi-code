@@ -2219,22 +2219,6 @@ onUnmounted(() => {
 .ws-pick-action:hover { background: var(--panel2); color: var(--ink); }
 .ws-pick-action svg { flex: none; }
 
-/* Larger textarea in the centred empty-session composer */
-:deep(.empty-composer .ph) {
-  min-height: 120px;
-}
-
-/* Mobile empty session: a 120px textarea floating mid-screen jumps around
-   when the soft keyboard opens. Keep the input compact and the hint modest. */
-@media (max-width: 640px) {
-  :deep(.empty-composer .ph) {
-    min-height: 44px;
-  }
-  .empty-hint {
-    font-size: calc(var(--ui-font-size) + 3px);
-  }
-}
-
 /* Chat scroll area: owns only messages; the dock is the bottom sibling. */
 .chat-scroll {
   display: flex;

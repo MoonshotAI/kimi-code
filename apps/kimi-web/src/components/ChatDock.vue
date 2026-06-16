@@ -150,14 +150,12 @@ defineExpose({ loadForEdit });
         :aria-pressed="dockPanel === 'bash'"
         @click="emit('toggle-dock-panel', 'bash')"
       >
-        <span class="dw-icon" aria-hidden="true">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <circle cx="8" cy="8" r="5.5" />
-            <path d="M8 4.5V8l2.5 1.5" />
-          </svg>
-        </span>
-        <span class="dw-label">{{ t('tasks.dockBash') }}</span>
-        <span class="dw-metric"><b>{{ bashTasks.length }}</b></span>
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <circle cx="8" cy="8" r="5.5" />
+          <path d="M8 4.5V8l2.5 1.5" />
+        </svg>
+        <span>{{ t('tasks.dockBash') }}</span>
+        <span class="dw-count">(<b>{{ bashTasks.length }}</b>)</span>
       </button>
       <button
         v-if="subagentTasks.length > 0"
@@ -167,13 +165,11 @@ defineExpose({ loadForEdit });
         :aria-pressed="dockPanel === 'subagent'"
         @click="emit('toggle-dock-panel', 'subagent')"
       >
-        <span class="dw-icon" aria-hidden="true">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M8 2l1.5 4.5L14 8l-4.5 1.5L8 14l-1.5-4.5L2 8l4.5-1.5z" />
-          </svg>
-        </span>
-        <span class="dw-label">{{ t('tasks.dockSubagent') }}</span>
-        <span class="dw-metric"><b>{{ subagentTasks.length }}</b></span>
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 2l1.5 4.5L14 8l-4.5 1.5L8 14l-1.5-4.5L2 8l4.5-1.5z" />
+        </svg>
+        <span>{{ t('tasks.dockSubagent') }}</span>
+        <span class="dw-count">(<b>{{ subagentTasks.length }}</b>)</span>
       </button>
       <button
         v-if="(todos?.length ?? 0) > 0"
@@ -183,16 +179,14 @@ defineExpose({ loadForEdit });
         :aria-pressed="dockPanel === 'todos'"
         @click="emit('toggle-dock-panel', 'todos')"
       >
-        <span class="dw-icon" aria-hidden="true">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M3 4.5l1.5 1.5L7 3.5" />
-            <path d="M8.5 5h4" />
-            <path d="M3 11l1.5 1.5L7 10" />
-            <path d="M8.5 11.5h4" />
-          </svg>
-        </span>
-        <span class="dw-label">{{ t('tasks.dockTodos') }}</span>
-        <span class="dw-metric"><b>{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</b></span>
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M3 4.5l1.5 1.5L7 3.5" />
+          <path d="M8.5 5h4" />
+          <path d="M3 11l1.5 1.5L7 10" />
+          <path d="M8.5 11.5h4" />
+        </svg>
+        <span>{{ t('tasks.dockTodos') }}</span>
+        <span class="dw-count">(<b>{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</b>)</span>
       </button>
     </div>
 
@@ -252,6 +246,8 @@ defineExpose({ loadForEdit });
 
 <style scoped>
 .chat-dock {
+  --dock-inline-left: 16px;
+  --dock-inline-right: 16px;
   width: 100%;
   max-width: var(--read-max);
   flex: none;
@@ -341,73 +337,35 @@ defineExpose({ loadForEdit });
 .dock-workbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 0 8px;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.dock-workbar::-webkit-scrollbar {
-  display: none;
+  gap: 6px;
+  padding: 4px var(--dock-inline-right) 2px var(--dock-inline-left);
 }
 .dock-work-chip {
-  display: grid;
-  grid-template-columns: 16px minmax(0, max-content) max-content;
+  display: inline-flex;
   align-items: center;
-  column-gap: 7px;
-  flex: none;
-  min-height: 28px;
-  max-width: 100%;
-  padding: 4px 10px;
-  border-radius: 999px;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
   font-size: 12px;
-  line-height: 1;
   color: var(--muted);
   background: var(--panel);
   border: 1px solid var(--line);
   cursor: pointer;
-  white-space: nowrap;
 }
 .dock-work-chip:hover,
 .dock-work-chip.on {
   background: var(--hover-bg);
   color: var(--ink);
 }
-.dw-icon {
-  width: 16px;
-  height: 16px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.dock-work-chip svg {
   flex: none;
-  color: var(--muted);
 }
-.dw-icon svg {
-  width: 14px;
-  height: 14px;
-  display: block;
-}
-.dock-work-chip.on .dw-icon,
-.dock-work-chip:hover .dw-icon {
-  color: currentColor;
-}
-.dw-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dw-metric {
-  justify-self: end;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.dw-metric b {
+.dock-work-chip b {
   font-weight: 600;
   color: var(--ink);
 }
-.dock-work-chip.on .dw-metric,
-.dock-work-chip:hover .dw-metric {
-  color: currentColor;
+.dock-work-chip .dw-count {
+  margin-left: 1px;
 }
 
 .dock-approval {
@@ -415,6 +373,10 @@ defineExpose({ loadForEdit });
 }
 
 @media (max-width: 640px) {
+  .chat-dock {
+    --dock-inline-left: max(12px, env(safe-area-inset-left));
+    --dock-inline-right: max(12px, env(safe-area-inset-right));
+  }
   .chat-dock.align-mobile {
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
@@ -422,10 +384,6 @@ defineExpose({ loadForEdit });
   .dock-work-panel {
     left: 10px;
     right: 10px;
-  }
-  .dock-workbar {
-    padding-left: 10px;
-    padding-right: 10px;
   }
 }
 

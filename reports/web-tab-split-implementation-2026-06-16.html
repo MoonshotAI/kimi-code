@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kimi Web · Tab/分屏收敛 + UI 审查吸收 · 实现说明</title>
+<style>
+  :root {
+    --ink: #16191d; --dim: #3c4350; --muted: #6b7280; --faint: #9aa1ab;
+    --line: #e6e8ec; --line2: #f0f1f4; --bg: #ffffff; --panel: #f7f8fa;
+    --blue: #1783ff; --ok: #1a7f37; --err: #c0392b; --warn: #b7791f;
+    --soft: #eef4ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #f3f4f6; color: var(--ink);
+    font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 20px 80px; }
+  header.hero {
+    background: linear-gradient(180deg, var(--soft), var(--bg));
+    border: 1px solid var(--line); border-radius: 14px; padding: 26px 28px; margin-bottom: 24px;
+  }
+  header.hero h1 { margin: 0 0 8px; font-size: 24px; letter-spacing: -0.01em; }
+  header.hero .sub { color: var(--muted); font-size: 14px; }
+  .tldr { margin-top: 16px; padding: 14px 16px; background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: 8px; }
+  .tldr b { color: var(--blue); }
+  section { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; margin-bottom: 18px; }
+  section > h2 { margin: 0 0 14px; font-size: 18px; display: flex; align-items: center; gap: 9px; }
+  section > h2 .n { width: 24px; height: 24px; flex: none; border-radius: 6px; background: var(--ink); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; }
+  h3 { font-size: 15px; margin: 18px 0 8px; color: var(--dim); }
+  p { margin: 8px 0; }
+  code { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; background: var(--panel); border: 1px solid var(--line2); border-radius: 4px; padding: 1px 5px; color: var(--dim); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel); color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+  td code { white-space: nowrap; }
+  .chip { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 9px; border-radius: 999px; white-space: nowrap; }
+  .done { background: color-mix(in srgb, var(--ok) 12%, #fff); color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 30%, #fff); }
+  .partial { background: color-mix(in srgb, var(--warn) 14%, #fff); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 32%, #fff); }
+  .already { background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+  .nope { background: color-mix(in srgb, var(--err) 8%, #fff); color: var(--err); border: 1px solid color-mix(in srgb, var(--err) 26%, #fff); }
+  .cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 9px; padding: 13px 14px; background: var(--panel); }
+  .card h4 { margin: 0 0 6px; font-size: 13.5px; }
+  .card ul { margin: 6px 0 0; padding-left: 16px; }
+  .card li { font-size: 12.5px; color: var(--dim); margin: 3px 0; }
+  ul.tight { margin: 6px 0; padding-left: 20px; }
+  ul.tight li { margin: 4px 0; }
+  .layer { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 12px 0; }
+  .layer .lh { padding: 9px 14px; font-weight: 600; font-size: 13.5px; display: flex; align-items: center; gap: 8px; }
+  .layer .lb { padding: 11px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--dim); background: var(--bg); }
+  .tag { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 4px; }
+  .tag.persist { background: var(--soft); color: var(--blue); }
+  .tag.transient { background: #fff4e6; color: var(--warn); }
+  .tag.detail { background: #f0f0f5; color: var(--muted); }
+  .note { font-size: 12.5px; color: var(--muted); }
+  .commit { font-family: "SF Mono", ui-monospace, monospace; font-size: 11.5px; color: var(--blue); }
+  @media (max-width: 720px) {
+    .cols { grid-template-columns: 1fr; }
+    table { font-size: 12.5px; }
+    th, td { padding: 7px 7px; }
+    td code { white-space: normal; word-break: break-all; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>Kimi Web · 主 Tab / 分屏收敛 + UI 审查吸收</h1>
+  <div class="sub">实现说明 · 2026-06-16 · 分支 <code>feat/web</code> · 配套设计稿 <code>reports/web-tab-split-design-2026-06-16.html</code></div>
+  <div class="tldr">
+    <b>结论：</b>工作区现在稳定在 <b>对话 / 文件</b> 两个持久主 Tab。Preview、BTW 只在被使用时作为分屏里的临时 Tab 出现；Thinking、Compaction、Subagent 详情、移动端文件/媒体预览统一进右侧详情层。
+    Tasks / Todo / Terminal <b>没有</b>被重新加回一级主 Tab。同时补齐了 tab/分屏的可访问性、键盘路径、按钮热区、弹层焦点和 diff 配色。共 6 个提交，全部测试 + 类型检查通过。
+  </div>
+</header>
+
+<section>
+  <h2><span class="n">1</span>最终视图分层模型</h2>
+  <p>这是收敛后的目标模型，三层各司其职，临时层永远不污染持久主 Tab：</p>
+
+  <div class="layer">
+    <div class="lh" style="background:var(--soft)"><span class="tag persist">持久主 Tab</span> 对话 / 文件</div>
+    <div class="lb">
+      每个分屏组（<code>ViewGroup</code>）固定只有 <code>chat</code> 与 <code>files</code> 两个 Tab。
+      数据来源 <code>usePaneLayout.ts</code> 的 <code>ALL_VIEWS = ['chat','files']</code>；
+      <code>normalizeLayout()</code> 会把任何持久化里残留的 <code>tasks/todo/terminal</code> 过滤掉，所以刷新后也回不到旧的一级 Tab。
+    </div>
+  </div>
+
+  <div class="layer">
+    <div class="lh" style="background:#fff8f0"><span class="tag transient">临时 Tab（分屏内）</span> Preview / BTW</div>
+    <div class="lb">
+      只在“正在用”时出现：<code>openPreview()</code> / <code>openBtw()</code> 会把当前组分屏出一个专用临时组，并在 <code>TabBar</code> 上通过 <code>hasPreview</code> / <code>hasBtw</code> 显示对应 Tab；关闭即折叠回去，且不写入持久化。它们不会抢占底部输入框或移动端的主 Tab 状态。
+    </div>
+  </div>
+
+  <div class="layer">
+    <div class="lh" style="background:#f4f4f7"><span class="tag detail">右侧详情层</span> Thinking / Compaction / Subagent / 移动端预览</div>
+    <div class="lb">
+      App 的 <code>aside.global-preview</code>，一次只显示一个：Thinking 文本、Compaction 摘要、Subagent 详情，移动端额外承载文件/媒体预览。现在是带标签的 <code>role="complementary"</code> 区域，Escape 关闭，关闭按钮统一带 aria-label。
+    </div>
+  </div>
+
+  <h3>临时视图路由规则（任务 4，代码已实现，此处定档）</h3>
+  <table>
+    <thead><tr><th>触发</th><th>去向</th><th>入口</th></tr></thead>
+    <tbody>
+      <tr><td>点击工作区<strong>内</strong>的文件路径</td><td>进入 <b>文件</b> 主 Tab，定位到该文件 / diff</td><td><code>App.openFilePreview → ConversationPane.openWorkspaceFileInFiles</code></td></tr>
+      <tr><td>点击工作区<strong>外</strong>路径</td><td>临时 Preview Tab（桌面）/ 右侧面板（移动）显示内容或越界提示</td><td><code>App.openFilePreview → openPreviewPane</code></td></tr>
+      <tr><td>点击媒体（图片）</td><td>临时 Preview Tab（桌面）/ 右侧面板（移动）</td><td><code>App.openMediaPreview</code></td></tr>
+      <tr><td>点击 Thinking 块 / Compaction 分隔 / Subagent 卡片</td><td>右侧详情层（互斥，再点同一个=收起）</td><td><code>App.openThinkingPanel / openCompactionPanel / openAgentPanel</code></td></tr>
+      <tr><td>BTW 侧聊</td><td>分屏临时 Tab（桌面）/ 主 Tab 降级（移动）</td><td><code>ConversationPane.openBtwPane</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="n">2</span>任务清单对照</h2>
+  <table>
+    <thead><tr><th style="width:30px">#</th><th>任务</th><th>状态</th><th>关键文件 / 提交</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>Auth banner 不再 fixed 遮挡导航，进入布局流</td>
+        <td><span class="chip done">完成</span></td>
+        <td><code>App.vue</code>：外层 <code>.app-shell</code> flex 列，banner 作首个在流子元素 · <span class="commit">6e494cbc</span></td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>TabBar 改为真正的 tablist 语义 + 键盘 + focus</td>
+        <td><span class="chip done">完成</span></td>
+        <td><code>TabBar.vue</code> <code>ViewGroup.vue</code> <code>ConversationPane.vue</code>：<code>role=tab/tablist/tabpanel</code>、<code>aria-selected</code>、roving tabindex、←/→/Home/End、<code>aria-controls↔aria-labelledby</code> · 测试 <code>test/tabbar.test.ts</code> · <span class="commit">f62c7ac3</span></td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>主 Tab 只保留对话/文件，不回收 Tasks/Todo/Terminal</td>
+        <td><span class="chip already">本已满足</span></td>
+        <td><code>usePaneLayout.ts</code> 已是 <code>ALL_VIEWS=['chat','files']</code> 且过滤旧视图；本轮确认 + 定档，未改代码</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>明确 transient 视图规则</td>
+        <td><span class="chip already">已实现 + 定档</span></td>
+        <td>路由规则见上表；代码早已就位，本轮以文档固定</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>ViewGroup 分屏/关闭按钮：本地化 aria-label + ≥28×28</td>
+        <td><span class="chip done">完成</span></td>
+        <td><code>ViewGroup.vue</code> + <code>workspace.ts(en/zh)</code>：<code>splitRight/splitDown/closeGroup</code>，按钮 24→28 · <span class="commit">f62c7ac3</span></td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>统一 Header/Sidebar/TabBar/ViewGroup 图标按钮热区</td>
+        <td><span class="chip done">完成</span></td>
+        <td>ChatHeader kebab 28×28 + aria-label；Sidebar <code>.gh-more</code> 24×24 + 键盘可见、<code>.gh-add</code> 增大；多处 focus-visible · <span class="commit">172456a9</span> / <span class="commit">f62c7ac3</span></td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>右侧详情层一致规则：标题/关闭/aria-label/Escape/移动端</td>
+        <td><span class="chip done">完成</span></td>
+        <td><code>App.vue</code>（Escape 捕获阶段关闭、区域 role/label）+ <code>ThinkingPanel/AgentDetailPanel/FilePreview</code>（aria-label + focus 环）· <span class="commit">f5caf4cc</span></td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td>弹层焦点基线：aria-modal/初始焦点/焦点返回/Escape</td>
+        <td><span class="chip partial">3/4 完成</span></td>
+        <td>新增 <code>useDialogFocus.ts</code>，接入 <code>ModelPicker / LoginDialog / ProviderManager</code> + 测试 · <span class="commit">22f6c1d2</span><br><span class="note">SettingsDialog 延后，见第 4 节</span></td>
+      </tr>
+      <tr>
+        <td>9</td>
+        <td>File/Diff：降低色块干扰，突出文件名和代码</td>
+        <td><span class="chip done">完成</span></td>
+        <td><code>DiffView.vue</code>：整行 12% 染色 → 7% 淡底 + 左侧色条，文字回到正常色，仅 +/- 号带色 · <span class="commit">eae691e4</span></td>
+      </tr>
+      <tr>
+        <td>10</td>
+        <td>更新设计文档 / 追加实现说明</td>
+        <td><span class="chip done">本文件</span></td>
+        <td><code>reports/web-tab-split-implementation-2026-06-16.html</code></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="n">3</span>审查建议：吸收 / 不吸收 / 本已完成</h2>
+  <div class="cols">
+    <div class="card">
+      <h4 style="color:var(--ok)">✓ 已吸收</h4>
+      <ul>
+        <li>登录横幅遮挡导航 → 进入布局流（任务 1）</li>
+        <li>操作目标 &lt; 24×24 → 统一热区（任务 5/6）</li>
+        <li>控件缺少语义/键盘路径 → tablist + 键盘（任务 2）</li>
+        <li>弹层焦点统一基线（任务 8，3/4）</li>
+        <li>Diff/文件视图降低色块（任务 9）</li>
+        <li>右侧详情层一致规则（任务 7）</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4 style="color:var(--muted)">○ 本已完成</h4>
+      <ul>
+        <li>主 Tab 收敛到对话/文件（<code>usePaneLayout</code> 早已如此）</li>
+        <li>OpenInMenu aria-label（前序提交）</li>
+        <li>Composer 固定到“对话” Tab（前序提交）</li>
+        <li>底部 dock 归属于聊天视图（前序提交）</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4 style="color:var(--err)">✗ 暂不吸收</h4>
+      <ul>
+        <li>把 Tasks/Todo/Terminal 重新做成一级主 Tab —— 与目标相悖，明确不做</li>
+        <li>移动设置分组 Sheet 重排 —— 超出本轮 tab/分屏范围，未触及 <code>MobileSettingsSheet</code></li>
+        <li>调试 UI 收口 —— 仅 <code>?debug=1</code> 可见，非主体验，留后续</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">4</span>延后项 + 原因</h2>
+  <p><b>SettingsDialog 的弹层焦点接入</b>被有意延后。本轮工作期间，<code>SettingsDialog.vue</code> 正被另一项“设置侧边 Tab（settings side tabs）”改动重写（约 360 增 / 251 删，未提交）。在它之上编辑并提交，会把那份未完成的大改一并打进本轮 commit，污染历史。</p>
+  <p>共享的 <code>useDialogFocus()</code> 已经就绪，等 side-tabs 落地后，给 SettingsDialog 接入只是“一个 ref + <code>aria-modal/tabindex</code> + 一行调用”，是低成本 follow-up。其余三个优先弹层（ModelPicker / LoginDialog / ProviderManager）本轮已干净覆盖。</p>
+  <p class="note">同样原因，本轮全程未触碰并行在改的 <code>ChatDock.vue</code> / <code>Composer.vue</code> / <code>settings.ts</code> 等文件。</p>
+</section>
+
+<section>
+  <h2><span class="n">5</span>验证</h2>
+  <ul class="tight">
+    <li><code>vue-tsc --noEmit</code>：通过（每个提交前均跑）。</li>
+    <li><code>vitest run</code>：39 个测试文件全部通过；新增 <code>test/tabbar.test.ts</code>（tablist/键盘/tabpanel 关联）与 <code>test/model-picker.test.ts</code> 焦点用例（开启聚焦搜索框、关闭返回开启者、<code>aria-modal</code>）。</li>
+    <li><code>test/markdown-streaming-placeholders.test.ts</code> 偶发 flaky（流式占位时序），与本轮改动无关，隔离重跑稳定通过。</li>
+    <li>每个问题单独成 commit（共 6 个），按目标“小步提交”。</li>
+  </ul>
+</section>
+
+</div>
+</body>
+</html>

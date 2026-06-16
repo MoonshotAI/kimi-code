@@ -1301,7 +1301,7 @@ function selectModel(modelId: string): void {
 
 <style scoped>
 .composer {
-  padding: 7px 16px 12px;
+  padding: 7px var(--dock-inline-right, 16px) 12px var(--dock-inline-left, 16px);
   background: transparent;
   transition: background 0.12s;
 }
@@ -2176,7 +2176,11 @@ function selectModel(modelId: string): void {
        and acts as a flex row; the textarea itself becomes the pill input. ---- */
 @media (max-width: 640px) {
   .composer {
-    padding: 9px max(12px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    padding:
+      9px
+      var(--dock-inline-right, max(12px, env(safe-area-inset-right)))
+      max(24px, env(safe-area-inset-bottom))
+      var(--dock-inline-left, max(12px, env(safe-area-inset-left)));
   }
   .composer-card {
     border-radius: 14px;

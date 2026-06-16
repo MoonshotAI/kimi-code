@@ -169,11 +169,10 @@ describe('ConversationPane dock work panel', () => {
     const chips = wrapper.findAll('.dock-work-chip');
     expect(chips).toHaveLength(3);
     for (const chip of chips) {
-      expect(chip.find('.dw-icon').exists()).toBe(true);
-      expect(chip.find('.dw-label').exists()).toBe(true);
-      expect(chip.find('.dw-metric').exists()).toBe(true);
+      expect(chip.find('svg').exists()).toBe(true);
+      expect(chip.find('.dw-count').exists()).toBe(true);
     }
-    expect(chips[2]!.find('.dw-metric').text()).toBe('0/1');
+    expect(chips[2]!.find('.dw-count').text()).toBe('(0/1)');
 
     await chips[0]!.trigger('click');
     expect(wrapper.find('.dock-work-panel').exists()).toBe(true);
