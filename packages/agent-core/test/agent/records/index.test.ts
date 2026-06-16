@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildReplay } from '../../../src';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
   InMemoryAgentRecordPersistence,
   type AgentRecord,
 } from '../../../src/agent/records';
+import type { ContextMessage } from '../../../src/agent/context';
 import { testAgent } from '../harness/agent';
 
 describe('AgentRecords persistence metadata', () => {
@@ -306,6 +308,188 @@ describe('AgentRecords persistence metadata', () => {
   });
 });
 
+describe('agent replay range build', () => {
+  it('returns the complete replay when no range is requested', async () => {
+    const firstMessage = userMessage('first');
+    const afterClearMessage = userMessage('after-clear');
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'context.append_message', message: firstMessage },
+      { type: 'context.clear' },
+      { type: 'context.append_message', message: afterClearMessage },
+    ]);
+
+    await expect(buildReplay(persistence)).resolves.toEqual([
+      expect.objectContaining({ type: 'message', message: firstMessage }),
+      expect.objectContaining({ type: 'message', message: afterClearMessage }),
+    ]);
+  });
+
+  it('applies start and count to replay records instead of wire records', async () => {
+    const message = userMessage('hello');
+    const persistence = new RecordingInMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'usage.record',
+        model: 'mock-model',
+        usage: { inputOther: 1, inputCacheRead: 0, inputCacheCreation: 0, output: 1 },
+      },
+      {
+        type: 'config.update',
+        cwd: process.cwd(),
+        thinkingLevel: 'off',
+      },
+      {
+        type: 'usage.record',
+        model: 'mock-model',
+        usage: { inputOther: 2, inputCacheRead: 0, inputCacheCreation: 0, output: 1 },
+      },
+      { type: 'permission.set_mode', mode: 'yolo' },
+      { type: 'context.append_message', message },
+    ]);
+
+    const replay = await buildReplay(persistence, { start: 1, count: 2 });
+
+    expect(replay).toEqual([
+      expect.objectContaining({ type: 'permission_updated', mode: 'yolo' }),
+      expect.objectContaining({ type: 'message', message }),
+    ]);
+    expect(persistence.rewrites).toEqual([]);
+  });
+
+  it('returns the last count replay records when start is omitted', async () => {
+    const firstMessage = userMessage('first');
+    const secondMessage = userMessage('second');
+    const thirdMessage = userMessage('third');
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'context.append_message', message: firstMessage },
+      { type: 'permission.set_mode', mode: 'auto' },
+      { type: 'context.append_message', message: secondMessage },
+      { type: 'context.append_message', message: thirdMessage },
+    ]);
+
+    await expect(buildReplay(persistence, { count: 2 })).resolves.toEqual([
+      expect.objectContaining({ type: 'message', message: secondMessage }),
+      expect.objectContaining({ type: 'message', message: thirdMessage }),
+    ]);
+    await expect(buildReplay(persistence, { count: 10 })).resolves.toEqual([
+      expect.objectContaining({ type: 'message', message: firstMessage }),
+      expect.objectContaining({ type: 'permission_updated', mode: 'auto' }),
+      expect.objectContaining({ type: 'message', message: secondMessage }),
+      expect.objectContaining({ type: 'message', message: thirdMessage }),
+    ]);
+  });
+
+  it('continues reading all segments before returning the last count replay records', async () => {
+    const beforeClearMessages = Array.from({ length: 50 }, (_item, index) =>
+      userMessage(`before-clear-${String(index)}`),
+    );
+    const afterClearMessages = Array.from({ length: 50 }, (_item, index) =>
+      userMessage(`after-clear-${String(index)}`),
+    );
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      ...beforeClearMessages.map((message) => ({ type: 'context.append_message' as const, message })),
+      { type: 'context.clear' },
+      ...afterClearMessages.map((message) => ({ type: 'context.append_message' as const, message })),
+    ]);
+
+    const replay = await buildReplay(persistence, { count: 10 });
+
+    expect(replay).toHaveLength(10);
+    expect(replay).toEqual(
+      afterClearMessages.slice(-10).map((message) =>
+        expect.objectContaining({ type: 'message', message }),
+      ),
+    );
+  });
+
+  it('continues reading after count so later wire records can patch captured replay records', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'full_compaction.begin', source: 'manual', instruction: 'keep facts' },
+      {
+        type: 'context.apply_compaction',
+        summary: 'Compacted summary.',
+        compactedCount: 0,
+        tokensBefore: 10,
+        tokensAfter: 3,
+      },
+      { type: 'permission.set_mode', mode: 'auto' },
+    ]);
+
+    await expect(buildReplay(persistence, { start: 0, count: 1 })).resolves.toEqual([
+      expect.objectContaining({
+        type: 'compaction',
+        instruction: 'keep facts',
+        result: {
+          summary: 'Compacted summary.',
+          compactedCount: 0,
+          tokensBefore: 10,
+          tokensAfter: 3,
+        },
+      }),
+    ]);
+  });
+
+  it('does not rewrite migrated wire records while projecting', async () => {
+    const persistence = new RecordingInMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: '1.0', created_at: 1 },
+      { type: 'permission.set_mode', mode: 'auto' },
+    ]);
+
+    await expect(buildReplay(persistence, { start: 0, count: 1 })).resolves.toEqual([
+      expect.objectContaining({ type: 'permission_updated', mode: 'auto' }),
+    ]);
+    expect(persistence.rewrites).toEqual([]);
+  });
+
+  it('keeps the start offset correct when undo removes more messages than count', async () => {
+    const firstMessage = userMessage('first');
+    const removedBeforeStart = userMessage('removed-before-start');
+    const removedAtStart = userMessage('removed-at-start');
+    const removedAfterStart = userMessage('removed-after-start');
+    const nextMessage = userMessage('next');
+    const expectedMessage = userMessage('expected');
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'context.append_message', message: firstMessage },
+      { type: 'context.append_message', message: removedBeforeStart },
+      { type: 'context.append_message', message: removedAtStart },
+      { type: 'context.append_message', message: removedAfterStart },
+      { type: 'context.undo', count: 3 },
+      { type: 'context.append_message', message: nextMessage },
+      { type: 'context.append_message', message: expectedMessage },
+    ]);
+
+    await expect(buildReplay(persistence, { start: 2, count: 1 })).resolves.toEqual([
+      expect.objectContaining({ type: 'message', message: expectedMessage }),
+    ]);
+  });
+
+  it('clamps results at undo boundaries', async () => {
+    const firstMessage = userMessage('first');
+    const secondMessage = userMessage('second');
+    const afterClearMessage = userMessage('after-clear');
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'context.append_message', message: firstMessage },
+      { type: 'context.append_message', message: secondMessage },
+      { type: 'context.clear' },
+      { type: 'context.append_message', message: afterClearMessage },
+    ]);
+
+    await expect(buildReplay(persistence, { start: 0, count: 10 })).resolves.toEqual([
+      expect.objectContaining({ type: 'message', message: firstMessage }),
+      expect.objectContaining({ type: 'message', message: secondMessage }),
+    ]);
+    await expect(buildReplay(persistence, { start: 2, count: 10 })).resolves.toEqual([
+      expect.objectContaining({ type: 'message', message: afterClearMessage }),
+    ]);
+  });
+});
+
 class RecordingInMemoryAgentRecordPersistence extends InMemoryAgentRecordPersistence {
   readonly rewrites: AgentRecord[][] = [];
 
@@ -313,4 +497,12 @@ class RecordingInMemoryAgentRecordPersistence extends InMemoryAgentRecordPersist
     this.rewrites.push([...records]);
     super.rewrite(records);
   }
+}
+
+function userMessage(text: string): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text }],
+    toolCalls: [],
+  };
 }

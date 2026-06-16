@@ -103,8 +103,11 @@ export const api = {
   getWire: (id: string, agentId: string) =>
     get<WireResponse>(`/api/sessions/${enc(id)}/wire?agent=${enc(agentId)}`),
 
-  getContext: (id: string, agentId: string) =>
-    get<ContextResponse>(`/api/sessions/${enc(id)}/context?agent=${enc(agentId)}`),
+  getContext: (id: string, agentId: string, mode?: 'model' | 'full') =>
+    get<ContextResponse>(
+      `/api/sessions/${enc(id)}/context?agent=${enc(agentId)}` +
+        (mode === 'full' ? '&history=full' : ''),
+    ),
 
   getAgentTree: (id: string) =>
     get<AgentTreeResponse>(`/api/sessions/${enc(id)}/agents`),

@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-05-20T05:59:51.085Z",
+  "updatedAt": "2026-05-21T03:12:08.000Z",
+  "title": "fixture: compaction",
+  "isCustomTitle": false,
+  "lastPrompt": "after compaction",
+  "agents": {
+    "main": {
+      "homedir": "<resolved-at-runtime>",
+      "type": "main",
+      "parentAgentId": null
+    }
+  },
+  "custom": {}
+}

@@ -4,6 +4,7 @@ import { join, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import type { SessionSummary, SessionDetail, AgentInfo, SessionHealth } from './agent-record-types';
+import { compareAgentIds } from './agent-tree';
 
 const SESSION_ID_RE = /^session_[A-Za-z0-9._-]+$/;
 const AGENT_ID_RE = /^[A-Za-z0-9._-]+$/;
@@ -23,7 +24,7 @@ interface StateJson {
   title?: string;
   isCustomTitle?: boolean;
   lastPrompt?: string;
-  agents?: Record<string, { homedir: string; type: 'main' | 'sub' | 'independent'; parentAgentId: string | null }>;
+  agents?: Record<string, { homedir: string; type: 'main' | 'sub' | 'independent'; parentAgentId: string | null; swarmItem?: string }>;
   custom?: Record<string, unknown>;
 }
 
@@ -106,13 +107,12 @@ async function discoverAgentsFromDisk(sessionDir: string): Promise<AgentInfo[]> 
       wireExists: readable,
       wireRecordCount: info.count,
       wireProtocolVersion: info.protocolVersion,
+      // swarmItem is persisted in state.json, which is unavailable on this
+      // disk-only fallback path, so it cannot be recovered here.
+      swarmItem: null,
     });
   }
-  return out.sort((a, b) => {
-    if (a.agentId === 'main') return -1;
-    if (b.agentId === 'main') return 1;
-    return a.agentId.localeCompare(b.agentId);
-  });
+  return out.sort((a, b) => compareAgentIds(a.agentId, b.agentId));
 }
 
 async function tryReadSummary(sessionDir: string, sessionId: string, workDir: string): Promise<SessionSummary | null> {
@@ -222,13 +222,10 @@ async function inventoryAgents(sessionDir: string, state: StateJson): Promise<Ag
       wireExists: readable,
       wireRecordCount: info.count,
       wireProtocolVersion: info.protocolVersion,
+      swarmItem: meta.swarmItem ?? null,
     });
   }
-  return result.sort((a, b) => {
-    if (a.agentId === 'main') return -1;
-    if (b.agentId === 'main') return 1;
-    return a.agentId.localeCompare(b.agentId);
-  });
+  return result.sort((a, b) => compareAgentIds(a.agentId, b.agentId));
 }
 
 async function readState(sessionDir: string): Promise<StateJson | null> {

@@ -39,7 +39,8 @@
     "#/cli/sub/server/*": "./src/cli/sub/server/*.ts",
     "#/*": [
       "./src/*.ts",
-      "./src/*/index.ts"
+      "./src/*/index.ts",
+      "./src/*.d.ts"
     ]
   },
   "publishConfig": {
@@ -48,6 +49,7 @@
   },
   "scripts": {
     "build": "pnpm -C ../kimi-web run build && tsdown && node scripts/copy-web-assets.mjs",
+    "prebuild": "node scripts/build-vis-asset.mjs",
     "catalog:update": "node scripts/update-catalog.mjs --out dist/built-in-catalog.json",
     "smoke": "node scripts/smoke.mjs",
     "build:native:js": "node scripts/native/01-bundle.mjs",
@@ -93,6 +95,8 @@
     "@moonshot-ai/kimi-web": "workspace:^",
     "@moonshot-ai/migration-legacy": "workspace:^",
     "@moonshot-ai/server": "workspace:^",
+    "@moonshot-ai/vis-server": "workspace:^",
+    "@moonshot-ai/vis-web": "workspace:*",
     "@types/semver": "^7.7.0",
     "@types/yazl": "^2.4.6",
     "chalk": "^5.4.1",
