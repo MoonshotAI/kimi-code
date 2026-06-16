@@ -8,6 +8,7 @@ function fakeInitialAppState(): AppState {
   return {
     model: 'test-model',
     workDir: '/tmp/kimi-test',
+    additionalDirs: [],
     sessionId: 'sess-1',
     permissionMode: 'manual',
     planMode: false,
@@ -61,6 +62,7 @@ describe('createTUIState', () => {
     // App state is cloned from initialAppState, not reused by reference.
     expect(state.appState).not.toBe(opts.initialAppState);
     expect(state.appState.model).toBe('test-model');
+    expect(state.appState.additionalDirs).toEqual([]);
     expect(state.appState.sessionId).toBe('sess-1');
     expect(state.startupState).toBe('pending');
 

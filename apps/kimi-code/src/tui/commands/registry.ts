@@ -1,3 +1,7 @@
+import { readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, join, relative, resolve } from 'pathe';
+
 import type { AutocompleteItem } from '@earendil-works/pi-tui';
 
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
@@ -22,6 +26,10 @@ const SWARM_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'off', description: 'Turn swarm mode off' },
 ];
 
+const ADD_DIR_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'list', description: 'Show configured additional workspace directories' },
+];
+
 /** Argument autocompletion for the `/goal` command (subcommands). */
 export function goalArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   const nextMatch = argumentPrefix.match(/^next\s+(\S*)$/i);
@@ -39,6 +47,89 @@ export function goalArgumentCompletions(argumentPrefix: string): AutocompleteIte
 /** Argument autocompletion for the `/swarm` command (subcommands). */
 export function swarmArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   return completeLeadingArg(SWARM_ARG_COMPLETIONS, argumentPrefix);
+}
+
+/** Argument autocompletion for the `/add-dir` command. */
+export function addDirArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  if (isPathLikeAddDirArgument(argumentPrefix)) {
+    return completeAddDirPath(argumentPrefix);
+  }
+  return completeLeadingArg(ADD_DIR_ARG_COMPLETIONS, argumentPrefix);
+}
+
+function isPathLikeAddDirArgument(argumentPrefix: string): boolean {
+  return argumentPrefix === '.' || argumentPrefix === '..' || argumentPrefix.startsWith('./') || argumentPrefix.startsWith('../') || argumentPrefix.startsWith('/') || argumentPrefix.startsWith('~');
+}
+
+function completeAddDirPath(argumentPrefix: string): AutocompleteItem[] | null {
+  const normalizedPrefix = argumentPrefix === '~' ? '~/' : argumentPrefix;
+  const expandedPrefix = expandHomePrefix(normalizedPrefix);
+  const parentInput = getDirectoryCompletionParentInput(normalizedPrefix, expandedPrefix);
+  const partialName = normalizedPrefix.endsWith('/') ? '' : basename(expandedPrefix);
+  const parentDir = resolveDirectoryCompletionParent(parentInput);
+  let entries;
+  try {
+    entries = readdirSync(parentDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  const items: AutocompleteItem[] = [];
+  for (const entry of entries) {
+    if (entry.name === '.' || entry.name === '..' || entry.name.startsWith('.')) continue;
+    if (partialName.length > 0 && !entry.name.toLowerCase().startsWith(partialName.toLowerCase())) continue;
+    const absolutePath = join(parentDir, entry.name);
+    if (!isDirectoryPath(absolutePath, entry.isDirectory(), entry.isSymbolicLink())) continue;
+    const value = formatDirectoryCompletionValue(normalizedPrefix, parentInput, entry.name);
+    items.push({
+      value,
+      label: `${entry.name}/`,
+      description: absolutePath,
+    });
+  }
+
+  return items.length > 0 ? items : null;
+}
+
+function expandHomePrefix(argumentPrefix: string): string {
+  if (argumentPrefix === '~') return homedir();
+  if (argumentPrefix.startsWith('~/')) return join(homedir(), argumentPrefix.slice(2));
+  return argumentPrefix;
+}
+
+function getDirectoryCompletionParentInput(argumentPrefix: string, expandedPrefix: string): string {
+  if (argumentPrefix === '/') return '/';
+  if (argumentPrefix === '~/') return homedir();
+  if (argumentPrefix.endsWith('/')) return expandedPrefix.slice(0, -1);
+  return dirname(expandedPrefix);
+}
+
+function resolveDirectoryCompletionParent(parentInput: string): string {
+  if (parentInput === '~') return homedir();
+  if (parentInput.startsWith('~/')) return join(homedir(), parentInput.slice(2));
+  return resolve(parentInput);
+}
+
+function isDirectoryPath(path: string, isDirectory: boolean, isSymlink: boolean): boolean {
+  if (isDirectory) return true;
+  if (!isSymlink) return false;
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function formatDirectoryCompletionValue(argumentPrefix: string, parentInput: string, entryName: string): string {
+  if (argumentPrefix.startsWith('~/')) {
+    const home = homedir();
+    const homeRelative = relative(home, parentInput);
+    return `~${homeRelative.length > 0 ? `/${homeRelative}` : ''}/${entryName}/`;
+  }
+  if (argumentPrefix.startsWith('/')) {
+    return `${join(parentInput, entryName)}/`;
+  }
+  return `${join(parentInput, entryName)}/`;
 }
 
 export const BUILTIN_SLASH_COMMANDS = [
@@ -145,6 +236,15 @@ export const BUILTIN_SLASH_COMMANDS = [
     description: 'Manage plugins',
     priority: 60,
     availability: 'always',
+  },
+  {
+    name: 'add-dir',
+    aliases: [],
+    description: 'Add or list an additional workspace directory',
+    priority: 60,
+    availability: 'idle-only',
+    argumentHint: '[list] | <path>',
+    completeArgs: addDirArgumentCompletions,
   },
   {
     name: 'experiments',

@@ -45,6 +45,7 @@ import {
 import { handleGoalCommand } from './goal';
 import { handleProviderCommand } from './provider';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
+import { handleAddDirCommand } from './add-dir';
 import { handlePluginsCommand } from './plugins';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
 import { handleSwarmCommand } from './swarm';
@@ -66,6 +67,7 @@ export {
   handleLogoutCommand,
 } from './auth';
 export { handleBtwCommand } from './btw';
+export { handleAddDirCommand } from './add-dir';
 export {
   handleAutoCommand,
   handleCompactCommand,
@@ -256,6 +258,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'plugins':
       void handlePluginsCommand(host, args);
+      return;
+    case 'add-dir':
+      await handleAddDirCommand(host, args);
       return;
     case 'experiments':
       await showExperimentsPanel(host);

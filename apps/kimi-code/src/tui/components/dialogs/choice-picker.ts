@@ -129,15 +129,22 @@ export class ChoicePickerComponent extends Container implements Focusable {
 
     const titleSuffix =
       searchable && view.query.length === 0 ? currentTheme.fg('textMuted', '  (type to search)') : '';
+    const hintLines = hint.split(/\r?\n/);
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
       currentTheme.boldFg('primary', ` ${this.opts.title}`) + titleSuffix,
-      this.opts.formatHint === undefined
-        ? currentTheme.fg('textMuted', ` ${hint}`)
-        : this.opts.formatHint(` ${hint}`),
     ];
+    for (const hintLine of hintLines) {
+      lines.push(
+        this.opts.formatHint === undefined
+          ? currentTheme.fg('textMuted', ` ${hintLine}`)
+          : this.opts.formatHint(` ${hintLine}`),
+      );
+    }
     if (this.opts.notice !== undefined) {
-      lines.push(currentTheme.fg('success', ` ${this.opts.notice}`));
+      for (const noticeLine of this.opts.notice.split(/\r?\n/)) {
+        lines.push(currentTheme.fg('success', ` ${noticeLine}`));
+      }
     }
     lines.push('');
     if (searchable && view.query.length > 0) {

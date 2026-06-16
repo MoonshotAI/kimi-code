@@ -4,15 +4,17 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { loadAgentsMd } from '../../src/profile/context';
+import { loadAgentsMd, prepareSystemPromptContext } from '../../src/profile/context';
 import { testKaos } from '../fixtures/test-kaos';
 
 let homeDir: string;
 let workDir: string;
+let extraDirs: string[];
 
 beforeEach(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'kimi-agents-home-'));
   workDir = await mkdtemp(join(tmpdir(), 'kimi-agents-work-'));
+  extraDirs = [];
   vi.spyOn(testKaos, 'gethome').mockReturnValue(homeDir);
   vi.spyOn(testKaos, 'getcwd').mockReturnValue(workDir);
 });
@@ -21,6 +23,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await rm(homeDir, { recursive: true, force: true });
   await rm(workDir, { recursive: true, force: true });
+  await Promise.all(extraDirs.map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
 describe('loadAgentsMd user-level discovery', () => {
@@ -122,5 +125,74 @@ describe('loadAgentsMd truncation marker', () => {
     expect(result).toContain('Some AGENTS.md files were truncated or omitted');
     expect(result).toContain(`<!-- From: ${join(workDir, 'AGENTS.md')} -->`);
     expect(result).not.toContain(largeContent);
+  });
+});
+
+describe('prepareSystemPromptContext additional directories', () => {
+  it('includes additional directory listings and AGENTS.md in context', async () => {
+    const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-empty-brand-'));
+    extraDirs.push(brandHome);
+    const extraDir = await mkdtemp(join(tmpdir(), 'kimi-agents-extra-'));
+    extraDirs.push(extraDir);
+
+    await writeFile(join(workDir, 'AGENTS.md'), 'repo project instructions', 'utf-8');
+    await writeFile(join(extraDir, 'AGENTS.md'), 'extra project instructions', 'utf-8');
+    await writeFile(join(extraDir, 'extra-file.txt'), 'extra listing entry', 'utf-8');
+
+    const result = await prepareSystemPromptContext(testKaos, brandHome, {
+      additionalDirs: [extraDir],
+    });
+
+    const agentsMd = result.agentsMd ?? '';
+
+    expect(result.cwdListing).toBeTypeOf('string');
+    expect(result.additionalDirsInfo).toContain(`### ${extraDir}`);
+    expect(result.additionalDirsInfo).toContain('extra-file.txt');
+    expect(agentsMd).toContain('repo project instructions');
+    expect(agentsMd).toContain('extra project instructions');
+    expect(agentsMd.split('<!-- From:').length - 1).toBe(2);
+  });
+
+  it('loads user-level AGENTS.md only once with multiple additional dirs', async () => {
+    const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-empty-brand-'));
+    extraDirs.push(brandHome);
+    const extraDirA = await mkdtemp(join(tmpdir(), 'kimi-agents-extra-a-'));
+    const extraDirB = await mkdtemp(join(tmpdir(), 'kimi-agents-extra-b-'));
+    extraDirs.push(extraDirA, extraDirB);
+
+    await mkdir(join(homeDir, '.agents'), { recursive: true });
+    await writeFile(join(homeDir, '.agents', 'AGENTS.md'), 'shared user instructions', 'utf-8');
+    await writeFile(join(extraDirA, 'AGENTS.md'), 'extra A instructions', 'utf-8');
+    await writeFile(join(extraDirB, 'AGENTS.md'), 'extra B instructions', 'utf-8');
+
+    const result = await prepareSystemPromptContext(testKaos, brandHome, {
+      additionalDirs: [extraDirA, extraDirB],
+    });
+
+    const agentsMd = result.agentsMd ?? '';
+
+    expect(agentsMd.split('shared user instructions').length - 1).toBe(1);
+    expect(agentsMd).toContain('extra A instructions');
+    expect(agentsMd).toContain('extra B instructions');
+  });
+
+  it('keeps AGENTS.md output within the byte budget and preserves UTF-8 content', async () => {
+    const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-empty-brand-'));
+    extraDirs.push(brandHome);
+    const extraDir = await mkdtemp(join(tmpdir(), 'kimi-agents-extra-large-'));
+    extraDirs.push(extraDir);
+
+    await writeFile(join(workDir, 'AGENTS.md'), `cwd tail marker ${'□'.repeat(40_000)}`, 'utf-8');
+    await writeFile(join(extraDir, 'AGENTS.md'), `extra marker\n${'😀'.repeat(12_000)}`, 'utf-8');
+
+    const result = await prepareSystemPromptContext(testKaos, brandHome, {
+      additionalDirs: [extraDir],
+    });
+
+    const agentsMd = result.agentsMd ?? '';
+    expect(Buffer.byteLength(agentsMd, 'utf-8')).toBeLessThanOrEqual(32 * 1024);
+    expect(agentsMd).toContain('extra marker');
+    expect(agentsMd).not.toContain('cwd tail marker');
+    expect(agentsMd).not.toContain('�');
   });
 });

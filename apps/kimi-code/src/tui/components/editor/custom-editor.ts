@@ -359,6 +359,17 @@ export class CustomEditor extends Editor {
     }
 
     super.handleInput(normalized);
+    this.reopenSlashArgumentCompletionAfterInput(normalized);
+  }
+
+  private reopenSlashArgumentCompletionAfterInput(data: string): void {
+    if (data !== '/') return;
+    const { line, col } = this.getCursor();
+    const textBeforeCursor = this.getLines()[line]?.slice(0, col) ?? '';
+    if (!textBeforeCursor.startsWith('/')) return;
+    if (!textBeforeCursor.includes(' ')) return;
+    (this as unknown as { requestAutocomplete?: (options: { force: boolean; explicitTab: boolean }) => void })
+      .requestAutocomplete?.({ force: true, explicitTab: false });
   }
 }
 

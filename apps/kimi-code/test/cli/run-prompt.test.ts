@@ -205,6 +205,7 @@ describe('runPrompt', () => {
       workDir: process.cwd(),
       model: 'k2',
       permission: 'auto',
+      additionalDirs: undefined,
     });
     expect(mocks.session.setPermission).not.toHaveBeenCalled();
     expect(mocks.session.setApprovalHandler).toHaveBeenCalledWith(expect.any(Function));
@@ -242,10 +243,25 @@ describe('runPrompt', () => {
       workDir: process.cwd(),
       model: 'kimi-code/k2.5',
       permission: 'auto',
+      additionalDirs: undefined,
     });
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'kimi-code/k2.5' }),
     );
+  });
+
+  it('passes the CLI additional directory when creating a fresh prompt session', async () => {
+    await runPrompt(opts({ addDirs: ['../shared', '/tmp/extra'] }), '1.2.3-test', {
+      stdout: { write: vi.fn(() => true) },
+      stderr: { write: vi.fn(() => true) },
+    });
+
+    expect(mocks.harnessCreateSession).toHaveBeenCalledWith({
+      workDir: process.cwd(),
+      model: 'k2',
+      permission: 'auto',
+      additionalDirs: ['../shared', '/tmp/extra'],
+    });
   });
 
   it('tracks first launch in prompt mode before harness construction can create the device id', async () => {

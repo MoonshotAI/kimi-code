@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { join } from 'pathe';
 
+import { normalizeAdditionalDirs } from '../config';
 import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
@@ -89,6 +90,7 @@ export interface AgentOptions {
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly experimentalFlags?: ExperimentalFlagResolver;
   readonly replay?: ReplayBuilderOptions;
+  readonly additionalDirs?: readonly string[];
 }
 
 export class Agent {
@@ -132,6 +134,7 @@ export class Agent {
   readonly goal: GoalMode;
   readonly replayBuilder: ReplayBuilder;
 
+  private additionalDirs: readonly string[];
   private lastLlmConfigLogSignature?: string;
 
   constructor(options: AgentOptions) {
@@ -150,6 +153,7 @@ export class Agent {
     this.log = options.log ?? log;
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
+    this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
 
     this.blobStore = options.homedir
       ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
@@ -189,6 +193,17 @@ export class Agent {
 
   setKaos(kaos: Kaos) {
     this._kaos = kaos;
+  }
+
+  getAdditionalDirs(): readonly string[] {
+    return this.additionalDirs;
+  }
+
+  setAdditionalDirs(additionalDirs: readonly string[]): void {
+    this.additionalDirs = normalizeAdditionalDirs(additionalDirs);
+    if (this.config.hasProvider) {
+      this.tools.initializeBuiltinTools();
+    }
   }
 
   get generate(): typeof generate {
@@ -288,6 +303,7 @@ export class Agent {
       skills: this.skills?.registry,
       cwdListing: context?.cwdListing,
       agentsMd: context?.agentsMd,
+      additionalDirsInfo: context?.additionalDirsInfo,
     });
     this.config.update({ profileName: profile.name, systemPrompt });
     this.tools.setActiveTools(profile.tools);

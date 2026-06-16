@@ -13,3 +13,4 @@ coverage/
 plugins/cdn/
 superpowers
 .worktrees/
+.kimi-code/local.toml
