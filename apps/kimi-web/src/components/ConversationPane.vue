@@ -1210,8 +1210,9 @@ defineExpose({ loadComposerForEdit });
   z-index: 20;
   max-width: 240px;
   padding: 6px 10px;
-  background: var(--ink);
-  color: #fff;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
   border-radius: 8px;
   font-size: var(--ui-font-size-xs);
   line-height: 1.45;
@@ -1229,7 +1230,7 @@ defineExpose({ loadComposerForEdit });
   top: 10px;
   border-width: 5px 0 5px 5px;
   border-style: solid;
-  border-color: transparent transparent transparent var(--ink);
+  border-color: transparent transparent transparent var(--bg);
 }
 .toc-tip-enter-active,
 .toc-tip-leave-active {
