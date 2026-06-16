@@ -74,6 +74,7 @@ const GOAL_MODE_STORAGE_KEY = 'kimi-web.goal-mode';
 const THEME_STORAGE_KEY = 'kimi-web.theme';
 const UI_FONT_SIZE_STORAGE_KEY = 'kimi-web.ui-font-size';
 const STARRED_MODELS_STORAGE_KEY = 'kimi-web.starred-models';
+const UNREAD_STORAGE_KEY = 'kimi-web.unread';
 const UI_FONT_SIZE_DEFAULT = 15;
 const UI_FONT_SIZE_MIN = 12;
 const UI_FONT_SIZE_MAX = 20;
@@ -237,6 +238,40 @@ function loadGoalModeFromStorage(): boolean {
 function saveGoalModeToStorage(v: boolean): void {
   try {
     localStorage.setItem(GOAL_MODE_STORAGE_KEY, v ? 'true' : 'false');
+  } catch {
+    // ignore
+  }
+}
+
+// Per-session unread flags are pure client state (set when a background turn
+// finishes, cleared on open). Persisting the `true` entries lets them survive a
+// page refresh — without this the sidebar's unread dots vanish on reload because
+// the in-memory map starts empty and there is no server-side read cursor.
+function loadUnreadFromStorage(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(UNREAD_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: Record<string, boolean> = {};
+    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (value === true) out[id] = true;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveUnreadToStorage(map: Record<string, boolean>): void {
+  try {
+    // Store only the `true` entries so the key stays compact (cleared sessions
+    // write `false` and are dropped here).
+    const out: Record<string, boolean> = {};
+    for (const [id, value] of Object.entries(map)) {
+      if (value) out[id] = true;
+    }
+    localStorage.setItem(UNREAD_STORAGE_KEY, JSON.stringify(out));
   } catch {
     // ignore
   }
@@ -455,7 +490,7 @@ const rawState: ExtendedState = reactive({
   gitStatusBySession: {},
   promptIdBySession: {},
   sendingBySession: {},
-  unreadBySession: {},
+  unreadBySession: loadUnreadFromStorage(),
   authReady: false,
   defaultModel: null,
   managedProviderStatus: null,
@@ -2476,6 +2511,7 @@ function onSessionIdle(sid: string): void {
     // A background session just finished a turn the user hasn't seen — light up
     // its unread dot until they open it.
     rawState.unreadBySession = { ...rawState.unreadBySession, [sid]: true };
+    saveUnreadToStorage(rawState.unreadBySession);
   }
 
   // Browser notification when the user isn't watching this session.
@@ -2977,6 +3013,7 @@ async function selectSession(
     // Opening a session clears its unread dot.
     if (rawState.unreadBySession[sessionId]) {
       rawState.unreadBySession = { ...rawState.unreadBySession, [sessionId]: false };
+      saveUnreadToStorage(rawState.unreadBySession);
     }
     // A diff belongs to the session it was loaded from — drop it on switch.
     clearFileDiff();

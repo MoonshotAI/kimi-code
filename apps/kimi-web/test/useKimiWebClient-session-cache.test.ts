@@ -150,11 +150,24 @@ describe('useKimiWebClient session memory cache', () => {
     });
   });
 
-  it('does not raise the loading state when selecting a known-empty unloaded session', async () => {
+  it('does not raise the loading state for a locally created session', async () => {
+    const { client } = await setup([]);
+
+    // Locally created sessions are trusted to start empty, so the empty-composer
+    // renders immediately without flashing the chat-pane loading state.
+    const pending = client.createSession('/repo');
+    expect(client.sessionLoading.value).toBe(false);
+    await pending;
+    expect(client.sessionLoading.value).toBe(false);
+  });
+
+  it('raises the loading state when selecting an existing session reported as empty', async () => {
     const { client, getHandlers } = await setup([]);
     await client.createSession('/repo');
 
     // A second, never-opened session whose daemon-reported messageCount is 0.
+    // We no longer trust messageCount for existing sessions (it can be stale),
+    // so we load the snapshot before deciding what to render.
     const empty = session('sess_empty'); // messageCount: 0
     getHandlers().onEvent(
       { type: 'sessionCreated', session: empty },
@@ -162,10 +175,7 @@ describe('useKimiWebClient session memory cache', () => {
     );
 
     const pending = client.selectSession('sess_empty');
-    // Synchronous part of selectSession already ran. The session is known empty,
-    // so we never flip the chat-pane loading state on (which would flash the
-    // chat pane before the empty-composer).
-    expect(client.sessionLoading.value).toBe(false);
+    expect(client.sessionLoading.value).toBe(true);
     await pending.catch(() => {});
     expect(client.sessionLoading.value).toBe(false);
   });
@@ -360,5 +370,97 @@ describe('useKimiWebClient session memory cache', () => {
 
     expect(client.config.value?.defaultModel).toBe('openai/gpt-5');
     expect(client.defaultModel.value).toBe('openai/gpt-5');
+  });
+});
+
+describe('session view-model status / busy', () => {
+  it('surfaces the real lifecycle status and only spins for running', async () => {
+    const { client, getHandlers } = await setup([]);
+    await client.createSession('/repo'); // sess_1 active
+
+    const bg = session('sess_bg');
+    getHandlers().onEvent(
+      { type: 'sessionCreated', session: bg },
+      { sessionId: 'sess_bg', seq: 1 },
+    );
+
+    const find = () => client.sessions.value.find((s) => s.id === 'sess_bg')!;
+
+    // Awaiting the user is NOT busy — the row must not show a working spinner.
+    getHandlers().onEvent(
+      { type: 'sessionStatusChanged', sessionId: 'sess_bg', status: 'awaitingApproval', previousStatus: 'running' },
+      { sessionId: 'sess_bg', seq: 2 },
+    );
+    expect(find().status).toBe('awaitingApproval');
+    expect(find().busy).toBe(false);
+
+    // Aborted is a distinct, non-busy state (not collapsed to idle).
+    getHandlers().onEvent(
+      { type: 'sessionStatusChanged', sessionId: 'sess_bg', status: 'aborted', previousStatus: 'awaitingApproval' },
+      { sessionId: 'sess_bg', seq: 3 },
+    );
+    expect(find().status).toBe('aborted');
+    expect(find().busy).toBe(false);
+
+    // Running (no tasks loaded yet → trust the status) IS busy.
+    getHandlers().onEvent(
+      { type: 'sessionStatusChanged', sessionId: 'sess_bg', status: 'running', previousStatus: 'aborted' },
+      { sessionId: 'sess_bg', seq: 4 },
+    );
+    expect(find().status).toBe('running');
+    expect(find().busy).toBe(true);
+  });
+
+  it('treats an aborted turn as a turn end (flushes like idle)', async () => {
+    const { client, getHandlers } = await setup([]);
+    await client.createSession('/repo'); // sess_1 active
+
+    const bg = session('sess_bg');
+    getHandlers().onEvent(
+      { type: 'sessionCreated', session: bg },
+      { sessionId: 'sess_bg', seq: 1 },
+    );
+
+    // Aborting a background turn must run the same turn-end cleanup as idle —
+    // observable here as the unread dot lighting up.
+    getHandlers().onEvent(
+      { type: 'sessionStatusChanged', sessionId: 'sess_bg', status: 'aborted', previousStatus: 'running' },
+      { sessionId: 'sess_bg', seq: 2 },
+    );
+    expect(client.unreadBySession.value['sess_bg']).toBe(true);
+  });
+});
+
+describe('unread persistence across reload', () => {
+  it('restores unread dots from storage and clears them on open', async () => {
+    try { localStorage.removeItem('kimi-web.unread'); } catch { /* ignore */ }
+    try {
+      // First "page load": a background session finishes a turn → unread.
+      const first = await setup([]);
+      await first.client.createSession('/repo');
+      first.getHandlers().onEvent(
+        { type: 'sessionCreated', session: session('sess_bg') },
+        { sessionId: 'sess_bg', seq: 1 },
+      );
+      first.getHandlers().onEvent(
+        { type: 'sessionStatusChanged', sessionId: 'sess_bg', status: 'idle', previousStatus: 'running' },
+        { sessionId: 'sess_bg', seq: 2 },
+      );
+      expect(first.client.unreadBySession.value['sess_bg']).toBe(true);
+
+      // Refresh: a brand-new client (vi.resetModules) seeds unread from storage
+      // instead of starting empty — the dot survives the reload.
+      const second = await setup([]);
+      expect(second.client.unreadBySession.value['sess_bg']).toBe(true);
+
+      // Opening the session clears the flag and the persisted entry.
+      await second.client.selectSession('sess_bg').catch(() => {});
+      expect(second.client.unreadBySession.value['sess_bg']).toBeUndefined();
+
+      const third = await setup([]);
+      expect(third.client.unreadBySession.value['sess_bg']).toBeUndefined();
+    } finally {
+      try { localStorage.removeItem('kimi-web.unread'); } catch { /* ignore */ }
+    }
   });
 });
