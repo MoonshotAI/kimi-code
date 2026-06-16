@@ -115,9 +115,9 @@ describe('ReviewSummaryComponent', () => {
     expect(later).toBeGreaterThan(earlier);
   });
 
-  it('shows a gray follow-up hint on the browsed note when there are comments', () => {
+  it('shows a gray follow-up tip on the browsed note when there are comments', () => {
     const out = lines(data([comment({ rejected: true })], { variant: 'browsed' }));
-    expect(out).toContain('   Ask Kimi to fix these comments, or discuss them here in chat.');
+    expect(out).toContain('  Tips: Ask Kimi to fix these comments, or discuss them here in chat.');
   });
 
   it('omits the follow-up hint on the browsed note when there are no comments', () => {

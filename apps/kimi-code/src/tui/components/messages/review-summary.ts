@@ -79,7 +79,7 @@ export class ReviewSummaryComponent implements Component {
       lines.push('   ' + currentTheme.fg('textDim', `• ${comment.path}:${String(comment.line)} — ${comment.title}`));
     }
     if (this.data.comments.length > 0) {
-      lines.push('   ' + currentTheme.fg('textDim', 'Ask Kimi to fix these comments, or discuss them here in chat.'));
+      lines.push('  ' + currentTheme.fg('textDim', 'Tips: Ask Kimi to fix these comments, or discuss them here in chat.'));
     }
     return lines.map((line) => truncateToWidth(line, width));
   }
