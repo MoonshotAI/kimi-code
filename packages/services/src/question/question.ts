@@ -89,6 +89,12 @@ export interface IQuestionService {
    * `dismissedQuestionResult()` (`packages/agent-core` — see SCHEMAS.md §6.3).
    */
   dismiss(id: string): void;
+
+  /**
+   * Returns the protocol-shaped pending question requests for a session.
+   * Used by the session status lifecycle to detect `awaiting_question`.
+   */
+  listPending(sessionId: string): readonly ProtocolQuestionRequest[];
 }
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare

@@ -92,6 +92,7 @@ export const sessionSchema = z.object({
   created_at: isoDateTimeSchema,
   updated_at: isoDateTimeSchema,
   status: sessionStatusSchema,
+  archived: z.boolean().optional(),
   current_prompt_id: z.string().min(1).optional(),
   metadata: sessionMetadataSchema,
   agent_config: sessionAgentConfigSchema,

@@ -21,6 +21,7 @@ import {
 export interface SessionListQuery extends CursorQuery {
   status?: import('@moonshot-ai/protocol').SessionStatus;
   workDir?: string;
+  includeArchive?: boolean;
 }
 
 export interface ISessionService {
@@ -46,7 +47,7 @@ export interface ISessionService {
 
   undo(id: string, input: UndoSessionRequest): Promise<UndoSessionResponse>;
 
-  delete(id: string): Promise<{ deleted: true }>;
+  archive(id: string): Promise<{ archived: true }>;
 
   readonly onDidCreate: Event<{ session: Session }>;
 
@@ -103,6 +104,7 @@ export function toProtocolSession(
     created_at: new Date(summary.createdAt).toISOString(),
     updated_at: new Date(summary.updatedAt).toISOString(),
     status: 'idle',
+    archived: summary.archived === true,
     metadata: mergedMetadata,
     agent_config: {
       model: '',

@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { ToolInputDisplaySchema, type ToolInputDisplay } from './display';
 import { messageContentSchema, type MessageContent } from './message';
-import { sessionSchema, type Session } from './session';
+import { sessionSchema, sessionStatusSchema, type Session, type SessionStatus } from './session';
 import { isoDateTimeSchema } from './time';
 import { configResponseSchema, type ConfigResponse } from './rest/config';
 
@@ -315,6 +315,13 @@ export interface SessionCreatedEvent {
   readonly session: Session;
 }
 
+export interface SessionStatusChangedEvent {
+  readonly type: 'event.session.status_changed';
+  readonly status: SessionStatus;
+  readonly previous_status: SessionStatus;
+  readonly current_prompt_id?: string;
+}
+
 export interface ConfigChangedEvent {
   readonly type: 'event.config.changed';
   readonly changedFields: string[];
@@ -566,6 +573,7 @@ export type AgentEvent =
   | AgentStatusUpdatedEvent
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
+  | SessionStatusChangedEvent
   | ConfigChangedEvent
   | GoalUpdatedEvent
   | SkillActivatedEvent
@@ -913,6 +921,13 @@ export const sessionCreatedEventSchema = z.object({
   session: sessionSchema,
 }) satisfies z.ZodType<SessionCreatedEvent>;
 
+export const sessionStatusChangedEventSchema = z.object({
+  type: z.literal('event.session.status_changed'),
+  status: sessionStatusSchema,
+  previous_status: sessionStatusSchema,
+  current_prompt_id: z.string().min(1).optional(),
+}) satisfies z.ZodType<SessionStatusChangedEvent>;
+
 export const configChangedEventSchema = z.object({
   type: z.literal('event.config.changed'),
   changedFields: z.array(z.string()),
@@ -1168,6 +1183,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   agentStatusUpdatedEventSchema,
   sessionMetaUpdatedEventSchema,
   sessionCreatedEventSchema,
+  sessionStatusChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
   turnStartedEventSchema,

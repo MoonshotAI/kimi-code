@@ -44,6 +44,7 @@ import {
   type IAuthSummaryService,
   type IEventService,
   type ICoreProcessService,
+  type ILogService,
   type ISessionService,
   PromptAlreadyCompletedError,
   PromptNotFoundError,
@@ -310,7 +311,7 @@ function makeSessionService(): {
     getStatus: vi.fn() as unknown as ISessionService['getStatus'],
     compact: vi.fn() as unknown as ISessionService['compact'],
     undo: vi.fn() as unknown as ISessionService['undo'],
-    delete: vi.fn() as unknown as ISessionService['delete'],
+    archive: vi.fn() as unknown as ISessionService['archive'],
     onDidCreate: createEmitter.event,
     onDidClose: closeEmitter.event,
   };
@@ -320,13 +321,26 @@ function makeSessionService(): {
   };
 }
 
+class NoopLogService implements ILogService {
+  readonly _serviceBrand: undefined;
+
+  debug(): void {}
+  info(): void {}
+  warn(): void {}
+  error(): void {}
+  child(): ILogService {
+    return this;
+  }
+}
+
 function newSvc(
   bridge: ICoreProcessService,
   bus: IEventService,
   auth: IAuthSummaryService = makeAuth(),
   sessionService: ISessionService = makeSessionService().sessionService,
+  logService: ILogService = new NoopLogService(),
 ): PromptService {
-  return new PromptService(bridge, bus, auth, sessionService);
+  return new PromptService(bridge, bus, auth, sessionService, logService);
 }
 
 describe('PromptService.submit', () => {
@@ -1087,7 +1101,7 @@ describe('PromptService stateless controls — bootstrap + shadow', () => {
     const { bridge, record } = makeBridge();
     const { bus, triggerSubscribers } = makeBus();
     const { sessionService, triggerClose } = makeSessionService();
-    const impl = new PromptService(bridge, bus, makeAuth(), sessionService);
+    const impl = new PromptService(bridge, bus, makeAuth(), sessionService, new NoopLogService());
     await impl.submit(SID, mkBody());
     expect(record.getConfigCalls).toBe(1);
     // First prompt cleared on completion so the second submit isn't busy.
@@ -1410,7 +1424,7 @@ describe('PromptService stateless controls — dispatch log', () => {
     const { bridge } = makeBridge({ plan: null });
     const { bus } = makeBus();
     const { sessionService, triggerClose } = makeSessionService();
-    const impl = new PromptService(bridge, bus, makeAuth(), sessionService);
+    const impl = new PromptService(bridge, bus, makeAuth(), sessionService, new NoopLogService());
     await impl.submit(SID, mkBody({ plan_mode: true }));
     expect(impl._dispatchLogForTest(SID)?.length).toBe(1);
     triggerClose(SID);

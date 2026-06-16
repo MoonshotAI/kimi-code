@@ -138,7 +138,7 @@ async function main() {
     console.log('✓ 05-workspace: end-to-end registry + picker + session round-trip');
   } finally {
     try {
-      if (sid) await client.deleteSession(sid);
+      if (sid) await client.archiveSession(sid);
     } catch {
       // ignore
     }

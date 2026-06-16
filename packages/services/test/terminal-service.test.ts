@@ -91,6 +91,7 @@ function session(id: string, cwd: string): Session {
     created_at: '2026-06-04T10:30:00.000Z',
     updated_at: '2026-06-04T10:30:00.000Z',
     status: 'idle',
+    archived: false,
     metadata: { cwd },
     agent_config: { model: '' },
     usage: {
@@ -141,7 +142,7 @@ function makeSessionService(sessions: Map<string, Session>): ISessionService {
     undo: async () => {
       throw new Error('not implemented');
     },
-    delete: async () => {
+    archive: async () => {
       throw new Error('not implemented');
     },
     onDidCreate: emptyEmitter.event,

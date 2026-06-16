@@ -4,9 +4,7 @@ import { join } from 'node:path';
 
 import { Disposable } from '@moonshot-ai/agent-core';
 import { isVolatileEventType, type Event, type SessionCursor } from '@moonshot-ai/protocol';
-import { IEventService } from '@moonshot-ai/services';
-
-import { IEnvironmentService, ILogService } from '@moonshot-ai/services';
+import { IEnvironmentService, IEventService, ILogService } from '@moonshot-ai/services';
 import { IConnectionRegistry } from './connectionRegistry';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
 import { ISessionClientsService } from './sessionClients';
@@ -240,7 +238,11 @@ function extractSessionId(event: Event): string | undefined {
 }
 
 function isGlobalSessionEvent(type: string): boolean {
-  return type === 'event.session.created' || type === 'event.config.changed';
+  return (
+    type === 'event.session.created' ||
+    type === 'event.session.status_changed' ||
+    type === 'event.config.changed'
+  );
 }
 
 /** Session ids are ULID-ish, but never trust an id used as a path segment. */

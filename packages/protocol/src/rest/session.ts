@@ -11,7 +11,7 @@
  *   GET     /v1/sessions/{id}/status      -                     data: SessionStatus
  *   POST    /v1/sessions/{id}:compact     body: CompactSession  data: {}
  *   POST    /v1/sessions/{id}:undo        body: UndoSession     data: UndoSession
- *   DELETE  /v1/sessions/{id}             -                     data: { deleted: true }
+ *   POST    /v1/sessions/{id}:archive     -                     data: { archived: true }
  */
 
 import { z } from 'zod';
@@ -33,9 +33,19 @@ export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 export const createSessionResponseSchema = sessionSchema;
 export type CreateSessionResponse = z.infer<typeof createSessionResponseSchema>;
 
+const booleanQueryParam = z.preprocess(
+  (value) => {
+    if (value === 'true' || value === '1' || value === 1 || value === true) return true;
+    if (value === 'false' || value === '0' || value === 0 || value === false) return false;
+    return value;
+  },
+  z.boolean().optional(),
+);
+
 export const listSessionsQuerySchema = cursorQuerySchema.and(
   z.object({
     status: sessionStatusSchema.optional(),
+    include_archive: booleanQueryParam,
   }),
 );
 export type ListSessionsQuery = z.infer<typeof listSessionsQuerySchema>;
@@ -88,6 +98,7 @@ export const createSessionChildResponseSchema = sessionSchema;
 export type CreateSessionChildResponse = z.infer<typeof createSessionChildResponseSchema>;
 
 export const sessionStatusResponseSchema = z.object({
+  status: sessionStatusSchema,
   model: z.string().optional(),
   thinking_level: z.string(),
   permission: z.string(),
@@ -125,10 +136,15 @@ export const undoSessionResponseSchema = z.object({
 });
 export type UndoSessionResponse = z.infer<typeof undoSessionResponseSchema>;
 
-export const deleteSessionResponseSchema = z.object({
-  deleted: z.literal(true),
+export const archiveSessionResponseSchema = z.object({
+  archived: z.literal(true),
 });
-export type DeleteSessionResponse = z.infer<typeof deleteSessionResponseSchema>;
+export type ArchiveSessionResponse = z.infer<typeof archiveSessionResponseSchema>;
+
+/** @deprecated kept as an alias for backward compatibility; prefer archiveSessionResponseSchema. */
+export const deleteSessionResponseSchema = archiveSessionResponseSchema;
+/** @deprecated kept as an alias for backward compatibility; prefer ArchiveSessionResponse. */
+export type DeleteSessionResponse = ArchiveSessionResponse;
 
 export const sessionAbortResponseSchema = z.object({
   aborted: z.boolean(),

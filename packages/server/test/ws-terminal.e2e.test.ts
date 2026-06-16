@@ -139,7 +139,13 @@ async function waitFor(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(
-    `waitFor timed out; received: ${received.map((frame) => `${frame['type']}:${frame['id'] ?? ''}`).join(', ')}`,
+    `waitFor timed out; received: ${received
+      .map((frame) => {
+        const frameType = typeof frame['type'] === 'string' ? frame['type'] : '(unknown)';
+        const frameId = typeof frame['id'] === 'string' ? frame['id'] : '';
+        return `${frameType}:${frameId}`;
+      })
+      .join(', ')}`,
   );
 }
 

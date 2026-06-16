@@ -36,7 +36,7 @@ const emit = defineEmits<{
   createInWorkspace: [workspaceId: string];
   addWorkspace: [];
   rename: [id: string, title: string];
-  delete: [id: string];
+  archive: [id: string];
   /** NOTE: needs `@delete-workspace="client.deleteWorkspace($event)"` wiring in App.vue. */
   deleteWorkspace: [workspaceId: string];
 }>();
@@ -142,14 +142,14 @@ function visibleSessions(sessions: Session[], expanded: boolean, activeId?: stri
 // a second tap within 2.5s confirms; otherwise it reverts.
 // ---------------------------------------------------------------------------
 const menuFor = ref<string | null>(null);
-const confirmingDeleteId = ref<string | null>(null);
-let confirmDeleteTimer: ReturnType<typeof setTimeout> | undefined;
+const confirmingArchiveId = ref<string | null>(null);
+let confirmArchiveTimer: ReturnType<typeof setTimeout> | undefined;
 
 function toggleMenu(id: string): void {
   menuFor.value = menuFor.value === id ? null : id;
   wsMenuFor.value = null;
-  clearTimeout(confirmDeleteTimer);
-  confirmingDeleteId.value = null;
+  clearTimeout(confirmArchiveTimer);
+  confirmingArchiveId.value = null;
 }
 function onRename(s: Session): void {
   menuFor.value = null;
@@ -157,18 +157,18 @@ function onRename(s: Session): void {
   const title = next?.trim();
   if (title) emit('rename', s.id, title);
 }
-function onDelete(id: string): void {
-  if (confirmingDeleteId.value === id) {
-    clearTimeout(confirmDeleteTimer);
-    confirmingDeleteId.value = null;
+function onArchive(id: string): void {
+  if (confirmingArchiveId.value === id) {
+    clearTimeout(confirmArchiveTimer);
+    confirmingArchiveId.value = null;
     menuFor.value = null;
-    emit('delete', id);
+    emit('archive', id);
     return;
   }
-  clearTimeout(confirmDeleteTimer);
-  confirmingDeleteId.value = id;
-  confirmDeleteTimer = setTimeout(() => {
-    confirmingDeleteId.value = null;
+  clearTimeout(confirmArchiveTimer);
+  confirmingArchiveId.value = id;
+  confirmArchiveTimer = setTimeout(() => {
+    confirmingArchiveId.value = null;
   }, 2500);
 }
 
@@ -207,7 +207,7 @@ function onDeleteWorkspace(id: string): void {
 }
 
 onUnmounted(() => {
-  clearTimeout(confirmDeleteTimer);
+  clearTimeout(confirmArchiveTimer);
   clearTimeout(confirmWsDeleteTimer);
 });
 </script>
@@ -338,8 +338,8 @@ onUnmounted(() => {
             <!-- Kebab menu -->
             <div v-if="menuFor === s.id" class="kmenu" @click.stop>
               <button class="kitem" @click.stop="onRename(s)">{{ t('sidebar.rename') }}</button>
-              <button class="kitem archive" @click.stop="onDelete(s.id)">
-                {{ confirmingDeleteId === s.id ? t('sidebar.archiveConfirm') : t('sidebar.archive') }}
+              <button class="kitem archive" @click.stop="onArchive(s.id)">
+                {{ confirmingArchiveId === s.id ? t('sidebar.archiveConfirm') : t('sidebar.archive') }}
               </button>
             </div>
           </div>

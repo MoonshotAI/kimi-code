@@ -25,7 +25,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   select: [id: string];
   rename: [id: string, title: string];
-  delete: [id: string];
+  archive: [id: string];
   fork: [id: string];
 }>();
 
@@ -97,22 +97,22 @@ function forkRow(): void {
   emit('fork', props.session.id);
 }
 
-// Delete confirm
+// Archive confirm
 const confirming = ref(false);
-function startDelete(): void {
+function startArchive(): void {
   closeMenu();
   confirming.value = true;
 }
-function confirmDelete(): void {
-  emit('delete', props.session.id);
+function confirmArchive(): void {
+  emit('archive', props.session.id);
   confirming.value = false;
 }
-function cancelDelete(): void {
+function cancelArchive(): void {
   confirming.value = false;
 }
 
 // Expose closeMenu so the parent can close on outside-click.
-defineExpose({ closeMenu, cancelDelete });
+defineExpose({ closeMenu, cancelArchive });
 </script>
 
 <template>
@@ -142,8 +142,8 @@ defineExpose({ closeMenu, cancelDelete });
            gutter, so it aligns under the title (not the row's left edge). -->
       <div v-if="confirming" class="archive-confirm" @click.stop>
         <span class="archive-label">{{ t('sidebar.archiveConfirm') }}</span>
-        <button class="btn-confirm" @click.stop="confirmDelete">{{ t('sidebar.confirm') }}</button>
-        <button class="btn-cancel" @click.stop="cancelDelete">{{ t('sidebar.cancel') }}</button>
+        <button class="btn-confirm" @click.stop="confirmArchive">{{ t('sidebar.confirm') }}</button>
+        <button class="btn-cancel" @click.stop="cancelArchive">{{ t('sidebar.cancel') }}</button>
       </div>
 
       <template v-else>
@@ -208,7 +208,7 @@ defineExpose({ closeMenu, cancelDelete });
       <div class="menu-divider" />
       <button class="menu-item" @click.stop="startRename">{{ t('sidebar.rename') }}</button>
       <button class="menu-item" @click.stop="forkRow">{{ t('sidebar.fork') }}</button>
-      <button class="menu-item archive" @click.stop="startDelete">{{ t('sidebar.archive') }}</button>
+      <button class="menu-item archive" @click.stop="startArchive">{{ t('sidebar.archive') }}</button>
     </div>
   </div>
 </template>

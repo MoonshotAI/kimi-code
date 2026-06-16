@@ -28,12 +28,14 @@ import type {
 
 import type { IApprovalService } from '../approval/approval';
 import type { IEventService } from '../event/event';
+import type { ILogService } from '../logger/logger';
 import type { IQuestionService } from '../question/question';
 
 export interface CoreProcessClientDeps {
   readonly eventService: IEventService;
   readonly approvalService: IApprovalService;
   readonly questionService: IQuestionService;
+  readonly logService: ILogService;
 }
 
 export class BridgeClientAPI implements SDKAPI {
@@ -45,9 +47,9 @@ export class BridgeClientAPI implements SDKAPI {
 
   emitEvent(event: Event): void {
     const e = event as { type?: string; sessionId?: string; agentId?: string };
-    // eslint-disable-next-line no-console
-    console.error(
-      `[DBG coreProcessClient.emitEvent] type=${e.type} sessionId=${e.sessionId ?? '<missing>'} agentId=${e.agentId ?? '<missing>'}`,
+    this.deps.logService.debug(
+      { type: e.type, sessionId: e.sessionId, agentId: e.agentId },
+      '[DBG coreProcessClient.emitEvent]',
     );
     this.deps.eventService.publish(event);
   }

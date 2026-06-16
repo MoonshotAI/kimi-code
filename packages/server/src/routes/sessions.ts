@@ -2,12 +2,12 @@
 
 import {
   ErrorCode,
+  archiveSessionResponseSchema,
   compactSessionRequestSchema,
   compactSessionResponseSchema,
   createSessionChildRequestSchema,
   createSessionChildResponseSchema,
   createSessionRequestSchema,
-  deleteSessionResponseSchema,
   forkSessionRequestSchema,
   listSessionChildrenResponseSchema,
   pageResponseSchema,
@@ -79,12 +79,22 @@ interface SessionRouteHost {
   ): unknown;
 }
 
+const booleanQueryParam = z.preprocess(
+  (value) => {
+    if (value === 'true' || value === '1' || value === 1 || value === true) return true;
+    if (value === 'false' || value === '0' || value === 0 || value === false) return false;
+    return value;
+  },
+  z.boolean().optional(),
+);
+
 const sessionsListQueryCoercion = z
   .object({
     before_id: z.string().min(1).optional(),
     after_id: z.string().min(1).optional(),
     page_size: z.coerce.number().int().min(1).max(100).optional(),
     status: sessionStatusSchema.optional(),
+    include_archive: booleanQueryParam,
 
     workspace_id: workspaceIdSchema.optional(),
   })
@@ -246,6 +256,13 @@ export function registerSessionsRoutes(
     async (req, reply) => {
       try {
         const raw = req.query;
+        const baseQuery = {
+          before_id: raw.before_id,
+          after_id: raw.after_id,
+          page_size: raw.page_size,
+          status: raw.status,
+          includeArchive: raw.include_archive,
+        };
         let query;
         if (raw.workspace_id !== undefined) {
           const registry = ix.invokeFunction((a) => a.get(IWorkspaceRegistry));
@@ -261,11 +278,9 @@ export function registerSessionsRoutes(
             }
             throw err;
           }
-          const { workspace_id: _drop, ...rest } = raw;
-          query = { ...rest, workDir: root };
+          query = { ...baseQuery, workDir: root };
         } else {
-          const { workspace_id: _drop, ...rest } = raw;
-          query = rest;
+          query = baseQuery;
         }
         const page = await ix.invokeFunction((a) => a.get(ISessionService).list(query));
         reply.send(okEnvelope(page, req.id));
@@ -369,7 +384,7 @@ export function registerSessionsRoutes(
       path: '/sessions/{tail}',
       params: sessionActionTailParamSchema,
       body: sessionActionRequestSchema,
-      success: { data: z.union([sessionSchema, compactSessionResponseSchema, undoSessionResponseSchema, sessionAbortResponseSchema, startBtwSessionResponseSchema]) },
+      success: { data: z.union([sessionSchema, compactSessionResponseSchema, undoSessionResponseSchema, sessionAbortResponseSchema, startBtwSessionResponseSchema, archiveSessionResponseSchema]) },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
@@ -386,7 +401,7 @@ export function registerSessionsRoutes(
         const { tail } = req.params;
         const parsed = parseActionSuffix({
           tail,
-          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw'] as const,
+          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw', 'archive'] as const,
           resourceLabel: 'session',
         });
         if (parsed.kind !== 'action') {
@@ -433,6 +448,14 @@ export function registerSessionsRoutes(
             a.get(IPromptService).startBtw(parsed.id),
           );
           reply.send(okEnvelope({ agent_id: agentId }, req.id));
+          return;
+        }
+
+        if (parsed.action === 'archive') {
+          const result = await ix.invokeFunction((a) =>
+            a.get(ISessionService).archive(parsed.id),
+          );
+          reply.send(okEnvelope(result, req.id));
           return;
         }
 
@@ -544,30 +567,6 @@ export function registerSessionsRoutes(
   );
   app.get(statusRoute.path, statusRoute.options, statusRoute.handler as Parameters<SessionRouteHost['get']>[2]);
 
-  const deleteRoute = defineRoute(
-    {
-      method: 'DELETE',
-      path: '/sessions/{session_id}',
-      params: sessionIdParamSchema,
-      success: { data: deleteSessionResponseSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-      },
-      description: 'Delete a session',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      try {
-        const { session_id } = req.params;
-        const result = await ix.invokeFunction((a) => a.get(ISessionService).delete(session_id));
-        reply.send(okEnvelope(result, req.id));
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
-      }
-    },
-  );
-  app.delete(deleteRoute.path, deleteRoute.options, deleteRoute.handler as Parameters<SessionRouteHost['delete']>[2]);
 }
 
 function sendMappedError(

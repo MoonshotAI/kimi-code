@@ -62,7 +62,7 @@ async function main() {
     console.log('✓ 08-pending-recovery: pending approvals and questions round-tripped');
   } finally {
     try {
-      if (sid) await client.deleteSession(sid);
+      if (sid) await client.archiveSession(sid);
     } catch {
       // ignore
     }

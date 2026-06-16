@@ -42,6 +42,7 @@ import { noopTelemetryClient, withTelemetryContext, type TelemetryClient } from 
 import type { CoreRPCClient } from './client';
 import type {
   ActivateSkillPayload,
+  ArchiveSessionPayload,
   BeginCompactionPayload,
   CancelPayload,
   CancelPlanPayload,
@@ -300,6 +301,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       await session.close();
       this.sessions.delete(sessionId);
     }
+  }
+
+  async archiveSession({ sessionId }: ArchiveSessionPayload): Promise<void> {
+    await this.closeSession({ sessionId });
+    await this.sessionStore.archive(sessionId);
   }
 
   async resumeSession(input: ResumeSessionPayload): Promise<ResumeSessionResult> {

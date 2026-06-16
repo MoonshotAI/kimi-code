@@ -131,8 +131,8 @@ interface WireSkillDescriptor {
   disable_model_invocation?: boolean;
 }
 
-interface WireDeleteResult {
-  deleted: true;
+interface WireArchiveResult {
+  archived: true;
 }
 
 interface WireListDirectoryResult {
@@ -278,13 +278,14 @@ export class DaemonKimiWebApi implements KimiWebApi {
   // -------------------------------------------------------------------------
 
   async listSessions(
-    input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string },
+    input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string; includeArchive?: boolean },
   ): Promise<Page<AppSession>> {
     const query: Record<string, string | number | boolean | undefined> = {
       before_id: input?.beforeId,
       after_id: input?.afterId,
       page_size: input?.pageSize,
       status: input?.status ? toWireSessionStatus(input.status) : undefined,
+      include_archive: input?.includeArchive,
       // PRESUMED — daemon supports ?workspace_id= once the registry ships; it
       // ignores unknown query params until then, so this is safe to always send.
       workspace_id: input?.workspaceId,
@@ -387,9 +388,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
     };
   }
 
-  async deleteSession(sessionId: string): Promise<{ deleted: true }> {
-    const data = await this.http.delete<WireDeleteResult>(
-      `/sessions/${encodeURIComponent(sessionId)}`,
+  async archiveSession(sessionId: string): Promise<{ archived: true }> {
+    const data = await this.http.post<WireArchiveResult>(
+      `/sessions/${encodeURIComponent(sessionId)}:archive`,
+      {},
     );
     return data;
   }

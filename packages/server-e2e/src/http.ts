@@ -242,8 +242,8 @@ export class HttpClient {
       body,
     );
   }
-  deleteSession(sid: string): Promise<{ deleted: true }> {
-    return this.request('DELETE', `/sessions/${encodeURIComponent(sid)}`, undefined);
+  archiveSession(sid: string): Promise<{ archived: true }> {
+    return this.request('POST', `/sessions/${encodeURIComponent(sid)}:archive`, {});
   }
   listChildren(
     sid: string,

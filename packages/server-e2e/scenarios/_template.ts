@@ -40,7 +40,7 @@ async function main() {
     console.log('✓ scenario template ran (no assertions)');
   } finally {
     try {
-      if (sid) await client.deleteSession(sid);
+      if (sid) await client.archiveSession(sid);
     } catch {
       // ignore
     }

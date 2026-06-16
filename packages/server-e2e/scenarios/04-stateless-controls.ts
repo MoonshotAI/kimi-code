@@ -282,7 +282,7 @@ async function main() {
     console.log(`✓ 04-stateless-controls: per-request controls diff-dispatched across 4 prompts + stateful /meta verified (via /debug)`);
   } finally {
     try {
-      if (sid) await client.deleteSession(sid);
+      if (sid) await client.archiveSession(sid);
     } catch {
       // ignore
     }

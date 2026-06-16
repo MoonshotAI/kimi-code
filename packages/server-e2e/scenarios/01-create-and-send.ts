@@ -64,7 +64,7 @@ async function main() {
     console.log(`✓ 01-create-and-send: assistant replied "${text.trim()}"`);
   } finally {
     try {
-      if (sid) await client.deleteSession(sid);
+      if (sid) await client.archiveSession(sid);
     } catch {
       // ignore
     }

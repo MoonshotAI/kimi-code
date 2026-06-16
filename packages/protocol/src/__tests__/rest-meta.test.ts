@@ -15,6 +15,7 @@ describe('metaResponseSchema', () => {
     },
     server_id: '01HXYZABCDEFGHJKMNPQRSTVWX',
     started_at: '2026-06-04T10:30:00.000Z',
+    open_in_apps: ['finder', 'vscode'] as const,
   };
 
   it('round-trips a well-formed payload', () => {

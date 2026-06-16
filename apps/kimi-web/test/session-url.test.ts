@@ -3,7 +3,7 @@
 // Session ↔ URL binding without a router: clicking a session pushes
 // /sessions/<id>; loading the app honours a deep link (fetching the session
 // when it is beyond the first page); back/forward drive selection via
-// popstate without re-writing the URL; deleting the active session repairs
+// popstate without re-writing the URL; archiving the active session repairs
 // the address bar with replaceState.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +19,7 @@ function session(id: string): AppSession {
     createdAt: now,
     updatedAt: now,
     status: 'idle',
+    archived: false,
     cwd: '/repo',
     model: 'kimi-test',
     usage: {
@@ -76,7 +77,7 @@ async function setup(opts: {
       if (!found) throw new Error('SESSION_NOT_FOUND');
       return found;
     }),
-    deleteSession: vi.fn(async () => ({ deleted: true })),
+    archiveSession: vi.fn(async () => ({ archived: true })),
     getSessionSnapshot: vi.fn(async (id: string) => {
       if (Object.prototype.hasOwnProperty.call(snapshotErrors, id)) {
         throw snapshotErrors[id];
@@ -299,13 +300,13 @@ describe('session ↔ URL binding', () => {
     expect(client.activeSessionId.value).toBe(''); // composable maps undefined → ''
   });
 
-  it('deleting the active session replaces the URL with the next session', async () => {
+  it('archiving the active session replaces the URL with the next session', async () => {
     const { client } = await setup({ sessions: [session('sess_1'), session('sess_2')] });
     await client.load();
     expect(client.activeSessionId.value).toBe('sess_1');
 
     const lenBefore = window.history.length;
-    await client.deleteSession('sess_1');
+    await client.archiveSession('sess_1');
 
     expect(client.activeSessionId.value).toBe('sess_2');
     expect(window.location.pathname).toBe('/sessions/sess_2');

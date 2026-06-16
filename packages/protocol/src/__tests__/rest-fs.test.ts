@@ -378,6 +378,8 @@ describe('fsGitStatusResponseSchema (W11.2)', () => {
       ahead: 0,
       behind: 0,
       entries: {},
+      additions: 0,
+      deletions: 0,
     };
     expect(fsGitStatusResponseSchema.parse(r)).toEqual(r);
   });
@@ -392,6 +394,8 @@ describe('fsGitStatusResponseSchema (W11.2)', () => {
         'src/new.ts': 'untracked' as const,
         'src/old.ts': 'deleted' as const,
       },
+      additions: 42,
+      deletions: 7,
     };
     expect(fsGitStatusResponseSchema.parse(r)).toEqual(r);
   });
@@ -403,6 +407,8 @@ describe('fsGitStatusResponseSchema (W11.2)', () => {
         ahead: 0,
         behind: 0,
         entries: {},
+        additions: 0,
+        deletions: 0,
       }).branch,
     ).toBe('');
   });

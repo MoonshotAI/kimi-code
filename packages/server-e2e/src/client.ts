@@ -237,8 +237,8 @@ export class DaemonClient {
   ): Promise<UndoSessionResponse> {
     return this.http.undoSession(sid, body);
   }
-  deleteSession(sid: string): Promise<{ deleted: true }> {
-    return this.http.deleteSession(sid);
+  archiveSession(sid: string): Promise<{ archived: true }> {
+    return this.http.archiveSession(sid);
   }
   listChildren(
     sid: string,

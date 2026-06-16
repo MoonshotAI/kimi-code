@@ -23,6 +23,7 @@ import { ulid } from 'ulid';
 import { ICoreProcessService } from '../coreProcess/coreProcess';
 import { IAuthSummaryService } from '../authSummary/authSummary';
 import { IEventService } from '../event/event';
+import { ILogService } from '../logger/logger';
 import { ISessionService, SessionNotFoundError } from '../session/session';
 import {
   IPromptService,
@@ -290,6 +291,7 @@ export class PromptService
     @IEventService private readonly eventService: IEventService,
     @IAuthSummaryService private readonly auth: IAuthSummaryService,
     @ISessionService private readonly sessionService: ISessionService,
+    @ILogService private readonly _logger: ILogService,
   ) {
     super();
     // Self-subscribe to the event stream for lifecycle synthesis.
@@ -438,18 +440,18 @@ export class PromptService
     // The submit RPC returns synchronously (PromptPayload → void); errors
     // would manifest as later `error` events, not as a rejection here.
     try {
-      // eslint-disable-next-line no-console
-      console.error(
-        `[DBG prompt-service.submit] sid=${sid} promptId=${state.promptId} agent=${state.agentId} parts=${input.length} -> core.rpc.prompt(...)`,
+      this._logger.debug(
+        { sid, promptId: state.promptId, agentId: state.agentId, partCount: input.length },
+        '[DBG prompt-service.submit] -> core.rpc.prompt(...)',
       );
       await this.core.rpc.prompt({
         sessionId: sid,
         agentId: state.agentId,
         input,
       });
-      // eslint-disable-next-line no-console
-      console.error(
-        `[DBG prompt-service.submit] sid=${sid} promptId=${state.promptId} core.rpc.prompt(...) resolved`,
+      this._logger.debug(
+        { sid, promptId: state.promptId },
+        '[DBG prompt-service.submit] core.rpc.prompt(...) resolved',
       );
     } catch (error) {
       // Clear our active-prompt state so the next submit succeeds; surface
@@ -457,9 +459,9 @@ export class PromptService
       if (this._active.get(key)?.promptId === state.promptId) {
         this._active.delete(key);
       }
-      // eslint-disable-next-line no-console
-      console.error(
-        `[DBG prompt-service.submit] sid=${sid} promptId=${state.promptId} core.rpc.prompt(...) threw: ${(error as Error)?.message ?? error}`,
+      this._logger.debug(
+        { sid, promptId: state.promptId, err: (error as Error)?.message ?? error },
+        '[DBG prompt-service.submit] core.rpc.prompt(...) threw',
       );
       throw error;
     }

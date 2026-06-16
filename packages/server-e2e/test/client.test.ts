@@ -52,7 +52,7 @@ afterEach(async () => {
   // Best-effort cleanup so reruns don't accumulate phantom sessions.
   for (const { client, sid } of created.splice(0)) {
     try {
-      await client.deleteSession(sid);
+      await client.archiveSession(sid);
     } catch {
       // ignore
     }
@@ -705,6 +705,7 @@ function testMessage(overrides: Partial<Message> = {}): Message {
 
 function testSessionStatus(): SessionStatusResponse {
   return {
+    status: 'idle',
     model: 'kimi-code/kimi-for-coding',
     thinking_level: 'off',
     permission: 'manual',

@@ -321,6 +321,35 @@ describe('WS broadcast + per-session seq (W5.2)', () => {
     a.ws.close();
     b.ws.close();
   });
+
+  it('event.session.status_changed is broadcast to all connections regardless of subscription', async () => {
+    const r = await spawn();
+    const a = await openConn(wsUrl(r.address));
+    const b = await openConn(wsUrl(r.address));
+    // Subscribe to different sessions
+    await helloAndSubscribe(a, 'A', 'sid_a');
+    await helloAndSubscribe(b, 'B', 'sid_b');
+
+    r.services.invokeFunction((acc) =>
+      acc.get(IEventService).publish({
+        type: 'event.session.status_changed',
+        agentId: 'main',
+        sessionId: 'sid_a',
+        status: 'running',
+        previous_status: 'idle',
+      } as unknown as Event),
+    );
+
+    const evA = await receiveType(a, 'event.session.status_changed', 1000);
+    const evB = await receiveType(b, 'event.session.status_changed', 1000);
+    expect(evA.session_id).toBe('sid_a');
+    expect(evB.session_id).toBe('sid_a');
+    expect(evA.seq).toBe(1);
+    expect(evB.seq).toBe(1);
+
+    a.ws.close();
+    b.ws.close();
+  });
 });
 
 /** Spin until `cond()` returns true or 2s elapses. */

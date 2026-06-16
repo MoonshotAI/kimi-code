@@ -7,6 +7,7 @@ import {
   type CreateSessionPayload,
   Emitter,
   type ForkSessionPayload,
+  IInstantiationService,
   type RenameSessionPayload,
   type ResumeSessionResult,
   type SessionMeta,
@@ -14,13 +15,15 @@ import {
   type UpdateSessionMetadataPayload,
 } from '@moonshot-ai/agent-core';
 import { TestInstantiationService } from '@moonshot-ai/agent-core/di/test';
-import { emptySessionUsage, type Session } from '@moonshot-ai/protocol';
+import { emptySessionUsage, type Event, type Session } from '@moonshot-ai/protocol';
 
 import {
+  IApprovalService,
   type IAuthSummaryService,
   type ICoreProcessService,
   type IEventService,
   IPromptService,
+  IQuestionService,
   type ISessionService,
   PromptService,
   SessionNotFoundError,
@@ -34,6 +37,7 @@ type WithSessionId<T> = T & { readonly sessionId: string };
 interface FakeBridgeState {
   sessions: SessionSummary[];
   metas: Map<string, SessionMeta>;
+  archivedIds: string[];
   closedIds: string[];
   renamedTitles: Map<string, string>;
   metadataPatches: Map<string, UpdateSessionMetadataPayload['metadata']>;
@@ -122,8 +126,8 @@ function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
           agents: {},
         };
       }),
-    closeSession: vi.fn().mockImplementation(async ({ sessionId }: { sessionId: string }) => {
-      state.closedIds.push(sessionId);
+    archiveSession: vi.fn().mockImplementation(async ({ sessionId }: { sessionId: string }) => {
+      state.archivedIds.push(sessionId);
     }),
     renameSession: vi
       .fn()
@@ -204,6 +208,7 @@ function freshState(): FakeBridgeState {
   return {
     sessions: [],
     metas: new Map(),
+    archivedIds: [],
     closedIds: [],
     renamedTitles: new Map(),
     metadataPatches: new Map(),
@@ -232,6 +237,8 @@ function textMessage(
 let state: FakeBridgeState;
 let svc: SessionService;
 let promptStub: ReturnType<typeof makePromptServiceStub>;
+let approvalStub: ReturnType<typeof makeApprovalServiceStub>;
+let questionStub: ReturnType<typeof makeQuestionServiceStub>;
 let eventBus: ReturnType<typeof makeEventServiceStub>;
 let instantiation: TestInstantiationService;
 
@@ -247,6 +254,7 @@ function makeEventServiceStub(): {
       _serviceBrand: undefined,
       publish: vi.fn((event: unknown) => {
         events.push(event);
+        emitter.fire(event as never);
       }) as IEventService['publish'],
       onDidPublish: emitter.event as unknown as IEventService['onDidPublish'],
     },
@@ -256,8 +264,10 @@ function makeEventServiceStub(): {
 function makePromptServiceStub(): {
   promptService: IPromptService;
   calls: Array<{ sid: string; patch: Record<string, unknown>; source: string; promptId: string | undefined }>;
+  activePromptIds: Map<string, string | undefined>;
 } {
   const calls: Array<{ sid: string; patch: Record<string, unknown>; source: string; promptId: string | undefined }> = [];
+  const activePromptIds = new Map<string, string | undefined>();
   const applyAgentState = vi
     .fn()
     .mockImplementation(async (sid: string, patch: Record<string, unknown>, source: string, promptId?: string) => {
@@ -271,32 +281,78 @@ function makePromptServiceStub(): {
     steer: vi.fn() as unknown as IPromptService['steer'],
     abort: vi.fn() as unknown as IPromptService['abort'],
     abortBySession: vi.fn() as unknown as IPromptService['abortBySession'],
-    getCurrentPromptId: vi.fn().mockReturnValue(undefined) as unknown as IPromptService['getCurrentPromptId'],
+    getCurrentPromptId: vi.fn().mockImplementation((sid: string) => activePromptIds.get(sid)) as unknown as IPromptService['getCurrentPromptId'],
     applyAgentState,
     onDidComplete: emitter.event as unknown as IPromptService['onDidComplete'],
     onDidAbort: emitter.event as unknown as IPromptService['onDidAbort'],
     getAgentStateSnapshot: vi.fn().mockReturnValue(undefined) as unknown as IPromptService['getAgentStateSnapshot'],
   };
-  return { promptService, calls };
+  return { promptService, calls, activePromptIds };
+}
+
+function makeApprovalServiceStub(): {
+  approvalService: IApprovalService;
+  pending: Map<string, unknown[]>;
+} {
+  const pending = new Map<string, unknown[]>();
+  const approvalService: IApprovalService = {
+    _serviceBrand: undefined,
+    request: vi.fn() as unknown as IApprovalService['request'],
+    resolve: vi.fn() as unknown as IApprovalService['resolve'],
+    listPending: vi.fn().mockImplementation((sessionId: string) => {
+      return (pending.get(sessionId) ?? []) as unknown as ReturnType<IApprovalService['listPending']>;
+    }),
+  } as unknown as IApprovalService;
+  return { approvalService, pending };
+}
+
+function makeQuestionServiceStub(): {
+  questionService: IQuestionService;
+  pending: Map<string, unknown[]>;
+} {
+  const pending = new Map<string, unknown[]>();
+  const questionService: IQuestionService = {
+    _serviceBrand: undefined,
+    request: vi.fn() as unknown as IQuestionService['request'],
+    resolve: vi.fn() as unknown as IQuestionService['resolve'],
+    dismiss: vi.fn() as unknown as IQuestionService['dismiss'],
+    listPending: vi.fn().mockImplementation((sessionId: string) => {
+      return (pending.get(sessionId) ?? []) as unknown as ReturnType<IQuestionService['listPending']>;
+    }),
+  } as unknown as IQuestionService;
+  return { questionService, pending };
 }
 
 function makeTestInstantiation(stubs: {
   promptService: IPromptService;
+  approvalService: IApprovalService;
+  questionService: IQuestionService;
 }): TestInstantiationService {
   const ix = new TestInstantiationService(undefined, true);
+  ix.stub(IInstantiationService, ix);
   ix.stub(IPromptService, stubs.promptService);
+  ix.stub(IApprovalService, stubs.approvalService);
+  ix.stub(IQuestionService, stubs.questionService);
   return ix;
 }
 
 beforeEach(() => {
   state = freshState();
   promptStub = makePromptServiceStub();
+  approvalStub = makeApprovalServiceStub();
+  questionStub = makeQuestionServiceStub();
   eventBus = makeEventServiceStub();
-  instantiation = makeTestInstantiation({ promptService: promptStub.promptService });
+  instantiation = makeTestInstantiation({
+    promptService: promptStub.promptService,
+    approvalService: approvalStub.approvalService,
+    questionService: questionStub.questionService,
+  });
   svc = new SessionService(
     makeFakeBridge(state),
     eventBus.eventService,
     instantiation,
+    approvalStub.approvalService,
+    questionStub.questionService,
   );
 });
 
@@ -736,16 +792,16 @@ describe('SessionService children', () => {
   });
 });
 
-describe('SessionService.delete', () => {
-  it('calls bridge.rpc.closeSession and returns { deleted: true }', async () => {
+describe('SessionService.archive', () => {
+  it('calls bridge.rpc.archiveSession and returns { archived: true }', async () => {
     const created = await svc.create({ metadata: { cwd: '/tmp/d' } });
-    const result = await svc.delete(created.id);
-    expect(result).toEqual({ deleted: true });
-    expect(state.closedIds).toEqual([created.id]);
+    const result = await svc.archive(created.id);
+    expect(result).toEqual({ archived: true });
+    expect(state.archivedIds).toEqual([created.id]);
   });
 
   it('throws SessionNotFoundError on a missing id', async () => {
-    await expect(svc.delete('does-not-exist')).rejects.toBeInstanceOf(SessionNotFoundError);
+    await expect(svc.archive('does-not-exist')).rejects.toBeInstanceOf(SessionNotFoundError);
   });
 });
 
@@ -805,6 +861,7 @@ describe('SessionService.undo', () => {
       { type: 'text', text: 'first prompt' },
     ]);
     expect(result.status).toMatchObject({
+      status: 'idle',
       model: 'kimi-k2',
       thinking_level: 'auto',
       permission: 'manual',
@@ -872,11 +929,11 @@ describe('SessionService per-domain event listeners (Phase C)', () => {
     expect(events).toHaveLength(0);
   });
 
-  it('onDidClose fires after bridge.rpc.closeSession resolves', async () => {
+  it('onDidClose fires after bridge.rpc.archiveSession resolves', async () => {
     const closedIds: string[] = [];
     svc.onDidClose((e) => { closedIds.push(e.sessionId); });
     const session = await svc.create({ metadata: { cwd: '/tmp/evt3' } });
-    await svc.delete(session.id);
+    await svc.archive(session.id);
     expect(closedIds).toEqual([session.id]);
   });
 
@@ -885,7 +942,87 @@ describe('SessionService per-domain event listeners (Phase C)', () => {
     const sub = svc.onDidClose((e) => { closedIds.push(e.sessionId); });
     sub.dispose();
     const session = await svc.create({ metadata: { cwd: '/tmp/evt4' } });
-    await svc.delete(session.id);
+    await svc.archive(session.id);
     expect(closedIds).toHaveLength(0);
+  });
+});
+
+describe('SessionService status lifecycle', () => {
+  it('getStatus returns live status', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/status' } });
+    const status = await svc.getStatus(session.id);
+    expect(status.status).toBe('idle');
+  });
+
+  it('patches created session status to idle', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/status2' } });
+    expect(session.status).toBe('idle');
+  });
+
+  it('turn.started moves status to running and emits status_changed', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/running' } });
+    eventBus.eventService.publish({
+      type: 'turn.started',
+      sessionId: session.id,
+    } as unknown as Event);
+    expect((await svc.get(session.id)).status).toBe('running');
+    expect(eventBus.events).toContainEqual(expect.objectContaining({
+      type: 'event.session.status_changed',
+      sessionId: session.id,
+      previous_status: 'idle',
+      status: 'running',
+    }));
+  });
+
+  it('turn.ended with success moves status back to idle', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/ended' } });
+    eventBus.eventService.publish({ type: 'turn.started', sessionId: session.id } as unknown as Event);
+    eventBus.eventService.publish({ type: 'turn.ended', sessionId: session.id, reason: 'success' } as unknown as Event);
+    expect((await svc.get(session.id)).status).toBe('idle');
+  });
+
+  it('turn.ended with failed moves status to aborted', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/aborted' } });
+    eventBus.eventService.publish({ type: 'turn.started', sessionId: session.id } as unknown as Event);
+    eventBus.eventService.publish({ type: 'turn.ended', sessionId: session.id, reason: 'failed' } as unknown as Event);
+    expect((await svc.get(session.id)).status).toBe('aborted');
+  });
+
+  it('prompt.submitted moves status to running when a current prompt exists', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/prompt' } });
+    promptStub.activePromptIds.set(session.id, 'p1');
+    eventBus.eventService.publish({ type: 'prompt.submitted', sessionId: session.id } as unknown as Event);
+    expect((await svc.get(session.id)).status).toBe('running');
+  });
+
+  it('pending approval yields awaiting_approval', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/approval' } });
+    approvalStub.pending.set(session.id, [{ id: 'a1' }]);
+    eventBus.eventService.publish({ type: 'event.approval.requested', sessionId: session.id } as unknown as Event);
+    expect((await svc.get(session.id)).status).toBe('awaiting_approval');
+  });
+
+  it('pending question yields awaiting_question', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/question' } });
+    questionStub.pending.set(session.id, [{ id: 'q1' }]);
+    eventBus.eventService.publish({ type: 'event.question.requested', sessionId: session.id } as unknown as Event);
+    expect((await svc.get(session.id)).status).toBe('awaiting_question');
+  });
+
+  it('approval takes precedence over active prompt', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/priority' } });
+    promptStub.activePromptIds.set(session.id, 'p1');
+    approvalStub.pending.set(session.id, [{ id: 'a1' }]);
+    eventBus.eventService.publish({ type: 'prompt.submitted', sessionId: session.id } as unknown as Event);
+    expect((await svc.get(session.id)).status).toBe('awaiting_approval');
+  });
+
+  it('does not emit status_changed when status is unchanged', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/nochange' } });
+    const statusChangedCount = (e: unknown) =>
+      (e as { type?: string }).type === 'event.session.status_changed';
+    const before = eventBus.events.filter(statusChangedCount).length;
+    eventBus.eventService.publish({ type: 'prompt.completed', sessionId: session.id } as unknown as Event);
+    expect(eventBus.events.filter(statusChangedCount).length).toBe(before);
   });
 });
