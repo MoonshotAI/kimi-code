@@ -125,7 +125,7 @@ defineExpose({ closeMenu, cancelArchive });
            spills past its left boundary. -->
       <span class="lead" aria-hidden="true">
         <svg
-          v-if="session.status === 'running'"
+          v-if="session.busy"
           class="run-ico"
           viewBox="0 0 16 16"
           width="12"
@@ -166,20 +166,30 @@ defineExpose({ closeMenu, cancelArchive });
 
         <!-- Pending tags — coloured per kind, shown even when the row isn't
              active. "Answer" = an askUserQuestion is waiting; "Approve" = a
-             permission request is waiting. -->
+             permission request is waiting. The session's lifecycle status drives
+             the same tags as a fallback for background sessions whose pending
+             lists aren't loaded yet (status known, counts not). -->
         <span
-          v-if="!renaming && questionCount > 0"
+          v-if="!renaming && (questionCount > 0 || session.status === 'awaitingQuestion')"
           class="tag tag-ask"
           :title="t('workspace.awaitingAnswerTitle')"
         >
           <span class="tag-text">{{ t('workspace.awaitingAnswer') }}</span>
         </span>
         <span
-          v-if="!renaming && approvalCount > 0"
+          v-if="!renaming && (approvalCount > 0 || session.status === 'awaitingApproval')"
           class="tag tag-approve"
           :title="t('workspace.awaitingPermissionTitle')"
         >
           <span class="tag-text">{{ t('workspace.awaitingPermission') }}</span>
+        </span>
+        <!-- Aborted: a distinct, low-key error tag (not collapsed into idle). -->
+        <span
+          v-if="!renaming && session.status === 'aborted'"
+          class="tag tag-aborted"
+          :title="t('workspace.abortedTitle')"
+        >
+          <span class="tag-text">{{ t('workspace.aborted') }}</span>
         </span>
 
         <!-- Kebab button (visible on hover) -->
@@ -311,6 +321,11 @@ defineExpose({ closeMenu, cancelArchive });
   background: color-mix(in srgb, var(--warn) 16%, var(--bg));
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 38%, var(--bg));
+}
+.tag-aborted {
+  background: color-mix(in srgb, var(--err) 12%, var(--bg));
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 32%, var(--bg));
 }
 
 /* Kebab button — hidden until hover. Sits at the RIGHT of the timestamp

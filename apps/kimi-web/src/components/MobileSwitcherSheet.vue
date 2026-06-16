@@ -318,7 +318,7 @@ onUnmounted(() => {
             @click="onSelectSession(s.id)"
           >
             <div class="m">
-              <div class="t" :class="{ run: s.status === 'running' }">{{ s.title }}</div>
+              <div class="t" :class="{ run: s.busy, aborted: s.status === 'aborted' }">{{ s.title }}</div>
               <div class="s">{{ s.time }}</div>
             </div>
             <span v-if="(attentionBySession[s.id] ?? 0) > 0" class="att">{{ attentionBySession[s.id] }}</span>
@@ -514,6 +514,19 @@ onUnmounted(() => {
 @keyframes mRunPulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+/* Aborted: a static red dot in the same gutter slot (no pulse — it's finished). */
+.srow .m .t.aborted { position: relative; }
+.srow .m .t.aborted::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--err);
 }
 .srow .m .s {
   font-size: calc(var(--ui-font-size) - 3px);

@@ -65,6 +65,15 @@ function attentionFor(id: string): number {
   return props.attentionBySession[id] ?? 0;
 }
 
+/** Status dot colour: amber when something needs the user (pending items or an
+    awaiting status), green while busy, red for an interrupted session, else grey. */
+function dotClass(s: Session): 'run' | 'attn' | 'aborted' | 'idle' {
+  if (attentionFor(s.id) > 0 || s.status === 'awaitingApproval' || s.status === 'awaitingQuestion') return 'attn';
+  if (s.busy) return 'run';
+  if (s.status === 'aborted') return 'aborted';
+  return 'idle';
+}
+
 // ---------------------------------------------------------------------------
 // Keyboard navigation
 // ---------------------------------------------------------------------------
@@ -138,15 +147,9 @@ onUnmounted(() => {
           @click="choose(s.id)"
           @mouseenter="selectedIdx = i"
         >
-          <!-- Status dot: running=green, idle=grey; attention overrides to amber -->
-          <span
-            class="dot"
-            :class="{
-              run: s.status === 'running' && attentionFor(s.id) === 0,
-              idle: s.status !== 'running' && attentionFor(s.id) === 0,
-              attn: attentionFor(s.id) > 0,
-            }"
-          />
+          <!-- Status dot: busy=green, awaiting/attention=amber, aborted=red,
+               idle=grey. -->
+          <span class="dot" :class="dotClass(s)" />
           <div class="meta">
             <span class="title">{{ s.title }}</span>
             <span class="sub">
@@ -291,6 +294,7 @@ onUnmounted(() => {
 .dot.run { background: var(--ok); }
 .dot.idle { background: var(--faint); }
 .dot.attn { background: var(--warn); }
+.dot.aborted { background: var(--err); }
 
 .meta {
   display: flex;

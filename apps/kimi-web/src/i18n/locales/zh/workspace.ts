@@ -47,4 +47,6 @@ export default {
   awaitingAnswerTitle: '有提问等待你回答',
   awaitingPermission: '待授权',
   awaitingPermissionTitle: '有操作等待你授权',
+  aborted: '已中断',
+  abortedTitle: '此会话在完成前被中断',
 };
