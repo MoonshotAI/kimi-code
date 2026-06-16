@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils';
 import { createI18n } from 'vue-i18n';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 
 import ConversationPane from '../src/components/ConversationPane.vue';
@@ -74,6 +74,7 @@ function mountPane(extraProps: Record<string, unknown>) {
 
 afterEach(() => {
   document.body.innerHTML = '';
+  vi.unstubAllGlobals();
 });
 
 describe('ConversationPane docked interrupt cards', () => {
@@ -93,6 +94,42 @@ describe('ConversationPane docked interrupt cards', () => {
     await nextTick();
 
     expect(wrapper.find('composer-stub').exists()).toBe(true);
+  });
+
+  it('passes the chat scroller gutter to the dock for composer alignment', async () => {
+    const resizeCallbacks: ResizeObserverCallback[] = [];
+    class MockResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback);
+      }
+
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal('ResizeObserver', MockResizeObserver);
+
+    const wrapper = mountPane({});
+    await nextTick();
+    await nextTick();
+
+    const pane = wrapper.find('.chat-scroll').element as HTMLElement;
+    Object.defineProperty(pane, 'offsetWidth', {
+      configurable: true,
+      get: () => 800,
+    });
+    Object.defineProperty(pane, 'clientWidth', {
+      configurable: true,
+      get: () => 785,
+    });
+
+    for (const callback of resizeCallbacks) {
+      callback([], {} as ResizeObserver);
+    }
+    await nextTick();
+
+    const dock = wrapper.find('.chat-dock').element as HTMLElement;
+    expect(dock.style.getPropertyValue('--panes-scrollbar-width')).toBe('15px');
   });
 
   it('remounts the question card when the pending question changes', async () => {
