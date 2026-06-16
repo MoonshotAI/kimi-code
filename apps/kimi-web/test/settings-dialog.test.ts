@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils';
+import { nextTick } from 'vue';
 import { createI18n } from 'vue-i18n';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -160,5 +161,46 @@ describe('SettingsDialog config controls', () => {
     const planRow = wrapper.findAll('.row').find((row) => row.text().includes('Plan mode by default'));
     await planRow!.find('button.switch').trigger('click');
     expect(wrapper.emitted('updateConfig')?.[2]?.[0]).toEqual({ defaultPlanMode: true });
+  });
+});
+
+describe('SettingsDialog dialog focus', () => {
+  it('is a modal that takes focus on open and restores it on close', async () => {
+    const opener = document.createElement('button');
+    document.body.appendChild(opener);
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+
+    const wrapper = mount(SettingsDialog, {
+      props: {
+        theme: 'modern',
+        colorScheme: 'system',
+        uiFontSize: 15,
+        authReady: true,
+        accountModel: 'kimi/k2',
+        notify: true,
+        notifyPermission: 'granted',
+        betaToc: false,
+        config,
+        models,
+        configSaving: false,
+      },
+      global: { plugins: [i18n], stubs: { LanguageSwitcher: true } },
+      attachTo: document.body,
+    });
+
+    const dialog = wrapper.find('.dialog');
+    expect(dialog.attributes('aria-modal')).toBe('true');
+
+    await nextTick();
+    // Opening moves focus into the dialog.
+    expect(document.activeElement).toBe(dialog.element);
+
+    wrapper.unmount();
+    await nextTick();
+    // Closing returns focus to the opener.
+    expect(document.activeElement).toBe(opener);
+
+    opener.remove();
   });
 });

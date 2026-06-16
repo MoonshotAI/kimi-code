@@ -5,6 +5,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useDialogFocus } from '../composables/useDialogFocus';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import { serverEndpointLabel } from '../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../debug/trace';
@@ -60,6 +61,11 @@ const tabs: { id: SettingsTab; labelKey: string }[] = [
 const daemonEndpoint = serverEndpointLabel();
 const buildInfo = [__KIMI_WEB_VERSION__, __KIMI_WEB_COMMIT__].filter(Boolean).join(' · ');
 const permissionModes = ['manual', 'auto', 'yolo'] as const;
+
+// Modal focus: move focus into the dialog on open, restore it to the opener on
+// close (Escape-to-close is handled below).
+const dialogRef = ref<HTMLElement | null>(null);
+useDialogFocus(dialogRef);
 
 function handleKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') emit('close');
@@ -134,7 +140,7 @@ function setTab(tab: SettingsTab): void {
 
 <template>
   <div class="backdrop" @click.self="emit('close')">
-    <div class="dialog" role="dialog" :aria-label="t('settings.title')">
+    <div ref="dialogRef" class="dialog" role="dialog" aria-modal="true" tabindex="-1" :aria-label="t('settings.title')">
       <div class="dh">
         <span class="dtitle">{{ t('settings.title') }}</span>
         <button class="close-btn" :title="t('newSession.close')" @click="emit('close')">
