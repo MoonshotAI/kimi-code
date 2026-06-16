@@ -226,6 +226,9 @@ function startArchive(): void {
       class="ch-act ch-act-more"
       :class="{ open: menuOpen }"
       :title="t('header.options')"
+      :aria-label="t('header.options')"
+      :aria-expanded="menuOpen"
+      aria-haspopup="menu"
       @click.stop="toggleMenu($event)"
     >
       <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
@@ -399,6 +402,19 @@ function startArchive(): void {
 .ch-act:hover { color: var(--ink); }
 .ch-act.open { color: var(--ink); }
 .ch-act svg { flex: none; }
+/* Kebab is icon-only: keep the glyph small but give it a comfortable 28x28
+   click target (and a clear keyboard focus ring). */
+.ch-act-more {
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+.ch-act-more:hover { background: var(--panel2); }
+.ch-act-more:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
 
 .ch-pr {
   display: inline-flex;

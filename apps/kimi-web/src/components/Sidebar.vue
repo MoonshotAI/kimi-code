@@ -462,9 +462,13 @@ function blinkOnce(): void {
                 />
 
                 <button
+                  type="button"
                   class="gh-more"
                   :class="{ open: wsMenuOpenId === g.workspace.id }"
                   :title="t('sidebar.options')"
+                  :aria-label="t('sidebar.options')"
+                  aria-haspopup="menu"
+                  :aria-expanded="wsMenuOpenId === g.workspace.id"
                   @click.stop="toggleWsMenu(g.workspace, $event)"
                 >
                   <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
@@ -475,8 +479,10 @@ function blinkOnce(): void {
                 </button>
 
                 <button
+                  type="button"
                   class="gh-add"
                   :title="t('workspace.newInGroup')"
+                  :aria-label="t('workspace.newInGroup')"
                   @click.stop="emit('createInWorkspace', g.workspace.id)"
                 >
                   <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -659,6 +665,10 @@ function blinkOnce(): void {
   padding: 0;
 }
 .settings-btn:hover { background: var(--soft); color: var(--ink); }
+.settings-btn:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
 
 /* Action buttons */
  .btn-wrap {
@@ -681,6 +691,10 @@ function blinkOnce(): void {
   white-space: nowrap;
 }
 .btn-wrap button svg { flex: none; }
+.btn-wrap button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
 .btn-wrap button span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -791,7 +805,10 @@ function blinkOnce(): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px 6px;
+  /* Keep the icon small but give the button a ≥24px tap target. Extra padding
+     is vertical only so the right-rail alignment below is preserved. */
+  padding: 5px 6px;
+  border-radius: 4px;
   flex: none;
   /* Pull the glyph onto the right rail: its right edge lands at --sb-pad-x
      from the sidebar edge, mirroring the folder icon's left gap and lining
@@ -799,17 +816,23 @@ function blinkOnce(): void {
   margin-right: -6px;
 }
 .gh-add:hover { color: var(--dim); }
+.gh-add:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
 
 /* More button — hidden until hover */
 .gh-more {
   display: none;
   flex: none;
+  width: 24px;
+  height: 24px;
   align-items: center;
   justify-content: center;
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px;
+  padding: 0;
   color: var(--muted);
   border-radius: 4px;
 }
@@ -819,6 +842,12 @@ function blinkOnce(): void {
 }
 .gh-more:hover,
 .gh-more.open { color: var(--ink); background: var(--line2); }
+.gh-more:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+  /* Keyboard users can't hover, so the focused kebab must be visible. */
+  display: inline-flex;
+}
 
 /* Workspace kebab dropdown menu — fixed so the scroll container can't clip it;
    anchored to the ⋯ trigger from toggleWsMenu(). */
