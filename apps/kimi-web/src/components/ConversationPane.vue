@@ -74,6 +74,8 @@ const props = defineProps<{
   compaction?: { status: 'running' } | null;
   /** Available models for the quick-switch dropdown in the composer toolbar. */
   models?: AppModel[];
+  /** Starred model ids shown at the top of the composer's quick-switch dropdown. */
+  starredIds?: string[];
   /** Session skills shown in the composer `/` menu. */
   skills?: AppSkill[];
   /** Workspace name shown in the empty-session hint above the centred composer. */
@@ -687,6 +689,10 @@ function defaultLoadDir(): Promise<FsEntry[]> {
 
 const panesRef = ref<HTMLElement | null>(null);
 const dockRef = ref<HTMLElement | null>(null);
+const panesScrollbarWidth = ref(0);
+const chatDockStyle = computed(() => ({
+  '--panes-scrollbar-width': `${panesScrollbarWidth.value}px`,
+}));
 type ComposerHandle = { loadForEdit: (value: string) => void };
 type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
 
@@ -708,6 +714,11 @@ function toHtmlEl(el: RefArg): HTMLElement | null {
   if (el instanceof HTMLElement) return el;
   if (el && '$el' in el && el.$el instanceof HTMLElement) return el.$el;
   return null;
+}
+
+function updatePanesScrollbarWidth(): void {
+  const el = panesRef.value;
+  panesScrollbarWidth.value = el ? Math.max(0, el.offsetWidth - el.clientWidth) : 0;
 }
 
 /** First group whose active tab is chat, depth-first. Determines the follow
@@ -779,8 +790,10 @@ function resolveScrollTarget(): void {
   const pane = chatPaneEls.get(key) ?? null;
   dockRef.value = chatDockEls.get(key) ?? null;
   dockedComposerRef.value = chatComposers.get(key) ?? null;
+  updatePanesScrollbarWidth();
   if (pane === panesRef.value) return;
   panesRef.value = pane;
+  updatePanesScrollbarWidth();
   rebindScrollObservers();
   if (active.value === 'chat' && (following.value || hasUserActionFollowLock())) {
     scheduleStableFollow();
@@ -1008,6 +1021,14 @@ watch(followPaneKey, () => {
   resolveScrollTarget();
 });
 
+watch(
+  () => props.mobile,
+  async () => {
+    await nextTick();
+    updatePanesScrollbarWidth();
+  },
+);
+
 // New session (reload key changes): reset the mobile files drill-down + clear
 // any previously-opened preview, and land at the bottom of the newly-selected
 // session. `following` stays on afterwards, so the markdown/code-highlighting
@@ -1152,6 +1173,7 @@ function ensureDockObserved(): void {
     driving the follow. */
 function rebindScrollObservers(): void {
   const el = panesRef.value;
+  updatePanesScrollbarWidth();
   if (contentObserver) {
     contentObserver.disconnect();
     if (el) contentObserver.observe(el, { childList: true, subtree: true, characterData: true });
@@ -1217,7 +1239,10 @@ onMounted(() => {
       contentObserver = new MutationObserver(onContentMutated);
     }
     if (typeof ResizeObserver === 'function') {
-      resizeObserver = new ResizeObserver(() => scheduleFollow(false));
+      resizeObserver = new ResizeObserver(() => {
+        updatePanesScrollbarWidth();
+        scheduleFollow(false);
+      });
     }
     // Attach both observers to whatever the current follow target is (the ref
     // callbacks already ran during mount and registered it).
@@ -1385,6 +1410,7 @@ onUnmounted(() => {
                 <ChatDock
                   v-if="!(turns.length === 0 && !sessionLoading)"
                   :ref="dockBinderFor(group.id)"
+                  :style="chatDockStyle"
                   :session-id="sessionId"
                   :running="running"
                   :queued="queued"
@@ -1397,6 +1423,7 @@ onUnmounted(() => {
                   :goal-mode="goalMode"
                   :activation-badges="activationBadges"
                   :models="models"
+                  :starred-ids="starredIds"
                   :skills="skills"
                   :goal="goal"
                   :goal-expand-signal="goalExpandSignal"
@@ -1604,6 +1631,7 @@ onUnmounted(() => {
             :goal-mode="goalMode"
             :activation-badges="activationBadges"
             :models="models"
+            :starred-ids="starredIds"
             :skills="skills"
             @submit="handleComposerSubmit"
             @steer="emit('steer', $event)"
@@ -1656,6 +1684,7 @@ onUnmounted(() => {
           <ChatDock
             v-if="!(turns.length === 0 && !sessionLoading)"
             :ref="setChatDockRef"
+            :style="chatDockStyle"
             :session-id="sessionId"
             :running="running"
             :queued="queued"
@@ -1668,6 +1697,7 @@ onUnmounted(() => {
             :goal-mode="goalMode"
             :activation-badges="activationBadges"
             :models="models"
+            :starred-ids="starredIds"
             :skills="skills"
             :goal="goal"
             :goal-expand-signal="goalExpandSignal"
@@ -1927,6 +1957,7 @@ onUnmounted(() => {
 /* Chat reading column max-width + alignment. The max-width applies in both
    modes; align-left hugs the left gutter, align-center centers in the pane. */
 .content-wrap {
+  width: 100%;
   max-width: var(--read-max);
   /* Fill the scroll viewport so an empty conversation can vertically center its
      hint (ChatPane grows via flex:1). With messages it grows past 100% and the

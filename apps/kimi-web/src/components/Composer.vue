@@ -53,6 +53,8 @@ const props = withDefaults(defineProps<{
   activationBadges?: ActivationBadges;
   /** Available models for the quick-switch dropdown. */
   models?: AppModel[];
+  /** Starred model ids shown at the top of the quick-switch dropdown. */
+  starredIds?: string[];
   /** Session skills shown in the `/` menu (after the built-in commands). */
   skills?: AppSkill[];
 }>(), {
@@ -61,6 +63,7 @@ const props = withDefaults(defineProps<{
   searchFiles: undefined,
   uploadImage: undefined,
   models: () => [],
+  starredIds: () => [],
   skills: () => [],
 });
 
@@ -912,6 +915,17 @@ const providerModels = computed(() => {
   return props.models.filter((m) => m.provider === currentProvider.value);
 });
 
+const starredSet = computed(() => new Set(props.starredIds ?? []));
+function isStarred(modelId: string): boolean {
+  return starredSet.value.has(modelId);
+}
+const starredOtherModels = computed(() => {
+  if (!props.models?.length) return [];
+  return props.models.filter(
+    (m) => isStarred(m.id) && m.provider !== currentProvider.value,
+  );
+});
+
 function selectModel(modelId: string): void {
   emit('selectModel', modelId);
   closeDropdown();
@@ -1257,6 +1271,24 @@ function selectModel(modelId: string): void {
 
         <!-- Model dropdown — current provider models + controls + more -->
         <div v-if="dropdownOpen && status" class="model-dropdown" role="menu" @click.stop>
+          <!-- Starred models from other providers -->
+          <div v-if="starredOtherModels.length > 0" class="md-section">{{ t('status.starredModels') }}</div>
+          <button
+            v-for="m in starredOtherModels"
+            :key="m.id"
+            class="md-row"
+            :class="{ 'is-current': m.id === status.modelId }"
+            role="menuitem"
+            @click="selectModel(m.id)"
+          >
+            <span class="md-check"><svg v-if="m.id === status.model || m.model === status.model || m.displayName === status.model" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg></span>
+            <span class="md-name">{{ m.displayName ?? m.model }}</span>
+            <span class="md-provider">{{ m.provider }}</span>
+            <svg class="md-star" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          </button>
+
+          <div v-if="starredOtherModels.length > 0" class="md-divider" />
+
           <!-- Current provider models -->
           <div v-if="providerModels.length > 0" class="md-section">{{ currentProvider }}</div>
           <button
@@ -1269,6 +1301,7 @@ function selectModel(modelId: string): void {
           >
             <span class="md-check"><svg v-if="m.id === status.model || m.model === status.model || m.displayName === status.model" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg></span>
             <span class="md-name">{{ m.displayName ?? m.model }}</span>
+            <svg v-if="isStarred(m.id)" class="md-star" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
           </button>
 
           <div v-if="providerModels.length > 0" class="md-divider" />
@@ -1953,6 +1986,16 @@ function selectModel(modelId: string): void {
 
 .md-name {
   flex: 1;
+}
+.md-provider {
+  color: var(--muted);
+  font-size: var(--ui-font-size-xs);
+  flex: none;
+}
+.md-star {
+  color: var(--star);
+  flex: none;
+  margin-left: auto;
 }
 
 .md-divider {

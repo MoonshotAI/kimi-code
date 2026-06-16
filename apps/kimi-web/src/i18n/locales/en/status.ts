@@ -32,6 +32,7 @@ export default {
   // Thinking selector
   thinkingLabel: 'thinking',
   thinkingTooltip: 'Toggle thinking mode',
+  starredModels: 'Starred',
   moreModels: 'More models…',
   // Status panel
   statusPanelTitle: 'Session status',

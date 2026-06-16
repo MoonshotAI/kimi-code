@@ -32,6 +32,7 @@ export default {
   // 思考强度选择
   thinkingLabel: '思考',
   thinkingTooltip: '切换思考模式',
+  starredModels: '收藏',
   moreModels: '更多模型…',
   // 状态面板
   statusPanelTitle: '会话状态',

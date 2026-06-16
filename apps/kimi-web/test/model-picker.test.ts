@@ -46,6 +46,13 @@ const models: AppModel[] = [
     displayName: 'GPT-5',
     maxContextSize: 256000,
   },
+  {
+    id: 'openai/gpt-4o',
+    provider: 'openai',
+    model: 'gpt-4o',
+    displayName: 'GPT-4o',
+    maxContextSize: 128000,
+  },
 ];
 
 afterEach(() => {
@@ -62,17 +69,17 @@ describe('ModelPicker provider tabs', () => {
       global: { plugins: [i18n] },
     });
 
-    expect(wrapper.findAll('.model-row')).toHaveLength(2);
+    expect(wrapper.findAll('.model-row')).toHaveLength(3);
 
     await wrapper.findAll('.tab-btn').find((button) => button.text() === 'openai')!.trigger('click');
 
-    expect(wrapper.findAll('.model-row')).toHaveLength(1);
+    expect(wrapper.findAll('.model-row')).toHaveLength(2);
     expect(wrapper.text()).toContain('GPT-5');
     expect(wrapper.text()).not.toContain('Kimi K2');
 
     await wrapper.findAll('.tab-btn').find((button) => button.text() === 'All')!.trigger('click');
 
-    expect(wrapper.findAll('.model-row')).toHaveLength(2);
+    expect(wrapper.findAll('.model-row')).toHaveLength(3);
   });
 });
 
@@ -103,5 +110,82 @@ describe('ModelPicker dialog focus', () => {
     expect(document.activeElement).toBe(opener);
 
     opener.remove();
+  });
+});
+
+describe('ModelPicker starred models', () => {
+  it('pins starred models to the top in the All tab', async () => {
+    const wrapper = mount(ModelPicker, {
+      props: {
+        models,
+        current: 'kimi/k2',
+        starredIds: ['openai/gpt-4o'],
+      },
+      global: { plugins: [i18n] },
+    });
+
+    const rows = wrapper.findAll('.model-row');
+    expect(rows).toHaveLength(3);
+    expect(rows[0]!.text()).toContain('GPT-4o');
+    expect(rows[1]!.text()).toContain('Kimi K2');
+    expect(rows[2]!.text()).toContain('GPT-5');
+  });
+
+  it('does not reorder models inside a provider tab', async () => {
+    const wrapper = mount(ModelPicker, {
+      props: {
+        models,
+        current: 'kimi/k2',
+        starredIds: ['openai/gpt-4o'],
+      },
+      global: { plugins: [i18n] },
+    });
+
+    await wrapper.findAll('.tab-btn').find((button) => button.text() === 'openai')!.trigger('click');
+
+    const rows = wrapper.findAll('.model-row');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.text()).toContain('GPT-5');
+    expect(rows[1]!.text()).toContain('GPT-4o');
+  });
+
+  it('emits toggle-star when the star button is clicked without selecting the model', async () => {
+    const wrapper = mount(ModelPicker, {
+      props: {
+        models,
+        current: 'kimi/k2',
+        starredIds: [],
+      },
+      global: { plugins: [i18n] },
+    });
+
+    const starBtn = wrapper.findAll('.star-btn').find((button) =>
+      button.element.closest('.model-row')?.textContent?.includes('GPT-5'),
+    );
+    expect(starBtn).toBeDefined();
+    await starBtn!.trigger('click');
+
+    expect(wrapper.emitted('toggle-star')).toHaveLength(1);
+    expect(wrapper.emitted('toggle-star')![0]).toEqual(['openai/gpt-5']);
+    expect(wrapper.emitted('select')).toBeUndefined();
+  });
+
+  it('keeps starred models first while searching in the All tab', async () => {
+    const wrapper = mount(ModelPicker, {
+      props: {
+        models,
+        current: 'kimi/k2',
+        starredIds: ['openai/gpt-5'],
+      },
+      global: { plugins: [i18n] },
+    });
+
+    const search = wrapper.find('.search-input');
+    await search.setValue('gpt');
+
+    const rows = wrapper.findAll('.model-row');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.text()).toContain('GPT-5');
+    expect(rows[1]!.text()).toContain('GPT-4o');
   });
 });

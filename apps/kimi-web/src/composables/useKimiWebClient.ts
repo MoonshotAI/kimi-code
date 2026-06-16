@@ -73,6 +73,7 @@ const SWARM_MODE_STORAGE_KEY = 'kimi-web.swarm-mode';
 const GOAL_MODE_STORAGE_KEY = 'kimi-web.goal-mode';
 const THEME_STORAGE_KEY = 'kimi-web.theme';
 const UI_FONT_SIZE_STORAGE_KEY = 'kimi-web.ui-font-size';
+const STARRED_MODELS_STORAGE_KEY = 'kimi-web.starred-models';
 const UI_FONT_SIZE_DEFAULT = 15;
 const UI_FONT_SIZE_MIN = 12;
 const UI_FONT_SIZE_MAX = 20;
@@ -236,6 +237,28 @@ function loadGoalModeFromStorage(): boolean {
 function saveGoalModeToStorage(v: boolean): void {
   try {
     localStorage.setItem(GOAL_MODE_STORAGE_KEY, v ? 'true' : 'false');
+  } catch {
+    // ignore
+  }
+}
+
+function loadStarredModelsFromStorage(): string[] {
+  try {
+    const raw = localStorage.getItem(STARRED_MODELS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
+      return parsed as string[];
+    }
+  } catch {
+    // ignore (localStorage not available or malformed)
+  }
+  return [];
+}
+
+function saveStarredModelsToStorage(v: string[]): void {
+  try {
+    localStorage.setItem(STARRED_MODELS_STORAGE_KEY, JSON.stringify(v));
   } catch {
     // ignore
   }
@@ -450,6 +473,7 @@ const rawState: ExtendedState = reactive({
 
 // Models + Providers reactive state (lazy-loaded, cached)
 const models = ref<AppModel[]>([]);
+const starredModelIds = ref<string[]>(loadStarredModelsFromStorage());
 
 // Session-scoped skills (slash-invocable). Loaded lazily per session; the active
 // session's list feeds the composer's `/` menu.
@@ -909,9 +933,12 @@ function connectEventsIfNeeded(): void {
 
       // Turn-end cleanup for the session the event belongs to — including
       // sessions running in the background (see onSessionIdle).
+      // Turn-end: both 'idle' and 'aborted' mean the prompt is no longer in
+      // flight, so both must flush in-flight/queued state. (Awaiting-* is still
+      // in flight — it's waiting on the user — and must NOT flush.)
       if (
         appEvent.type === 'sessionStatusChanged' &&
-        toUiSessionStatus(appEvent.status) === 'idle'
+        (appEvent.status === 'idle' || appEvent.status === 'aborted')
       ) {
         onSessionIdle(appEvent.sessionId);
       }
@@ -959,6 +986,12 @@ function connectEventsIfNeeded(): void {
 // Journal epoch per session, learned from snapshots / resync frames. Not
 // reactive — only consulted when building the subscribe cursor.
 const epochBySession: Record<string, string> = {};
+
+// Sessions created locally in this client instance are known to be empty until
+// they receive their first message. This is more reliable than the daemon's
+// messageCount field, which can be stale for old sessions and would otherwise
+// flash the empty-composer before the real snapshot arrives.
+const sessionsKnownEmpty = new Set<string>();
 
 /**
  * v2 initial sync (IM-style rebuild): fetch the atomic session snapshot,
@@ -1117,6 +1150,7 @@ async function handleSessionNotFound(sessionId: string): Promise<void> {
   delete rawState.lastSeqBySession[sessionId];
   delete rawState.compactionBySession[sessionId];
   delete epochBySession[sessionId];
+  sessionsKnownEmpty.delete(sessionId);
 
   if (rawState.activeSessionId !== sessionId) return;
 
@@ -1397,24 +1431,22 @@ function refreshSessionSidecars(sessionId: string): void {
 // View-model mappers
 // ---------------------------------------------------------------------------
 
-/** Map AppSession status to UI SessionStatus */
-function toUiSessionStatus(status: string): 'running' | 'idle' {
-  if (status === 'running' || status === 'awaitingApproval' || status === 'awaitingQuestion') {
-    return 'running';
-  }
-  return 'idle';
-}
-
-/** Whether the session has any running task other than its BTW side-channel agent.
-    This prevents the sidebar spinner / activity indicator from spinning while only
-    a BTW side chat is working. */
+/** Whether the session should show the "working" spinner. Only a `running`
+    session qualifies — `awaiting*` is waiting on the user (not working) and
+    `aborted` is finished, so neither spins. Additionally, a session whose only
+    running task is its BTW side-channel agent should not look busy. When tasks
+    have not been loaded yet — e.g. right after a page refresh — we trust the
+    daemon-reported `running` status rather than hiding the spinner. */
 function isSessionEffectivelyRunning(sessionId: string): boolean {
   const session = rawState.sessions.find((s) => s.id === sessionId);
   if (!session) return false;
-  if (toUiSessionStatus(session.status) !== 'running') return false;
+  if (session.status !== 'running') return false;
   const hiddenBtwAgentId = sideChatTargetBySession.value[sessionId]?.agentId;
   const tasks = rawState.tasksBySession[sessionId] ?? [];
-  return tasks.some((t) => t.status === 'running' && t.id !== hiddenBtwAgentId);
+  const runningTasks = tasks.filter((t) => t.status === 'running');
+  // No task list yet (fresh refresh) — trust the daemon-reported session status.
+  if (runningTasks.length === 0) return true;
+  return runningTasks.some((t) => t.id !== hiddenBtwAgentId);
 }
 
 /** Format createdAt/updatedAt into a short display string */
@@ -1693,7 +1725,8 @@ const sessions = computed<Session[]>(() => {
     id: s.id,
     title: s.title,
     time: formatTime(s.updatedAt, s.status),
-    status: toUiSessionStatus(s.status),
+    status: s.status,
+    busy: isSessionEffectivelyRunning(s.id),
   }));
 });
 
@@ -2302,7 +2335,8 @@ const sessionsForView = computed<Session[]>(() => {
       id: s.id,
       title: s.title,
       time: formatTime(s.updatedAt, s.status),
-      status: isSessionEffectivelyRunning(s.id) ? 'running' : 'idle',
+      status: s.status,
+      busy: isSessionEffectivelyRunning(s.id),
     }));
 });
 
@@ -2317,7 +2351,8 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
       id: s.id,
       title: s.title,
       time: formatTime(s.updatedAt, s.status),
-      status: isSessionEffectivelyRunning(s.id) ? 'running' : 'idle',
+      status: s.status,
+      busy: isSessionEffectivelyRunning(s.id),
       updatedAt: s.updatedAt,
     };
     const list = byId.get(wid) ?? [];
@@ -2726,6 +2761,9 @@ async function createSessionInWorkspace(workspaceId: string): Promise<AppSession
     const session = await api.createSession({ workspaceId: workspaceIdForCreate, cwd: cwdForCreate });
     rawState.sessions = [session, ...rawState.sessions.filter((s) => s.id !== session.id)];
     selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
+    // Locally created sessions start empty; trust that so the empty-composer
+    // renders immediately instead of flashing a loading state.
+    sessionsKnownEmpty.add(session.id);
     await selectSession(session.id);
     return session;
   } catch (err) {
@@ -2773,6 +2811,12 @@ async function startSessionAndSendPrompt(
         : session;
     rawState.sessions = [created, ...rawState.sessions.filter((s) => s.id !== session.id)];
     selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
+    // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
+    // session" (createSession), here we immediately send a prompt: keeping
+    // sessionLoading=true through the snapshot avoids flashing the empty-session
+    // composer before the optimistic user message lands. selectSession resolves,
+    // then submitPromptInternal adds the user turn synchronously (no await in
+    // between), so the view goes loading → message with no empty-composer frame.
     await selectSession(session.id);
     await submitPromptInternal(session.id, text, attachments);
   } catch (err) {
@@ -2914,14 +2958,15 @@ async function selectSession(
   opts?: { urlMode?: SessionUrlMode },
 ): Promise<void> {
   const messagesLoaded = hasLoadedMessages(sessionId);
-  // A session the daemon reports as empty (messageCount 0) has nothing to load:
-  // its snapshot is an empty array. Showing the chat-pane loading state until
-  // that arrives flashes the chat pane before the empty-composer. Treat a
-  // known-empty session as "nothing to wait for" so the empty-composer renders
-  // immediately with no flash.
-  const knownEmpty =
-    !messagesLoaded &&
-    (rawState.sessions.find((s) => s.id === sessionId)?.messageCount ?? -1) === 0;
+  // Only sessions created locally in this client are trusted to be empty.
+  // The daemon-reported messageCount can be stale for old sessions, so relying
+  // on it causes the empty-composer to flash before the real snapshot arrives.
+  // A locally created session has no history to load: show the empty composer
+  // immediately by skipping the `sessionLoading` flag (no flash), while the
+  // snapshot still loads in the background like any other first open.
+  const knownEmpty = !messagesLoaded && sessionsKnownEmpty.has(sessionId);
+  // Single-use: after this select resolves the session is no longer "known empty".
+  sessionsKnownEmpty.delete(sessionId);
   try {
     // Write the URL synchronously (before any await) so rapid clicks lay down
     // history entries in click order.
@@ -2973,6 +3018,9 @@ async function createSession(cwd: string, opts?: { title?: string; model?: strin
     const api = getKimiWebApi();
     const session = await api.createSession({ cwd, title: opts?.title, model: opts?.model });
     rawState.sessions = [session, ...rawState.sessions.filter((s) => s.id !== session.id)];
+    // Locally created sessions start empty; trust that so the empty-composer
+    // renders immediately instead of flashing a loading state.
+    sessionsKnownEmpty.add(session.id);
     await selectSession(session.id);
   } catch (err) {
     pushOperationFailure('createSession', err);
@@ -3671,6 +3719,18 @@ async function setModel(modelId: string): Promise<void> {
   await refreshSessionStatus(sid);
 }
 
+/** Toggle whether a model is starred (favorited) in the model picker. */
+function toggleStarModel(modelId: string): void {
+  const set = new Set(starredModelIds.value);
+  if (set.has(modelId)) {
+    set.delete(modelId);
+  } else {
+    set.add(modelId);
+  }
+  starredModelIds.value = Array.from(set);
+  saveStarredModelsToStorage(starredModelIds.value);
+}
+
 /**
  * Activate a session skill (the web analogue of typing `/<skill> <args>` in the
  * TUI). The daemon starts a turn with a `skill_activation` origin; progress
@@ -4110,6 +4170,7 @@ export function useKimiWebClient() {
 
     // Model + Provider reactive state
     models,
+    starredModelIds,
     providers,
 
     // Theme
@@ -4213,6 +4274,7 @@ export function useKimiWebClient() {
     skills,
     activateSkill,
     setModel,
+    toggleStarModel,
     addProvider,
     deleteProvider,
     refreshProvider,

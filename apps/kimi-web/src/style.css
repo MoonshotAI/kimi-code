@@ -24,6 +24,7 @@
   --blueln: #cfe6ff;
   --ok: #0e7a38;
   --warn: #92660a;
+  --star: #eab308;
   --err: #b91c1c;
   /* Subtle hover wash for icon buttons (toast close, etc.). */
   --hover: rgba(0, 0, 0, 0.05);
@@ -77,6 +78,7 @@ html[data-color-scheme="dark"] {
   --blueln: #1f4f7a;
   --ok: #3fb950;
   --warn: #d29922;
+  --star: #facc15;
   --err: #f85149;
   --hover: rgba(255, 255, 255, 0.07);
 }
@@ -102,6 +104,7 @@ html[data-color-scheme="dark"] {
     --blueln: #1f4f7a;
     --ok: #3fb950;
     --warn: #d29922;
+    --star: #facc15;
     --err: #f85149;
     --hover: rgba(255, 255, 255, 0.07);
   }
@@ -828,6 +831,7 @@ html[data-theme="kimi"] {
   /* status (color.status.*) */
   --ok: #16c456;
   --warn: #ff9500;
+  --star: #facc15;
   --err: #ff3849;
   --hover: rgba(0, 0, 0, 0.03);  /* color.fills.f1 */
   /* radius scale snaps to radius.xxs/sm/lg/xl = 4/8/12/16 */
@@ -866,6 +870,7 @@ html[data-color-scheme="dark"][data-theme="kimi"] {
   --blueln: #292929;
   --ok: #16c456;
   --warn: #ff9f0a;
+  --star: #facc15;
   --err: #ff4756;
   --hover: rgba(255, 255, 255, 0.05);
 }
@@ -891,6 +896,7 @@ html[data-color-scheme="dark"][data-theme="kimi"] {
     --blueln: #292929;
     --ok: #16c456;
     --warn: #ff9f0a;
+    --star: #facc15;
     --err: #ff4756;
     --hover: rgba(255, 255, 255, 0.05);
   }

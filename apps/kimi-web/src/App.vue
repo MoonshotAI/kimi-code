@@ -97,6 +97,9 @@ function closeOpenSidePanel(): boolean {
 
 function onGlobalKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
+  // A modal dialog open on top of the side panel owns Escape — leave the event
+  // alone so the dialog can close itself instead of the panel behind it.
+  if (anyOverlayOpen.value) return;
   if (closeOpenSidePanel()) {
     e.stopPropagation();
     e.preventDefault();
@@ -464,6 +467,24 @@ const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
 
+// Any of these modal/overlay layers, when open, owns Escape. The global
+// capture-phase handler must NOT close a background side panel out from under an
+// open dialog — otherwise Escape dismisses the panel behind the dialog and the
+// dialog's own Escape handler never fires. New top-level dialogs go here too.
+const anyOverlayOpen = computed<boolean>(() =>
+  showModelPicker.value ||
+  showProviders.value ||
+  showLogin.value ||
+  showNewSession.value ||
+  showSessions.value ||
+  showAddWorkspace.value ||
+  showStatusPanel.value ||
+  showSettings.value ||
+  showOnboarding.value ||
+  showMobileSwitcher.value ||
+  showMobileSettings.value,
+);
+
 // Loading state for model/provider fetches
 const modelsLoading = ref(false);
 const modelsUnavailable = ref(false);
@@ -817,6 +838,7 @@ function openPr(url: string): void {
       :swarm-mode="client.swarmMode.value"
       :goal-mode="client.goalMode.value"
       :models="client.models.value"
+      :starred-ids="client.starredModelIds.value"
       :skills="client.skills.value"
       :questions="client.questions.value"
       :running="running"
@@ -959,9 +981,11 @@ function openPr(url: string): void {
       v-if="showModelPicker"
       :models="client.models.value"
       :current="client.status.value.modelId"
+      :starred-ids="client.starredModelIds.value"
       :loading="modelsLoading"
       :unavailable="modelsUnavailable"
       @select="handleSelectModel($event)"
+      @toggle-star="client.toggleStarModel($event)"
       @close="showModelPicker = false"
     />
 

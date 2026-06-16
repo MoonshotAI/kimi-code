@@ -28,6 +28,7 @@ const props = defineProps<{
   goalMode?: boolean;
   activationBadges?: ActivationBadges;
   models?: AppModel[];
+  starredIds?: string[];
   skills?: AppSkill[];
   goal?: AppGoal | null;
   goalExpandSignal?: number;
@@ -220,6 +221,7 @@ defineExpose({ loadForEdit });
       :goal-mode="goalMode"
       :activation-badges="activationBadges"
       :models="models"
+      :starred-ids="starredIds"
       :skills="skills"
       @submit="emit('submit', $event)"
       @steer="emit('steer', $event)"
@@ -248,8 +250,10 @@ defineExpose({ loadForEdit });
 .chat-dock {
   --dock-inline-left: 16px;
   --dock-inline-right: 16px;
+  box-sizing: border-box;
   width: 100%;
-  max-width: var(--read-max);
+  max-width: calc(var(--read-max) + var(--panes-scrollbar-width, 0px));
+  padding-right: var(--panes-scrollbar-width, 0px);
   flex: none;
   position: relative;
   background: var(--bg);
@@ -262,7 +266,7 @@ defineExpose({ loadForEdit });
 .dock-work-panel {
   position: absolute;
   left: 16px;
-  right: 16px;
+  right: calc(16px + var(--panes-scrollbar-width, 0px));
   bottom: 100%;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -383,7 +387,7 @@ defineExpose({ loadForEdit });
   }
   .dock-work-panel {
     left: 10px;
-    right: 10px;
+    right: calc(10px + var(--panes-scrollbar-width, 0px));
   }
 }
 

@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createI18n } from 'vue-i18n';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Composer from '../src/components/Composer.vue';
+import type { AppModel } from '../src/api/types';
 
 function mountComposer(props: Record<string, unknown> = {}) {
   const i18n = createI18n({
@@ -27,6 +28,12 @@ function mountComposer(props: Record<string, unknown> = {}) {
           swarm: { desc: 'Run with swarm' },
           btw: { desc: 'Ask side chat' },
           compact: { desc: 'Compact context' },
+        },
+        status: {
+          modelTooltip: 'Switch model',
+          starredModels: 'Starred',
+          moreModels: 'More models…',
+          thinkingLabel: 'thinking',
         },
       },
     },
@@ -166,6 +173,25 @@ describe('Composer draft persistence', () => {
     // Draft cleared once sent.
     expect(localStorage.getItem('kimi-web.draft.sess_X')).toBe(null);
   });
+
+  it('stays empty when a new session is created right after sending from the empty state', async () => {
+    const wrapper = mountComposer({ sessionId: undefined });
+    const textarea = wrapper.get('textarea');
+    const el = textarea.element as HTMLTextAreaElement;
+
+    await textarea.setValue('hello');
+    await textarea.trigger('keydown', { key: 'Enter' });
+
+    expect(wrapper.emitted('submit')).toHaveLength(1);
+    expect(el.value).toBe('');
+
+    // Parent creates a new session and passes its id down to the composer.
+    await wrapper.setProps({ sessionId: 'sess_new' });
+    await flushPromises();
+
+    expect(el.value).toBe('');
+    expect(localStorage.getItem('kimi-web.draft.sess_new')).toBe(null);
+  });
 });
 
 describe('Composer height', () => {
@@ -269,5 +295,44 @@ describe('Composer slash command input', () => {
 
     expect((textarea.element as HTMLTextAreaElement).value).toBe('/goal ');
     expect(wrapper.emitted('command')).toBeUndefined();
+  });
+});
+
+describe('Composer model dropdown', () => {
+  const models: AppModel[] = [
+    { id: 'kimi/k2', provider: 'kimi', model: 'k2', displayName: 'Kimi K2', maxContextSize: 128000 },
+    { id: 'openai/gpt-5', provider: 'openai', model: 'gpt-5', displayName: 'GPT-5', maxContextSize: 256000 },
+    { id: 'openai/gpt-4o', provider: 'openai', model: 'gpt-4o', displayName: 'GPT-4o', maxContextSize: 128000 },
+  ];
+
+  it('shows starred models from other providers in the quick-switch dropdown', async () => {
+    const wrapper = mountComposer({
+      status: { model: 'Kimi K2', modelId: 'kimi/k2', ctxUsed: 0, ctxMax: 128000, permission: 'manual' },
+      models,
+      starredIds: ['openai/gpt-5'],
+    });
+
+    await wrapper.find('.model-pill').trigger('click');
+
+    const rows = wrapper.findAll('.md-row');
+    expect(rows.length).toBeGreaterThan(0);
+    expect(wrapper.text()).toContain('Starred');
+    expect(wrapper.text()).toContain('GPT-5');
+    expect(wrapper.text()).toContain('openai');
+  });
+
+  it('emits selectModel when a starred model is chosen', async () => {
+    const wrapper = mountComposer({
+      status: { model: 'Kimi K2', modelId: 'kimi/k2', ctxUsed: 0, ctxMax: 128000, permission: 'manual' },
+      models,
+      starredIds: ['openai/gpt-5'],
+    });
+
+    await wrapper.find('.model-pill').trigger('click');
+    const starredRow = wrapper.findAll('.md-row').find((row) => row.text().includes('GPT-5'));
+    expect(starredRow).toBeDefined();
+    await starredRow!.trigger('click');
+
+    expect(wrapper.emitted('selectModel')).toEqual([['openai/gpt-5']]);
   });
 });

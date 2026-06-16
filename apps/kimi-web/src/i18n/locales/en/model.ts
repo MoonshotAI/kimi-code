@@ -10,5 +10,7 @@ export default {
   contextSuffix: '{size}k ctx',
   emptyNoModels: 'The daemon offers no selectable models',
   emptyNoMatch: 'No matching models',
+  starTitle: 'Add to favorites',
+  unstarTitle: 'Remove from favorites',
   footerHint: '↑↓ Navigate · Enter Select · Esc Close',
 } as const;

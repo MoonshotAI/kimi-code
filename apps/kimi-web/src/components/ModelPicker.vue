@@ -12,6 +12,7 @@ const { t } = useI18n();
 const props = defineProps<{
   models: AppModel[];
   current: string;
+  starredIds?: string[];
   loading?: boolean;
   /** If true, models could not be fetched (daemon 404 / unsupported) */
   unavailable?: boolean;
@@ -19,8 +20,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [modelId: string];
+  'toggle-star': [modelId: string];
   close: [];
 }>();
+
+const starredSet = computed(() => new Set(props.starredIds ?? []));
+function isStarred(modelId: string): boolean {
+  return starredSet.value.has(modelId);
+}
 
 // -------------------------------------------------------------------------
 // Search + filtered list
@@ -47,12 +54,20 @@ const providerTabs = computed(() => {
 
 const filtered = computed<AppModel[]>(() => {
   const q = query.value.toLowerCase().trim();
-  return props.models.filter((m) => {
+  const list = props.models.filter((m) => {
     if (activeTab.value !== 'all' && m.provider !== activeTab.value) return false;
     const matchName = (m.displayName ?? m.model).toLowerCase().includes(q);
     const matchProvider = m.provider.toLowerCase().includes(q);
     const matchId = m.id.toLowerCase().includes(q);
     return !q || matchName || matchProvider || matchId;
+  });
+  if (activeTab.value !== 'all') return list;
+  // In the "All" tab, starred models are pinned to the top while preserving
+  // the original order within each group.
+  return list.sort((a, b) => {
+    const aStarred = isStarred(a.id) ? 1 : 0;
+    const bStarred = isStarred(b.id) ? 1 : 0;
+    return bStarred - aStarred;
   });
 });
 
@@ -210,6 +225,24 @@ function selectTab(tabId: string): void {
           <span v-if="m.capabilities && m.capabilities.length > 0" class="caps">
             {{ m.capabilities.join(', ') }}
           </span>
+          <button
+            type="button"
+            class="star-btn"
+            :class="{ starred: isStarred(m.id) }"
+            :title="isStarred(m.id) ? t('model.unstarTitle') : t('model.starTitle')"
+            @click.stop="emit('toggle-star', m.id)"
+            @mouseenter.stop
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path
+                :fill="isStarred(m.id) ? 'currentColor' : 'none'"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linejoin="round"
+                d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
+              />
+            </svg>
+          </button>
         </div>
         <div v-if="flat.length === 0 && !loading && !unavailable" class="empty">
           {{ props.models.length === 0 ? t('model.emptyNoModels') : t('model.emptyNoMatch') }}
@@ -402,6 +435,32 @@ function selectTab(tabId: string): void {
   border-radius: 3px;
   padding: 1px 5px;
   flex: none;
+}
+.star-btn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin: -4px -6px -4px 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  line-height: 1;
+}
+.star-btn:hover {
+  background: var(--panel2);
+  color: var(--star);
+}
+.star-btn.starred {
+  color: var(--star);
+}
+.star-btn.starred:hover {
+  color: var(--faint);
 }
 
 .loading-state,

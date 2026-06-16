@@ -10,5 +10,7 @@ export default {
   contextSuffix: '{size}k ctx',
   emptyNoModels: 'daemon 未提供可选模型',
   emptyNoMatch: '无匹配模型',
+  starTitle: '添加到收藏',
+  unstarTitle: '取消收藏',
   footerHint: '↑↓ 导航 · Enter 选择 · Esc 关闭',
 } as const;
