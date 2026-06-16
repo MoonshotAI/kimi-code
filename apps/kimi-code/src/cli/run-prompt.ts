@@ -156,7 +156,7 @@ export async function runPrompt(
     } else {
       await runPromptTurn(session, opts.prompt!, outputFormat, stdout, stderr);
     }
-    writeResumeHint(session.id, outputFormat, stdout, stderr);
+    writeResumeHint(session.id, outputFormat, stdout, stderr, opts.worktreePath !== undefined ? workDir : undefined);
 
     withTelemetryContext({ sessionId: session.id }).track('exit', {
       duration_s: (Date.now() - startedAt) / 1000,
@@ -598,8 +598,10 @@ function writeResumeHint(
   outputFormat: PromptOutputFormat,
   stdout: PromptOutput,
   stderr: PromptOutput,
+  workDir?: string,
 ): void {
-  const command = `kimi -r ${sessionId}`;
+  const command =
+    workDir !== undefined ? `cd "${workDir}" && kimi -r ${sessionId}` : `kimi -r ${sessionId}`;
   const content = `To resume this session: ${command}`;
   if (outputFormat === 'stream-json') {
     const message: PromptJsonResumeMetaMessage = {

@@ -141,6 +141,19 @@ describe('createWorktree', () => {
     const status = execSync('git status --short', { cwd: dir, encoding: 'utf8', stdio: 'pipe' });
     expect(status.trim()).toBe('');
   });
+
+  it('adds .kimi/ to .git/info/exclude so the parent checkout stays clean', () => {
+    const dir = makeTempDir('kimi-exclude-wt-');
+    initRepo(dir);
+
+    createWorktree(dir, 'feature-x');
+
+    const excludePath = join(dir, '.git', 'info', 'exclude');
+    expect(existsSync(excludePath)).toBe(true);
+    const exclude = execSync('git check-ignore -v .kimi/', { cwd: dir, encoding: 'utf8', stdio: 'pipe' });
+    expect(exclude).toContain('.git/info/exclude');
+    expect(exclude).toContain('.kimi/');
+  });
 });
 
 describe('normalizeWorktreeName', () => {

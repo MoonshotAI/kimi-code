@@ -239,6 +239,7 @@ export class KimiTUI {
   private startupNotice: string | undefined;
   private lastActivityMode: string | undefined;
   private lastHistoryContent: string | undefined;
+  private everHadSessionContent = false;
   readonly streamingUI: StreamingUIController;
   readonly authFlow: AuthFlowController;
   readonly btwPanelController: BtwPanelController;
@@ -1036,7 +1037,23 @@ export class KimiTUI {
   }
 
   hasSessionContent(): boolean {
-    return this.state.transcriptEntries.length > 0;
+    const hasContent = this.state.transcriptEntries.length > 0;
+    if (hasContent) {
+      this.everHadSessionContent = true;
+    }
+    return hasContent;
+  }
+
+  /**
+   * Whether any session in this TUI lifetime has had transcript content.
+   *
+   * Used for worktree cleanup: after `/new` the current session may be empty,
+   * but we must not delete a worktree that held an earlier session.
+   */
+  hasEverHadSessionContent(): boolean {
+    // Refresh the flag in case content was added since the last call.
+    this.hasSessionContent();
+    return this.everHadSessionContent;
   }
 
   async getStartupMcpMs(): Promise<number> {
