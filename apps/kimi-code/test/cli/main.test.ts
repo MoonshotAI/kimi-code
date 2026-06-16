@@ -151,6 +151,7 @@ function defaultOpts(): CLIOptions {
     outputFormat: undefined,
     prompt: undefined,
     skillsDirs: [],
+    worktree: undefined,
   };
 }
 

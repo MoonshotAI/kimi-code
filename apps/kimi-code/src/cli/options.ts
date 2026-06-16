@@ -45,6 +45,11 @@ export interface CLIOptions {
   prompt: string | undefined;
   skillsDirs: string[];
   addDirs?: string[];
+  worktree?: string;
+  /** Populated during startup when --worktree is used. */
+  worktreePath?: string;
+  /** Populated during startup when --worktree is used. */
+  parentRepoPath?: string;
 }
 
 export interface ValidatedOptions {
@@ -91,6 +96,12 @@ export function validateOptions(
   }
   if (opts.yolo && opts.auto) {
     throw new OptionConflictError('Cannot combine --yolo with --auto.');
+  }
+  if (opts.worktree !== undefined && opts.session !== undefined) {
+    throw new OptionConflictError('Cannot combine --worktree with --session.');
+  }
+  if (opts.worktree !== undefined && opts.continue) {
+    throw new OptionConflictError('Cannot combine --worktree with --continue.');
   }
   // Validate `KIMI_MODEL_OUTPUT_FORMAT` eagerly in prompt mode so a typo fails
   // fast through the friendly `error:` path instead of mid-run.

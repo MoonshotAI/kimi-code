@@ -366,12 +366,17 @@ async function resolvePromptSession(
   }
 
   const model = requireConfiguredModel(opts.model, defaultModel);
+  const metadata =
+    opts.worktreePath !== undefined && opts.parentRepoPath !== undefined
+      ? { worktreePath: opts.worktreePath, parentRepoPath: opts.parentRepoPath }
+      : undefined;
   const session = await harness.createSession({
     workDir,
     model,
     permission: 'auto',
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     drainAgentTasksOnStop: true,
+    metadata,
   });
   installHeadlessHandlers(session);
   return {

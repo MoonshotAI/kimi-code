@@ -2,6 +2,8 @@ import { execSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { removeWorktree } from '#/utils/git/worktree';
+
 import {
   createKimiHarness,
   flushDiagnosticLogsSync,
@@ -202,6 +204,17 @@ export async function runShell(
     const hasContent = tui.hasSessionContent();
     setCrashPhase('shutdown');
     trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
+
+    // Clean up the git worktree for empty sessions so abandoned worktrees
+    // do not accumulate.
+    if (!hasContent && opts.worktreePath !== undefined && opts.parentRepoPath !== undefined) {
+      try {
+        removeWorktree(opts.parentRepoPath, opts.worktreePath);
+      } catch {
+        // Best-effort cleanup only.
+      }
+    }
+
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     const gutter = ' '.repeat(CHROME_GUTTER);
     process.stdout.write(`${gutter}Bye!\n`);

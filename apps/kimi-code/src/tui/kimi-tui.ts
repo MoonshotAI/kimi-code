@@ -7,6 +7,7 @@ import type {
   ApprovalResponse,
   BackgroundTaskInfo,
   CreateSessionOptions,
+  JsonObject,
   KimiHarness,
   PermissionMode,
   PromptPart,
@@ -233,6 +234,16 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
   };
 }
 
+function buildSessionMetadata(cliOptions: CLIOptions): JsonObject | undefined {
+  if (cliOptions.worktreePath === undefined || cliOptions.parentRepoPath === undefined) {
+    return undefined;
+  }
+  return {
+    worktreePath: cliOptions.worktreePath,
+    parentRepoPath: cliOptions.parentRepoPath,
+  };
+}
+
 interface SendMessageOptions {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
@@ -372,6 +383,7 @@ export class KimiTUI {
         plan: startupInput.cliOptions.plan,
         model: startupInput.cliOptions.model,
         startupNotice: startupInput.startupNotice,
+        metadata: buildSessionMetadata(startupInput.cliOptions),
       },
     };
     this.options = tuiOptions;
@@ -730,6 +742,7 @@ export class KimiTUI {
       model: startup.model,
       permission: startup.auto ? 'auto' : startup.yolo ? 'yolo' : undefined,
       planMode: startup.plan ? true : undefined,
+      metadata: startup.metadata,
     };
     if (this.state.appState.additionalDirs.length > 0) {
       createSessionOptions.additionalDirs = [...this.state.appState.additionalDirs];

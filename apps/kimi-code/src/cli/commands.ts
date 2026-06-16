@@ -84,7 +84,13 @@ export function createProgram(
     )
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
-    .option('--plan', 'Start in plan mode.', false);
+    .option('--plan', 'Start in plan mode.', false)
+    .addOption(
+      new Option(
+        '-w, --worktree [name]',
+        'Create a new git worktree for this session (optionally specify a name).',
+      ).argParser((val: string | boolean) => (val === true ? '' : (val as string))),
+    );
 
   registerExportCommand(program);
   registerProviderCommand(program);
@@ -123,6 +129,9 @@ export function createProgram(
     const yoloValue = raw['yolo'] === true || raw['yes'] === true || raw['autoApprove'] === true;
     const autoValue = raw['auto'] === true;
 
+    const rawWorktree = raw['worktree'];
+    const worktreeValue = rawWorktree === true ? '' : (rawWorktree as string | undefined);
+
     const opts: CLIOptions = {
       session: sessionValue,
       continue: raw['continue'] === true || raw['C'] === true,
@@ -134,6 +143,7 @@ export function createProgram(
       prompt: raw['prompt'] as string | undefined,
       skillsDirs: raw['skillsDir'] as string[],
       addDirs: raw['addDir'] as string[],
+      worktree: worktreeValue,
     };
 
     onMain(opts);
