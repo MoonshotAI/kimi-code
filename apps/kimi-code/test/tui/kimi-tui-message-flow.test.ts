@@ -631,6 +631,40 @@ command = "vim"
     });
   });
 
+  it('carries forward worktree metadata from a resumed session when /new has no --worktree flags', async () => {
+    // Resuming a worktree session via `-r <id>` passes no --worktree CLI flags,
+    // so startup.metadata is undefined. The worktree paths must still be
+    // recovered from the resumed session's metadata so the replacement session
+    // stays in the same worktree checkout.
+    const session = makeSession({
+      id: 'ses-1',
+      summary: {
+        title: null,
+        metadata: {
+          worktreePath: '/repo/.kimi/worktrees/wt',
+          parentRepoPath: '/repo',
+        },
+      },
+    });
+    const nextSession = makeSession({ id: 'ses-2' });
+    const { driver, harness } = await makeDriver(session);
+    harness.createSession.mockResolvedValueOnce(nextSession);
+    harness.createSession.mockClear();
+
+    driver.handleUserInput('/new');
+
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: {
+            worktreePath: '/repo/.kimi/worktrees/wt',
+            parentRepoPath: '/repo',
+          },
+        }),
+      );
+    });
+  });
+
   it('keeps the new session subscribed when post-create setup fails', async () => {
     const initialSession = makeSession({ id: 'ses-initial' });
     const failedSession = makeSession({

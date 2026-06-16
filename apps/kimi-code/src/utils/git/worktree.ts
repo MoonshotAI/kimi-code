@@ -180,11 +180,15 @@ function ensureWorktreeStorageIgnored(worktreesDir: string): void {
  * ignore rules.
  */
 function ensureKimiDirIgnored(repoRoot: string): void {
-  const gitDirResult = runGit(repoRoot, ['rev-parse', '--git-dir']);
-  if (gitDirResult.status !== 0 || gitDirResult.stdout.length === 0) {
+  // Resolve the exclude file via `--git-path` so that when `repoRoot` is itself
+  // a linked worktree we target the common git dir's `info/exclude` (where Git
+  // actually reads it from) rather than `.git/worktrees/<name>/info/exclude`,
+  // which Git would never consult.
+  const excludePathResult = runGit(repoRoot, ['rev-parse', '--git-path', 'info/exclude']);
+  if (excludePathResult.status !== 0 || excludePathResult.stdout.length === 0) {
     return;
   }
-  const excludePath = resolve(repoRoot, gitDirResult.stdout, 'info', 'exclude');
+  const excludePath = resolve(repoRoot, excludePathResult.stdout);
   const marker = '.kimi/';
 
   let existing = '';

@@ -206,6 +206,25 @@ function buildSessionMetadata(cliOptions: CLIOptions): JsonObject | undefined {
   };
 }
 
+// Recover the worktree metadata carried by an existing session so a replacement
+// session (e.g. from /new) stays in the same worktree context. Resuming a
+// worktree session via `-r <id>` carries no --worktree CLI flags, so
+// startup.metadata is undefined; without this the new session would lose its
+// worktreePath/parentRepoPath and agents/subagents would drop the worktree
+// system-prompt context. Mirrors the flat shape buildSessionMetadata produces.
+function worktreeMetadataFromSession(session: Session | undefined): JsonObject | undefined {
+  const metadata = session?.summary?.metadata;
+  if (metadata === undefined) {
+    return undefined;
+  }
+  const worktreePath = metadata['worktreePath'];
+  const parentRepoPath = metadata['parentRepoPath'];
+  if (typeof worktreePath !== 'string' || typeof parentRepoPath !== 'string') {
+    return undefined;
+  }
+  return { worktreePath, parentRepoPath };
+}
+
 interface SendMessageOptions {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
@@ -1122,7 +1141,7 @@ export class KimiTUI {
         this.session === undefined ? undefined : this.state.appState.thinking ? 'on' : 'off',
       permission: this.state.appState.permissionMode,
       planMode: this.state.appState.planMode ? true : undefined,
-      metadata: this.options.startup.metadata,
+      metadata: this.options.startup.metadata ?? worktreeMetadataFromSession(this.session),
     });
   }
 
