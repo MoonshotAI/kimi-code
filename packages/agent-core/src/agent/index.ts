@@ -43,7 +43,7 @@ import {
   type AgentRecord,
   type AgentRecordPersistence,
 } from './records';
-import { ReplayBuilder } from './replay';
+import { ReplayBuilder, type ReplayBuilderOptions } from './replay';
 import { SkillManager } from './skill';
 import type { SkillRegistry } from './skill/types';
 import { SwarmMode } from './swarm';
@@ -87,6 +87,7 @@ export interface AgentOptions {
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly experimentalFlags?: ExperimentalFlagResolver;
+  readonly replay?: ReplayBuilderOptions;
 }
 
 export class Agent {
@@ -182,7 +183,7 @@ export class Agent {
     );
     this.cron = this.type === 'sub' ? null : new CronManager(this);
     this.goal = new GoalMode(this);
-    this.replayBuilder = new ReplayBuilder(this);
+    this.replayBuilder = new ReplayBuilder(this, options.replay);
   }
 
   setKaos(kaos: Kaos) {
