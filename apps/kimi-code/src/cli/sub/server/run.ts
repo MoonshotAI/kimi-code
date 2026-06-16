@@ -16,16 +16,28 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { join } from 'node:path';
 
 import {
+  ICoreProcessService,
   ServerLockedError,
   resolveServiceManager,
   startServer,
   type ServiceStatus,
 } from '@moonshot-ai/server';
+import {
+  initializeTelemetry,
+  setCrashPhase,
+  setTelemetryContext,
+  shutdownTelemetry,
+  track,
+  withTelemetryContext,
+} from '@moonshot-ai/kimi-telemetry';
+import type { KimiConfig, TelemetryClient } from '@moonshot-ai/kimi-code-sdk';
 
+import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 
+import { createCliTelemetryBootstrap } from '../../telemetry';
 import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../../version';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
@@ -40,6 +52,7 @@ import {
 
 const WEB_ASSETS_DIR = 'dist-web';
 const READY_PANEL_WIDTH = 72;
+const SERVER_WEB_UI_MODE = 'web';
 
 export interface RunCliOptions extends ServerCliOptions {
   open?: boolean;
@@ -126,6 +139,12 @@ export async function startServerForeground(
   options: ParsedServerOptions,
 ): Promise<{ origin: string }> {
   const version = getVersion();
+  const telemetryBootstrap = createCliTelemetryBootstrap();
+  const telemetryClient: TelemetryClient = {
+    track,
+    withContext: withTelemetryContext,
+    setContext: setTelemetryContext,
+  };
   const running = await startServer({
     host: options.host,
     port: options.port,
@@ -135,12 +154,17 @@ export async function startServerForeground(
     webAssetsDir: serverWebAssetsDir(),
     coreProcessOptions: {
       identity: createKimiCodeHostIdentity(version),
+      telemetry: telemetryClient,
     },
   });
+  await initializeServerTelemetry(running, telemetryBootstrap, version);
+  setCrashPhase('runtime');
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     running.logger.info({ signal }, 'server shutting down');
+    setCrashPhase('shutdown');
     try {
+      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
       await running.close();
       process.exit(0);
     } catch (error) {
@@ -158,6 +182,29 @@ export async function startServerForeground(
   process.once('SIGTERM', handleSignal);
 
   return { origin: serverOrigin(options.host, options.port) };
+}
+
+async function initializeServerTelemetry(
+  running: Awaited<ReturnType<typeof startServer>>,
+  bootstrap: ReturnType<typeof createCliTelemetryBootstrap>,
+  version: string,
+): Promise<void> {
+  const config = await running.services.invokeFunction(async (a): Promise<KimiConfig> => {
+    const core = a.get(ICoreProcessService);
+    return core.rpc.getKimiConfig({ reload: true });
+  });
+  initializeTelemetry({
+    homeDir: bootstrap.homeDir,
+    deviceId: bootstrap.deviceId,
+    enabled: config.telemetry !== false,
+    appName: CLI_USER_AGENT_PRODUCT,
+    version,
+    uiMode: SERVER_WEB_UI_MODE,
+    model: config.defaultModel,
+  });
+  if (bootstrap.firstLaunch) {
+    track('first_launch');
+  }
 }
 
 function serverWebAssetsDir(): string {

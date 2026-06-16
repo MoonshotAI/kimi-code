@@ -40,6 +40,13 @@ export type PromptInput = readonly PromptPart[];
 export type EmptyPayload = {};
 export type SessionMetadataPatch = Partial<Omit<SessionMeta, 'agents'>>;
 
+export interface ClientTelemetryInfo {
+  readonly id?: string | undefined;
+  readonly name?: string | undefined;
+  readonly version?: string | undefined;
+  readonly uiMode?: string | undefined;
+}
+
 export interface CreateSessionPayload {
   readonly id?: string | undefined;
   readonly workDir: string;
@@ -48,6 +55,7 @@ export interface CreateSessionPayload {
   readonly permission?: PermissionMode | undefined;
   readonly metadata?: JsonObject | undefined;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly client?: ClientTelemetryInfo | undefined;
 }
 
 export interface CloseSessionPayload {

@@ -209,6 +209,7 @@ export interface RouteDefinition<
       id: string;
       body: InferZod<TBody>;
       params: InferZod<TParams>;
+      headers: Record<string, unknown>;
     } & (TQuery extends z.ZodTypeAny ? { query: InferZod<TQuery> } : {}),
     reply: { send(payload: unknown): unknown },
   ) => Promise<void> | void;

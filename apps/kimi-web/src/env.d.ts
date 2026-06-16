@@ -5,6 +5,9 @@
 // In production builds this is still defined but unused (same-origin daemon).
 declare const __KIMI_DEV_PROXY_TARGET__: string;
 
+// Injected by Vite `define` from apps/kimi-web/package.json.
+declare const __KIMI_WEB_VERSION__: string;
+
 declare module '*.vue' {
   import type { DefineComponent } from 'vue';
 

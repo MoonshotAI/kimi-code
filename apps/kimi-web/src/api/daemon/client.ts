@@ -244,7 +244,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   constructor(config: KimiApiConfig) {
     this.config = config;
-    this.http = new DaemonHttpClient(config.serverHttpUrl);
+    this.http = new DaemonHttpClient(config.serverHttpUrl, {
+      clientId: config.clientId,
+      clientName: config.clientName,
+      clientVersion: config.clientVersion,
+      clientUiMode: config.clientUiMode,
+    });
   }
 
   // -------------------------------------------------------------------------

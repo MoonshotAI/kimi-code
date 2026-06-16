@@ -36,6 +36,7 @@ type WithSessionId<T> = T & { readonly sessionId: string };
 
 interface FakeBridgeState {
   sessions: SessionSummary[];
+  createPayloads: CreateSessionPayload[];
   metas: Map<string, SessionMeta>;
   archivedIds: string[];
   closedIds: string[];
@@ -54,6 +55,7 @@ function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
     createSession: vi
       .fn()
       .mockImplementation(async (payload: CreateSessionPayload): Promise<SessionSummary> => {
+        state.createPayloads.push(payload);
         const id = payload.id ?? `sess_${state.sessions.length + 1}`;
         const created: SessionSummary = {
           id,
@@ -207,6 +209,7 @@ function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
 function freshState(): FakeBridgeState {
   return {
     sessions: [],
+    createPayloads: [],
     metas: new Map(),
     archivedIds: [],
     closedIds: [],
@@ -278,6 +281,7 @@ function makePromptServiceStub(): {
     _serviceBrand: undefined,
     list: vi.fn() as unknown as IPromptService['list'],
     submit: vi.fn() as unknown as IPromptService['submit'],
+    startBtw: vi.fn().mockResolvedValue('btw_test') as unknown as IPromptService['startBtw'],
     steer: vi.fn() as unknown as IPromptService['steer'],
     abort: vi.fn() as unknown as IPromptService['abort'],
     abortBySession: vi.fn() as unknown as IPromptService['abortBySession'],
@@ -498,6 +502,27 @@ describe('SessionService.create', () => {
       agent_config: { model: 'moonshot-v1-128k' },
     });
     expect(state.sessions[0]!.metadata?.['cwd']).toBe('/tmp/x');
+  });
+
+  it('passes client telemetry metadata through to core createSession', async () => {
+    await svc.create(
+      { metadata: { cwd: '/tmp/web' } },
+      {
+        client: {
+          id: 'web_test_client',
+          name: 'kimi-code-web',
+          version: '0.1.1',
+          uiMode: 'web',
+        },
+      },
+    );
+
+    expect(state.createPayloads[0]!.client).toEqual({
+      id: 'web_test_client',
+      name: 'kimi-code-web',
+      version: '0.1.1',
+      uiMode: 'web',
+    });
   });
 
   it('rejects when metadata.cwd is absent (daemon route must pre-resolve workspace_id → cwd)', async () => {

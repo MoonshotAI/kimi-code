@@ -14,6 +14,13 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const BODY_PREVIEW_LIMIT = 500;
 
+export interface DaemonHttpClientIdentity {
+  readonly clientId: string;
+  readonly clientName: string;
+  readonly clientVersion: string;
+  readonly clientUiMode: string;
+}
+
 /** AbortSignal.timeout with a fallback for older environments (jsdom). */
 function timeoutSignal(): AbortSignal | undefined {
   try {
@@ -77,7 +84,10 @@ async function readResponsePreview(response: Response): Promise<string | undefin
 }
 
 export class DaemonHttpClient {
-  constructor(private readonly origin: string) {}
+  constructor(
+    private readonly origin: string,
+    private readonly identity?: DaemonHttpClientIdentity,
+  ) {}
 
   async get<T>(path: string, query?: Record<string, string | number | boolean | undefined>): Promise<T> {
     return this.request<T>('GET', path, undefined, query);
@@ -94,6 +104,7 @@ export class DaemonHttpClient {
     const headers: Record<string, string> = {
       'X-Request-Id': requestId,
     };
+    this.addClientHeaders(headers);
     const startedAt = Date.now();
     traceRestRequest({ method: 'POST', path, url, requestId, body: describeFormData(formData) });
     let response: Response;
@@ -188,6 +199,7 @@ export class DaemonHttpClient {
     const headers: Record<string, string> = {
       'X-Request-Id': requestId,
     };
+    this.addClientHeaders(headers);
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json; charset=utf-8';
     }
@@ -266,5 +278,13 @@ export class DaemonHttpClient {
     // For both code=0 and allowed non-zero codes, return the data field.
     // Callers that pass allowCodes handle the null/non-null data themselves.
     return envelope.data as T;
+  }
+
+  private addClientHeaders(headers: Record<string, string>): void {
+    if (this.identity === undefined) return;
+    headers['X-Kimi-Client-Id'] = this.identity.clientId;
+    headers['X-Kimi-Client-Name'] = this.identity.clientName;
+    headers['X-Kimi-Client-Version'] = this.identity.clientVersion;
+    headers['X-Kimi-Client-Ui-Mode'] = this.identity.clientUiMode;
   }
 }

@@ -43,6 +43,7 @@ import {
   SessionNotFoundError,
   SessionUndoUnavailableError,
   toProtocolSession,
+  type SessionCreateOptions,
   type SessionListQuery,
 } from './session';
 
@@ -240,7 +241,7 @@ export class SessionService extends Disposable implements ISessionService {
     }
   }
 
-  async create(input: SessionCreate): Promise<Session> {
+  async create(input: SessionCreate, options?: SessionCreateOptions): Promise<Session> {
     if (input.metadata === undefined || typeof input.metadata.cwd !== 'string') {
       throw new Error('SessionService.create: metadata.cwd is required');
     }
@@ -248,7 +249,8 @@ export class SessionService extends Disposable implements ISessionService {
     const summary = await this.core.rpc.createSession({
       workDir: input.metadata.cwd,
       metadata: metadataForCore,
-      ...(input.agent_config?.model !== undefined ? { model: input.agent_config.model } : {}),
+      model: input.agent_config?.model,
+      client: options?.client,
     });
     if (input.title !== undefined) {
       try {

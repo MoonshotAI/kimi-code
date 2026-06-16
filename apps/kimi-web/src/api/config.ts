@@ -2,16 +2,24 @@
 // Reads Vite env, builds REST/WS URLs, manages stable clientId.
 
 const CLIENT_ID_KEY = 'kimi-web.client-id';
+const WEB_CLIENT_NAME = 'kimi-code-web';
+const WEB_CLIENT_UI_MODE = 'web';
 
 export interface KimiApiConfig {
   serverHttpUrl: string;
   clientId: string;
+  clientName: string;
+  clientVersion: string;
+  clientUiMode: string;
 }
 
 export function readKimiApiConfig(): KimiApiConfig {
   return {
     serverHttpUrl: normalizeServerOrigin(import.meta.env.VITE_KIMI_SERVER_HTTP_URL),
     clientId: getClientId(),
+    clientName: WEB_CLIENT_NAME,
+    clientVersion: webClientVersion(),
+    clientUiMode: WEB_CLIENT_UI_MODE,
   };
 }
 
@@ -83,4 +91,10 @@ function getClientId(): string {
   const generated = `web_${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
   globalThis.localStorage?.setItem(CLIENT_ID_KEY, generated);
   return generated;
+}
+
+function webClientVersion(): string {
+  return typeof __KIMI_WEB_VERSION__ === 'string' && __KIMI_WEB_VERSION__.trim()
+    ? __KIMI_WEB_VERSION__
+    : '0.0.0-dev';
 }

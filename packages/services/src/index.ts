@@ -128,7 +128,7 @@ export {
   SessionUndoUnavailableError,
   toProtocolSession,
 } from './session/session';
-export type { SessionListQuery } from './session/session';
+export type { SessionClientTelemetry, SessionCreateOptions, SessionListQuery } from './session/session';
 export { SessionService } from './session/sessionService';
 
 export {

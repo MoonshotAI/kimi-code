@@ -24,10 +24,21 @@ export interface SessionListQuery extends CursorQuery {
   includeArchive?: boolean;
 }
 
+export interface SessionClientTelemetry {
+  id?: string;
+  name?: string;
+  version?: string;
+  uiMode?: string;
+}
+
+export interface SessionCreateOptions {
+  client?: SessionClientTelemetry;
+}
+
 export interface ISessionService {
   readonly _serviceBrand: undefined;
 
-  create(input: SessionCreate): Promise<Session>;
+  create(input: SessionCreate, options?: SessionCreateOptions): Promise<Session>;
 
   list(query: SessionListQuery): Promise<PageResponse<Session>>;
 

@@ -84,6 +84,26 @@ describe('REST tracing via DaemonHttpClient', () => {
     expect(detail.envelope.request_id).toBe('req_env_1');
   });
 
+  it('sends client identity headers when configured', async () => {
+    const fetchMock = vi.fn(async () => okEnvelope({ id: 'ses_1' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const http = new DaemonHttpClient('http://example.test:7878', {
+      clientId: 'web_test_client',
+      clientName: 'kimi-code-web',
+      clientVersion: '0.1.1',
+      clientUiMode: 'web',
+    });
+
+    await http.post('/sessions', { metadata: { cwd: '/repo' } });
+
+    const init = fetchMock.mock.calls[0]![1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-Kimi-Client-Id']).toBe('web_test_client');
+    expect(headers['X-Kimi-Client-Name']).toBe('kimi-code-web');
+    expect(headers['X-Kimi-Client-Version']).toBe('0.1.1');
+    expect(headers['X-Kimi-Client-Ui-Mode']).toBe('web');
+  });
+
   it('redacts sensitive request fields (api_key / authorization)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => okEnvelope({})));
     const http = new DaemonHttpClient('http://example.test:7878');

@@ -113,6 +113,7 @@ function createPromptServiceOverride(
       content: [{ type: 'text', text: 'test' }],
       created_at: '2026-06-09T00:00:00.000Z',
     }),
+    startBtw: async () => 'btw_test',
     steer: async (_sid, promptIds) => ({
       steered: true,
       prompt_ids: [...promptIds],
