@@ -1,9 +1,9 @@
 /**
- * Declared capabilities for a specific model exposed by a {@link ChatProvider}.
+ * Declared capabilities for a specific model.
  *
- * Providers return one of these from {@link ChatProvider.getCapability} so
- * callers can gate requests against modalities the model does not accept
- * without dispatching the request and watching it fail upstream.
+ * `getModelCapability(wire, model)` returns one of these so callers can gate
+ * requests against modalities the model does not accept without dispatching
+ * the request and watching it fail upstream.
  *
  * `max_context_tokens: 0` means "unknown"; callers that do not gate on
  * context length can ignore the field.

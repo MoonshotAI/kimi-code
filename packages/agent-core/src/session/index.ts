@@ -30,8 +30,8 @@ import {
 import type { ProviderManager } from './provider-manager';
 import {
   registerBuiltinSkills,
+  SessionSkillRegistry,
   resolveSkillRoots,
-  SkillRegistry,
   summarizeSkill,
   type SkillRoot,
   type SkillSummary,
@@ -138,7 +138,7 @@ async function waitForSettlementOrTimeout(
 export class Session {
   readonly rpc: SDKSessionRPC;
   readonly telemetry: TelemetryClient;
-  readonly skills: SkillRegistry;
+  readonly skills: SessionSkillRegistry;
   readonly agents: Map<string, AgentEntry> = new Map();
   readonly mcp: McpConnectionManager;
   readonly log: Logger;
@@ -182,7 +182,7 @@ export class Session {
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.toolKaos = options.kaos;
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
-    this.skills = new SkillRegistry({
+    this.skills = new SessionSkillRegistry({
       sessionId: options.id,
     });
     this.mcp = new McpConnectionManager({
@@ -234,6 +234,7 @@ export class Session {
 
   async resume(): Promise<{ warning?: string }> {
     await this.skillsReady;
+    this.log.info('session resume', { app_version: this.options.appVersion });
     const { agents } = await this.readMetadata();
     this.agents.clear();
     // Only the main agent is needed to reopen the session; subagents replay
@@ -345,9 +346,15 @@ export class Session {
     });
     if (keepAliveOnExit) return;
     await Promise.all(
-      Array.from(this.readyAgents(), (agent) =>
-        agent.background.stopAll('Session closed'),
-      ),
+      Array.from(this.readyAgents(), async (agent) => {
+        const activeTasks = agent.background.list(true);
+        await Promise.all(
+          activeTasks.map((task) =>
+            agent.background.suppressTerminalNotification(task.taskId),
+          ),
+        );
+        await agent.background.stopAll('Session closed');
+      }),
     );
   }
 
@@ -573,7 +580,6 @@ export class Session {
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
-      appVersion: this.options.appVersion,
       experimentalFlags: this.experimentalFlags,
     });
   }

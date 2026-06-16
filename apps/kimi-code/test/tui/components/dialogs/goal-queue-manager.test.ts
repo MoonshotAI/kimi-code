@@ -245,6 +245,19 @@ describe('GoalQueueEditDialogComponent', () => {
     }
   });
 
+  it('keeps the edit dialog within narrow widths', () => {
+    const dialog = new GoalQueueEditDialogComponent({
+      goal: goal('g1', 'A very long queued objective for width testing'),
+      onDone: vi.fn(),
+    });
+
+    for (const width of [24, 20, 10]) {
+      for (const line of dialog.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+
   it('keeps accepting input after save returns control to the mounted dialog', () => {
     const onDone = vi.fn();
     const dialog = new GoalQueueEditDialogComponent({

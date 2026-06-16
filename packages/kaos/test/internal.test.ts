@@ -95,6 +95,15 @@ describe('BufferedReadable', () => {
     expect(received).toBe(boom);
     expect(buffered.destroyed).toBe(true);
   });
+
+  it('destroys the underlying source when the wrapper is destroyed', () => {
+    const source = new PassThrough();
+    const buffered = new BufferedReadable(source);
+
+    buffered.destroy();
+
+    expect(source.destroyed).toBe(true);
+  });
 });
 
 describe('decodeTextWithErrors', () => {

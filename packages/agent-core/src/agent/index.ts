@@ -19,7 +19,6 @@ import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
-import type { SkillRegistry } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager, BackgroundTaskPersistence } from './background';
@@ -43,9 +42,11 @@ import {
   FileSystemAgentRecordPersistence,
   type AgentRecord,
   type AgentRecordPersistence,
+  type AgentRecordsReplayOptions,
 } from './records';
-import { ReplayBuilder } from './replay';
+import { ReplayBuilder, type ReplayBuilderOptions } from './replay';
 import { SkillManager } from './skill';
+import type { SkillRegistry } from './skill/types';
 import { SwarmMode } from './swarm';
 import { ToolManager } from './tool/index';
 import { TurnFlow } from './turn';
@@ -86,8 +87,8 @@ export interface AgentOptions {
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
-  readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
+  readonly replay?: ReplayBuilderOptions;
 }
 
 export class Agent {
@@ -110,7 +111,6 @@ export class Agent {
   readonly hooks?: HookEngine;
   readonly log: Logger;
   readonly telemetry: TelemetryClient;
-  readonly appVersion?: string;
   readonly experimentalFlags: ExperimentalFlagResolver;
 
   readonly blobStore: BlobStore | undefined;
@@ -147,7 +147,6 @@ export class Agent {
     this.subagentHost = options.subagentHost;
     this.mcp = options.mcp;
     this.hooks = options.hookEngine;
-    this.appVersion = options.appVersion;
     this.log = options.log ?? log;
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
@@ -185,7 +184,7 @@ export class Agent {
     );
     this.cron = this.type === 'sub' ? null : new CronManager(this);
     this.goal = new GoalMode(this);
-    this.replayBuilder = new ReplayBuilder(this);
+    this.replayBuilder = new ReplayBuilder(this, options.replay);
   }
 
   setKaos(kaos: Kaos) {
@@ -294,13 +293,19 @@ export class Agent {
     this.tools.setActiveTools(profile.tools);
   }
 
-  async resume(): Promise<{ warning?: string }> {
-    const result = await this.records.replay();
-    this.goal.normalizeAfterReplay();
-    await this.background.loadFromDisk();
-    await this.background.reconcile();
-    await this.cron?.loadFromDisk();
-    this.turn.finishResume();
+  async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
+    const result = await this.records.replay(options);
+    try {
+      this.replayBuilder.postRestoring = true;
+      this.goal.normalizeAfterReplay();
+      await this.background.loadFromDisk();
+      await this.background.reconcile();
+      await this.cron?.loadFromDisk();
+      this.context.finishResume();
+      this.turn.finishResume();
+    } finally {
+      this.replayBuilder.postRestoring = false;
+    }
     return result;
   }
 

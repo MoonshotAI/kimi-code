@@ -1181,12 +1181,32 @@ command = "vim"
     const { driver, session } = await makeDriver();
 
     driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.setText('draft while streaming');
     driver.state.editor.onEscape?.();
 
     expect(session.cancel).toHaveBeenCalledTimes(1);
+    expect(driver.state.editor.getText()).toBe('draft while streaming');
 
     session.cancel.mockClear();
     driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.setText('');
+    driver.state.editor.onCtrlC?.();
+
+    expect(session.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears streaming editor text before cancelling the active turn on Ctrl-C', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.setText('draft while streaming');
+
+    driver.state.editor.onCtrlC?.();
+
+    expect(driver.state.editor.getText()).toBe('');
+    expect(session.cancel).not.toHaveBeenCalled();
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+
     driver.state.editor.onCtrlC?.();
 
     expect(session.cancel).toHaveBeenCalledTimes(1);
@@ -1742,10 +1762,10 @@ command = "vim"
     expect(finalLines.at(-1)).toMatch(/^│\s+│$/);
   });
 
-  it('caps /btw height to half the terminal and supports scrolling', async () => {
+  it('caps /btw height to one-third of the terminal and supports scrolling', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
-    setTerminalRows(driver, 12);
+    setTerminalRows(driver, 15);
     await openBtwPanel(driver, session, 'question 1');
 
     const panel = getMountedBtwPanel(driver);
@@ -1758,7 +1778,7 @@ command = "vim"
     }
 
     const collapsed = panel.render(80).map(stripSgr);
-    expect(collapsed).toHaveLength(6);
+    expect(collapsed).toHaveLength(5);
     expect(collapsed.join('\n')).toContain('BTW ─ Esc close · ↑↓ scroll');
     expect(collapsed.join('\n')).not.toContain('ctrl+o expand');
     expect(collapsed.join('\n')).toContain('question 8');

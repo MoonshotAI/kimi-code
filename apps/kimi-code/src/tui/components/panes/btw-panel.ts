@@ -185,7 +185,7 @@ export class BtwPanelComponent implements Component {
   private collapsedBodyLimit(): number | undefined {
     const terminalRows = this.options.terminalRows();
     if (!Number.isFinite(terminalRows) || terminalRows <= 0) return undefined;
-    const maxPanelLines = Math.max(MIN_COLLAPSED_PANEL_LINES, Math.floor(terminalRows / 2));
+    const maxPanelLines = Math.max(MIN_COLLAPSED_PANEL_LINES, Math.floor(terminalRows / 3));
     return Math.max(1, maxPanelLines - 1);
   }
 

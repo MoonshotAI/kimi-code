@@ -27,6 +27,17 @@ describe('AssistantMessageComponent', () => {
     expect(visibleWidth(lines[1] ?? '')).toBe(8);
   });
 
+  it('keeps assistant lines within very narrow widths', () => {
+    const component = new AssistantMessageComponent();
+    component.updateContent('abcdef');
+
+    for (const width of [1, 2, 4, 10, 39]) {
+      for (const line of component.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+
   it('renders unknown markdown fence languages as plain text without stderr noise', () => {
     const stderr = captureProcessWrite('stderr');
     try {

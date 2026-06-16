@@ -5,7 +5,7 @@
 
 import { isAbsolute, relative, sep } from 'node:path';
 
-import { Container, Text, Spacer, visibleWidth } from '@earendil-works/pi-tui';
+import { Container, Spacer, Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, TUI } from '@earendil-works/pi-tui';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
@@ -472,19 +472,24 @@ class PrefixedWrappedLine implements Component {
   invalidate(): void { }
 
   render(width: number): string[] {
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [''];
+
     const prefixWidth = Math.max(
       visibleWidth(this.firstPrefix),
       visibleWidth(this.continuationPrefix),
     );
-    const contentWidth = Math.max(1, width - prefixWidth);
+    const contentWidth = Math.max(1, safeWidth - prefixWidth);
     const wrapped = new Text(this.text, 0, 0).render(contentWidth);
     const lines =
       this.tailLines !== undefined && wrapped.length > this.tailLines
         ? wrapped.slice(wrapped.length - this.tailLines)
         : wrapped;
-    return lines.map((line, index) =>
-      index === 0 ? `${this.firstPrefix}${line}` : `${this.continuationPrefix}${line}`,
-    );
+    return lines
+      .map((line, index) =>
+        index === 0 ? `${this.firstPrefix}${line}` : `${this.continuationPrefix}${line}`,
+      )
+      .map((line) => truncateToWidth(line, safeWidth, '…'));
   }
 }
 

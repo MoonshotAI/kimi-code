@@ -1,4 +1,3 @@
-import type { ModelCapability } from '#/capability';
 import {
   APIConnectionError,
   APITimeoutError,
@@ -38,12 +37,7 @@ import type {
   ToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/messages/messages.js';
 
-import { getAnthropicModelCapability } from './capability-registry';
-import {
-  mergeRequestHeaders,
-  requireProviderApiKey,
-  resolveAuthBackedClient,
-} from './request-auth';
+import { mergeRequestHeaders, resolveAuthBackedClient } from './request-auth';
 import {
   normalizeToolCallIdsForProvider,
   sanitizeToolCallId,
@@ -864,7 +858,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private _metadata: Record<string, string> | undefined;
   private _apiKey: string | undefined;
   private _baseUrl: string | undefined;
-  private _defaultHeaders: Record<string, string> | undefined;
+  private _defaultHeaders: Record<string, string | null> | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => Anthropic) | undefined;
   private _adaptiveThinking: boolean | undefined;
   private _explicitMaxTokens: boolean;
@@ -874,8 +868,8 @@ export class AnthropicChatProvider implements ChatProvider {
     this._stream = options.stream ?? true;
     this._metadata = options.metadata;
     this._adaptiveThinking = options.adaptiveThinking;
-    const apiKey = options.apiKey ?? process.env['ANTHROPIC_API_KEY'];
-    this._apiKey = apiKey === undefined || apiKey.length === 0 ? undefined : apiKey;
+    this._apiKey =
+      options.apiKey === undefined || options.apiKey.length === 0 ? undefined : options.apiKey;
     this._baseUrl = options.baseUrl;
     this._defaultHeaders = options.defaultHeaders;
     this._clientFactory = options.clientFactory;
@@ -929,10 +923,6 @@ export class AnthropicChatProvider implements ChatProvider {
       model: this._model,
       ...this._generationKwargs,
     };
-  }
-
-  getCapability(model?: string): ModelCapability {
-    return getAnthropicModelCapability(model ?? this._model);
   }
 
   async generate(
@@ -1079,15 +1069,62 @@ export class AnthropicChatProvider implements ChatProvider {
     return resolveAuthBackedClient(
       { cachedClient: this._client, clientFactory: this._clientFactory },
       auth,
-      (a) => this._buildClient(requireProviderApiKey('AnthropicChatProvider', a, this._apiKey)),
+      (a) => this._buildClient(this._requireApiKey(a)),
     );
   }
 
+  private _requireApiKey(auth: ProviderRequestAuth | undefined): string {
+    const apiKey = auth?.apiKey ?? this._apiKey;
+    if (apiKey === undefined || apiKey.length === 0) {
+      throw new ChatProviderError(
+        'AnthropicChatProvider: apiKey is required. Provide it via constructor options, options.auth.apiKey on each request, or an OAuth login. The Anthropic adapter does not read shell API-key environment variables.',
+      );
+    }
+    return apiKey;
+  }
+
+  private _anthropicCustomHeaderEnvNames(): string[] {
+    const customHeaders = process.env['ANTHROPIC_CUSTOM_HEADERS'];
+    if (customHeaders === undefined || customHeaders.length === 0) return [];
+
+    const names: string[] = [];
+    for (const line of customHeaders.split('\n')) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex < 0) continue;
+
+      const name = line.slice(0, colonIndex).trim().toLowerCase();
+      if (name.length > 0) names.push(name);
+    }
+    return names;
+  }
+
+  private _buildDefaultHeaders(apiKey: string): Record<string, string | null> {
+    const defaultHeaders: Record<string, string | null> = { authorization: null };
+    for (const name of this._anthropicCustomHeaderEnvNames()) {
+      defaultHeaders[name] = null;
+    }
+    for (const [name, value] of Object.entries(this._defaultHeaders ?? {})) {
+      defaultHeaders[name.toLowerCase()] = value;
+    }
+    defaultHeaders['x-api-key'] = apiKey;
+    return defaultHeaders;
+  }
+
+  // We use the Anthropic SDK purely as a transport to arbitrary
+  // anthropic-compatible endpoints (`baseUrl` may point anywhere). Left to its
+  // defaults the SDK auto-discovers credentials from the shell environment
+  // (ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS), which
+  // would leak an out-of-band bearer/headers to a third-party endpoint even when
+  // an explicit apiKey is set. So we hard-disable every auto-discovery channel.
+  // These `null`s — and the nulled headers in _buildDefaultHeaders — are NOT
+  // redundant: removing them reintroduces credential leakage. Regression cover:
+  // test/e2e/anthropic-adapter.test.ts.
   private _buildClient(apiKey: string): Anthropic {
     return new Anthropic({
       apiKey,
-      baseURL: this._baseUrl,
-      defaultHeaders: this._defaultHeaders,
+      authToken: null,
+      baseURL: this._baseUrl ?? null,
+      defaultHeaders: this._buildDefaultHeaders(apiKey),
     });
   }
 

@@ -193,6 +193,25 @@ describe('detectFileType', () => {
     expect(result.kind).toBe('unknown');
   });
 
+  it('can prefer the sniffed media header over the extension in media mode', () => {
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(detectFileType('mismatch.mp4', pngHeader, 'media')).toEqual<FileType>({
+      kind: 'image',
+      mimeType: 'image/png',
+    });
+  });
+
+  it('falls back to a media extension in media mode when sniffing is inconclusive', () => {
+    const mpegProgramStreamHeader = Buffer.from([0x00, 0x00, 0x01, 0xba, 0x21, 0x00]);
+    expect(detectFileType('clip.mpg', mpegProgramStreamHeader, 'media')).toEqual<
+      FileType
+    >({
+      kind: 'video',
+      mimeType: 'video/mpeg',
+    });
+    expect(detectFileType('clip.mpg', mpegProgramStreamHeader).kind).toBe('unknown');
+  });
+
   it('extension in NON_TEXT_SUFFIXES → unknown', () => {
     // A `.zip` file with no header and no image/video hint must not
     // be treated as text.
