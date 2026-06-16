@@ -51,11 +51,12 @@ const renderPlan = computed(() => {
 // Code blocks follow the app colour scheme (shiki re-renders on flip).
 const isDark = useIsDark();
 
-// markstream's chat mode batches nodes and defers offscreen nodes by default.
-// That is useful for loading long historical messages, but during active
-// streaming it can show newly appended nodes as blank placeholders before the
-// next render batch lands. Keep the optimization for settled content only.
-const allowDeferredRender = computed(() => !props.streaming);
+// markstream's chat mode can batch nodes and defer offscreen nodes. Batching is
+// safe for settled history, but viewport deferral can leave individual code
+// blocks blank in our internal chat scroller when visibility events are missed
+// during a session/theme switch. Keep batching for history, but always mount the
+// actual nodes so every code block has at least its plain fallback immediately.
+const allowBatchRender = computed(() => !props.streaming);
 
 // ---------------------------------------------------------------------------
 // Local image resolution — rewrite the SOURCE TEXT before markstream sees it.
@@ -364,8 +365,8 @@ function copyDiff(code: string, idx: number) {
         :code-block-props="codeBlockProps"
         :final="final"
         :smooth-streaming="streaming"
-        :batch-rendering="allowDeferredRender"
-        :defer-nodes-until-visible="allowDeferredRender"
+        :batch-rendering="allowBatchRender"
+        :defer-nodes-until-visible="false"
       />
 
       <!-- ```diff fence → local renderer (preserves +/- markers + colours) -->

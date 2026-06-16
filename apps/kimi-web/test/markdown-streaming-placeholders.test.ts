@@ -2,6 +2,7 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { createI18n } from 'vue-i18n';
 import { nextTick } from 'vue';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { MarkdownRender } from 'markstream-vue';
 
 import Markdown from '../src/components/Markdown.vue';
 
@@ -53,6 +54,20 @@ async function waitForSettled(wrapper: VueWrapper, timeoutMs = 8000): Promise<vo
 }
 
 describe('markdown streaming placeholders', () => {
+  it('keeps settled code blocks mounted instead of viewport-deferred', () => {
+    const wrapper = mount(Markdown, {
+      attachTo: document.body,
+      props: { text: '```ts\nconst ready = true;\n```', streaming: false },
+      global: { plugins: [i18n], provide: { resolveImage: undefined } },
+    });
+    mounted.push(wrapper);
+
+    const renderer = wrapper.findComponent(MarkdownRender);
+    expect(renderer.exists()).toBe(true);
+    expect(renderer.props('batchRendering')).toBe(true);
+    expect(renderer.props('deferNodesUntilVisible')).toBe(false);
+  });
+
   it('does not show markstream placeholders while a large message is streaming', async () => {
     const text = Array.from(
       { length: 480 },
