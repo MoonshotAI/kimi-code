@@ -13,6 +13,7 @@ export default {
   prevMatch: 'Previous match',
   nextMatch: 'Next match',
   htmlMode: 'HTML preview mode',
+  markdownMode: 'Markdown preview mode',
   preview: 'Preview',
   source: 'Source',
   imageFit: 'Image sizing',

@@ -282,7 +282,7 @@ function openMediaPreview(): void {
 .er { color: var(--err); font-weight: 700; }
 .tm { color: var(--muted); }
 
-/* running spinner — matches the FilePreview/FileTree ring spinner */
+/* running spinner — matches the FilePreview ring spinner */
 @keyframes tc-spin { to { transform: rotate(360deg); } }
 .spin {
   display: inline-block;

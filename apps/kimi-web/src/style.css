@@ -482,43 +482,6 @@ html[data-color-scheme="dark"][data-theme="modern"] {
   border-radius: var(--r-sm);
 }
 
-/* ---- TabBar (moved out of TabBar.vue — scoped :global() didn't apply) --------
-   Soft pill tabs on a white strip: no hard cell borders, active tab is a rounded
-   soft-blue pill. */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tabs {
-  height: 40px;
-  background: var(--bg);
-  padding: 0 8px;
-  gap: 2px;
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tb {
-  border-right: none;
-  border-radius: var(--r-sm);
-  margin: 5px 0;
-  padding: 0 12px;
-  font-size: var(--ui-font-size-sm);
-  color: var(--muted);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tb:hover {
-  background: var(--canvas);
-  color: var(--ink);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tb.on {
-  background: var(--soft);
-  color: var(--blue2);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tabs .cnt {
-  min-width: 16px;
-  height: 16px;
-  padding: 0 5px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--blue);
-  /* On-accent text: var(--bg) stays readable in dark + mono-dark too. */
-  color: var(--bg);
-}
-
 /* ---- Chat bubbles (moved out of ChatPane.vue) ---- */
 :is(html[data-theme="modern"], html[data-theme="kimi"]) .chat {
   gap: 0;

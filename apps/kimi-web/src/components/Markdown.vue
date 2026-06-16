@@ -189,8 +189,44 @@ function processFileLinks(): void {
   }
 }
 
+function isLocalLink(href: string): boolean {
+  if (!href) return false;
+  if (/^(https?:|mailto:|tel:|data:|blob:|#)/i.test(href)) return false;
+  return true;
+}
+
+/** Strip `?query` and `#fragment` from a link path so it can be opened as a
+    workspace file. Pure `#anchor` links are skipped upstream by isLocalLink. */
+function stripFragmentAndQuery(href: string): string {
+  let cut = href.length;
+  for (const sep of ['#', '?']) {
+    const idx = href.indexOf(sep);
+    if (idx !== -1 && idx < cut) cut = idx;
+  }
+  return href.slice(0, cut);
+}
+
+function processMarkdownLinks(): void {
+  if (!mdRef.value || !props.openFile || props.streaming) return;
+  const links = mdRef.value.querySelectorAll<HTMLAnchorElement>('a[href]');
+  for (const link of links) {
+    if (link.dataset.mdLinkHandled === 'true') continue;
+    const href = link.getAttribute('href') ?? '';
+    if (!isLocalLink(href)) continue;
+    link.dataset.mdLinkHandled = 'true';
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      props.openFile?.({ path: stripFragmentAndQuery(href) });
+    });
+  }
+}
+
 function scheduleFileLinkProcessing(): void {
-  void nextTick().then(() => processFileLinks());
+  void nextTick().then(() => {
+    processFileLinks();
+    processMarkdownLinks();
+  });
 }
 
 watch(() => props.text, scheduleFileLinkProcessing);

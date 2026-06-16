@@ -13,6 +13,8 @@ const props = defineProps<{
   turns: ChatTurn[];
   running: boolean;
   sending: boolean;
+  title?: string;
+  subtitle?: string;
 }>();
 
 const emit = defineEmits<{
@@ -21,6 +23,17 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+const firstUserText = computed(() => {
+  const turn = props.turns.find((t) => t.role === 'user');
+  return turn?.text?.trim() ?? '';
+});
+
+const panelTitle = computed(() => props.title?.trim() || t('sideChat.title'));
+const panelSubtitle = computed(() => {
+  if (props.subtitle?.trim()) return props.subtitle.trim();
+  return firstUserText.value || t('sideChat.subtitle');
+});
 
 const draft = ref('');
 const inputRef = ref<HTMLTextAreaElement | null>(null);
@@ -87,6 +100,19 @@ function autosize(): void {
 
 <template>
   <div class="sc">
+    <div class="sc-header">
+      <span class="sc-title">{{ panelTitle }}</span>
+      <span class="sc-subtitle" :title="panelSubtitle">{{ panelSubtitle }}</span>
+      <button
+        type="button"
+        class="sc-close"
+        :title="t('thinking.close')"
+        :aria-label="t('thinking.close')"
+        @click="emit('close')"
+      >
+        <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
+      </button>
+    </div>
     <div ref="bodyRef" class="sc-body">
       <div v-if="turns.length === 0" class="sc-empty">{{ t('sideChat.empty') }}</div>
       <ChatPane
@@ -126,6 +152,55 @@ function autosize(): void {
   flex-direction: column;
   min-height: 0;
   background: var(--bg);
+}
+.sc-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--panel-head-h, 48px);
+  padding: 0 6px 0 12px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.sc-title {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--ui-font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.sc-subtitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--ui-font-size-xs);
+  color: var(--muted);
+}
+.sc-close {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.sc-close:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.sc-close:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
 }
 .sc-body {
   flex: 1;

@@ -319,20 +319,20 @@ function startArchive(): void {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 38px;
-  padding: 0 14px;
+  gap: 14px;
+  height: 48px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--line);
   background: var(--bg);
   font-family: var(--sans);
   min-width: 0;
 }
 .ch-id { display: flex; align-items: center; gap: 6px; min-width: 0; flex: none; max-width: 46%; }
-.ch-ws { color: var(--muted); font-size: calc(var(--ui-font-size) - 1.5px); flex: none; }
+.ch-ws { color: var(--muted); font-size: var(--ui-font-size-sm); flex: none; }
 .ch-sep { color: var(--faint); flex: none; }
 .ch-ses {
   color: var(--ink);
-  font-size: calc(var(--ui-font-size) - 1.5px);
+  font-size: var(--ui-font-size-sm);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -342,7 +342,7 @@ function startArchive(): void {
   flex: 1;
   min-width: 0;
   font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 1.5px);
+  font-size: var(--ui-font-size-sm);
   font-weight: 600;
   color: var(--ink);
   background: var(--bg);
@@ -354,13 +354,13 @@ function startArchive(): void {
 .ch-git {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   border: none;
   background: transparent;
   padding: 0;
   color: var(--muted);
   font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 2.5px);
+  font-size: calc(var(--ui-font-size) - 2px);
   min-width: 0;
   cursor: pointer;
 }

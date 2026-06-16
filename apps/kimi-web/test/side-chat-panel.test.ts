@@ -124,4 +124,41 @@ describe('SideChatPanel', () => {
 
     expect(bodyEl.scrollTop).toBe(50);
   });
+
+  it('renders a header with title, first user message subtitle, and a close button', async () => {
+    const turns: ChatTurn[] = [
+      { id: 'u1', role: 'user', no: 1, text: 'explain this code' },
+    ];
+
+    const wrapper = mount(SideChatPanel, {
+      props: { turns, running: false, sending: false },
+      global: {
+        plugins: [i18n],
+        stubs: { ChatPane: true },
+      },
+      attachTo: document.body,
+    });
+    await nextTick();
+
+    expect(wrapper.find('.sc-header').exists()).toBe(true);
+    expect(wrapper.find('.sc-title').text()).toBe('Side chat');
+    expect(wrapper.find('.sc-subtitle').text()).toBe('explain this code');
+
+    await wrapper.find('.sc-close').trigger('click');
+    expect(wrapper.emitted('close')).toHaveLength(1);
+  });
+
+  it('uses the title prop when provided', async () => {
+    const wrapper = mount(SideChatPanel, {
+      props: { turns: [], running: false, sending: false, title: 'Custom title' },
+      global: {
+        plugins: [i18n],
+        stubs: { ChatPane: true },
+      },
+      attachTo: document.body,
+    });
+    await nextTick();
+
+    expect(wrapper.find('.sc-title').text()).toBe('Custom title');
+  });
 });

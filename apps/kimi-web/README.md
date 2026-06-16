@@ -125,9 +125,9 @@ web UI of the `kimi` CLI (`apps/kimi-code`).
 5. **Serve** — `kimi server run` / `kimi web` serves `dist-web` from the
    installed package.
 
-The version pill shown in the sidebar (`vX.Y.Z`) comes from
-`apps/kimi-web/package.json` and is injected at build time in
-`vite.config.ts` (`__KIMI_WEB_VERSION__`).
+The web UI does not display its own package version or build commit. It is
+bundled into the CLI package and follows the published `@moonshot-ai/kimi-code`
+release.
 
 ### Suggested improvements
 
@@ -139,10 +139,9 @@ The version pill shown in the sidebar (`vX.Y.Z`) comes from
   `.github/workflows/web-deploy.yml` that builds `apps/kimi-web` and uploads
   `dist/` to the chosen static host (S3/CloudFront, Cloudflare Pages, Vercel,
   etc.). Until then, do not maintain a separate deploy target.
-- **Align versions if confusion appears.** `apps/kimi-web/package.json` is
-  versioned independently of `apps/kimi-code`. If users start comparing the two,
-  consider pinning the web version to the CLI version or removing the web
-  version from the UI. At the moment the sidebar shows the web package version.
+- **Keep versioning owned by the CLI release.** `apps/kimi-web/package.json`
+  remains internal workspace metadata; do not surface it as a separate user
+  version unless the web app becomes an independently published product.
 - **Ensure the web build is exercised in CI.** The root `build` script already
   builds every workspace, so `pnpm run build` in CI covers `apps/kimi-web`.
   Keep it that way; do not bypass the web build in release pipelines.

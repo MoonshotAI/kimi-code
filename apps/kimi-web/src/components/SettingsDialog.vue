@@ -59,7 +59,6 @@ const tabs: { id: SettingsTab; labelKey: string }[] = [
 ];
 
 const daemonEndpoint = serverEndpointLabel();
-const buildInfo = [__KIMI_WEB_VERSION__, __KIMI_WEB_COMMIT__].filter(Boolean).join(' · ');
 const permissionModes = ['manual', 'auto', 'yolo'] as const;
 
 // Modal focus: move focus into the dialog on open, restore it to the opener on
@@ -412,10 +411,6 @@ function setTab(tab: SettingsTab): void {
               <div class="row">
                 <span class="rlabel">{{ t('sidebar.daemon') }}</span>
                 <span class="rvalue mono">{{ daemonEndpoint }}</span>
-              </div>
-              <div class="row">
-                <span class="rlabel">{{ t('settings.build') }}</span>
-                <span class="rvalue mono">{{ buildInfo }}</span>
               </div>
               <div class="row">
                 <span class="rlabel">

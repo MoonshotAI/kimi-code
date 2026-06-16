@@ -8,10 +8,7 @@ import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
 
-declare const __KIMI_WEB_VERSION__: string;
-
 const { t } = useI18n();
-const webVersion = __KIMI_WEB_VERSION__;
 
 withDefaults(
   defineProps<{
@@ -373,7 +370,6 @@ function blinkOnce(): void {
             <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#kimiEyes)" />
           </svg>
           <span class="ch-name">Kimi Code</span>
-          <span class="ch-version">{{ webVersion }}</span>
         </div>
         <button
           type="button"
@@ -656,19 +652,6 @@ function blinkOnce(): void {
    size and the action buttons remain reachable. */
 @container sidebar-col (max-width: 250px) {
   .ch-name { display: none; }
-}
-.ch-version {
-  flex: none;
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
-  font-weight: 600;
-  color: var(--muted);
-  background: var(--soft);
-  border: 1px solid var(--line2, var(--line));
-  border-radius: 4px;
-  padding: 1px 5px;
-  line-height: 1.2;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
 }
 .settings-btn,
 .collapse-btn {

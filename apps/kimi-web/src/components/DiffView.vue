@@ -1,8 +1,9 @@
 <!-- apps/kimi-web/src/components/DiffView.vue -->
 <!-- ~/diff tab: real git changes from the daemon's fs:git_status, with a
-     line-by-line unified-diff view (fs:diff) when a file is tapped. -->
+     line-by-line unified-diff view (fs:diff) when a file is tapped.
+     The changed-file list can be viewed as a flat list or as a tree. -->
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { DiffViewLine } from '../types';
 
@@ -27,8 +28,10 @@ const props = withDefaults(
     mode?: 'full' | 'list' | 'detail';
     /** Hide the in-panel Back button (the merged tab owns the back affordance). */
     hideBack?: boolean;
+    /** Show the close button in the panel header. */
+    closable?: boolean;
   }>(),
-  { mode: 'full', hideBack: false },
+  { mode: 'full', hideBack: false, closable: true },
 );
 
 const emit = defineEmits<{
@@ -36,6 +39,8 @@ const emit = defineEmits<{
   open: [path: string];
   /** Fired when the user collapses the diff back to the file list. */
   back: [];
+  /** Fired when the user closes the right-side panel. */
+  close: [];
 }>();
 
 // Status badge: single-letter glyph + CSS class
@@ -110,18 +115,130 @@ function onOpen(path: string): void {
 function onBack(): void {
   emit('back');
 }
+function onClose(): void {
+  emit('close');
+}
+
+// ---------------------------------------------------------------------------
+// List / tree view toggle
+// ---------------------------------------------------------------------------
+
+type ViewMode = 'list' | 'tree';
+const viewMode = ref<ViewMode>('list');
+
+function setViewMode(mode: ViewMode): void {
+  viewMode.value = mode;
+}
+
+// ---------------------------------------------------------------------------
+// Tree view
+// ---------------------------------------------------------------------------
+
+interface TreeNode {
+  name: string;
+  path: string;
+  kind: 'file' | 'folder';
+  status?: string;
+  children: TreeNode[];
+}
+
+function buildTree(changes: { path: string; status: string }[]): TreeNode[] {
+  const root: TreeNode = { name: '', path: '', kind: 'folder', children: [] };
+  const sorted = [...changes].sort((a, b) => a.path.localeCompare(b.path));
+  for (const entry of sorted) {
+    const parts = entry.path.split('/');
+    let current = root;
+    for (let i = 0; i < parts.length; i++) {
+      const name = parts[i]!;
+      const isFile = i === parts.length - 1;
+      const path = parts.slice(0, i + 1).join('/');
+      let child = current.children.find((c) => c.name === name && c.kind === (isFile ? 'file' : 'folder'));
+      if (!child) {
+        child = {
+          name,
+          path,
+          kind: isFile ? 'file' : 'folder',
+          status: isFile ? entry.status : undefined,
+          children: [],
+        };
+        current.children.push(child);
+      }
+      current = child;
+    }
+  }
+  return root.children;
+}
+
+interface FlatNode {
+  node: TreeNode;
+  depth: number;
+}
+
+const treeRoots = computed<TreeNode[]>(() => buildTree(props.changes));
+const collapsedPaths = ref<Set<string>>(new Set());
+
+function isExpanded(path: string): boolean {
+  return !collapsedPaths.value.has(path);
+}
+
+const flatTree = computed<FlatNode[]>(() => {
+  const result: FlatNode[] = [];
+  function walk(nodes: TreeNode[], depth: number): void {
+    for (const node of nodes) {
+      result.push({ node, depth });
+      if (node.kind === 'folder' && isExpanded(node.path)) {
+        walk(node.children, depth + 1);
+      }
+    }
+  }
+  walk(treeRoots.value, 0);
+  return result;
+});
+
+function toggleFolder(node: TreeNode): void {
+  const next = new Set(collapsedPaths.value);
+  if (next.has(node.path)) {
+    next.delete(node.path);
+  } else {
+    next.add(node.path);
+  }
+  collapsedPaths.value = next;
+}
+
+const folderIcon = (expanded: boolean) =>
+  expanded
+    ? 'M1.5 3.5h3l1.5 2h7a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z'
+    : 'M1.5 3.5h3l1.5 2h7a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z';
+
+function treePadding(depth: number): string {
+  return `${16 + depth * 16}px`;
+}
 </script>
 
 <template>
   <div class="changes-pane">
     <!-- ===================== LINE-BY-LINE DIFF VIEW ===================== -->
     <template v-if="renderDetail">
+      <div class="dv-panel-head">
+        <span class="dv-title">{{ t('diff.title') }}</span>
+        <span class="dv-path" :title="selectedDiffPath ?? ''">{{ truncateLeft(selectedDiffPath ?? '', 50) }}</span>
+        <button
+          v-if="closable"
+          type="button"
+          class="dv-close"
+          :title="t('diff.close')"
+          :aria-label="t('diff.close')"
+          @click="onClose"
+        >
+          <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
+        </button>
+      </div>
+
       <div class="diff-head">
         <button v-if="!hideBack" class="back-btn" type="button" @click="onBack" :title="t('diff.back')">
           <span aria-hidden="true">&#8592;</span>
           <span class="back-label">{{ t('diff.back') }}</span>
         </button>
-        <span class="diff-path" :title="selectedDiffPath ?? ''">{{ truncateLeft(selectedDiffPath ?? '', 50) }}</span>
       </div>
 
       <div v-if="loading" class="empty-state">{{ t('diff.loading') }}</div>
@@ -150,7 +267,43 @@ function onBack(): void {
 
     <!-- ======================== CHANGED-FILE LIST ======================= -->
     <template v-else>
-      <!-- Header -->
+      <!-- Panel header: title, view toggle, close -->
+      <div class="dv-panel-head">
+        <span class="dv-title">{{ t('diff.title') }}</span>
+        <span class="dv-change-count">{{ t('diff.changeCount', { count: changes.length }) }}</span>
+        <div class="dv-toggle" role="group" :aria-label="t('diff.list') + ' / ' + t('diff.tree')">
+          <button
+            type="button"
+            class="dv-toggle-btn"
+            :class="{ active: viewMode === 'list' }"
+            :aria-pressed="viewMode === 'list'"
+            @click="setViewMode('list')"
+          >
+            {{ t('diff.list') }}
+          </button>
+          <button
+            type="button"
+            class="dv-toggle-btn"
+            :class="{ active: viewMode === 'tree' }"
+            :aria-pressed="viewMode === 'tree'"
+            @click="setViewMode('tree')"
+          >
+            {{ t('diff.tree') }}
+          </button>
+        </div>
+        <button
+          v-if="closable"
+          type="button"
+          class="dv-close"
+          :title="t('diff.close')"
+          :aria-label="t('diff.close')"
+          @click="onClose"
+        >
+          <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
+        </button>
+      </div>
+
+      <!-- Git branch / status sub-header -->
       <div class="ch-head">
         <template v-if="hasGitInfo">
           <span class="br-label">{{ t('diff.branch') }}</span>
@@ -159,15 +312,14 @@ function onBack(): void {
             <span v-if="gitInfo!.ahead > 0" class="ahead" :title="t('diff.aheadTitle')">&#8593;{{ gitInfo!.ahead }}</span>
             <span v-if="gitInfo!.behind > 0" class="behind" :title="t('diff.behindTitle')">&#8595;{{ gitInfo!.behind }}</span>
           </span>
-          <span class="change-count">{{ t('diff.changeCount', { count: changes.length }) }}</span>
         </template>
         <template v-else>
           <span class="empty-head">{{ t('diff.empty') }}</span>
         </template>
       </div>
 
-      <!-- File list -->
-      <div v-if="hasChanges" class="ch-list">
+      <!-- File list (flat) -->
+      <div v-if="hasChanges && viewMode === 'list'" class="ch-list">
         <button
           v-for="entry in changes"
           :key="entry.path"
@@ -179,6 +331,41 @@ function onBack(): void {
           <span class="badge" :class="badgeKind(entry.status)">{{ badgeGlyph(entry.status) }}</span>
           <span class="fpath">{{ truncateLeft(entry.path) }}</span>
         </button>
+      </div>
+
+      <!-- File tree -->
+      <div v-else-if="hasChanges && viewMode === 'tree'" class="ch-list ch-tree">
+        <ul class="tree-list">
+          <li
+            v-for="{ node, depth } in flatTree"
+            :key="node.path"
+            class="tree-node"
+          >
+            <button
+              v-if="node.kind === 'folder'"
+              type="button"
+              class="tree-row tree-folder"
+              :style="{ paddingLeft: treePadding(depth) }"
+              @click="toggleFolder(node)"
+            >
+              <svg class="tree-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <path :d="folderIcon(isExpanded(node.path))" />
+              </svg>
+              <span class="tree-name">{{ node.name }}</span>
+            </button>
+            <button
+              v-else
+              type="button"
+              class="tree-row tree-file"
+              :style="{ paddingLeft: treePadding(depth) }"
+              :title="node.path"
+              @click="onOpen(node.path)"
+            >
+              <span class="badge" :class="badgeKind(node.status!)">{{ badgeGlyph(node.status!) }}</span>
+              <span class="tree-name">{{ node.name }}</span>
+            </button>
+          </li>
+        </ul>
       </div>
 
       <!-- Empty state when git info present but no changes -->
@@ -203,7 +390,87 @@ function onBack(): void {
   font-family: var(--mono);
 }
 
-/* ---- Header ---- */
+/* ---- Panel header (matches other right-side panels) ---- */
+.dv-panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--panel-head-h, 48px);
+  padding: 0 6px 0 12px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.dv-title {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--ui-font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.dv-path,
+.dv-change-count {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--ui-font-size-xs);
+  color: var(--muted);
+}
+.dv-change-count {
+  flex: 1;
+}
+.dv-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.dv-toggle-btn {
+  background: var(--panel);
+  border: none;
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: calc(var(--ui-font-size) - 2.5px);
+  color: var(--dim);
+  cursor: pointer;
+}
+.dv-toggle-btn.active {
+  background: var(--bg);
+  color: var(--ink);
+}
+.dv-toggle-btn:hover:not(.active) {
+  background: var(--panel2, #f5f6f8);
+  color: var(--ink);
+}
+.dv-close {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dv-close:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.dv-close:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+/* ---- Branch sub-header ---- */
 .ch-head {
   display: flex;
   align-items: center;
@@ -245,15 +512,6 @@ function onBack(): void {
   font-size: calc(var(--ui-font-size) - 3px);
 }
 
-.change-count {
-  margin-left: auto;
-  color: var(--dim);
-  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 0 6px;
-}
-
 .empty-head {
   color: var(--muted);
   font-size: calc(var(--ui-font-size) - 3px);
@@ -290,6 +548,54 @@ function onBack(): void {
 .ch-row:focus-visible {
   outline: 2px solid var(--blue, #1783ff);
   outline-offset: -2px;
+}
+
+/* ---- Tree view ---- */
+.ch-tree {
+  padding: 4px 0;
+}
+.tree-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 16px;
+  background: none;
+  border: none;
+  text-align: left;
+  font-family: inherit;
+  font-size: var(--ui-font-size);
+  color: inherit;
+  cursor: pointer;
+}
+.tree-row:hover {
+  background: var(--panel2, #f5f6f8);
+}
+.tree-row:focus-visible {
+  outline: 2px solid var(--blue, #1783ff);
+  outline-offset: -2px;
+}
+.tree-folder {
+  color: var(--ink);
+  font-weight: 600;
+}
+.tree-file {
+  color: var(--ink);
+}
+.tree-icon {
+  flex: none;
+  color: var(--muted);
+}
+.tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---- Status badge ---- */
@@ -374,17 +680,6 @@ function onBack(): void {
 .back-btn:focus-visible {
   outline: 2px solid var(--blue, #1783ff);
   outline-offset: 1px;
-}
-
-.diff-path {
-  color: var(--ink);
-  font-size: var(--ui-font-size);
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  direction: rtl;
-  text-align: left;
-  min-width: 0;
 }
 
 .diff-lines {
@@ -484,6 +779,10 @@ function onBack(): void {
   .ch-row:active { background: var(--panel2, #f5f6f8); }
   .badge { width: 18px; height: 18px; }
   .fpath { font-size: var(--ui-font-size-sm); }
+  .tree-row {
+    min-height: 40px;
+    padding: 8px 14px;
+  }
 
   /* Diff-head Back → real tap target. */
   .diff-head { padding: 8px 12px; gap: 10px; }

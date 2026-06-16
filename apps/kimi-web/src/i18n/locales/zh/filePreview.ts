@@ -13,6 +13,7 @@ export default {
   prevMatch: '上一个匹配',
   nextMatch: '下一个匹配',
   htmlMode: 'HTML 预览模式',
+  markdownMode: 'Markdown 预览模式',
   preview: '预览',
   source: '源码',
   imageFit: '图片缩放',

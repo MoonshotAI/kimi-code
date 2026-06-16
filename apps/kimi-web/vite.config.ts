@@ -1,36 +1,13 @@
 /// <reference types="vitest/config" />
-import { execFileSync } from 'node:child_process';
 
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import tailwindcss from '@tailwindcss/vite';
-import pkg from './package.json';
 
 const webPort = Number(process.env.WEB_PORT) || 5175;
 // Where the dev proxy forwards server traffic. Defaults to the local server
 // (or `pnpm dev:stub`). Override to point dev at another server instance.
 const serverTarget = process.env.KIMI_SERVER_URL || 'http://127.0.0.1:7878';
-const webCommit = resolveWebCommit();
-
-function shortCommit(value: string | undefined): string {
-  const commit = value?.trim() ?? '';
-  return commit.length > 7 ? commit.slice(0, 7) : commit;
-}
-
-function resolveWebCommit(): string {
-  const fromEnv = shortCommit(process.env.KIMI_CODE_COMMIT ?? process.env.GITHUB_SHA);
-  if (fromEnv.length > 0) return fromEnv;
-
-  try {
-    return shortCommit(execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: import.meta.dirname,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }));
-  } catch {
-    return '';
-  }
-}
 
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
@@ -39,8 +16,6 @@ export default defineConfig({
   // own same-origin URL). Unused by the same-origin production build.
   define: {
     __KIMI_DEV_PROXY_TARGET__: JSON.stringify(serverTarget),
-    __KIMI_WEB_VERSION__: JSON.stringify(`v${pkg.version}`),
-    __KIMI_WEB_COMMIT__: JSON.stringify(webCommit),
   },
   server: {
     port: webPort,

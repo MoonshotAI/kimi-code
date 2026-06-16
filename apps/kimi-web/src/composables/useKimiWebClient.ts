@@ -1479,8 +1479,16 @@ function isSessionEffectivelyRunning(sessionId: string): boolean {
   const hiddenBtwAgentId = sideChatTargetBySession.value[sessionId]?.agentId;
   const tasks = rawState.tasksBySession[sessionId] ?? [];
   const runningTasks = tasks.filter((t) => t.status === 'running');
-  // No task list yet (fresh refresh) — trust the daemon-reported session status.
-  if (runningTasks.length === 0) return true;
+  if (runningTasks.length === 0) {
+    // No task list yet (fresh refresh) — trust the daemon-reported session status,
+    // unless the only active work is a BTW side-chat agent. In that window the
+    // side chat is sending and its task hasn't been loaded, so suppress the main
+    // session spinner so the main composer stays usable.
+    if (hiddenBtwAgentId && rawState.sideChatSendingByAgent[hiddenBtwAgentId]) {
+      return false;
+    }
+    return true;
+  }
   return runningTasks.some((t) => t.id !== hiddenBtwAgentId);
 }
 

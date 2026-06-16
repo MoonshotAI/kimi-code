@@ -215,10 +215,9 @@ export interface ConversationStatus {
   isGitRepo: boolean;
 }
 
-// ~/diff and ~/files were merged into a single ~/files tab (changed-first list +
-// a Changed|All toggle + an adaptive content pane: diff for changed files, content
-// preview for unchanged ones). 'diff' is gone; 'files' is the merged key.
-export type PaneKey = 'chat' | 'files' | 'tasks' | 'todo' | 'terminal' | 'preview' | 'btw';
+/** Kind of the global right-side detail layer. Only one detail is visible at a
+ *  time; opening a new one closes the previous. */
+export type DetailTarget = 'file' | 'diff' | 'thinking' | 'compaction' | 'agent' | 'btw';
 
 export interface ActivationBadges {
   plan: boolean;

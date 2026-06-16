@@ -58,9 +58,8 @@ watch(
   background: var(--bg);
 }
 
-/* Header height matches the conversation TabBar (32px terminal / 40px modern
-   via --panel-head-h) so the hairline under both reads as one continuous line
-   across the split. */
+/* Header height matches the conversation header (32px terminal / 40px modern
+   via --panel-head-h) so the hairline reads as one continuous line. */
 .tp-header {
   flex: none;
   display: flex;

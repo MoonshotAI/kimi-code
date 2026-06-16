@@ -27,14 +27,29 @@ afterEach(() => {
   for (const wrapper of mounted.splice(0)) wrapper.unmount();
 });
 
-async function settleRender() {
-  await nextTick();
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  await nextTick();
-}
-
 function visibleByVShow(wrapper: VueWrapper): boolean {
   return !/\bdisplay:\s*none\b/.test(wrapper.attributes('style') ?? '');
+}
+
+function isSettled(wrapper: VueWrapper): boolean {
+  if (wrapper.findAll('.node-placeholder').length > 0) return false;
+  const visibleSkeletons = wrapper.findAll('.code-loading-placeholder').filter(visibleByVShow);
+  if (visibleSkeletons.length > 0) return false;
+  return wrapper.findAll('[data-node-index]').length > 0;
+}
+
+// Poll until markstream finishes rendering the real nodes. A fixed timeout was
+// flaky under full-suite parallel load: markstream's shiki/parse queue can take
+// longer than 1s when the CPU is busy, leaving `[data-node-index]` empty.
+async function waitForSettled(wrapper: VueWrapper, timeoutMs = 8000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await nextTick();
+    if (isSettled(wrapper)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  // One last check so the assertion below produces a useful diff on failure.
+  await nextTick();
 }
 
 describe('markdown streaming placeholders', () => {
@@ -51,11 +66,11 @@ describe('markdown streaming placeholders', () => {
     });
     mounted.push(wrapper);
 
-    await settleRender();
+    await waitForSettled(wrapper);
 
     expect(wrapper.findAll('.node-placeholder')).toHaveLength(0);
     const visibleCodeSkeletons = wrapper.findAll('.code-loading-placeholder').filter(visibleByVShow);
     expect(visibleCodeSkeletons).toHaveLength(0);
     expect(wrapper.findAll('[data-node-index]').length).toBeGreaterThan(0);
-  });
+  }, 10000);
 });

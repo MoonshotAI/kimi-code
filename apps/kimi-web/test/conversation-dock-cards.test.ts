@@ -54,7 +54,6 @@ function mountPane(extraProps: Record<string, unknown>) {
     global: {
       plugins: [i18n],
       stubs: {
-        TabBar: true,
         ChatHeader: true,
         ChatPane: true,
         Composer: true,
@@ -63,10 +62,6 @@ function mountPane(extraProps: Record<string, unknown>) {
         TodoCard: true,
         Terminal: true,
         SwarmCard: true,
-        FileTree: true,
-        DiffView: true,
-        ChangedTree: true,
-        FilePreview: true,
       },
     },
   });
@@ -77,23 +72,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('ConversationPane docked interrupt cards', () => {
-  it('keeps the docked composer scoped to the chat tab', async () => {
+describe('ConversationPane docked composer', () => {
+  it('renders the docked composer inside the chat layout', async () => {
     const wrapper = mountPane({});
 
     expect(wrapper.find('composer-stub').exists()).toBe(true);
     expect(wrapper.find('.chat-layout > .chat-dock').exists()).toBe(true);
     expect(wrapper.find('.chat-scroll > .chat-dock').exists()).toBe(false);
-
-    (wrapper.vm as unknown as { switchTab(tab: string): void }).switchTab('files');
-    await nextTick();
-
-    expect(wrapper.find('composer-stub').exists()).toBe(false);
-
-    (wrapper.vm as unknown as { switchTab(tab: string): void }).switchTab('chat');
-    await nextTick();
-
-    expect(wrapper.find('composer-stub').exists()).toBe(true);
   });
 
   it('passes the chat scroller gutter to the dock for composer alignment', async () => {
@@ -160,23 +145,6 @@ describe('ConversationPane docked interrupt cards', () => {
 
     expect(wrapper.find('.body-generic').exists()).toBe(true);
     expect(wrapper.text()).toContain('second action');
-  });
-});
-
-describe('ConversationPane BTW tab', () => {
-  it('renders the side-chat panel inside the BTW tab and emits close', async () => {
-    const wrapper = mountPane({ sideChatVisible: true, sideChatTurns: [] });
-
-    (wrapper.vm as unknown as { switchTab(tab: string): void }).switchTab('btw');
-    await nextTick();
-
-    const panel = wrapper.findComponent({ name: 'SideChatPanel' });
-    expect(panel.exists()).toBe(true);
-
-    panel.vm.$emit('close');
-    await nextTick();
-
-    expect(wrapper.emitted('closeSideChat')).toHaveLength(1);
   });
 });
 

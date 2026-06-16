@@ -1,11 +1,66 @@
 <!-- apps/kimi-web/src/components/FilePreview.vue -->
 <!-- File preview pane: renders text/markdown/json/image/binary by mime and encoding. -->
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, inject, nextTick, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Markdown from './Markdown.vue';
+import type { FilePreviewRequest } from '../types';
 
 const { t } = useI18n();
+
+// Resolve a relative path (from inside a Markdown file) against that file's
+// directory. Handles "./foo", "../foo", and bare "foo" segments.
+function resolveRelativePath(src: string, base: string): string {
+  const result = base ? base.split('/').filter(Boolean) : [];
+  for (const part of src.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') {
+      result.pop();
+    } else {
+      result.push(part);
+    }
+  }
+  return result.join('/');
+}
+
+// Wrap the app-level image resolver so that relative image paths inside a
+// Markdown file are resolved against that file's directory.
+const parentResolveImage = inject<(src: string) => Promise<string>>('resolveImage', async (src: string) => src);
+const markdownBaseDir = computed(() => {
+  const path = props.file?.path ?? '';
+  const lastSlash = path.lastIndexOf('/');
+  return lastSlash > 0 ? path.slice(0, lastSlash) : '';
+});
+function resolveImageSrc(src: string): string {
+  if (/^(https?:|data:|blob:)/i.test(src)) return src;
+  if (src.startsWith('/')) return src;
+  const base = markdownBaseDir.value;
+  if (!base) return src;
+  return resolveRelativePath(src, base);
+}
+async function resolveMarkdownImage(src: string): Promise<string> {
+  const resolved = resolveImageSrc(src);
+  if (parentResolveImage) return parentResolveImage(resolved);
+  return resolved;
+}
+provide('resolveImage', resolveMarkdownImage);
+
+// Resolve a Markdown `[link](./foo.md)` target against the current file's
+// directory before forwarding it to the app's file opener. Absolute paths and
+// URLs/anchors are passed through unchanged (Markdown.vue skips those itself).
+// `?query` and `#fragment` are stripped so they don't become part of the path.
+function resolveMarkdownFileTarget(target: { path: string; line?: number }): FilePreviewRequest {
+  let href = target.path;
+  if (/^(https?:|mailto:|tel:|data:|blob:|#)/i.test(href) || href.startsWith('/')) {
+    return target;
+  }
+  for (const sep of ['#', '?']) {
+    const idx = href.indexOf(sep);
+    if (idx !== -1) href = href.slice(0, idx);
+  }
+  const base = markdownBaseDir.value;
+  return { ...target, path: resolveRelativePath(href, base) };
+}
 
 export interface FileData {
   path: string;
@@ -27,6 +82,9 @@ const props = defineProps<{
   downloadUrl?: string | null;
   closable?: boolean;
   externalActions?: boolean;
+  /** Open a linked file from inside a Markdown preview (resolved against the
+      current file's directory before being called). */
+  openFile?: (target: FilePreviewRequest) => void;
 }>();
 
 const emit = defineEmits<{
@@ -34,6 +92,10 @@ const emit = defineEmits<{
   openExternal: [];
   reveal: [];
 }>();
+
+function handleMarkdownOpenFile(target: { path: string; line?: number }): void {
+  props.openFile?.(resolveMarkdownFileTarget(target));
+}
 
 const rootRef = ref<HTMLElement | null>(null);
 
@@ -50,7 +112,7 @@ const contentKind = computed<ContentKind>(() => {
   const lang = f.languageId ?? '';
   const lowerPath = f.path.toLowerCase();
 
-  if (mime === 'text/markdown' || lang === 'markdown' || lang === 'md') return 'markdown';
+  if (mime === 'text/markdown' || lang === 'markdown' || lang === 'md' || lowerPath.endsWith('.mdx')) return 'markdown';
   if (mime === 'application/json' || lang === 'json') return 'json';
   if (mime === 'text/html' || lang === 'html' || lowerPath.endsWith('.html') || lowerPath.endsWith('.htm')) return 'html';
   if (mime === 'application/pdf' || lowerPath.endsWith('.pdf')) return 'pdf';
@@ -220,10 +282,12 @@ function copyPath(): void {
 // ---------------------------------------------------------------------------
 
 const htmlMode = ref<'preview' | 'source'>('preview');
+const markdownMode = ref<'preview' | 'source'>('preview');
 const imageFit = ref<'fit' | 'actual'>('fit');
 
 watch(contentKind, (kind) => {
   htmlMode.value = kind === 'html' ? 'preview' : 'source';
+  markdownMode.value = 'preview';
   imageFit.value = 'fit';
 });
 
@@ -378,6 +442,20 @@ function truncatePath(path: string, maxLen = 55): string {
             @click="htmlMode = 'source'"
           >{{ t('filePreview.source') }}</button>
         </div>
+        <div v-if="contentKind === 'markdown'" class="fp-seg" role="group" :aria-label="t('filePreview.markdownMode')">
+          <button
+            type="button"
+            class="fp-seg-btn"
+            :class="{ on: markdownMode === 'preview' }"
+            @click="markdownMode = 'preview'"
+          >{{ t('filePreview.preview') }}</button>
+          <button
+            type="button"
+            class="fp-seg-btn"
+            :class="{ on: markdownMode === 'source' }"
+            @click="markdownMode = 'source'"
+          >{{ t('filePreview.source') }}</button>
+        </div>
         <div v-if="contentKind === 'image'" class="fp-seg" role="group" :aria-label="t('filePreview.imageFit')">
           <button
             type="button"
@@ -445,8 +523,26 @@ function truncatePath(path: string, maxLen = 55): string {
       </div>
 
       <!-- Body: Markdown -->
-      <div v-if="contentKind === 'markdown'" class="fp-body fp-markdown">
-        <Markdown :text="decodedContent" />
+      <div v-if="contentKind === 'markdown'" class="fp-body" :class="{ 'fp-markdown': markdownMode === 'preview' }">
+        <Markdown
+          v-if="markdownMode === 'preview'"
+          :text="decodedContent"
+          :open-file="props.openFile ? handleMarkdownOpenFile : undefined"
+        />
+        <div v-else class="fp-code">
+          <div class="fp-line-table">
+            <div
+              v-for="(line, idx) in lines"
+              :key="idx"
+              class="fp-line-row"
+              :class="lineClass(idx + 1)"
+              :data-line="idx + 1"
+            >
+              <span class="fp-gutter">{{ idx + 1 }}</span>
+              <span class="fp-line-text" v-html="highlightLine(line)"></span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Body: JSON -->
@@ -591,9 +687,9 @@ function truncatePath(path: string, maxLen = 55): string {
 }
 
 /* ---- Header ----
-   Single-line baseline matches the conversation TabBar height (32px terminal /
-   40px modern via --panel-head-h) so the hairline under both reads as one line
-   across the split; wraps taller only when the panel is too narrow. */
+   Single-line baseline matches the conversation header height (32px terminal /
+   40px modern via --panel-head-h) so the hairline reads as one line; wraps
+   taller only when the panel is too narrow. */
 .fp-header {
   display: flex;
   align-items: center;

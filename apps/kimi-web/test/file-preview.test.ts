@@ -10,11 +10,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 
 import FilePreview, { type FileData } from '../src/components/FilePreview.vue';
+import enFilePreview from '../src/i18n/locales/en/filePreview';
 
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: {} },
+  messages: { en: { filePreview: enFilePreview } },
   missingWarn: false,
   fallbackWarn: false,
 });
@@ -151,5 +152,178 @@ describe('FilePreview scroll-to-line', () => {
 
     // Reset + centered: 20 - 50 + 10 = -20, clamped to 0 by the browser.
     expect(bodyEl.scrollTop).toBe(0);
+  });
+});
+
+describe('FilePreview markdown', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  function markdownFile(path: string, content: string): FileData {
+    return {
+      path,
+      content,
+      encoding: 'utf-8',
+      mime: 'text/markdown',
+      isBinary: false,
+      size: content.length,
+      lineCount: content.split('\n').length,
+    };
+  }
+
+  it('renders Markdown as rich preview by default', async () => {
+    const wrapper = mount(FilePreview, {
+      props: { file: markdownFile('README.md', '# Hello\n\nWorld'), loading: false },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    });
+    await nextTick();
+
+    expect(wrapper.find('.fp-markdown').exists()).toBe(true);
+    expect(wrapper.find('.fp-markdown').text()).toContain('Hello');
+    expect(wrapper.find('.fp-code').exists()).toBe(false);
+  });
+
+  it('toggles to source view and back', async () => {
+    const wrapper = mount(FilePreview, {
+      props: { file: markdownFile('README.md', '# Hello'), loading: false },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    });
+    await nextTick();
+
+    const buttons = wrapper.findAll('.fp-seg-btn');
+    expect(buttons.map((b) => b.text())).toEqual(['Preview', 'Source']);
+
+    await buttons[1]!.trigger('click');
+    await nextTick();
+
+    expect(wrapper.find('.fp-code').exists()).toBe(true);
+    expect(wrapper.find('.fp-code').text()).toContain('# Hello');
+
+    await buttons[0]!.trigger('click');
+    await nextTick();
+
+    expect(wrapper.find('.fp-markdown').exists()).toBe(true);
+  });
+
+  it('recognises .mdx files as markdown', async () => {
+    const wrapper = mount(FilePreview, {
+      props: { file: { ...markdownFile('page.mdx', '# MDX'), mime: 'text/plain' }, loading: false },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    });
+    await nextTick();
+
+    expect(wrapper.find('.fp-seg-btn').exists()).toBe(true);
+  });
+
+  it('resolves a Markdown relative link against the current file directory', async () => {
+    const openFile = vi.fn();
+    const wrapper = mount(FilePreview, {
+      props: {
+        file: markdownFile('docs/guide/page.md', 'See [other](../other.md).'),
+        loading: false,
+        openFile,
+      },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    });
+    await nextTick();
+    await nextTick();
+
+    const link = wrapper.find('.fp-markdown a[href="../other.md"]');
+    expect(link.exists()).toBe(true);
+    await link.trigger('click');
+    await nextTick();
+
+    expect(openFile).toHaveBeenCalledWith({ path: 'docs/other.md' });
+  });
+
+  it('resolves a Markdown relative image against the current file directory', async () => {
+    const resolveImage = vi.fn(async (src: string) => `resolved:${src}`);
+    const wrapper = mount(FilePreview, {
+      props: {
+        file: markdownFile('docs/guide/page.md', '![img](../img.png)'),
+        loading: false,
+      },
+      global: {
+        plugins: [i18n],
+        provide: { resolveImage },
+      },
+      attachTo: document.body,
+    });
+    await nextTick();
+    await nextTick();
+
+    expect(resolveImage).toHaveBeenCalledWith('docs/img.png');
+  });
+
+  it('strips fragment and query from Markdown file links before opening', async () => {
+    const openFile = vi.fn();
+    const wrapper = mount(FilePreview, {
+      props: {
+        file: markdownFile('docs/page.md', 'See [a](guide.md#section) and [b](other.md?x=1).'),
+        loading: false,
+        openFile,
+      },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    });
+    await nextTick();
+    await nextTick();
+
+    const linkA = wrapper.find('.fp-markdown a[href="guide.md#section"]');
+    const linkB = wrapper.find('.fp-markdown a[href="other.md?x=1"]');
+    expect(linkA.exists()).toBe(true);
+    expect(linkB.exists()).toBe(true);
+
+    await linkA.trigger('click');
+    await nextTick();
+    await linkB.trigger('click');
+    await nextTick();
+
+    expect(openFile).toHaveBeenNthCalledWith(1, { path: 'docs/guide.md' });
+    expect(openFile).toHaveBeenNthCalledWith(2, { path: 'docs/other.md' });
+  });
+
+  it('does not intercept pure anchor links', async () => {
+    const openFile = vi.fn();
+    const wrapper = mount(FilePreview, {
+      props: {
+        file: markdownFile('docs/page.md', 'Jump to [section](#section).'),
+        loading: false,
+        openFile,
+      },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    });
+    await nextTick();
+    await nextTick();
+
+    const link = wrapper.find('.fp-markdown a[href="#section"]');
+    expect(link.exists()).toBe(true);
+    await link.trigger('click');
+    await nextTick();
+
+    expect(openFile).not.toHaveBeenCalled();
   });
 });

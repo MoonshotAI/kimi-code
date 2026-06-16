@@ -1,4 +1,5 @@
 export default {
+  title: 'Changes',
   branch: 'branch',
   aheadTitle: 'ahead of remote',
   behindTitle: 'behind remote',
@@ -8,4 +9,7 @@ export default {
   back: 'Back',
   loading: 'Loading diff…',
   noDiff: 'No line changes for this file',
+  list: 'List',
+  tree: 'Tree',
+  close: 'Close',
 } as const;

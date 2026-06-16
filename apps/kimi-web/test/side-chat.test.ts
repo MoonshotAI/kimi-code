@@ -249,4 +249,16 @@ describe('side chat (BTW)', () => {
       'what does this do?',
     ]);
   });
+
+  it('does not make the main session look busy while the BTW agent is sending', async () => {
+    const { client } = await setup();
+    await client.createSession('/repo');
+    // Simulate the daemon reporting the parent session as running before the
+    // task list has been refreshed to show the BTW agent.
+    client.sessions.value[0]!.status = 'running';
+
+    await client.openSideChat('what does this do?');
+
+    expect(client.activity.value).toBe('idle');
+  });
 });

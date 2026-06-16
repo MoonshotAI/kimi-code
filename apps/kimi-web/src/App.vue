@@ -8,6 +8,8 @@ import ConversationPane from './components/ConversationPane.vue';
 import FilePreview, { type FileData } from './components/FilePreview.vue';
 import ThinkingPanel from './components/ThinkingPanel.vue';
 import AgentDetailPanel from './components/AgentDetailPanel.vue';
+import SideChatPanel from './components/SideChatPanel.vue';
+import DiffView from './components/DiffView.vue';
 import type { AgentMember } from './types';
 import ModelPicker from './components/ModelPicker.vue';
 import ProviderManager from './components/ProviderManager.vue';
@@ -85,13 +87,14 @@ onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
 });
 
-// Escape closes whichever transient right-side detail panel is open (thinking,
-// compaction summary, subagent detail, or the mobile file/media preview).
+// Escape closes whichever transient right-side detail panel is open.
 function closeOpenSidePanel(): boolean {
-  if (thinkingVisible.value) { closeThinkingPanel(); return true; }
-  if (compactionPanelVisible.value) { closeCompactionPanel(); return true; }
-  if (agentPanelVisible.value) { closeAgentPanel(); return true; }
-  if (sidePreviewVisible.value) { closeFilePreview(); return true; }
+  if (detailTarget.value === 'thinking' && thinkingVisible.value) { closeThinkingPanel(); return true; }
+  if (detailTarget.value === 'compaction' && compactionPanelVisible.value) { closeCompactionPanel(); return true; }
+  if (detailTarget.value === 'agent' && agentPanelVisible.value) { closeAgentPanel(); return true; }
+  if (detailTarget.value === 'file') { closeFilePreview(); return true; }
+  if (detailTarget.value === 'diff') { closeDiffDetail(); return true; }
+  if (detailTarget.value === 'btw') { closeSideChat(); return true; }
   return false;
 }
 
@@ -145,9 +148,11 @@ function toggleSidebarCollapse(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Global file preview panel. Chat path links open here; the existing ~/files
-// tab keeps its local split-pane preview.
+// Unified right-side detail layer. Only one detail is open at a time.
 // ---------------------------------------------------------------------------
+type DetailTarget = 'file' | 'diff' | 'thinking' | 'compaction' | 'agent' | 'btw';
+const detailTarget = ref<DetailTarget | null>(null);
+
 const PREVIEW_WIDTH_KEY = 'kimi-web.file-preview-width';
 const PREVIEW_MIN = 320;
 
@@ -172,13 +177,16 @@ const previewTarget = ref<FilePreviewRequest | null>(null);
 const previewFile = ref<FileData | null>(null);
 const previewLoading = ref(false);
 const previewError = ref<string | null>(null);
+// Normalized workspace-relative path of the currently-open preview. Used for
+// the download URL so it matches the server's relative-path contract even when
+// the user opened the preview from an absolute path in the chat.
+const previewNormalizedPath = ref<string | null>(null);
+// Incremented on every openFilePreview call so a slower earlier request can't
+// overwrite the result of a later one (request-sequence guard).
 let previewRequestSeq = 0;
 
-const previewVisible = computed(
-  () => previewTarget.value !== null || previewFile.value !== null || previewLoading.value || previewError.value !== null,
-);
 const previewDownloadUrl = computed(() => {
-  const path = previewTarget.value?.path;
+  const path = previewNormalizedPath.value;
   return path ? client.getFileDownloadUrl(path) : null;
 });
 const previewExternalActions = computed(() => previewTarget.value !== null);
@@ -232,26 +240,47 @@ function normalizePreviewPath(inputPath: string): { path: string } | { error: st
 }
 
 async function openFilePreview(target: FilePreviewRequest): Promise<void> {
-  thinkingTarget.value = null; // shared right-side slot
-  compactionTarget.value = null;
-  agentTarget.value = null;
-  client.closeSideChat();
-  const normalized = normalizePreviewPath(target.path);
+  const requestSeq = ++previewRequestSeq;
+  detailTarget.value = 'file';
   previewFile.value = null;
   previewError.value = null;
+  previewLoading.value = true;
+  previewTarget.value = target;
+  previewNormalizedPath.value = null;
 
-  if (!('error' in normalized)) {
-    closeFilePreview();
-    await conversationPaneRef.value?.openWorkspaceFileInFiles({ path: normalized.path, line: target.line });
+  const normalized = normalizePreviewPath(target.path);
+  if ('error' in normalized) {
+    previewLoading.value = false;
+    previewError.value = normalized.error;
     return;
   }
+  previewNormalizedPath.value = normalized.path;
 
-  // Paths outside the active workspace cannot be read through the Files tab.
-  // Keep the preview pane so the click has a visible result and error message.
-  if (!isMobile.value) conversationPaneRef.value?.openPreviewPane();
-  previewTarget.value = target;
-  previewLoading.value = false;
-  previewError.value = normalized.error;
+  try {
+    const result = await client.readFileContent(normalized.path);
+    // A newer openFilePreview started while this one was in flight — discard
+    // the stale result so the right-side panel shows the latest file.
+    if (requestSeq !== previewRequestSeq) return;
+    if (result) {
+      previewFile.value = { ...result, path: result.path || normalized.path };
+    } else {
+      previewFile.value = {
+        path: normalized.path,
+        content: '',
+        encoding: 'utf-8',
+        mime: 'text/plain',
+        isBinary: false,
+        size: 0,
+      };
+    }
+  } catch (err) {
+    if (requestSeq !== previewRequestSeq) return;
+    previewError.value = err instanceof Error ? err.message : t('filePreview.errors.loadFailed');
+  } finally {
+    if (requestSeq === previewRequestSeq) {
+      previewLoading.value = false;
+    }
+  }
 }
 
 function mimeFromDataUrl(url: string): string | undefined {
@@ -261,11 +290,9 @@ function mimeFromDataUrl(url: string): string | undefined {
 
 function openMediaPreview(media: ToolMedia): void {
   if (media.kind !== 'image') return;
-  thinkingTarget.value = null;
-  compactionTarget.value = null;
-  if (!isMobile.value) conversationPaneRef.value?.openPreviewPane();
-  previewRequestSeq++;
+  detailTarget.value = 'file';
   previewTarget.value = null;
+  previewNormalizedPath.value = null;
   previewError.value = null;
   previewLoading.value = false;
   previewFile.value = {
@@ -280,17 +307,16 @@ function openMediaPreview(media: ToolMedia): void {
 }
 
 function closeFilePreview(): void {
-  previewRequestSeq++;
   previewTarget.value = null;
+  previewNormalizedPath.value = null;
   previewFile.value = null;
   previewError.value = null;
   previewLoading.value = false;
+  if (detailTarget.value === 'file') detailTarget.value = null;
 }
 
 // ---------------------------------------------------------------------------
-// Thinking panel — shares the right-side slot with the file preview (one open
-// at a time; opening either closes the other). The panel resolves its text
-// reactively from the transcript so a still-streaming block keeps growing.
+// Thinking panel
 // ---------------------------------------------------------------------------
 const thinkingTarget = ref<{ turnId: string; blockIndex: number } | null>(null);
 
@@ -302,32 +328,26 @@ const thinkingPanelText = computed<string | null>(() => {
   return blk?.kind === 'thinking' ? blk.thinking : null;
 });
 
-// Visible only while the block still exists (a compaction reload that drops
-// the turn auto-hides the panel).
 const thinkingVisible = computed(() => thinkingPanelText.value !== null);
 
 function openThinkingPanel(target: { turnId: string; blockIndex: number }): void {
-  // Clicking the SAME thinking block again closes the drawer (toggle).
   const current = thinkingTarget.value;
   if (current && current.turnId === target.turnId && current.blockIndex === target.blockIndex) {
     thinkingTarget.value = null;
+    if (detailTarget.value === 'thinking') detailTarget.value = null;
     return;
   }
-  closeFilePreview();
-  compactionTarget.value = null;
-  agentTarget.value = null;
-  client.closeSideChat();
+  detailTarget.value = 'thinking';
   thinkingTarget.value = target;
 }
 
 function closeThinkingPanel(): void {
   thinkingTarget.value = null;
+  if (detailTarget.value === 'thinking') detailTarget.value = null;
 }
 
 // ---------------------------------------------------------------------------
-// Compaction summary panel — shares the right-side slot too. Opened from a
-// "context compacted" divider in the transcript; resolves the summary text
-// reactively from the divider turn.
+// Compaction summary panel
 // ---------------------------------------------------------------------------
 const compactionTarget = ref<{ turnId: string } | null>(null);
 
@@ -341,26 +361,22 @@ const compactionPanelText = computed<string | null>(() => {
 const compactionPanelVisible = computed(() => compactionPanelText.value !== null);
 
 function openCompactionPanel(target: { turnId: string }): void {
-  // Clicking the SAME divider again closes the drawer (toggle).
   if (compactionTarget.value?.turnId === target.turnId) {
     compactionTarget.value = null;
+    if (detailTarget.value === 'compaction') detailTarget.value = null;
     return;
   }
-  closeFilePreview();
-  thinkingTarget.value = null;
-  agentTarget.value = null;
-  client.closeSideChat();
+  detailTarget.value = 'compaction';
   compactionTarget.value = target;
 }
 
 function closeCompactionPanel(): void {
   compactionTarget.value = null;
+  if (detailTarget.value === 'compaction') detailTarget.value = null;
 }
 
 // ---------------------------------------------------------------------------
-// Subagent detail panel — shares the right-side slot too. Opened by clicking a
-// subagent card; resolves the member reactively from the transcript so a still-
-// running subagent keeps streaming its progress here.
+// Subagent detail panel
 // ---------------------------------------------------------------------------
 const agentTarget = ref<{ turnId: string; blockIndex: number; memberId: string } | null>(null);
 
@@ -378,43 +394,76 @@ const agentPanelMember = computed<AgentMember | null>(() => {
 const agentPanelVisible = computed(() => agentPanelMember.value !== null);
 
 function openAgentPanel(target: { turnId: string; blockIndex: number; memberId: string }): void {
-  // Clicking the SAME subagent again closes the drawer (toggle).
   const current = agentTarget.value;
   if (current && current.turnId === target.turnId && current.memberId === target.memberId) {
     agentTarget.value = null;
+    if (detailTarget.value === 'agent') detailTarget.value = null;
     return;
   }
-  closeFilePreview();
-  thinkingTarget.value = null;
-  compactionTarget.value = null;
-  client.closeSideChat();
+  detailTarget.value = 'agent';
   agentTarget.value = target;
 }
 
 function closeAgentPanel(): void {
   agentTarget.value = null;
+  if (detailTarget.value === 'agent') detailTarget.value = null;
 }
 
 // ---------------------------------------------------------------------------
-// Side chat (BTW side-channel agent) — rendered as a tab inside the active
-// ConversationPane, not in the global right-side panel.
+// Diff detail layer (opened from the chat header git area)
+// ---------------------------------------------------------------------------
+const detailDiffMode = ref<'list' | 'detail'>('list');
+const detailDiffPath = ref<string | null>(null);
+
+function openDiffDetail(): void {
+  detailTarget.value = 'diff';
+  detailDiffMode.value = 'list';
+  detailDiffPath.value = null;
+  void client.loadGitStatus(client.activeSessionId.value!);
+}
+
+function closeDiffDetail(): void {
+  if (detailTarget.value === 'diff') detailTarget.value = null;
+  detailDiffMode.value = 'list';
+  detailDiffPath.value = null;
+  client.clearFileDiff();
+}
+
+async function selectDiffFile(path: string): Promise<void> {
+  detailDiffMode.value = 'detail';
+  detailDiffPath.value = path;
+  await client.loadFileDiff(path);
+}
+
+// ---------------------------------------------------------------------------
+// Side chat (BTW) — now rendered in the unified right-side detail layer.
 // ---------------------------------------------------------------------------
 async function openSideChatTab(prompt?: string): Promise<void> {
   await client.openSideChat(prompt);
-  conversationPaneRef.value?.openBtwPane();
+  detailTarget.value = 'btw';
 }
 
+function closeSideChat(): void {
+  client.closeSideChat();
+  if (detailTarget.value === 'btw') detailTarget.value = null;
+}
+
+// Only hides the right-side BTW panel; the side-chat target is per-session and
+// preserved so switching back to a session restores its BTW transcript.
+function hideSideChatPanel(): void {
+  if (detailTarget.value === 'btw') detailTarget.value = null;
+}
+
+const btwVisible = computed(() => client.sideChatVisible.value);
+
 /** Any occupant of the shared right-side slot. */
-// File/media preview lives in the split-pane system on desktop (a peer of
-// chat/files); the right-side panel only hosts it on mobile, where there is no
-// split layout. Thinking/compaction summaries stay in the side panel always.
-const sidePreviewVisible = computed(() => previewVisible.value && isMobile.value);
 const sidePanelVisible = computed(
   () =>
-    sidePreviewVisible.value ||
-    thinkingVisible.value ||
-    compactionPanelVisible.value ||
-    agentPanelVisible.value,
+    detailTarget.value !== null &&
+    (detailTarget.value !== 'thinking' || thinkingVisible.value) &&
+    (detailTarget.value !== 'compaction' || compactionPanelVisible.value) &&
+    (detailTarget.value !== 'agent' || agentPanelVisible.value) &&
+    (detailTarget.value !== 'btw' || btwVisible.value),
 );
 
 /** True while the panel's resize handle is being dragged — the width
@@ -437,6 +486,9 @@ watch(client.activeSessionId, () => {
   closeFilePreview();
   closeThinkingPanel();
   closeCompactionPanel();
+  closeAgentPanel();
+  closeDiffDetail();
+  hideSideChatPanel();
 });
 
 // Reference to ConversationPane so we can imperatively switch tabs
@@ -823,11 +875,6 @@ function openPr(url: string): void {
       :approvals="client.pendingApprovals.value"
       :changes="client.changes.value"
       :git-info="client.gitInfo.value"
-      :file-diff="client.fileDiff.value"
-      :selected-diff-path="client.selectedDiffPath.value"
-      :file-diff-loading="client.fileDiffLoading.value"
-      :load-file-diff="client.loadFileDiff"
-      :clear-file-diff="client.clearFileDiff"
       :tasks="client.tasks.value"
       :todos="client.todos.value"
       :goal="client.goal.value"
@@ -846,13 +893,8 @@ function openPr(url: string): void {
       :queued="client.queued.value"
       :search-files="client.searchFiles"
       :upload-image="client.uploadImage"
-      :connection="client.connection.value"
-      :activity="client.activity.value"
       :sending="client.isSending.value"
       :fast-moon="client.fastMoon.value"
-      :load-dir="client.listDir"
-      :read-file="client.readFileContent"
-      :changes-by-path="client.changesByPath.value"
       :file-reload-key="client.activeSessionId.value"
       :session-loading="client.sessionLoading.value"
       :compaction="client.compaction.value"
@@ -863,22 +905,8 @@ function openPr(url: string): void {
       :active-workspace-id="client.activeWorkspaceId.value"
       :session-title="activeSessionTitle"
       :pr="null"
-      :preview-file="previewFile"
-      :preview-loading="previewLoading"
-      :preview-error="previewError"
-      :preview-line="previewTarget?.line"
-      :preview-download-url="previewDownloadUrl"
-      :preview-external-actions="previewExternalActions"
       :beta-toc="client.betaToc.value"
-      :side-chat-turns="client.sideChatTurns.value"
-      :side-chat-running="client.sideChatRunning.value"
-      :side-chat-sending="client.sideChatSending.value"
-      :side-chat-visible="client.sideChatVisible.value"
-      @close-preview="closeFilePreview"
-      @send-side-chat="client.sendSideChatPrompt($event)"
-      @close-side-chat="client.closeSideChat()"
-      @open-preview-external="openPreviewInEditor"
-      @reveal-preview="revealPreviewFile"
+      @open-changes="openDiffDetail()"
       @select-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="showAddWorkspace = true"
       @open-pr="openPr"
@@ -897,7 +925,6 @@ function openPr(url: string): void {
       @toggle-plan="client.togglePlanMode()"
       @toggle-swarm="client.toggleSwarmMode()"
       @toggle-goal="client.toggleGoalMode()"
-      @open-btw="openSideChatTab()"
       @create-goal="client.createGoal($event)"
       @control-goal="client.controlGoal($event)"
       @refresh-git-status="client.activeSessionId.value && client.loadGitStatus(client.activeSessionId.value)"
@@ -947,23 +974,44 @@ function openPr(url: string): void {
       :aria-hidden="!sidePanelVisible"
     >
       <ThinkingPanel
-        v-if="thinkingVisible"
+        v-if="detailTarget === 'thinking' && thinkingVisible"
         :text="thinkingPanelText ?? ''"
         @close="closeThinkingPanel"
       />
       <ThinkingPanel
-        v-else-if="compactionPanelVisible"
+        v-else-if="detailTarget === 'compaction' && compactionPanelVisible"
         :text="compactionPanelText ?? ''"
         :subtitle="t('conversation.summaryTitle')"
         @close="closeCompactionPanel"
       />
       <AgentDetailPanel
-        v-else-if="agentPanelVisible && agentPanelMember"
+        v-else-if="detailTarget === 'agent' && agentPanelMember"
         :member="agentPanelMember"
         @close="closeAgentPanel"
       />
+      <SideChatPanel
+        v-else-if="detailTarget === 'btw' && btwVisible"
+        :turns="client.sideChatTurns.value"
+        :running="client.sideChatRunning.value"
+        :sending="client.sideChatSending.value"
+        @send="client.sendSideChatPrompt($event)"
+        @close="closeSideChat"
+      />
+      <DiffView
+        v-else-if="detailTarget === 'diff'"
+        :mode="detailDiffMode"
+        :changes="client.changes.value"
+        :git-info="client.gitInfo.value"
+        :file-diff="client.fileDiff.value"
+        :selected-diff-path="client.selectedDiffPath.value"
+        :file-diff-loading="client.fileDiffLoading.value"
+        closable
+        @open="selectDiffFile"
+        @back="detailDiffMode = 'list'; detailDiffPath = null; client.clearFileDiff()"
+        @close="closeDiffDetail"
+      />
       <FilePreview
-        v-else-if="sidePreviewVisible"
+        v-else-if="detailTarget === 'file'"
         :file="previewFile"
         :loading="previewLoading"
         :error="previewError"
@@ -971,6 +1019,7 @@ function openPr(url: string): void {
         :download-url="previewDownloadUrl"
         closable
         :external-actions="previewExternalActions"
+        :open-file="openFilePreview"
         @close="closeFilePreview"
         @open-external="openPreviewInEditor"
         @reveal="revealPreviewFile"
@@ -1315,11 +1364,10 @@ function openPr(url: string): void {
 </style>
 
 <style>
-/* Right-side panel headers (ThinkingPanel / FilePreview) track the TabBar
-   height per theme: 32px terminal (the components' var fallback), 40px
-   modern/kimi. */
-html[data-theme="modern"],
-html[data-theme="kimi"] {
-  --panel-head-h: 40px;
+:root {
+  /* Right-side panel headers (ThinkingPanel / FilePreview / DiffView / SideChatPanel)
+     share the same 48px height as the conversation header so the hairline reads as
+     one continuous line across the layout. */
+  --panel-head-h: 48px;
 }
 </style>
