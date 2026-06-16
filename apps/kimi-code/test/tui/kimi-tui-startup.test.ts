@@ -1,8 +1,13 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { log, type GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BannerProvider } from '#/tui/banner/banner-provider';
+import { readBannerDisplayState } from '#/tui/banner/state';
 import { handleLoginCommand, handleLogoutCommand } from '#/tui/commands/auth';
 import { promptPlatformSelection, promptLogoutProviderSelection } from '#/tui/commands/prompts';
 import { BannerComponent } from '#/tui/components/chrome/banner';
@@ -1569,9 +1574,11 @@ describe('KimiTUI startup', () => {
 
   it('renders the banner below the welcome message after it loads', async () => {
     const banner = {
+      key: 'new-banner',
       tag: 'New',
       mainText: 'Banner main',
       subText: null,
+      display: 'always' as const,
     };
     const loadSpy = vi.spyOn(BannerProvider.prototype, 'load').mockResolvedValue(banner);
     const session = makeSession({ id: 'ses-target' });
@@ -1603,6 +1610,96 @@ describe('KimiTUI startup', () => {
     expect(bannerIndex).toBe(welcomeIndex + 1);
 
     loadSpy.mockRestore();
+  });
+
+  it('writes display state after rendering a once banner', async () => {
+    const originalEnv = { ...process.env };
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-startup-banner-'));
+    process.env['KIMI_CODE_HOME'] = dir;
+
+    try {
+      const banner = {
+        key: 'once-banner',
+        tag: null,
+        mainText: 'Banner main',
+        subText: null,
+        display: 'once' as const,
+      };
+      const loadSpy = vi.spyOn(BannerProvider.prototype, 'load').mockResolvedValue(banner);
+      const session = makeSession({ id: 'ses-target' });
+      const harness = makeHarness(session, {
+        listSessions: vi.fn(async () => [{ id: 'ses-target', workDir: '/tmp/proj-a' }]),
+      });
+      const driver = makeDriver(
+        harness,
+        makeStartupInput({ session: 'ses-target' }),
+      ) as unknown as MigrateExitDriver;
+
+      await driver.initMainTui();
+
+      await vi.waitFor(() => {
+        expect(
+          driver.state.transcriptContainer.children.some((child) => child instanceof BannerComponent),
+        ).toBe(true);
+      });
+
+      await expect(readBannerDisplayState()).resolves.toMatchObject({
+        version: 1,
+        shown: {
+          'once-banner': {
+            lastShownAt: expect.any(String),
+          },
+        },
+      });
+
+      loadSpy.mockRestore();
+    } finally {
+      process.env = { ...originalEnv };
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not write display state for an always banner', async () => {
+    const originalEnv = { ...process.env };
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-startup-banner-'));
+    process.env['KIMI_CODE_HOME'] = dir;
+
+    try {
+      const banner = {
+        key: 'always-banner',
+        tag: null,
+        mainText: 'Banner main',
+        subText: null,
+        display: 'always' as const,
+      };
+      const loadSpy = vi.spyOn(BannerProvider.prototype, 'load').mockResolvedValue(banner);
+      const session = makeSession({ id: 'ses-target' });
+      const harness = makeHarness(session, {
+        listSessions: vi.fn(async () => [{ id: 'ses-target', workDir: '/tmp/proj-a' }]),
+      });
+      const driver = makeDriver(
+        harness,
+        makeStartupInput({ session: 'ses-target' }),
+      ) as unknown as MigrateExitDriver;
+
+      await driver.initMainTui();
+
+      await vi.waitFor(() => {
+        expect(
+          driver.state.transcriptContainer.children.some((child) => child instanceof BannerComponent),
+        ).toBe(true);
+      });
+
+      await expect(readBannerDisplayState()).resolves.toEqual({
+        version: 1,
+        shown: {},
+      });
+
+      loadSpy.mockRestore();
+    } finally {
+      process.env = { ...originalEnv };
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('resumes a startup session when Windows workdir uses backslashes', async () => {
