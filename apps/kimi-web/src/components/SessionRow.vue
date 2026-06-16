@@ -220,6 +220,10 @@ defineExpose({ closeMenu, cancelArchive });
       <button class="menu-item" @click.stop="forkRow">{{ t('sidebar.fork') }}</button>
       <button class="menu-item archive" @click.stop="startArchive">{{ t('sidebar.archive') }}</button>
     </div>
+
+    <div v-if="session.summary && !confirming" class="session-summary" :title="session.summary">
+      {{ session.summary }}
+    </div>
   </div>
 </template>
 
@@ -288,6 +292,20 @@ defineExpose({ closeMenu, cancelArchive });
 
 .ts { color: var(--muted); font-size: max(9px, calc(var(--ui-font-size) - 3.5px)); flex: none; }
 .se:hover .ts { display: none; }
+
+.session-summary {
+  margin-top: 2px;
+  padding-left: calc(var(--sb-gutter, 16px) + var(--sb-gap, 6px));
+  color: var(--muted);
+  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.se.on .session-summary {
+  color: var(--dim);
+}
 
 /* Pending tags — small coloured pills, one per kind. "Ask" reuses the Kimi-blue
    accent; "Approve" uses the warn tone so the two read as distinct at a glance.

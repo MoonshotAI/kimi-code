@@ -150,6 +150,21 @@ describe('useKimiWebClient session memory cache', () => {
     });
   });
 
+  it('adds a local content summary to loaded session rows', async () => {
+    const initial: AppMessage = {
+      id: 'msg_1',
+      sessionId: 'sess_1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Please review this\n\n```ts\nconst value = 1;\n```\n\nand explain the risk.' }],
+      createdAt: now,
+    };
+    const { client } = await setup([initial]);
+
+    await client.createSession('/repo');
+
+    expect(client.sessionsForView.value[0]?.summary).toBe('Please review this code block and explain the risk.');
+  });
+
   it('does not raise the loading state for a locally created session', async () => {
     const { client } = await setup([]);
 
