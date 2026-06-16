@@ -56,14 +56,6 @@ export class ReviewSummaryComponent implements Component {
       lines.push(SECTION_INDENT + currentTheme.boldFg('textDim', 'Rejected'));
       for (const comment of rejected) lines.push(SECTION_INDENT + rejectedLine(comment));
     }
-    if (this.data.handle !== undefined) {
-      lines.push('');
-      lines.push(
-        SECTION_INDENT +
-          currentTheme.fg('textDim', 'Browse or reject: ') +
-          currentTheme.fg('primary', `/review read ${this.data.handle}`),
-      );
-    }
     return lines.map((line) => truncateToWidth(line, width));
   }
 
