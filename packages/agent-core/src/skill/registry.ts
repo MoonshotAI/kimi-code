@@ -85,7 +85,9 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
 
     // Build the BM25 search index so the model can discover skills
     // via the `skill_search` tool instead of scanning a full listing.
-    this.searchIndex.build(this.listInvocableSkills());
+    // Sub-skills are excluded: they are intentionally hidden from the model
+    // and reachable only through their parent skill.
+    this.searchIndex.build(this.listSearchableSkills());
   }
 
   registerBuiltinSkill(skill: SkillDefinition): void {
@@ -164,6 +166,15 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     );
   }
 
+  /**
+   * Skills that should be discoverable by the model via search or the skill
+   * listing. Same as {@link listInvocableSkills} but excludes sub-skills, which
+   * are hidden from the model and should only be reached through their parent.
+   */
+  private listSearchableSkills(): readonly SkillDefinition[] {
+    return this.listInvocableSkills().filter((skill) => skill.metadata.isSubSkill !== true);
+  }
+
   getSkillRoots(): readonly string[] {
     return [...this.roots];
   }
@@ -183,7 +194,7 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
    */
   searchSkills(query: string, limit?: number): readonly SkillSearchResult[] {
     if (this.indexDirty) {
-      this.searchIndex.build(this.listInvocableSkills());
+      this.searchIndex.build(this.listSearchableSkills());
       this.indexDirty = false;
     }
     return this.searchIndex.search(query, limit);

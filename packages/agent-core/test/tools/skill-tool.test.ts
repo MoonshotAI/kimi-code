@@ -5,6 +5,10 @@ import type { SkillActivationOrigin } from '../../src/agent/context';
 import type { SkillRegistry as AgentSkillRegistry } from '../../src/agent/skill';
 import { SessionSkillRegistry, type SkillDefinition } from '../../src/skill';
 import {
+  compileToolArgsValidator,
+  validateToolArgs,
+} from '../../src/tools/args-validator';
+import {
   MAX_SKILL_QUERY_DEPTH,
   NestedSkillTooDeepError,
   SkillTool,
@@ -103,6 +107,14 @@ describe('SkillTool metadata and schema', () => {
     expect(SkillToolInputSchema.safeParse({}).success).toBe(true);
     expect(SkillToolInputSchema.safeParse({ action: 'search', query: 'test' }).success).toBe(true);
     expect(MAX_SKILL_QUERY_DEPTH).toBe(3);
+  });
+
+  it('advertises a schema that validates search-only calls without a skill name', () => {
+    const tool = skillTool(registry());
+    const validator = compileToolArgsValidator(tool.parameters);
+
+    expect(validateToolArgs(validator, { action: 'search', query: 'e2e test' })).toBeNull();
+    expect(validateToolArgs(validator, { action: 'load', skill: 'commit' })).toBeNull();
   });
 });
 

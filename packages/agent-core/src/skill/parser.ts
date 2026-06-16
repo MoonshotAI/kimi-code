@@ -117,24 +117,40 @@ export async function parseSkillMetaFromFile(options: ParseSkillOptions): Promis
     return parseSkillFromFile(options);
   }
 
-  // M1 fix: find second fence in the original buffer to handle CRLF correctly.
-  // split(/\r?\n/) strips \r\n as one separator but offset counting must
-  // account for the original byte positions.
+  // Find the exact end of the second fence in the original buffer so the
+  // slice works for both LF and CRLF line endings. `split('\n')` keeps a
+  // trailing '\r' on CRLF lines, so the fence line itself is '---\r' (length
+  // 4) and must be included in full; hard-coding +3 only works for LF.
   let fencesFound = 0;
   let offset = 0;
+  let fenceLineLength = 0;
   const lines = buffer.split('\n');
   for (const line of lines) {
     const trimmed = line.endsWith('\r') ? line.slice(0, -1) : line;
     if (/^---\s*$/.test(trimmed)) {
       fencesFound++;
-      if (fencesFound === 2) break;
+      if (fencesFound === 2) {
+        fenceLineLength = line.length;
+        break;
+      }
     }
     offset += line.length + 1; // +1 for the \n that split removed
   }
 
-  const frontmatterOnly = buffer.slice(0, offset + 3);
+  const frontmatterOnly = buffer.slice(0, offset + fenceLineLength);
   const result = parseSkillText({ ...options, text: frontmatterOnly });
-  return { ...result, content: LAZY_CONTENT_SENTINEL };
+  const definition = { ...result, content: LAZY_CONTENT_SENTINEL };
+
+  // Flat .md skills are allowed to omit description and derive it from the
+  // first body line. The frontmatter-only parse has no body, so re-parse the
+  // full file when that fallback was triggered.
+  const isDirectorySkill = path.basename(options.skillMdPath) === 'SKILL.md';
+  if (!isDirectorySkill && definition.description === 'No description provided.') {
+    const full = await parseSkillFromFile(options);
+    return { ...definition, description: full.description };
+  }
+
+  return definition;
 }
 
 export function parseFrontmatter(text: string): ParsedFrontmatter {

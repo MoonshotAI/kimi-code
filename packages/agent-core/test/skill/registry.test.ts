@@ -174,6 +174,16 @@ describe('skill registry search', () => {
     expect(results[0]!.name).toBe('docker-expert');
   });
 
+  it('searchSkills excludes sub-skills from results', () => {
+    const registry = makeRegistry([
+      makeSkill('parent', 'user', 'Parent skill'),
+      makeSkill('parent.child', 'user', 'Hidden child skill', undefined, { isSubSkill: true }),
+    ]);
+
+    const results = registry.searchSkills('child');
+    expect(results.some((r) => r.name === 'parent.child')).toBe(false);
+  });
+
   it('getModelSkillListing caches the result and invalidates on register()', () => {
     const skills = Array.from({ length: 100 }, (_, i) =>
       makeSkill(`skill-${String(i)}`, 'user', `Description ${String(i)}`),
@@ -240,6 +250,7 @@ function makeSkill(
   source: SkillSource,
   description = 'desc',
   skillPath?: string,
+  metadataOverrides: Partial<SkillDefinition['metadata']> = {},
 ): SkillDefinition {
   const finalPath = skillPath ?? `/tmp/${source}/${name}/SKILL.md`;
   return {
@@ -248,7 +259,7 @@ function makeSkill(
     path: finalPath,
     dir: finalPath.replace(/\/SKILL\.md$/, ''),
     content: '',
-    metadata: { type: 'prompt' },
+    metadata: { type: 'prompt', ...metadataOverrides },
     source,
   };
 }

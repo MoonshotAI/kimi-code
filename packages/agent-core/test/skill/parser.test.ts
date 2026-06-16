@@ -135,6 +135,44 @@ describe('skill parser', () => {
     expect(skills).toEqual([]);
     expect(warnings.some((message) => message.includes('Invalid frontmatter'))).toBe(true);
   });
+
+  it('lazy frontmatter parsing preserves CRLF frontmatter fences', async () => {
+    const root = await makeSkillsRoot();
+    const content = ['---', 'name: crlf-skill', 'description: A CRLF skill', '---', '', '# Body'].join(
+      '\r\n',
+    );
+    const dir = path.join(root, 'crlf-skill');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'SKILL.md'), content);
+
+    const registry = new SessionSkillRegistry();
+    await registry.loadRoots([userRoot(root)]);
+
+    const skill = registry.getSkill('crlf-skill');
+    expect(skill).toBeDefined();
+    expect(skill?.description).toBe('A CRLF skill');
+    expect(skill?.content).toBe('\u0000LAZY');
+
+    // Full body should still render correctly after lazy load.
+    const rendered = registry.renderSkillPrompt(skill!, '');
+    expect(rendered).toContain('# Body');
+  });
+
+  it('lazy frontmatter parsing derives flat-skill description from the body', async () => {
+    const root = await makeSkillsRoot();
+    await writeFile(
+      path.join(root, 'flat-derived.md'),
+      ['---', 'name: flat-derived', '---', '', 'Body headline for the skill.'].join('\n'),
+    );
+
+    const registry = new SessionSkillRegistry();
+    await registry.loadRoots([userRoot(root)]);
+
+    const skill = registry.getSkill('flat-derived');
+    expect(skill).toBeDefined();
+    expect(skill?.description).toBe('Body headline for the skill.');
+    expect(skill?.content).toBe('\u0000LAZY');
+  });
 });
 
 describe('skill parameter expansion', () => {
