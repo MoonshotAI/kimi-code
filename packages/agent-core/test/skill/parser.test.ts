@@ -54,14 +54,27 @@ describe('skill parser', () => {
     });
   });
 
-  it('falls back to the first non-empty body line as description when frontmatter is absent', async () => {
+  it('falls back to the first body sentence as description when frontmatter is absent', async () => {
     const root = await makeSkillsRoot();
-    await writeFlat(root, 'plain.md', ['', '', 'This is the headline description.', '', 'More body text here.']);
+    await writeFlat(root, 'plain.md', ['', '', '# This is a heading.', '', 'More body text here.']);
 
     const skills = await discoverSkills({ roots: [userRoot(root)] });
     expect(skills).toHaveLength(1);
     expect(skills[0]?.name).toBe('plain');
-    expect(skills[0]?.description.toLowerCase()).toContain('headline description');
+    expect(skills[0]?.description).toBe('# This is a heading.');
+  });
+
+  it('prefers the first sentence over a heading if a sentence exists before any heading', async () => {
+    const root = await makeSkillsRoot();
+    await writeFlat(root, 'lead-sentence.md', [
+      '',
+      'This is the lead sentence. Then more text.',
+      '',
+      '# Heading',
+    ]);
+
+    const skills = await discoverSkills({ roots: [userRoot(root)] });
+    expect(skills[0]?.description).toBe('This is the lead sentence.');
   });
 
   it('prefers frontmatter description over body first-line fallback', async () => {

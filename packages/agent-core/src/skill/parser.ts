@@ -319,12 +319,13 @@ function normalizeMetadata(raw: Record<string, unknown>): SkillMetadata {
 }
 
 function descriptionFromBody(body: string): string {
-  const firstLine = body
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  if (firstLine === undefined) return 'No description provided.';
-  return firstLine.length > 240 ? `${firstLine.slice(0, 239)}…` : firstLine;
+  const lines = body.split(/\r?\n/).map((line) => line.trim());
+  const firstSentence = lines
+    .join(' ')
+    .match(/[^.!?]+[.!?]+/);
+  const candidate = firstSentence?.[0]?.trim() ?? lines.find((line) => line.length > 0);
+  if (candidate === undefined) return 'No description provided.';
+  return candidate.length > 240 ? `${candidate.slice(0, 239)}…` : candidate;
 }
 
 function tokenizeArgs(raw: string): string[] {
