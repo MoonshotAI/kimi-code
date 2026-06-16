@@ -135,6 +135,47 @@ describe('startSessionAndSendPrompt', () => {
     expect(client.sessions.value[0]!.id).toBe('sess_new');
   });
 
+  it('keeps sessionLoading true while the snapshot is in flight (no empty-composer flash)', async () => {
+    const { api, client } = await setup();
+    await client.addWorkspaceByPath('/repo');
+
+    // Hold the snapshot open so we can observe the state between selecting the
+    // freshly created session and the user's message landing.
+    let resolveSnap!: (value: unknown) => void;
+    (api.getSessionSnapshot as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((resolve) => { resolveSnap = resolve; }),
+    );
+
+    const flow = client.startSessionAndSendPrompt('ws_repo', 'hello world');
+
+    // Wait until selectSession reaches the snapshot fetch.
+    await vi.waitFor(() => expect(api.getSessionSnapshot).toHaveBeenCalledTimes(1));
+
+    // The new session is active but its snapshot has not returned yet. The
+    // empty-conversation composer renders only when `turns.length === 0 &&
+    // !sessionLoading`; sessionLoading MUST stay true here so it does not flash
+    // before the optimistic user message arrives.
+    expect(client.activeSessionId.value).toBe('sess_new');
+    expect(client.sessionLoading.value).toBe(true);
+
+    resolveSnap({
+      asOfSeq: 0,
+      epoch: 'ep_test',
+      session: makeSession('sess_new'),
+      messages: [],
+      hasMoreMessages: false,
+      inFlightTurn: null,
+      pendingApprovals: [],
+      pendingQuestions: [],
+    });
+    await flow;
+
+    // Loading cleared and the user's message was submitted + shown optimistically.
+    expect(client.sessionLoading.value).toBe(false);
+    expect(api.submitPrompt).toHaveBeenCalledTimes(1);
+    expect(client.turns.value.some((t) => t.role === 'user')).toBe(true);
+  });
+
   it('applies a model picked in the draft state (no session yet) to the created session', async () => {
     const { api, client } = await setup();
     await client.addWorkspaceByPath('/repo');
