@@ -6,6 +6,30 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.16.0 (2026-06-16)
+
+### Features
+
+- Add a built-in `kimi vis` command that launches the session visualizer in your browser, pointed at your local sessions. Supports `--port`/`--host`, `--no-open`, and `kimi vis <sessionId>` deep-links.
+- Add configurable banner display frequencies with local display state.
+
+### Bug Fixes
+
+- Stop Anthropic-compatible providers from reading ambient Anthropic shell credentials and custom headers.
+- Fix repeated compaction handling when context remains over the blocking threshold.
+- Prevent session shutdown from resuming the agent when stopping background tasks.
+- Project session replay ranges over rendered replay records instead of raw persisted records.
+- Close wrapped output streams when buffered readers are destroyed.
+
+### Polish
+
+- Reduce the maximum height of the `/btw` side panel from half to one-third of the terminal.
+- Polish queue pane styling.
+
+### Refactors
+
+- Remove redundant LLM request logging context plumbing.
+
 ## 0.15.0 (2026-06-15)
 
 ### Features
