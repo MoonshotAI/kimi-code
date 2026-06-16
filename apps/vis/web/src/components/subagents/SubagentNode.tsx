@@ -33,6 +33,11 @@ export function SubagentNode({ node, sessionId }: Props) {
               {node.type}
             </Pill>
             <span className="font-mono text-[12px] text-fg-0">{node.agentId}</span>
+            {node.swarmItem ? (
+              <Pill tone="subagent" variant="outline" title={node.swarmItem}>
+                {node.swarmItem}
+              </Pill>
+            ) : null}
             {node.parentAgentId !== null ? (
               <span className="font-mono text-[10.5px] text-fg-3">
                 ← {node.parentAgentId}

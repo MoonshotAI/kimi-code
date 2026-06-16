@@ -33,9 +33,9 @@ describe('kimi server', () => {
   it('declares pino-pretty as a CLI runtime dependency', () => {
     const packageJson = JSON.parse(
       readFileSync(new URL('../../../package.json', import.meta.url), 'utf-8'),
-    ) as { dependencies?: Record<string, string> };
+    ) as { optionalDependencies?: Record<string, string> };
 
-    expect(packageJson.dependencies).toHaveProperty('pino-pretty');
+    expect(packageJson.optionalDependencies).toHaveProperty('pino-pretty');
   });
 
   it('registers `server` with all six lifecycle subcommands plus `run`', () => {

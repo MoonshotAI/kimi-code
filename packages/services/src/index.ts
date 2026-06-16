@@ -41,6 +41,7 @@ export { FileStore } from './fileStore/fileStoreService';
 
 export {
   IFsService,
+  FsAlreadyExistsError,
   FsPathNotFoundError,
   FsIsDirectoryError,
   FsIsBinaryError,

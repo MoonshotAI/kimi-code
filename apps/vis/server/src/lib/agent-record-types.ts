@@ -20,6 +20,11 @@ export type {
 export { AGENT_WIRE_PROTOCOL_VERSION } from '@moonshot-ai/agent-core';
 export type { Message, ContentPart, ToolCall, TokenUsage } from '@moonshot-ai/kosong';
 
+// Local binding for the `AgentRecord` type used by the vis-only DTOs below
+// (e.g. `WireEntry.data`). The `export type { … }` re-export above forwards
+// the name to consumers but does NOT bring it into this module's scope.
+import type { AgentRecord } from '@moonshot-ai/agent-core';
+
 // ── vis-only DTOs ──────────────────────────────────────────────────────────
 
 export interface ApiError {
@@ -30,16 +35,14 @@ export interface ApiError {
     | 'UNAUTHORIZED'
     | 'READ_ERROR'
     | 'PARSE_ERROR'
-    | 'DELETE_ERROR'
-    | 'UNSUPPORTED_PROTOCOL';
+    | 'DELETE_ERROR';
 }
 
 export type SessionHealth =
   | 'ok'
   | 'broken_state'
   | 'broken_main_wire'
-  | 'missing_main_wire'
-  | 'unsupported_protocol';
+  | 'missing_main_wire';
 
 export interface SessionSummary {
   sessionId: string;
@@ -65,6 +68,11 @@ export interface AgentInfo {
   wireExists: boolean;
   wireRecordCount: number;
   wireProtocolVersion: string | null;
+  /** Per-item swarm work label persisted by agent-core for swarm-spawned
+   *  sub-agents (`AgentMeta.swarmItem`). `null` when the agent is not a
+   *  swarm item or when the value cannot be recovered (e.g. disk-only
+   *  inventory of a session with a corrupt `state.json`). */
+  swarmItem: string | null;
 }
 
 export interface SessionDetail {

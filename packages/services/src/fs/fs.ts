@@ -6,6 +6,7 @@ import type {
   FsListManyResponse,
   FsListRequest,
   FsListResponse,
+  FsMkdirRequest,
   FsReadRequest,
   FsReadResponse,
   FsStatManyRequest,
@@ -62,6 +63,15 @@ export class FsTooManyResultsError extends Error {
   }
 }
 
+export class FsAlreadyExistsError extends Error {
+  readonly inputPath: string;
+  constructor(inputPath: string) {
+    super(`fs.already_exists: ${inputPath}`);
+    this.name = 'FsAlreadyExistsError';
+    this.inputPath = inputPath;
+  }
+}
+
 export interface IFsService extends IDisposable {
   readonly _serviceBrand: undefined;
 
@@ -77,6 +87,8 @@ export interface IFsService extends IDisposable {
     sessionId: string,
     req: FsStatManyRequest,
   ): Promise<FsStatManyResponse>;
+
+  mkdir(sessionId: string, req: FsMkdirRequest): Promise<FsEntry>;
 
   resolveDownload(
     sessionId: string,

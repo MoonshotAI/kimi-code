@@ -1,5 +1,6 @@
 export {
   IFsService,
+  FsAlreadyExistsError,
   FsPathNotFoundError,
   FsIsDirectoryError,
   FsIsBinaryError,

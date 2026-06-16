@@ -13,8 +13,10 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
+    // Unused-locals/params are intentionally NOT enforced here: this package
+    // type-checks agent-core's source (consumed via source `exports`), so these
+    // flags would surface dead code inside agent-core. Matches the repo norm
+    // (root tsconfig and other packages do not set them); oxlint covers unused.
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": false,

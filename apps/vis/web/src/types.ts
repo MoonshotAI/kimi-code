@@ -13,6 +13,7 @@ export type {
   WireEntry,
   ApiError,
   AgentRecord,
+  AgentRecordOf,
   ContextMessage,
   PromptOrigin,
   TokenUsage,
@@ -28,6 +29,7 @@ export type {
   UsageTotals,
   ConfigSnapshot,
   ContextProjection,
+  GoalSnapshot,
 } from '../../server/src/lib/context-projector';
 
 export interface DeleteSessionResponse {
@@ -46,7 +48,10 @@ export interface ContextResponse {
   agentId: string;
   messages: import('../../server/src/lib/context-projector').ProjectedMessage[];
   usage: import('../../server/src/lib/context-projector').UsageTotals;
+  contextTokens: number;
   config: import('../../server/src/lib/context-projector').ConfigSnapshot;
   permission: { mode: import('../../server/src/lib/agent-record-types').PermissionMode | null };
   planMode: { active: boolean; id?: string };
+  goal: import('../../server/src/lib/context-projector').GoalSnapshot | null;
+  swarm: { active: boolean; trigger?: string };
 }

@@ -241,7 +241,12 @@ function isGlobalSessionEvent(type: string): boolean {
   return (
     type === 'event.session.created' ||
     type === 'event.session.status_changed' ||
-    type === 'event.config.changed'
+    type === 'event.config.changed' ||
+    // Workspace registry is not session-scoped: workspace lifecycle events ride
+    // the '__global__' watermark and fan out to every connection.
+    type === 'event.workspace.created' ||
+    type === 'event.workspace.updated' ||
+    type === 'event.workspace.deleted'
   );
 }
 

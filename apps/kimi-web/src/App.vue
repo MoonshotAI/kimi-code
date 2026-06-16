@@ -904,7 +904,7 @@ function openPr(url: string): void {
       :workspaces="client.workspacesView.value"
       :active-workspace-id="client.activeWorkspaceId.value"
       :session-title="activeSessionTitle"
-      :pr="null"
+      :pr="client.activePullRequest.value"
       :beta-toc="client.betaToc.value"
       @open-changes="openDiffDetail()"
       @select-workspace="handleCreateSessionInWorkspace($event)"

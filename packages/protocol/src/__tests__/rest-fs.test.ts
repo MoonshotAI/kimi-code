@@ -10,6 +10,8 @@ import {
   fsListManyResponseSchema,
   fsListRequestSchema,
   fsListResponseSchema,
+  fsMkdirRequestSchema,
+  fsMkdirResponseSchema,
   fsReadRequestSchema,
   fsReadResponseSchema,
   fsSearchRequestSchema,
@@ -380,6 +382,7 @@ describe('fsGitStatusResponseSchema (W11.2)', () => {
       entries: {},
       additions: 0,
       deletions: 0,
+      pullRequest: null,
     };
     expect(fsGitStatusResponseSchema.parse(r)).toEqual(r);
   });
@@ -396,6 +399,11 @@ describe('fsGitStatusResponseSchema (W11.2)', () => {
       },
       additions: 42,
       deletions: 7,
+      pullRequest: {
+        number: 625,
+        state: 'open' as const,
+        url: 'https://github.com/MoonshotAI/kimi-code/pull/625',
+      },
     };
     expect(fsGitStatusResponseSchema.parse(r)).toEqual(r);
   });
@@ -409,6 +417,7 @@ describe('fsGitStatusResponseSchema (W11.2)', () => {
         entries: {},
         additions: 0,
         deletions: 0,
+        pullRequest: null,
       }).branch,
     ).toBe('');
   });
@@ -432,5 +441,42 @@ describe('fsDownloadParamsSchema (W11.3)', () => {
 
   it('rejects empty path', () => {
     expect(fsDownloadParamsSchema.safeParse({ path: '' }).success).toBe(false);
+  });
+});
+
+describe('fsMkdirRequestSchema', () => {
+  it('applies recursive default', () => {
+    expect(fsMkdirRequestSchema.parse({ path: 'a' })).toEqual({
+      path: 'a',
+      recursive: false,
+    });
+  });
+
+  it('accepts recursive:true', () => {
+    expect(fsMkdirRequestSchema.parse({ path: 'a/b', recursive: true })).toEqual({
+      path: 'a/b',
+      recursive: true,
+    });
+  });
+
+  it('rejects empty path', () => {
+    expect(fsMkdirRequestSchema.safeParse({ path: '' }).success).toBe(false);
+  });
+
+  it('rejects missing path', () => {
+    expect(fsMkdirRequestSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('fsMkdirResponseSchema', () => {
+  it('round-trips a directory entry', () => {
+    const entry = {
+      path: 'a',
+      name: 'a',
+      kind: 'directory' as const,
+      modified_at: '2026-06-16T08:00:00.000Z',
+      etag: 'deadbeef',
+    };
+    expect(fsMkdirResponseSchema.parse(entry)).toEqual(entry);
   });
 });

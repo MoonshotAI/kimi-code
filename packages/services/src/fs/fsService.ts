@@ -10,6 +10,7 @@ import type {
   FsListManyResponse,
   FsListRequest,
   FsListResponse,
+  FsMkdirRequest,
   FsReadRequest,
   FsReadResponse,
   FsStatManyRequest,
@@ -22,6 +23,7 @@ import { ISessionService, SessionNotFoundError } from '../session/session';
 
 import {
   IFsService,
+  FsAlreadyExistsError,
   FsPathNotFoundError,
   FsIsDirectoryError,
   FsIsBinaryError,
@@ -324,6 +326,30 @@ export class FsService extends Disposable implements IFsService {
       entries[raw] = entry;
     }
     return { entries };
+  }
+
+  async mkdir(sessionId: string, req: FsMkdirRequest): Promise<FsEntry> {
+    const session = await this.sessions.get(sessionId);
+    const cwd = session.metadata.cwd;
+    const safe = await resolveSafePath(cwd, req.path);
+
+    try {
+      await fs.mkdir(safe.absolute, { recursive: req.recursive });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EEXIST') {
+        throw new FsAlreadyExistsError(req.path);
+      }
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        // Non-recursive mkdir whose parent is missing / not a directory.
+        throw new FsPathNotFoundError(req.path);
+      }
+      throw err;
+    }
+
+    const st = await fs.stat(safe.absolute);
+    const name = path.basename(safe.absolute);
+    return buildFsEntryFromStat(safe.relative, name, safe.absolute, st, false);
   }
 
   async resolveDownload(

@@ -148,7 +148,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-tu2PjDdv4cm5LfRK7/A7BZ75lO61sEjVNr70hph78ww=";
+              hash = "sha256-4Zduy2AKSzdIAUHSHrmzgaU8l3aeOtHETbkFnIEHgOA=";
             };
 
             nativeBuildInputs = [
@@ -185,6 +185,12 @@
                     "await runVerifyStep({ requireGatekeeper: false });" \
                     "// runVerifyStep skipped in nix sandbox (sigtool lacks -dv)"
               ''}
+              # The SEA blob step (scripts/native/02-sea-blob.mjs) embeds the
+              # Kimi web assets from apps/kimi-code/dist-web and fails if that
+              # directory is missing. Build the web app and stage its assets
+              # before producing the native executable.
+              pnpm --filter=@moonshot-ai/kimi-web run build
+              node apps/kimi-code/scripts/copy-web-assets.mjs
               pnpm --filter=@moonshot-ai/kimi-code run build:native:sea
               runHook postBuild
             '';

@@ -322,6 +322,40 @@ describe('WS broadcast + per-session seq (W5.2)', () => {
     b.ws.close();
   });
 
+  it('event.workspace.created is broadcast to all connections regardless of subscription', async () => {
+    const r = await spawn();
+    const a = await openConn(wsUrl(r.address));
+    const b = await openConn(wsUrl(r.address));
+    await helloAndSubscribe(a, 'A', 'sid_a');
+    await helloAndSubscribe(b, 'B', 'sid_b');
+
+    r.services.invokeFunction((acc) =>
+      acc.get(IEventService).publish({
+        type: 'event.workspace.created',
+        agentId: 'main',
+        sessionId: '__global__',
+        workspace: {
+          id: 'wd_project_123456abcdef',
+          root: '/tmp/project',
+          name: 'project',
+          is_git_repo: false,
+          branch: null,
+          created_at: '2026-06-11T00:00:00.000Z',
+          last_opened_at: '2026-06-11T00:00:00.000Z',
+          session_count: 0,
+        },
+      } as unknown as Event),
+    );
+
+    const evA = await receiveType(a, 'event.workspace.created', 1000);
+    const evB = await receiveType(b, 'event.workspace.created', 1000);
+    expect(evA.session_id).toBe('__global__');
+    expect(evB.session_id).toBe('__global__');
+
+    a.ws.close();
+    b.ws.close();
+  });
+
   it('event.session.status_changed is broadcast to all connections regardless of subscription', async () => {
     const r = await spawn();
     const a = await openConn(wsUrl(r.address));

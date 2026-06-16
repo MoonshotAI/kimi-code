@@ -5,6 +5,7 @@ import { messageContentSchema, type MessageContent } from './message';
 import { sessionSchema, sessionStatusSchema, type Session, type SessionStatus } from './session';
 import { isoDateTimeSchema } from './time';
 import { configResponseSchema, type ConfigResponse } from './rest/config';
+import { workspaceSchema, type Workspace } from './workspace';
 
 export interface TokenUsage {
   readonly inputOther: number;
@@ -315,6 +316,22 @@ export interface SessionCreatedEvent {
   readonly session: Session;
 }
 
+export interface WorkspaceCreatedEvent {
+  readonly type: 'event.workspace.created';
+  readonly workspace: Workspace;
+}
+
+export interface WorkspaceUpdatedEvent {
+  readonly type: 'event.workspace.updated';
+  readonly workspace: Workspace;
+}
+
+export interface WorkspaceDeletedEvent {
+  readonly type: 'event.workspace.deleted';
+  readonly workspace_id: string;
+  readonly root: string;
+}
+
 export interface SessionStatusChangedEvent {
   readonly type: 'event.session.status_changed';
   readonly status: SessionStatus;
@@ -573,6 +590,9 @@ export type AgentEvent =
   | AgentStatusUpdatedEvent
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
+  | WorkspaceCreatedEvent
+  | WorkspaceUpdatedEvent
+  | WorkspaceDeletedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | GoalUpdatedEvent
@@ -921,6 +941,22 @@ export const sessionCreatedEventSchema = z.object({
   session: sessionSchema,
 }) satisfies z.ZodType<SessionCreatedEvent>;
 
+export const workspaceCreatedEventSchema = z.object({
+  type: z.literal('event.workspace.created'),
+  workspace: workspaceSchema,
+}) satisfies z.ZodType<WorkspaceCreatedEvent>;
+
+export const workspaceUpdatedEventSchema = z.object({
+  type: z.literal('event.workspace.updated'),
+  workspace: workspaceSchema,
+}) satisfies z.ZodType<WorkspaceUpdatedEvent>;
+
+export const workspaceDeletedEventSchema = z.object({
+  type: z.literal('event.workspace.deleted'),
+  workspace_id: z.string().min(1),
+  root: z.string().min(1),
+}) satisfies z.ZodType<WorkspaceDeletedEvent>;
+
 export const sessionStatusChangedEventSchema = z.object({
   type: z.literal('event.session.status_changed'),
   status: sessionStatusSchema,
@@ -1183,6 +1219,9 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   agentStatusUpdatedEventSchema,
   sessionMetaUpdatedEventSchema,
   sessionCreatedEventSchema,
+  workspaceCreatedEventSchema,
+  workspaceUpdatedEventSchema,
+  workspaceDeletedEventSchema,
   sessionStatusChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,

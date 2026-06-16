@@ -32,6 +32,7 @@ import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
 import { quoteShellArg } from '#/utils/shell-quote';
 
 import { BannerProvider } from './banner/banner-provider';
+import { readBannerDisplayState, writeBannerDisplayState } from './banner/state';
 import {
   BUILTIN_SLASH_COMMANDS,
   buildSkillSlashCommands,
@@ -414,10 +415,29 @@ export class KimiTUI {
 
   private async loadBanner(): Promise<void> {
     const provider = new BannerProvider(this.state.appState.version);
-    this.state.appState.banner = await provider.load();
-    if (this.state.appState.banner !== null) {
-      this.renderBanner();
-      this.state.ui.requestRender();
+    const displayState = await readBannerDisplayState();
+    const now = new Date();
+    const banner = await provider.load(fetch, {
+      state: displayState,
+      now,
+    });
+    this.state.appState.banner = banner;
+    if (banner === null) return;
+
+    this.renderBanner();
+    this.state.ui.requestRender();
+
+    if (banner.display === 'always') return;
+    try {
+      await writeBannerDisplayState({
+        version: 1,
+        shown: {
+          ...displayState.shown,
+          [banner.key]: { lastShownAt: now.toISOString() },
+        },
+      });
+    } catch {
+      // Best-effort: banner display state should never block startup.
     }
   }
 

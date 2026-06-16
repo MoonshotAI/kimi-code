@@ -55,6 +55,12 @@
  *   POST /v1/sessions/{sid}/fs:reveal
  *     Body: FsRevealRequest
  *     Response data: FsRevealResponse
+ *
+ *   POST /v1/sessions/{sid}/fs:mkdir
+ *     Body: FsMkdirRequest  { path, recursive? }
+ *     Response data: FsEntry (the created directory)
+ *     Errors: 40401, 40409 (parent missing), 40919 (already exists),
+ *             41304 (path escapes cwd)
  */
 
 import { z } from 'zod';
@@ -140,6 +146,15 @@ export const fsRevealResponseSchema = z.object({
   revealed: z.literal(true),
 });
 export type FsRevealResponse = z.infer<typeof fsRevealResponseSchema>;
+
+export const fsMkdirRequestSchema = z.object({
+  path: z.string().min(1),
+  recursive: z.boolean().default(false),
+});
+export type FsMkdirRequest = z.infer<typeof fsMkdirRequestSchema>;
+
+export const fsMkdirResponseSchema = fsEntrySchema;
+export type FsMkdirResponse = z.infer<typeof fsMkdirResponseSchema>;
 
 export const fsOpenInAppIdSchema = z.enum([
   'finder',
@@ -247,6 +262,13 @@ export const fsGitStatusRequestSchema = z.object({
 });
 export type FsGitStatusRequest = z.infer<typeof fsGitStatusRequestSchema>;
 
+export const fsPullRequestSchema = z.object({
+  number: z.number().int().positive(),
+  state: z.enum(['open', 'merged', 'closed']),
+  url: z.string().url(),
+});
+export type FsPullRequest = z.infer<typeof fsPullRequestSchema>;
+
 export const fsGitStatusResponseSchema = z.object({
   branch: z.string(),
   ahead: z.number().int().nonnegative(),
@@ -257,6 +279,10 @@ export const fsGitStatusResponseSchema = z.object({
   // `-`) contribute 0. Both 0 for a clean tree or a repo with no commits yet.
   additions: z.number().int().nonnegative(),
   deletions: z.number().int().nonnegative(),
+  // GitHub pull request for the current branch, looked up via `gh pr view`.
+  // Null when not a GitHub repo, `gh` is unavailable/unauthenticated, the
+  // branch has no PR, or the lookup failed/timed out. Never fails the request.
+  pullRequest: fsPullRequestSchema.nullable(),
 });
 export type FsGitStatusResponse = z.infer<typeof fsGitStatusResponseSchema>;
 

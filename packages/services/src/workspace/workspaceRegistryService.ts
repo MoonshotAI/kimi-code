@@ -8,6 +8,7 @@ import type { Stats } from 'node:fs';
 import { Disposable, InstantiationType, registerSingleton } from '@moonshot-ai/agent-core';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core/session/store';
 import { IEnvironmentService } from '../environment/environment';
+import { IEventService } from '../event/event';
 
 import type { Workspace } from '@moonshot-ai/protocol';
 
@@ -19,94 +20,62 @@ import {
   type WorkspacePatch,
 } from './workspaceRegistry';
 
-const WORKSPACE_FILE = 'workspace.json';
-const WORKSPACE_FILE_VERSION = 1;
+const WORKSPACE_REGISTRY_FILE = 'workspaces.json';
+const WORKSPACE_REGISTRY_VERSION = 1;
 
-interface WorkspaceFile {
-  version: number;
+interface WorkspaceRegistryEntry {
   root: string;
   name: string;
   created_at: string;
   last_opened_at: string;
 }
 
+interface WorkspaceRegistryFile {
+  version: number;
+  workspaces: Record<string, WorkspaceRegistryEntry>;
+}
+
+type WorkspaceRegistryEvent =
+  | { type: 'event.workspace.created'; workspace: Workspace }
+  | { type: 'event.workspace.updated'; workspace: Workspace }
+  | { type: 'event.workspace.deleted'; workspace_id: string; root: string };
+
 export class WorkspaceRegistryService extends Disposable implements IWorkspaceRegistry {
   readonly _serviceBrand: undefined;
 
   private readonly sessionsDir: string;
+  private readonly registryPath: string;
+  private opQueue: Promise<unknown> = Promise.resolve();
 
   constructor(
     @IEnvironmentService env: IEnvironmentService,
     @ILogService private readonly logger: ILogService,
+    @IEventService private readonly eventService: IEventService,
   ) {
     super();
     this.sessionsDir = join(env.homeDir, 'sessions');
+    this.registryPath = join(env.homeDir, WORKSPACE_REGISTRY_FILE);
   }
 
   async list(): Promise<Workspace[]> {
-    let dirents;
-    try {
-      dirents = await fsp.readdir(this.sessionsDir, { withFileTypes: true });
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT') return [];
-      throw err;
-    }
-    const candidates: { workspaceId: string; dir: string }[] = [];
-    for (const d of dirents) {
-      if (!d.isDirectory()) continue;
-      if (!d.name.startsWith('wd_')) continue;
-      candidates.push({
-        workspaceId: d.name,
-        dir: join(this.sessionsDir, d.name),
-      });
-    }
+    const file = await this.runExclusive(() => this.readRegistry());
     const hydrated = await Promise.all(
-      candidates.map(async ({ workspaceId, dir }) => {
-        const file = await this.readFile(dir);
-        if (file === null) return null;
-        const [{ is_git_repo, branch }, session_count] = await Promise.all([
-          detectGit(file.root),
-          countSessionDirs(dir),
-        ]);
-        const ws: Workspace = {
-          id: workspaceId,
-          root: file.root,
-          name: file.name,
-          is_git_repo,
-          branch,
-          created_at: file.created_at,
-          last_opened_at: file.last_opened_at,
-          session_count,
-        };
-        return ws;
-      }),
+      Object.entries(file.workspaces).map(([workspaceId, entry]) =>
+        this.hydrate(workspaceId, entry),
+      ),
     );
-    return hydrated
-      .filter((ws): ws is Workspace => ws !== null)
-      .sort((a, b) => (b.last_opened_at < a.last_opened_at ? -1 : 1));
+    return hydrated.sort((a, b) => (b.last_opened_at < a.last_opened_at ? -1 : 1));
   }
 
   async get(workspaceId: string): Promise<Workspace> {
-    const dir = join(this.sessionsDir, workspaceId);
-    const file = await this.readFile(dir);
-    if (file === null) {
+    const entry = await this.runExclusive(async () => {
+      const file = await this.readRegistry();
+      return file.workspaces[workspaceId] ?? null;
+    });
+    if (entry === null) {
       throw new WorkspaceNotFoundError(workspaceId);
     }
-    const [{ is_git_repo, branch }, session_count] = await Promise.all([
-      detectGit(file.root),
-      countSessionDirs(dir),
-    ]);
-    return {
-      id: workspaceId,
-      root: file.root,
-      name: file.name,
-      is_git_repo,
-      branch,
-      created_at: file.created_at,
-      last_opened_at: file.last_opened_at,
-      session_count,
-    };
+    return this.hydrate(workspaceId, entry);
   }
 
   async createOrTouch(root: string, name?: string): Promise<Workspace> {
@@ -121,134 +90,205 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       throw err;
     }
     const workspaceId = encodeWorkDirKey(realRoot);
-    const dir = join(this.sessionsDir, workspaceId);
-    await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
+    await fsp.mkdir(join(this.sessionsDir, workspaceId), { recursive: true, mode: 0o700 });
 
     const now = new Date().toISOString();
-    let existing = await this.readFile(dir);
-    let file: WorkspaceFile;
-    if (existing !== null) {
-      file = { ...existing, last_opened_at: now };
-    } else {
-      file = {
-        version: WORKSPACE_FILE_VERSION,
-        root: realRoot,
-        name: name ?? basename(realRoot),
-        created_at: now,
-        last_opened_at: now,
-      };
+    const { entry, created } = await this.runExclusive(async () => {
+      const file = await this.readRegistry();
+      const existing = file.workspaces[workspaceId];
+      const next: WorkspaceRegistryEntry =
+        existing !== undefined
+          ? { ...existing, last_opened_at: now }
+          : {
+              root: realRoot,
+              name: name ?? basename(realRoot),
+              created_at: now,
+              last_opened_at: now,
+            };
+      file.workspaces[workspaceId] = next;
+      await this.writeRegistry(file);
+      return { entry: next, created: existing === undefined };
+    });
+    const workspace = await this.hydrate(workspaceId, entry);
+    if (created) {
+      this.publishWorkspace({ type: 'event.workspace.created', workspace });
     }
-    await this.writeFile(dir, file);
-
-    const [{ is_git_repo, branch }, session_count] = await Promise.all([
-      detectGit(realRoot),
-      countSessionDirs(dir),
-    ]);
-    return {
-      id: workspaceId,
-      root: file.root,
-      name: file.name,
-      is_git_repo,
-      branch,
-      created_at: file.created_at,
-      last_opened_at: file.last_opened_at,
-      session_count,
-    };
+    return workspace;
   }
 
   async update(workspaceId: string, patch: WorkspacePatch): Promise<Workspace> {
-    const dir = join(this.sessionsDir, workspaceId);
-    const existing = await this.readFile(dir);
-    if (existing === null) {
+    const entry = await this.runExclusive(async () => {
+      const file = await this.readRegistry();
+      const existing = file.workspaces[workspaceId];
+      if (existing === undefined) {
+        throw new WorkspaceNotFoundError(workspaceId);
+      }
+      const next: WorkspaceRegistryEntry = {
+        ...existing,
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+      };
+      file.workspaces[workspaceId] = next;
+      await this.writeRegistry(file);
+      return next;
+    });
+    const workspace = await this.hydrate(workspaceId, entry);
+    this.publishWorkspace({ type: 'event.workspace.updated', workspace });
+    return workspace;
+  }
+
+  async delete(workspaceId: string): Promise<void> {
+    const root = await this.runExclusive(async () => {
+      const file = await this.readRegistry();
+      const existing = file.workspaces[workspaceId];
+      if (existing === undefined) {
+        throw new WorkspaceNotFoundError(workspaceId);
+      }
+      delete file.workspaces[workspaceId];
+      await this.writeRegistry(file);
+      return existing.root;
+    });
+    this.publishWorkspace({
+      type: 'event.workspace.deleted',
+      workspace_id: workspaceId,
+      root,
+    });
+  }
+
+  async resolveRoot(workspaceId: string): Promise<string> {
+    const entry = await this.runExclusive(async () => {
+      const file = await this.readRegistry();
+      return file.workspaces[workspaceId] ?? null;
+    });
+    if (entry === null) {
       throw new WorkspaceNotFoundError(workspaceId);
     }
-    const next: WorkspaceFile = {
-      ...existing,
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-    };
-    await this.writeFile(dir, next);
+    return entry.root;
+  }
+
+  private async hydrate(
+    workspaceId: string,
+    entry: WorkspaceRegistryEntry,
+  ): Promise<Workspace> {
     const [{ is_git_repo, branch }, session_count] = await Promise.all([
-      detectGit(next.root),
-      countSessionDirs(dir),
+      detectGit(entry.root),
+      countSessionDirs(join(this.sessionsDir, workspaceId)),
     ]);
     return {
       id: workspaceId,
-      root: next.root,
-      name: next.name,
+      root: entry.root,
+      name: entry.name,
       is_git_repo,
       branch,
-      created_at: next.created_at,
-      last_opened_at: next.last_opened_at,
+      created_at: entry.created_at,
+      last_opened_at: entry.last_opened_at,
       session_count,
     };
   }
 
-  async delete(workspaceId: string): Promise<void> {
-    const filePath = join(this.sessionsDir, workspaceId, WORKSPACE_FILE);
+  private publishWorkspace(event: WorkspaceRegistryEvent): void {
+    switch (event.type) {
+      case 'event.workspace.created':
+      case 'event.workspace.updated':
+        this.eventService.publish({
+          agentId: 'main',
+          sessionId: '__global__',
+          type: event.type,
+          workspace: event.workspace,
+        });
+        break;
+      case 'event.workspace.deleted':
+        this.eventService.publish({
+          agentId: 'main',
+          sessionId: '__global__',
+          type: event.type,
+          workspace_id: event.workspace_id,
+          root: event.root,
+        });
+        break;
+    }
+  }
+
+  private async readRegistry(): Promise<WorkspaceRegistryFile> {
+    let raw: string;
     try {
-      await fsp.unlink(filePath);
+      raw = await fsp.readFile(this.registryPath, 'utf8');
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT') {
-        throw new WorkspaceNotFoundError(workspaceId);
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {} };
       }
       throw err;
     }
-  }
-
-  async resolveRoot(workspaceId: string): Promise<string> {
-    const dir = join(this.sessionsDir, workspaceId);
-    const file = await this.readFile(dir);
-    if (file === null) {
-      throw new WorkspaceNotFoundError(workspaceId);
-    }
-    return file.root;
-  }
-
-  private async readFile(dir: string): Promise<WorkspaceFile | null> {
-    const filePath = join(dir, WORKSPACE_FILE);
-    let raw: string;
+    let parsed: unknown;
     try {
-      raw = await fsp.readFile(filePath, 'utf8');
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT' || code === 'ENOTDIR') return null;
-      throw err;
-    }
-    let parsed: Partial<WorkspaceFile>;
-    try {
-      parsed = JSON.parse(raw) as Partial<WorkspaceFile>;
+      parsed = JSON.parse(raw);
     } catch (err) {
       this.logger.warn(
-        { dir, err: String(err) },
-        'workspace.json malformed; treating bucket as unregistered',
+        { path: this.registryPath, err: String(err) },
+        'workspaces.json malformed; treating as empty',
       );
-      return null;
+      return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {} };
     }
     if (
-      typeof parsed.root !== 'string' ||
-      typeof parsed.name !== 'string' ||
-      typeof parsed.created_at !== 'string' ||
-      typeof parsed.last_opened_at !== 'string'
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof (parsed as { workspaces?: unknown }).workspaces !== 'object' ||
+      (parsed as { workspaces?: unknown }).workspaces === null
     ) {
-      this.logger.warn({ dir }, 'workspace.json missing required keys; treating as unregistered');
+      this.logger.warn(
+        { path: this.registryPath },
+        'workspaces.json missing required keys; treating as empty',
+      );
+      return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {} };
+    }
+    const rawWorkspaces = (parsed as { workspaces: Record<string, unknown> }).workspaces;
+    const workspaces: Record<string, WorkspaceRegistryEntry> = {};
+    for (const [id, value] of Object.entries(rawWorkspaces)) {
+      const entry = this.sanitizeEntry(value);
+      if (entry !== null) {
+        workspaces[id] = entry;
+      }
+    }
+    const version =
+      typeof (parsed as { version?: unknown }).version === 'number'
+        ? (parsed as { version: number }).version
+        : WORKSPACE_REGISTRY_VERSION;
+    return { version, workspaces };
+  }
+
+  private sanitizeEntry(value: unknown): WorkspaceRegistryEntry | null {
+    if (typeof value !== 'object' || value === null) return null;
+    const v = value as Partial<WorkspaceRegistryEntry>;
+    if (
+      typeof v.root !== 'string' ||
+      typeof v.name !== 'string' ||
+      typeof v.created_at !== 'string' ||
+      typeof v.last_opened_at !== 'string'
+    ) {
       return null;
     }
     return {
-      version: typeof parsed.version === 'number' ? parsed.version : 1,
-      root: parsed.root,
-      name: parsed.name,
-      created_at: parsed.created_at,
-      last_opened_at: parsed.last_opened_at,
+      root: v.root,
+      name: v.name,
+      created_at: v.created_at,
+      last_opened_at: v.last_opened_at,
     };
   }
 
-  private async writeFile(dir: string, file: WorkspaceFile): Promise<void> {
-    await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
-    const final = join(dir, WORKSPACE_FILE);
-    const tmp = `${final}.tmp`;
+  private async writeRegistry(file: WorkspaceRegistryFile): Promise<void> {
+    await fsp.mkdir(dirname(this.registryPath), { recursive: true, mode: 0o700 });
+    const tmp = `${this.registryPath}.tmp`;
     await fsp.writeFile(tmp, JSON.stringify(file, null, 2), 'utf8');
-    await fsp.rename(tmp, final);
+    await fsp.rename(tmp, this.registryPath);
+  }
+
+  private runExclusive<T>(op: () => Promise<T>): Promise<T> {
+    const next = this.opQueue.then(op, op);
+    this.opQueue = next.then(
+      () => {},
+      () => {},
+    );
+    return next;
   }
 
   override dispose(): void {
