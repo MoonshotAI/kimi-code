@@ -49,6 +49,7 @@ const appState: AppState = {
   planMode: false,
   swarmMode: false,
   theme: 'dark',
+  language: 'auto',
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },

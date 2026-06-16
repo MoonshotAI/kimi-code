@@ -11,6 +11,7 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
@@ -199,11 +200,12 @@ function safeUsage(usage: number): number {
 }
 
 function formatContextStatus(usage: number, tokens?: number, maxTokens?: number): string {
+  const label = i18n.t('components.footer.context');
   const pct = `${(safeUsage(usage) * 100).toFixed(1)}%`;
   if (maxTokens && maxTokens > 0 && tokens !== undefined) {
-    return `context: ${pct} (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
+    return `${label}: ${pct} (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
   }
-  return `context: ${pct}`;
+  return `${label}: ${pct}`;
 }
 
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {
@@ -294,7 +296,7 @@ export class FooterComponent implements Component {
 
     const model = modelDisplayName(state);
     if (model) {
-      const thinkingLabel = state.thinking ? ' thinking' : '';
+      const thinkingLabel = state.thinking ? ` ${i18n.t('components.footer.thinking')}` : '';
       const modelLabel = `${model}${thinkingLabel}`;
       let renderedModelLabel = chalk.hex(colors.text)(modelLabel);
       if (isRainbowDancing()) {
@@ -307,15 +309,21 @@ export class FooterComponent implements Component {
     // (shell processes) and `agent-*` tasks (background subagents) get
     // separate badges so the user can distinguish them at a glance.
     if (this.backgroundBashTaskCount > 0) {
-      const noun = this.backgroundBashTaskCount === 1 ? 'task' : 'tasks';
+      const key =
+        this.backgroundBashTaskCount === 1
+          ? 'components.footer.taskRunning'
+          : 'components.footer.tasksRunning';
       left.push(
-        chalk.hex(colors.primary)(`[${String(this.backgroundBashTaskCount)} ${noun} running]`),
+        chalk.hex(colors.primary)(`[${i18n.t(key, { count: this.backgroundBashTaskCount })}]`),
       );
     }
     if (this.backgroundAgentCount > 0) {
-      const noun = this.backgroundAgentCount === 1 ? 'agent' : 'agents';
+      const key =
+        this.backgroundAgentCount === 1
+          ? 'components.footer.agentRunning'
+          : 'components.footer.agentsRunning';
       left.push(
-        chalk.hex(colors.primary)(`[${String(this.backgroundAgentCount)} ${noun} running]`),
+        chalk.hex(colors.primary)(`[${i18n.t(key, { count: this.backgroundAgentCount })}]`),
       );
     }
 

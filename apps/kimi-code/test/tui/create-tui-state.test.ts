@@ -21,6 +21,7 @@ function fakeInitialAppState(): AppState {
     streamingPhase: 'idle',
     streamingStartTime: 0,
     theme: 'dark',
+    language: 'auto',
     version: '0.0.0-test',
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },

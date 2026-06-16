@@ -34,6 +34,7 @@
   "type": "module",
   "imports": {
     "#/tui/theme": "./src/tui/theme/index.ts",
+    "#/tui/i18n": "./src/tui/i18n/index.ts",
     "#/*": [
       "./src/*.ts",
       "./src/*/index.ts",

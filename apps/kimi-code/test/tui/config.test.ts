@@ -42,9 +42,14 @@ describe('TUI config', () => {
     expect(text).toContain('notification_condition = "unfocused"');
   });
 
+  it('defaults language to auto', () => {
+    expect(DEFAULT_TUI_CONFIG.language).toBe('auto');
+  });
+
   it('parses valid TOML', () => {
     const config = parseTuiConfig(`
 theme = "light"
+language = "zh-CN"
 
 [editor]
 command = "code --wait"
@@ -59,10 +64,23 @@ auto_install = false
 
     expect(config).toEqual({
       theme: 'light',
+      language: 'zh-CN',
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
     });
+  });
+
+  it('defaults language to auto when the field is absent', () => {
+    const config = parseTuiConfig(`theme = "dark"`);
+
+    expect(config.language).toBe('auto');
+  });
+
+  it('round-trips language through save and reload without loss', async () => {
+    await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, language: 'zh-CN' }, filePath);
+
+    expect((await loadTuiConfig(filePath)).language).toBe('zh-CN');
   });
 
   it('normalizes an empty editor command to auto-detect', () => {
@@ -73,6 +91,7 @@ command = "   "
 
     expect(config).toEqual({
       theme: 'auto',
+      language: 'auto',
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
@@ -104,6 +123,7 @@ command = "   "
     await saveTuiConfig(
       {
         theme: 'light',
+        language: 'en',
         editorCommand: 'vim',
         notifications: { enabled: false, condition: 'always' },
         upgrade: { autoInstall: false },
@@ -113,6 +133,7 @@ command = "   "
 
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
+      language: 'en',
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
@@ -124,6 +145,7 @@ command = "   "
     await saveTuiConfig(
       {
         theme,
+        language: 'auto',
         editorCommand: null,
         notifications: DEFAULT_TUI_CONFIG.notifications,
         upgrade: DEFAULT_TUI_CONFIG.upgrade,

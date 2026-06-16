@@ -182,6 +182,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     streamingPhase: 'idle',
     streamingStartTime: 0,
     theme: input.tuiConfig.theme,
+    language: input.tuiConfig.language,
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     notifications: input.tuiConfig.notifications,
