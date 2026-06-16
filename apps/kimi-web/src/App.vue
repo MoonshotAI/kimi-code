@@ -792,9 +792,10 @@ function openPr(url: string): void {
           @click="toggleSidebarCollapse"
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <path d="M15 3v18" />
-            <path d="M9 8l4 4-4 4" />
+            <path d="M4 6h9" />
+            <path d="M4 12h9" />
+            <path d="M4 18h9" />
+            <path d="M17 9l3 3-3 3" />
           </svg>
         </button>
       </div>

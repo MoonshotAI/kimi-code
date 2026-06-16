@@ -383,9 +383,10 @@ function blinkOnce(): void {
           @click.stop="emit('collapse')"
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <path d="M9 3v18" />
-            <path d="M15 8l-4 4 4 4" />
+            <path d="M11 6h9" />
+            <path d="M11 12h9" />
+            <path d="M11 18h9" />
+            <path d="M7 9l-3 3 3 3" />
           </svg>
         </button>
         <button
