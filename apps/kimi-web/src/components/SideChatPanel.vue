@@ -247,7 +247,7 @@ function autosize(): void {
   border: none;
   border-radius: var(--r-sm, 8px);
   background: var(--blue);
-  color: #fff;
+  color: var(--bg);
   cursor: pointer;
 }
 .sc-send:disabled { opacity: 0.4; cursor: default; }

@@ -1341,7 +1341,7 @@ function openPr(url: string): void {
   font-family: var(--mono);
   font-size: var(--ui-font-size-xs);
   padding: 4px 14px;
-  color: #fff;
+  color: var(--bg);
   cursor: pointer;
   flex: none;
 }

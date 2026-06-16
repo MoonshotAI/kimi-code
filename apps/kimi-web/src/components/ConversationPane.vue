@@ -1428,7 +1428,7 @@ defineExpose({ loadComposerForEdit });
   padding: 8px 14px;
   border-radius: 6px;
   background: var(--ink);
-  color: #fff;
+  color: var(--bg);
   font-size: var(--ui-font-size-sm);
   z-index: 20;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
