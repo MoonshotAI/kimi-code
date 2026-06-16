@@ -73,7 +73,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
     if (source === 'manual') {
       for (let i = messages.length - 1; i > 0; i--) {
         if (canSplitAfter(messages, i)) {
-          return i + 1;
+          return this.fitCompactCountToWindow(messages, i + 1);
         }
       }
       return 0;
@@ -115,7 +115,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
       }
     }
 
-    return bestN ?? 0;
+    return this.fitCompactCountToWindow(messages, bestN ?? 0);
   }
 
   reduceCompactOnOverflow(messages: readonly Message[]): number {
@@ -136,6 +136,37 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
       }
     }
     return bestN ?? messages.length;
+  }
+
+  private fitCompactCountToWindow(
+    messages: readonly Message[],
+    compactedCount: number,
+  ): number {
+    if (this.maxSize <= 0 || compactedCount <= 0) {
+      return compactedCount;
+    }
+
+    let compactedSize = 0;
+    for (let i = 0; i < compactedCount; i++) {
+      compactedSize += estimateTokensForMessage(messages[i]!);
+    }
+    if (compactedSize <= this.maxSize) {
+      return compactedCount;
+    }
+
+    let bestN: number | undefined;
+    for (let n = compactedCount - 1; n > 0; n--) {
+      compactedSize -= estimateTokensForMessage(messages[n]!);
+      if (!canSplitAfter(messages, n - 1)) {
+        continue;
+      }
+      bestN = n;
+      if (compactedSize <= this.maxSize) {
+        return n;
+      }
+    }
+
+    return bestN ?? compactedCount;
   }
 
   get checkAfterStep(): boolean {

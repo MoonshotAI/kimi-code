@@ -1,5 +1,7 @@
 import type { ContentPart, Message, Tool } from '@moonshot-ai/kosong';
 
+const messageTokenEstimateCache = new WeakMap<Message, number>();
+
 /**
  * Estimate token count from text using a character-based heuristic.
  *   - ASCII (~4 chars per token)
@@ -40,6 +42,11 @@ export function estimateTokensForTools(tools: readonly Tool[]): number {
 }
 
 export function estimateTokensForMessage(message: Message): number {
+  const cached = messageTokenEstimateCache.get(message);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   let total = estimateTokens(message.role);
   total += estimateTokensForContentParts(message.content);
   if (message.toolCalls !== undefined) {
@@ -48,6 +55,7 @@ export function estimateTokensForMessage(message: Message): number {
       total += estimateTokens(JSON.stringify(call.arguments));
     }
   }
+  messageTokenEstimateCache.set(message, total);
   return total;
 }
 

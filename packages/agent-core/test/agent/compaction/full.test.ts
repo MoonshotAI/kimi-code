@@ -949,6 +949,45 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('auto-compacts very large context in window-sized rounds', async () => {
+    const maxContextTokens = 4_000;
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: maxContextTokens,
+      },
+    });
+    for (let i = 1; i <= 22; i++) {
+      ctx.appendAssistantTextWithUsage(
+        i,
+        `history chunk ${String(i)} ${'x'.repeat(7_200)}`,
+        i * 1_850,
+      );
+    }
+    const initialTokens = estimateTokensForMessages(ctx.agent.context.history);
+    const completed = ctx.once('compaction.completed');
+    for (let i = 1; i <= 30; i++) {
+      ctx.mockNextResponse({ type: 'text', text: `Auto summary ${String(i)}.` });
+    }
+
+    ctx.agent.fullCompaction.begin({ source: 'auto', instruction: undefined });
+    await completed;
+
+    const events = ctx.newEvents();
+    const compactedPrefixSizes = ctx.llmCalls.map((call) =>
+      estimateTokensForMessages(call.history.slice(0, -1)),
+    );
+    expect(initialTokens).toBeGreaterThan(maxContextTokens * 9);
+    expect(countEvents(events, 'context.apply_compaction')).toBeGreaterThan(1);
+    expect(countEvents(events, 'compaction.completed')).toBe(1);
+    expect(compactedPrefixSizes.length).toBeGreaterThan(1);
+    expect(compactedPrefixSizes.every((size) => size <= maxContextTokens)).toBe(true);
+    expect(ctx.agent.context.tokenCount).toBeLessThan(maxContextTokens * 0.85);
+    await ctx.expectResumeMatches();
+  });
+
   it('cancels when the compacted prefix changes before completion', async () => {
     const ctx = testAgent();
     ctx.configure({
