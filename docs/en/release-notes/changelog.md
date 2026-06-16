@@ -6,6 +6,39 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.15.0 (2026-06-15)
+
+### Features
+
+- Add an all-sessions picker view with name search, paginated browsing, and clipboard-ready resume commands for sessions in other working directories.
+- Add support for legacy SSE MCP servers alongside stdio and streamable HTTP transports.
+
+### Bug Fixes
+
+- Recover resumed sessions when an interrupted tool call result was not recorded.
+- Stop writing resume version markers into persisted agent metadata.
+- Do not carry obsolete legacy loop, background, plan, yolo, or unknown experimental flags into migrated config files.
+- Repair mismatched JSON Schema types emitted by Xcode 26.5 MCP server for Moonshot compatibility.
+
+### Polish
+
+- Keep TUI components within narrow terminal widths by wrapping, compacting, or truncating lines that could exceed the render width.
+- Prompt the CLI to show one brief same-language status sentence before non-trivial tool calls.
+- Extend the same-language rule to the model's reasoning, so thinking follows the user's language while keeping code and technical terms in their original form.
+- Read media files using header-detected types before falling back to media extensions.
+- Prioritize clearing draft editor text before Ctrl-C cancels an active stream.
+- Collapse hidden directories in the workspace prompt and explain how to inspect them.
+- Include the skill's directory on the loaded-skill context block so the agent can locate a skill's bundled resources (scripts, templates) after it is invoked.
+- Show the all-sessions toggle hint when the current working directory has no sessions.
+- Clarify that compaction summaries must be emitted in the final answer.
+- Clarify AGENTS.md prompt guidance and mark truncated instruction files.
+
+### Refactors
+
+- Resolve model capabilities through a static lookup instead of instantiating a temporary provider.
+- Decouple agent skill access from session-specific registry implementations.
+- Optimize the npm packaging system.
+
 ## 0.14.3 (2026-06-14)
 
 ### Polish
