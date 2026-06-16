@@ -564,6 +564,13 @@ export function reduceAppEvent(
       break;
     }
 
+    // Workspace lifecycle events are handled in the composable (rawState), not
+    // here — listed explicitly to keep the switch exhaustive.
+    case 'workspaceCreated':
+    case 'workspaceUpdated':
+    case 'workspaceDeleted':
+      break;
+
     default: {
       // TypeScript exhaustiveness guard — should not reach here
       const _exhaustive: never = event;

@@ -492,6 +492,20 @@ export function toAppEvent(wire: WireEvent): AppEvent {
     case 'event.session.deleted':
       return { type: 'sessionDeleted', sessionId: w.session_id };
 
+    // ----- Workspace lifecycle -----
+    case 'event.workspace.created':
+      return { type: 'workspaceCreated', workspace: toAppWorkspace(w.payload.workspace) };
+
+    case 'event.workspace.updated':
+      return { type: 'workspaceUpdated', workspace: toAppWorkspace(w.payload.workspace) };
+
+    case 'event.workspace.deleted':
+      return {
+        type: 'workspaceDeleted',
+        workspaceId: w.payload.workspace_id,
+        root: w.payload.root,
+      };
+
     case 'event.session.status_changed':
       return {
         type: 'sessionStatusChanged',

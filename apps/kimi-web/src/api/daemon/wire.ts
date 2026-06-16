@@ -632,6 +632,11 @@ type WireEventSessionHistoryCompacted = WireEventBase<'event.session.history_com
   summary_message_id?: string;
 }>;
 
+// Workspace lifecycle (global — not session-scoped)
+type WireEventWorkspaceCreated = WireEventBase<'event.workspace.created', { workspace: WireWorkspace }>;
+type WireEventWorkspaceUpdated = WireEventBase<'event.workspace.updated', { workspace: WireWorkspace }>;
+type WireEventWorkspaceDeleted = WireEventBase<'event.workspace.deleted', { workspace_id: string; root: string }>;
+
 // Message lifecycle
 type WireEventMessageCreated = WireEventBase<'event.message.created', { message: WireMessage }>;
 type WireEventMessageUpdated = WireEventBase<'event.message.updated', {
@@ -757,6 +762,10 @@ export type WireEvent =
   | WireEventSessionStatusChanged
   | WireEventSessionUsageUpdated
   | WireEventSessionHistoryCompacted
+  // Workspace lifecycle
+  | WireEventWorkspaceCreated
+  | WireEventWorkspaceUpdated
+  | WireEventWorkspaceDeleted
   // Message lifecycle
   | WireEventMessageCreated
   | WireEventMessageUpdated

@@ -848,6 +848,18 @@ function connectEventsIfNeeded(): void {
 
   eventConn = api.connectEvents({
     onEvent(appEvent, meta) {
+      // Workspace lifecycle events are global (not session-scoped) and update
+      // rawState.workspaces directly — they bypass the reducer, which has no
+      // workspace state.
+      if (
+        appEvent.type === 'workspaceCreated' ||
+        appEvent.type === 'workspaceUpdated' ||
+        appEvent.type === 'workspaceDeleted'
+      ) {
+        applyWorkspaceEvent(appEvent);
+        return;
+      }
+
       // meta carries wire-level seq/sessionId so the reducer can advance
       // lastSeqBySession[sessionId] = seq. Compaction completion appends a
       // persistent divider marker in the reducer (TUI parity: the scrollback
@@ -2554,6 +2566,51 @@ function upsertWorkspacePreserveOrder(workspace: AppWorkspace): void {
   const next = [...rawState.workspaces];
   next[index] = workspace;
   rawState.workspaces = next;
+}
+
+type WorkspaceLifecycleEvent =
+  | { type: 'workspaceCreated'; workspace: AppWorkspace }
+  | { type: 'workspaceUpdated'; workspace: AppWorkspace }
+  | { type: 'workspaceDeleted'; workspaceId: string; root: string };
+
+/** Apply a workspace lifecycle event broadcast by the daemon (multi-client sync).
+ *  Workspaces live outside the reducer in rawState, so these events are handled
+ *  here instead of in reduceAppEvent. */
+function applyWorkspaceEvent(event: WorkspaceLifecycleEvent): void {
+  if (event.type === 'workspaceCreated' || event.type === 'workspaceUpdated') {
+    upsertWorkspacePreserveOrder(event.workspace);
+    return;
+  }
+  // workspaceDeleted — mirror the local deleteWorkspace so a removal initiated
+  // by another client stays hidden even though its surviving sessions would
+  // otherwise re-derive it in mergedWorkspaces.
+  const root =
+    rawState.workspaces.find((w) => w.id === event.workspaceId)?.root ?? event.root;
+  if (root && !rawState.hiddenWorkspaceRoots.includes(root)) {
+    rawState.hiddenWorkspaceRoots = [...rawState.hiddenWorkspaceRoots, root];
+    saveHiddenWorkspacesToStorage(rawState.hiddenWorkspaceRoots);
+  }
+  rawState.workspaces = rawState.workspaces.filter(
+    (w) => w.id !== event.workspaceId && w.root !== root,
+  );
+  const removingActiveWorkspace =
+    rawState.activeWorkspaceId === event.workspaceId || rawState.activeWorkspaceId === root;
+  if (removingActiveWorkspace) {
+    const nextWorkspace = mergedWorkspaces.value[0]?.id ?? null;
+    rawState.activeWorkspaceId = nextWorkspace;
+    if (nextWorkspace) saveActiveWorkspaceToStorage(nextWorkspace);
+    else {
+      try {
+        localStorage.removeItem(ACTIVE_WORKSPACE_KEY);
+      } catch {
+        // ignore
+      }
+    }
+    rawState.activeSessionId = undefined;
+    rawState.sessionLoading = false;
+    clearFileDiff();
+    writeSessionUrl(undefined, 'replace');
+  }
 }
 
 /** Clear the active session without creating a new one. */

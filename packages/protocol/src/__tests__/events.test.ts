@@ -153,6 +153,45 @@ describe('events / display re-exports', () => {
     expect((parsed as { session: { id: string } }).session.id).toBe('sess_1');
   });
 
+  it('validates workspace lifecycle events', () => {
+    const workspace = {
+      id: 'wd_project_123456abcdef',
+      root: '/tmp/project',
+      name: 'project',
+      is_git_repo: true,
+      branch: 'main',
+      created_at: '2026-06-11T00:00:00.000Z',
+      last_opened_at: '2026-06-11T00:00:00.000Z',
+      session_count: 1,
+    };
+
+    const created = eventSchema.parse({
+      type: 'event.workspace.created',
+      agentId: 'main',
+      sessionId: '__global__',
+      workspace,
+    });
+    expect(created.type).toBe('event.workspace.created');
+
+    const updated = eventSchema.parse({
+      type: 'event.workspace.updated',
+      agentId: 'main',
+      sessionId: '__global__',
+      workspace: { ...workspace, name: 'renamed' },
+    });
+    expect(updated.type).toBe('event.workspace.updated');
+
+    const deleted = eventSchema.parse({
+      type: 'event.workspace.deleted',
+      agentId: 'main',
+      sessionId: '__global__',
+      workspace_id: workspace.id,
+      root: workspace.root,
+    });
+    expect(deleted.type).toBe('event.workspace.deleted');
+    expect((deleted as { root: string }).root).toBe('/tmp/project');
+  });
+
   it('validates event.session.status_changed events', () => {
     const parsed = eventSchema.parse({
       type: 'event.session.status_changed',

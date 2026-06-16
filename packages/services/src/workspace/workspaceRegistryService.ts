@@ -8,6 +8,7 @@ import type { Stats } from 'node:fs';
 import { Disposable, InstantiationType, registerSingleton } from '@moonshot-ai/agent-core';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core/session/store';
 import { IEnvironmentService } from '../environment/environment';
+import { IEventService } from '../event/event';
 
 import type { Workspace } from '@moonshot-ai/protocol';
 
@@ -34,6 +35,11 @@ interface WorkspaceRegistryFile {
   workspaces: Record<string, WorkspaceRegistryEntry>;
 }
 
+type WorkspaceRegistryEvent =
+  | { type: 'event.workspace.created'; workspace: Workspace }
+  | { type: 'event.workspace.updated'; workspace: Workspace }
+  | { type: 'event.workspace.deleted'; workspace_id: string; root: string };
+
 export class WorkspaceRegistryService extends Disposable implements IWorkspaceRegistry {
   readonly _serviceBrand: undefined;
 
@@ -44,6 +50,7 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
   constructor(
     @IEnvironmentService env: IEnvironmentService,
     @ILogService private readonly logger: ILogService,
+    @IEventService private readonly eventService: IEventService,
   ) {
     super();
     this.sessionsDir = join(env.homeDir, 'sessions');
@@ -86,7 +93,7 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     await fsp.mkdir(join(this.sessionsDir, workspaceId), { recursive: true, mode: 0o700 });
 
     const now = new Date().toISOString();
-    const entry = await this.runExclusive(async () => {
+    const { entry, created } = await this.runExclusive(async () => {
       const file = await this.readRegistry();
       const existing = file.workspaces[workspaceId];
       const next: WorkspaceRegistryEntry =
@@ -100,9 +107,13 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
             };
       file.workspaces[workspaceId] = next;
       await this.writeRegistry(file);
-      return next;
+      return { entry: next, created: existing === undefined };
     });
-    return this.hydrate(workspaceId, entry);
+    const workspace = await this.hydrate(workspaceId, entry);
+    if (created) {
+      this.publishWorkspace({ type: 'event.workspace.created', workspace });
+    }
+    return workspace;
   }
 
   async update(workspaceId: string, patch: WorkspacePatch): Promise<Workspace> {
@@ -120,17 +131,26 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       await this.writeRegistry(file);
       return next;
     });
-    return this.hydrate(workspaceId, entry);
+    const workspace = await this.hydrate(workspaceId, entry);
+    this.publishWorkspace({ type: 'event.workspace.updated', workspace });
+    return workspace;
   }
 
   async delete(workspaceId: string): Promise<void> {
-    await this.runExclusive(async () => {
+    const root = await this.runExclusive(async () => {
       const file = await this.readRegistry();
-      if (file.workspaces[workspaceId] === undefined) {
+      const existing = file.workspaces[workspaceId];
+      if (existing === undefined) {
         throw new WorkspaceNotFoundError(workspaceId);
       }
       delete file.workspaces[workspaceId];
       await this.writeRegistry(file);
+      return existing.root;
+    });
+    this.publishWorkspace({
+      type: 'event.workspace.deleted',
+      workspace_id: workspaceId,
+      root,
     });
   }
 
@@ -163,6 +183,29 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       last_opened_at: entry.last_opened_at,
       session_count,
     };
+  }
+
+  private publishWorkspace(event: WorkspaceRegistryEvent): void {
+    switch (event.type) {
+      case 'event.workspace.created':
+      case 'event.workspace.updated':
+        this.eventService.publish({
+          agentId: 'main',
+          sessionId: '__global__',
+          type: event.type,
+          workspace: event.workspace,
+        });
+        break;
+      case 'event.workspace.deleted':
+        this.eventService.publish({
+          agentId: 'main',
+          sessionId: '__global__',
+          type: event.type,
+          workspace_id: event.workspace_id,
+          root: event.root,
+        });
+        break;
+    }
   }
 
   private async readRegistry(): Promise<WorkspaceRegistryFile> {

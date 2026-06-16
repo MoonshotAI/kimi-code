@@ -382,6 +382,9 @@ export interface FsEntry {
 
 export type AppEvent =
   | { type: 'sessionCreated'; session: AppSession }
+  | { type: 'workspaceCreated'; workspace: AppWorkspace }
+  | { type: 'workspaceUpdated'; workspace: AppWorkspace }
+  | { type: 'workspaceDeleted'; workspaceId: string; root: string }
   | { type: 'sessionUpdated'; session: AppSession; changedFields: string[] }
   | { type: 'sessionDeleted'; sessionId: string }
   | { type: 'sessionStatusChanged'; sessionId: string; status: AppSessionStatus; previousStatus: AppSessionStatus; currentPromptId?: string }
