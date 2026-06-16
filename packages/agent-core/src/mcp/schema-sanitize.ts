@@ -94,7 +94,11 @@ function derefJsonSchema(schema: JsonRecord): JsonRecord {
   const root = structuredClone(schema);
 
   function resolvePointer(pointer: string): Json {
-    const parts = pointer.replace(/^#\/?/, '').split('/');
+    const pathStr = pointer.replace(/^#\/?/, '');
+    if (pathStr === '') {
+      return root;
+    }
+    const parts = pathStr.split('/');
     let current: Json = root;
     for (const part of parts) {
       if (typeof current !== 'object' || current === null || Array.isArray(current)) {

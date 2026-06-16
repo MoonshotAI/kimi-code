@@ -381,4 +381,23 @@ describe('sanitizeMcpSchema — recursive / circular schemas', () => {
     expect(nestedBranches[1]!['type']).toBe('object');
     expect(nestedBranches[1]!['description']).toBe('Circular reference');
   });
+
+  it('handles root self-recursive references ($ref: "#") safely', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        self: { $ref: '#' },
+      },
+    };
+
+    const result = sanitizeMcpSchema(schema);
+
+    // Verify circular reference at the root level was safely resolved at the nested level
+    const selfProp = prop(result, 'self');
+    expect(selfProp['type']).toBe('object');
+    
+    const nestedSelf = prop(selfProp, 'self');
+    expect(nestedSelf['type']).toBe('object');
+    expect(nestedSelf['description']).toBe('Circular reference');
+  });
 });
