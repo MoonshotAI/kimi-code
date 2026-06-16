@@ -269,20 +269,28 @@ function renderDiffRow(row: FileDiffRow, highlightedText: string, gutterWidth: n
   return currentTheme.fg(gutterColor, gutter) + truncateToWidth(highlightedText, available, '…');
 }
 
-/** The marker-aligned comment band: ┎ rule, ┃ lines, ┖ rule, indented to the +/- column. */
+/** The comment band: a colored-severity / bold-title bar, a rule, then the body. */
 function renderBand(comment: ReviewArtifactComment, gutterWidth: number, width: number): string[] {
   const indent = ' '.repeat(gutterWidth + 2); // leading space + line number + space → marker column
   const inner = Math.max(8, width - indent.length - 2);
   const ruleWidth = Math.max(1, width - indent.length - 1);
-  const heading = `! ${comment.severity} — ${comment.title}`;
-  // Render the body through the shared Markdown component so bold/code/lists
-  // match the rest of the chat; the heading stays plain text.
-  const body = comment.body.length > 0 ? renderMarkdownLines(comment.body, inner) : [];
   const tone: ColorToken = comment.severity === 'critical' ? 'error' : comment.severity === 'important' ? 'warning' : 'textDim';
   const bar = currentTheme.fg(tone, '┃');
-  const lines = [indent + currentTheme.fg(tone, '┎' + '─'.repeat(ruleWidth))];
-  for (const line of [heading, ...body]) {
-    lines.push(indent + bar + ' ' + truncateToWidth(line, inner, '…'));
+  // Title bar: severity colored by tone, then the bold title.
+  const severity = SEVERITY_TAG[comment.severity];
+  const titleBudget = Math.max(1, inner - visibleWidth(severity) - 2);
+  const titleBar =
+    currentTheme.fg(tone, severity) + '  ' + currentTheme.boldFg('text', truncateToWidth(comment.title, titleBudget, '…'));
+  // Render the body through the shared Markdown component so it matches chat.
+  const body = comment.body.length > 0 ? renderMarkdownLines(comment.body, inner) : [];
+
+  const lines = [
+    indent + currentTheme.fg(tone, '┎' + '─'.repeat(ruleWidth)),
+    indent + bar + ' ' + titleBar,
+  ];
+  if (body.length > 0) {
+    lines.push(indent + currentTheme.fg(tone, '┠' + '─'.repeat(ruleWidth)));
+    for (const line of body) lines.push(indent + bar + ' ' + truncateToWidth(line, inner, '…'));
   }
   lines.push(indent + currentTheme.fg(tone, '┖' + '─'.repeat(ruleWidth)));
   return lines;

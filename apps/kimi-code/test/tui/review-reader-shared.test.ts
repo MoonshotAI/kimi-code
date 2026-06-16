@@ -138,6 +138,23 @@ describe('ReviewReaderFullscreenApp markdown body', () => {
     expect(body).toContain('code');
     expect(body).not.toContain('**bold**');
   });
+
+  it('puts the severity and title in a title bar with a rule below it', () => {
+    const app = new ReviewReaderFullscreenApp({
+      artifact: markdownArtifact(),
+      terminal: { rows: 40, columns: 120 } as never,
+      onReject: async () => undefined,
+      onRestore: async () => undefined,
+      onClose: () => {},
+      requestRender: vi.fn(),
+    });
+    const text = app.render(120).map((line) => line.replaceAll(ANSI_SGR, '')).join('\n');
+    // Title bar shows the severity tag and the title.
+    expect(text).toContain('! critical');
+    expect(text).toContain('A bug');
+    // A title-bar rule (┠) separates the title from the body.
+    expect(text).toContain('┠');
+  });
 });
 
 function unsortedArtifact(): ReviewArtifact {
