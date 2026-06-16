@@ -25,11 +25,19 @@ const REVIEW_TOOL_NAMES = new Set([
 ]);
 const FULL_GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const SHORT_GIT_OBJECT_ID_LENGTH = 7;
-/** Cap on path width inside one-line tool labels, so long paths don't overflow. */
-const LABEL_PATH_MAX_WIDTH = 40;
+/** Columns reserved for label chrome (verb, parens, line/severity) beside a path. */
+const PATH_LABEL_RESERVE = 36;
+const MIN_LABEL_PATH_WIDTH = 24;
 
+/**
+ * Abbreviate a path for a one-line tool label, sized to the terminal width so
+ * paths are only shortened when they would actually crowd the line. When the
+ * width is unknown (not a TTY, e.g. tests) the path is left intact.
+ */
 function shortLabelPath(path: string): string {
-  return abbreviatePath(path, LABEL_PATH_MAX_WIDTH);
+  const columns = process.stdout.columns;
+  if (columns === undefined || columns <= 0) return path;
+  return abbreviatePath(path, Math.max(MIN_LABEL_PATH_WIDTH, columns - PATH_LABEL_RESERVE));
 }
 
 export const reviewSummary: ResultRenderer = (toolCall, result, ctx) => {

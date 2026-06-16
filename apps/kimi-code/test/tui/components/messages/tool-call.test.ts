@@ -167,7 +167,7 @@ describe('ToolCallComponent', () => {
 
     const out = strip(component.render(120).join('\n'));
 
-    expect(out).toContain('Read current file state (packages/agent-core/…/review/prompts.ts · from line 1)');
+    expect(out).toContain('Read current file state (packages/agent-core/src/review/prompts.ts · from line 1)');
     expect(out).not.toContain('Used file version');
     expect(out).not.toContain('Used ReadFileVersion');
     expect(out).not.toContain('Used Read current file state');
@@ -210,7 +210,7 @@ describe('ToolCallComponent', () => {
 
     const out = strip(component.render(120).join('\n'));
 
-    expect(out).toContain('Read current file state (packages/agent-core/…/review/prompts.ts · from line 1)');
+    expect(out).toContain('Read current file state (packages/agent-core/src/review/prompts.ts · from line 1)');
     expect(out).not.toContain('Used file version');
     expect(out).not.toContain('Used Read current file state');
   });

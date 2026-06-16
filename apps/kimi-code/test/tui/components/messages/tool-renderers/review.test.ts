@@ -9,7 +9,7 @@ describe('review tool activity labels', () => {
       version: 'current',
       line_offset: 1,
     })).toBe(
-      'Read current file state (packages/agent-core/…/review/prompts.ts · from line 1)',
+      'Read current file state (packages/agent-core/src/review/prompts.ts · from line 1)',
     );
 
     expect(formatReviewToolActivityLabel('ReadFileVersion', {
@@ -18,7 +18,7 @@ describe('review tool activity labels', () => {
       line_offset: 40,
       n_lines: 8,
     })).toBe(
-      'Read base file state (packages/agent-core/…/review/prompts.ts · lines 40-47)',
+      'Read base file state (packages/agent-core/src/review/prompts.ts · lines 40-47)',
     );
 
     expect(formatReviewToolActivityLabel('ReadFileVersion', {
@@ -27,7 +27,7 @@ describe('review tool activity labels', () => {
       line_offset: 7,
       n_lines: 1,
     })).toBe(
-      'Read file at ref (packages/agent-core/…/review/prompts.ts · ref a58b5b2 · line 7)',
+      'Read file at ref (packages/agent-core/src/review/prompts.ts · ref a58b5b2 · line 7)',
     );
   });
 
@@ -53,16 +53,33 @@ describe('review tool activity labels', () => {
     })).toBe('Added review comment (src/a.ts:12 · important · Validate input)');
   });
 
-  it('abbreviates long paths in comment labels so they do not overflow', () => {
+  it('keeps full paths when the terminal width is unknown (no abbreviation)', () => {
     const label = formatReviewToolActivityLabel('AddComment', {
       path: 'packages/agent-core/src/review/artifact.ts',
       line: 146,
       severity: 'critical',
       title: 'Concurrent review saves can overwrite each other',
     });
-    // The middle of the path is elided; the package root and file name remain.
-    expect(label).toContain('packages/agent-core/…/review/artifact.ts:146');
-    expect(label).not.toContain('agent-core/src/review/artifact.ts');
+    expect(label).toContain('packages/agent-core/src/review/artifact.ts:146');
+  });
+
+  it('abbreviates long paths only to fit a narrow terminal width', () => {
+    const original = Object.getOwnPropertyDescriptor(process.stdout, 'columns');
+    Object.defineProperty(process.stdout, 'columns', { value: 60, configurable: true });
+    try {
+      const label = formatReviewToolActivityLabel('AddComment', {
+        path: 'packages/agent-core/src/review/artifact.ts',
+        line: 146,
+        severity: 'critical',
+        title: 'Concurrent review saves can overwrite each other',
+      });
+      // The path is elided to fit; the file name and line survive.
+      expect(label).toContain('artifact.ts:146');
+      expect(label).toContain('…');
+      expect(label).not.toContain('agent-core/src/review/artifact.ts');
+    } finally {
+      if (original !== undefined) Object.defineProperty(process.stdout, 'columns', original);
+    }
   });
 
   it('formats legacy ReadPatch records for replay', () => {
