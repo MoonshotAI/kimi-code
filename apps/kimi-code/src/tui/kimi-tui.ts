@@ -1117,6 +1117,7 @@ export class KimiTUI {
         this.session === undefined ? undefined : this.state.appState.thinking ? 'on' : 'off',
       permission: this.state.appState.permissionMode,
       planMode: this.state.appState.planMode ? true : undefined,
+      metadata: this.options.startup.metadata,
     });
   }
 
