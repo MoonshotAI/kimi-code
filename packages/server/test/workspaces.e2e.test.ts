@@ -5,12 +5,19 @@
  *   - POST /api/v1/workspaces                 (idempotent on root)
  *   - GET  /api/v1/workspaces                 (list with git probe)
  *   - PATCH /api/v1/workspaces/{id}           (rename)
- *   - DELETE /api/v1/workspaces/{id}          (unlinks workspace.json only)
+ *   - DELETE /api/v1/workspaces/{id}          (removes the registry entry only)
  *   - Unknown id → 40410
  *   - Non-existent root → 40409
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -80,6 +87,19 @@ function makeGitRepo(root: string, branch: string): void {
   writeFileSync(join(root, '.git', 'HEAD'), `ref: refs/heads/${branch}\n`, 'utf8');
 }
 
+interface RegistryFile {
+  version: number;
+  workspaces: Record<string, { root: string; name: string }>;
+}
+
+function readRegistry(): RegistryFile {
+  return JSON.parse(readFileSync(join(bridgeHome, 'workspaces.json'), 'utf8')) as RegistryFile;
+}
+
+function bucketDir(workspaceId: string): string {
+  return join(bridgeHome, 'sessions', workspaceId);
+}
+
 describe('POST /api/v1/workspaces — register', () => {
   it('creates a Workspace with derived id, name=basename, is_git_repo via probe', async () => {
     const r = await bootDaemon();
@@ -102,6 +122,22 @@ describe('POST /api/v1/workspaces — register', () => {
     expect(ws.branch).toBe('main');
     expect(ws.session_count).toBe(0);
     expect(ws.root).toBeTruthy();
+  });
+
+  it('writes the entry to workspaces.json and does not create per-bucket workspace.json', async () => {
+    const r = await bootDaemon();
+    const root = join(tmpDir, 'registry-source');
+    mkdirSync(root, { recursive: true });
+
+    const ws = envelopeOf<Workspace>(
+      (await appOf(r).inject({ method: 'POST', url: '/api/v1/workspaces', payload: { root } })).json(),
+    ).data!;
+
+    const registry = readRegistry();
+    expect(registry.workspaces[ws.id]?.name).toBe('registry-source');
+    expect(registry.workspaces[ws.id]?.root).toBe(ws.root);
+
+    expect(existsSync(join(bucketDir(ws.id), 'workspace.json'))).toBe(false);
   });
 
   it('uses caller-supplied name when present', async () => {
@@ -233,7 +269,7 @@ describe('PATCH /api/v1/workspaces/{id} — rename', () => {
 });
 
 describe('DELETE /api/v1/workspaces/{id} — unregister', () => {
-  it('removes workspace.json but does not touch on-disk content', async () => {
+  it('removes the registry entry but keeps the session bucket on disk', async () => {
     const r = await bootDaemon();
     const root = join(tmpDir, 'deleteme');
     mkdirSync(root, { recursive: true });
@@ -246,12 +282,17 @@ describe('DELETE /api/v1/workspaces/{id} — unregister', () => {
         })
       ).json(),
     ).data!;
+    expect(readRegistry().workspaces[created.id]).toBeDefined();
+
     const deletedRes = await appOf(r).inject({
       method: 'DELETE',
       url: `/api/v1/workspaces/${created.id}`,
     });
     expect(envelopeOf<{ deleted: true }>(deletedRes.json()).data).toEqual({ deleted: true });
-    // The workspace no longer shows up in list, but the root dir still exists.
+
+    expect(readRegistry().workspaces[created.id]).toBeUndefined();
+    expect(existsSync(bucketDir(created.id))).toBe(true);
+
     const listRes = await appOf(r).inject({ method: 'GET', url: '/api/v1/workspaces' });
     expect(envelopeOf<{ items: Workspace[] }>(listRes.json()).data!.items).toEqual([]);
   });

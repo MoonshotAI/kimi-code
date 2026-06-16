@@ -122,7 +122,7 @@ async function main() {
     }
 
     // 7. Unregister. Workspace count drops; session is unaffected
-    //    (the workspace.json file is unlinked but the session subdir stays).
+    //    (the registry entry is removed but the session subdir stays).
     await client.deleteWorkspace(workspaceId);
     workspaceId = undefined;
     const after = await client.listWorkspaces();
