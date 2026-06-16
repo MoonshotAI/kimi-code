@@ -9,6 +9,7 @@ import type {
   FsDiffResponse,
   FsGitStatusRequest,
   FsGitStatusResponse,
+  FsPullRequest,
 } from '@moonshot-ai/protocol';
 import { ISessionService } from '../session/session';
 
@@ -20,8 +21,16 @@ import { resolveSafePath } from './fsPathSafety';
     up the envelope); the response carries `truncated` so the UI can say so. */
 const DIFF_MAX_BYTES = 1_048_576;
 
+const PR_SPAWN_TIMEOUT_MS = 5_000;
+const PULL_REQUEST_TTL_MS = 60_000;
+
 export class FsGitService extends Disposable implements IFsGitService {
   readonly _serviceBrand: undefined;
+
+  private readonly pullRequestCache = new Map<
+    string,
+    { value: FsPullRequest | null; fetchedAt: number }
+  >();
 
   constructor(@ISessionService protected readonly sessions: ISessionService) {
     super();
@@ -96,7 +105,30 @@ export class FsGitService extends Disposable implements IFsGitService {
       }
     }
 
+    result.pullRequest = await this.readPullRequest(realCwd);
+
     return result;
+  }
+
+  private async readPullRequest(cwd: string): Promise<FsPullRequest | null> {
+    const cached = this.pullRequestCache.get(cwd);
+    const now = Date.now();
+    if (cached !== undefined && now - cached.fetchedAt < PULL_REQUEST_TTL_MS) {
+      return cached.value;
+    }
+
+    const res = await runCommand(
+      'gh',
+      ['pr', 'view', '--json', 'number,url,state'],
+      cwd,
+      {
+        timeoutMs: PR_SPAWN_TIMEOUT_MS,
+        env: { GH_NO_UPDATE_NOTIFIER: '1', GH_PROMPT_DISABLED: '1' },
+      },
+    );
+    const value = res.exitCode === 0 ? parsePullRequest(res.stdout) : null;
+    this.pullRequestCache.set(cwd, { value, fetchedAt: now });
+    return value;
   }
 
   async diff(sessionId: string, req: FsDiffRequest): Promise<FsDiffResponse> {
@@ -186,18 +218,40 @@ interface RunResult {
   stderr: string;
 }
 
+interface RunCommandOptions {
+  readonly timeoutMs?: number;
+  readonly env?: NodeJS.ProcessEnv;
+}
+
 async function runCommand(
   cmd: string,
   args: readonly string[],
   cwd: string,
+  options: RunCommandOptions = {},
 ): Promise<RunResult> {
   return new Promise<RunResult>((resolve) => {
     const child = spawn(cmd, args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: options.env ? { ...process.env, ...options.env } : process.env,
     });
     let stdout = '';
     let stderr = '';
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (result: RunResult) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      resolve(result);
+    };
+    if (options.timeoutMs !== undefined) {
+      timer = setTimeout(() => {
+        child.kill();
+        finish({ exitCode: -1, stdout, stderr });
+      }, options.timeoutMs);
+      timer.unref?.();
+    }
     child.stdout.setEncoding('utf-8');
     child.stderr.setEncoding('utf-8');
     child.stdout.on('data', (c: string) => {
@@ -207,12 +261,50 @@ async function runCommand(
       stderr += c;
     });
     child.once('error', () => {
-      resolve({ exitCode: -1, stdout, stderr });
+      finish({ exitCode: -1, stdout, stderr });
     });
     child.once('close', (code) => {
-      resolve({ exitCode: code ?? -1, stdout, stderr });
+      finish({ exitCode: code ?? -1, stdout, stderr });
     });
   });
+}
+
+function parsePullRequest(stdout: string): FsPullRequest | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (typeof raw !== 'object' || raw === null) return null;
+  const record = raw as Record<string, unknown>;
+  const number = record['number'];
+  const url = record['url'];
+  const state = record['state'];
+  if (typeof number !== 'number' || !Number.isInteger(number) || number <= 0) return null;
+  if (typeof url !== 'string' || !isSafeHttpUrl(url)) return null;
+  if (typeof state !== 'string') return null;
+  const normalized = state.toLowerCase();
+  if (normalized !== 'open' && normalized !== 'merged' && normalized !== 'closed') return null;
+  return { number, state: normalized, url };
+}
+
+function isSafeHttpUrl(value: string): boolean {
+  if (hasControlChars(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+function hasControlChars(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
 }
 
 registerSingleton(IFsGitService, FsGitService, InstantiationType.Delayed);

@@ -262,6 +262,13 @@ export const fsGitStatusRequestSchema = z.object({
 });
 export type FsGitStatusRequest = z.infer<typeof fsGitStatusRequestSchema>;
 
+export const fsPullRequestSchema = z.object({
+  number: z.number().int().positive(),
+  state: z.enum(['open', 'merged', 'closed']),
+  url: z.string().url(),
+});
+export type FsPullRequest = z.infer<typeof fsPullRequestSchema>;
+
 export const fsGitStatusResponseSchema = z.object({
   branch: z.string(),
   ahead: z.number().int().nonnegative(),
@@ -272,6 +279,10 @@ export const fsGitStatusResponseSchema = z.object({
   // `-`) contribute 0. Both 0 for a clean tree or a repo with no commits yet.
   additions: z.number().int().nonnegative(),
   deletions: z.number().int().nonnegative(),
+  // GitHub pull request for the current branch, looked up via `gh pr view`.
+  // Null when not a GitHub repo, `gh` is unavailable/unauthenticated, the
+  // branch has no PR, or the lookup failed/timed out. Never fails the request.
+  pullRequest: fsPullRequestSchema.nullable(),
 });
 export type FsGitStatusResponse = z.infer<typeof fsGitStatusResponseSchema>;
 

@@ -355,6 +355,7 @@ interface GitStatusEntry {
   entries: Record<string, string>;
   additions: number;
   deletions: number;
+  pullRequest: { number: number; state: string; url: string } | null;
 }
 
 /** An uploaded attachment to send with a prompt. `kind` drives the content-block
@@ -1997,6 +1998,14 @@ const gitInfo = computed<{ branch: string; ahead: number; behind: number } | nul
   const gs = rawState.gitStatusBySession[sid];
   if (!gs) return null;
   return { branch: gs.branch, ahead: gs.ahead, behind: gs.behind };
+});
+
+/** GitHub pull request for the active session's current branch. Null when
+    unknown, not a GitHub repo, or the branch has no PR — the header hides it. */
+const activePullRequest = computed<{ number: number; state: string; url: string } | null>(() => {
+  const sid = rawState.activeSessionId;
+  if (!sid) return null;
+  return rawState.gitStatusBySession[sid]?.pullRequest ?? null;
 });
 
 /** Changed files for the active session, sorted by path */
@@ -4009,6 +4018,7 @@ export function useKimiWebClient() {
     changes,
     gitInfo,
     gitDiffStats,
+    activePullRequest,
     changesByPath,
     pendingApprovals,
     recentCwds,

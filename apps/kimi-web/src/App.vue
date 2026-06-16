@@ -752,7 +752,7 @@ function openPr(url: string): void {
       :workspaces="client.workspacesView.value"
       :active-workspace-id="client.activeWorkspaceId.value"
       :session-title="activeSessionTitle"
-      :pr="null"
+      :pr="client.activePullRequest.value"
       :preview-file="previewFile"
       :preview-loading="previewLoading"
       :preview-error="previewError"
