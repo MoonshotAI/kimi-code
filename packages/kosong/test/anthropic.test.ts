@@ -163,6 +163,28 @@ describe('AnthropicChatProvider', () => {
     }
   });
 
+  it('does not read ANTHROPIC_BASE_URL from process.env inside the adapter', () => {
+    const previousBaseUrl = process.env['ANTHROPIC_BASE_URL'];
+    process.env['ANTHROPIC_BASE_URL'] = 'http://127.0.0.1:1';
+
+    try {
+      const provider = new AnthropicChatProvider({
+        model: 'k25',
+        apiKey: 'test-key',
+        stream: false,
+      });
+      const client = Reflect.get(provider, '_client') as { baseURL?: string } | undefined;
+
+      expect(client?.baseURL).toBe('https://api.anthropic.com');
+    } finally {
+      if (previousBaseUrl === undefined) {
+        delete process.env['ANTHROPIC_BASE_URL'];
+      } else {
+        process.env['ANTHROPIC_BASE_URL'] = previousBaseUrl;
+      }
+    }
+  });
+
   describe('message conversion', () => {
     it('simple user message with system prompt', async () => {
       const provider = createProvider();

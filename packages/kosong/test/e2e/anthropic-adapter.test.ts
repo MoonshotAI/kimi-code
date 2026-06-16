@@ -59,10 +59,14 @@ const MUL_TOOL: Tool = {
 describe('e2e: Anthropic adapter bridge', () => {
   it('sends the adapter request body and parses streamed text, tool use, and usage', async () => {
     const previousAuthToken = process.env['ANTHROPIC_AUTH_TOKEN'];
-    process.env['ANTHROPIC_AUTH_TOKEN'] = 'env-auth-token';
-
+    const previousCustomHeaders = process.env['ANTHROPIC_CUSTOM_HEADERS'];
     const harness = await createFakeProviderHarness();
+
     try {
+      process.env['ANTHROPIC_AUTH_TOKEN'] = 'env-auth-token';
+      process.env['ANTHROPIC_CUSTOM_HEADERS'] =
+        'Authorization: Bearer env-token\nX-Api-Key: env-key';
+
       harness.route('POST', '/v1/messages', async (request, reply) => {
         const body = request.bodyJson as Record<string, unknown>;
         expect(request.pathname).toBe('/v1/messages');
@@ -214,6 +218,11 @@ describe('e2e: Anthropic adapter bridge', () => {
         delete process.env['ANTHROPIC_AUTH_TOKEN'];
       } else {
         process.env['ANTHROPIC_AUTH_TOKEN'] = previousAuthToken;
+      }
+      if (previousCustomHeaders === undefined) {
+        delete process.env['ANTHROPIC_CUSTOM_HEADERS'];
+      } else {
+        process.env['ANTHROPIC_CUSTOM_HEADERS'] = previousCustomHeaders;
       }
       await harness.close();
     }

@@ -37,11 +37,7 @@ import type {
   ToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/messages/messages.js';
 
-import {
-  mergeRequestHeaders,
-  requireProviderApiKey,
-  resolveAuthBackedClient,
-} from './request-auth';
+import { mergeRequestHeaders, resolveAuthBackedClient } from './request-auth';
 import {
   normalizeToolCallIdsForProvider,
   sanitizeToolCallId,
@@ -862,7 +858,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private _metadata: Record<string, string> | undefined;
   private _apiKey: string | undefined;
   private _baseUrl: string | undefined;
-  private _defaultHeaders: Record<string, string> | undefined;
+  private _defaultHeaders: Record<string, string | null> | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => Anthropic) | undefined;
   private _adaptiveThinking: boolean | undefined;
   private _explicitMaxTokens: boolean;
@@ -1073,16 +1069,35 @@ export class AnthropicChatProvider implements ChatProvider {
     return resolveAuthBackedClient(
       { cachedClient: this._client, clientFactory: this._clientFactory },
       auth,
-      (a) => this._buildClient(requireProviderApiKey('AnthropicChatProvider', a, this._apiKey)),
+      (a) => this._buildClient(this._requireApiKey(a)),
     );
+  }
+
+  private _requireApiKey(auth: ProviderRequestAuth | undefined): string {
+    const apiKey = auth?.apiKey ?? this._apiKey;
+    if (apiKey === undefined || apiKey.length === 0) {
+      throw new ChatProviderError(
+        'AnthropicChatProvider: apiKey is required. Provide it via constructor options, options.auth.apiKey on each request, or an OAuth login. The Anthropic adapter does not read shell API-key environment variables.',
+      );
+    }
+    return apiKey;
+  }
+
+  private _buildDefaultHeaders(apiKey: string): Record<string, string | null> {
+    const defaultHeaders: Record<string, string | null> = { authorization: null };
+    for (const [name, value] of Object.entries(this._defaultHeaders ?? {})) {
+      defaultHeaders[name.toLowerCase()] = value;
+    }
+    defaultHeaders['x-api-key'] = apiKey;
+    return defaultHeaders;
   }
 
   private _buildClient(apiKey: string): Anthropic {
     return new Anthropic({
       apiKey,
       authToken: null,
-      baseURL: this._baseUrl,
-      defaultHeaders: this._defaultHeaders,
+      baseURL: this._baseUrl ?? null,
+      defaultHeaders: this._buildDefaultHeaders(apiKey),
     });
   }
 
