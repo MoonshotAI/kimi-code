@@ -11,7 +11,6 @@ This page documents the changes in each Kimi Code CLI release.
 ### Features
 
 - Add a built-in `kimi vis` command that launches the session visualizer in your browser, pointed at your local sessions. Supports `--port`/`--host`, `--no-open`, and `kimi vis <sessionId>` deep-links.
-- Add configurable banner display frequencies with local display state.
 
 ### Bug Fixes
 
@@ -25,6 +24,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Reduce the maximum height of the `/btw` side panel from half to one-third of the terminal.
 - Polish queue pane styling.
+- Add configurable banner display frequencies with local display state.
 
 ### Refactors
 
