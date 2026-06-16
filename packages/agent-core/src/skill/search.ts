@@ -103,9 +103,9 @@ function splitCompoundIdentifier(token: string): string[] {
 function tokenize(text: string, options: { removeStopwords?: boolean } = {}): string[] {
   const raw = text
     .toLowerCase()
-    .replaceAll(/[^a-z0-9_-\s]/g, ' ')
+    .replaceAll(/[^\p{L}\p{N}_\-\s]/gu, ' ')
     .split(/\s+/)
-    .filter((t) => t.length > 1);
+    .filter((t) => t.length > 0);
 
   const expanded: string[] = [];
   for (const token of raw) {
