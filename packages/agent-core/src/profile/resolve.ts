@@ -5,6 +5,7 @@ import type {
   ResolvedAgentProfile,
   SystemPromptContext,
   SystemPromptRenderer,
+  WorktreeInfo,
 } from './types';
 
 interface MergedAgentProfile {
@@ -160,9 +161,22 @@ function buildTemplateVars(
     KIMI_AGENTS_MD: context.agentsMd ?? '',
     KIMI_SKILLS: skills,
     KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
+    KIMI_WORKTREE_INFO: renderWorktreeInfo(context.worktreeInfo),
     ROLE_ADDITIONAL:
       context.roleAdditional ?? promptVars['ROLE_ADDITIONAL'] ?? promptVars['roleAdditional'] ?? '',
   };
+}
+
+function renderWorktreeInfo(worktreeInfo?: WorktreeInfo): string {
+  if (worktreeInfo === undefined) {
+    return '';
+  }
+  return [
+    'You are running inside a git worktree that was created for this session.',
+    `Worktree path: ${worktreeInfo.worktreePath}`,
+    `Parent repository: ${worktreeInfo.parentRepoPath}`,
+    'Treat the worktree as the active project workspace; all relative paths and shell commands run from this directory unless the user explicitly changes scope.',
+  ].join('\n');
 }
 
 function applySubagentDescriptions(

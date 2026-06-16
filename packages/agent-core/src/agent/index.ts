@@ -288,6 +288,7 @@ export class Agent {
       skills: this.skills?.registry,
       cwdListing: context?.cwdListing,
       agentsMd: context?.agentsMd,
+      worktreeInfo: context?.worktreeInfo,
     });
     this.config.update({ profileName: profile.name, systemPrompt });
     this.tools.setActiveTools(profile.tools);

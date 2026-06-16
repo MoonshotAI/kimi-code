@@ -12,6 +12,7 @@ import { InMemoryAgentRecordPersistence } from '../agent/records';
 import { isAbortError } from '../loop/errors';
 import {
   DEFAULT_AGENT_PROFILES,
+  getWorktreeInfoFromSessionMetadata,
   prepareSystemPromptContext,
   type ResolvedAgentProfile,
 } from '../profile';
@@ -366,7 +367,10 @@ export class SessionSubagentHost {
       this.session.systemContextKaos(child.kaos.getcwd()),
       this.session.options.kimiHomeDir,
     );
-    child.useProfile(profile, context);
+    child.useProfile(profile, {
+      ...context,
+      worktreeInfo: getWorktreeInfoFromSessionMetadata(this.session.metadata),
+    });
     child.tools.inheritUserTools(parent.tools);
   }
 
