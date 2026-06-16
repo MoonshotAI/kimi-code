@@ -55,4 +55,28 @@ describe('SkillSearchIndex tokenization', () => {
     const results = index.search('graphql');
     expect(results.some((r) => r.name === 'api-skill')).toBe(true);
   });
+
+  it('matches skills by aliases metadata', () => {
+    const index = new SkillSearchIndex();
+    index.build([
+      {
+        ...makeSkill('containers', 'Container best practices'),
+        metadata: { type: 'prompt', aliases: ['docker', 'podman'] },
+      },
+    ]);
+    const results = index.search('docker');
+    expect(results.some((r) => r.name === 'containers')).toBe(true);
+  });
+
+  it('matches skills by tags metadata', () => {
+    const index = new SkillSearchIndex();
+    index.build([
+      {
+        ...makeSkill('auth-skill', 'Authentication patterns'),
+        metadata: { type: 'prompt', tags: ['oauth', 'jwt'] },
+      },
+    ]);
+    const results = index.search('jwt');
+    expect(results.some((r) => r.name === 'auth-skill')).toBe(true);
+  });
 });

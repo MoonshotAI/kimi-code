@@ -9,6 +9,8 @@ export interface SkillMetadata {
   readonly isSubSkill?: boolean | undefined;
   readonly safe?: boolean | undefined;
   readonly arguments?: readonly unknown[] | string | undefined;
+  readonly aliases?: readonly string[] | undefined;
+  readonly tags?: readonly string[] | undefined;
   readonly [key: string]: unknown;
 }
 

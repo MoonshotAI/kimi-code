@@ -19,8 +19,10 @@ const B = 0.75; // document-length normalisation
 // skill than description matches.
 const FIELD_WEIGHTS = {
   name: 3.0,
+  aliases: 2.5,
   whenToUse: 1.5,
   description: 1.0,
+  tags: 0.8,
   bodySnippet: 0.5,
 };
 
@@ -174,6 +176,8 @@ export class SkillSearchIndex {
       const descriptionTokens = tokenize(skill.description, { removeStopwords: true });
       const whenToUseTokens = tokenize(skill.metadata.whenToUse ?? '', { removeStopwords: true });
       const bodySnippetTokens = tokenize(skill.bodySnippet ?? '', { removeStopwords: true });
+      const aliasesTokens = tokenize((skill.metadata.aliases ?? []).join(' '), { removeStopwords: true });
+      const tagsTokens = tokenize((skill.metadata.tags ?? []).join(' '), { removeStopwords: true });
 
       // Weighted term frequency: a term appearing in the name contributes
       // more than the same term appearing only in the description.
@@ -184,8 +188,10 @@ export class SkillSearchIndex {
         }
       };
       addTokens(nameTokens, FIELD_WEIGHTS.name);
+      addTokens(aliasesTokens, FIELD_WEIGHTS.aliases);
       addTokens(whenToUseTokens, FIELD_WEIGHTS.whenToUse);
       addTokens(descriptionTokens, FIELD_WEIGHTS.description);
+      addTokens(tagsTokens, FIELD_WEIGHTS.tags);
       addTokens(bodySnippetTokens, FIELD_WEIGHTS.bodySnippet);
 
       // Expand synonyms after field weighting so synonyms inherit the source
