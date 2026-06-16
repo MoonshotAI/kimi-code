@@ -4,7 +4,7 @@
 
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { Readable } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 
@@ -22,6 +22,7 @@ import {
   registerProcess,
   waitForOutput,
 } from './helpers';
+import { isUserCancellation, userCancellationReason } from '../../../src/utils/abort';
 
 function immediateProcess(exitCode: number, stdoutText = ''): KaosProcess {
   return {
@@ -43,6 +44,22 @@ function rejectedProcess(error: Error): KaosProcess {
     pid: 99999,
     exitCode: null,
     wait: vi.fn().mockRejectedValue(error) as KaosProcess['wait'],
+    kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
+  };
+}
+
+function processWithStdoutError(message = 'stdout read failed'): KaosProcess {
+  const stdout = new PassThrough();
+  return {
+    stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+    stdout,
+    stderr: Readable.from([]),
+    pid: 99998,
+    exitCode: 0,
+    wait: vi.fn(async () => {
+      stdout.destroy(new Error(message));
+      return 0;
+    }) as KaosProcess['wait'],
     kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
   };
 }
@@ -234,6 +251,37 @@ describe('BackgroundManager', () => {
     });
   });
 
+  it('forwards foreground signal abort reasons to agent task controllers', async () => {
+    const { manager } = createBackgroundManager();
+    const foregroundController = new AbortController();
+    const subagentController = new AbortController();
+    const completion = new Promise<{ result: string }>((_resolve, reject) => {
+      subagentController.signal.addEventListener(
+        'abort',
+        () => {
+          reject(subagentController.signal.reason);
+        },
+        { once: true },
+      );
+    });
+    const taskId = manager.registerTask(
+      agentTask(completion, 'foreground agent', { abortController: subagentController }),
+      {
+        detached: false,
+        signal: foregroundController.signal,
+      },
+    );
+
+    foregroundController.abort(userCancellationReason());
+
+    const info = await manager.wait(taskId);
+    expect(info).toMatchObject({
+      status: 'killed',
+      stopReason: 'Interrupted by user',
+    });
+    expect(isUserCancellation(subagentController.signal.reason)).toBe(true);
+  });
+
   it('does not count foreground tasks against the detached task limit', () => {
     const { manager } = createBackgroundManager({ maxRunningTasks: 1 });
     manager.registerTask(agentTask(new Promise(() => {}), 'foreground agent'), {
@@ -296,6 +344,23 @@ describe('BackgroundManager', () => {
     await waitForOutput(manager, taskId, 'captured output');
 
     expect(await manager.readOutput(taskId)).toContain('captured output');
+  });
+
+  it('fails process tasks when output capture errors after successful exit', async () => {
+    const { manager } = createBackgroundManager();
+    const taskId = registerProcess(
+      manager,
+      processWithStdoutError(),
+      'ssh example.test',
+      'stream error test',
+    );
+
+    await expect(manager.wait(taskId)).resolves.toMatchObject({
+      kind: 'process',
+      status: 'failed',
+      exitCode: 0,
+      stopReason: 'stdout read failed',
+    });
   });
 
   it('transitions process status from exit code', async () => {

@@ -162,6 +162,40 @@ function processThatNeverExits(): KaosProcess {
   };
 }
 
+function processWithStreamError(options: {
+  readonly stdoutError?: Error;
+  readonly stderrError?: Error;
+  readonly exitCode?: number;
+} = {}): KaosProcess {
+  const exitCode = options.exitCode ?? 0;
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const waitPromise = new Promise<number>((resolve) => {
+    setTimeout(() => {
+      if (options.stdoutError !== undefined) {
+        stdout.emit('error', options.stdoutError);
+      } else {
+        stdout.end();
+      }
+      if (options.stderrError !== undefined) {
+        stderr.emit('error', options.stderrError);
+      } else {
+        stderr.end();
+      }
+      resolve(exitCode);
+    }, 1);
+  });
+  return {
+    stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+    stdout,
+    stderr,
+    pid: 128,
+    exitCode,
+    wait: vi.fn(async () => waitPromise),
+    kill: vi.fn(async () => {}),
+  };
+}
+
 function processWithOpenStreamsThatExitOnKill(): KaosProcess {
   let currentExitCode: number | null = null;
   let resolveWait: (code: number) => void = () => {};
@@ -943,6 +977,22 @@ describe('BashTool', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('reports a stream read error as a tool error even when the process exits with code 0', async () => {
+    const proc = processWithStreamError({
+      stdoutError: new Error('SSH channel read failed'),
+      exitCode: 0,
+    });
+    const tool = bashTool(
+      createFakeKaos({ execWithEnv: vi.fn().mockResolvedValue(proc), osEnv: posixEnv }),
+      '/workspace',
+    );
+
+    const result = await executeTool(tool, context({ command: 'remote-cmd', timeout: 60 }));
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('SSH channel read failed');
   });
 
   it('rejects empty-string commands at the schema layer', () => {

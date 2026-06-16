@@ -171,6 +171,7 @@ export type ForegroundTaskReleaseReason = 'detached' | 'terminal';
 
 interface StopRequest {
   readonly reason?: string;
+  readonly abortReason?: unknown;
 }
 
 type TerminalOutcome =
@@ -695,16 +696,16 @@ export class BackgroundManager {
   private signalOutcome(entry: ManagedTask): Promise<TerminalOutcome> {
     const signal = entry.options.signal;
     if (signal === undefined) return new Promise<never>(() => {});
-    const outcome: TerminalOutcome = {
+    const outcome = (): TerminalOutcome => ({
       kind: 'stop',
-      request: { reason: USER_INTERRUPT_REASON },
-    };
-    if (signal.aborted) return Promise.resolve(outcome);
+      request: { reason: USER_INTERRUPT_REASON, abortReason: signal.reason },
+    });
+    if (signal.aborted) return Promise.resolve(outcome());
     return new Promise((resolve) => {
       signal.addEventListener(
         'abort',
         () => {
-          if (!this.isDetached(entry)) resolve(outcome);
+          if (!this.isDetached(entry)) resolve(outcome());
         },
         { once: true },
       );
@@ -720,8 +721,14 @@ export class BackgroundManager {
 
     const timedOut = outcome.kind === 'timeout';
     const stopReason = outcome.kind === 'stop' ? outcome.request.reason : undefined;
+    let abortReason: unknown;
+    if (timedOut) {
+      abortReason = 'Timed out';
+    } else if (outcome.kind === 'stop') {
+      abortReason = outcome.request.abortReason ?? stopReason;
+    }
     entry.stopReason = stopReason;
-    entry.abortController.abort(timedOut ? 'Timed out' : stopReason);
+    entry.abortController.abort(abortReason);
 
     const graceTimeout = timeoutOutcome(SIGTERM_GRACE_MS, undefined);
     const workerAfterAbort = await Promise.race([

@@ -32,7 +32,7 @@ export class AgentBackgroundTask implements BackgroundTask {
 
   async start(sink: BackgroundTaskSink): Promise<void> {
     const requestAbort = (): void => {
-      this.abortController.abort();
+      this.abortController.abort(sink.signal.reason);
     };
     if (sink.signal.aborted) {
       requestAbort();
@@ -45,7 +45,7 @@ export class AgentBackgroundTask implements BackgroundTask {
       sink.appendOutput(outcome.result);
       await sink.settle({ status: 'completed' });
     } catch (error: unknown) {
-      if (sink.signal.aborted && isAbortError(error)) {
+      if (sink.signal.aborted && (isAbortError(error) || error === sink.signal.reason)) {
         await sink.settle({ status: 'killed' });
         return;
       }

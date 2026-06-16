@@ -112,18 +112,52 @@ function observeProcessStream(
     onOutput?.(kind, chunk);
   });
 
-  return new Promise<void>((resolve) => {
-    const done = (): void => {
+  return new Promise<void>((resolve, reject) => {
+    let ended = false;
+    const settle = (callback: () => void): void => {
       cleanup();
-      resolve();
+      callback();
+    };
+    const done = (): void => {
+      settle(resolve);
+    };
+    const fail = (error: unknown): void => {
+      settle(() => reject(error));
+    };
+    const onEnd = (): void => {
+      ended = true;
+      done();
+    };
+    const onClose = (): void => {
+      if (ended || sink.signal.aborted) {
+        done();
+        return;
+      }
+
+      fail(createPrematureCloseError());
+    };
+    const onError = (error: Error): void => {
+      // When the task is aborted we intentionally destroy the streams, which
+      // can emit errors. Swallow those expected errors; surface anything else.
+      if (sink.signal.aborted) {
+        done();
+      } else {
+        fail(error);
+      }
     };
     const cleanup = (): void => {
-      stream.removeListener('end', done);
-      stream.removeListener('close', done);
-      stream.removeListener('error', done);
+      stream.removeListener('end', onEnd);
+      stream.removeListener('close', onClose);
+      stream.removeListener('error', onError);
     };
-    stream.once('end', done);
-    stream.once('close', done);
-    stream.once('error', done);
+    stream.once('end', onEnd);
+    stream.once('close', onClose);
+    stream.once('error', onError);
   });
+}
+
+function createPrematureCloseError(): Error {
+  const error = new Error('Premature close') as NodeJS.ErrnoException;
+  error.code = 'ERR_STREAM_PREMATURE_CLOSE';
+  return error;
 }
