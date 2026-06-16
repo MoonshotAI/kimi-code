@@ -653,11 +653,28 @@ function openPr(url: string): void {
 </script>
 
 <template>
-  <div
-    class="app"
-    :class="{ mobile: isMobile }"
-    :style="{ '--side-w': sideWidth + 'px', '--preview-w': previewWidth + 'px' }"
-  >
+  <div class="app-shell">
+    <!-- Onboarding banner: shown when the daemon has no auth configured. It sits
+         in the layout flow at the very top so it reserves height instead of
+         overlapping the desktop ChatHeader / mobile top bar. -->
+    <div v-if="!authReady" class="auth-banner">
+      <div class="auth-banner-inner">
+        <div class="auth-banner-icon">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="var(--blue)" stroke-width="1.5">
+            <circle cx="10" cy="10" r="8"/>
+            <line x1="10" y1="6" x2="10" y2="10"/>
+            <circle cx="10" cy="13" r="1" fill="var(--blue)"/>
+          </svg>
+        </div>
+        <span class="auth-banner-msg">{{ t('app.authBannerMessage') }}</span>
+        <button class="auth-banner-btn" @click="openLogin">{{ t('app.authBannerLogin') }}</button>
+      </div>
+    </div>
+    <div
+      class="app"
+      :class="{ mobile: isMobile }"
+      :style="{ '--side-w': sideWidth + 'px', '--preview-w': previewWidth + 'px' }"
+    >
     <!-- Desktop navigation: workspace rail + resizable session column. -->
     <template v-if="!isMobile">
       <Sidebar
@@ -964,21 +981,6 @@ function openPr(url: string): void {
       @close="showAddWorkspace = false"
     />
 
-    <!-- Onboarding banner: shown when daemon has no auth configured -->
-    <div v-if="!authReady" class="auth-banner">
-      <div class="auth-banner-inner">
-        <div class="auth-banner-icon">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="var(--blue)" stroke-width="1.5">
-            <circle cx="10" cy="10" r="8"/>
-            <line x1="10" y1="6" x2="10" y2="10"/>
-            <circle cx="10" cy="13" r="1" fill="var(--blue)"/>
-          </svg>
-        </div>
-        <span class="auth-banner-msg">{{ t('app.authBannerMessage') }}</span>
-        <button class="auth-banner-btn" @click="openLogin">{{ t('app.authBannerLogin') }}</button>
-      </div>
-    </div>
-
     <!-- Global connecting splash on first load (until the daemon round-trips) -->
     <Transition name="gload-fade">
       <GlobalLoading v-if="!client.initialized.value" />
@@ -1043,6 +1045,7 @@ function openPr(url: string): void {
       @login="openLogin"
       @logout="client.logout"
     />
+    </div>
   </div>
 </template>
 
@@ -1051,10 +1054,21 @@ function openPr(url: string): void {
 .gload-fade-leave-active { transition: opacity 0.28s ease; }
 .gload-fade-leave-to { opacity: 0; }
 
+/* Outer shell: the auth banner (when shown) stacks above the app grid in normal
+   flow so it reserves height instead of overlapping the header/top bar. */
+.app-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-top: 2px solid var(--ink);
+  box-sizing: border-box;
+}
 .app {
   --side-w: 248px;
   --preview-w: 460px;
-  height: 100vh;
+  flex: 1;
+  min-height: 0;
   display: grid;
   /* sidebar (rail + resizable session column) | 0-width handle | conversation.
      The 4px ResizeHandle overflows its zero-width track via negative margins so
@@ -1065,7 +1079,6 @@ function openPr(url: string): void {
   grid-template-columns: var(--side-w) 0 minmax(0, 1fr) 0 auto;
   background: var(--bg);
   color: var(--ink);
-  border-top: 2px solid var(--ink);
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -1118,18 +1131,13 @@ function openPr(url: string): void {
   border-top: 2px solid var(--ink);
 }
 
-/* Auth onboarding banner */
+/* Auth onboarding banner — in-flow at the top of the shell (full width, above
+   both the desktop sidebar/header and the mobile top bar). */
 .auth-banner {
-  position: fixed;
-  top: 0;
-  left: var(--side-w); /* sidebar width (52 rail + resizable session column) */
-  right: 0;
-  z-index: 50;
+  flex: none;
   background: var(--soft);
   border-bottom: 1px solid var(--bd);
 }
-/* Mobile: the banner spans the full width (no sidebar to clear). */
-.app.mobile .auth-banner { left: 0; }
 .auth-banner-inner {
   display: flex;
   align-items: center;
