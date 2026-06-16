@@ -8,6 +8,6 @@ Read media content from a file.
 - This tool can only read image or video files. To read text files, use the Read tool. To list directories, use `ls` via Bash for a known directory, or Glob for pattern search.
 - If the file doesn't exist or path is invalid, an error will be returned.
 - The maximum size that can be read is {{ MAX_MEDIA_MEGABYTES }}MB. An error will be returned if the file is larger than this limit.
-- The media content will be returned in a form that you can directly view and understand.
+- When analyzing video files, prefer using ReadMediaFile directly rather than writing Python scripts to extract frames. The model can directly view and understand the video content returned by this tool.
 
 **Capabilities**
