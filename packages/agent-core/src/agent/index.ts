@@ -42,6 +42,7 @@ import {
   FileSystemAgentRecordPersistence,
   type AgentRecord,
   type AgentRecordPersistence,
+  type AgentRecordsReplayOptions,
 } from './records';
 import { ReplayBuilder, type ReplayBuilderOptions } from './replay';
 import { SkillManager } from './skill';
@@ -292,8 +293,8 @@ export class Agent {
     this.tools.setActiveTools(profile.tools);
   }
 
-  async resume(): Promise<{ warning?: string }> {
-    const result = await this.records.replay();
+  async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
+    const result = await this.records.replay(options);
     try {
       this.replayBuilder.postRestoring = true;
       this.goal.normalizeAfterReplay();

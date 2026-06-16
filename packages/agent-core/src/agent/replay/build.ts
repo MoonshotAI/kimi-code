@@ -15,8 +15,6 @@ export async function buildReplay(
     type: 'sub',
     replay: { range },
   });
-  await agent.records.replay({
-    rewriteMigratedRecords: false,
-  });
+  await agent.resume({ rewriteMigratedRecords: false });
   return agent.replayBuilder.buildResult();
 }
