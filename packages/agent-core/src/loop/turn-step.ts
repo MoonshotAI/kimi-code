@@ -9,7 +9,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { TokenUsage } from '@moonshot-ai/kosong';
+import { mergeInPlace, type ThinkPart, type TokenUsage } from '@moonshot-ai/kosong';
 import type { Logger } from '#/logging/types';
 
 import type { LoopEventDispatcher } from './events';
@@ -238,24 +238,34 @@ function createChatStreamingCallbacks(deps: {
   const { dispatchEvent, turnId, currentStep, stepUuid } = deps;
 
   let bufferedText = '';
-  let bufferedThink = '';
+  const bufferedThinkParts: ThinkPart[] = [];
 
   const clearBuffer = (): void => {
     bufferedText = '';
-    bufferedThink = '';
+    bufferedThinkParts.length = 0;
+  };
+
+  const bufferThinkPart = (part: ThinkPart): void => {
+    if (part.think.length === 0 && part.encrypted === undefined) return;
+
+    const next: ThinkPart = { ...part };
+    const last = bufferedThinkParts.at(-1);
+    if (last === undefined || !mergeInPlace(last, next)) {
+      bufferedThinkParts.push(next);
+    }
   };
 
   const flushOnAbort = async (): Promise<void> => {
     const text = bufferedText;
     if (text.length === 0) return;
-    if (bufferedThink.length > 0) {
+    for (const part of bufferedThinkParts) {
       await dispatchEvent({
         type: 'content.part',
         uuid: randomUUID(),
         turnId,
         step: currentStep,
         stepUuid,
-        part: { type: 'think', think: bufferedThink },
+        part,
       });
     }
     await dispatchEvent({
@@ -269,15 +279,14 @@ function createChatStreamingCallbacks(deps: {
     clearBuffer();
   };
 
-
   return {
     callbacks: {
       onTextDelta: (delta) => {
         bufferedText += delta;
         dispatchEvent({ type: 'text.delta', delta });
       },
-      onThinkDelta: (delta) => {
-        bufferedThink += delta;
+      onThinkDelta: (delta, part) => {
+        bufferThinkPart(part ?? { type: 'think', think: delta });
         dispatchEvent({ type: 'thinking.delta', delta });
       },
       onToolCallDelta: (delta) => {

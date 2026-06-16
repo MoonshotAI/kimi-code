@@ -208,7 +208,7 @@ function buildKosongCallbacks(
       }
       if (part.type === 'think') {
         if (params.onThinkDelta === undefined) return;
-        params.onThinkDelta(part.think);
+        params.onThinkDelta(part.think, part);
         return;
       }
       if (part.type === 'function') {
