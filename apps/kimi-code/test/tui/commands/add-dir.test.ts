@@ -34,6 +34,7 @@ function makeHost(additionalDirs: readonly string[] = []) {
       configPath: '/repo/.kimi-code/local.toml',
       persisted: options.persist,
     })),
+    appendUserMessage: vi.fn(async () => {}),
   };
   const host = {
     state,
@@ -41,6 +42,7 @@ function makeHost(additionalDirs: readonly string[] = []) {
     skillCommandMap: new Map<string, string>(),
     setAppState: vi.fn((patch: Record<string, unknown>) => Object.assign(state.appState, patch)),
     refreshSlashCommandAutocomplete: vi.fn(),
+    appendTranscriptEntry: vi.fn(),
     showError: vi.fn(),
     showStatus: vi.fn(),
     sendNormalUserInput: vi.fn(),
@@ -56,6 +58,7 @@ function makeHost(additionalDirs: readonly string[] = []) {
     state: typeof state;
     setAppState: ReturnType<typeof vi.fn>;
     refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
+    appendTranscriptEntry: ReturnType<typeof vi.fn>;
     showError: ReturnType<typeof vi.fn>;
     showStatus: ReturnType<typeof vi.fn>;
     sendNormalUserInput: ReturnType<typeof vi.fn>;
@@ -120,15 +123,27 @@ describe('handleAddDirCommand', () => {
     await vi.waitFor(() => {
       expect(session.addAdditionalDir).toHaveBeenCalledWith('../shared', { persist: false });
     });
+    expect(session.appendUserMessage).toHaveBeenCalledWith(
+      'Added workspace directory:\n  ../shared\n  For this session only',
+    );
+    expect(host.appendTranscriptEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'user',
+        renderMode: 'plain',
+        content: 'Added workspace directory:\n  ../shared\n  For this session only',
+      }),
+    );
     expect(host.restoreEditor).toHaveBeenCalledOnce();
     expect(host.setAppState).toHaveBeenCalledWith({
       additionalDirs: ['../shared'],
     });
     expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalledOnce();
-    expect(host.showStatus).toHaveBeenCalledWith(
-      'Added workspace directory:\n  ../shared\n  For this session only',
-      'success',
-    );
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalledWith(
+        'Added workspace directory:\n  ../shared\n  For this session only',
+        'success',
+      );
+    });
   });
 
   it('adds a remembered workspace dir after confirmation', async () => {
@@ -141,10 +156,22 @@ describe('handleAddDirCommand', () => {
     await vi.waitFor(() => {
       expect(session.addAdditionalDir).toHaveBeenCalledWith('../shared', { persist: true });
     });
-    expect(host.showStatus).toHaveBeenCalledWith(
+    expect(session.appendUserMessage).toHaveBeenCalledWith(
       'Added workspace directory:\n  ../shared\n  Saved to:\n  /repo/.kimi-code/local.toml',
-      'success',
     );
+    expect(host.appendTranscriptEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'user',
+        renderMode: 'plain',
+        content: 'Added workspace directory:\n  ../shared\n  Saved to:\n  /repo/.kimi-code/local.toml',
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalledWith(
+        'Added workspace directory:\n  ../shared\n  Saved to:\n  /repo/.kimi-code/local.toml',
+        'success',
+      );
+    });
   });
 
   it('does not add a workspace dir when the confirmation is cancelled', async () => {
@@ -156,6 +183,8 @@ describe('handleAddDirCommand', () => {
     getMountedPanel()?.handleInput(' ');
 
     expect(session.addAdditionalDir).not.toHaveBeenCalled();
+    expect(session.appendUserMessage).not.toHaveBeenCalled();
+    expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
     expect(host.showStatus).toHaveBeenCalledWith('Did not add ../shared as a working directory.');
   });
 
@@ -177,6 +206,8 @@ describe('handleAddDirCommand', () => {
 
     expect(host.setAppState).not.toHaveBeenCalled();
     expect(host.refreshSlashCommandAutocomplete).not.toHaveBeenCalled();
+    expect(session.appendUserMessage).not.toHaveBeenCalled();
+    expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 });

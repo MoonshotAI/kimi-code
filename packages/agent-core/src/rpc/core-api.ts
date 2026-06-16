@@ -151,6 +151,9 @@ export interface PromptPayload {
 export interface SteerPayload {
   readonly input: readonly ContentPart[];
 }
+export interface AppendUserMessagePayload {
+  readonly input: readonly ContentPart[];
+}
 export interface CancelPayload {
   readonly turnId?: number;
 }
@@ -323,6 +326,7 @@ export interface RemoveKimiProviderPayload {
 export interface AgentAPI {
   prompt: (payload: PromptPayload) => void;
   steer: (payload: SteerPayload) => void;
+  appendUserMessage: (payload: AppendUserMessagePayload) => void;
   cancel: (payload: CancelPayload) => void;
   undoHistory: (payload: UndoHistoryPayload) => void;
   setThinking: (payload: SetThinkingPayload) => void;

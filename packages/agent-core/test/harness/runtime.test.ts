@@ -598,6 +598,47 @@ max_context_size = 100000
     ]);
   });
 
+  it('appends a user message to the main agent context', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    void new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_append_user_message',
+      workDir,
+      model: 'default-mock',
+    });
+
+    await rpc.appendUserMessage({
+      sessionId: created.id,
+      agentId: 'main',
+      input: [{ type: 'text', text: 'Added workspace directory:\n  extra' }],
+    });
+
+    const records = await readMainWire(created.sessionDir);
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        type: 'context.append_message',
+        message: expect.objectContaining({
+          role: 'user',
+          content: [{ type: 'text', text: 'Added workspace directory:\n  extra' }],
+        }),
+      }),
+    );
+  });
+
   it('adds an additional dir through the session RPC', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');

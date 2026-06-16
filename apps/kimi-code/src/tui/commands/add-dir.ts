@@ -1,5 +1,6 @@
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
+import { nextTranscriptId } from '../utils/transcript-id';
 import type { SlashCommandHost } from './dispatch';
 
 type AddDirChoice = 'session' | 'remember' | 'cancel';
@@ -56,6 +57,12 @@ function formatAdditionalDirsStatus(additionalDirs: readonly string[]): string {
   return ['Additional directories:', ...additionalDirs.map((dir) => `  ${dir}`)].join('\n');
 }
 
+function formatAddDirMessage(path: string, choice: AddDirChoice, configPath: string): string {
+  return choice === 'remember'
+    ? `Added workspace directory:\n  ${path}\n  Saved to:\n  ${configPath}`
+    : `Added workspace directory:\n  ${path}\n  For this session only`;
+}
+
 async function handleAddDirChoice(
   host: SlashCommandHost,
   sessionId: string,
@@ -79,6 +86,14 @@ async function handleAddDirChoice(
     const result = await session.addAdditionalDir(path, { persist: choice === 'remember' });
     host.setAppState({ additionalDirs: result.additionalDirs });
     host.refreshSlashCommandAutocomplete();
+    const message = formatAddDirMessage(path, choice, result.configPath);
+    await session.appendUserMessage(message);
+    host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'user',
+      renderMode: 'plain',
+      content: message,
+    });
     host.showStatus(
       choice === 'remember'
         ? `Added workspace directory:\n  ${path}\n  Saved to:\n  ${result.configPath}`
