@@ -8,7 +8,9 @@
 import type { MessageTree } from '../../i18n';
 
 import { components } from './components';
+import { reverseRpc } from './reverse-rpc';
 
 export const zhCN: MessageTree = {
   components,
+  reverseRpc,
 };

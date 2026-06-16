@@ -28,6 +28,7 @@ import {
 
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLines } from '#/tui/components/media/diff-preview';
+import { i18n } from '#/tui/i18n';
 import type { DiffDisplayBlock, FileContentDisplayBlock } from '#/tui/reverse-rpc/types';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
@@ -150,7 +151,7 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
   }
 
   private renderHeader(width: number): string {
-    const title = currentTheme.boldFg('primary', ' Preview ');
+    const title = currentTheme.boldFg('primary', ` ${i18n.t('reverseRpc.preview.title')} `);
     return fitExactly(title + this.headerTitle, width);
   }
 
@@ -191,10 +192,10 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
       ` ${String(lineFrom)}-${String(lineTo)} / ${String(total)} (${String(percent)}%) `,
     );
     const keys =
-      `${key('↑↓')} ${dim('line')}  ` +
-      `${key('PgUp/PgDn')} ${dim('page')}  ` +
-      `${key('g/G')} ${dim('top/bot')}  ` +
-      `${key('Q/Esc/Ctrl+E')} ${dim('cancel')}`;
+      `${key('↑↓')} ${dim(i18n.t('reverseRpc.preview.hint.line'))}  ` +
+      `${key('PgUp/PgDn')} ${dim(i18n.t('reverseRpc.preview.hint.page'))}  ` +
+      `${key('g/G')} ${dim(i18n.t('reverseRpc.preview.hint.topBot'))}  ` +
+      `${key('Q/Esc/Ctrl+E')} ${dim(i18n.t('reverseRpc.preview.hint.cancel'))}`;
     const left = ` ${keys}`;
     const leftW = visibleWidth(left);
     const rightW = visibleWidth(position);

@@ -1,19 +1,40 @@
 import type { ApprovalRequest, ApprovalResponse, ToolInputDisplay } from '@moonshot-ai/kimi-code-sdk';
 
+import { i18n } from '#/tui/i18n';
 import type { ApprovalPanelResponse } from '#/tui/components/dialogs/approval-panel';
 import type { ApprovalPanelChoice, ApprovalPanelData, DisplayBlock } from '#/tui/reverse-rpc/types';
 
-const DEFAULT_APPROVAL_CHOICES: ApprovalPanelChoice[] = [
-  { label: 'Approve once', response: 'approved' },
-  { label: 'Approve for this session', response: 'approved_for_session' },
-  { label: 'Reject', response: 'rejected' },
-  { label: 'Reject with feedback', response: 'rejected', requires_feedback: true },
-];
+// Choice labels are resolved at adapt time so a panel built while the active
+// locale is `zh-CN` shows Chinese controls. `selected_label` stays a stable
+// English identifier — it is reported upstream and must not shift with the UI
+// language.
+function defaultApprovalChoices(): ApprovalPanelChoice[] {
+  return [
+    { label: i18n.t('reverseRpc.approval.choice.approveOnce'), response: 'approved' },
+    {
+      label: i18n.t('reverseRpc.approval.choice.approveSession'),
+      response: 'approved_for_session',
+    },
+    { label: i18n.t('reverseRpc.approval.choice.reject'), response: 'rejected' },
+    {
+      label: i18n.t('reverseRpc.approval.choice.rejectWithFeedback'),
+      response: 'rejected',
+      requires_feedback: true,
+    },
+  ];
+}
 
-const PLAN_REJECT_CHOICES: ApprovalPanelChoice[] = [
-  { label: 'Reject', response: 'rejected', selected_label: 'Reject' },
-  { label: 'Revise', response: 'rejected', selected_label: 'Revise', requires_feedback: true },
-];
+function planRejectChoices(): ApprovalPanelChoice[] {
+  return [
+    { label: i18n.t('reverseRpc.approval.choice.reject'), response: 'rejected', selected_label: 'Reject' },
+    {
+      label: i18n.t('reverseRpc.approval.choice.revise'),
+      response: 'rejected',
+      selected_label: 'Revise',
+      requires_feedback: true,
+    },
+  ];
+}
 
 export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData {
   const resolved = resolveDisplay(event.toolName, event.display, event.action);
@@ -208,20 +229,22 @@ function describeApproval(display: ToolInputDisplay, action: string): string {
   }
 }
 
-const DANGER_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
-  { pattern: /\brm\s+(-[a-zA-Z]*[rRfF][a-zA-Z]*|--recursive|--force)/i, label: 'recursive delete' },
-  { pattern: /\bsudo\b/i, label: 'sudo' },
-  { pattern: /\b(curl|wget)\b[^|]*\|\s*(sh|bash|zsh)\b/i, label: 'pipe to shell' },
-  { pattern: /\bdd\b[^|]*\bof=/i, label: 'dd write' },
-  { pattern: /\bmkfs\b/i, label: 'mkfs' },
-  { pattern: />\s*\/dev\/(sd|nvme|disk|hd)/i, label: 'write to raw device' },
-  { pattern: /\bchmod\s+-R?\s*777\b/i, label: 'chmod 777' },
-  { pattern: /:\(\)\s*\{\s*:\|:&\s*\}/i, label: 'fork bomb' },
+// `key` indexes `reverseRpc.approval.danger.*` so the label localizes with the
+// active UI language; the pattern detection itself is language-agnostic.
+const DANGER_PATTERNS: Array<{ pattern: RegExp; key: string }> = [
+  { pattern: /\brm\s+(-[a-zA-Z]*[rRfF][a-zA-Z]*|--recursive|--force)/i, key: 'recursiveDelete' },
+  { pattern: /\bsudo\b/i, key: 'sudo' },
+  { pattern: /\b(curl|wget)\b[^|]*\|\s*(sh|bash|zsh)\b/i, key: 'pipeToShell' },
+  { pattern: /\bdd\b[^|]*\bof=/i, key: 'ddWrite' },
+  { pattern: /\bmkfs\b/i, key: 'mkfs' },
+  { pattern: />\s*\/dev\/(sd|nvme|disk|hd)/i, key: 'rawDevice' },
+  { pattern: /\bchmod\s+-R?\s*777\b/i, key: 'chmod777' },
+  { pattern: /:\(\)\s*\{\s*:\|:&\s*\}/i, key: 'forkBomb' },
 ];
 
 function detectDanger(command: string): string | undefined {
-  for (const { pattern, label } of DANGER_PATTERNS) {
-    if (pattern.test(command)) return label;
+  for (const { pattern, key } of DANGER_PATTERNS) {
+    if (pattern.test(command)) return i18n.t(`reverseRpc.approval.danger.${key}`);
   }
   return undefined;
 }
@@ -336,7 +359,7 @@ function adaptChoices(toolName: string, display: ToolInputDisplay): ApprovalPane
     return adaptPlanReviewChoices(display);
   }
 
-  return DEFAULT_APPROVAL_CHOICES.map((choice) => cloneChoice(choice));
+  return defaultApprovalChoices();
 }
 
 function adaptPlanReviewChoices(display: ToolInputDisplay): ApprovalPanelChoice[] {
@@ -347,10 +370,12 @@ function adaptPlanReviewChoices(display: ToolInputDisplay): ApprovalPanelChoice[
           response: 'approved' as const,
           selected_label: option.label,
         }))
-      : [{ label: 'Approve', response: 'approved' as const, selected_label: 'Approve' }];
-  return [...optionChoices, ...PLAN_REJECT_CHOICES].map((choice) => cloneChoice(choice));
-}
-
-function cloneChoice(choice: ApprovalPanelChoice): ApprovalPanelChoice {
-  return { ...choice };
+      : [
+          {
+            label: i18n.t('reverseRpc.approval.choice.approve'),
+            response: 'approved' as const,
+            selected_label: 'Approve',
+          },
+        ];
+  return [...optionChoices, ...planRejectChoices()];
 }

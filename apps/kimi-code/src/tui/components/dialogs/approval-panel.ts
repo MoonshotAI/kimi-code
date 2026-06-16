@@ -16,6 +16,7 @@ import {
   wrapTextWithAnsi,
 } from '@earendil-works/pi-tui';
 import { currentTheme } from '#/tui/theme';
+import { i18n } from '#/tui/i18n';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
 import type {
@@ -84,10 +85,10 @@ function renderShellDisplayBlock(
 ): string[] {
   const lines: string[] = [];
   if (block.cwd !== undefined && block.cwd.length > 0) {
-    lines.push(s.dim(`cwd: ${block.cwd}`));
+    lines.push(s.dim(i18n.t('reverseRpc.approval.cwd', { path: block.cwd })));
   }
   if (block.danger !== undefined) {
-    lines.push(s.errorBold(`Dangerous: ${block.danger}`));
+    lines.push(s.errorBold(i18n.t('reverseRpc.approval.dangerousPrefix', { label: block.danger })));
   }
   const cmdLines = block.command.length > 0 ? block.command.split('\n') : [''];
   cmdLines.forEach((cmdLine, idx) => {
@@ -122,11 +123,11 @@ function renderDisplayBlock(
       }
       const remaining = allLines.length - shown.length;
       if (remaining > 0) {
-        lines.push(
-          s.dim(
-            `     … ${String(remaining)} more line${remaining > 1 ? 's' : ''} hidden (ctrl+e to preview)`,
-          ),
-        );
+        const moreKey =
+          remaining > 1
+            ? 'reverseRpc.approval.moreLinesHidden'
+            : 'reverseRpc.approval.moreLineHidden';
+        lines.push(s.dim(`     ${i18n.t(moreKey, { count: remaining })}`));
       }
       return lines;
     }
@@ -147,7 +148,7 @@ function renderDisplayBlock(
     case 'search': {
       const lines = [`${s.accent('search')} ${s.strong(block.query)}`];
       if (block.scope !== undefined && block.scope.length > 0) {
-        lines.push(s.dim(`scope: ${block.scope}`));
+        lines.push(s.dim(i18n.t('reverseRpc.approval.scope', { scope: block.scope })));
       }
       return lines;
     }
@@ -191,17 +192,17 @@ function isDuplicateBriefBlock(block: DisplayBlock, description: string): boolea
 function headerFor(toolName: string): string {
   switch (toolName) {
     case 'Bash':
-      return 'Run this command?';
+      return i18n.t('reverseRpc.approval.header.bash');
     case 'Write':
-      return 'Write this file?';
+      return i18n.t('reverseRpc.approval.header.write');
     case 'Edit':
-      return 'Apply these edits?';
+      return i18n.t('reverseRpc.approval.header.edit');
     case 'TaskStop':
-      return 'Stop this task?';
+      return i18n.t('reverseRpc.approval.header.taskStop');
     case 'ExitPlanMode':
-      return 'Ready to build with this plan?';
+      return i18n.t('reverseRpc.approval.header.exitPlanMode');
     default:
-      return `Approve ${toolName}?`;
+      return i18n.t('reverseRpc.approval.header.default', { tool: toolName });
   }
 }
 
@@ -383,13 +384,18 @@ export class ApprovalPanelComponent extends Container implements Focusable {
 
     lines.push('');
     if (this.feedbackMode) {
-      lines.push(indent(dim('Type feedback · ↵ submit.')));
+      lines.push(indent(dim(i18n.t('reverseRpc.approval.hint.feedback'))));
     } else {
-      const expandHint = hasPreviewable ? ' · ctrl+e preview' : '';
+      const expandHint = hasPreviewable
+        ? ` · ${i18n.t('reverseRpc.approval.hint.preview')}`
+        : '';
+      const select = i18n.t('reverseRpc.approval.hint.select');
+      const choose = i18n.t('reverseRpc.approval.hint.choose');
+      const confirm = i18n.t('reverseRpc.approval.hint.confirm');
       lines.push(
         indent(
           dim(
-            `↑/↓ select · ${buildNumericHint(data.choices.length)} choose · ↵ confirm${expandHint}`,
+            `↑/↓ ${select} · ${buildNumericHint(data.choices.length)} ${choose} · ↵ ${confirm}${expandHint}`,
           ),
         ),
       );

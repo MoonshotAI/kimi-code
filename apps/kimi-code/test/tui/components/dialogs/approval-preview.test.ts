@@ -1,10 +1,11 @@
 import type { Terminal } from '@earendil-works/pi-tui';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   ApprovalPreviewViewer,
   type ApprovalPreviewBlock,
 } from '#/tui/components/dialogs/approval-preview';
+import { i18n } from '#/tui/i18n';
 const ANSI_SGR = /\[[0-9;]*m/g;
 function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '');
@@ -136,6 +137,40 @@ describe('ApprovalPreviewViewer', () => {
     expect(text).toContain('-1');
     expect(text).toContain('beta');
     expect(text).toContain('BETA');
+  });
+
+  describe('locale rendering', () => {
+    afterEach(() => {
+      i18n.setLocale('en');
+    });
+
+    it('renders the title and footer hints in English by default', () => {
+      const viewer = makeViewer({
+        block: { type: 'file_content', path: 'a.ts', content: 'one\ntwo' },
+        rows: 24,
+      });
+      const out = strip(viewer.render(100).join('\n'));
+      expect(out).toContain('Preview');
+      expect(out).toContain('line');
+      expect(out).toContain('page');
+      expect(out).toContain('top/bot');
+      expect(out).toContain('cancel');
+    });
+
+    it('renders the title and footer hints in Simplified Chinese under zh-CN', () => {
+      i18n.setLocale('zh-CN');
+      const viewer = makeViewer({
+        block: { type: 'file_content', path: 'a.ts', content: 'one\ntwo' },
+        rows: 24,
+      });
+      const out = strip(viewer.render(100).join('\n'));
+      expect(out).toContain('预览');
+      expect(out).toContain('翻页');
+      expect(out).toContain('顶部/底部');
+      expect(out).toContain('取消');
+      expect(out).not.toContain('Preview');
+      expect(out).not.toContain('cancel');
+    });
   });
 
   // Sanity: rendering is a pure slice — repeated render() calls without
