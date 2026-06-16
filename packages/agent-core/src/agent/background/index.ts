@@ -301,17 +301,25 @@ export class BackgroundManager {
   list(activeOnly = true, limit?: number): BackgroundTaskInfo[] {
     const result: BackgroundTaskInfo[] = [];
     for (const entry of this.tasks.values()) {
-      if (activeOnly && TERMINAL_STATUSES.has(entry.status)) continue;
-      result.push(this.toInfo(entry));
+      const info = this.toInfo(entry);
+      if (!this.shouldListTask(info, activeOnly)) continue;
+      result.push(info);
       if (limit !== undefined && result.length >= limit) return result;
     }
     if (!activeOnly) {
       for (const ghost of this.ghosts.values()) {
+        if (!this.shouldListTask(ghost, activeOnly)) continue;
         result.push(ghost);
         if (limit !== undefined && result.length >= limit) return result;
       }
     }
     return result;
+  }
+
+  private shouldListTask(info: BackgroundTaskInfo, activeOnly: boolean): boolean {
+    if (!TERMINAL_STATUSES.has(info.status)) return true;
+    if (activeOnly) return false;
+    return info.detached !== false;
   }
 
   /**
