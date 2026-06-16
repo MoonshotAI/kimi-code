@@ -127,6 +127,123 @@ describe('context-projector', () => {
     ]);
   });
 
+  // ---- Fix G: tool.result content must match what the model saw ---------------
+  // agent-core's `ContextMemory.appendLoopEvent` (`tool.result` case) stores
+  // `createToolMessage(toolCallId, toolResultOutputForModel(event.result))`, NOT
+  // the raw `event.result.output`. `toolResultOutputForModel`
+  // (`packages/agent-core/src/agent/context/index.ts` ~line 350) normalizes
+  // error / empty outputs with sentinel strings. The projector must replicate
+  // that normalization so the model-view shows the content the model actually
+  // received for failed / empty tool calls.
+
+  const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
+  const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
+  const TOOL_EMPTY_ERROR_STATUS =
+    '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
+
+  /** Build a minimal wire fixture: one assistant step with a tool call, then a
+   *  `tool.result` loop event carrying `result`. Returns the projected tool
+   *  message (last entry). */
+  const projectToolResult = (result: unknown) => {
+    const entries = [
+      {
+        lineNo: 1,
+        data: {
+          type: 'context.append_loop_event' as const,
+          event: { type: 'step.begin' as const, uuid: 's1', turnId: 't1', step: 0 },
+        },
+        raw: {},
+      },
+      {
+        lineNo: 2,
+        data: {
+          type: 'context.append_loop_event' as const,
+          event: {
+            type: 'tool.call' as const,
+            uuid: 'tc1', turnId: 't1', step: 0, stepUuid: 's1',
+            toolCallId: 'call_1', name: 'Bash', args: '{}',
+          },
+        },
+        raw: {},
+      },
+      {
+        lineNo: 3,
+        data: {
+          type: 'context.append_loop_event' as const,
+          event: { type: 'step.end' as const, uuid: 's1', turnId: 't1', step: 0 },
+        },
+        raw: {},
+      },
+      {
+        lineNo: 4,
+        data: {
+          type: 'context.append_loop_event' as const,
+          event: {
+            type: 'tool.result' as const,
+            parentUuid: 'tc1',
+            toolCallId: 'call_1',
+            result,
+          },
+        },
+        raw: {},
+      },
+    ];
+    const proj = projectContext(entries as any);
+    return proj.messages.at(-1)!.message;
+  };
+
+  it('tool.result: error string output is prefixed with the error sentinel', () => {
+    const msg = projectToolResult({ output: 'boom: file not found', isError: true });
+    expect(msg.role).toBe('tool');
+    expect(msg.toolCallId).toBe('call_1');
+    expect(msg.isError).toBe(true);
+    expect(msg.content).toEqual([
+      { type: 'text', text: `${TOOL_ERROR_STATUS}\nboom: file not found` },
+    ]);
+  });
+
+  it('tool.result: error string already starting with <system>ERROR: is passed through (no double prefix)', () => {
+    const text = '<system>ERROR: already wrapped</system>\ndetails here';
+    const msg = projectToolResult({ output: text, isError: true });
+    expect(msg.content).toEqual([{ type: 'text', text }]);
+  });
+
+  it('tool.result: empty string output (non-error) becomes the empty sentinel', () => {
+    const msg = projectToolResult({ output: '' });
+    expect(msg.content).toEqual([{ type: 'text', text: TOOL_EMPTY_STATUS }]);
+  });
+
+  it('tool.result: empty string output with error becomes the empty-error sentinel', () => {
+    const msg = projectToolResult({ output: '', isError: true });
+    expect(msg.isError).toBe(true);
+    expect(msg.content).toEqual([{ type: 'text', text: TOOL_EMPTY_ERROR_STATUS }]);
+  });
+
+  it('tool.result: normal non-empty non-error string is unchanged', () => {
+    const msg = projectToolResult({ output: 'file1.txt\nfile2.txt' });
+    expect(msg.content).toEqual([{ type: 'text', text: 'file1.txt\nfile2.txt' }]);
+  });
+
+  it('tool.result: array output with error is prefixed with an error-sentinel part', () => {
+    const parts = [
+      { type: 'text' as const, text: 'partial output' },
+      { type: 'image_url' as const, imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ];
+    const msg = projectToolResult({ output: parts, isError: true });
+    expect(msg.content).toEqual([{ type: 'text', text: TOOL_ERROR_STATUS }, ...parts]);
+  });
+
+  it('tool.result: empty array output (non-error) becomes a single empty-sentinel part', () => {
+    const msg = projectToolResult({ output: [] });
+    expect(msg.content).toEqual([{ type: 'text', text: TOOL_EMPTY_STATUS }]);
+  });
+
+  it('tool.result: non-error array output is passed through as-is', () => {
+    const parts = [{ type: 'text' as const, text: 'a' }, { type: 'text' as const, text: 'b' }];
+    const msg = projectToolResult({ output: parts });
+    expect(msg.content).toEqual(parts);
+  });
+
   it('clears messages on context.clear', async () => {
     const entries = [
       { lineNo: 2, data: { type: 'context.append_message' as const, message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'a' }], toolCalls: [] } }, raw: {} },

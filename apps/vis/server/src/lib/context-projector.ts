@@ -180,11 +180,14 @@ export function projectContext(
           }
           openSteps.delete(ev.uuid);
         } else if (ev.type === 'tool.result') {
-          const output = ev.result.output;
-          const content: ContentPart[] =
-            typeof output === 'string'
-              ? [{ type: 'text', text: output }]
-              : (output as ContentPart[]);
+          // Mirror what the MODEL saw, not the raw output. agent-core's
+          // ContextMemory.appendLoopEvent (`tool.result` case) stores
+          // `createToolMessage(toolCallId, toolResultOutputForModel(result))`,
+          // which normalizes error / empty outputs with sentinel strings. Using
+          // `ev.result.output` directly would surface content the model never
+          // received for failed / empty tool calls. See
+          // `toolResultContentForModel` below.
+          const content = toolResultContentForModel(ev.result);
           const toolMsg: ContextMessage = {
             role: 'tool',
             content,
@@ -469,6 +472,68 @@ function addUsage(into: TokenUsage, src: TokenUsage): void {
   (into as any).output += src.output;
   (into as any).inputCacheRead += src.inputCacheRead;
   (into as any).inputCacheCreation += src.inputCacheCreation;
+}
+
+// ── Tool-result normalization (mirror of agent-core) ─────────────────────────
+// These replicate agent-core's `toolResultOutputForModel` so vis's model-view
+// shows the EXACT content the model received for a tool result. The constants
+// and branch conditions are copied verbatim from
+// `packages/agent-core/src/agent/context/index.ts` (lines 18-22, 350-377). Keep
+// them byte-identical with that source — if agent-core changes the sentinels or
+// branch logic, update here too.
+const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
+const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
+const TOOL_EMPTY_ERROR_STATUS =
+  '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
+const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
+
+/** Mirrors agent-core `isEmptyOutputText`
+ *  (`packages/agent-core/src/agent/context/index.ts` ~line 375). */
+function isEmptyOutputText(output: string): boolean {
+  return output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
+}
+
+/** Mirrors agent-core `toolResultOutputForModel`
+ *  (`packages/agent-core/src/agent/context/index.ts` ~line 350), then wraps the
+ *  result into `ContentPart[]` exactly as `createToolMessage` does (a string
+ *  output → a single `{ type: 'text', text }` part). The model saw this
+ *  normalized content in BOTH model and full views (agent-core normalizes at
+ *  append time, before any of the destructive lifecycle events), so the
+ *  tool.result branch uses this output mode-independently. */
+function toolResultContentForModel(result: {
+  output: string | ContentPart[];
+  isError?: boolean;
+}): ContentPart[] {
+  const output = result.output;
+  if (typeof output === 'string') {
+    let normalized: string;
+    if (result.isError === true) {
+      if (output.length === 0) {
+        normalized = TOOL_EMPTY_ERROR_STATUS;
+      } else if (output.trimStart().startsWith('<system>ERROR:')) {
+        normalized = output;
+      } else {
+        normalized = `${TOOL_ERROR_STATUS}\n${output}`;
+      }
+    } else {
+      normalized = isEmptyOutputText(output) ? TOOL_EMPTY_STATUS : output;
+    }
+    // Match createToolMessage: a string output becomes a single text part.
+    return [{ type: 'text', text: normalized }];
+  }
+
+  if (output.length === 0) {
+    return [
+      {
+        type: 'text',
+        text: result.isError === true ? TOOL_EMPTY_ERROR_STATUS : TOOL_EMPTY_STATUS,
+      },
+    ];
+  }
+  if (result.isError === true) {
+    return [{ type: 'text', text: TOOL_ERROR_STATUS }, ...output];
+  }
+  return output;
 }
 
 const MICRO_TRUNCATED_MARKER = '[Old tool result content cleared]';
