@@ -492,6 +492,20 @@ mode = "auto"
     );
   });
 
+  it('rejects unknown top-level tables in strict mode', () => {
+    expectKimiErrorCode(
+      () =>
+        parseConfigString('[typo]\nkey = "value"\n', 'config.toml', { strict: true }),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
+  it('silently drops unknown top-level tables in non-strict mode', () => {
+    const config = parseConfigString('[typo]\nkey = "value"\n', 'config.toml');
+    expect(config.raw?.['typo']).toEqual({ key: 'value' });
+    expect('typo' in config).toBe(false);
+  });
+
   it('rejects unknown keys in strict permission section', () => {
     expectKimiErrorCode(
       () =>

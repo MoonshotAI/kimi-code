@@ -335,7 +335,10 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
       result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'experimental' && isPlainObject(value)) {
       result[targetKey] = cloneRecord(value);
-    } else if (!isPlainObject(value)) {
+    } else {
+      // Carry unrecognized top-level keys (including object tables) through.
+      // The lenient schema strips them; the strict schema rejects them so
+      // `--strict-config` actually catches unknown top-level sections.
       result[targetKey] = value;
     }
   }
