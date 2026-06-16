@@ -38,7 +38,7 @@ const { prompt_id, finalFrame } = await client.submitAndWait(session.id, {
 });
 
 await client.close();
-await client.deleteSession(session.id);
+await client.archiveSession(session.id);
 ```
 
 > The exported facade is still spelled `DaemonClient` to keep the diff small;

@@ -84,7 +84,7 @@ async function main() {
   } finally {
     for (const sid of sessions.toReversed()) {
       try {
-        await client.deleteSession(sid);
+        await client.archiveSession(sid);
       } catch {
         // ignore
       }

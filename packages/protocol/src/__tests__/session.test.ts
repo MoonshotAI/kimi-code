@@ -66,6 +66,7 @@ describe('sessionSchema', () => {
     created_at: '2026-06-04T10:30:00.000Z',
     updated_at: '2026-06-04T10:35:00.000Z',
     status: 'idle',
+    archived: false,
     metadata: { cwd: '/tmp/test' },
     agent_config: { model: 'moonshot-v1-128k' },
     usage: emptySessionUsage(),
@@ -110,6 +111,12 @@ describe('sessionSchema', () => {
     const offsetForm = { ...fullSession, created_at: '2026-06-04T18:30:00+08:00' };
     const parsed = sessionSchema.parse(offsetForm);
     expect(parsed.created_at).toBe('2026-06-04T10:30:00.000Z');
+  });
+
+  it('accepts a session without the optional archived flag', () => {
+    const { archived: _drop, ...withoutArchived } = fullSession;
+    const parsed = sessionSchema.parse(withoutArchived);
+    expect(parsed.archived).toBeUndefined();
   });
 });
 

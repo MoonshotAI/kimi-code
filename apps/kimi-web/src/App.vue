@@ -675,7 +675,7 @@ function openPr(url: string): void {
         @select-workspace="client.openWorkspace($event)"
         @add-workspace="showAddWorkspace = true"
         @rename="(id, title) => client.renameSession(id, title)"
-        @delete="(id) => client.deleteSession(id)"
+        @archive="(id) => client.archiveSession(id)"
         @fork="(id) => client.forkSession(id)"
         @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
         @delete-workspace="(id) => client.deleteWorkspace(id)"
@@ -786,7 +786,7 @@ function openPr(url: string): void {
       @control-goal="client.controlGoal($event)"
       @rename-session="(id, title) => client.renameSession(id, title)"
       @fork-session="(id) => client.forkSession(id)"
-      @archive-session="(id) => client.deleteSession(id)"
+      @archive-session="(id) => client.archiveSession(id)"
       @compact="client.compact()"
       @pick-model="openModelPicker()"
       @select-model="client.setModel($event)"
@@ -1011,7 +1011,7 @@ function openPr(url: string): void {
       @create-in-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="showAddWorkspace = true"
       @rename="(id, title) => client.renameSession(id, title)"
-      @delete="(id) => client.deleteSession(id)"
+      @archive="(id) => client.archiveSession(id)"
       @delete-workspace="(id) => client.deleteWorkspace(id)"
     />
 

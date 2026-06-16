@@ -6,6 +6,7 @@ import {
   createSessionChildRequestSchema,
   createSessionChildResponseSchema,
   createSessionRequestSchema,
+  archiveSessionResponseSchema,
   deleteSessionResponseSchema,
   forkSessionRequestSchema,
   forkSessionResponseSchema,
@@ -78,6 +79,24 @@ describe('listSessionsQuerySchema', () => {
 
   it('rejects an unknown status value', () => {
     expect(listSessionsQuerySchema.safeParse({ status: 'frozen' }).success).toBe(false);
+  });
+
+  it('parses include_archive string values to boolean', () => {
+    expect(listSessionsQuerySchema.parse({ include_archive: 'true' })).toEqual({
+      include_archive: true,
+    });
+    expect(listSessionsQuerySchema.parse({ include_archive: 'false' })).toEqual({
+      include_archive: false,
+    });
+  });
+
+  it('parses include_archive boolean and numeric values', () => {
+    expect(listSessionsQuerySchema.parse({ include_archive: true })).toEqual({
+      include_archive: true,
+    });
+    expect(listSessionsQuerySchema.parse({ include_archive: 0 })).toEqual({
+      include_archive: false,
+    });
   });
 });
 
@@ -452,12 +471,22 @@ describe('undoSessionResponseSchema', () => {
   });
 });
 
-describe('deleteSessionResponseSchema', () => {
-  it('accepts the canonical { deleted: true } shape', () => {
-    expect(deleteSessionResponseSchema.parse({ deleted: true })).toEqual({ deleted: true });
+describe('archiveSessionResponseSchema', () => {
+  it('accepts the canonical { archived: true } shape', () => {
+    expect(archiveSessionResponseSchema.parse({ archived: true })).toEqual({ archived: true });
   });
 
-  it('rejects { deleted: false }', () => {
-    expect(deleteSessionResponseSchema.safeParse({ deleted: false }).success).toBe(false);
+  it('rejects { archived: false }', () => {
+    expect(archiveSessionResponseSchema.safeParse({ archived: false }).success).toBe(false);
+  });
+});
+
+describe('deleteSessionResponseSchema (deprecated alias)', () => {
+  it('accepts the canonical { archived: true } shape', () => {
+    expect(deleteSessionResponseSchema.parse({ archived: true })).toEqual({ archived: true });
+  });
+
+  it('rejects { archived: false }', () => {
+    expect(deleteSessionResponseSchema.safeParse({ archived: false }).success).toBe(false);
   });
 });

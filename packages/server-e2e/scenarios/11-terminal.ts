@@ -123,7 +123,7 @@ async function main() {
       }
     }
     try {
-      if (sid) await client.deleteSession(sid);
+      if (sid) await client.archiveSession(sid);
     } catch {
       // ignore
     }

@@ -70,7 +70,7 @@ afterEach(async () => {
       }
     }
     try {
-      await client.deleteSession(sid);
+      await client.archiveSession(sid);
     } catch {
       // ignore
     }

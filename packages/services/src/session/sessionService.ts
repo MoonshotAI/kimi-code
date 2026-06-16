@@ -11,6 +11,7 @@ import type {
   AgentContextData,
   ContextMessage,
   JsonObject,
+  ListSessionsPayload,
   SessionMeta,
   SessionSummary,
 } from '@moonshot-ai/agent-core';
@@ -262,10 +263,11 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   async list(query: SessionListQuery): Promise<PageResponse<Session>> {
-    const all =
-      query.workDir !== undefined
-        ? await this.core.rpc.listSessions({ workDir: query.workDir })
-        : await this.core.rpc.listSessions({});
+    const corePayload: ListSessionsPayload = {
+      workDir: query.workDir,
+      includeArchive: query.includeArchive,
+    };
+    const all = await this.core.rpc.listSessions(corePayload);
     const sorted = all.toSorted((a, b) => b.createdAt - a.createdAt);
 
     let pivotIndex = -1;
@@ -530,18 +532,18 @@ export class SessionService extends Disposable implements ISessionService {
     };
   }
 
-  async delete(id: string): Promise<{ deleted: true }> {
+  async archive(id: string): Promise<{ archived: true }> {
     const all = await this.core.rpc.listSessions({});
     const summary = all.find((s) => s.id === id);
     if (summary === undefined) {
       throw new SessionNotFoundError(id);
     }
-    await this.core.rpc.closeSession({ sessionId: id });
+    await this.core.rpc.archiveSession({ sessionId: id });
     this._onDidClose.fire({ sessionId: id });
     this._statusBySession.delete(id);
     this._activeTurns.delete(id);
     this._abortedTurns.delete(id);
-    return { deleted: true };
+    return { archived: true };
   }
 
   private async requireSummary(id: string): Promise<SessionSummary> {

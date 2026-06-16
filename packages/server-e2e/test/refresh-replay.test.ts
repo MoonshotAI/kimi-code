@@ -150,7 +150,7 @@ afterEach(async () => {
   }
   for (const { client, sid } of created.splice(0)) {
     try {
-      await client.http.deleteSession(sid);
+      await client.http.archiveSession(sid);
     } catch {
       // ignore
     }

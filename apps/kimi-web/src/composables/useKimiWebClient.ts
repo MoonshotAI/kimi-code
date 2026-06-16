@@ -3424,14 +3424,14 @@ async function deleteWorkspace(id: string): Promise<void> {
   }
 }
 
-/** Delete a session — calls API, removes locally, picks another active session or none */
-async function deleteSession(id: string): Promise<void> {
+/** Archive a session — calls API, persists the archive flag, removes locally, picks another active session or none */
+async function archiveSession(id: string): Promise<void> {
   try {
     const api = getKimiWebApi();
-    await api.deleteSession(id);
+    await api.archiveSession(id);
     rawState.sessions = rawState.sessions.filter((s) => s.id !== id);
 
-    // If deleted session was active, pick another. 'replace' so the address
+    // If archived session was active, pick another. 'replace' so the address
     // bar doesn't keep pointing at (and back doesn't return to) a dead session.
     if (rawState.activeSessionId === id) {
       const next = rawState.sessions[0];
@@ -3443,7 +3443,7 @@ async function deleteSession(id: string): Promise<void> {
       }
     }
   } catch (err) {
-    pushOperationFailure('deleteSession', err, { sessionId: id });
+    pushOperationFailure('archiveSession', err, { sessionId: id });
   }
 }
 
@@ -4051,7 +4051,7 @@ export function useKimiWebClient() {
     renameSession,
     renameWorkspace,
     deleteWorkspace,
-    deleteSession,
+    archiveSession,
     compact,
     forkSession,
     undo,

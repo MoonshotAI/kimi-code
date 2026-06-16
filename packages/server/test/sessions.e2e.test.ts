@@ -14,7 +14,7 @@
  *   - GET  /api/v1/sessions/{id}          → Session (40401 on unknown id)
  *   - GET  /api/v1/sessions/{id}/profile  → Session (40401 on unknown id)
  *   - POST /api/v1/sessions/{id}/profile  → Session (40401 on unknown id)
- *   - DELETE /api/v1/sessions/{id}        → { deleted: true } (40401 on unknown)
+ *   - POST  /api/v1/sessions/{id}:archive → { archived: true } (40401 on unknown)
  *
  * Plus the validation matrix:
  *   - POST with missing `metadata.cwd` → 40001 + `details` containing path.
@@ -629,10 +629,10 @@ describe('POST and GET /api/v1/sessions/{session_id}/children', () => {
   });
 });
 
-describe('DELETE /api/v1/sessions/{session_id} — delete', () => {
-  it('returns { deleted: true } envelope', async () => {
+describe('POST /api/v1/sessions/{session_id}:archive — archive', () => {
+  it('returns { archived: true } envelope and hides the session from list', async () => {
     const r = await bootDaemon();
-    const cwd = join(tmpDir, 'workspace-delete');
+    const cwd = join(tmpDir, 'workspace-archive');
     const created = envelopeOf<{ id: string }>(
       (await appOf(r).inject({
         method: 'POST',
@@ -642,19 +642,78 @@ describe('DELETE /api/v1/sessions/{session_id} — delete', () => {
     ).data!;
 
     const res = await appOf(r).inject({
-      method: 'DELETE',
-      url: `/api/v1/sessions/${created.id}`,
+      method: 'POST',
+      url: `/api/v1/sessions/${created.id}:archive`,
+      payload: {},
     });
-    const env = envelopeOf<{ deleted: boolean }>(res.json());
+    const env = envelopeOf<{ archived: boolean }>(res.json());
     expect(env.code).toBe(0);
-    expect(env.data).toEqual({ deleted: true });
+    expect(env.data).toEqual({ archived: true });
+
+    const listRes = await appOf(r).inject({
+      method: 'GET',
+      url: '/api/v1/sessions',
+    });
+    const listEnv = envelopeOf<{ items: Array<{ id: string }>; has_more: boolean }>(listRes.json());
+    expect(listEnv.code).toBe(0);
+    expect(listEnv.data!.items.find((s) => s.id === created.id)).toBeUndefined();
+  });
+
+  it('includes archived sessions when include_archive=true and marks archived flag', async () => {
+    const r = await bootDaemon();
+    const cwd = join(tmpDir, 'workspace-archive-include');
+    const created = envelopeOf<{ id: string }>(
+      (await appOf(r).inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { metadata: { cwd } },
+      })).json(),
+    ).data!;
+
+    const archiveRes = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${created.id}:archive`,
+      payload: {},
+    });
+    expect(envelopeOf<{ archived: boolean }>(archiveRes.json()).data).toEqual({ archived: true });
+
+    const defaultList = await appOf(r).inject({
+      method: 'GET',
+      url: '/api/v1/sessions',
+    });
+    const defaultEnv = envelopeOf<{ items: Array<{ id: string; archived?: boolean }>; has_more: boolean }>(
+      defaultList.json(),
+    );
+    expect(defaultEnv.code).toBe(0);
+    expect(defaultEnv.data!.items.find((s) => s.id === created.id)).toBeUndefined();
+
+    const archivedList = await appOf(r).inject({
+      method: 'GET',
+      url: '/api/v1/sessions?include_archive=true',
+    });
+    const archivedEnv = envelopeOf<{ items: Array<{ id: string; archived?: boolean }>; has_more: boolean }>(
+      archivedList.json(),
+    );
+    expect(archivedEnv.code).toBe(0);
+    const listed = archivedEnv.data!.items.find((s) => s.id === created.id);
+    expect(listed).toBeDefined();
+    expect(listed!.archived).toBe(true);
+
+    const explicitList = await appOf(r).inject({
+      method: 'GET',
+      url: '/api/v1/sessions?include_archive=false',
+    });
+    const explicitEnv = envelopeOf<{ items: Array<{ id: string }>; has_more: boolean }>(explicitList.json());
+    expect(explicitEnv.code).toBe(0);
+    expect(explicitEnv.data!.items.find((s) => s.id === created.id)).toBeUndefined();
   });
 
   it('returns 40401 for unknown id', async () => {
     const r = await bootDaemon();
     const res = await appOf(r).inject({
-      method: 'DELETE',
-      url: '/api/v1/sessions/sess_missing',
+      method: 'POST',
+      url: '/api/v1/sessions/sess_missing:archive',
+      payload: {},
     });
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(40401);

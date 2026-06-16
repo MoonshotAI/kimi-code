@@ -45,7 +45,7 @@ const emit = defineEmits<{
   selectWorkspaces: [ids: string[]];
   addWorkspace: [];
   rename: [id: string, title: string];
-  delete: [id: string];
+  archive: [id: string];
   fork: [id: string];
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
@@ -498,7 +498,7 @@ function blinkOnce(): void {
                 :unread="unreadBySession[s.id] ?? false"
                 @select="onSelectSession($event)"
                 @rename="(id, title) => emit('rename', id, title)"
-                @delete="emit('delete', $event)"
+                @archive="emit('archive', $event)"
                 @fork="emit('fork', $event)"
               />
               <button

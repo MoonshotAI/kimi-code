@@ -37,6 +37,7 @@ type WithSessionId<T> = T & { readonly sessionId: string };
 interface FakeBridgeState {
   sessions: SessionSummary[];
   metas: Map<string, SessionMeta>;
+  archivedIds: string[];
   closedIds: string[];
   renamedTitles: Map<string, string>;
   metadataPatches: Map<string, UpdateSessionMetadataPayload['metadata']>;
@@ -125,8 +126,8 @@ function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
           agents: {},
         };
       }),
-    closeSession: vi.fn().mockImplementation(async ({ sessionId }: { sessionId: string }) => {
-      state.closedIds.push(sessionId);
+    archiveSession: vi.fn().mockImplementation(async ({ sessionId }: { sessionId: string }) => {
+      state.archivedIds.push(sessionId);
     }),
     renameSession: vi
       .fn()
@@ -207,6 +208,7 @@ function freshState(): FakeBridgeState {
   return {
     sessions: [],
     metas: new Map(),
+    archivedIds: [],
     closedIds: [],
     renamedTitles: new Map(),
     metadataPatches: new Map(),
@@ -790,16 +792,16 @@ describe('SessionService children', () => {
   });
 });
 
-describe('SessionService.delete', () => {
-  it('calls bridge.rpc.closeSession and returns { deleted: true }', async () => {
+describe('SessionService.archive', () => {
+  it('calls bridge.rpc.archiveSession and returns { archived: true }', async () => {
     const created = await svc.create({ metadata: { cwd: '/tmp/d' } });
-    const result = await svc.delete(created.id);
-    expect(result).toEqual({ deleted: true });
-    expect(state.closedIds).toEqual([created.id]);
+    const result = await svc.archive(created.id);
+    expect(result).toEqual({ archived: true });
+    expect(state.archivedIds).toEqual([created.id]);
   });
 
   it('throws SessionNotFoundError on a missing id', async () => {
-    await expect(svc.delete('does-not-exist')).rejects.toBeInstanceOf(SessionNotFoundError);
+    await expect(svc.archive('does-not-exist')).rejects.toBeInstanceOf(SessionNotFoundError);
   });
 });
 
@@ -927,11 +929,11 @@ describe('SessionService per-domain event listeners (Phase C)', () => {
     expect(events).toHaveLength(0);
   });
 
-  it('onDidClose fires after bridge.rpc.closeSession resolves', async () => {
+  it('onDidClose fires after bridge.rpc.archiveSession resolves', async () => {
     const closedIds: string[] = [];
     svc.onDidClose((e) => { closedIds.push(e.sessionId); });
     const session = await svc.create({ metadata: { cwd: '/tmp/evt3' } });
-    await svc.delete(session.id);
+    await svc.archive(session.id);
     expect(closedIds).toEqual([session.id]);
   });
 
@@ -940,7 +942,7 @@ describe('SessionService per-domain event listeners (Phase C)', () => {
     const sub = svc.onDidClose((e) => { closedIds.push(e.sessionId); });
     sub.dispose();
     const session = await svc.create({ metadata: { cwd: '/tmp/evt4' } });
-    await svc.delete(session.id);
+    await svc.archive(session.id);
     expect(closedIds).toHaveLength(0);
   });
 });

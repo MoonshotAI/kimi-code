@@ -54,6 +54,10 @@ export interface CloseSessionPayload {
   readonly sessionId: string;
 }
 
+export interface ArchiveSessionPayload {
+  readonly sessionId: string;
+}
+
 export interface ResumeSessionPayload {
   readonly sessionId: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
@@ -124,6 +128,7 @@ export interface ExportSessionResult {
 export interface ListSessionsPayload {
   readonly workDir?: string;
   readonly sessionId?: string;
+  readonly includeArchive?: boolean;
 }
 
 export interface CoreInfo {
@@ -368,6 +373,7 @@ export interface CoreAPI extends SessionAPIWithId {
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
   createSession: (payload: CreateSessionPayload) => SessionSummary;
   closeSession: (payload: CloseSessionPayload) => void;
+  archiveSession: (payload: ArchiveSessionPayload) => void;
   resumeSession: (payload: ResumeSessionPayload) => ResumeSessionResult;
   reloadSession: (payload: ReloadSessionPayload) => ResumeSessionResult;
   forkSession: (payload: ForkSessionPayload) => ResumeSessionResult;

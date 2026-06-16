@@ -305,7 +305,7 @@ async function main() {
     console.log('✓ 03-refresh-replay: refresh round-trip preserves subscription + replay semantics');
   } finally {
     try {
-      if (sid) await initial.http.deleteSession(sid);
+      if (sid) await initial.http.archiveSession(sid);
     } catch {
       // ignore
     }

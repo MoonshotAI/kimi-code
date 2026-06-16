@@ -94,7 +94,7 @@ async function main() {
     console.log(`✓ 02-tool-call-with-approval: canary round-tripped end-to-end`);
   } finally {
     try {
-      if (sid) await client.deleteSession(sid);
+      if (sid) await client.archiveSession(sid);
     } catch {
       // ignore
     }
