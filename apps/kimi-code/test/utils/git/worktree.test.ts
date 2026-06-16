@@ -5,7 +5,14 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createWorktree, findGitRoot, listWorktrees, removeWorktree, WorktreeError } from '#/utils/git/worktree';
+import {
+  createWorktree,
+  findGitRoot,
+  listWorktrees,
+  normalizeWorktreeName,
+  removeWorktree,
+  WorktreeError,
+} from '#/utils/git/worktree';
 
 function initRepo(path: string): void {
   execSync('git init', { cwd: path, stdio: 'ignore' });
@@ -52,7 +59,7 @@ describe('createWorktree', () => {
     expect(branch.trim()).toBe('');
   });
 
-  it('auto-generates a kimi-prefixed name when none is given', () => {
+  it('auto-generates a three-word slug when none is given', () => {
     const dir = makeTempDir('kimi-auto-wt-');
     initRepo(dir);
 
@@ -60,7 +67,7 @@ describe('createWorktree', () => {
 
     expect(existsSync(wt)).toBe(true);
     const baseName = wt.split('/').pop();
-    expect(baseName).toMatch(/^kimi-\d{8}-\d{6}$/);
+    expect(baseName).toMatch(/^[a-z0-9]+-[a-z0-9]+-[a-z0-9]+$/);
   });
 
   it('raises when the worktree directory already exists', () => {
@@ -75,6 +82,103 @@ describe('createWorktree', () => {
   it('raises outside a git repository', () => {
     const dir = makeTempDir('kimi-no-git-');
     expect(() => createWorktree(dir, 'x')).toThrow(WorktreeError);
+  });
+
+  it('rejects names with invalid characters', () => {
+    const dir = makeTempDir('kimi-invalid-wt-');
+    initRepo(dir);
+
+    expect(() => createWorktree(dir, 'hello world')).toThrow(WorktreeError);
+    expect(() => createWorktree(dir, 'foo:bar')).toThrow(WorktreeError);
+    expect(() => createWorktree(dir, 'foo@bar')).toThrow(WorktreeError);
+  });
+
+  it('rejects names with path separators', () => {
+    const dir = makeTempDir('kimi-sep-wt-');
+    initRepo(dir);
+
+    expect(() => createWorktree(dir, 'foo/bar')).toThrow(WorktreeError);
+    expect(() => createWorktree(dir, '/foo')).toThrow(WorktreeError);
+  });
+
+  it('rejects names with dot segments', () => {
+    const dir = makeTempDir('kimi-dot-wt-');
+    initRepo(dir);
+
+    expect(() => createWorktree(dir, '.')).toThrow(WorktreeError);
+    expect(() => createWorktree(dir, '..')).toThrow(WorktreeError);
+    expect(() => createWorktree(dir, 'foo/./bar')).toThrow(WorktreeError);
+  });
+
+  it('rejects names longer than 64 characters', () => {
+    const dir = makeTempDir('kimi-long-wt-');
+    initRepo(dir);
+
+    const longName = 'a'.repeat(65);
+    expect(() => createWorktree(dir, longName)).toThrow(WorktreeError);
+    expect(() => createWorktree(dir, longName)).toThrow('64 characters');
+  });
+
+  it('can create multiple auto-generated worktrees in the same repo', () => {
+    const dir = makeTempDir('kimi-multi-wt-');
+    initRepo(dir);
+
+    const wt1 = createWorktree(dir);
+    const wt2 = createWorktree(dir);
+
+    expect(existsSync(wt1)).toBe(true);
+    expect(existsSync(wt2)).toBe(true);
+    expect(wt1).not.toBe(wt2);
+  });
+
+  it('keeps the worktree storage out of the parent git index', () => {
+    const dir = makeTempDir('kimi-clean-wt-');
+    initRepo(dir);
+
+    createWorktree(dir, 'feature-x');
+
+    expect(existsSync(join(dir, '.kimi', 'worktrees', '.gitignore'))).toBe(true);
+    const status = execSync('git status --short', { cwd: dir, encoding: 'utf8', stdio: 'pipe' });
+    expect(status.trim()).toBe('');
+  });
+});
+
+describe('normalizeWorktreeName', () => {
+  it('trims whitespace', () => {
+    expect(normalizeWorktreeName('  feature-x  ')).toBe('feature-x');
+  });
+
+  it('normalizes #123 to pr-123', () => {
+    expect(normalizeWorktreeName('#123')).toBe('pr-123');
+    expect(normalizeWorktreeName('  #42  ')).toBe('pr-42');
+  });
+
+  it('accepts letters, digits, dots, underscores, and hyphens', () => {
+    expect(normalizeWorktreeName('feature_2.1-x')).toBe('feature_2.1-x');
+  });
+
+  it('rejects empty names', () => {
+    expect(() => normalizeWorktreeName('')).toThrow(WorktreeError);
+    expect(() => normalizeWorktreeName('   ')).toThrow(WorktreeError);
+  });
+
+  it('rejects names with slashes', () => {
+    expect(() => normalizeWorktreeName('foo/bar')).toThrow(WorktreeError);
+  });
+
+  it('rejects dot segments', () => {
+    expect(() => normalizeWorktreeName('.')).toThrow(WorktreeError);
+    expect(() => normalizeWorktreeName('..')).toThrow(WorktreeError);
+  });
+
+  it('rejects invalid characters', () => {
+    expect(() => normalizeWorktreeName('foo bar')).toThrow(WorktreeError);
+    expect(() => normalizeWorktreeName('foo:bar')).toThrow(WorktreeError);
+    expect(() => normalizeWorktreeName('foo@bar')).toThrow(WorktreeError);
+  });
+
+  it('rejects names longer than 64 characters', () => {
+    expect(() => normalizeWorktreeName('a'.repeat(65))).toThrow(WorktreeError);
   });
 });
 
@@ -95,7 +199,23 @@ describe('removeWorktree', () => {
     initRepo(dir);
     const missing = join(dir, '.kimi', 'worktrees', 'ghost');
 
-    expect(() => removeWorktree(dir, missing)).not.toThrow();
+    expect(() => {
+      removeWorktree(dir, missing);
+    }).not.toThrow();
+  });
+
+  it('does not delete a dirty registered worktree', () => {
+    const dir = makeTempDir('kimi-rm-dirty-');
+    initRepo(dir);
+    const wt = createWorktree(dir, 'dirty');
+    const dirtyFile = join(wt, 'dirty-file.txt');
+    execSync('touch dirty-file.txt', { cwd: wt, stdio: 'ignore' });
+
+    expect(() => {
+      removeWorktree(dir, wt);
+    }).toThrow(WorktreeError);
+    expect(existsSync(wt)).toBe(true);
+    expect(existsSync(dirtyFile)).toBe(true);
   });
 });
 
@@ -107,7 +227,8 @@ describe('listWorktrees', () => {
     const wt2 = createWorktree(dir, 'wt2');
 
     const list = listWorktrees(dir);
-    const paths = list.map((w) => w.path);
+    expect(list).not.toBeNull();
+    const paths = list!.map((w) => w.path);
 
     expect(paths).toContain(wt1);
     expect(paths).toContain(wt2);
