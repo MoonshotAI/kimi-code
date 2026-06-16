@@ -36,6 +36,10 @@ export default {
   noSubfolders: '此处没有子文件夹',
   gitTag: 'git',
   browseHint: '点击文件夹进入，再点"打开此文件夹"将其添加为工作区。',
+  // View group split controls
+  splitRight: '向右分屏',
+  splitDown: '向下分屏',
+  closeGroup: '关闭此分屏',
   // Attention marker
   attentionTitle: '{count} 项待处理',
   // Per-session pending tags (sidebar)

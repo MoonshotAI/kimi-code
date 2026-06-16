@@ -29,6 +29,7 @@ export default {
   tabTerminal: 'terminal',
   tabPreview: 'preview',
   tabBtw: 'Side chat',
+  tablistLabel: 'Workspace views',
   noSessions: 'No conversations yet',
   showMore: 'Show more ({count})',
 } as const;

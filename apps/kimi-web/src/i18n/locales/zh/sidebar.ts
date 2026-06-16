@@ -29,6 +29,7 @@ export default {
   tabTerminal: '终端',
   tabPreview: '预览',
   tabBtw: '侧边聊天',
+  tablistLabel: '工作区视图',
   noSessions: '暂无对话',
   showMore: '展开更多 ({count})',
 };

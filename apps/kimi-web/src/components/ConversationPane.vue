@@ -1331,6 +1331,7 @@ onUnmounted(() => {
       <template #group="{ group }">
         <ViewGroup
           :active="group.active"
+          :group-id="group.id"
           :changes-count="changesCount"
           :can-close="paneLayout.layout.value.type !== 'group'"
           :has-preview="group.views.includes('preview')"

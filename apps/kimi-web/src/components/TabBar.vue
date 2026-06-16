@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/TabBar.vue -->
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { PaneKey } from '../types';
 
@@ -10,6 +10,8 @@ const props = defineProps<{
   mobile?: boolean;
   hasPreview?: boolean;
   hasBtw?: boolean;
+  /** Id of the tabpanel these tabs control (enables aria-controls / tab ids). */
+  panelId?: string;
 }>();
 const emit = defineEmits<{ select: [pane: PaneKey] }>();
 
@@ -27,21 +29,67 @@ const tabs = computed(() => {
   if (props.hasPreview) extra.push({ key: 'preview', labelKey: 'sidebar.tabPreview' });
   return [...BASE_TABS, ...extra];
 });
+
+function tabId(key: PaneKey): string | undefined {
+  return props.panelId ? `${props.panelId}__${key}` : undefined;
+}
+
+const tablistEl = ref<HTMLElement | null>(null);
+
+function focusTab(key: PaneKey): void {
+  void nextTick(() => {
+    tablistEl.value?.querySelector<HTMLElement>(`[data-tab-key="${key}"]`)?.focus();
+  });
+}
+
+// Roving-tabindex keyboard navigation: Left/Right move (and activate) the
+// adjacent tab, wrapping at the ends; Home/End jump to the first/last.
+function onKeydown(event: KeyboardEvent): void {
+  const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+  if (!keys.includes(event.key)) return;
+  event.preventDefault();
+  const list = tabs.value;
+  if (list.length === 0) return;
+  const cur = Math.max(0, list.findIndex((tb) => tb.key === props.active));
+  let next = cur;
+  if (event.key === 'ArrowLeft') next = (cur - 1 + list.length) % list.length;
+  else if (event.key === 'ArrowRight') next = (cur + 1) % list.length;
+  else if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = list.length - 1;
+  const tab = list[next];
+  if (!tab) return;
+  if (tab.key !== props.active) emit('select', tab.key);
+  focusTab(tab.key);
+}
 </script>
 
 <template>
   <div class="tabs" :class="{ mobile }">
-    <div class="tabs-left">
-      <div
+    <div
+      ref="tablistEl"
+      class="tabs-left"
+      role="tablist"
+      :aria-label="t('sidebar.tablistLabel')"
+      :aria-orientation="'horizontal'"
+      @keydown="onKeydown"
+    >
+      <button
         v-for="tab in tabs"
         :key="tab.key"
+        :id="tabId(tab.key)"
+        type="button"
         class="tb"
+        role="tab"
+        :data-tab-key="tab.key"
         :class="{ on: active === tab.key }"
+        :aria-selected="active === tab.key"
+        :aria-controls="panelId || undefined"
+        :tabindex="active === tab.key ? 0 : -1"
         @click="emit('select', tab.key)"
       >
         {{ t(tab.labelKey) }}
-        <span v-if="tab.key === 'files' && (changesCount ?? 0) > 0" class="d"></span>
-      </div>
+        <span v-if="tab.key === 'files' && (changesCount ?? 0) > 0" class="d" aria-hidden="true"></span>
+      </button>
     </div>
   </div>
 </template>
@@ -60,17 +108,27 @@ const tabs = computed(() => {
   align-items: stretch;
 }
 .tb {
+  appearance: none;
+  font: inherit;
+  box-sizing: border-box;
   padding: 0 14px;
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: calc(var(--ui-font-size) - 1.5px);
   color: var(--dim);
+  background: transparent;
+  border: none;
   border-right: 1px solid var(--line);
   cursor: pointer;
 }
 .tb:hover {
   background: var(--panel2);
+}
+.tb:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+  border-radius: 2px;
 }
 .tb.on {
   /* Merge the active tab into the content surface below (dark-mode safe). */
@@ -88,6 +146,9 @@ const tabs = computed(() => {
 .tabs.mobile {
   height: 46px;
   background: var(--bg);
+}
+.tabs.mobile .tabs-left {
+  flex: 1;
 }
 .tabs.mobile .tb {
   flex: 1;

@@ -36,6 +36,10 @@ export default {
   noSubfolders: 'No subfolders here',
   gitTag: 'git',
   browseHint: 'Click a folder to enter it, then "Open this folder" to add it as a workspace.',
+  // View group split controls
+  splitRight: 'Split right',
+  splitDown: 'Split down',
+  closeGroup: 'Close this pane',
   // Attention marker
   attentionTitle: '{count} item needs your attention | {count} items need your attention',
   // Per-session pending tags (sidebar)
