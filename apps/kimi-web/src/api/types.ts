@@ -395,6 +395,11 @@ export type AppEvent =
   | { type: 'messageCreated'; message: AppMessage }
   | { type: 'messageUpdated'; sessionId: string; messageId: string; content: AppMessageContent[]; status: 'pending' | 'completed' | 'error' }
   | { type: 'assistantDelta'; sessionId: string; messageId: string; contentIndex: number; delta: { text?: string; thinking?: string } }
+  // Side-channel / non-main-agent streaming: carries text/thinking deltas for a
+  // specific agent (e.g. a BTW side chat) without folding them into the parent
+  // transcript. The web layer routes these to the side-chat panel.
+  | { type: 'agentDelta'; sessionId: string; agentId: string; delta: { text?: string; thinking?: string } }
+  | { type: 'agentTurnEnded'; sessionId: string; agentId: string; reason?: string }
   | { type: 'toolOutput'; sessionId: string; toolCallId: string; outputChunk: string; stream: 'stdout' | 'stderr' }
   | { type: 'approvalRequested'; sessionId: string; approval: AppApprovalRequest }
   | { type: 'approvalResolved'; sessionId: string; approvalId: string; decision: ApprovalDecision; resolvedAt: string }
@@ -486,6 +491,12 @@ export interface KimiEventConnection {
   terminalResize(sessionId: string, terminalId: string, cols: number, rows: number): void;
   terminalDetach(sessionId: string, terminalId: string): void;
   terminalClose(sessionId: string, terminalId: string): void;
+  /**
+   * Mark an agent as a side-channel (e.g. BTW side chat). The client-side
+   * projector will then emit its text/thinking deltas as agent-scoped events
+   * instead of dropping them like background subagents.
+   */
+  markSideChannelAgent(agentId: string): void;
   close(): void;
 }
 

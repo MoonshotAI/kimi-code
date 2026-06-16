@@ -81,6 +81,8 @@ describe('ConversationPane docked interrupt cards', () => {
     const wrapper = mountPane({});
 
     expect(wrapper.find('composer-stub').exists()).toBe(true);
+    expect(wrapper.find('.chat-layout > .chat-dock').exists()).toBe(true);
+    expect(wrapper.find('.chat-scroll > .chat-dock').exists()).toBe(false);
 
     (wrapper.vm as unknown as { switchTab(tab: string): void }).switchTab('files');
     await nextTick();
@@ -124,6 +126,23 @@ describe('ConversationPane docked interrupt cards', () => {
   });
 });
 
+describe('ConversationPane BTW tab', () => {
+  it('renders the side-chat panel inside the BTW tab and emits close', async () => {
+    const wrapper = mountPane({ sideChatVisible: true, sideChatTurns: [] });
+
+    (wrapper.vm as unknown as { switchTab(tab: string): void }).switchTab('btw');
+    await nextTick();
+
+    const panel = wrapper.findComponent({ name: 'SideChatPanel' });
+    expect(panel.exists()).toBe(true);
+
+    panel.vm.$emit('close');
+    await nextTick();
+
+    expect(wrapper.emitted('closeSideChat')).toHaveLength(1);
+  });
+});
+
 describe('ConversationPane dock work panel', () => {
   it('opens bash, subagent, and todos from the dock chips', async () => {
     const tasks: TaskItem[] = [
@@ -149,6 +168,12 @@ describe('ConversationPane dock work panel', () => {
 
     const chips = wrapper.findAll('.dock-work-chip');
     expect(chips).toHaveLength(3);
+    for (const chip of chips) {
+      expect(chip.find('.dw-icon').exists()).toBe(true);
+      expect(chip.find('.dw-label').exists()).toBe(true);
+      expect(chip.find('.dw-metric').exists()).toBe(true);
+    }
+    expect(chips[2]!.find('.dw-metric').text()).toBe('0/1');
 
     await chips[0]!.trigger('click');
     expect(wrapper.find('.dock-work-panel').exists()).toBe(true);

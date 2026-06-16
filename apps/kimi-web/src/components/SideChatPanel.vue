@@ -6,6 +6,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ChatPane from './ChatPane.vue';
+import MoonSpinner from './MoonSpinner.vue';
 import type { ChatTurn } from '../types';
 
 const props = defineProps<{
@@ -61,6 +62,14 @@ watch(scrollKey, async () => {
   scrollToBottom();
 });
 
+/** Show a lightweight "waiting for first token" indicator from the moment the
+    user sends a prompt until the assistant's first message appears. */
+const showLoading = computed(() => {
+  if (!props.sending) return false;
+  const last = props.turns.at(-1);
+  return last?.role === 'user';
+});
+
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
@@ -78,14 +87,6 @@ function autosize(): void {
 
 <template>
   <div class="sc">
-    <div class="sc-header">
-      <span class="sc-title">{{ t('sideChat.title') }}</span>
-      <span class="sc-sub">{{ t('sideChat.subtitle') }}</span>
-      <button type="button" class="sc-close" :title="t('thinking.close')" @click="emit('close')">
-        <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
-      </button>
-    </div>
-
     <div ref="bodyRef" class="sc-body">
       <div v-if="turns.length === 0" class="sc-empty">{{ t('sideChat.empty') }}</div>
       <ChatPane
@@ -96,6 +97,9 @@ function autosize(): void {
         :sending="sending"
         bubble
       />
+      <div v-if="showLoading" class="sc-loading" aria-hidden="true">
+        <MoonSpinner />
+      </div>
     </div>
 
     <div class="sc-composer">
@@ -123,49 +127,6 @@ function autosize(): void {
   min-height: 0;
   background: var(--bg);
 }
-.sc-header {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: var(--panel-head-h, 32px);
-  padding: 0 6px 0 12px;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
-.sc-title {
-  flex: none;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--ink);
-}
-.sc-sub {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  color: var(--muted);
-}
-.sc-close {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  background: none;
-  border: none;
-  border-radius: 5px;
-  color: var(--muted);
-  cursor: pointer;
-}
-.sc-close:hover { background: var(--hover); color: var(--ink); }
-
 .sc-body {
   flex: 1;
   min-height: 0;
@@ -216,4 +177,17 @@ function autosize(): void {
 }
 .sc-send:disabled { opacity: 0.4; cursor: default; }
 .sc-send:not(:disabled):hover { background: var(--blue2); }
+
+/* Send → first-token loading indicator (replaces ChatPane's working moon). */
+.sc-loading {
+  flex: none;
+  padding: 8px 12px 12px;
+}
+
+/* The side chat reuses ChatPane, but we don't want its working moon/spinner
+   placeholder here — the tab already shows activity via the parent layout. */
+.sc-body :deep(.sending-placeholder),
+.sc-body :deep(.sending-line) {
+  display: none;
+}
 </style>

@@ -8,6 +8,8 @@ defineProps<{
   canClose?: boolean;
   /** This group currently hosts a preview pane → show its 'preview' tab. */
   hasPreview?: boolean;
+  /** This group currently hosts a BTW side chat → show its 'btw' tab. */
+  hasBtw?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -24,6 +26,7 @@ const emit = defineEmits<{
         :active="active"
         :changes-count="changesCount"
         :has-preview="hasPreview"
+        :has-btw="hasBtw"
         @select="emit('select', $event)"
       />
       <div class="view-actions">

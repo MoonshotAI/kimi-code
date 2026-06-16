@@ -44,6 +44,7 @@ async function setup() {
     unsubscribe: vi.fn(),
     bindNextPromptId: vi.fn(),
     seedSnapshot: vi.fn(),
+    markSideChannelAgent: vi.fn(),
     abort: vi.fn(),
     close: vi.fn(),
   };
@@ -91,6 +92,7 @@ async function setup() {
   return {
     api,
     client: useKimiWebClient(),
+    eventConn,
     getHandlers: () => {
       if (!handlers) throw new Error('connectEvents was not called');
       return handlers;
@@ -106,13 +108,15 @@ afterEach(() => {
 
 describe('side chat (BTW)', () => {
   it('opens a side-channel agent, sends the question, and echoes it', async () => {
-    const { api, client, getHandlers } = await setup();
+    const { api, client, eventConn, getHandlers } = await setup();
     await client.createSession('/repo');
 
     await client.openSideChat('what does this do?');
 
-    // A BTW agent is started under the active session.
+    // A BTW agent is started under the active session and marked as side-channel
+    // so its streamed text deltas are not dropped like background subagents.
     expect(api.startBtw).toHaveBeenCalledWith('sess_1');
+    expect(eventConn.markSideChannelAgent).toHaveBeenCalledWith('agent_btw');
     // The question goes to the SAME session, scoped to the BTW agent.
     const call = (api.submitPrompt as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(call[0]).toBe('sess_1');
@@ -141,6 +145,77 @@ describe('side chat (BTW)', () => {
 
     const assistantTurns = client.sideChatTurns.value.filter((t) => t.role === 'assistant');
     expect(assistantTurns.map((t) => t.text)).toEqual(['It checks the diff.']);
+  });
+
+  it('keeps BTW user messages out of the main conversation transcript', async () => {
+    const { api, client, getHandlers } = await setup();
+    await client.createSession('/repo');
+
+    await client.openSideChat('what does this do?');
+
+    const submitResult = await (api.submitPrompt as ReturnType<typeof vi.fn>).mock.results[0]!.value;
+    getHandlers().onEvent(
+      {
+        type: 'messageCreated',
+        message: {
+          id: submitResult.userMessageId,
+          sessionId: 'sess_1',
+          role: 'user',
+          content: [{ type: 'text', text: 'what does this do?' }],
+          createdAt: now,
+          promptId: submitResult.promptId,
+        },
+      },
+      { sessionId: 'sess_1', seq: 2 },
+    );
+
+    // The side chat still shows the user question.
+    expect(client.sideChatTurns.value.filter((t) => t.role === 'user').map((t) => t.text)).toEqual([
+      'what does this do?',
+    ]);
+    // But it must not leak into the main session transcript.
+    expect(client.turns.value.filter((t) => t.role === 'user').map((t) => t.text)).toEqual([]);
+  });
+
+  it('renders side-channel agent text deltas as the assistant response', async () => {
+    const { client, getHandlers } = await setup();
+    await client.createSession('/repo');
+
+    await client.openSideChat('what does this do?');
+
+    getHandlers().onEvent(
+      {
+        type: 'agentDelta',
+        sessionId: 'sess_1',
+        agentId: 'agent_btw',
+        delta: { text: 'It checks ' },
+      },
+      { sessionId: 'sess_1', seq: 2 },
+    );
+    getHandlers().onEvent(
+      {
+        type: 'agentDelta',
+        sessionId: 'sess_1',
+        agentId: 'agent_btw',
+        delta: { text: 'the diff.' },
+      },
+      { sessionId: 'sess_1', seq: 3 },
+    );
+
+    const assistantTurns = client.sideChatTurns.value.filter((t) => t.role === 'assistant');
+    expect(assistantTurns.map((t) => t.text)).toEqual(['It checks the diff.']);
+    expect(client.sideChatRunning.value).toBe(true);
+
+    getHandlers().onEvent(
+      {
+        type: 'agentTurnEnded',
+        sessionId: 'sess_1',
+        agentId: 'agent_btw',
+      },
+      { sessionId: 'sess_1', seq: 4 },
+    );
+
+    expect(client.sideChatRunning.value).toBe(false);
   });
 
   it('does not create a child session for the sidebar', async () => {

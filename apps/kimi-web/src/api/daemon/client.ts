@@ -1330,6 +1330,9 @@ export class DaemonKimiWebApi implements KimiWebApi {
       terminalClose(sessionId: string, terminalId: string): void {
         socket.terminalClose(sessionId, terminalId);
       },
+      markSideChannelAgent(agentId: string): void {
+        projector.markSideChannelAgent(agentId);
+      },
       close(): void {
         socket.close();
       },

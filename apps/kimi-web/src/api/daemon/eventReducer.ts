@@ -537,6 +537,12 @@ export function reduceAppEvent(
     }
 
     // -------------------------------------------------------------------------
+    // Agent-scoped side-channel events (e.g. BTW side chat) are consumed by the
+    // web layer, not the session reducer. Advance seq silently.
+    case 'agentDelta':
+    case 'agentTurnEnded':
+      break;
+
     case 'unknown': {
       // Distinguish no-op known events (sentinel _noop) from agent errors/warnings
       // and truly unknown events.

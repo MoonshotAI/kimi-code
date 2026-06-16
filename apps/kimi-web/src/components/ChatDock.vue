@@ -1,0 +1,445 @@
+<!-- ChatDock.vue -->
+<!-- Bottom dock that belongs to the chat tab: goal strip, running-task chips, -->
+<!-- pending question/approval cards, and the composer. Only rendered inside a -->
+<!-- chat-pane group so it never leaks into files/tasks/preview/btw panes. -->
+<script setup lang="ts">
+import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
+import type { ActivationBadges, ApprovalBlock, ConversationStatus, PermissionMode, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../types';
+import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../api/types';
+import type { FileItem } from './MentionMenu.vue';
+import Composer from './Composer.vue';
+import GoalStrip from './GoalStrip.vue';
+import QuestionCard from './QuestionCard.vue';
+import ApprovalCard from './ApprovalCard.vue';
+import TasksPane from './TasksPane.vue';
+import TodoCard from './TodoCard.vue';
+
+const props = defineProps<{
+  sessionId?: string;
+  running?: boolean;
+  queued?: QueuedPromptView[];
+  searchFiles?: (q: string) => Promise<FileItem[]>;
+  uploadImage?: (file: Blob, name?: string) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
+  status: ConversationStatus;
+  thinking?: ThinkingLevel;
+  planMode?: boolean;
+  swarmMode?: boolean;
+  goalMode?: boolean;
+  activationBadges?: ActivationBadges;
+  models?: AppModel[];
+  skills?: AppSkill[];
+  goal?: AppGoal | null;
+  goalExpandSignal?: number;
+  dockPanel: 'bash' | 'subagent' | 'todos' | null;
+  bashTasks: TaskItem[];
+  subagentTasks: TaskItem[];
+  bashRunning: number;
+  subagentRunning: number;
+  todoDoneCount: number;
+  hasDockWork: boolean;
+  todos?: TodoView[];
+  pendingQuestion?: UIQuestion;
+  pendingApproval?: { approvalId: string; block: ApprovalBlock; agentName?: string };
+  mobile?: boolean;
+}>();
+
+const emit = defineEmits<{
+  submit: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  command: [cmd: string];
+  interrupt: [];
+  unqueue: [index: number];
+  editQueued: [index: number];
+  setPermission: [mode: PermissionMode];
+  setThinking: [level: ThinkingLevel];
+  togglePlan: [];
+  toggleSwarm: [];
+  toggleGoal: [];
+  openBtw: [];
+  createGoal: [objective: string];
+  controlGoal: [action: 'pause' | 'resume' | 'cancel'];
+  focusGoal: [];
+  focusSwarm: [];
+  compact: [];
+  pickModel: [];
+  selectModel: [modelId: string];
+  answer: [questionId: string, response: QuestionResponse];
+  dismiss: [questionId: string];
+  approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string }];
+  cancelTask: [taskId: string];
+  'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos'];
+  'close-dock-panel': [];
+}>();
+
+const { t } = useI18n();
+const composerRef = ref<{ loadForEdit: (value: string) => void } | null>(null);
+
+function loadForEdit(value: string): void {
+  composerRef.value?.loadForEdit(value);
+}
+
+defineExpose({ loadForEdit });
+</script>
+
+<template>
+  <div class="chat-dock" :class="[mobile ? 'align-mobile' : 'align-center']" @click.stop>
+    <Transition name="dock-panel">
+      <div
+        v-if="dockPanel"
+        class="dock-work-panel"
+        @click.stop
+      >
+        <div class="dock-work-head">
+          <span
+            v-if="dockPanel === 'bash'"
+            class="dock-work-tab static"
+          >
+            {{ t('tasks.dockBash') }} · {{ bashRunning }} {{ t('tasks.running') }}
+          </span>
+          <span
+            v-else-if="dockPanel === 'subagent'"
+            class="dock-work-tab static"
+          >
+            {{ t('tasks.dockSubagent') }} · {{ subagentRunning }} {{ t('tasks.running') }}
+          </span>
+          <span
+            v-else-if="dockPanel === 'todos'"
+            class="dock-work-tab static"
+          >
+            {{ t('tasks.dockTodos') }} · {{ todoDoneCount }}/{{ todos?.length ?? 0 }}
+          </span>
+          <button type="button" class="dock-work-close" :aria-label="t('tasks.closePanel')" @click="emit('close-dock-panel')">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+              <path d="M2 2l8 8M10 2l-8 8" />
+            </svg>
+          </button>
+        </div>
+        <div class="dock-work-body">
+          <TasksPane
+            v-if="dockPanel === 'bash'"
+            :tasks="bashTasks"
+            @cancel="emit('cancelTask', $event)"
+          />
+          <TasksPane
+            v-else-if="dockPanel === 'subagent'"
+            :tasks="subagentTasks"
+            @cancel="emit('cancelTask', $event)"
+          />
+          <TodoCard
+            v-else
+            :todos="todos ?? []"
+            inline
+          />
+        </div>
+      </div>
+    </Transition>
+
+    <GoalStrip
+      v-if="goal"
+      :goal="goal"
+      :force-expanded="goalExpandSignal"
+      @control-goal="emit('controlGoal', $event)"
+    />
+    <div v-if="hasDockWork" class="dock-workbar">
+      <button
+        v-if="bashTasks.length > 0"
+        type="button"
+        class="dock-work-chip"
+        :class="{ on: dockPanel === 'bash' }"
+        :aria-pressed="dockPanel === 'bash'"
+        @click="emit('toggle-dock-panel', 'bash')"
+      >
+        <span class="dw-icon" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="8" cy="8" r="5.5" />
+            <path d="M8 4.5V8l2.5 1.5" />
+          </svg>
+        </span>
+        <span class="dw-label">{{ t('tasks.dockBash') }}</span>
+        <span class="dw-metric"><b>{{ bashTasks.length }}</b></span>
+      </button>
+      <button
+        v-if="subagentTasks.length > 0"
+        type="button"
+        class="dock-work-chip"
+        :class="{ on: dockPanel === 'subagent' }"
+        :aria-pressed="dockPanel === 'subagent'"
+        @click="emit('toggle-dock-panel', 'subagent')"
+      >
+        <span class="dw-icon" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 2l1.5 4.5L14 8l-4.5 1.5L8 14l-1.5-4.5L2 8l4.5-1.5z" />
+          </svg>
+        </span>
+        <span class="dw-label">{{ t('tasks.dockSubagent') }}</span>
+        <span class="dw-metric"><b>{{ subagentTasks.length }}</b></span>
+      </button>
+      <button
+        v-if="(todos?.length ?? 0) > 0"
+        type="button"
+        class="dock-work-chip"
+        :class="{ on: dockPanel === 'todos' }"
+        :aria-pressed="dockPanel === 'todos'"
+        @click="emit('toggle-dock-panel', 'todos')"
+      >
+        <span class="dw-icon" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M3 4.5l1.5 1.5L7 3.5" />
+            <path d="M8.5 5h4" />
+            <path d="M3 11l1.5 1.5L7 10" />
+            <path d="M8.5 11.5h4" />
+          </svg>
+        </span>
+        <span class="dw-label">{{ t('tasks.dockTodos') }}</span>
+        <span class="dw-metric"><b>{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</b></span>
+      </button>
+    </div>
+
+    <QuestionCard
+      v-if="pendingQuestion"
+      :key="pendingQuestion.questionId"
+      :question="pendingQuestion"
+      @answer="(qid, resp) => emit('answer', qid, resp)"
+      @dismiss="emit('dismiss', $event)"
+    />
+    <ApprovalCard
+      v-else-if="pendingApproval"
+      :key="pendingApproval.approvalId"
+      class="dock-approval"
+      :block="pendingApproval.block"
+      :agent-name="pendingApproval.agentName"
+      @decide="emit('approval', pendingApproval!.approvalId, $event)"
+    />
+    <Composer
+      v-else
+      ref="composerRef"
+      :session-id="sessionId"
+      :running="running"
+      :queued="queued"
+      :search-files="searchFiles"
+      :upload-image="uploadImage"
+      :status="status"
+      :thinking="thinking"
+      :plan-mode="planMode"
+      :swarm-mode="swarmMode"
+      :goal-mode="goalMode"
+      :activation-badges="activationBadges"
+      :models="models"
+      :skills="skills"
+      @submit="emit('submit', $event)"
+      @steer="emit('steer', $event)"
+      @command="emit('command', $event)"
+      @interrupt="emit('interrupt')"
+      @unqueue="emit('unqueue', $event)"
+      @edit-queued="emit('editQueued', $event)"
+      @set-permission="emit('setPermission', $event)"
+      @set-thinking="emit('setThinking', $event)"
+      @toggle-plan="emit('togglePlan')"
+      @toggle-swarm="emit('toggleSwarm')"
+      @toggle-goal="emit('toggleGoal')"
+      @open-btw="emit('openBtw')"
+      @create-goal="emit('createGoal', $event)"
+      @control-goal="emit('controlGoal', $event)"
+      @focus-goal="emit('focusGoal')"
+      @focus-swarm="emit('focusSwarm')"
+      @compact="emit('compact')"
+      @pick-model="emit('pickModel')"
+      @select-model="emit('selectModel', $event)"
+    />
+  </div>
+</template>
+
+<style scoped>
+.chat-dock {
+  width: 100%;
+  max-width: var(--read-max);
+  flex: none;
+  position: relative;
+  background: var(--bg);
+  z-index: 10;
+}
+.chat-dock.align-center { margin-left: auto; margin-right: auto; }
+.chat-dock.align-left { margin-left: 0; margin-right: auto; }
+.chat-dock.align-mobile { max-width: none; }
+
+.dock-work-panel {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 100%;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  margin-bottom: 7px;
+  max-height: min(360px, 50vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dock-work-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.dock-work-tab {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+.dock-work-tab.static {
+  background: transparent;
+  border-color: transparent;
+  padding-left: 2px;
+}
+.dock-work-close {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.dock-work-close:hover {
+  background: var(--hover-bg);
+  color: var(--ink);
+}
+.dock-work-body {
+  padding: 8px 10px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.dock-work-body :deep(.taskspane) {
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+.dock-work-body :deep(.taskspane .tp-head) {
+  display: none;
+}
+.dock-work-body :deep(.todo-card.tab-mode) {
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+.dock-work-body :deep(.todo-card.tab-mode .tc-list) {
+  max-height: none;
+}
+
+.dock-workbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 8px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.dock-workbar::-webkit-scrollbar {
+  display: none;
+}
+.dock-work-chip {
+  display: grid;
+  grid-template-columns: 16px minmax(0, max-content) max-content;
+  align-items: center;
+  column-gap: 7px;
+  flex: none;
+  min-height: 28px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dock-work-chip:hover,
+.dock-work-chip.on {
+  background: var(--hover-bg);
+  color: var(--ink);
+}
+.dw-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--muted);
+}
+.dw-icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.dock-work-chip.on .dw-icon,
+.dock-work-chip:hover .dw-icon {
+  color: currentColor;
+}
+.dw-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dw-metric {
+  justify-self: end;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.dw-metric b {
+  font-weight: 600;
+  color: var(--ink);
+}
+.dock-work-chip.on .dw-metric,
+.dock-work-chip:hover .dw-metric {
+  color: currentColor;
+}
+
+.dock-approval {
+  margin-top: 8px;
+}
+
+@media (max-width: 640px) {
+  .chat-dock.align-mobile {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  .dock-work-panel {
+    left: 10px;
+    right: 10px;
+  }
+  .dock-workbar {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+}
+
+.chat-dock:not(.align-mobile) :deep(.composer) {
+  padding-bottom: 14px;
+}
+
+.dock-panel-enter-active,
+.dock-panel-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+.dock-panel-enter-from,
+.dock-panel-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+</style>

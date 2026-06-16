@@ -38,7 +38,9 @@ function isPaneKey(value: unknown): value is PaneKey {
     value === 'files' ||
     value === 'tasks' ||
     value === 'todo' ||
-    value === 'preview'
+    value === 'terminal' ||
+    value === 'preview' ||
+    value === 'btw'
   );
 }
 
@@ -60,6 +62,12 @@ function firstGroupId(node: PaneLayout): string | null {
 function hasPreviewGroup(node: PaneLayout): boolean {
   if (node.type === 'group') return node.views.includes('preview');
   return node.children.some(hasPreviewGroup);
+}
+
+/** Whether any group already hosts the 'btw' view. */
+function hasBtwGroup(node: PaneLayout): boolean {
+  if (node.type === 'group') return node.views.includes('btw');
+  return node.children.some(hasBtwGroup);
 }
 
 function normalizeLayout(raw: unknown): PaneLayout | null {
@@ -161,6 +169,18 @@ export function usePaneLayout() {
     })));
   }
 
+  function removeView(groupId: string, pane: PaneKey): void {
+    commit(updateGroup(layout.value, groupId, (group) => {
+      if (!group.views.includes(pane)) return group;
+      const views = group.views.filter((v) => v !== pane);
+      return {
+        ...group,
+        views,
+        active: group.active === pane ? (views[0] ?? 'chat') : group.active,
+      };
+    }));
+  }
+
   function split(groupId: string, dir: 'row' | 'col'): void {
     commit(updateGroup(layout.value, groupId, (group) => ({
       type: 'split',
@@ -246,7 +266,61 @@ export function usePaneLayout() {
     commit(next);
   }
 
-  return { layout, setActive, split, close, resize, reset, openPreview, closePreview };
+  /** Open (or focus) a 'btw' side-chat pane as a split next to the main group.
+      Like preview, it lives in its own transient group and is not persisted. */
+  function openBtw(): void {
+    if (hasBtwGroup(layout.value)) {
+      commit(
+        mapGroups(layout.value, (group) =>
+          group.views.includes('btw') ? { ...group, active: 'btw' } : group,
+        ),
+      );
+      return;
+    }
+    const targetId = firstGroupId(layout.value);
+    if (!targetId) {
+      commit({ type: 'group', id: nextId('group'), views: ['btw'], active: 'btw' });
+      return;
+    }
+    commit(
+      updateGroup(layout.value, targetId, (group) => ({
+        type: 'split',
+        id: nextId('split'),
+        dir: 'row',
+        children: [group, { type: 'group', id: nextId('group'), views: ['btw'], active: 'btw' }],
+        sizes: [1, 1],
+      })),
+    );
+  }
+
+  /** Close any btw pane: a btw-only group collapses its split; a mixed group
+      just switches away from 'btw'. */
+  function closeBtw(): void {
+    if (!hasBtwGroup(layout.value)) return;
+    let next = layout.value;
+    const btwOnlyIds: string[] = [];
+    function collect(node: PaneLayout): void {
+      if (node.type === 'group') {
+        if (node.views.length === 1 && node.views[0] === 'btw') btwOnlyIds.push(node.id);
+      } else {
+        node.children.forEach(collect);
+      }
+    }
+    collect(next);
+    for (const id of btwOnlyIds) next = removeGroup(next, id);
+    next = mapGroups(next, (group) =>
+      group.views.includes('btw')
+        ? {
+            ...group,
+            views: group.views.filter((v) => v !== 'btw'),
+            active: group.active === 'btw' ? 'chat' : group.active,
+          }
+        : group,
+    );
+    commit(next);
+  }
+
+  return { layout, setActive, removeView, split, close, resize, reset, openPreview, closePreview, openBtw, closeBtw };
 }
 
 /** Apply `fn` to every group in the tree. */

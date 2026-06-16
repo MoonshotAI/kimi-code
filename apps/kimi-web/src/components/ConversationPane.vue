@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/ConversationPane.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivityState, ActivationBadges, ApprovalBlock, ChatTurn, ConnectionState, ConversationStatus, DiffViewLine, FilePreviewRequest, PaneKey, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../types';
 import type { AppGoal, AppModel, AppSkill, FsEntry, QuestionResponse, ThinkingLevel } from '../api/types';
@@ -20,13 +20,11 @@ import FileTree from './FileTree.vue';
 import FilePreview from './FilePreview.vue';
 import Composer from './Composer.vue';
 import Terminal from './Terminal.vue';
-import QuestionCard from './QuestionCard.vue';
-import ApprovalCard from './ApprovalCard.vue';
 import SwarmCard from './SwarmCard.vue';
-import GoalStrip from './GoalStrip.vue';
 import ViewGroup from './ViewGroup.vue';
 import SplitLayout from './SplitLayout.vue';
 import SideChatPanel from './SideChatPanel.vue';
+import ChatDock from './ChatDock.vue';
 import { getVisibleWorkspaces } from '../lib/workspacePicker';
 
 const props = defineProps<{
@@ -252,24 +250,25 @@ function closePreviewPane(): void {
   emit('closePreview');
 }
 
-/** Close the BTW side-chat tab and tell App to clear the side-chat state. */
-function closeSideChatPane(): void {
-  emit('closeSideChat');
-  if (active.value === 'btw') active.value = 'chat';
-  removeBtwFromAllGroups();
+/** Open the BTW side-chat as a split pane (mobile falls back to a tab). */
+function openBtwPane(): void {
+  if (props.mobile) {
+    switchTab('btw');
+    return;
+  }
+  paneLayout.openBtw();
 }
 
-function removeBtwFromAllGroups(): void {
-  const ids: string[] = [];
-  function collect(node: PaneLayout): void {
-    if (node.type === 'group') {
-      if (node.views.includes('btw')) ids.push(node.id);
-    } else {
-      node.children.forEach(collect);
-    }
-  }
-  collect(paneLayout.layout.value);
-  for (const id of ids) paneLayout.removeView(id, 'btw');
+/** Remove the BTW pane from the layout without touching App state. */
+function cleanupBtwPane(): void {
+  paneLayout.closeBtw();
+  if (active.value === 'btw') active.value = 'chat';
+}
+
+/** Close the BTW side-chat pane and tell App to clear the side-chat state. */
+function closeSideChatPane(): void {
+  emit('closeSideChat');
+  cleanupBtwPane();
 }
 
 // When App clears the preview (e.g. on a session switch), drop the now-empty
@@ -283,14 +282,14 @@ watch(
 );
 
 // If the side chat is closed (or the active session switches to one without a
-// side chat), make sure no pane group is stuck on the BTW tab.
+// side chat), make sure no pane group is stuck on the BTW pane.
 watch(
   () => props.sideChatVisible,
   (visible) => {
-    if (!visible) closeSideChatPane();
+    if (!visible) cleanupBtwPane();
   },
 );
-defineExpose({ switchTab, loadComposerForEdit, openPreviewPane, openWorkspaceFileInFiles });
+defineExpose({ switchTab, loadComposerForEdit, openPreviewPane, openWorkspaceFileInFiles, openBtwPane });
 
 function firstGroupId(node: PaneLayout): string | undefined {
   if (node.type === 'group') return node.id;
@@ -298,7 +297,12 @@ function firstGroupId(node: PaneLayout): string | undefined {
 }
 
 function selectGroupPane(group: PaneGroup, pane: PaneKey): void {
-  active.value = pane;
+  // Only update the top-level/mobile active tab for real conversation tabs.
+  // Transient side panes (preview / btw) are split groups and should not steal
+  // the composer / mobile tab state.
+  if (pane !== 'preview' && pane !== 'btw') {
+    active.value = pane;
+  }
   paneLayout.setActive(group.id, pane);
 }
 
@@ -406,7 +410,6 @@ const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.statu
 const hasDockWork = computed(() => props.tasks.length > 0 || (props.todos?.length ?? 0) > 0);
 const dockPanel = ref<'bash' | 'subagent' | 'todos' | null>(null);
 const changesCount = computed(() => (props.gitInfo ? props.changes?.length ?? 0 : 0));
-const dockVisible = computed(() => active.value === 'chat' && !(props.turns.length === 0 && !props.sessionLoading));
 
 function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos'): void {
   dockPanel.value = dockPanel.value === panel ? null : panel;
@@ -684,6 +687,106 @@ function defaultLoadDir(): Promise<FsEntry[]> {
 
 const panesRef = ref<HTMLElement | null>(null);
 const dockRef = ref<HTMLElement | null>(null);
+type ComposerHandle = { loadForEdit: (value: string) => void };
+type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
+
+// A desktop split can show more than one chat group at once. Each chat group
+// registers its scroll container + dock here, keyed by group id; the mobile /
+// empty single pane registers under SINGLE_PANE_KEY. resolveScrollTarget() then
+// drives auto-follow at ONE deterministic target — the first chat group in the
+// layout — instead of whichever ref callback happened to fire last (which, in
+// DOM order, is the last group). Extra chat panes render as mirrors and simply
+// don't drive auto-follow.
+const SINGLE_PANE_KEY = '__single__';
+const chatPaneEls = new Map<string, HTMLElement>();
+const chatDockEls = new Map<string, HTMLElement>();
+const chatComposers = new Map<string, ComposerHandle>();
+const paneBinderCache = new Map<string, (el: RefArg) => void>();
+const dockBinderCache = new Map<string, (el: RefArg) => void>();
+
+function toHtmlEl(el: RefArg): HTMLElement | null {
+  if (el instanceof HTMLElement) return el;
+  if (el && '$el' in el && el.$el instanceof HTMLElement) return el.$el;
+  return null;
+}
+
+/** First group whose active tab is chat, depth-first. Determines the follow
+    target when several chat groups are open in a split. */
+function firstChatGroupId(node: PaneLayout): string | null {
+  if (node.type === 'group') return node.active === 'chat' ? node.id : null;
+  for (const child of node.children) {
+    const id = firstChatGroupId(child);
+    if (id) return id;
+  }
+  return null;
+}
+
+// The registered pane that currently owns auto-follow. The single-pane branch
+// (mobile, or the empty composer before a session loads) always wins; otherwise
+// the first chat group in the layout.
+const followPaneKey = computed<string>(() => {
+  if (props.mobile || (props.turns.length === 0 && !props.sessionLoading)) return SINGLE_PANE_KEY;
+  return firstChatGroupId(paneLayout.layout.value) ?? SINGLE_PANE_KEY;
+});
+
+function bindChatPane(key: string, el: RefArg): void {
+  const node = toHtmlEl(el);
+  if (node) chatPaneEls.set(key, node);
+  else chatPaneEls.delete(key);
+  resolveScrollTarget();
+}
+
+function bindChatDock(key: string, el: RefArg): void {
+  const node = toHtmlEl(el);
+  if (node) chatDockEls.set(key, node);
+  else chatDockEls.delete(key);
+  if (el && 'loadForEdit' in el && typeof el.loadForEdit === 'function') {
+    chatComposers.set(key, { loadForEdit: el.loadForEdit.bind(el) });
+  } else {
+    chatComposers.delete(key);
+  }
+  resolveScrollTarget();
+}
+
+// Stable per-key ref callbacks: Vue only invokes them on a real mount/unmount of
+// that group's element (never on every re-render), so the registry stays
+// authoritative regardless of child patch ordering.
+function panesBinderFor(key: string): (el: RefArg) => void {
+  let fn = paneBinderCache.get(key);
+  if (!fn) {
+    fn = (el) => bindChatPane(key, el);
+    paneBinderCache.set(key, fn);
+  }
+  return fn;
+}
+function dockBinderFor(key: string): (el: RefArg) => void {
+  let fn = dockBinderCache.get(key);
+  if (!fn) {
+    fn = (el) => bindChatDock(key, el);
+    dockBinderCache.set(key, fn);
+  }
+  return fn;
+}
+// The mobile / empty single pane + its dock.
+const setPanesRef = panesBinderFor(SINGLE_PANE_KEY);
+const setChatDockRef = dockBinderFor(SINGLE_PANE_KEY);
+
+/** Point panesRef / dockRef / the docked composer at the current follow target,
+    and re-attach the scroll observers + re-pin when the target element changes
+    (tab switch, session reload, or the active chat group changing in a split). */
+function resolveScrollTarget(): void {
+  const key = followPaneKey.value;
+  const pane = chatPaneEls.get(key) ?? null;
+  dockRef.value = chatDockEls.get(key) ?? null;
+  dockedComposerRef.value = chatComposers.get(key) ?? null;
+  if (pane === panesRef.value) return;
+  panesRef.value = pane;
+  rebindScrollObservers();
+  if (active.value === 'chat' && (following.value || hasUserActionFollowLock())) {
+    scheduleStableFollow();
+  }
+}
+
 const following = ref(true);
 const showPill = ref(false);
 
@@ -898,6 +1001,13 @@ watch(dockRef, () => {
   ensureDockObserved();
 });
 
+// The follow target moves when the layout's first chat group changes (a group
+// switched to/from chat, closed, or reordered) without that exact element
+// mounting/unmounting. Re-resolve so panesRef tracks the deterministic target.
+watch(followPaneKey, () => {
+  resolveScrollTarget();
+});
+
 // New session (reload key changes): reset the mobile files drill-down + clear
 // any previously-opened preview, and land at the bottom of the newly-selected
 // session. `following` stays on afterwards, so the markdown/code-highlighting
@@ -974,6 +1084,14 @@ function handleQuestionAnswer(qid: string, resp: QuestionResponse): void {
   emit('answer', qid, resp);
 }
 
+function handleApproval(
+  id: string | undefined,
+  response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string } | undefined,
+): void {
+  if (!id || !response) return;
+  emit('approval', id, response);
+}
+
 // ---------------------------------------------------------------------------
 // Follow triggers.
 // - MutationObserver on the scroller subtree: streaming text, thinking deltas,
@@ -1027,6 +1145,27 @@ function ensureDockObserved(): void {
   if (el) resizeObserver.observe(el);
 }
 
+/** Re-point the Mutation + Resize observers at the CURRENT scroll target. The
+    scroll container is recreated on tab switches and session reloads, and in a
+    desktop split the followed chat group can change — without this, the
+    observers would keep watching a detached or non-followed scroller and stop
+    driving the follow. */
+function rebindScrollObservers(): void {
+  const el = panesRef.value;
+  if (contentObserver) {
+    contentObserver.disconnect();
+    if (el) contentObserver.observe(el, { childList: true, subtree: true, characterData: true });
+  }
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    observedContent = null;
+    observedDock = null;
+    if (el) resizeObserver.observe(el);
+    ensureContentObserved();
+    ensureDockObserved();
+  }
+}
+
 function onContentMutated(): void {
   ensureContentObserved();
   scheduleFollow(true);
@@ -1074,22 +1213,17 @@ function onKeyDown(event: KeyboardEvent): void {
 onMounted(() => {
   // Initial scroll to bottom on first load.
   nextTick(() => {
-    scheduleStableFollow(48);
-    updateTocViewport();
-    if (panesRef.value && typeof MutationObserver === 'function') {
+    if (typeof MutationObserver === 'function') {
       contentObserver = new MutationObserver(onContentMutated);
-      contentObserver.observe(panesRef.value, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
     }
     if (typeof ResizeObserver === 'function') {
       resizeObserver = new ResizeObserver(() => scheduleFollow(false));
-      if (panesRef.value) resizeObserver.observe(panesRef.value);
-      ensureDockObserved();
-      ensureContentObserved();
     }
+    // Attach both observers to whatever the current follow target is (the ref
+    // callbacks already ran during mount and registered it).
+    rebindScrollObservers();
+    scheduleStableFollow(48);
+    updateTocViewport();
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', onVisibilityChange);
       document.addEventListener('keydown', onKeyDown);
@@ -1200,43 +1334,110 @@ onUnmounted(() => {
           :changes-count="changesCount"
           :can-close="paneLayout.layout.value.type !== 'group'"
           :has-preview="group.views.includes('preview')"
-          :has-btw="props.sideChatVisible"
+          :has-btw="group.views.includes('btw')"
           @select="selectGroupPane(group, $event)"
           @split="paneLayout.split(group.id, $event)"
-          @close="group.active === 'preview' ? closePreviewPane() : paneLayout.close(group.id)"
+          @close="group.active === 'preview' ? closePreviewPane() : group.active === 'btw' ? closeSideChatPane() : paneLayout.close(group.id)"
         >
           <div
-            :ref="group.active === 'chat' ? 'panesRef' : undefined"
-            class="panes group-panes"
-            :class="{ 'files-layout': group.active === 'files', 'terminal-layout': group.active === 'terminal' }"
+            class="group-panes"
+            :class="{
+              panes: group.active !== 'chat',
+              'files-layout': group.active === 'files',
+              'terminal-layout': group.active === 'terminal',
+            }"
             @click="closeDockPanel"
-            @scroll.passive="group.active === 'chat' ? onPanesScroll() : undefined"
           >
-            <div v-if="group.active === 'chat'" class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
-              <ChatPane
-                ref="chatPaneRef"
-                :key="fileReloadKey ?? 'no-session'"
-                :turns="turns"
-                :approvals="approvals"
-                :bubble="bubble"
-                :mobile="mobile"
-                :running="running"
-                :sending="sending"
-                :fast-moon="fastMoon"
-                :session-loading="sessionLoading"
-                :compaction="compaction"
-                @open-file="emit('openFile', $event)"
-                @open-media="emit('openMedia', $event)"
-                @copy-conversation-copied="handleCopyConversationCopied"
-                @open-thinking="emit('openThinking', $event)"
-                @open-agent="emit('openAgent', $event)"
-                @open-compaction="emit('openCompaction', $event)"
-                @edit-message="emit('editMessage', $event)"
-              />
-              <div v-if="activeSwarms.length > 0" class="swarm-stack">
-                <SwarmCard v-for="groupItem in activeSwarms" :key="groupItem.id" :group="groupItem" />
+            <template v-if="group.active === 'chat'">
+              <div class="chat-layout">
+                <div
+                  :ref="panesBinderFor(group.id)"
+                  class="panes chat-scroll"
+                  @scroll.passive="onPanesScroll"
+                >
+                  <div class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
+                    <ChatPane
+                      ref="chatPaneRef"
+                      :key="fileReloadKey ?? 'no-session'"
+                      :turns="turns"
+                      :approvals="approvals"
+                      :bubble="bubble"
+                      :mobile="mobile"
+                      :running="running"
+                      :sending="sending"
+                      :fast-moon="fastMoon"
+                      :session-loading="sessionLoading"
+                      :compaction="compaction"
+                      @open-file="emit('openFile', $event)"
+                      @open-media="emit('openMedia', $event)"
+                      @copy-conversation-copied="handleCopyConversationCopied"
+                      @open-thinking="emit('openThinking', $event)"
+                      @open-agent="emit('openAgent', $event)"
+                      @open-compaction="emit('openCompaction', $event)"
+                      @edit-message="emit('editMessage', $event)"
+                    />
+                    <div v-if="activeSwarms.length > 0" class="swarm-stack">
+                      <SwarmCard v-for="groupItem in activeSwarms" :key="groupItem.id" :group="groupItem" />
+                    </div>
+                  </div>
+                </div>
+                <ChatDock
+                  v-if="!(turns.length === 0 && !sessionLoading)"
+                  :ref="dockBinderFor(group.id)"
+                  :session-id="sessionId"
+                  :running="running"
+                  :queued="queued"
+                  :search-files="searchFiles"
+                  :upload-image="uploadImage"
+                  :status="status"
+                  :thinking="thinking"
+                  :plan-mode="planMode"
+                  :swarm-mode="swarmMode"
+                  :goal-mode="goalMode"
+                  :activation-badges="activationBadges"
+                  :models="models"
+                  :skills="skills"
+                  :goal="goal"
+                  :goal-expand-signal="goalExpandSignal"
+                  :dock-panel="dockPanel"
+                  :bash-tasks="bashTasks"
+                  :subagent-tasks="subagentTasks"
+                  :bash-running="bashRunning"
+                  :subagent-running="subagentRunning"
+                  :todo-done-count="todoDoneCount"
+                  :has-dock-work="hasDockWork"
+                  :todos="todos"
+                  :pending-question="pendingQuestion"
+                  :pending-approval="pendingApproval"
+                  :mobile="mobile"
+                  @toggle-dock-panel="toggleDockPanel($event)"
+                  @close-dock-panel="closeDockPanel()"
+                  @answer="handleQuestionAnswer"
+                  @dismiss="emit('dismiss', $event)"
+                  @approval="handleApproval"
+                  @cancel-task="emit('cancelTask', $event)"
+                  @control-goal="emit('controlGoal', $event)"
+                  @submit="handleComposerSubmit"
+                  @steer="emit('steer', $event)"
+                  @command="emit('command', $event)"
+                  @interrupt="handleInterrupt"
+                  @unqueue="emit('unqueue', $event)"
+                  @edit-queued="emit('editQueued', $event)"
+                  @set-permission="emit('setPermission', $event)"
+                  @set-thinking="emit('setThinking', $event)"
+                  @toggle-plan="emit('togglePlan')"
+                  @toggle-swarm="emit('toggleSwarm')"
+                  @toggle-goal="emit('toggleGoal')"
+                  @open-btw="emit('openBtw')"
+                  @create-goal="emit('createGoal', $event)"
+                  @focus-goal="focusGoal"
+                  @focus-swarm="focusSwarm"
+                  @compact="emit('compact')"
+                  @pick-model="emit('pickModel')"
+                  @select-model="emit('selectModel', $event)"
+                />
               </div>
-            </div>
+            </template>
             <TasksPane
               v-else-if="group.active === 'tasks'"
               :tasks="tasks"
@@ -1320,16 +1521,21 @@ onUnmounted(() => {
 
     <div
       v-else
-      ref="panesRef"
       class="panes"
       :class="{ 'files-layout': active === 'files', 'terminal-layout': active === 'terminal' }"
       @click="closeDockPanel"
-      @scroll.passive="onPanesScroll"
     >
       <!-- Chat reading column: constrained to a comfortable max width and
            aligned left or centered within the pane. -->
-      <div v-if="active === 'chat'" class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
-        <template v-if="turns.length === 0 && !sessionLoading">
+      <template v-if="active === 'chat'">
+        <div class="chat-layout">
+          <div
+            :ref="setPanesRef"
+            class="panes chat-scroll"
+            @scroll.passive="onPanesScroll"
+          >
+            <div class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
+              <template v-if="turns.length === 0 && !sessionLoading">
           <!-- Empty session: Composer rendered in the centre of the pane -->
           <div class="empty-spacer" />
           <div class="empty-hint">
@@ -1444,7 +1650,65 @@ onUnmounted(() => {
             <SwarmCard v-for="group in activeSwarms" :key="group.id" :group="group" />
           </div>
         </template>
-      </div>
+            </div>
+          </div>
+          <ChatDock
+            v-if="!(turns.length === 0 && !sessionLoading)"
+            :ref="setChatDockRef"
+            :session-id="sessionId"
+            :running="running"
+            :queued="queued"
+            :search-files="searchFiles"
+            :upload-image="uploadImage"
+            :status="status"
+            :thinking="thinking"
+            :plan-mode="planMode"
+            :swarm-mode="swarmMode"
+            :goal-mode="goalMode"
+            :activation-badges="activationBadges"
+            :models="models"
+            :skills="skills"
+            :goal="goal"
+            :goal-expand-signal="goalExpandSignal"
+            :dock-panel="dockPanel"
+            :bash-tasks="bashTasks"
+            :subagent-tasks="subagentTasks"
+            :bash-running="bashRunning"
+            :subagent-running="subagentRunning"
+            :todo-done-count="todoDoneCount"
+            :has-dock-work="hasDockWork"
+            :todos="todos"
+            :pending-question="pendingQuestion"
+            :pending-approval="pendingApproval"
+            :mobile="mobile"
+            @toggle-dock-panel="toggleDockPanel($event)"
+            @close-dock-panel="closeDockPanel()"
+            @answer="handleQuestionAnswer"
+            @dismiss="emit('dismiss', $event)"
+            @approval="handleApproval"
+            @cancel-task="emit('cancelTask', $event)"
+            @control-goal="emit('controlGoal', $event)"
+            @submit="handleComposerSubmit"
+            @steer="emit('steer', $event)"
+            @command="emit('command', $event)"
+            @interrupt="handleInterrupt"
+            @unqueue="emit('unqueue', $event)"
+            @edit-queued="emit('editQueued', $event)"
+            @set-permission="emit('setPermission', $event)"
+            @set-thinking="emit('setThinking', $event)"
+            @toggle-plan="emit('togglePlan')"
+            @toggle-swarm="emit('toggleSwarm')"
+            @toggle-goal="emit('toggleGoal')"
+            @open-btw="emit('openBtw')"
+            @create-goal="emit('createGoal', $event)"
+            @focus-goal="focusGoal"
+            @focus-swarm="focusSwarm"
+            @compact="emit('compact')"
+            @pick-model="emit('pickModel')"
+            @select-model="emit('selectModel', $event)"
+          />
+        </div>
+      </template>
       <TasksPane
         v-else-if="active === 'tasks'"
         :tasks="tasks"
@@ -1599,173 +1863,6 @@ onUnmounted(() => {
       </button>
     </Transition>
 
-    <!-- Bottom dock. Capped to the chat reading column so it doesn't stretch
-         edge-to-edge on wide screens. The composer/input sits on top; the status
-         line is a quiet footer BELOW it (model/thinking/plan/permission left,
-         ctx far right). -->
-    <div v-if="dockVisible" ref="dockRef" class="dock" :class="[mobile ? 'align-mobile' : 'align-center']">
-      <Transition name="dock-panel">
-        <div
-          v-if="dockPanel"
-          class="dock-work-panel"
-          @click.stop
-        >
-          <div class="dock-work-head">
-            <span
-              v-if="dockPanel === 'bash'"
-              class="dock-work-tab static"
-            >
-              {{ t('tasks.dockBash') }} · {{ bashRunning }} {{ t('tasks.running') }}
-            </span>
-            <span
-              v-else-if="dockPanel === 'subagent'"
-              class="dock-work-tab static"
-            >
-              {{ t('tasks.dockSubagent') }} · {{ subagentRunning }} {{ t('tasks.running') }}
-            </span>
-            <span
-              v-else-if="dockPanel === 'todos'"
-              class="dock-work-tab static"
-            >
-              {{ t('tasks.dockTodos') }} · {{ todoDoneCount }}/{{ todos?.length ?? 0 }}
-            </span>
-            <button type="button" class="dock-work-close" :aria-label="t('tasks.closePanel')" @click="closeDockPanel">
-              <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
-                <path d="M2 2l8 8M10 2l-8 8" />
-              </svg>
-            </button>
-          </div>
-          <div class="dock-work-body">
-            <TasksPane
-              v-if="dockPanel === 'bash'"
-              :tasks="bashTasks"
-              @cancel="emit('cancelTask', $event)"
-            />
-            <TasksPane
-              v-else-if="dockPanel === 'subagent'"
-              :tasks="subagentTasks"
-              @cancel="emit('cancelTask', $event)"
-            />
-            <TodoCard
-              v-else
-              :todos="todos ?? []"
-              inline
-            />
-          </div>
-        </div>
-      </Transition>
-
-      <GoalStrip
-        v-if="goal"
-        :goal="goal"
-        :force-expanded="goalExpandSignal"
-        @control-goal="emit('controlGoal', $event)"
-      />
-      <div v-if="hasDockWork" class="dock-workbar">
-        <button
-          v-if="bashTasks.length > 0"
-          type="button"
-          class="dock-work-chip"
-          :class="{ on: dockPanel === 'bash' }"
-          :aria-pressed="dockPanel === 'bash'"
-          @click="toggleDockPanel('bash')"
-        >
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-            <circle cx="8" cy="8" r="5.5" />
-            <path d="M8 4.5V8l2.5 1.5" />
-          </svg>
-          <span>{{ t('tasks.dockBash') }}</span>
-          <span class="dw-count">(<b>{{ bashTasks.length }}</b>)</span>
-        </button>
-        <button
-          v-if="subagentTasks.length > 0"
-          type="button"
-          class="dock-work-chip"
-          :class="{ on: dockPanel === 'subagent' }"
-          :aria-pressed="dockPanel === 'subagent'"
-          @click="toggleDockPanel('subagent')"
-        >
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M8 2l1.5 4.5L14 8l-4.5 1.5L8 14l-1.5-4.5L2 8l4.5-1.5z" />
-          </svg>
-          <span>{{ t('tasks.dockSubagent') }}</span>
-          <span class="dw-count">(<b>{{ subagentTasks.length }}</b>)</span>
-        </button>
-        <button
-          v-if="(todos?.length ?? 0) > 0"
-          type="button"
-          class="dock-work-chip"
-          :class="{ on: dockPanel === 'todos' }"
-          :aria-pressed="dockPanel === 'todos'"
-          @click="toggleDockPanel('todos')"
-        >
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-            <path d="M3 4.5l1.5 1.5L7 3.5" />
-            <path d="M8.5 5h4" />
-            <path d="M3 11l1.5 1.5L7 10" />
-            <path d="M8.5 11.5h4" />
-          </svg>
-          <span>{{ t('tasks.dockTodos') }}</span>
-          <span class="dw-count">(<b>{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</b>)</span>
-        </button>
-      </div>
-      <!-- A pending question or approval replaces the Composer here — both are
-           the agent blocking on the user, so they share this docked slot. A
-           question takes priority (it is a direct ask); the approval falls back
-           to the composer once resolved. -->
-      <QuestionCard
-        v-if="pendingQuestion"
-        :key="pendingQuestion.questionId"
-        :question="pendingQuestion"
-        @answer="handleQuestionAnswer"
-        @dismiss="(qid) => emit('dismiss', qid)"
-      />
-      <ApprovalCard
-        v-else-if="pendingApproval"
-        :key="pendingApproval.approvalId"
-        class="dock-approval"
-        :block="pendingApproval.block"
-        :agent-name="pendingApproval.agentName"
-        @decide="(response) => emit('approval', pendingApproval!.approvalId, response)"
-      />
-      <Composer
-        ref="dockedComposerRef"
-        v-else
-        :session-id="sessionId"
-        :running="running"
-        :queued="queued"
-        :search-files="searchFiles"
-        :upload-image="uploadImage"
-        :status="status"
-        :thinking="thinking"
-        :plan-mode="planMode"
-        :swarm-mode="swarmMode"
-        :goal-mode="goalMode"
-        :activation-badges="activationBadges"
-        :models="models"
-        :skills="skills"
-        @submit="handleComposerSubmit"
-        @steer="emit('steer', $event)"
-        @command="emit('command', $event)"
-        @interrupt="handleInterrupt"
-        @unqueue="emit('unqueue', $event)"
-        @edit-queued="emit('editQueued', $event)"
-        @set-permission="emit('setPermission', $event)"
-        @set-thinking="emit('setThinking', $event)"
-        @toggle-plan="emit('togglePlan')"
-        @toggle-swarm="emit('toggleSwarm')"
-        @toggle-goal="emit('toggleGoal')"
-        @open-btw="emit('openBtw')"
-        @create-goal="emit('createGoal', $event)"
-        @control-goal="emit('controlGoal', $event)"
-        @focus-goal="focusGoal"
-        @focus-swarm="focusSwarm"
-        @compact="emit('compact')"
-        @pick-model="emit('pickModel')"
-        @select-model="emit('selectModel', $event)"
-      />
-    </div>
-
     <!-- Manual-abort toast: shown when the user presses Escape to stop a prompt -->
     <Transition name="abort-toast">
       <div
@@ -1809,6 +1906,21 @@ onUnmounted(() => {
 }
 .group-panes {
   height: 100%;
+}
+
+/* Chat tab layout: the message list scrolls, while the dock stays as the
+   bottom sibling inside the same chat pane. */
+.chat-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  position: relative;
+}
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  position: relative;
 }
 
 /* Chat reading column max-width + alignment. The max-width applies in both
@@ -2122,210 +2234,17 @@ onUnmounted(() => {
   }
 }
 
-/* Bottom dock (status line + composer): capped to the same reading column as
-   the chat and aligned the same way, so it doesn't stretch the full pane width
-   on wide screens. Full-width on mobile. */
-.dock {
-  flex: none;
+/* Chat scroll area: owns only messages; the dock is the bottom sibling. */
+.chat-scroll {
   display: flex;
   flex-direction: column;
-  position: relative;
-  width: 100%;
-  max-width: var(--read-max);
-}
-.dock.align-center { margin-left: auto; margin-right: auto; }
-.dock.align-left { margin-left: 0; margin-right: auto; }
-.dock.align-mobile { max-width: none; }
-@media (max-width: 640px) {
-  .dock.align-mobile {
-    box-sizing: border-box;
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
-  }
 }
 
-.dock-workbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 16px 0;
-  min-width: 0;
-}
-.dock-work-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  color: var(--text);
-  padding: 4px 11px;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  cursor: pointer;
-}
-.dock-work-chip:hover,
-.dock-work-chip.on {
-  border-color: var(--bd);
-  background: var(--soft);
-  color: var(--blue2);
-}
-.dock-work-chip b {
-  color: var(--ink);
-  font-weight: 600;
-}
-.dock-work-chip .dw-count {
-  font-family: var(--sans);
-  letter-spacing: -0.02em;
-}
-.dock-work-panel {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: 100%;
-  z-index: 16;
-  display: flex;
-  flex-direction: column;
-  max-height: min(48vh, 320px);
-  margin-bottom: 7px;
+/* Mobile shell: the outer .panes is just a flex host; the actual chat scroll is
+   .chat-scroll inside it. Avoid a double scrollbar gutter on the chat tab. */
+.mobile .panes:has(> .chat-layout) {
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-}
-.dock-panel-enter-active,
-.dock-panel-leave-active {
-  transition: opacity 0.16s ease, transform 0.16s ease;
-}
-.dock-panel-enter-from,
-.dock-panel-leave-to {
-  opacity: 0;
-  transform: translateY(8px);
-}
-.dock-work-head {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--line);
-  background: transparent;
-}
-.dock-work-tab {
-  border: none;
-  border-radius: 8px;
-  background: none;
-  color: var(--muted);
-  padding: 0;
-  font-family: var(--sans);
-  font-size: calc(var(--ui-font-size) - 1.5px);
-  font-weight: 500;
-  cursor: pointer;
-}
-.dock-work-tab:hover {
-  color: var(--ink);
-}
-.dock-work-tab.on {
-  background: none;
-  color: var(--ink);
-  font-weight: 700;
-}
-.dock-work-tab.static {
-  cursor: default;
-  color: var(--ink);
-  font-weight: 700;
-}
-.dock-work-close {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 8px;
-  background: none;
-  color: var(--muted);
-  padding: 4px;
-  cursor: pointer;
-}
-.dock-work-close:hover {
-  background: none;
-  color: var(--ink);
-}
-.dock-work-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.dock-work-body :deep(.taskspane) {
-  padding: 10px 12px 12px;
-}
-.dock-work-body :deep(.taskspane .tp-head) {
-  display: none;
-}
-.dock-work-body :deep(.todo-card.tab-mode) {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.dock-work-body :deep(.todo-card.tab-mode .tc-list) {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 10px 12px 12px;
-}
-
-@media (max-width: 640px) {
-  .dock-workbar {
-    padding: 2px 10px 9px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .dock-work-chip {
-    flex: none;
-    max-width: min(82vw, 360px);
-  }
-  .dock-work-panel {
-    left: 10px;
-    right: 10px;
-    max-height: 45dvh;
-  }
-  .dock-work-head {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .dock-work-tab {
-    flex: none;
-    white-space: nowrap;
-  }
-}
-
-/* A docked approval can carry a tall diff/file preview; cap it so it never
-   pushes the rest of the dock off-screen, scrolling internally instead. Match
-   the question card's outer margin so both docked prompts sit identically. */
-.dock-approval {
-  margin: 8px 0;
-  max-height: 50vh;
-  overflow-y: auto;
-}
-@media (max-width: 640px) {
-  .dock-approval {
-    max-height: 45dvh;
-    margin: 8px 10px;
-  }
-}
-
-/* Capped desktop dock (center/left): the fused composer card is the visual
-   anchor. No panel border, no hard dividers — the dock blends into the (white)
-   chat surface and the rounded composer card defines the area. Mobile keeps its
-   own flat full-width bar. */
-.dock:not(.align-mobile) :deep(.composer) {
-  border-top: none;
-  background: transparent;
-  padding-bottom: 14px;
+  scrollbar-gutter: auto;
 }
 
 /* Merged files pane: horizontal split (navigator | divider | content), no outer scroll */

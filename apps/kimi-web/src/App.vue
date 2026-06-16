@@ -346,7 +346,7 @@ function closeAgentPanel(): void {
 // ---------------------------------------------------------------------------
 async function openSideChatTab(prompt?: string): Promise<void> {
   await client.openSideChat(prompt);
-  conversationPaneRef.value?.switchTab('btw');
+  conversationPaneRef.value?.openBtwPane();
 }
 
 /** Any occupant of the shared right-side slot. */

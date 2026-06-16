@@ -9,20 +9,10 @@ import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
 import AgentCard from './AgentCard.vue';
 import AgentGroup from './AgentGroup.vue';
+import MoonSpinner from './MoonSpinner.vue';
 import { formatMessageTime } from '../lib/formatMessageTime';
 
 const { t } = useI18n();
-
-const MOON_FRAMES = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'];
-const MOON_FRAME_MS = 120;
-const MOON_FAST_FRAME_MS = 60;
-
-function moonFrameStyle(index: number): Record<string, string> {
-  return {
-    '--moon-frame-delay': `${index * MOON_FRAME_MS}ms`,
-    '--moon-frame-fast-delay': `${index * MOON_FAST_FRAME_MS}ms`,
-  };
-}
 
 onUnmounted(() => {
   if (copiedTimer !== null) {
@@ -581,17 +571,7 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
          a page refresh mid-stream, where `sending` was lost but the session is
          still running). -->
     <div v-if="showWorking" class="sending-placeholder">
-      <span class="moon-spin" :class="{ 'moon-spin--fast': fastMoon }" aria-label="Working…" role="img">
-        <span
-          v-for="(frame, index) in MOON_FRAMES"
-          :key="frame"
-          class="moon-frame"
-          :style="moonFrameStyle(index)"
-          aria-hidden="true"
-        >
-          {{ frame }}
-        </span>
-      </span>
+      <MoonSpinner :fast="fastMoon" />
     </div>
   </div>
 
@@ -741,17 +721,7 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
           <span class="pr">kimi</span>
           <span class="who"> &gt; </span>
         </div>
-        <span class="moon-spin" :class="{ 'moon-spin--fast': fastMoon }" aria-label="Sending…" role="img">
-          <span
-            v-for="(frame, index) in MOON_FRAMES"
-            :key="frame"
-            class="moon-frame"
-            :style="moonFrameStyle(index)"
-            aria-hidden="true"
-          >
-            {{ frame }}
-          </span>
-        </span>
+        <MoonSpinner :fast="fastMoon" label="Sending…" />
       </div>
     </div>
   </div>
@@ -1291,44 +1261,6 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
 /* NOTE: Modern-theme chat/bubble styles live in src/style.css (global). Scoped
    `:global(html[data-theme=modern]) .u-bub` rules here did NOT win the cascade,
    so they were moved to the global sheet. */
-
-/* ---- Moon spinner — shown while the prompt is in flight ---- */
-.moon-spin {
-  --moon-frame: 1.15em;
-  display: inline-block;
-  position: relative;
-  width: var(--moon-frame);
-  height: var(--moon-frame);
-  font-size: var(--ui-font-size);
-  line-height: 1;
-  user-select: none;
-  vertical-align: -0.1em;
-}
-
-.moon-frame {
-  position: absolute;
-  inset: 0;
-  display: block;
-  text-align: center;
-  opacity: 0;
-  animation-name: moon-frame;
-  animation-duration: 960ms;
-  animation-timing-function: steps(1, end);
-  animation-iteration-count: infinite;
-  animation-delay: var(--moon-frame-delay);
-}
-
-.moon-spin--fast .moon-frame {
-  animation-duration: 480ms;
-  animation-delay: var(--moon-frame-fast-delay);
-}
-
-@keyframes moon-frame {
-  0%,
-  12.49% { opacity: 1; }
-  12.5%,
-  100% { opacity: 0; }
-}
 
 /* Mobile bubble layout sending placeholder */
 .sending-placeholder {

@@ -4,7 +4,13 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { PaneKey } from '../types';
 
-const props = defineProps<{ active: PaneKey; changesCount?: number; mobile?: boolean; hasPreview?: boolean }>();
+const props = defineProps<{
+  active: PaneKey;
+  changesCount?: number;
+  mobile?: boolean;
+  hasPreview?: boolean;
+  hasBtw?: boolean;
+}>();
 const emit = defineEmits<{ select: [pane: PaneKey] }>();
 
 const { t } = useI18n();
@@ -14,12 +20,13 @@ const BASE_TABS: { key: PaneKey; labelKey: string }[] = [
   { key: 'files', labelKey: 'sidebar.tabFiles' },
 ];
 
-// 'preview' is a transient tab — shown only while this group hosts a preview.
-const tabs = computed(() =>
-  props.hasPreview
-    ? [...BASE_TABS, { key: 'preview' as PaneKey, labelKey: 'sidebar.tabPreview' }]
-    : BASE_TABS,
-);
+// 'preview' and 'btw' are transient tabs — shown only while the group hosts them.
+const tabs = computed(() => {
+  const extra: { key: PaneKey; labelKey: string }[] = [];
+  if (props.hasBtw) extra.push({ key: 'btw', labelKey: 'sidebar.tabBtw' });
+  if (props.hasPreview) extra.push({ key: 'preview', labelKey: 'sidebar.tabPreview' });
+  return [...BASE_TABS, ...extra];
+});
 </script>
 
 <template>

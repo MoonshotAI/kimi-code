@@ -253,7 +253,12 @@ function projectSubagentProgress(
   subagentId: string,
   rawType: string,
   payload: Record<string, unknown>,
+  sideChannelAgents: ReadonlySet<string>,
 ): AppEvent[] {
+  // Side-channel agents (e.g. BTW side chat) stream their own transcript via
+  // agentDelta events; don't pollute the main task output with generic step
+  // placeholders like "Started a step".
+  if (sideChannelAgents.has(subagentId) && rawType === 'turn.step.started') return [];
   const text = subagentProgressText(rawType, payload);
   if (text === null || text.length === 0) return [];
   const previous = state.subagentMeta.get(subagentId);
@@ -455,10 +460,17 @@ export interface AgentProjector {
   seedInFlight(sessionId: string, turn: AppInFlightTurn): AppEvent[];
   /** Reset all per-session state (call on re-subscribe / resync). */
   reset(sessionId: string): void;
+  /**
+   * Mark an agent id as a side-channel (e.g. BTW side chat) rather than a
+   * background subagent. Its text/thinking deltas and turn boundary are then
+   * emitted as agent-scoped events instead of being dropped.
+   */
+  markSideChannelAgent(agentId: string): void;
 }
 
 export function createAgentProjector(): AgentProjector {
   const sessions = new Map<string, SessionState>();
+  const sideChannelAgents = new Set<string>();
 
   function getOrCreate(sessionId: string): SessionState {
     let s = sessions.get(sessionId);
@@ -471,6 +483,10 @@ export function createAgentProjector(): AgentProjector {
 
   function reset(sessionId: string): void {
     sessions.set(sessionId, createSessionState());
+  }
+
+  function markSideChannelAgent(agentId: string): void {
+    sideChannelAgents.add(agentId);
   }
 
   function bindNextPromptId(sessionId: string, promptId: string): void {
@@ -568,12 +584,32 @@ export function createAgentProjector(): AgentProjector {
     // intentionally NOT in the set — they describe the subagent for the task view
     // and must always be projected.
     const frameAgentId: unknown = p?.agentId;
-    if (
-      typeof frameAgentId === 'string' &&
-      frameAgentId !== MAIN_AGENT_ID &&
-      MAIN_AGENT_TRANSCRIPT_FRAMES.has(rawType)
-    ) {
-      return projectSubagentProgress(s, sessionId, frameAgentId, rawType, p ?? {});
+    if (typeof frameAgentId === 'string' && frameAgentId !== MAIN_AGENT_ID) {
+      const isSideChannel = sideChannelAgents.has(frameAgentId);
+      // Side-channel agents (e.g. BTW side chat) stream text/thinking deltas and
+      // a turn boundary over the parent session channel. Route them to the web
+      // layer as agent-scoped events instead of dropping them or folding them
+      // into the parent transcript.
+      if (isSideChannel && (rawType === 'thinking.delta' || rawType === 'assistant.delta')) {
+        const deltaText: string = p?.delta ?? '';
+        if (!deltaText) return [];
+        return [
+          {
+            type: 'agentDelta' as const,
+            sessionId,
+            agentId: frameAgentId,
+            delta: { [rawType === 'thinking.delta' ? ('thinking' as const) : ('text' as const)]: deltaText },
+          },
+        ];
+      }
+      if (isSideChannel && rawType === 'turn.ended') {
+        return [
+          { type: 'agentTurnEnded' as const, sessionId, agentId: frameAgentId, reason: p?.reason },
+        ];
+      }
+      if (MAIN_AGENT_TRANSCRIPT_FRAMES.has(rawType)) {
+        return projectSubagentProgress(s, sessionId, frameAgentId, rawType, p ?? {}, sideChannelAgents);
+      }
     }
 
     switch (rawType) {
@@ -1144,7 +1180,7 @@ export function createAgentProjector(): AgentProjector {
     return out;
   }
 
-  return { project, bindNextPromptId, seedInFlight, reset };
+  return { project, bindNextPromptId, seedInFlight, reset, markSideChannelAgent };
 }
 
 // ---------------------------------------------------------------------------

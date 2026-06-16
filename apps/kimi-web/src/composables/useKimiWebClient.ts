@@ -411,6 +411,8 @@ interface ExtendedState extends KimiClientState {
   sideChatMessagesByAgent: Record<string, AppMessage[]>;
   /** Local sending flag for BTW agents; agent ids are not session ids. */
   sideChatSendingByAgent: Record<string, boolean>;
+  /** User message ids sent through BTW so they can be hidden from the main transcript. */
+  sideChatUserMessageIdsBySession: Record<string, string[]>;
 }
 
 const rawState: ExtendedState = reactive({
@@ -443,6 +445,7 @@ const rawState: ExtendedState = reactive({
   config: null,
   sideChatMessagesByAgent: {},
   sideChatSendingByAgent: {},
+  sideChatUserMessageIdsBySession: {},
 });
 
 // Models + Providers reactive state (lazy-loaded, cached)
@@ -866,12 +869,20 @@ function connectEventsIfNeeded(): void {
       // is kept, only a marker line records the compaction).
       applyEvent(appEvent, meta.sessionId, meta.seq);
 
-      const sideTarget = sideChatTarget.value;
-      if (sideTarget && meta.sessionId === sideTarget.parentId) {
-        if (appEvent.type === 'taskProgress' && appEvent.taskId === sideTarget.agentId) {
-          appendSideChatAssistantText(sideTarget.agentId, sideTarget.parentId, appEvent.outputChunk);
-        } else if (appEvent.type === 'taskCompleted' && appEvent.taskId === sideTarget.agentId) {
-          finishSideChatAgent(sideTarget.agentId, sideTarget.parentId, appEvent.outputPreview);
+      const sideTarget = sideChatTargetBySession.value[meta.sessionId];
+      if (sideTarget) {
+        const { agentId } = sideTarget;
+        const parentId = meta.sessionId;
+        if (appEvent.type === 'agentDelta' && appEvent.agentId === agentId) {
+          if (appEvent.delta.text) {
+            appendSideChatAssistantText(agentId, parentId, appEvent.delta.text);
+          }
+        } else if (appEvent.type === 'agentTurnEnded' && appEvent.agentId === agentId) {
+          finishSideChatAgent(agentId, parentId);
+        } else if (appEvent.type === 'taskProgress' && appEvent.taskId === agentId) {
+          appendSideChatAssistantText(agentId, parentId, appEvent.outputChunk);
+        } else if (appEvent.type === 'taskCompleted' && appEvent.taskId === agentId) {
+          finishSideChatAgent(agentId, parentId, appEvent.outputPreview);
         }
       }
 
@@ -1394,6 +1405,18 @@ function toUiSessionStatus(status: string): 'running' | 'idle' {
   return 'idle';
 }
 
+/** Whether the session has any running task other than its BTW side-channel agent.
+    This prevents the sidebar spinner / activity indicator from spinning while only
+    a BTW side chat is working. */
+function isSessionEffectivelyRunning(sessionId: string): boolean {
+  const session = rawState.sessions.find((s) => s.id === sessionId);
+  if (!session) return false;
+  if (toUiSessionStatus(session.status) !== 'running') return false;
+  const hiddenBtwAgentId = sideChatTargetBySession.value[sessionId]?.agentId;
+  const tasks = rawState.tasksBySession[sessionId] ?? [];
+  return tasks.some((t) => t.status === 'running' && t.id !== hiddenBtwAgentId);
+}
+
 /** Format createdAt/updatedAt into a short display string */
 function formatTime(iso: string, _status: string): string {
   try {
@@ -1692,15 +1715,15 @@ const isSending = computed<boolean>(() => {
 const activeAppTasks = computed<AppTask[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
-  const hiddenBtwAgentId =
-    sideChatTarget.value?.parentId === sid ? sideChatTarget.value.agentId : undefined;
+  const hiddenBtwAgentId = sideChatTargetBySession.value[sid]?.agentId;
   return (rawState.tasksBySession[sid] ?? []).filter((task) => task.id !== hiddenBtwAgentId);
 });
 
 const turns = computed<ChatTurn[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
-  const messages = rawState.messagesBySession[sid] ?? [];
+  const hiddenIds = new Set(rawState.sideChatUserMessageIdsBySession[sid] ?? []);
+  const messages = (rawState.messagesBySession[sid] ?? []).filter((m) => !hiddenIds.has(m.id));
   const approvals = rawState.approvalsBySession[sid] ?? [];
   return messagesToTurns(
     messages,
@@ -1712,23 +1735,32 @@ const turns = computed<ChatTurn[]>(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Side chat ("BTW") — a TUI-style forked agent shown in the right-side panel.
-// It is not a child session and never appears in the sidebar. The panel keeps a
-// transient local transcript keyed by agent id; raw non-main agent deltas are
-// already projected as task progress, which we copy into this transcript.
+// Side chat ("BTW") — a TUI-style forked agent rendered as a session tab.
+// It is not a child session and never appears in the sidebar. Each session can
+// have its own side chat; state is keyed by session id, while messages are
+// keyed by agent id so they survive session switches.
 // ---------------------------------------------------------------------------
-const sideChatTarget = ref<{ parentId: string; agentId: string } | null>(null);
+const sideChatTargetBySession = ref<Record<string, { agentId: string }>>({});
 
-const sideChatSessionId = computed<string | null>(() => sideChatTarget.value?.parentId ?? null);
-const sideChatVisible = computed<boolean>(() => sideChatTarget.value !== null);
+const activeSideChatTarget = computed<{ parentId: string; agentId: string } | null>(() => {
+  const sid = rawState.activeSessionId;
+  if (!sid) return null;
+  const target = sideChatTargetBySession.value[sid];
+  return target ? { parentId: sid, agentId: target.agentId } : null;
+});
+
+const sideChatSessionId = computed<string | null>(
+  () => activeSideChatTarget.value?.parentId ?? null,
+);
+const sideChatVisible = computed<boolean>(() => activeSideChatTarget.value !== null);
 
 const sideChatSending = computed<boolean>(() => {
-  const id = sideChatTarget.value?.agentId;
-  return id ? Boolean(rawState.sideChatSendingByAgent[id]) : false;
+  const target = activeSideChatTarget.value;
+  return target ? Boolean(rawState.sideChatSendingByAgent[target.agentId]) : false;
 });
 
 const sideChatRunning = computed<boolean>(() => {
-  const target = sideChatTarget.value;
+  const target = activeSideChatTarget.value;
   if (!target) return false;
   if (rawState.sideChatSendingByAgent[target.agentId]) return true;
   return (rawState.tasksBySession[target.parentId] ?? []).some(
@@ -1737,7 +1769,7 @@ const sideChatRunning = computed<boolean>(() => {
 });
 
 const sideChatTurns = computed<ChatTurn[]>(() => {
-  const target = sideChatTarget.value;
+  const target = activeSideChatTarget.value;
   if (!target) return [];
   const messages = rawState.sideChatMessagesByAgent[target.agentId] ?? [];
   return messagesToTurns(
@@ -1826,8 +1858,8 @@ function finishSideChatAgent(agentId: string, sessionId: string, outputPreview?:
 async function openSideChat(initialPrompt?: string): Promise<void> {
   const parent = rawState.activeSessionId;
   if (!parent) return;
-  // Reuse the existing side chat only if it belongs to the current parent.
-  if (sideChatTarget.value?.parentId !== parent) {
+  // Reuse the existing side chat for this session if it already exists.
+  if (!sideChatTargetBySession.value[parent]) {
     let agentId: string;
     try {
       ({ agentId } = await getKimiWebApi().startBtw(parent));
@@ -1839,7 +1871,12 @@ async function openSideChat(initialPrompt?: string): Promise<void> {
       ...rawState.sideChatMessagesByAgent,
       [agentId]: rawState.sideChatMessagesByAgent[agentId] ?? [],
     };
-    sideChatTarget.value = { parentId: parent, agentId };
+    sideChatTargetBySession.value = {
+      ...sideChatTargetBySession.value,
+      [parent]: { agentId },
+    };
+    connectEventsIfNeeded();
+    eventConn?.markSideChannelAgent(agentId);
   }
   if (initialPrompt && initialPrompt.trim()) {
     await sendSideChatPrompt(initialPrompt.trim());
@@ -1847,12 +1884,16 @@ async function openSideChat(initialPrompt?: string): Promise<void> {
 }
 
 function closeSideChat(): void {
-  sideChatTarget.value = null;
+  const sid = rawState.activeSessionId;
+  if (!sid) return;
+  const { [sid]: _removed, ...rest } = sideChatTargetBySession.value;
+  void _removed;
+  sideChatTargetBySession.value = rest;
 }
 
 /** Send a plain prompt to the side-chat child (no plan/swarm/goal modes). */
 async function sendSideChatPrompt(text: string): Promise<void> {
-  const target = sideChatTarget.value;
+  const target = activeSideChatTarget.value;
   const trimmed = text.trim();
   if (!target || !trimmed) return;
   const sid = target.parentId;
@@ -1873,6 +1914,10 @@ async function sendSideChatPrompt(text: string): Promise<void> {
       agentId,
     });
     stampLastSideChatUserPrompt(agentId, result.promptId);
+    rawState.sideChatUserMessageIdsBySession = {
+      ...rawState.sideChatUserMessageIdsBySession,
+      [sid]: [...(rawState.sideChatUserMessageIdsBySession[sid] ?? []), result.userMessageId],
+    };
   } catch (err) {
     pushOperationFailure('sendSideChatPrompt', err, { sessionId: sid });
     removeLastSideChatUserMessage(agentId);
@@ -1880,15 +1925,14 @@ async function sendSideChatPrompt(text: string): Promise<void> {
   }
 }
 
-// Switching the main session closes a side chat that belonged to the old parent.
-watch(
-  () => rawState.activeSessionId,
-  (sid) => {
-    if (sideChatTarget.value && sideChatTarget.value.parentId !== sid) {
-      sideChatTarget.value = null;
-    }
-  },
-);
+// When a session is deleted, drop its side-chat target so it cannot leak into a
+// later session that happens to reuse the same id.
+function clearSideChatForSession(sessionId: string): void {
+  if (!sideChatTargetBySession.value[sessionId]) return;
+  const { [sessionId]: _removed, ...rest } = sideChatTargetBySession.value;
+  void _removed;
+  sideChatTargetBySession.value = rest;
+}
 
 // A 1-second clock that only ticks while a task is running, so a running task's
 // elapsed-time label keeps counting up. toUiTask reads Date.now() once per
@@ -2049,8 +2093,7 @@ const activity = computed<ActivityState>(() => {
   const questionList = rawState.questionsBySession[sid] ?? [];
   if (questionList.length > 0) return 'awaiting-question';
 
-  const activeSession = rawState.sessions.find((s) => s.id === sid);
-  if (activeSession && (activeSession.status === 'running' || activeSession.status === 'awaitingApproval' || activeSession.status === 'awaitingQuestion')) {
+  if (isSessionEffectivelyRunning(sid)) {
     return 'running';
   }
 
@@ -2259,7 +2302,7 @@ const sessionsForView = computed<Session[]>(() => {
       id: s.id,
       title: s.title,
       time: formatTime(s.updatedAt, s.status),
-      status: toUiSessionStatus(s.status),
+      status: isSessionEffectivelyRunning(s.id) ? 'running' : 'idle',
     }));
 });
 
@@ -2274,7 +2317,7 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
       id: s.id,
       title: s.title,
       time: formatTime(s.updatedAt, s.status),
-      status: toUiSessionStatus(s.status),
+      status: isSessionEffectivelyRunning(s.id) ? 'running' : 'idle',
       updatedAt: s.updatedAt,
     };
     const list = byId.get(wid) ?? [];
@@ -3517,6 +3560,10 @@ async function deleteSession(id: string): Promise<void> {
     const api = getKimiWebApi();
     await api.deleteSession(id);
     rawState.sessions = rawState.sessions.filter((s) => s.id !== id);
+    clearSideChatForSession(id);
+    const { [id]: _removedIds, ...restIds } = rawState.sideChatUserMessageIdsBySession;
+    void _removedIds;
+    rawState.sideChatUserMessageIdsBySession = restIds;
 
     // If deleted session was active, pick another. 'replace' so the address
     // bar doesn't keep pointing at (and back doesn't return to) a dead session.
