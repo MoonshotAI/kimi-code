@@ -489,7 +489,6 @@ function toChoiceOption(choice: ReviewChoice): ChoiceOption {
   return {
     value: choice.value,
     label: choice.label,
-    labelAnimation: choice.labelAnimation,
     description: choice.description,
   };
 }

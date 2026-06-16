@@ -321,7 +321,7 @@ describe('handleReviewCommand', () => {
     await task;
   });
 
-  it('marks only Deep Review with the wave label animation', async () => {
+  it('does not animate any intensity option', async () => {
     const { host } = makeHost();
     const task = handleReviewCommand(host, '');
 
@@ -333,42 +333,10 @@ describe('handleReviewCommand', () => {
       labelAnimation?: string;
     }>;
 
-    expect(options.find((option) => option.value === 'deep')?.labelAnimation).toBe('wave');
-    expect(options.filter((option) => option.value !== 'deep').map((option) => option.labelAnimation)).toEqual([
-      undefined,
-      undefined,
-    ]);
+    expect(options.map((option) => option.labelAnimation)).toEqual([undefined, undefined, undefined]);
 
     mountedPicker(host, 1).handleInput(ESC);
     await task;
-  });
-
-  it('keeps animated selector render requests bound to the TUI object', async () => {
-    vi.useFakeTimers();
-    try {
-      const scheduleRender = vi.fn();
-      const { host } = makeHost();
-      const uiWithReceiverSensitiveRender = {
-        scheduleRender,
-        requestRender(this: { scheduleRender: () => void }) {
-          this.scheduleRender();
-        },
-      };
-      (host.state as { ui: unknown }).ui = uiWithReceiverSensitiveRender;
-      const task = handleReviewCommand(host, '');
-
-      await waitForPicker(host, 1);
-      mountedPicker(host, 0).handleInput(ENTER);
-      await waitForPicker(host, 2);
-
-      expect(() => vi.advanceTimersByTime(120)).not.toThrow();
-      expect(scheduleRender).toHaveBeenCalled();
-
-      mountedPicker(host, 1).handleInput(ESC);
-      await task;
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it('shows review scope metadata in the first selector', async () => {

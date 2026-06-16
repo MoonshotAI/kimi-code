@@ -16,7 +16,6 @@ export type ReviewScopeChoice = 'working_tree' | 'current_branch' | 'ahead_of_up
 export interface ReviewChoice {
   readonly value: string;
   readonly label: string;
-  readonly labelAnimation?: 'wave';
   readonly description?: string;
 }
 
@@ -82,7 +81,6 @@ export const REVIEW_INTENSITY_CHOICES: readonly ReviewChoice[] = [
   {
     value: 'deep',
     label: 'Deep Review',
-    labelAnimation: 'wave',
     description: 'Uses AgentSwarm for risky or large changes.',
   },
 ];
