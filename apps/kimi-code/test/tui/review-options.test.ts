@@ -7,6 +7,7 @@ import {
   buildReviewSummaryData,
   formatRelativeTime,
   formatReviewArtifactMarkdown,
+  resolveTtyLocale,
   reviewCommitChoice,
 } from '#/tui/utils/review-options';
 
@@ -111,14 +112,33 @@ describe('formatRelativeTime', () => {
   const now = Date.parse('2026-06-16T12:00:00Z');
 
   it('formats recent times with Intl relative units', () => {
-    expect(formatRelativeTime('2026-06-16T10:00:00Z', now)).toBe('2 hours ago');
-    expect(formatRelativeTime('2026-06-15T12:00:00Z', now)).toBe('yesterday');
-    expect(formatRelativeTime('2026-06-09T12:00:00Z', now)).toBe('last week');
-    expect(formatRelativeTime('2026-03-16T12:00:00Z', now)).toBe('3 months ago');
+    expect(formatRelativeTime('2026-06-16T10:00:00Z', now, 'en')).toBe('2 hours ago');
+    expect(formatRelativeTime('2026-06-15T12:00:00Z', now, 'en')).toBe('yesterday');
+    expect(formatRelativeTime('2026-06-09T12:00:00Z', now, 'en')).toBe('last week');
+    expect(formatRelativeTime('2026-03-16T12:00:00Z', now, 'en')).toBe('3 months ago');
   });
 
   it('returns empty for an unparseable date', () => {
-    expect(formatRelativeTime('not-a-date', now)).toBe('');
+    expect(formatRelativeTime('not-a-date', now, 'en')).toBe('');
+  });
+
+  it('does not throw on a malformed locale and still formats', () => {
+    expect(formatRelativeTime('2026-06-16T10:00:00Z', now, 'not a locale!!')).toBe('2 hours ago');
+  });
+});
+
+describe('resolveTtyLocale', () => {
+  it('parses POSIX locale env vars into BCP-47 tags', () => {
+    expect(resolveTtyLocale({ LANG: 'fr_FR.UTF-8' })).toBe('fr-FR');
+    expect(resolveTtyLocale({ LC_ALL: 'de_DE.UTF-8', LANG: 'en_US.UTF-8' })).toBe('de-DE');
+    expect(resolveTtyLocale({ LANGUAGE: 'es_ES:en' })).toBe('es-ES');
+    expect(resolveTtyLocale({ LANG: 'zh_CN.UTF-8@pinyin' })).toBe('zh-CN');
+  });
+
+  it('falls back to en for unset, C, or POSIX locales', () => {
+    expect(resolveTtyLocale({})).toBe('en');
+    expect(resolveTtyLocale({ LANG: 'C' })).toBe('en');
+    expect(resolveTtyLocale({ LC_ALL: 'POSIX' })).toBe('en');
   });
 });
 

@@ -144,11 +144,11 @@ function renderCommitRow(commit: ReviewCommit, selected: boolean, width: number)
 }
 
 /** Format an ISO timestamp as relative time (e.g. "2 hours ago") via Intl. */
-export function formatRelativeTime(iso: string, nowMs: number): string {
+export function formatRelativeTime(iso: string, nowMs: number, locale: string = resolveTtyLocale()): string {
   const time = Date.parse(iso);
   if (Number.isNaN(time)) return '';
   const diffSeconds = Math.round((time - nowMs) / 1000);
-  const formatter = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  const formatter = relativeTimeFormatter(locale);
   const units: readonly (readonly [Intl.RelativeTimeFormatUnit, number])[] = [
     ['year', 31_536_000],
     ['month', 2_592_000],
@@ -164,6 +164,32 @@ export function formatRelativeTime(iso: string, nowMs: number): string {
     }
   }
   return formatter.format(0, 'second');
+}
+
+/** Build a relative-time formatter for `locale`, silently falling back to `en`. */
+function relativeTimeFormatter(locale: string): Intl.RelativeTimeFormat {
+  try {
+    if (locale !== 'en' && Intl.RelativeTimeFormat.supportedLocalesOf(locale).length > 0) {
+      return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+    }
+  } catch {
+    // Malformed locale tag — fall through to the default below.
+  }
+  return new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+}
+
+/**
+ * Resolve the display locale from the terminal's POSIX locale environment
+ * (LC_ALL / LC_MESSAGES / LANG / LANGUAGE), as a BCP-47 tag. Falls back to
+ * `en` for the unset, `C`/`POSIX`, or unparseable cases — never throws.
+ */
+export function resolveTtyLocale(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env['LC_ALL'] || env['LC_MESSAGES'] || env['LANG'] || env['LANGUAGE'] || '';
+  // LANGUAGE may be a colon-separated priority list; take the first entry.
+  // Strip the ".UTF-8" charset and "@modifier" suffixes from "en_US.UTF-8".
+  const candidate = (raw.split(':')[0] ?? '').split('.')[0]?.split('@')[0]?.trim() ?? '';
+  if (candidate === '' || candidate === 'C' || candidate === 'POSIX') return 'en';
+  return candidate.replace('_', '-');
 }
 
 const SEVERITY_ORDER: readonly ReviewCommentSeverity[] = ['critical', 'important', 'minor'];
