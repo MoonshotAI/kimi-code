@@ -39,7 +39,7 @@ import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
 
-async function prepareWorktree(worktreeName: string): Promise<{ worktreePath: string; parentRepoPath: string }> {
+function prepareWorktree(worktreeName: string): { worktreePath: string; parentRepoPath: string } {
   const cwd = process.cwd();
   const repoRoot = findGitRoot(cwd);
   if (repoRoot === null) {
@@ -97,8 +97,9 @@ export async function handleMainCommand(opts: CLIOptions, version: string): Prom
     if (opts.worktreePath !== undefined && opts.parentRepoPath !== undefined) {
       try {
         removeWorktree(opts.parentRepoPath, opts.worktreePath);
-      } catch {
-        // Best-effort cleanup only.
+      } catch (cleanupError) {
+        // Best-effort cleanup only; do not let cleanup failures mask the original error.
+        log.warn('Failed to clean up git worktree after runner startup failed', cleanupError);
       }
     }
     throw error;
