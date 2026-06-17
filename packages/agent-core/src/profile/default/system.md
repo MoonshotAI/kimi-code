@@ -116,6 +116,16 @@ The applicable `AGENTS.md` instructions are:
 ```````
 {{ KIMI_AGENTS_MD }}
 ```````
+{% if KIMI_OUTPUT_STYLE %}
+
+# Output Style
+
+The user selected a custom output style. Apply these response-style instructions on top of everything above. They govern tone, format, and verbosity only — they never override correctness, safety, or the task's actual requirements:
+
+```````
+{{ KIMI_OUTPUT_STYLE }}
+```````
+{% endif %}
 
 # Skills
 

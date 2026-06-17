@@ -162,6 +162,7 @@ function buildTemplateVars(
     KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
     ROLE_ADDITIONAL:
       context.roleAdditional ?? promptVars['ROLE_ADDITIONAL'] ?? promptVars['roleAdditional'] ?? '',
+    KIMI_OUTPUT_STYLE: context.outputStyleBody ?? '',
   };
 }
 
