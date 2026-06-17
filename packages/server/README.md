@@ -13,8 +13,7 @@ it ships inside the `kimi` CLI (`apps/kimi-code`) and is launched via
 - Exposes them over **REST** (Fastify) and **WebSocket** (`ws`) under `/api/v1`.
 - Serves the built-in web UI (`apps/kimi-web`) as static assets when a
   `webAssetsDir` is provided.
-- Publishes machine-readable contract docs: `/openapi.json`, `/asyncapi.json`,
-  and a Swagger UI at `/documentation`.
+- Publishes machine-readable contract docs: `/openapi.json`, `/asyncapi.json`.
 
 ## Running it
 

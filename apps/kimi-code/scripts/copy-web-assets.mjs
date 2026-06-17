@@ -1,20 +1,11 @@
 import { cp, rm, stat } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(appRoot, '../..');
-const require = createRequire(import.meta.url);
 const source = resolve(repoRoot, 'apps/kimi-web/dist');
 const target = resolve(appRoot, 'dist-web');
-const swaggerUiSource = resolve(
-  dirname(require.resolve('@fastify/swagger-ui/package.json', {
-    paths: [resolve(repoRoot, 'packages/server')],
-  })),
-  'static',
-);
-const swaggerUiTarget = resolve(appRoot, 'dist/static');
 
 async function assertBuiltWeb() {
   try {
@@ -32,8 +23,5 @@ async function assertBuiltWeb() {
 await assertBuiltWeb();
 await rm(target, { recursive: true, force: true });
 await cp(source, target, { recursive: true });
-await rm(swaggerUiTarget, { recursive: true, force: true });
-await cp(swaggerUiSource, swaggerUiTarget, { recursive: true });
 
 console.log(`Copied Kimi web assets to ${target}`);
-console.log(`Copied Swagger UI assets to ${swaggerUiTarget}`);

@@ -1,9 +1,8 @@
 /**
- * OpenAPI / Swagger UI smoke test.
+ * OpenAPI smoke test.
  *
- * Asserts that `@fastify/swagger` and `@fastify/swagger-ui` are wired
- * correctly and that the generated OpenAPI document covers the server's
- * REST surface.
+ * Asserts that `@fastify/swagger` is wired correctly and that the generated
+ * OpenAPI document covers the server's REST surface.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -44,7 +43,6 @@ async function bootDaemon(): Promise<RunningServer> {
     lockPath,
     logger: pino({ level: 'silent' }),
     coreProcessOptions: { homeDir: bridgeHome },
-    swagger: true,
   });
   return server;
 }
@@ -230,12 +228,5 @@ describe('Swagger / OpenAPI', () => {
     expect(promptCodes[0]).toBe(0);
     expect(promptCodes).toContain(40001);
     expect(promptCodes).toContain(40401);
-  });
-
-  it('/documentation returns the Swagger UI HTML', async () => {
-    const r = await bootDaemon();
-    const res = await appOf(r).inject({ method: 'GET', url: '/documentation' });
-    expect(res.statusCode).toBe(200);
-    expect(res.payload).toContain('swagger-ui');
   });
 });

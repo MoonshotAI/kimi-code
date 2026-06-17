@@ -57,7 +57,6 @@ describe('kimi server', () => {
     expect(longs).toContain('--port');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
-    expect(longs).toContain('--swagger');
     // run defaults to NOT opening the browser → option is the positive --open
     expect(longs).toContain('--open');
   });
@@ -274,12 +273,12 @@ describe('`kimi server` lifecycle output', () => {
 });
 
 describe('`kimi server run` already-running handling', () => {
-  it('defaults foreground logs off and passes --swagger through to startup options', async () => {
+  it('defaults foreground logs off', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let parsed: unknown;
 
     await handleRunCommand(
-      { port: '7878', swagger: true },
+      { port: '7878' },
       {
         startServerForeground: async (options) => {
           parsed = options;
@@ -300,7 +299,7 @@ describe('`kimi server run` already-running handling', () => {
       },
     );
 
-    expect(parsed).toMatchObject({ logLevel: 'silent', swagger: true });
+    expect(parsed).toMatchObject({ logLevel: 'silent' });
   });
 
   it('enables foreground logs only when --log-level is provided', async () => {
