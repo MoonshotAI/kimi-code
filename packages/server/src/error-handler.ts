@@ -49,4 +49,3 @@ export function installErrorHandler(app: ErrorHandlerHost): void {
     );
   });
 }
-

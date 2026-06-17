@@ -51,5 +51,3 @@ export interface IRestGateway {
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const IRestGateway = createDecorator<IRestGateway>('restGateway');
-
-

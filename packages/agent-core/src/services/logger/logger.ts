@@ -15,4 +15,3 @@ export interface ILogService {
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const ILogService = createDecorator<ILogService>('logService');
-
