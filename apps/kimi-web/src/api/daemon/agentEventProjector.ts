@@ -107,6 +107,9 @@ interface SessionState {
   // Tool timing
   toolStartTimes: Map<string, number>;
 
+  // Client-side turn timing
+  turnStartTime?: number;
+
   // Usage accumulator
   totalInput: number;
   totalOutput: number;
@@ -133,6 +136,7 @@ function createSessionState(): SessionState {
     turnTextLen: 0,
     turnThinkLen: 0,
     toolStartTimes: new Map(),
+    turnStartTime: undefined,
     totalInput: 0,
     totalOutput: 0,
     totalCacheRead: 0,
@@ -655,9 +659,10 @@ export function createAgentProjector(): AgentProjector {
         if (turnId !== undefined) {
           s.turnPromptId.set(turnId, existingPromptId);
         }
-        // Fresh turn → fresh per-turn stream offsets.
+        // Fresh turn → fresh per-turn stream offsets and client-side timer.
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
+        s.turnStartTime = Date.now();
 
         out.push({
           type: 'sessionStatusChanged',
@@ -900,6 +905,8 @@ export function createAgentProjector(): AgentProjector {
       case 'turn.ended': {
         const msgId = s.currentAssistantMsgId;
         const reason: string = p?.reason ?? 'completed';
+        const durationMs =
+          s.turnStartTime !== undefined ? Math.max(0, Date.now() - s.turnStartTime) : undefined;
 
         if (msgId) {
           finishAssistantMessage(s, msgId);
@@ -911,6 +918,7 @@ export function createAgentProjector(): AgentProjector {
               messageId: msgId,
               content: msg.content.map((c) => ({ ...c })),
               status: reason === 'failed' ? 'error' : 'completed',
+              durationMs,
             });
           }
         }
@@ -934,6 +942,7 @@ export function createAgentProjector(): AgentProjector {
         s.currentPromptId = undefined;
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
+        s.turnStartTime = undefined;
         break;
       }
 

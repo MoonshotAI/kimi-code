@@ -167,6 +167,8 @@ export interface AppMessage {
   createdAt: string;
   promptId?: string;
   parentMessageId?: string;
+  /** Client-side measured duration from turn.started to turn.ended (ms). */
+  durationMs?: number;
   metadata?: Record<string, unknown>;
 }
 
@@ -397,7 +399,7 @@ export type AppEvent =
   | { type: 'compactionCompleted'; sessionId: string; tokensBefore?: number; tokensAfter?: number; summary?: string }
   | { type: 'compactionCancelled'; sessionId: string }
   | { type: 'messageCreated'; message: AppMessage }
-  | { type: 'messageUpdated'; sessionId: string; messageId: string; content: AppMessageContent[]; status: 'pending' | 'completed' | 'error' }
+  | { type: 'messageUpdated'; sessionId: string; messageId: string; content: AppMessageContent[]; status: 'pending' | 'completed' | 'error'; durationMs?: number }
   | { type: 'assistantDelta'; sessionId: string; messageId: string; contentIndex: number; delta: { text?: string; thinking?: string } }
   // Side-channel / non-main-agent streaming: carries text/thinking deltas for a
   // specific agent (e.g. a BTW side chat) without folding them into the parent

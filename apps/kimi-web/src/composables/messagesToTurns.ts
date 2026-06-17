@@ -341,6 +341,8 @@ interface Group {
   blocks: TurnBlock[];
   approval: ApprovalBlock | undefined;
   approvalId: string | undefined;
+  /** Client-side measured duration from turn.started to turn.ended (ms). */
+  durationMs?: number;
   /**
    * Content signatures already folded into this group, used to drop a duplicate
    * assistant message. The same logical reply can reach us under two different
@@ -473,6 +475,7 @@ export function messagesToTurns(
       blocks: g.blocks.length > 0 ? g.blocks : undefined,
       approval: g.approval,
       approvalId: g.approvalId,
+      durationMs: g.durationMs,
     });
   }
 
@@ -680,6 +683,7 @@ export function messagesToTurns(
         approval: undefined,
         approvalId: undefined,
         seenSigs: new Set<string>(),
+        durationMs: msg.durationMs,
       };
     } else if (pendingGroup !== null && pendingGroup.promptId === undefined && pid !== undefined) {
       pendingGroup.promptId = pid;

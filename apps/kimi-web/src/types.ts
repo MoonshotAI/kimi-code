@@ -174,6 +174,8 @@ export interface ChatTurn {
   compaction?: { trigger?: 'manual' | 'auto'; tokensBefore?: number; tokensAfter?: number };
   /** ISO timestamp when the message was created (used for the user bubble timestamp). */
   createdAt?: string;
+  /** Client-side measured duration from turn.started to turn.ended (ms). */
+  durationMs?: number;
   /** Skill activation metadata: when a user turn was triggered by a slash
       command (/skill), this holds the skill name and args for display. */
   skillActivation?: { name: string; args?: string };

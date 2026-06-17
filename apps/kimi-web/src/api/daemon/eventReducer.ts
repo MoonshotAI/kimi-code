@@ -377,7 +377,11 @@ export function reduceAppEvent(
       const msgs = next.messagesBySession[sid] ?? [];
       next.messagesBySession[sid] = msgs.map((m) => {
         if (m.id !== event.messageId) return m;
-        return { ...m, content: event.content };
+        return {
+          ...m,
+          content: event.content,
+          durationMs: event.durationMs ?? m.durationMs,
+        };
       });
       break;
     }

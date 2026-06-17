@@ -140,6 +140,14 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60_000);
+  const s = ((ms % 60_000) / 1000).toFixed(1);
+  return `${m}m${s}s`;
+}
+
 /** Divider label: "Context compacted"/"auto-compacted" + optional token stats. */
 function compactionDividerLabel(turn: ChatTurn): string {
   const c = turn.compaction;
@@ -542,8 +550,10 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
           <AgentGroup v-else-if="blk.kind === 'agentGroup'" :members="blk.members" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" :mobile="childBubble" @open-media="emit('openMedia', $event)" />
         </template>
-        <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && assistantRunFinalText(ti).trim().length > 0" class="a-msg-ft">
+        <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turn.durationMs !== undefined)" class="a-msg-ft">
+          <span v-if="turn.durationMs !== undefined" class="a-duration" :title="`${turn.durationMs} ms`">{{ formatDuration(turn.durationMs) }}</span>
           <button
+            v-if="assistantRunFinalText(ti).trim().length > 0"
             class="a-cpbtn"
             tabindex="-1"
             @click="copyAssistantRun(ti)"
@@ -635,6 +645,7 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
               </svg>
               <span class="cpbtn-text">{{ t('filePreview.copy') }}</span>
             </button>
+            <span v-if="turn.durationMs !== undefined && turn.role === 'assistant'" class="turn-duration" :title="`${turn.durationMs} ms`">{{ formatDuration(turn.durationMs) }}</span>
           </div>
 
           <!-- User input renders verbatim (pre-wrap), never through Markdown -->
@@ -816,6 +827,12 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
 .userline .pr { color: var(--blue2); font-weight: 700; font-size: calc(var(--ui-font-size) - 1.5px); }
 .ai .pr { color: var(--ok); font-weight: 700; font-size: calc(var(--ui-font-size) - 1.5px); }
 .who { color: var(--muted); font-size: calc(var(--ui-font-size) - 1.5px); }
+.turn-duration {
+  margin-left: 8px;
+  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--muted);
+  font-family: var(--mono);
+}
 
 /* Copy button: always visible, text shows on hover */
 .cpbtn {
@@ -1150,9 +1167,16 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
 }
 .a-msg-ft {
   display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
   height: auto;
   margin-top: var(--chat-block-gap);
   overflow: visible;
+}
+.a-duration {
+  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--muted);
 }
 
 .a-cpbtn {
