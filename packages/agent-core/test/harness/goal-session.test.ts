@@ -239,6 +239,48 @@ describe('goal session end-to-end', () => {
     expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
   });
 
+  it('drives a goal the model creates mid-turn with CreateGoal', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(sessionDir, events, [
+      'CreateGoal',
+      'GetGoal',
+      'UpdateGoal',
+    ]);
+    const api = new SessionAPIImpl(session);
+
+    // No goal exists at launch. The model creates one mid-turn via CreateGoal;
+    // the driver must then pursue it across continuation turns instead of
+    // stopping after the ordinary turn that merely started it.
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'create',
+      name: 'CreateGoal',
+      arguments: JSON.stringify({ objective: 'work' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'Goal created and active.' });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'complete',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'I completed the goal.' });
+
+    agent.turn.prompt([{ type: 'text', text: 'Please start a goal to do the work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    // The driver ran a continuation turn after the goal became active, reaching
+    // the UpdateGoal('complete') the standalone turn never would have.
+    expect(scripted.calls.length).toBeGreaterThanOrEqual(4);
+    expect(JSON.stringify(scripted.calls[2]?.history ?? [])).toContain(
+      'Continue working toward the active goal',
+    );
+    const turnStarts = events.filter((e) => e['type'] === 'turn.started').length;
+    expect(turnStarts).toBeGreaterThanOrEqual(2);
+    expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
+  });
+
   it('asks the model to explain why it marked a goal blocked', async () => {
     const sessionDir = await makeTempDir();
     const events: Array<Record<string, unknown>> = [];

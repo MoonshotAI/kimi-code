@@ -301,12 +301,14 @@ export class TurnFlow {
         return await this.driveGoal(firstTurnId, input, origin, signal);
       }
       const end = await this.runOneTurn(firstTurnId, input, origin, signal, true);
-      const resumedFromPausedOrBlocked =
-        initialGoalStatus === 'paused' || initialGoalStatus === 'blocked';
-      const currentGoalStatus = this.agent.goal.getGoal().goal?.status;
+      // A goal can become active during an ordinary turn: the model creates one
+      // with CreateGoal, or resumes a paused/blocked goal via UpdateGoal. Either
+      // way, hand the now-active goal to the driver so it is actually pursued,
+      // instead of stopping after the turn that merely started it. (The
+      // already-active case took the early return above.)
+      const goalBecameActive = this.agent.goal.getGoal().goal?.status === 'active';
       if (
-        resumedFromPausedOrBlocked &&
-        currentGoalStatus === 'active' &&
+        goalBecameActive &&
         end.event.reason !== 'cancelled' &&
         end.event.reason !== 'failed'
       ) {
