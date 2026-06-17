@@ -222,6 +222,7 @@ export class SSHProcess implements KaosProcess {
   private _exitCode: number | null = null;
   private readonly _exitPromise: Promise<number>;
   private readonly _channel: ClientChannel;
+  private _disposed = false;
 
   constructor(channel: ClientChannel) {
     this._channel = channel;
@@ -260,6 +261,14 @@ export class SSHProcess implements KaosProcess {
     const sshSignal = rawSignal.startsWith('SIG') ? rawSignal.slice(3) : rawSignal;
     this._channel.signal(sshSignal);
     return Promise.resolve();
+  }
+
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+    this.stdin.destroy();
+    this.stdout.destroy();
+    this.stderr.destroy();
   }
 }
 

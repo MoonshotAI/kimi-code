@@ -468,6 +468,7 @@ function pendingProcess(exitOnKill = 143): {
     },
     wait: () => waitPromise,
     kill: killSpy as unknown as KaosProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
   };
   return { proc, killSpy };
 }

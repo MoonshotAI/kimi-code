@@ -1,16 +1,10 @@
-import { createHash } from 'node:crypto';
 import { join } from 'pathe';
 
 import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
 import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
-import {
-  generate,
-  type ChatProvider,
-  type Message,
-  type Tool,
-} from '@moonshot-ai/kosong';
+import { generate } from '@moonshot-ai/kosong';
 
 import type { EnabledPluginSessionStart } from '#/plugin';
 
@@ -50,12 +44,9 @@ import type { SkillRegistry } from './skill/types';
 import { SwarmMode } from './swarm';
 import { ToolManager } from './tool/index';
 import { TurnFlow } from './turn';
-import {
-  GENERATE_REQUEST_LOG_CONTEXT,
-  KosongLLM,
-  type GenerateOptionsWithRequestLog,
-} from './turn/kosong-llm';
+import { KosongLLM } from './turn/kosong-llm';
 import { UsageRecorder } from './usage';
+import { LlmRequestLogger, splitGenerateOptions } from './llm-request-logger';
 import { resolveCompletionBudget } from '../utils/completion-budget';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { ToolServices } from '../tools/support/services';
@@ -113,6 +104,7 @@ export class Agent {
   readonly telemetry: TelemetryClient;
   readonly experimentalFlags: ExperimentalFlagResolver;
 
+  readonly llmRequestLogger: LlmRequestLogger;
   readonly blobStore: BlobStore | undefined;
   readonly records: AgentRecords;
   readonly fullCompaction: FullCompaction;
@@ -132,8 +124,6 @@ export class Agent {
   readonly goal: GoalMode;
   readonly replayBuilder: ReplayBuilder;
 
-  private lastLlmConfigLogSignature?: string;
-
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
     this._kaos = options.kaos;
@@ -151,6 +141,7 @@ export class Agent {
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
 
+    this.llmRequestLogger = new LlmRequestLogger(this.log);
     this.blobStore = options.homedir
       ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
       : undefined;
@@ -193,29 +184,36 @@ export class Agent {
 
   get generate(): typeof generate {
     return async (provider, systemPrompt, tools, history, callbacks, options) => {
-      if (options?.auth !== undefined) {
-        this.logLlmRequest(provider, systemPrompt, tools, history, options);
-        return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, options);
-      }
+      const { requestLogFields, generateOptions } = splitGenerateOptions(options);
       const modelAlias = this.config.modelAlias;
+      const run = (requestOptions: Parameters<typeof generate>[5]) => {
+        this.llmRequestLogger.logRequest({
+          provider,
+          modelAlias,
+          systemPrompt,
+          tools,
+          messages: history,
+          fields: requestLogFields,
+        });
+        return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, requestOptions);
+      };
+      if (generateOptions?.auth !== undefined) {
+        return run(generateOptions);
+      }
       const withAuth =
         modelAlias === undefined
           ? undefined
           : this.modelProvider?.resolveAuth?.(modelAlias, { log: this.log });
       if (withAuth === undefined) {
-        this.logLlmRequest(provider, systemPrompt, tools, history, options);
-        return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, options);
+        return run(generateOptions);
       }
       return withAuth((auth) => {
-        const requestOptions = { ...options, auth };
-        this.logLlmRequest(provider, systemPrompt, tools, history, requestOptions);
-        return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, requestOptions);
+        return run({ ...generateOptions, auth });
       });
     };
   }
 
   get llm(): KosongLLM {
-    const model = this.config.model;
     // All provider-level request config (thinking, sampling params, thinking.keep)
     // is applied in ConfigState.provider so compaction shares it. See get provider().
     const provider = this.config.provider;
@@ -226,58 +224,10 @@ export class Agent {
     });
     return new KosongLLM({
       provider,
-      modelName: model,
       systemPrompt: this.config.systemPrompt,
       capability: this.config.modelCapabilities,
       generate: this.generate,
       completionBudgetConfig,
-    });
-  }
-
-  private logLlmRequest(
-    provider: ChatProvider,
-    systemPrompt: string,
-    tools: readonly Tool[],
-    history: readonly Message[],
-    options: Parameters<typeof generate>[5],
-  ): void {
-    const context = buildLlmRequestContext(options);
-    const configMetadata = buildLlmConfigMetadata(
-      provider,
-      this.config.modelAlias,
-      systemPrompt,
-      tools,
-    );
-    this.logLlmConfigIfChanged(
-      context,
-      configMetadata,
-      buildLlmConfigSignature(configMetadata, systemPrompt, tools),
-    );
-
-    let partialMessageCount = 0;
-    for (const message of history) {
-      if (message.partial === true) partialMessageCount += 1;
-    }
-    const requestMetadata: LlmRequestMetadata = {};
-    if (partialMessageCount > 0) {
-      requestMetadata.partialMessageCount = partialMessageCount;
-    }
-    this.log.info('llm request', {
-      ...context,
-      ...requestMetadata,
-    });
-  }
-
-  private logLlmConfigIfChanged(
-    context: LlmRequestContextFields,
-    metadata: LlmConfigMetadata,
-    signature: string,
-  ): void {
-    if (signature === this.lastLlmConfigLogSignature) return;
-    this.lastLlmConfigLogSignature = signature;
-    this.log.info('llm config', {
-      ...context,
-      ...metadata,
     });
   }
 
@@ -477,89 +427,4 @@ export class Agent {
       ),
     });
   }
-}
-
-interface LlmRequestContextFields {
-  turnStep?: string;
-  attempt?: string;
-}
-
-interface LlmRequestMetadata {
-  partialMessageCount?: number;
-}
-
-/**
- * Fields that identify an LLM configuration for deduplication.
- * Keep this interface simple and avoid dynamic keys — the shape is
- * serialized with `JSON.stringify` to produce a stable signature in
- * `logLlmConfigIfChanged`.
- */
-interface LlmConfigMetadata {
-  provider: string;
-  model: string;
-  modelAlias?: string;
-  thinkingEffort?: string;
-  systemPromptChars: number;
-  toolCount: number;
-}
-
-function buildLlmRequestContext(options: Parameters<typeof generate>[5]): LlmRequestContextFields {
-  const context = requestLogContext(options);
-  if (context === undefined) return {};
-
-  const fields: LlmRequestContextFields = {
-    turnStep:
-      context.turnId === undefined || context.step === undefined
-        ? undefined
-        : `${context.turnId}.${String(context.step)}`,
-  };
-  if (
-    context.attempt !== undefined &&
-    context.maxAttempts !== undefined &&
-    context.attempt > 1
-  ) {
-    fields.attempt = `${String(context.attempt)}/${String(context.maxAttempts)}`;
-  }
-  return fields;
-}
-
-function buildLlmConfigMetadata(
-  provider: ChatProvider,
-  modelAlias: string | undefined,
-  systemPrompt: string,
-  tools: readonly Tool[],
-): LlmConfigMetadata {
-  return {
-    provider: provider.name,
-    model: provider.modelName,
-    modelAlias,
-    thinkingEffort: provider.thinkingEffort ?? undefined,
-    systemPromptChars: systemPrompt.length,
-    toolCount: tools.length,
-  };
-}
-
-function buildLlmConfigSignature(
-  metadata: LlmConfigMetadata,
-  systemPrompt: string,
-  tools: readonly Tool[],
-): string {
-  const toolsForSignature = tools.map(({ name, description, parameters }) => ({
-    name,
-    description,
-    parameters,
-  }));
-  return JSON.stringify({
-    ...metadata,
-    systemPromptHash: fingerprint(systemPrompt),
-    toolsHash: fingerprint(JSON.stringify(toolsForSignature)),
-  });
-}
-
-function fingerprint(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
-}
-
-function requestLogContext(options: Parameters<typeof generate>[5]) {
-  return (options as GenerateOptionsWithRequestLog | undefined)?.[GENERATE_REQUEST_LOG_CONTEXT];
 }

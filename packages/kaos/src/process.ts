@@ -22,4 +22,6 @@ export interface KaosProcess {
   wait(): Promise<number>;
   /** Send a signal to the process (defaults to `SIGTERM`). */
   kill(signal?: NodeJS.Signals): Promise<void>;
+  /** Release stdin/stdout/stderr resources owned by this process wrapper. */
+  dispose(): Promise<void> | void;
 }
