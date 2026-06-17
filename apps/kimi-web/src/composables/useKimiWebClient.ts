@@ -1762,53 +1762,6 @@ function toUiTask(task: AppTask): TaskItem {
   };
 }
 
-function compactSessionSummary(text: string): string | undefined {
-  const normalized = text
-    .replace(/```[\s\S]*?```/g, ' code block ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!normalized) return undefined;
-  return normalized.length > 110 ? `${normalized.slice(0, 107).trimEnd()}...` : normalized;
-}
-
-function messageTextForSessionSummary(message: AppMessage): string | undefined {
-  const text = message.content
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join(' ')
-    .trim();
-  return compactSessionSummary(text);
-}
-
-function sessionContentSummary(sessionId: string): string | undefined {
-  const hiddenIds = new Set(rawState.sideChatUserMessageIdsBySession[sessionId] ?? []);
-  const messages = (rawState.messagesBySession[sessionId] ?? []).filter((m) => !hiddenIds.has(m.id));
-  for (const message of messages) {
-    if (message.role !== 'user') continue;
-    const text = messageTextForSessionSummary(message);
-    if (text) return text;
-  }
-  for (const message of messages.toReversed()) {
-    if (message.role !== 'assistant') continue;
-    const text = messageTextForSessionSummary(message);
-    if (text) return text;
-  }
-  return undefined;
-}
-
-function toSessionView(session: AppSession): Session {
-  return {
-    id: session.id,
-    title: session.title,
-    summary: sessionContentSummary(session.id),
-    time: formatTime(session.updatedAt, session.status),
-    status: session.status,
-    busy: isSessionEffectivelyRunning(session.id),
-    updatedAt: session.updatedAt,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Computed view props
 // ---------------------------------------------------------------------------
@@ -1824,7 +1777,13 @@ const workspace = computed<Workspace>(() => {
 
 const sessions = computed<Session[]>(() => {
   void sessionTimeClock.value;
-  return rawState.sessions.map(toSessionView);
+  return rawState.sessions.map((s) => ({
+    id: s.id,
+    title: s.title,
+    time: formatTime(s.updatedAt, s.status),
+    status: s.status,
+    busy: isSessionEffectivelyRunning(s.id),
+  }));
 });
 
 const activeSessionId = computed<string>(() => rawState.activeSessionId ?? '');
@@ -2434,7 +2393,15 @@ const sessionsForView = computed<Session[]>(() => {
   void sessionTimeClock.value;
   // Child ("side chat") sessions never appear in the main list — they live in
   // the side-chat panel only.
-  return rawState.sessions.filter((s) => !s.parentSessionId).map(toSessionView);
+  return rawState.sessions
+    .filter((s) => !s.parentSessionId)
+    .map((s) => ({
+      id: s.id,
+      title: s.title,
+      time: formatTime(s.updatedAt, s.status),
+      status: s.status,
+      busy: isSessionEffectivelyRunning(s.id),
+    }));
 });
 
 /** Per-workspace groups for the 'all workspaces' scope. */
@@ -2444,7 +2411,14 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
   for (const s of rawState.sessions) {
     if (s.parentSessionId) continue; // child sessions stay out of the list
     const wid = workspaceIdForSession(s);
-    const view = toSessionView(s);
+    const view: Session = {
+      id: s.id,
+      title: s.title,
+      time: formatTime(s.updatedAt, s.status),
+      status: s.status,
+      busy: isSessionEffectivelyRunning(s.id),
+      updatedAt: s.updatedAt,
+    };
     const list = byId.get(wid) ?? [];
     list.push(view);
     byId.set(wid, list);

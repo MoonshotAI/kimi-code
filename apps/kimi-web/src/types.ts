@@ -8,8 +8,6 @@ export type SessionStatus = AppSessionStatus;
 export interface Session {
   id: string;
   title: string;
-  /** One-line local preview from already-loaded conversation content. */
-  summary?: string;
   time: string;
   status: SessionStatus;
   /** True only when the session should show a "working" spinner: it is

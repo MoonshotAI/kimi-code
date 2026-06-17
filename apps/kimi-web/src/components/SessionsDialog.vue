@@ -40,7 +40,7 @@ const workspaceNameBySession = computed<Record<string, string>>(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Search (filters by title + local content summary, case-insensitive)
+// Search (filters by title, case-insensitive)
 // ---------------------------------------------------------------------------
 const query = ref('');
 const searchRef = ref<HTMLInputElement | null>(null);
@@ -48,10 +48,7 @@ const searchRef = ref<HTMLInputElement | null>(null);
 const filtered = computed<Session[]>(() => {
   const q = query.value.toLowerCase().trim();
   if (!q) return props.sessions;
-  return props.sessions.filter((s) =>
-    s.title.toLowerCase().includes(q) ||
-    (s.summary?.toLowerCase().includes(q) ?? false),
-  );
+  return props.sessions.filter((s) => s.title.toLowerCase().includes(q));
 });
 
 const selectedIdx = ref(0);
@@ -155,7 +152,6 @@ onUnmounted(() => {
           <span class="dot" :class="dotClass(s)" />
           <div class="meta">
             <span class="title">{{ s.title }}</span>
-            <span v-if="s.summary" class="summary" :title="s.summary">{{ s.summary }}</span>
             <span class="sub">
               <span class="ws">{{ workspaceNameBySession[s.id] ?? t('sessions.noWorkspace') }}</span>
               <span class="sep">·</span>
@@ -311,13 +307,6 @@ onUnmounted(() => {
   font-size: calc(var(--ui-font-size) - 1.5px);
   font-weight: 500;
   color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.summary {
-  color: var(--dim);
-  font-size: max(9px, calc(var(--ui-font-size) - 3px));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

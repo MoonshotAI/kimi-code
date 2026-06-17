@@ -56,12 +56,4 @@ describe('SessionRow status / busy', () => {
     expect(w.find('.tag-ask').exists()).toBe(false);
     expect(w.find('.tag-aborted').exists()).toBe(false);
   });
-
-  it('shows a one-line content summary when available', () => {
-    const w = row({ summary: 'Fix dark-mode markdown code rendering' });
-    const summary = w.find('.session-summary');
-    expect(summary.exists()).toBe(true);
-    expect(summary.text()).toBe('Fix dark-mode markdown code rendering');
-    expect(summary.attributes('title')).toBe('Fix dark-mode markdown code rendering');
-  });
 });
