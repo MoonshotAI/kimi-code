@@ -26,7 +26,6 @@ All other workspace packages are private internal packages, are not published to
 - `@moonshot-ai/protocol`
 - `@moonshot-ai/server`
 - `@moonshot-ai/server-e2e`
-- `@moonshot-ai/services`
 - `@moonshot-ai/vis`
 - `@moonshot-ai/vis-server`
 - `@moonshot-ai/vis-web`
