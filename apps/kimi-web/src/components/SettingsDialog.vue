@@ -76,19 +76,42 @@ function exportLog(): void {
   downloadTraceLog();
 }
 
-type ModelOption = { id: string; label: string };
+type ModelOption = { id: string; label: string; provider: string };
 
 const modelOptions = computed<ModelOption[]>(() => {
-  const byId = new Map<string, string>();
+  const byId = new Map<string, ModelOption>();
   for (const model of props.models ?? []) {
-    byId.set(model.id, model.displayName ?? model.model ?? model.id);
+    byId.set(model.id, {
+      id: model.id,
+      label: model.displayName ?? model.model ?? model.id,
+      provider: model.provider,
+    });
   }
   for (const [id, raw] of Object.entries(props.config?.models ?? {})) {
     if (byId.has(id)) continue;
-    byId.set(id, formatConfigModelLabel(id, raw));
+    const provider = extractConfigModelProvider(raw);
+    byId.set(id, {
+      id,
+      label: formatConfigModelLabel(id, raw, provider),
+      provider: provider ?? id,
+    });
   }
-  return Array.from(byId, ([id, label]) => ({ id, label }))
-    .sort((a, b) => a.label.localeCompare(b.label));
+  return Array.from(byId.values());
+});
+
+const modelGroups = computed<Array<{ provider: string; options: ModelOption[] }>>(() => {
+  const map = new Map<string, ModelOption[]>();
+  for (const option of modelOptions.value) {
+    const list = map.get(option.provider) ?? [];
+    list.push(option);
+    map.set(option.provider, list);
+  }
+  for (const list of map.values()) {
+    list.sort((a, b) => a.label.localeCompare(b.label));
+  }
+  return Array.from(map.entries())
+    .toSorted(([a], [b]) => a.localeCompare(b))
+    .map(([provider, options]) => ({ provider, options }));
 });
 
 const providerEntries = computed<Array<{ id: string; provider: AppConfigProvider }>>(() =>
@@ -102,12 +125,19 @@ const defaultPermissionMode = computed(() => {
   return mode === 'auto' || mode === 'yolo' || mode === 'manual' ? mode : 'manual';
 });
 
-function formatConfigModelLabel(id: string, raw: unknown): string {
+function extractConfigModelProvider(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const source = raw as Record<string, unknown>;
+  const provider = typeof source['provider'] === 'string' ? source['provider'] : undefined;
+  return provider;
+}
+
+function formatConfigModelLabel(id: string, raw: unknown, provider?: string): string {
   if (!raw || typeof raw !== 'object') return id;
   const source = raw as Record<string, unknown>;
   const model = typeof source['model'] === 'string' ? source['model'] : undefined;
-  const provider = typeof source['provider'] === 'string' ? source['provider'] : undefined;
-  if (model && provider) return `${id} (${provider}/${model})`;
+  const resolvedProvider = provider ?? extractConfigModelProvider(raw);
+  if (model && resolvedProvider) return `${id} (${resolvedProvider}/${model})`;
   if (model) return `${id} (${model})`;
   return id;
 }
@@ -271,7 +301,7 @@ function setTab(tab: SettingsTab): void {
                     <span class="hint">{{ t('settings.defaultModelHint') }}</span>
                   </span>
                   <select
-                    v-if="modelOptions.length > 0"
+                    v-if="modelGroups.length > 0"
                     class="select-field"
                     :value="config.defaultModel ?? ''"
                     :disabled="configSaving"
@@ -279,9 +309,11 @@ function setTab(tab: SettingsTab): void {
                     @change="setDefaultModel"
                   >
                     <option v-if="!config.defaultModel" value="" disabled>{{ t('settings.noDefaultModel') }}</option>
-                    <option v-for="model in modelOptions" :key="model.id" :value="model.id">
-                      {{ model.label }}
-                    </option>
+                    <optgroup v-for="group in modelGroups" :key="group.provider" :label="group.provider">
+                      <option v-for="model in group.options" :key="model.id" :value="model.id">
+                        {{ model.label }}
+                      </option>
+                    </optgroup>
                   </select>
                   <span v-else class="rvalue mono">{{ config.defaultModel ?? t('settings.noDefaultModel') }}</span>
                 </div>

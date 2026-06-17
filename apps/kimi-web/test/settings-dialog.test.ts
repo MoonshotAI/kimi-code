@@ -162,6 +162,24 @@ describe('SettingsDialog config controls', () => {
     await planRow!.find('button.switch').trigger('click');
     expect(wrapper.emitted('updateConfig')?.[2]?.[0]).toEqual({ defaultPlanMode: true });
   });
+
+  it('groups default model options by provider', async () => {
+    const wrapper = mountDialog();
+
+    const agentTab = wrapper.findAll('.tab').find((button) => button.text() === 'Agent');
+    await agentTab!.trigger('click');
+
+    const groups = wrapper.findAll('optgroup');
+    expect(groups.length).toBe(2);
+    expect(groups[0]!.attributes('label')).toBe('kimi');
+    expect(groups[1]!.attributes('label')).toBe('openai');
+
+    const kimiOptions = groups[0]!.findAll('option');
+    expect(kimiOptions.some((o) => o.attributes('value') === 'kimi/k2')).toBe(true);
+
+    const openaiOptions = groups[1]!.findAll('option');
+    expect(openaiOptions.some((o) => o.attributes('value') === 'openai/gpt-5')).toBe(true);
+  });
 });
 
 describe('SettingsDialog dialog focus', () => {
