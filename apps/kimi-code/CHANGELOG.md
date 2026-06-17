@@ -1,5 +1,31 @@
 # @moonshot-ai/kimi-code
 
+## 0.16.0
+
+### Minor Changes
+
+- [#788](https://github.com/MoonshotAI/kimi-code/pull/788) [`efdf8a1`](https://github.com/MoonshotAI/kimi-code/commit/efdf8a1b2d4e906fbb35620083c3e7b490e0e88a) - Add a built-in `kimi vis` command that launches the session visualizer in your browser, pointed at your local sessions. Supports `--port`/`--host`, `--no-open`, and `kimi vis <sessionId>` deep-links.
+
+### Patch Changes
+
+- [#790](https://github.com/MoonshotAI/kimi-code/pull/790) [`d0d5821`](https://github.com/MoonshotAI/kimi-code/commit/d0d58219007cd9d7355f1ea8900e9777b66abda2) - Stop Anthropic-compatible providers from reading ambient Anthropic shell credentials and custom headers.
+
+- [#809](https://github.com/MoonshotAI/kimi-code/pull/809) [`6f442bd`](https://github.com/MoonshotAI/kimi-code/commit/6f442bd8cde29e21526fa36c9836e2d4c282b4bf) - Add configurable banner display frequencies with local display state.
+
+- [#807](https://github.com/MoonshotAI/kimi-code/pull/807) [`b45672c`](https://github.com/MoonshotAI/kimi-code/commit/b45672cdaac9959024c3ae36bf35b16a423aa1dc) - Close wrapped output streams when buffered readers are destroyed.
+
+- [#813](https://github.com/MoonshotAI/kimi-code/pull/813) [`7b5b818`](https://github.com/MoonshotAI/kimi-code/commit/7b5b8188157ec902e5cd4e73545bc5ca6c52bb76) - Fix repeated compaction handling when context remains over the blocking threshold.
+
+- [#801](https://github.com/MoonshotAI/kimi-code/pull/801) [`ff332be`](https://github.com/MoonshotAI/kimi-code/commit/ff332be6d364ce3d5974133deb7c76220684181a) - Polish queue pane styling
+
+- [#802](https://github.com/MoonshotAI/kimi-code/pull/802) [`aa1896c`](https://github.com/MoonshotAI/kimi-code/commit/aa1896ca749e41a67d7c4b655dcc8be830cbec82) - Reduce the maximum height of the /btw side panel from half to one-third of the terminal.
+
+- [#805](https://github.com/MoonshotAI/kimi-code/pull/805) [`3e6196e`](https://github.com/MoonshotAI/kimi-code/commit/3e6196e6b227c66860651f4335e06973865b2714) - Project session replay ranges over rendered replay records instead of raw persisted records.
+
+- [#804](https://github.com/MoonshotAI/kimi-code/pull/804) [`299b9fc`](https://github.com/MoonshotAI/kimi-code/commit/299b9fcad4c9c4b755fae4dfae01a1dbf60aec3c) - Prevent session shutdown from resuming the agent when stopping background tasks.
+
+- [#823](https://github.com/MoonshotAI/kimi-code/pull/823) [`90fc04b`](https://github.com/MoonshotAI/kimi-code/commit/90fc04b7072ec20055022c50583d35286ca715a6) - Remove redundant LLM request logging context plumbing.
+
 ## 0.15.0
 
 ### Minor Changes

@@ -33,6 +33,7 @@ describe('BashTool cancellation contract', () => {
       exitCode: null,
       wait: vi.fn(async () => waitPromise),
       kill,
+      dispose: vi.fn(async () => {}),
     };
     const execWithEnv = vi.fn().mockResolvedValue(proc);
     const controller = new AbortController();

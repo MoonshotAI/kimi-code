@@ -46,6 +46,7 @@ class LocalProcess implements KaosProcess {
   private readonly _child: ChildProcess;
   private _exitCode: number | null = null;
   private readonly _exitPromise: Promise<number>;
+  private _disposed = false;
 
   constructor(child: ChildProcess) {
     if (child.stdin === null || child.stdout === null || child.stderr === null) {
@@ -134,6 +135,14 @@ class LocalProcess implements KaosProcess {
       throw error;
     }
     return Promise.resolve();
+  }
+
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+    this.stdin.destroy();
+    this.stdout.destroy();
+    this.stderr.destroy();
   }
 }
 

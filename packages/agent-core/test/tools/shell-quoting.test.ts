@@ -33,6 +33,7 @@ function fakeProcess(): KaosProcess {
     exitCode: 0,
     wait: vi.fn(async () => 0),
     kill: vi.fn(async () => {}),
+    dispose: vi.fn(async () => {}),
   };
 }
 
@@ -45,6 +46,7 @@ function fakeProcessWithOutput(stdout: Readable, stderr: Readable): KaosProcess 
     exitCode: 0,
     wait: vi.fn(async () => 0),
     kill: vi.fn(async () => {}),
+    dispose: vi.fn(async () => {}),
   };
 }
 

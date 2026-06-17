@@ -119,6 +119,14 @@ function normalizeTimeoutMs(timeout: number | undefined, isBackground: boolean):
   return Math.min(value, timeoutCapS(isBackground)) * MS_PER_SECOND;
 }
 
+async function disposeProcess(proc: KaosProcess): Promise<void> {
+  try {
+    await proc.dispose();
+  } catch {
+    /* best-effort cleanup */
+  }
+}
+
 function renderBashDescription(shellName: string): string {
   return renderPrompt(bashDescriptionTemplate, { ...SHELL_TIMEOUT_VARS, SHELL_NAME: shellName });
 }
@@ -404,6 +412,8 @@ async function killSpawnedProcess(proc: KaosProcess): Promise<void> {
     await proc.kill('SIGTERM');
   } catch {
     /* process already gone */
+  } finally {
+    await disposeProcess(proc);
   }
 }
 

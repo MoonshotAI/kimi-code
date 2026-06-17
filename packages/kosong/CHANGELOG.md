@@ -1,5 +1,11 @@
 # @moonshot-ai/kosong
 
+## 0.4.6
+
+### Patch Changes
+
+- [#790](https://github.com/MoonshotAI/kimi-code/pull/790) [`d0d5821`](https://github.com/MoonshotAI/kimi-code/commit/d0d58219007cd9d7355f1ea8900e9777b66abda2) - Stop Anthropic-compatible providers from reading ambient Anthropic shell credentials and custom headers.
+
 ## 0.4.5
 
 ### Patch Changes

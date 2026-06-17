@@ -1,7 +1,7 @@
 import { type ChatProvider, KimiChatProvider } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
-import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '../../src/agent/kimi-env-params';
+import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '../../src/config/kimi-env-params';
 import { KimiError } from '../../src/errors';
 
 function kimi(): KimiChatProvider {

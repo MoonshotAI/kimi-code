@@ -1,5 +1,21 @@
 # @moonshot-ai/agent-core
 
+## 0.13.1
+
+### Patch Changes
+
+- [#813](https://github.com/MoonshotAI/kimi-code/pull/813) [`7b5b818`](https://github.com/MoonshotAI/kimi-code/commit/7b5b8188157ec902e5cd4e73545bc5ca6c52bb76) - Fix repeated compaction handling when context remains over the blocking threshold.
+
+- [#805](https://github.com/MoonshotAI/kimi-code/pull/805) [`3e6196e`](https://github.com/MoonshotAI/kimi-code/commit/3e6196e6b227c66860651f4335e06973865b2714) - Project session replay ranges over rendered replay records instead of raw persisted records.
+
+- [#804](https://github.com/MoonshotAI/kimi-code/pull/804) [`299b9fc`](https://github.com/MoonshotAI/kimi-code/commit/299b9fcad4c9c4b755fae4dfae01a1dbf60aec3c) - Prevent session shutdown from resuming the agent when stopping background tasks.
+
+- [#823](https://github.com/MoonshotAI/kimi-code/pull/823) [`90fc04b`](https://github.com/MoonshotAI/kimi-code/commit/90fc04b7072ec20055022c50583d35286ca715a6) - Remove redundant LLM request logging context plumbing.
+
+- Updated dependencies [[`d0d5821`](https://github.com/MoonshotAI/kimi-code/commit/d0d58219007cd9d7355f1ea8900e9777b66abda2), [`b45672c`](https://github.com/MoonshotAI/kimi-code/commit/b45672cdaac9959024c3ae36bf35b16a423aa1dc)]:
+  - @moonshot-ai/kosong@0.4.6
+  - @moonshot-ai/kaos@0.1.6
+
 ## 0.13.0
 
 ### Minor Changes

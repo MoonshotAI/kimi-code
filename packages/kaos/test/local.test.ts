@@ -615,6 +615,20 @@ describe('LocalKaos', () => {
   });
 
   describe('exec timeout', () => {
+    it('dispose destroys process stdio without killing the process', async () => {
+      const proc = await kaos.exec(...nodeArgs('setTimeout(() => {}, 10000);'));
+
+      await proc.dispose();
+      await proc.dispose();
+
+      expect(proc.exitCode).toBeNull();
+      expect(proc.stdout.destroyed).toBe(true);
+      expect(proc.stderr.destroyed).toBe(true);
+
+      await proc.kill('SIGKILL');
+      await proc.wait();
+    });
+
     it('should allow killing a long-running process', async () => {
       const code = `setTimeout(() => {}, 10000);`;
       const proc = await kaos.exec(...nodeArgs(code));

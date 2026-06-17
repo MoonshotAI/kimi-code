@@ -129,6 +129,7 @@ export function createCommandKaos(stdout: string): Kaos {
       exitCode: 0,
       wait: vi.fn().mockResolvedValue(0),
       kill: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn().mockResolvedValue(undefined),
     };
   }
 

@@ -6,6 +6,7 @@ import type {
   BackgroundTask,
   BackgroundTaskInfoBase,
   BackgroundTaskSink,
+  BackgroundTaskSettlement,
 } from './task';
 
 export interface ProcessBackgroundTaskInfo extends BackgroundTaskInfoBase {
@@ -21,6 +22,8 @@ export type ProcessBackgroundTaskOutputCallback = (
   kind: ProcessBackgroundTaskOutputKind,
   text: string,
 ) => void;
+
+const STREAM_DRAIN_GRACE_MS = 250;
 
 export class ProcessBackgroundTask implements BackgroundTask {
   readonly kind = 'process' as const;
@@ -42,7 +45,6 @@ export class ProcessBackgroundTask implements BackgroundTask {
 
     const requestStop = (): void => {
       void this.proc.kill('SIGTERM').catch(() => {});
-      destroyProcessStreams(this.proc);
     };
     if (sink.signal.aborted) {
       requestStop();
@@ -50,29 +52,36 @@ export class ProcessBackgroundTask implements BackgroundTask {
       sink.signal.addEventListener('abort', requestStop, { once: true });
     }
 
+    let settlement: BackgroundTaskSettlement;
     try {
       const exitCode = await this.proc.wait();
-      await Promise.all(streamSettled);
+      await waitForStreamDrain(streamSettled);
       this.exitCode = exitCode;
-      await sink.settle({
+      settlement = {
         status: sink.signal.aborted ? 'killed' : exitCode === 0 ? 'completed' : 'failed',
-      });
+      };
     } catch (error: unknown) {
-      await Promise.allSettled(streamSettled);
+      await waitForStreamDrainSettled(streamSettled);
       this.exitCode = this.proc.exitCode;
-      await sink.settle({
+      settlement = {
         status: sink.signal.aborted ? 'killed' : 'failed',
         stopReason: sink.signal.aborted ? undefined : errorMessage(error),
-      });
+      };
     } finally {
       sink.signal.removeEventListener('abort', requestStop);
+      await this.disposeProcess();
     }
+    await sink.settle(settlement);
   }
 
   async forceStop(): Promise<void> {
-    if (this.proc.exitCode !== null) return;
-    await this.proc.kill('SIGKILL');
-    destroyProcessStreams(this.proc);
+    try {
+      if (this.proc.exitCode === null) {
+        await this.proc.kill('SIGKILL');
+      }
+    } finally {
+      await this.disposeProcess();
+    }
   }
 
   toInfo(base: BackgroundTaskInfoBase): ProcessBackgroundTaskInfo {
@@ -84,18 +93,36 @@ export class ProcessBackgroundTask implements BackgroundTask {
       exitCode: this.exitCode,
     };
   }
+
+  private async disposeProcess(): Promise<void> {
+    try {
+      await this.proc.dispose();
+    } catch {
+      /* best-effort cleanup */
+    }
+  }
 }
 
-function destroyProcessStreams(proc: KaosProcess): void {
+async function waitForStreamDrain(streamSettled: readonly Promise<void>[]): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    proc.stdout.destroy();
-  } catch {
-    /* ignore */
+    await Promise.race([
+      Promise.all(streamSettled),
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, STREAM_DRAIN_GRACE_MS);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
+}
+
+async function waitForStreamDrainSettled(streamSettled: readonly Promise<void>[]): Promise<void> {
   try {
-    proc.stderr.destroy();
+    await waitForStreamDrain(streamSettled);
   } catch {
-    /* ignore */
+    /* original process/stream error wins */
   }
 }
 
@@ -106,11 +133,12 @@ function observeProcessStream(
   onOutput?: ProcessBackgroundTaskOutputCallback,
 ): Promise<void> {
   stream.setEncoding('utf8');
-  stream.on('data', (chunk: string) => {
+  const onData = (chunk: string): void => {
     if (chunk.length === 0) return;
     sink.appendOutput(chunk);
     onOutput?.(kind, chunk);
-  });
+  };
+  stream.on('data', onData);
 
   return new Promise<void>((resolve, reject) => {
     let ended = false;
@@ -146,6 +174,7 @@ function observeProcessStream(
       }
     };
     const cleanup = (): void => {
+      stream.removeListener('data', onData);
       stream.removeListener('end', onEnd);
       stream.removeListener('close', onClose);
       stream.removeListener('error', onError);
