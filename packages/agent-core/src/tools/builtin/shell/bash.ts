@@ -195,13 +195,7 @@ export class BashTool implements BuiltinTool<BashInput> {
   }
 
   private spawn(effectiveCwd: string, command: string): Promise<KaosProcess> {
-    const shellCwd = this.isWindowsBash ? windowsPathToPosixPath(effectiveCwd) : effectiveCwd;
-    const shellArgs = [
-      this.kaos.osEnv.shellPath,
-      '-c',
-      `cd ${shellQuote(shellCwd)} && ${command}`,
-    ];
-
+    const shellArgs = [this.kaos.osEnv.shellPath, '-c', command];
     const noninteractiveEnv: Record<string, string> = {
       NO_COLOR: '1',
       TERM: 'dumb',
@@ -218,7 +212,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       ...(process.env as Record<string, string>),
       ...noninteractiveEnv,
     };
-    return this.kaos.execWithEnv(shellArgs, mergedEnv);
+    return this.kaos.withCwd(effectiveCwd).execWithEnv(shellArgs, mergedEnv);
   }
 
   private async execution(
@@ -466,25 +460,6 @@ async function readStreamIntoBuilder(
   const trailing = decoder.end();
   if (trailing.length > 0) onUpdate?.({ kind, text: trailing });
   builder.write(trailing);
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replaceAll("'", "'\\''")}'`;
-}
-
-function windowsPathToPosixPath(path: string): string {
-  if (path.startsWith('\\\\')) {
-    return path.replaceAll('\\', '/');
-  }
-
-  const driveMatch = /^([A-Za-z]):(?:[\\/]|$)/.exec(path);
-  if (driveMatch !== null) {
-    const drive = driveMatch[1]!.toLowerCase();
-    const rest = path.slice(2).replaceAll('\\', '/');
-    return `/${drive}${rest.startsWith('/') ? rest : `/${rest}`}`;
-  }
-
-  return path.replaceAll('\\', '/');
 }
 
 const WINDOWS_NUL_REDIRECT = /(\d?&?>+\s*)[Nn][Uu][Ll](?=\s|$|[|&;)\n])/g;
