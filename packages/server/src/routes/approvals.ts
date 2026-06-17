@@ -33,13 +33,9 @@ import {
   listPendingApprovalsQuerySchema,
   listPendingApprovalsResponseSchema,
 } from '@moonshot-ai/protocol';
-import {
-  IApprovalService,
-  approvalToAgentCoreResponse,
-} from '@moonshot-ai/services';
+import { IApprovalService, approvalToAgentCoreResponse, type IInstantiationService } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

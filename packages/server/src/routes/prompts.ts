@@ -12,24 +12,12 @@ import {
   promptSteerResultSchema,
   type PromptSubmission,
 } from '@moonshot-ai/protocol';
-import {
-  IPromptService,
-  AuthModelNotResolvedError,
-  AuthProvisioningRequiredError,
-  AuthTokenMissingError,
-  AuthTokenUnauthorizedError,
-  PromptAlreadyCompletedError,
-  PromptNotFoundError,
-  SessionBusyError,
-  SessionNotFoundError,
-} from '@moonshot-ai/services';
+import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, IFileStore, type IInstantiationService, type GetResult } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
-import { FileNotFoundError, IFileStore, type GetResult } from '@moonshot-ai/services';
 import { parseActionSuffix } from './action-suffix';
 
 interface PromptRouteHost {

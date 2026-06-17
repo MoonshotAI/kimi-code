@@ -31,31 +31,12 @@ import {
   type FsStatManyRequest,
   type FsStatRequest,
 } from '@moonshot-ai/protocol';
-import { SessionNotFoundError } from '@moonshot-ai/services';
+import { SessionNotFoundError, FsAlreadyExistsError, FsIsBinaryError, FsIsDirectoryError, FsPathNotFoundError, FsTooLargeError, FsTooManyResultsError, IFsService, FsGrepTimeoutError, IFsSearchService, FsGitUnavailableError, IFsGitService, FsPathEscapesError, type IInstantiationService } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
-import {
-  FsAlreadyExistsError,
-  FsIsBinaryError,
-  FsIsDirectoryError,
-  FsPathNotFoundError,
-  FsTooLargeError,
-  FsTooManyResultsError,
-  IFsService,
-} from '@moonshot-ai/services';
-import {
-  FsGrepTimeoutError,
-  IFsSearchService,
-} from '@moonshot-ai/services';
-import {
-  FsGitUnavailableError,
-  IFsGitService,
-} from '@moonshot-ai/services';
-import { FsPathEscapesError } from '@moonshot-ai/services';
 import {
   launchDetached,
   openFileCommandFor,
@@ -255,7 +236,7 @@ export function registerFsRoutes(
       );
     }
 
-    let resolved: import('@moonshot-ai/services').FsDownloadResolved;
+    let resolved: import('@moonshot-ai/agent-core').FsDownloadResolved;
     try {
       resolved = await ix.invokeFunction((a) =>
         a.get(IFsService).resolveDownload(session_id, relPath),

@@ -33,7 +33,7 @@ import { pino } from 'pino';
 import { WebSocket } from 'ws';
 
 import type { Event } from '@moonshot-ai/protocol';
-import { IEventService } from '@moonshot-ai/services';
+import { IEventService } from '@moonshot-ai/agent-core';
 
 import {
   ISessionClientsService,

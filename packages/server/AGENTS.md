@@ -21,9 +21,9 @@ The Kimi Code server. It hosts `agent-core` sessions and exposes them over REST 
 - `middleware/` — `defineRoute.ts`, `schema.ts`, `validate.ts`. `openapi/transforms.ts`.
 - `svc/` — OS service managers (launchd / systemd / schtasks) backing `kimi server install/start`.
 
-## DI: how it consumes `@moonshot-ai/services`
+## DI: how it consumes `@moonshot-ai/agent-core`
 
-Service conventions (naming, file layout, registration) live in `packages/services/AGENTS.md` — read that before adding or changing a service. This package only wires the container:
+Service conventions (naming, file layout, registration) live in `packages/agent-core/src/services/AGENTS.md` — read that before adding or changing a service. This package only wires the container:
 
 - `src/services/serviceCollection.ts` `createServerServiceCollection(...)` seeds a `ServiceCollection` with `...getSingletonServiceDescriptors()` plus server-owned gateway singletons (`ConnectionRegistry`, `SessionClientsService`, `WSBroadcastService`) and overrides `IApprovalService` / `IQuestionService`.
 - `services.set(...)` overrides: `ILogService` (Pino adapter), `IRestGateway` (`FastifyRestGateway(app)`), `IEnvironmentService`; then `IWSGateway` / `ICoreProcessService` as `SyncDescriptor`s with options; then `server.serviceOverrides` last (the test seam — later registration wins).

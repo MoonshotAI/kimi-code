@@ -2,9 +2,8 @@
 
 import { join } from 'node:path';
 
-import { Disposable } from '@moonshot-ai/agent-core';
+import { Disposable, IEnvironmentService, IEventService, ILogService } from '@moonshot-ai/agent-core';
 import { isVolatileEventType, type Event, type SessionCursor } from '@moonshot-ai/protocol';
-import { IEnvironmentService, IEventService, ILogService } from '@moonshot-ai/services';
 import { IConnectionRegistry } from './connectionRegistry';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
 import { ISessionClientsService } from './sessionClients';

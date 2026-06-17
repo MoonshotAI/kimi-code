@@ -25,9 +25,8 @@ import {
   listToolsResponseSchema,
   restartMcpServerResultSchema,
 } from '@moonshot-ai/protocol';
-import { IMcpService, IToolService, McpServerNotFoundError } from '@moonshot-ai/services';
+import { IMcpService, IToolService, McpServerNotFoundError, type IInstantiationService } from '@moonshot-ai/agent-core';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

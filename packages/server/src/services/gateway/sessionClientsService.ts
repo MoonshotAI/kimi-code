@@ -1,8 +1,7 @@
 
 
-import { Disposable } from '@moonshot-ai/agent-core';
+import { Disposable, ILogService } from '@moonshot-ai/agent-core';
 
-import { ILogService } from '@moonshot-ai/services';
 import { ISessionClientsService } from './sessionClients';
 import type { WsConnection } from '#/ws/connection';
 

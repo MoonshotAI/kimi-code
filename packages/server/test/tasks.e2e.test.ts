@@ -34,7 +34,7 @@ import {
   ITaskService,
   TaskAlreadyFinishedError,
   TaskNotFoundError,
-} from '@moonshot-ai/services';
+} from '@moonshot-ai/agent-core';
 import {
   listTasksResponseSchema,
 } from '@moonshot-ai/protocol';

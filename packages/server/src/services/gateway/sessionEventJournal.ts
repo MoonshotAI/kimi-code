@@ -28,7 +28,7 @@ import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { ulid } from 'ulid';
 
-import type { ILogService } from '@moonshot-ai/services';
+import type { ILogService } from '@moonshot-ai/agent-core';
 
 import type { EventEnvelope } from '#/ws/protocol';
 

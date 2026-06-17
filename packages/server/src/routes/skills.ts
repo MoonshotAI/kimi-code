@@ -35,15 +35,9 @@ import {
   activateSkillResultSchema,
   listSkillsResponseSchema,
 } from '@moonshot-ai/protocol';
-import {
-  ISkillService,
-  SessionNotFoundError,
-  SkillNotActivatableError,
-  SkillNotFoundError,
-} from '@moonshot-ai/services';
+import { ISkillService, SessionNotFoundError, SkillNotActivatableError, SkillNotFoundError, type IInstantiationService } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

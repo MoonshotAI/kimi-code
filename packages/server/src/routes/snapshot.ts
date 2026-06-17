@@ -27,17 +27,9 @@ import {
   type Message,
   type Session,
 } from '@moonshot-ai/protocol';
-import {
-  IApprovalService,
-  IMessageService,
-  IPromptService,
-  IQuestionService,
-  ISessionService,
-  SessionNotFoundError,
-} from '@moonshot-ai/services';
+import { IApprovalService, IMessageService, IPromptService, IQuestionService, ISessionService, SessionNotFoundError, type IInstantiationService } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

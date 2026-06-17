@@ -26,8 +26,7 @@ import {
   oauthLogoutRequestSchema,
   oauthLogoutResponseSchema,
 } from '@moonshot-ai/protocol';
-import { IOAuthService } from '@moonshot-ai/services';
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
+import { IOAuthService, type IInstantiationService } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';

@@ -7,25 +7,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  InstantiationService,
-  ServiceCollection,
-  type ApprovalResponse,
-  type QuestionResult,
-} from '@moonshot-ai/agent-core';
+import { InstantiationService, ServiceCollection, EventService, FsWatcherService, IApprovalService, IEventService, ILogService, IQuestionService, type ApprovalResponse, type QuestionResult, type FsWatcherServiceOptions, type IEnvironmentService, type ILogService as ILoggerT, type ISessionService } from '@moonshot-ai/agent-core';
 import type { Event } from '@moonshot-ai/protocol';
-import {
-  EventService,
-  FsWatcherService,
-  IApprovalService,
-  IEventService,
-  ILogService,
-  IQuestionService,
-  type FsWatcherServiceOptions,
-  type IEnvironmentService,
-  type ILogService as ILoggerT,
-  type ISessionService,
-} from '@moonshot-ai/services';
 
 import { ApprovalService } from '#/services/approval/approvalService';
 import { QuestionService } from '#/services/question/questionService';

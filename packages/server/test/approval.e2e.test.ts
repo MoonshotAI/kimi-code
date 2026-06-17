@@ -31,7 +31,7 @@ import {
   IApprovalService,
   type ApprovalRequest,
   type ApprovalResponse,
-} from '@moonshot-ai/services';
+} from '@moonshot-ai/agent-core';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
 import { rawDataToString } from '../src/ws/rawData';

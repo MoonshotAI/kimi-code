@@ -27,7 +27,7 @@ import type {
   ILogService,
   TerminalAttachOptions,
   TerminalAttachSink,
-} from '@moonshot-ai/services';
+} from '@moonshot-ai/agent-core';
 import type { ISessionClientsService } from '#/services/gateway';
 
 import {

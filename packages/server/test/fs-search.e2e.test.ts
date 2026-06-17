@@ -12,11 +12,9 @@ import { join } from 'node:path';
 import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { ISessionService } from '@moonshot-ai/services';
+import { ISessionService, FsSearchService, ILogService } from '@moonshot-ai/agent-core';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
-import { FsSearchService } from '@moonshot-ai/services';
-import { ILogService } from '@moonshot-ai/services';
 
 let tmpDir: string;
 let lockPath: string;
@@ -446,7 +444,7 @@ describe('FsSearchService direct: rg fallback + grep timeout (W11.1)', () => {
       ): Promise<import('@moonshot-ai/protocol').FsGrepResponse> {
 
         throw new (
-          await import('@moonshot-ai/services')
+          await import('@moonshot-ai/agent-core')
         ).FsGrepTimeoutError(Date.now() - startedAt);
       }
       public override probeRg(): Promise<string | null> {

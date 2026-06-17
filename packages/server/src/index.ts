@@ -35,4 +35,4 @@ export {
   IModelCatalogService,
   ISessionService,
   SessionNotFoundError,
-} from '@moonshot-ai/services';
+} from '@moonshot-ai/agent-core';

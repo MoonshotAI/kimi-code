@@ -95,3 +95,15 @@ export * from './di';
 // consumers like `services/src/event/event.ts` while letting new code reach
 // for the emitter type without naming clashes.
 export { Emitter } from './base/common/event';
+
+// ─── In-process services (merged from @moonshot-ai/services) ─────────────────
+// Re-exports the `IXxxService` contracts, default `XxxService` implementations,
+// `toProtocol*` translators and error classes. Importing this barrel triggers
+// the `registerSingleton(...)` side-effects at the bottom of each `*Service.ts`,
+// populating the DI registry consumed by `getSingletonServiceDescriptors()`.
+//
+// NOTE: `ApprovalRequest` / `ApprovalResponse` / `QuestionRequest` /
+// `QuestionResult` are intentionally NOT re-exported here — they are the
+// canonical protocol shapes already exported via `./rpc` (`rpc/sdk-api.ts`),
+// and re-exporting them again would collide (TS2308).
+export * from './services';

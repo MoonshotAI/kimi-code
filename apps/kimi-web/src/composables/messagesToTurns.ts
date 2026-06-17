@@ -361,7 +361,7 @@ interface Group {
  * user-typed slash command) is displayed; system-injected user turns
  * (compaction summaries, injections, hook results, retries, system triggers,
  * background tasks, cron) are hidden. The origin arrives via message metadata
- * (see toProtocolMessage in @moonshot-ai/services).
+ * (see toProtocolMessage in @moonshot-ai/agent-core).
  */
 function isDisplayableUserMessage(msg: AppMessage): boolean {
   const origin = msg.metadata?.['origin'] as { kind?: string; trigger?: string } | undefined;

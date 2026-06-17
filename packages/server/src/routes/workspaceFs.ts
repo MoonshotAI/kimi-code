@@ -7,16 +7,10 @@ import {
   fsHomeResponseSchema,
 } from '@moonshot-ai/protocol';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
+import { IWorkspaceFsService, WorkspaceFsNotAbsoluteError, WorkspaceFsNotFoundError, WorkspaceFsPermissionError, type IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
-import {
-  IWorkspaceFsService,
-  WorkspaceFsNotAbsoluteError,
-  WorkspaceFsNotFoundError,
-  WorkspaceFsPermissionError,
-} from '@moonshot-ai/services';
 
 interface WorkspaceFsRouteHost {
   get(

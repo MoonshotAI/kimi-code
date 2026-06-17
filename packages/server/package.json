@@ -41,7 +41,6 @@
     "@fastify/swagger-ui": "^5.2.6",
     "@moonshot-ai/agent-core": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^",
-    "@moonshot-ai/services": "workspace:^",
     "fastify": "^5.1.0",
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",

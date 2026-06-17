@@ -1,43 +1,4 @@
-import {
-  type ServiceIdentifier,
-  InstantiationService,
-  resolveConfigPath,
-  resolveKimiHome,
-  setUnexpectedErrorHandler,
-} from '@moonshot-ai/agent-core';
-import {
-  IApprovalService,
-  IAuthSummaryService,
-  IEnvironmentService,
-  IEventService,
-  ICoreProcessService,
-  IModelCatalogService,
-  IMcpService,
-  IMessageService,
-  IOAuthService,
-  IFileStore,
-  IFsGitService,
-  IFsSearchService,
-  IFsService,
-  IFsWatcher,
-  ILogService,
-  IPromptService,
-  IQuestionService,
-  ISessionService,
-  ISkillService,
-  ITaskService,
-  ITerminalService,
-  IToolService,
-  IWorkspaceFsService,
-  IWorkspaceRegistry,
-  FsPathEscapesError,
-  FsWatchLimitError,
-  FsWatcherService,
-  SessionNotFoundError,
-  createConnectionLookup,
-  resolveSafePath,
-  type CoreProcessServiceOptions,
-} from '@moonshot-ai/services';
+import { InstantiationService, resolveConfigPath, resolveKimiHome, setUnexpectedErrorHandler, IApprovalService, IAuthSummaryService, IEnvironmentService, IEventService, ICoreProcessService, IModelCatalogService, IMcpService, IMessageService, IOAuthService, IFileStore, IFsGitService, IFsSearchService, IFsService, IFsWatcher, ILogService, IPromptService, IQuestionService, ISessionService, ISkillService, ITaskService, ITerminalService, IToolService, IWorkspaceFsService, IWorkspaceRegistry, FsPathEscapesError, FsWatchLimitError, FsWatcherService, SessionNotFoundError, createConnectionLookup, resolveSafePath, type ServiceIdentifier, type CoreProcessServiceOptions } from '@moonshot-ai/agent-core';
 import { ErrorCode, createAsyncApiDocument } from '@moonshot-ai/protocol';
 import Fastify from 'fastify';
 import { promises as fspPromises } from 'node:fs';

@@ -30,15 +30,9 @@ import {
   listTasksQuerySchema,
   listTasksResponseSchema,
 } from '@moonshot-ai/protocol';
-import {
-  ITaskService,
-  SessionNotFoundError,
-  TaskAlreadyFinishedError,
-  TaskNotFoundError,
-} from '@moonshot-ai/services';
+import { ITaskService, SessionNotFoundError, TaskAlreadyFinishedError, TaskNotFoundError, type IInstantiationService } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

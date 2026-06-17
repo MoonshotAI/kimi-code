@@ -30,7 +30,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import type { Event, PromptSubmission } from '@moonshot-ai/protocol';
-import { IEventService, IPromptService, PromptService } from '@moonshot-ai/services';
+import { IEventService, IPromptService, PromptService } from '@moonshot-ai/agent-core';
 
 import { IRestGateway, startServer, type ServerStartOptions, type RunningServer } from '../src';
 

@@ -2,11 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { SyncDescriptor } from '@moonshot-ai/agent-core';
-import {
-  ITerminalService,
-  TerminalService,
-} from '@moonshot-ai/services';
+import { SyncDescriptor, ITerminalService, TerminalService } from '@moonshot-ai/agent-core';
 import type { Terminal } from '@moonshot-ai/protocol';
 import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';

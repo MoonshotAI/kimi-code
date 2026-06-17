@@ -22,7 +22,7 @@ import {
   IQuestionService,
   type QuestionRequest,
   type QuestionResult,
-} from '@moonshot-ai/services';
+} from '@moonshot-ai/agent-core';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
 import { rawDataToString } from '../src/ws/rawData';

@@ -21,27 +21,13 @@ import {
   undoSessionResponseSchema,
   workspaceIdSchema,
 } from '@moonshot-ai/protocol';
-import {
-  IPromptService,
-  ISessionService,
-  SessionNotFoundError,
-  SessionUndoUnavailableError,
-} from '@moonshot-ai/services';
+import { IPromptService, ISessionService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IWorkspaceRegistry, WorkspaceNotFoundError, type IInstantiationService } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
-import {
-  ErrorCodes,
-  KimiError,
-  type IInstantiationService,
-} from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { parseActionSuffix } from './action-suffix';
-import {
-  IWorkspaceRegistry,
-  WorkspaceNotFoundError,
-} from '@moonshot-ai/services';
 
 interface SessionRouteHost {
   post(

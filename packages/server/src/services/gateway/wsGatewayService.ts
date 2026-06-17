@@ -3,11 +3,10 @@
 import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import type { Socket } from 'node:net';
 
-import { Disposable } from '@moonshot-ai/agent-core';
+import { Disposable, ILogService } from '@moonshot-ai/agent-core';
 import { WebSocketServer, type WebSocket } from 'ws';
 
 import { IConnectionRegistry } from './connectionRegistry';
-import { ILogService } from '@moonshot-ai/services';
 import { IRestGateway } from './restGateway';
 import { ISessionClientsService } from './sessionClients';
 import { IWSBroadcastService } from './wsBroadcast';
