@@ -208,11 +208,15 @@ const subagentTasks = computed(() => props.tasks.filter((t) => t.kind === 'subag
 const bashRunning = computed(() => bashTasks.value.filter((t) => t.state === 'run').length);
 const subagentRunning = computed(() => subagentTasks.value.filter((t) => t.state === 'run').length);
 const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
-const hasDockWork = computed(() => props.tasks.length > 0 || (props.todos?.length ?? 0) > 0);
-const dockPanel = ref<'bash' | 'subagent' | 'todos' | null>(null);
+const hasDockWork = computed(() =>
+  props.tasks.length > 0 ||
+  (props.todos?.length ?? 0) > 0 ||
+  (props.queued?.length ?? 0) > 0,
+);
+const dockPanel = ref<'bash' | 'subagent' | 'todos' | 'queue' | null>(null);
 const changesCount = computed(() => (props.gitInfo ? props.changes?.length ?? 0 : 0));
 
-function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos'): void {
+function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos' | 'queue'): void {
   dockPanel.value = dockPanel.value === panel ? null : panel;
 }
 

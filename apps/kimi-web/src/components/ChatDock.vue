@@ -14,6 +14,7 @@ import QuestionCard from './QuestionCard.vue';
 import ApprovalCard from './ApprovalCard.vue';
 import TasksPane from './TasksPane.vue';
 import TodoCard from './TodoCard.vue';
+import QueuePane from './QueuePane.vue';
 
 const props = defineProps<{
   sessionId?: string;
@@ -32,7 +33,7 @@ const props = defineProps<{
   skills?: AppSkill[];
   goal?: AppGoal | null;
   goalExpandSignal?: number;
-  dockPanel: 'bash' | 'subagent' | 'todos' | null;
+  dockPanel: 'bash' | 'subagent' | 'todos' | 'queue' | null;
   bashTasks: TaskItem[];
   subagentTasks: TaskItem[];
   bashRunning: number;
@@ -69,7 +70,7 @@ const emit = defineEmits<{
   dismiss: [questionId: string];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string }];
   cancelTask: [taskId: string];
-  'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos'];
+  'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos' | 'queue'];
   'close-dock-panel': [];
 }>();
 
@@ -80,6 +81,12 @@ const workbarRef = ref<HTMLElement | null>(null);
 
 function loadForEdit(value: string): void {
   composerRef.value?.loadForEdit(value);
+}
+
+function handleEditQueued(index: number): void {
+  const text = props.queued?.[index]?.text ?? '';
+  if (text) loadForEdit(text);
+  emit('editQueued', index);
 }
 
 function onDocumentMouseDown(event: MouseEvent): void {
@@ -138,6 +145,19 @@ defineExpose({ loadForEdit });
           >
             {{ t('tasks.dockTodos') }} · {{ todoDoneCount }}/{{ todos?.length ?? 0 }}
           </span>
+          <span
+            v-else-if="dockPanel === 'queue'"
+            class="dock-work-tab static"
+          >
+            {{ t('tasks.dockQueue') }} · {{ queued?.length ?? 0 }}
+          </span>
+          <button
+            v-if="dockPanel === 'queue' && running"
+            type="button"
+            class="dock-queue-steer"
+            :title="t('composer.steerTitle')"
+            @click="emit('steer', { text: '', attachments: [] })"
+          >{{ t('composer.steerNow') }}</button>
         </div>
         <div class="dock-work-body">
           <TasksPane
@@ -151,9 +171,18 @@ defineExpose({ loadForEdit });
             @cancel="emit('cancelTask', $event)"
           />
           <TodoCard
-            v-else
+            v-else-if="dockPanel === 'todos'"
             :todos="todos ?? []"
             inline
+          />
+          <QueuePane
+            v-else
+            :queued="queued ?? []"
+            :running="running"
+            inline
+            @steer="emit('steer', { text: '', attachments: [] })"
+            @unqueue="emit('unqueue', $event)"
+            @edit-queued="handleEditQueued"
           />
         </div>
       </div>
@@ -212,6 +241,21 @@ defineExpose({ loadForEdit });
         <span>{{ t('tasks.dockTodos') }}</span>
         <span class="dw-count">(<b>{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</b>)</span>
       </button>
+      <button
+        v-if="(queued?.length ?? 0) > 0"
+        type="button"
+        class="dock-work-chip"
+        :class="{ on: dockPanel === 'queue' }"
+        :aria-pressed="dockPanel === 'queue'"
+        @click="emit('toggle-dock-panel', 'queue')"
+      >
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M2 4l6 4 6-4" />
+          <rect x="2" y="4" width="12" height="8" rx="1.5" />
+        </svg>
+        <span>{{ t('tasks.dockQueue') }}</span>
+        <span class="dw-count">(<b>{{ queued?.length ?? 0 }}</b>)</span>
+      </button>
     </div>
 
     <QuestionCard
@@ -250,8 +294,6 @@ defineExpose({ loadForEdit });
       @steer="emit('steer', $event)"
       @command="emit('command', $event)"
       @interrupt="emit('interrupt')"
-      @unqueue="emit('unqueue', $event)"
-      @edit-queued="emit('editQueued', $event)"
       @set-permission="emit('setPermission', $event)"
       @set-thinking="emit('setThinking', $event)"
       @toggle-plan="emit('togglePlan')"
@@ -322,6 +364,21 @@ defineExpose({ loadForEdit });
   border-color: transparent;
   padding-left: 2px;
 }
+.dock-queue-steer {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--blueln);
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-family: var(--mono);
+  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--blue2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dock-queue-steer:hover {
+  background: var(--bluebg);
+}
 .dock-work-body {
   padding: 8px 10px;
   overflow-y: auto;
@@ -341,6 +398,12 @@ defineExpose({ loadForEdit });
   padding: 0;
 }
 .dock-work-body :deep(.todo-card.tab-mode .tc-list) {
+  max-height: none;
+}
+.dock-work-body :deep(.queue-pane) {
+  padding: 0;
+}
+.dock-work-body :deep(.queue-pane.tab-mode .queue-list) {
   max-height: none;
 }
 

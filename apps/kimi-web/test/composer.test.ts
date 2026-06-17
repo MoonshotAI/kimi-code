@@ -247,22 +247,6 @@ describe('Composer attachment preview', () => {
   });
 });
 
-describe('Composer queue bubble', () => {
-  it('keeps queued prompts collapsed until the queue bubble is opened', async () => {
-    const wrapper = mountComposer({
-      queued: [{ text: 'follow up after this', attachmentCount: 0 }],
-    });
-
-    expect(wrapper.find('.queue-popover').exists()).toBe(false);
-    expect(wrapper.find('.queue-bubble').exists()).toBe(true);
-
-    await wrapper.find('.queue-bubble').trigger('click');
-
-    expect(wrapper.find('.queue-popover').exists()).toBe(true);
-    expect(wrapper.find('.queue-text-inner').text()).toBe('follow up after this');
-  });
-});
-
 describe('Composer slash command input', () => {
   it('emits /goal with the typed objective instead of sending it as chat', async () => {
     const wrapper = mountComposer();

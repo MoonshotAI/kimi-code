@@ -5,7 +5,7 @@ import { nextTick } from 'vue';
 
 import ConversationPane from '../src/components/ConversationPane.vue';
 import type { SwarmGroup } from '../src/composables/swarmGroups';
-import type { ConversationStatus, TaskItem, TodoView, UIQuestion } from '../src/types';
+import type { ConversationStatus, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../src/types';
 
 const status: ConversationStatus = {
   model: 'kimi-test',
@@ -60,6 +60,7 @@ function mountPane(extraProps: Record<string, unknown>) {
         GoalStrip: true,
         TasksPane: true,
         TodoCard: true,
+        QueuePane: true,
         Terminal: true,
         SwarmCard: true,
       },
@@ -149,7 +150,7 @@ describe('ConversationPane docked composer', () => {
 });
 
 describe('ConversationPane dock work panel', () => {
-  it('opens bash, subagent, and todos from the dock chips', async () => {
+  it('opens bash, subagent, todos, and queue from the dock chips', async () => {
     const tasks: TaskItem[] = [
       {
         id: 'task_1',
@@ -167,17 +168,19 @@ describe('ConversationPane dock work panel', () => {
       },
     ];
     const todos: TodoView[] = [{ title: 'Check mobile dock', status: 'in_progress' }];
-    const wrapper = mountPane({ tasks, todos });
+    const queued: QueuedPromptView[] = [{ text: 'Queued thought', attachmentCount: 0 }];
+    const wrapper = mountPane({ tasks, todos, queued });
 
     expect(wrapper.find('.dock-work-panel').exists()).toBe(false);
 
     const chips = wrapper.findAll('.dock-work-chip');
-    expect(chips).toHaveLength(3);
+    expect(chips).toHaveLength(4);
     for (const chip of chips) {
       expect(chip.find('svg').exists()).toBe(true);
       expect(chip.find('.dw-count').exists()).toBe(true);
     }
     expect(chips[2]!.find('.dw-count').text()).toBe('(0/1)');
+    expect(chips[3]!.find('.dw-count').text()).toBe('(1)');
 
     await chips[0]!.trigger('click');
     expect(wrapper.find('.dock-work-panel').exists()).toBe(true);
@@ -194,6 +197,10 @@ describe('ConversationPane dock work panel', () => {
 
     await chips[2]!.trigger('click');
     expect(wrapper.find('todo-card-stub').exists()).toBe(true);
+
+    await chips[3]!.trigger('click');
+    expect(wrapper.find('queue-pane-stub').exists()).toBe(true);
+    expect(wrapper.findComponent({ name: 'QueuePane' }).props('queued')).toHaveLength(1);
   });
 
   it('closes the dock work panel when the user clicks outside it', async () => {

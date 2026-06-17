@@ -80,8 +80,6 @@ const emit = defineEmits<{
   steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
   command: [cmd: string];
   interrupt: [];
-  unqueue: [index: number];
-  editQueued: [index: number];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];
   togglePlan: [];
@@ -496,28 +494,9 @@ onUnmounted(() => {
 // Submit / keydown
 // ---------------------------------------------------------------------------
 
-/**
- * Load a queued message back into the textarea for editing, then ask the parent
- * to remove it from the queue. If the textarea already has content, prepend the
- * queued text so the user doesn't lose what they were typing.
- */
-function editQueued(index: number, msg: string): void {
-  const current = text.value;
-  text.value = current ? `${msg}\n${current}` : msg;
-  queueOpen.value = false;
-  emit('editQueued', index);
-  void nextTick(() => {
-    const el = textareaRef.value;
-    if (!el) return;
-    el.focus();
-    const pos = msg.length;
-    el.setSelectionRange(pos, pos);
-    autosize();
-  });
-}
-
 /** Imperatively load text into the box for editing (used by "edit & resend the
-    last message" after an undo). Focuses with the caret at the end. */
+    last message" after an undo, or by the dock queue panel when the user edits
+    a queued prompt). Focuses with the caret at the end. */
 function loadForEdit(value: string): void {
   text.value = value;
   void nextTick(() => {
@@ -604,7 +583,6 @@ function handleSteer(): void {
   attachments.value = [];
   pushInputHistory(trimmed);
   text.value = '';
-  queueOpen.value = false;
   slashOpen.value = false;
   mentionOpen.value = false;
   emit('steer', payload);
@@ -750,12 +728,6 @@ function handleKeydown(e: KeyboardEvent): void {
 
 const sendLabel = computed(() => props.running ? t('composer.interrupt') : t('composer.send'));
 const hasUpload = computed(() => !!props.uploadImage);
-const queueOpen = ref(false);
-const queueCount = computed(() => props.queued.length);
-
-watch(queueCount, (count) => {
-  if (count === 0) queueOpen.value = false;
-});
 
 // ---------------------------------------------------------------------------
 // Bottom toolbar — split into individual controls
@@ -942,40 +914,6 @@ function selectModel(modelId: string): void {
     @dragleave="handleDragLeave"
     @drop="handleDrop"
   >
-    <!-- Queue list: collapsed by default into a dashed bubble on the input. -->
-    <div v-if="queueOpen && queued && queued.length > 0" class="queue-popover">
-      <div class="queue-head">
-        <span class="queue-label">{{ t('composer.queueLabel') }} · {{ queued.length }}</span>
-        <!-- Steer the whole queue into the running turn right now (TUI ctrl+s) -->
-        <button
-          v-if="running"
-          class="queue-steer"
-          type="button"
-          :title="t('composer.steerTitle')"
-          @click="handleSteer()"
-        >{{ t('composer.steerNow') }}</button>
-      </div>
-      <div
-        v-for="(msg, i) in queued"
-        :key="i"
-        class="queue-item"
-      >
-        <button
-          class="queue-text"
-          type="button"
-          :disabled="msg.attachmentCount > 0"
-          :title="msg.attachmentCount > 0 ? t('composer.queuedHasImage', { n: msg.attachmentCount }) : t('composer.editQueued')"
-          @click="msg.attachmentCount === 0 && editQueued(i, msg.text)"
-        >
-          <svg v-if="msg.attachmentCount > 0" class="queue-img" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><circle cx="5.5" cy="6.5" r="1.2"/><path d="M2.5 12l3.5-3.5 2.5 2.5 3-3 2 2"/></svg>
-          <span class="queue-text-inner" :class="{ placeholder: !msg.text }">{{ msg.text || t('composer.queuedImageOnly', { n: msg.attachmentCount }) }}</span>
-        </button>
-        <button class="queue-rm" :title="t('composer.remove')" @click="emit('unqueue', i)">
-          <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.6" xmlns="http://www.w3.org/2000/svg"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
-        </button>
-      </div>
-    </div>
-
     <!-- Attachment chips (above the input row) -->
     <div v-if="attachments.length > 0" class="att-strip">
       <div v-for="att in attachments" :key="att.localId" class="att-chip" :class="{ 'att-error': att.error }">
@@ -1026,21 +964,6 @@ function selectModel(modelId: string): void {
 
     <!-- Main composer card -->
     <div class="composer-card">
-      <button
-        v-if="queued && queued.length > 0"
-        class="queue-bubble"
-        type="button"
-        :aria-expanded="queueOpen"
-        :title="t('composer.queueLabel')"
-        @click="queueOpen = !queueOpen"
-      >
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <path d="M2 4l6 4 6-4" />
-          <rect x="2" y="4" width="12" height="8" rx="1.5" />
-        </svg>
-        <span>{{ t('composer.queueLabel') }}</span>
-        <span class="queue-count">{{ queued.length }}</span>
-      </button>
       <!-- Input row with popup menus -->
       <div class="cin-wrap">
         <!-- Slash menu (above textarea) -->
@@ -1356,142 +1279,6 @@ function selectModel(modelId: string): void {
 }
 
 
-
-/* Queue popover: opens above the composer card when the dashed bubble is used. */
-.queue-popover {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 2px 2px 10px;
-}
-
-.queue-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.queue-label {
-  font-size: var(--ui-font-size-xs);
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  margin-right: 2px;
-}
-
-.queue-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 6px 8px;
-  font-size: var(--ui-font-size);
-  color: var(--text);
-  min-width: 0;
-}
-
-/* "Steer now" — inject the queue into the running turn (TUI ctrl+s) */
-.queue-steer {
-  margin-left: auto;
-  background: none;
-  border: 1px solid var(--blueln);
-  border-radius: 3px;
-  padding: 2px 8px;
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--blue2);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.queue-steer:hover {
-  background: var(--bluebg);
-}
-
-.queue-text {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  background: none;
-  border: none;
-  padding: 0;
-  margin: 0;
-  font-size: var(--ui-font-size);
-  color: var(--text);
-  cursor: pointer;
-  text-align: left;
-}
-.queue-text:hover:not(:disabled) {
-  color: var(--blue);
-}
-.queue-text:disabled {
-  cursor: default;
-}
-.queue-img { flex: none; color: var(--muted); }
-.queue-text-inner {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.queue-text-inner.placeholder { color: var(--muted); }
-
-.queue-rm {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  padding: 1px;
-  cursor: pointer;
-  color: var(--muted);
-  flex-shrink: 0;
-}
-
-.queue-rm:hover {
-  color: var(--err);
-}
-
-.queue-bubble {
-  position: absolute;
-  top: -13px;
-  right: 14px;
-  z-index: 4;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px dashed var(--blueln);
-  border-radius: 999px;
-  background: var(--bg);
-  color: var(--blue2);
-  padding: 3px 10px 3px 9px;
-  font-size: var(--ui-font-size-xs);
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-}
-.queue-bubble:hover,
-.queue-bubble[aria-expanded="true"] {
-  border-color: var(--blue);
-  color: var(--blue);
-}
-.queue-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--blue);
-  color: var(--bg);
-  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
-  line-height: 1;
-}
 
 /* Attachment strip */
 .att-strip {
@@ -2235,24 +2022,6 @@ function selectModel(modelId: string): void {
     gap: 6px;
     min-width: 0;
   }
-  .queue-popover {
-    max-width: 100%;
-    max-height: 34dvh;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 2px;
-  }
-  .queue-label {
-    flex: none;
-  }
-  .queue-item {
-    max-width: 100%;
-  }
-  .queue-bubble {
-    right: 10px;
-    max-width: calc(100% - 20px);
-  }
-
   /* Send → 36px round (hide the SVG arrow, show only the ::after glyph) */
   .send {
     width: 36px;
