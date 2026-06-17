@@ -78,6 +78,19 @@ interface ManagedTask {
   readonly abortController: AbortController;
   persistWriteQueue: Promise<void>;
   outputWriteQueue: Promise<void>;
+  /**
+   * Full output buffered in memory while a foreground task has not yet
+   * persisted to disk. Flushed to `output.log` (in order, ahead of the live
+   * stream) when the task detaches or spills, then released.
+   */
+  pendingOutput: string[];
+  pendingOutputBytes: number;
+  /**
+   * Whether `output.log` writes have begun. True from the start for tasks
+   * registered already-detached; flipped on detach or memory-bound spill for
+   * foreground tasks. Until then output stays in `pendingOutput`.
+   */
+  outputPersistStarted: boolean;
 }
 
 /**
@@ -270,13 +283,18 @@ export class BackgroundManager {
       abortController: new AbortController(),
       persistWriteQueue: Promise.resolve(),
       outputWriteQueue: Promise.resolve(),
+      pendingOutput: [],
+      pendingOutputBytes: 0,
+      outputPersistStarted: detached,
     };
     this.tasks.set(taskId, entry);
     void this.runTaskLifecycle(entry);
 
-    // Initial persistence (snapshot at start).
-    void this.persistLive(entry);
+    // Initial persistence (snapshot at start). Foreground tasks defer all
+    // persistence until they detach (or spill) — see appendOutput / detach /
+    // finalizeTask — so ordinary commands leave nothing undiscoverable on disk.
     if (this.isDetached(entry)) {
+      void this.persistLive(entry);
       this.emitTaskStarted(this.toInfo(entry));
     }
 
@@ -400,6 +418,9 @@ export class BackgroundManager {
     } catch {
       /* detach has already succeeded; hooks must not make RPC fail */
     }
+    // Flush buffered pre-detach output to disk before the live stream resumes,
+    // so output.log stays the complete, in-order record.
+    this.startOutputPersist(entry);
     void this.persistLive(entry);
     this.emitTaskStarted(this.toInfo(entry));
     foregroundRelease.resolve('detached');
@@ -563,11 +584,44 @@ export class BackgroundManager {
       total -= removed.length;
     }
 
+    if (this.persistence === undefined) return;
+
+    // Foreground tasks keep their full output in memory and only touch disk
+    // once they detach. A memory-bound spill begins disk persistence early so
+    // a never-detached command can't grow the buffer without limit.
+    if (!entry.outputPersistStarted) {
+      entry.pendingOutput.push(chunk);
+      entry.pendingOutputBytes += Buffer.byteLength(chunk, 'utf-8');
+      if (entry.pendingOutputBytes > MAX_OUTPUT_BYTES) this.startOutputPersist(entry);
+      return;
+    }
+
+    this.appendTaskOutput(entry, chunk);
+  }
+
+  /** Enqueue an `output.log` append, serialized per task. No-op when detached managers omit persistence. */
+  private appendTaskOutput(entry: ManagedTask, chunk: string): void {
     const persistence = this.persistence;
     if (persistence === undefined) return;
     entry.outputWriteQueue = entry.outputWriteQueue
       .then(() => persistence.appendTaskOutput(entry.taskId, chunk))
       .catch(() => { });
+  }
+
+  /**
+   * Begin persisting `output.log` for a task that buffered while foreground.
+   * Flushes the buffered pre-detach output first (in order, ahead of the live
+   * stream) so the on-disk log stays complete, then releases the buffer.
+   * Idempotent.
+   */
+  private startOutputPersist(entry: ManagedTask): void {
+    if (entry.outputPersistStarted) return;
+    entry.outputPersistStarted = true;
+    if (entry.pendingOutput.length > 0) {
+      this.appendTaskOutput(entry, entry.pendingOutput.join(''));
+    }
+    entry.pendingOutput = [];
+    entry.pendingOutputBytes = 0;
   }
 
   private async restoreBackgroundTaskNotifications(): Promise<void> {
@@ -767,7 +821,17 @@ export class BackgroundManager {
     entry.endedAt = Date.now();
     entry.stopReason =
       settlement.stopReason ?? (settlement.status === 'killed' ? entry.stopReason : undefined);
-    await this.persistLive(entry);
+    // Persist the terminal record only when the task actually touched disk:
+    // detached tasks, and foreground tasks that spilled past the in-memory
+    // buffer. A foreground task whose output stayed in memory leaves nothing on
+    // disk — release the buffer and skip persistence so it never accumulates as
+    // an undiscoverable log.
+    if (entry.outputPersistStarted) {
+      await this.persistLive(entry);
+    } else {
+      entry.pendingOutput = [];
+      entry.pendingOutputBytes = 0;
+    }
     this.fireTerminalEffects(entry);
     entry.foregroundRelease?.resolve('terminal');
     entry.terminal.resolve();
