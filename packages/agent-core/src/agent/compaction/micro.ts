@@ -74,7 +74,7 @@ export class MicroCompaction {
       const contextTokensBefore = estimateTokensForMessages(history);
       const contextTokensAfter =
         contextTokensBefore - effect.beforeTokens + effect.afterTokens;
-      this.agent.telemetry.track('micro_compaction_applied', {
+      this.agent.telemetry.track('micro_compaction_finished', {
         ...config,
         ...effect,
         contextTokensBefore,

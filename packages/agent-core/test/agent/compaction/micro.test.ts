@@ -469,7 +469,7 @@ describe('MicroCompaction', () => {
       'result three',
     ]);
 
-    const event = singleTelemetryEvent(records, 'micro_compaction_applied');
+    const event = singleTelemetryEvent(records, 'micro_compaction_finished');
     expect(event.properties).toMatchObject({
       ...microCompaction,
       truncatedMarker: DEFAULT_MARKER,
@@ -491,7 +491,7 @@ describe('MicroCompaction', () => {
     );
 
     expect(ctx.agent.context.messages).toHaveLength(9);
-    expect(records.filter((record) => record.event === 'micro_compaction_applied')).toHaveLength(1);
+    expect(records.filter((record) => record.event === 'micro_compaction_finished')).toHaveLength(1);
   });
 
   it('leaves context unchanged when the micro_compaction flag is disabled', () => {
