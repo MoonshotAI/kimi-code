@@ -24,7 +24,20 @@ describe('formatStepDebugTiming', () => {
       llmStreamDurationMs: 5000,
       usage: { output: 200 },
     });
-    expect(result).toBe('[Debug] TTFT: 800ms | TPS: 40.0 tok/s (200 tokens in 5.0s)');
+    expect(result).toBe(
+      '[Debug] TTFT: 800ms | TPS: 34.5 tok/s (200 tokens over 5.8s, stream 5.0s)',
+    );
+  });
+
+  it('does not inflate TPS when the streamed window is tiny', () => {
+    const result = formatStepDebugTiming({
+      llmFirstTokenLatencyMs: 1200,
+      llmStreamDurationMs: 1,
+      usage: { output: 44 },
+    });
+    expect(result).toBe(
+      '[Debug] TTFT: 1.2s | TPS: 36.6 tok/s (44 tokens over 1.2s, stream 1ms)',
+    );
   });
 
   it('formats durations under 1s as milliseconds', () => {

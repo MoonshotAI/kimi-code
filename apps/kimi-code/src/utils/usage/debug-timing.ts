@@ -11,9 +11,12 @@ export function formatStepDebugTiming(input: StepTimingInput): string | undefine
 
   const parts: string[] = [`TTFT: ${formatDuration(latency)}`];
   const outputTokens = input.usage?.output;
-  if (outputTokens !== undefined && outputTokens > 0 && streamMs > 0) {
-    const tps = (outputTokens / (streamMs / 1000)).toFixed(1);
-    parts.push(`TPS: ${tps} tok/s (${outputTokens} tokens in ${formatDuration(streamMs)})`);
+  const totalMs = latency + streamMs;
+  if (outputTokens !== undefined && outputTokens > 0 && totalMs > 0) {
+    const tps = (outputTokens / (totalMs / 1000)).toFixed(1);
+    parts.push(
+      `TPS: ${tps} tok/s (${outputTokens} tokens over ${formatDuration(totalMs)}, stream ${formatDuration(streamMs)})`,
+    );
   }
   return `[Debug] ${parts.join(' | ')}`;
 }
