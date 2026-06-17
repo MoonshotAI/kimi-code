@@ -87,8 +87,10 @@ async function main() {
     assert.ok(submit.prompt_id.length > 0, 'image file prompt returns a prompt_id');
     console.log(`▶ image-file: uploaded ${png.id} and submitted prompt ${submit.prompt_id}`);
 
+    let terminalStatus: 'idle' | 'aborted' = 'idle';
     try {
       await client.abortPrompt(sid, submit.prompt_id);
+      terminalStatus = 'aborted';
       console.log(`▶ image-file: prompt ${submit.prompt_id} aborted after submit`);
     } catch (error) {
       if (
@@ -101,7 +103,7 @@ async function main() {
         throw error;
       }
     }
-    await client.waitForSessionStatus(sid, 'idle', { timeoutMs: SHORT_TIMEOUT_MS });
+    await client.waitForSessionStatus(sid, terminalStatus, { timeoutMs: SHORT_TIMEOUT_MS });
 
     console.log('✓ 09-image-file-prompts: image file prompt references round-tripped');
   } finally {
