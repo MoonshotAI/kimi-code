@@ -48,6 +48,15 @@ describe('CreateGoalTool', () => {
     expect(store.getGoal().goal?.objective).toBe('Ship feature X');
   });
 
+  it('omits the internal goalId from the model-facing output', async () => {
+    const store = makeStore();
+    const tool = new CreateGoalTool(fakeAgent({ goal: store }));
+    const result = await executeTool(tool, ctx({ objective: 'Ship feature X' }));
+    expect(store.getGoal().goal?.goalId).toBeTruthy();
+    expect(result.output).not.toContain('goalId');
+    expect(result.output).not.toContain(store.getGoal().goal?.goalId ?? 'no-id');
+  });
+
   it('passes completionCriterion and replace', async () => {
     const store = makeStore();
     const tool = new CreateGoalTool(fakeAgent({ goal: store }));

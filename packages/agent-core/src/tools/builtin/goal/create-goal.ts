@@ -12,6 +12,7 @@ import type { ToolExecution } from '../../../loop/types';
 import type { ToolInputDisplay } from '../../display';
 import { toInputJsonSchema } from '../../support/input-schema';
 import DESCRIPTION from './create-goal.md?raw';
+import { goalForModel } from './serialize';
 
 export const CreateGoalToolInputSchema = z
   .object({
@@ -52,7 +53,7 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
           },
           'model',
         );
-        return { output: JSON.stringify({ goal: snapshot }, null, 2) };
+        return { output: JSON.stringify({ goal: goalForModel(snapshot) }, null, 2) };
       },
     };
   }
