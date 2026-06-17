@@ -58,6 +58,9 @@ const activeWorkspaceSessionCount = computed<number>(
   () => client.visibleWorkspace.value?.sessionCount ?? 0,
 );
 
+// running: true when activity is not idle
+const running = computed(() => client.activity.value !== 'idle');
+
 // Dynamic page title: session title first, then workspace name, then app name.
 // Prefix a dot when the agent is running so users can see activity at a glance.
 const pageTitle = computed<string>(() => {
@@ -507,9 +510,6 @@ watch(client.activeSessionId, () => {
 
 // Reference to ConversationPane so we can imperatively switch tabs
 const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(null);
-
-// running: true when activity is not idle
-const running = computed(() => client.activity.value !== 'idle');
 
 // Auth readiness — drives onboarding banner
 const authReady = computed(() => client.authReady.value);
