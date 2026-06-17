@@ -197,7 +197,7 @@ function formatSeconds(s: number): string {
 </script>
 
 <template>
-  <div class="backdrop" @click.self="close">
+  <div class="backdrop">
     <div ref="dialogRef" class="dialog" role="dialog" aria-modal="true" tabindex="-1" :aria-label="t('login.title')">
 
       <!-- Header -->
