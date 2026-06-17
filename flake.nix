@@ -64,8 +64,11 @@
       workspacePaths = [
         ./packages/acp-adapter
         ./packages/agent-core
+        ./packages/daemon
         ./packages/server
+        ./packages/server-e2e
         ./packages/kaos
+        ./packages/kimi-migration-legacy
         ./packages/kosong
         ./packages/migration-legacy
         ./packages/node-sdk
@@ -84,6 +87,7 @@
         "@moonshot-ai/acp-adapter"
         "@moonshot-ai/agent-core"
         "@moonshot-ai/server"
+        "@moonshot-ai/server-e2e"
         "@moonshot-ai/kaos"
         "@moonshot-ai/kosong"
         "@moonshot-ai/migration-legacy"
@@ -96,7 +100,9 @@
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"
         "@moonshot-ai/vis-web"
+        "daemon"
         "kimi-code-docs"
+        "kimi-migration-legacy"
       ];
     in
     {
