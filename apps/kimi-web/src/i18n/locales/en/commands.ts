@@ -5,7 +5,7 @@ export default {
   clear: { desc: 'Clear and start a new session' },
   model: { desc: 'Switch model' },
   provider: { desc: 'Manage providers (add / remove / refresh)' },
-  login: { desc: 'Sign in to the platform with an API key' },
+  login: { desc: 'Sign in to Kimi in the browser' },
   permission: { desc: 'Switch approval mode (manual / auto / yolo)' },
   plan: { desc: 'Toggle plan mode on/off' },
   swarm: { desc: 'Toggle swarm mode; /swarm <task> runs a task in swarm' },
