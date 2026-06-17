@@ -748,8 +748,16 @@ function setTab(tab: SettingsTab): void {
 .act.danger:hover { background: color-mix(in srgb, var(--err) 8%, var(--bg)); }
 
 @media (max-width: 640px) {
-  .backdrop { padding: 12px; }
-  .dialog { max-height: 92vh; }
+  .backdrop {
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+  .dialog {
+    max-height: calc(100dvh - 24px);
+  }
   .settings-layout { flex-direction: column; }
   .settings-tabs {
     flex-direction: row;

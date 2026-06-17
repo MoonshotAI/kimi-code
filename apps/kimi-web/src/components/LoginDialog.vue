@@ -544,4 +544,49 @@ function formatSeconds(s: number): string {
   background: var(--panel);
   border-radius: 0 0 4px 4px;
 }
+
+@media (max-width: 640px) {
+  .backdrop {
+    align-items: stretch;
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+  .dialog {
+    width: 100%;
+    max-width: none;
+    height: auto;
+    max-height: calc(100dvh - 24px);
+    overflow: hidden;
+  }
+  .center-body,
+  .dc-body {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .dc-code-row,
+  .dc-status-row,
+  .actions {
+    flex-wrap: wrap;
+  }
+  .dc-code-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    letter-spacing: 0.08em;
+  }
+  .dc-copy-btn {
+    min-height: 34px;
+  }
+  .dc-status-text {
+    min-width: 0;
+  }
+  .actions {
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+  .act-btn {
+    min-height: 36px;
+  }
+}
 </style>

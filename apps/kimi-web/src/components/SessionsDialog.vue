@@ -370,4 +370,36 @@ onUnmounted(() => {
   background: var(--panel);
   border-radius: 0 0 4px 4px;
 }
+
+@media (max-width: 640px) {
+  .backdrop {
+    align-items: stretch;
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+  .dialog {
+    width: 100%;
+    max-width: none;
+    height: auto;
+    max-height: calc(100dvh - 24px);
+  }
+  .dh {
+    min-height: 44px;
+  }
+  .session-row {
+    min-height: 48px;
+    padding: 8px 12px;
+  }
+  .sub {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .ws {
+    max-width: 100%;
+    flex: 1 1 100%;
+  }
+}
 </style>

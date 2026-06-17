@@ -332,4 +332,51 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   background: var(--panel);
   border-radius: 0 0 4px 4px;
 }
+
+@media (max-width: 640px) {
+  .backdrop {
+    align-items: stretch;
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+  .dialog {
+    width: 100%;
+    max-width: none;
+    height: auto;
+    max-height: calc(100dvh - 24px);
+  }
+  .form-body {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .form-row {
+    flex-direction: column;
+    gap: 5px;
+  }
+  .flabel {
+    width: auto;
+    text-align: left;
+    padding-top: 0;
+  }
+  .finput {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .recent-section {
+    padding-left: 0;
+  }
+  .actions {
+    flex-wrap: wrap;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+  .act-btn {
+    min-height: 36px;
+  }
+  .act-btn.primary {
+    flex: 1 1 100%;
+  }
+}
 </style>

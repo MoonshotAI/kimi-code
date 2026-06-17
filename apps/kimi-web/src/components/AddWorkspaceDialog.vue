@@ -622,4 +622,45 @@ onUnmounted(() => {
   border-top: 1px solid var(--line2);
   background: var(--panel);
 }
+
+@media (max-width: 640px) {
+  .backdrop {
+    align-items: stretch;
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+  .dialog {
+    width: 100%;
+    max-width: none;
+    height: auto;
+    max-height: calc(100dvh - 24px);
+  }
+  .dh,
+  .folder-row {
+    min-height: 44px;
+  }
+  .crumbbar {
+    align-items: flex-start;
+  }
+  .paste-section {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+  .paste-label {
+    flex: 1 0 100%;
+  }
+  .actions {
+    flex-wrap: wrap;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+  .act-btn {
+    min-height: 36px;
+  }
+  .act-btn.primary {
+    flex: 1 1 100%;
+  }
+}
 </style>

@@ -1361,6 +1361,28 @@ function openPr(url: string): void {
 /* Fixed icon glyph size — not part of the UI font scale. */
 .cs-icon { font-size: 32px; }
 .cs-text { font-size: var(--ui-font-size); }
+
+@media (max-width: 640px) {
+  .auth-banner-inner {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding:
+      8px
+      max(12px, env(safe-area-inset-right))
+      8px
+      max(12px, env(safe-area-inset-left));
+  }
+  .auth-banner-msg {
+    min-width: 0;
+    flex: 1 1 calc(100% - 34px);
+    line-height: 1.45;
+  }
+  .auth-banner-btn {
+    margin-left: 24px;
+    max-width: calc(100% - 24px);
+    white-space: normal;
+  }
+}
 </style>
 
 <style>

@@ -516,4 +516,51 @@ function statusLabel(status: AppProvider['status']): string {
   background: var(--panel);
   border-radius: 0 0 4px 4px;
 }
+
+@media (max-width: 640px) {
+  .backdrop {
+    align-items: stretch;
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+  .dialog {
+    width: 100%;
+    max-width: none;
+    height: auto;
+    max-height: calc(100dvh - 24px);
+  }
+  .prov-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    min-height: 48px;
+  }
+  .prov-actions,
+  .confirm-row {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .form-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .flabel {
+    width: auto;
+    text-align: left;
+  }
+  .add-error,
+  .form-btns {
+    padding-left: 0;
+  }
+  .form-btns {
+    flex-wrap: wrap;
+  }
+  .act-btn {
+    min-height: 34px;
+  }
+}
 </style>

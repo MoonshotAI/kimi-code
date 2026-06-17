@@ -208,4 +208,38 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown));
   height: 100%;
   background: var(--blue);
 }
+
+@media (max-width: 640px) {
+  .backdrop {
+    align-items: stretch;
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+  .dialog {
+    width: 100%;
+    max-width: none;
+    height: auto;
+    max-height: calc(100dvh - 24px);
+  }
+  .rows {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    min-height: 48px;
+  }
+  .row dt {
+    width: auto;
+  }
+  .row dd {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+}
 </style>

@@ -501,7 +501,7 @@ function selectTab(tabId: string): void {
     width: 100%;
     max-width: none;
     height: 640px;
-    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
   }
   .model-provider,
   .caps {
