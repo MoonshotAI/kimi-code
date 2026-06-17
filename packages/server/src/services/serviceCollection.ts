@@ -3,7 +3,7 @@ import {
   ServiceCollection,
   SyncDescriptor,
 } from '@moonshot-ai/agent-core';
-import * as Services from '@moonshot-ai/services';
+import * as Services from '@moonshot-ai/agent-core';
 import type { Logger as PinoLogger } from 'pino';
 
 import type { FastifyLike } from '#/services/gateway/restGateway';

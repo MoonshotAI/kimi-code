@@ -3,8 +3,7 @@ import {
   ErrorCode,
   patchConfigRequestSchema,
 } from '@moonshot-ai/protocol';
-import { IConfigService } from '@moonshot-ai/services';
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
+import { IConfigService, type IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

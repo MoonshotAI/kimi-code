@@ -8,12 +8,7 @@ import {
   refreshOAuthProviderModelsResponseSchema,
   setDefaultModelResponseSchema,
 } from '@moonshot-ai/protocol';
-import {
-  IModelCatalogService,
-  ModelNotFoundError,
-  ProviderNotFoundError,
-} from '@moonshot-ai/services';
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
+import { IModelCatalogService, ModelNotFoundError, ProviderNotFoundError, type IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

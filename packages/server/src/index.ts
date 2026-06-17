@@ -8,7 +8,7 @@ export type {
   ServerLogger,
   ServerLogLevel,
 } from './services/pinoLoggerService';
-export { acquireLock, DEFAULT_LOCK_PATH, DEFAULT_LOCK_DIR } from './lock';
+export { acquireLock, getLiveLock, DEFAULT_LOCK_PATH, DEFAULT_LOCK_DIR } from './lock';
 export type { AcquireLockOptions, AcquireLockResult, LockContents } from './lock';
 
 export { resolveServiceManager, ServiceUnavailableError, ServiceUnsupportedError } from './svc';
@@ -35,4 +35,4 @@ export {
   IModelCatalogService,
   ISessionService,
   SessionNotFoundError,
-} from '@moonshot-ai/services';
+} from '@moonshot-ai/agent-core';

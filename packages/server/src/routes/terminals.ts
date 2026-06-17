@@ -5,15 +5,9 @@ import {
   getTerminalResponseSchema,
   listTerminalsResponseSchema,
 } from '@moonshot-ai/protocol';
-import {
-  FsPathEscapesError,
-  ITerminalService,
-  SessionNotFoundError,
-  TerminalNotFoundError,
-} from '@moonshot-ai/services';
+import { FsPathEscapesError, ITerminalService, SessionNotFoundError, TerminalNotFoundError, type IInstantiationService } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

@@ -71,7 +71,6 @@
         ./packages/node-sdk
         ./packages/oauth
         ./packages/protocol
-        ./packages/services
         ./packages/telemetry
         ./apps/kimi-code
         ./apps/kimi-web
@@ -91,7 +90,6 @@
         "@moonshot-ai/kimi-code-sdk"
         "@moonshot-ai/kimi-code-oauth"
         "@moonshot-ai/protocol"
-        "@moonshot-ai/services"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/kimi-code"
         "@moonshot-ai/kimi-web"
@@ -148,7 +146,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-4Zduy2AKSzdIAUHSHrmzgaU8l3aeOtHETbkFnIEHgOA=";
+              hash = "sha256-vtn1XBvcmcDQv6pfc+XQWv5JXDc9m14QL7X2QRnLTdA=";
             };
 
             nativeBuildInputs = [

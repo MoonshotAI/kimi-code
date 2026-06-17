@@ -11,15 +11,10 @@ import {
   workspaceIdParamSchema,
 } from '@moonshot-ai/protocol';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
+import { IWorkspaceRegistry, WorkspaceNotFoundError, WorkspaceRootNotFoundError, type IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
-import {
-  IWorkspaceRegistry,
-  WorkspaceNotFoundError,
-  WorkspaceRootNotFoundError,
-} from '@moonshot-ai/services';
 
 interface WorkspaceRouteHost {
   post(

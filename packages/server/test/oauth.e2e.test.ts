@@ -31,7 +31,7 @@ import {
 } from '@moonshot-ai/protocol';
 import {
   IOAuthService,
-} from '@moonshot-ai/services';
+} from '@moonshot-ai/agent-core';
 import type {
   OAuthFlowSnapshot,
   OAuthFlowStart,

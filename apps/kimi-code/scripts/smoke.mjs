@@ -7,7 +7,6 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bundlePath = resolve(appRoot, 'dist', 'main.mjs');
-const swaggerUiLogoPath = resolve(appRoot, 'dist', 'static', 'logo.svg');
 const webIndexPath = resolve(appRoot, 'dist-web', 'index.html');
 const packageJson = JSON.parse(await readFile(resolve(appRoot, 'package.json'), 'utf-8'));
 const expectedVersion = packageJson.version;
@@ -26,12 +25,10 @@ async function ensureBundleExists() {
 }
 
 async function ensureRuntimeAssetsExist() {
-  for (const filePath of [swaggerUiLogoPath, webIndexPath]) {
-    try {
-      await stat(filePath);
-    } catch {
-      fail(`Runtime asset not found at ${filePath}. Run \`pnpm build\` first.`);
-    }
+  try {
+    await stat(webIndexPath);
+  } catch {
+    fail(`Runtime asset not found at ${webIndexPath}. Run \`pnpm build\` first.`);
   }
 }
 

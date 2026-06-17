@@ -18,6 +18,7 @@ import {
   DEFAULT_LOCK_PATH,
   ServerLockedError,
   acquireLock,
+  getLiveLock,
   type LockContents,
 } from '../src/lock';
 
@@ -151,5 +152,38 @@ describe('acquireLock — concurrent-instance protection', () => {
 describe('acquireLock — defaults', () => {
   it('DEFAULT_LOCK_PATH points under the kimi-code home', () => {
     expect(DEFAULT_LOCK_PATH).toMatch(/[/\\]\.kimi-code[/\\]server[/\\]lock$/);
+  });
+});
+
+describe('getLiveLock', () => {
+  it('returns undefined when the lock file is missing', () => {
+    expect(getLiveLock(lockPath)).toBeUndefined();
+  });
+
+  it('returns undefined for an unparseable lock file', () => {
+    writeFileSync(lockPath, '{garbage');
+    expect(getLiveLock(lockPath)).toBeUndefined();
+  });
+
+  it('returns undefined for a stale lock whose recorded pid is dead', () => {
+    writeFileSync(
+      lockPath,
+      JSON.stringify({
+        pid: 0x7fffffff,
+        started_at: '2025-01-01T00:00:00.000Z',
+        port: 7878,
+      } satisfies LockContents),
+    );
+    expect(getLiveLock(lockPath)).toBeUndefined();
+  });
+
+  it('returns the contents when the recorded pid is alive', () => {
+    const live: LockContents = {
+      pid: process.pid,
+      started_at: '2026-06-05T00:00:00.000Z',
+      port: 9000,
+    };
+    writeFileSync(lockPath, JSON.stringify(live));
+    expect(getLiveLock(lockPath)).toEqual(live);
   });
 });

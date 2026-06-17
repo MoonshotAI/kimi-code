@@ -10,34 +10,23 @@
  */
 
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { Option, type Command } from 'commander';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 
 import { join } from 'node:path';
 
 import {
-  ICoreProcessService,
   ServerLockedError,
   resolveServiceManager,
   startServer,
+  type RunningServer,
   type ServiceStatus,
 } from '@moonshot-ai/server';
-import {
-  initializeTelemetry,
-  setCrashPhase,
-  setTelemetryContext,
-  shutdownTelemetry,
-  track,
-  withTelemetryContext,
-} from '@moonshot-ai/kimi-telemetry';
-import type { KimiConfig, TelemetryClient } from '@moonshot-ai/kimi-code-sdk';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 
-import { createCliTelemetryBootstrap } from '../../telemetry';
 import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../../version';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
@@ -52,7 +41,6 @@ import {
 
 const WEB_ASSETS_DIR = 'dist-web';
 const READY_PANEL_WIDTH = 72;
-const SERVER_WEB_UI_MODE = 'web';
 
 export interface RunCliOptions extends ServerCliOptions {
   open?: boolean;
@@ -84,16 +72,20 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
       false,
     )
     .option(
-      '--swagger',
-      'Mount the Swagger UI at /documentation. OpenAPI JSON remains available at /openapi.json.',
-      false,
-    )
-    .option(
       options.defaultOpen ? '--no-open' : '--open',
       options.defaultOpen
         ? 'Do not open the web UI in the default browser.'
         : 'Open the web UI in the default browser once the server is healthy.',
       options.defaultOpen,
+    )
+    .addOption(
+      new Option('--daemon', 'Run as an idle-exiting background daemon (internal).').hideHelp(),
+    )
+    .addOption(
+      new Option(
+        '--idle-grace-ms <ms>',
+        'Idle-shutdown grace in ms (daemon mode, internal).',
+      ).hideHelp(),
     )
     .action(async (opts: RunCliOptions) => {
       try {
@@ -110,6 +102,10 @@ export async function handleRunCommand(
   deps: RunCommandDeps = DEFAULT_RUN_COMMAND_DEPS,
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
+  if (parsed.daemon) {
+    await startServerDaemon(parsed);
+    return;
+  }
   let outcome: { origin: string };
   const startedAt = Date.now();
   try {
@@ -139,32 +135,20 @@ export async function startServerForeground(
   options: ParsedServerOptions,
 ): Promise<{ origin: string }> {
   const version = getVersion();
-  const telemetryBootstrap = createCliTelemetryBootstrap();
-  const telemetryClient: TelemetryClient = {
-    track,
-    withContext: withTelemetryContext,
-    setContext: setTelemetryContext,
-  };
   const running = await startServer({
     host: options.host,
     port: options.port,
     logLevel: options.logLevel,
     debugEndpoints: options.debugEndpoints,
-    swagger: options.swagger,
     webAssetsDir: serverWebAssetsDir(),
     coreProcessOptions: {
       identity: createKimiCodeHostIdentity(version),
-      telemetry: telemetryClient,
     },
   });
-  await initializeServerTelemetry(running, telemetryBootstrap, version);
-  setCrashPhase('runtime');
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     running.logger.info({ signal }, 'server shutting down');
-    setCrashPhase('shutdown');
     try {
-      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
       await running.close();
       process.exit(0);
     } catch (error) {
@@ -184,27 +168,117 @@ export async function startServerForeground(
   return { origin: serverOrigin(options.host, options.port) };
 }
 
-async function initializeServerTelemetry(
-  running: Awaited<ReturnType<typeof startServer>>,
-  bootstrap: ReturnType<typeof createCliTelemetryBootstrap>,
-  version: string,
-): Promise<void> {
-  const config = await running.services.invokeFunction(async (a): Promise<KimiConfig> => {
-    const core = a.get(ICoreProcessService);
-    return core.rpc.getKimiConfig({ reload: true });
+/**
+ * `kimi server run --daemon` — runs the local server as a background daemon.
+ *
+ * Identical bootstrap to {@link startServerForeground}, but the process is
+ * expected to be detached (no controlling terminal) and self-terminates after
+ * the last web client disconnects and a grace period elapses. The grace timer
+ * is driven by the WS connection count reported through `wsGatewayOptions`.
+ * Resolves only via `process.exit`.
+ */
+export async function startServerDaemon(options: ParsedServerOptions): Promise<never> {
+  const version = getVersion();
+
+  let running: RunningServer | undefined;
+  let stopping = false;
+
+  const idle = createIdleShutdownHandler({
+    graceMs: options.idleGraceMs,
+    onIdle: () => {
+      void shutdown('idle');
+    },
   });
-  initializeTelemetry({
-    homeDir: bootstrap.homeDir,
-    deviceId: bootstrap.deviceId,
-    enabled: config.telemetry !== false,
-    appName: CLI_USER_AGENT_PRODUCT,
-    version,
-    uiMode: SERVER_WEB_UI_MODE,
-    model: config.defaultModel,
-  });
-  if (bootstrap.firstLaunch) {
-    track('first_launch');
+
+  async function shutdown(reason: string): Promise<void> {
+    if (stopping) return;
+    stopping = true;
+    idle.cancel();
+    running?.logger.info({ reason }, 'server shutting down');
+    try {
+      await running?.close();
+    } catch (error) {
+      running?.logger.error(
+        { err: error instanceof Error ? error : new Error(String(error)) },
+        'server shutdown error',
+      );
+    }
+    process.exit(0);
   }
+
+  running = await startServer({
+    host: options.host,
+    port: options.port,
+    logLevel: options.logLevel,
+    debugEndpoints: options.debugEndpoints,
+    webAssetsDir: serverWebAssetsDir(),
+    coreProcessOptions: {
+      identity: createKimiCodeHostIdentity(version),
+    },
+    wsGatewayOptions: {
+      onConnectionCountChange: (size) => {
+        idle.onConnectionCountChange(size);
+      },
+    },
+  });
+
+  process.once('SIGINT', () => {
+    void shutdown('SIGINT');
+  });
+  process.once('SIGTERM', () => {
+    void shutdown('SIGTERM');
+  });
+
+  running.logger.info(
+    { address: running.address, idleGraceMs: options.idleGraceMs },
+    'daemon ready',
+  );
+
+  return new Promise<never>(() => {
+    // Keeps the event loop alive; the process ends via shutdown()/process.exit.
+  });
+}
+
+/**
+ * Pure idle-shutdown state machine, exported for tests.
+ *
+ * Watches the live WS connection count and fires `onIdle` exactly once, after
+ * the count has dropped back to zero for `graceMs` ms *and* at least one
+ * client had connected since startup. A reconnect before the grace elapses
+ * cancels the pending exit. The initial "no clients yet" state never arms the
+ * timer (so a freshly-spawned daemon is not killed before anyone connects).
+ */
+export function createIdleShutdownHandler(opts: {
+  graceMs: number;
+  onIdle: () => void;
+}): {
+  onConnectionCountChange(size: number): void;
+  cancel(): void;
+} {
+  let timer: NodeJS.Timeout | undefined;
+  let seenClient = false;
+
+  const cancel = (): void => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+
+  return {
+    onConnectionCountChange(size: number): void {
+      if (size > 0) {
+        seenClient = true;
+        cancel();
+        return;
+      }
+      if (seenClient) {
+        cancel();
+        timer = setTimeout(opts.onIdle, opts.graceMs);
+      }
+    },
+    cancel,
+  };
 }
 
 function serverWebAssetsDir(): string {

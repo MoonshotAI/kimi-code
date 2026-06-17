@@ -24,7 +24,6 @@ const optionalRuntimeRequires = new Set([
 ]);
 const optionalRelativeRuntimeRequires = new Set(['./crypto/build/Release/sshcrypto.node']);
 const handledNativeRuntimeRequires = new Set(['koffi']);
-const disabledProductionDynamicImports = new Set(['@fastify/swagger', '@fastify/swagger-ui']);
 
 function isAllowedSpecifier(specifier) {
   if (builtins.has(specifier) || specifier.startsWith('node:')) return true;
@@ -65,7 +64,6 @@ for (const line of executableLines()) {
       errors.push(`relative dynamic import remains: ${specifier}`);
       continue;
     }
-    if (disabledProductionDynamicImports.has(specifier)) continue;
     if (!isAllowedSpecifier(specifier)) {
       errors.push(`external dynamic import remains: ${specifier}`);
     }

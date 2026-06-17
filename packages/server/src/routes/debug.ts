@@ -31,10 +31,9 @@
  * pattern `packages/server/test/prompt.e2e.test.ts` already uses.
  */
 
-import { IPromptService, PromptService } from '@moonshot-ai/services';
+import { IPromptService, PromptService, type IInstantiationService } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

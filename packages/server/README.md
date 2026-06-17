@@ -13,8 +13,7 @@ it ships inside the `kimi` CLI (`apps/kimi-code`) and is launched via
 - Exposes them over **REST** (Fastify) and **WebSocket** (`ws`) under `/api/v1`.
 - Serves the built-in web UI (`apps/kimi-web`) as static assets when a
   `webAssetsDir` is provided.
-- Publishes machine-readable contract docs: `/openapi.json`, `/asyncapi.json`,
-  and a Swagger UI at `/documentation`.
+- Publishes machine-readable contract docs: `/openapi.json`, `/asyncapi.json`.
 
 ## Running it
 
@@ -49,7 +48,7 @@ apps/kimi-code (CLI)            apps/kimi-web (browser)
         │  @moonshot-ai/server │
         │  Fastify REST        │
         │  ws gateway          │
-        │  DI container        │  ← @moonshot-ai/services
+        │  DI container        │  ← @moonshot-ai/agent-core
         │  agent-core sessions │  ← @moonshot-ai/agent-core
         └──────────────────────┘
 ```
@@ -61,7 +60,7 @@ apps/kimi-code (CLI)            apps/kimi-web (browser)
   `server_hello` / `ack` / `event` / `resync_required` frames, replay and
   fan-out.
 - **DI** (`src/services/serviceCollection.ts`): seeds the container from
-  `@moonshot-ai/services` (`getSingletonServiceDescriptors()`) and layers in
+  `@moonshot-ai/agent-core` (`getSingletonServiceDescriptors()`) and layers in
   server-owned gateways plus `IApprovalService` / `IQuestionService`
   implementations.
 - **OS service managers** (`src/svc/`): launchd / systemd / schtasks backends
@@ -79,9 +78,8 @@ apps/kimi-code (CLI)            apps/kimi-web (browser)
 
 ## Related packages
 
-- `@moonshot-ai/services` — the in-process DI service container this server
-  wires together. See `packages/services/README.md`.
-- `@moonshot-ai/agent-core` — the agent engine the server hosts.
+- `@moonshot-ai/agent-core` — the agent engine the server hosts, including the
+  in-process DI service layer it wires together.
 - `@moonshot-ai/protocol` — wire types and the AsyncAPI document.
 - `@moonshot-ai/node-sdk` — typed in-process facade for user code
   (`KimiHarness`, `Session`); prefer it over hand-rolling REST/WS calls.

@@ -20,7 +20,7 @@ describe('packages/server/src anti-corruption', () => {
     expect(out).toBe('');
   });
 
-  it('imports shared filesystem, file store, logger, and workspace services from @moonshot-ai/services', () => {
+  it('imports shared filesystem, file store, logger, and workspace services from @moonshot-ai/agent-core', () => {
     const out = execSync(
       `grep -rE '["'"'"']#/services/(fileStore|fs|logger|workspace)(/|["'"'"'])' "${daemonSrc}" || true`,
       { encoding: 'utf8' },

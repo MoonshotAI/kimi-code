@@ -50,12 +50,6 @@ export default defineConfig({
         ),
       },
       {
-        find: '@moonshot-ai/services',
-        replacement: fileURLToPath(
-          new URL('../services/src/index.ts', import.meta.url),
-        ),
-      },
-      {
         find: '@moonshot-ai/kimi-code-oauth',
         replacement: fileURLToPath(
           new URL('../oauth/src/index.ts', import.meta.url),

@@ -9,10 +9,11 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:net';
 
 import chalk, { Chalk } from 'chalk';
 import { Command } from 'commander';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerServerCommand } from '#/cli/sub/server';
 import { addLifecycleCommands } from '#/cli/sub/server/lifecycle';
@@ -38,12 +39,12 @@ describe('kimi server', () => {
     expect(packageJson.optionalDependencies).toHaveProperty('pino-pretty');
   });
 
-  it('registers `server` with all six lifecycle subcommands plus `run`', () => {
+  it('registers `server` with only `run` while lifecycle commands are hidden', () => {
     const program = makeProgram();
     const server = program.commands.find((c) => c.name() === 'server');
     expect(server).toBeDefined();
     const subs = server?.commands.map((c) => c.name()).toSorted();
-    expect(subs).toEqual(['install', 'restart', 'run', 'start', 'status', 'stop', 'uninstall']);
+    expect(subs).toEqual(['run']);
   });
 
   it('`server run` exposes local-only foreground options', () => {
@@ -57,16 +58,16 @@ describe('kimi server', () => {
     expect(longs).toContain('--port');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
-    expect(longs).toContain('--swagger');
     // run defaults to NOT opening the browser → option is the positive --open
     expect(longs).toContain('--open');
   });
 
   it('`server install` exposes local-only service options', () => {
-    const program = makeProgram();
-    const install = program.commands
-      .find((c) => c.name() === 'server')
-      ?.commands.find((c) => c.name() === 'install');
+    // Lifecycle commands are no longer registered via `registerServerCommand`,
+    // but the builder still lives in `./lifecycle` — exercise it directly.
+    const server = new Command('server');
+    addLifecycleCommands(server);
+    const install = server.commands.find((c) => c.name() === 'install');
     expect(install).toBeDefined();
     const longs = install!.options.map((o) => o.long).filter(Boolean);
     expect(longs).not.toContain('--host');
@@ -274,12 +275,12 @@ describe('`kimi server` lifecycle output', () => {
 });
 
 describe('`kimi server run` already-running handling', () => {
-  it('defaults foreground logs off and passes --swagger through to startup options', async () => {
+  it('defaults foreground logs off', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let parsed: unknown;
 
     await handleRunCommand(
-      { port: '7878', swagger: true },
+      { port: '7878' },
       {
         startServerForeground: async (options) => {
           parsed = options;
@@ -300,7 +301,7 @@ describe('`kimi server run` already-running handling', () => {
       },
     );
 
-    expect(parsed).toMatchObject({ logLevel: 'silent', swagger: true });
+    expect(parsed).toMatchObject({ logLevel: 'silent' });
   });
 
   it('enables foreground logs only when --log-level is provided', async () => {
@@ -545,6 +546,156 @@ describe('server web asset directory resolution', () => {
   it('falls back to package dist-web outside SEA mode', async () => {
     const { resolveServerWebAssetsDir } = await import('#/cli/sub/server/run');
     expect(resolveServerWebAssetsDir(null)).toMatch(/[/\\]dist-web$/);
+  });
+});
+
+function listenOnce(host: string, port: number): Promise<Server> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen({ host, port }, () => resolve(server));
+  });
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()));
+}
+
+async function allocateFreePort(host = '127.0.0.1'): Promise<number> {
+  const server = await listenOnce(host, 0);
+  const address = server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : 0;
+  await closeServer(server);
+  return port;
+}
+
+describe('resolveDaemonPort', () => {
+  it('returns the preferred port when it is free', async () => {
+    const { resolveDaemonPort } = await import('#/cli/sub/server/daemon');
+    const free = await allocateFreePort();
+    await expect(resolveDaemonPort('127.0.0.1', free)).resolves.toBe(free);
+  });
+
+  it('falls back to a different free port when the preferred port is busy', async () => {
+    const { resolveDaemonPort } = await import('#/cli/sub/server/daemon');
+    const busy = await allocateFreePort();
+    const holder = await listenOnce('127.0.0.1', busy);
+    try {
+      const port = await resolveDaemonPort('127.0.0.1', busy);
+      expect(port).not.toBe(busy);
+      expect(port).toBeGreaterThan(0);
+    } finally {
+      await closeServer(holder);
+    }
+  });
+});
+
+describe('createIdleShutdownHandler', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not arm before any client connects', async () => {
+    const { createIdleShutdownHandler } = await import('#/cli/sub/server/run');
+    const onIdle = vi.fn();
+    const handler = createIdleShutdownHandler({ graceMs: 1000, onIdle });
+    handler.onConnectionCountChange(0);
+    vi.advanceTimersByTime(2000);
+    expect(onIdle).not.toHaveBeenCalled();
+  });
+
+  it('fires onIdle after the grace once the last client leaves', async () => {
+    const { createIdleShutdownHandler } = await import('#/cli/sub/server/run');
+    const onIdle = vi.fn();
+    const handler = createIdleShutdownHandler({ graceMs: 1000, onIdle });
+    handler.onConnectionCountChange(1);
+    handler.onConnectionCountChange(0);
+    vi.advanceTimersByTime(999);
+    expect(onIdle).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a pending exit when a client reconnects during the grace', async () => {
+    const { createIdleShutdownHandler } = await import('#/cli/sub/server/run');
+    const onIdle = vi.fn();
+    const handler = createIdleShutdownHandler({ graceMs: 1000, onIdle });
+    handler.onConnectionCountChange(1);
+    handler.onConnectionCountChange(0);
+    vi.advanceTimersByTime(500);
+    handler.onConnectionCountChange(1); // reconnect
+    vi.advanceTimersByTime(2000);
+    expect(onIdle).not.toHaveBeenCalled();
+  });
+
+  it('only the final drop to zero arms the timer with multiple clients', async () => {
+    const { createIdleShutdownHandler } = await import('#/cli/sub/server/run');
+    const onIdle = vi.fn();
+    const handler = createIdleShutdownHandler({ graceMs: 500, onIdle });
+    handler.onConnectionCountChange(1);
+    handler.onConnectionCountChange(2);
+    handler.onConnectionCountChange(1); // still one connected
+    vi.advanceTimersByTime(1000);
+    expect(onIdle).not.toHaveBeenCalled();
+    handler.onConnectionCountChange(0); // now none
+    vi.advanceTimersByTime(500);
+    expect(onIdle).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('kimi web (handleWebCommand)', () => {
+  it('ensures the daemon, prints the origin, and opens the browser by default', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/server/web-alias');
+    const ensureDaemon = vi.fn(async () => ({ origin: 'http://127.0.0.1:7878' }));
+    const openUrl = vi.fn();
+    let stdout = '';
+
+    await handleWebCommand(
+      {},
+      {
+        ensureDaemon,
+        openUrl,
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+      },
+    );
+
+    expect(ensureDaemon).toHaveBeenCalledWith({ port: 7878, logLevel: undefined });
+    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:7878');
+    expect(stdout).toContain('http://127.0.0.1:7878');
+  });
+
+  it('does not open the browser when --no-open is set', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/server/web-alias');
+    const openUrl = vi.fn();
+    await handleWebCommand(
+      { open: false },
+      {
+        ensureDaemon: vi.fn(async () => ({ origin: 'http://127.0.0.1:9000' })),
+        openUrl,
+        stdout: { write: () => true },
+      },
+    );
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid --log-level before touching the daemon', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/server/web-alias');
+    const ensureDaemon = vi.fn();
+    await expect(
+      handleWebCommand(
+        { logLevel: 'shout' },
+        { ensureDaemon, openUrl: vi.fn(), stdout: { write: () => true } },
+      ),
+    ).rejects.toThrow(/invalid --log-level/);
+    expect(ensureDaemon).not.toHaveBeenCalled();
   });
 });
 

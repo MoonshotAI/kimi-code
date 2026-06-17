@@ -2,20 +2,12 @@
 
 import { ulid } from 'ulid';
 
-import { Disposable, DisposableMap, type IDisposable } from '@moonshot-ai/agent-core';
+import { Disposable, DisposableMap, IApprovalService, IEventService, approvalToBrokerRequest, ILogService, type IDisposable, type ApprovalRequest, type ApprovalResponse } from '@moonshot-ai/agent-core';
 import type {
   ApprovalRequest as ProtocolApprovalRequest,
   Event,
 } from '@moonshot-ai/protocol';
-import {
-  IApprovalService,
-  IEventService,
-  approvalToBrokerRequest,
-  type ApprovalRequest,
-  type ApprovalResponse,
-} from '@moonshot-ai/services';
 
-import { ILogService } from '@moonshot-ai/services';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _typeAnchor: typeof IApprovalService = IApprovalService;

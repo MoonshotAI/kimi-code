@@ -1,48 +1,8 @@
-import {
-  type ServiceIdentifier,
-  InstantiationService,
-  resolveConfigPath,
-  resolveKimiHome,
-  setUnexpectedErrorHandler,
-} from '@moonshot-ai/agent-core';
-import {
-  IApprovalService,
-  IAuthSummaryService,
-  IEnvironmentService,
-  IEventService,
-  ICoreProcessService,
-  IModelCatalogService,
-  IMcpService,
-  IMessageService,
-  IOAuthService,
-  IFileStore,
-  IFsGitService,
-  IFsSearchService,
-  IFsService,
-  IFsWatcher,
-  ILogService,
-  IPromptService,
-  IQuestionService,
-  ISessionService,
-  ISkillService,
-  ITaskService,
-  ITerminalService,
-  IToolService,
-  IWorkspaceFsService,
-  IWorkspaceRegistry,
-  FsPathEscapesError,
-  FsWatchLimitError,
-  FsWatcherService,
-  SessionNotFoundError,
-  createConnectionLookup,
-  resolveSafePath,
-  type CoreProcessServiceOptions,
-} from '@moonshot-ai/services';
+import { InstantiationService, resolveConfigPath, resolveKimiHome, setUnexpectedErrorHandler, IApprovalService, IAuthSummaryService, IEnvironmentService, IEventService, ICoreProcessService, IModelCatalogService, IMcpService, IMessageService, IOAuthService, IFileStore, IFsGitService, IFsSearchService, IFsService, IFsWatcher, ILogService, IPromptService, IQuestionService, ISessionService, ISkillService, ITaskService, ITerminalService, IToolService, IWorkspaceFsService, IWorkspaceRegistry, FsPathEscapesError, FsWatchLimitError, FsWatcherService, SessionNotFoundError, createConnectionLookup, resolveSafePath, type ServiceIdentifier, type CoreProcessServiceOptions } from '@moonshot-ai/agent-core';
 import { ErrorCode, createAsyncApiDocument } from '@moonshot-ai/protocol';
 import Fastify from 'fastify';
 import { promises as fspPromises } from 'node:fs';
 import {
-  join as nodePathJoin,
   sep as nodePathSep,
   relative as nodePathRelativeNative,
 } from 'node:path';
@@ -86,10 +46,6 @@ export interface ServerStartOptions {
 
   webAssetsDir?: string;
 
-  swagger?: boolean;
-
-  swaggerUiAssetsDir?: string;
-
   serviceOverrides?: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>;
 }
 
@@ -131,7 +87,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   installErrorHandler(app);
 
   const serverVersion = getServerVersion();
-  const swaggerEnabled = opts.swagger === true;
 
   async function registerOpenApi(): Promise<void> {
     const { default: swagger } = await import('@fastify/swagger');
@@ -166,27 +121,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           return documentObject.swaggerObject;
         }
         return transformOpenApiDocument(documentObject.openapiObject as Record<string, unknown>);
-      },
-    });
-  }
-
-  async function registerSwaggerUi(assetsDir: string | undefined): Promise<void> {
-    const { default: swaggerUi } = await import('@fastify/swagger-ui');
-    const logo =
-      assetsDir === undefined
-        ? undefined
-        : {
-            type: 'image/svg+xml',
-            content: await fspPromises.readFile(nodePathJoin(assetsDir, 'logo.svg')),
-          };
-
-    await app.register(swaggerUi, {
-      routePrefix: '/documentation',
-      baseDir: assetsDir,
-      logo,
-      uiConfig: {
-        docExpansion: 'list',
-        deepLinking: true,
       },
     });
   }
@@ -228,10 +162,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     const openApiDocument = (app as unknown as { swagger(): unknown }).swagger();
     return reply.type('application/json').send(openApiDocument);
   });
-
-  if (swaggerEnabled) {
-    await registerSwaggerUi(opts.swaggerUiAssetsDir);
-  }
 
   if (opts.webAssetsDir !== undefined) {
     await registerWebAssetRoutes(app, opts.webAssetsDir);

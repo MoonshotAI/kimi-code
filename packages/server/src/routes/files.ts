@@ -13,16 +13,10 @@ import {
 } from '@moonshot-ai/protocol';
 import { z } from 'zod';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
+import { DEFAULT_MAX_UPLOAD_BYTES, FileNotFoundError, FileTooLargeError, IFileStore, type IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
-import {
-  DEFAULT_MAX_UPLOAD_BYTES,
-  FileNotFoundError,
-  FileTooLargeError,
-  IFileStore,
-} from '@moonshot-ai/services';
 
 interface FilesRouteHost {
   register(plugin: unknown, opts?: unknown): unknown;

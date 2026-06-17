@@ -21,9 +21,9 @@ The Kimi Code server. It hosts `agent-core` sessions and exposes them over REST 
 - `middleware/` — `defineRoute.ts`, `schema.ts`, `validate.ts`. `openapi/transforms.ts`.
 - `svc/` — OS service managers (launchd / systemd / schtasks) backing `kimi server install/start`.
 
-## DI: how it consumes `@moonshot-ai/services`
+## DI: how it consumes `@moonshot-ai/agent-core`
 
-Service conventions (naming, file layout, registration) live in `packages/services/AGENTS.md` — read that before adding or changing a service. This package only wires the container:
+Service conventions (naming, file layout, registration) live in `packages/agent-core/src/services/AGENTS.md` — read that before adding or changing a service. This package only wires the container:
 
 - `src/services/serviceCollection.ts` `createServerServiceCollection(...)` seeds a `ServiceCollection` with `...getSingletonServiceDescriptors()` plus server-owned gateway singletons (`ConnectionRegistry`, `SessionClientsService`, `WSBroadcastService`) and overrides `IApprovalService` / `IQuestionService`.
 - `services.set(...)` overrides: `ILogService` (Pino adapter), `IRestGateway` (`FastifyRestGateway(app)`), `IEnvironmentService`; then `IWSGateway` / `ICoreProcessService` as `SyncDescriptor`s with options; then `server.serviceOverrides` last (the test seam — later registration wins).
@@ -33,7 +33,7 @@ Service conventions (naming, file layout, registration) live in `packages/servic
 
 - REST is **Fastify**. All v1 routes are registered under `/api/v1` in `routes/registerApiV1Routes.ts`. Declare routes with `middleware/defineRoute.ts`: one object carries the Zod validators and the OpenAPI response schema; the `200` schema is expanded into the envelope `oneOf`.
 - `start.ts` neuters Fastify's validator/serializer compilers — validation happens in `defineRoute` preHandlers, not in Fastify's own pipeline.
-- Doc/meta endpoints in `start.ts`: `/openapi.json`, `/asyncapi.json` (`createAsyncApiDocument` from `@moonshot-ai/protocol`), `/documentation` (swagger-ui, lazily imported, gated by `swagger: true`), `/healthz`. `webAssetsDir` enables `registerWebAssetRoutes`.
+- Doc/meta endpoints in `start.ts`: `/openapi.json` (`@fastify/swagger`, lazily imported), `/asyncapi.json` (`createAsyncApiDocument` from `@moonshot-ai/protocol`), `/healthz`. `webAssetsDir` enables `registerWebAssetRoutes`.
 - WebSocket uses the `ws` package; frames/envelopes live in `ws/protocol.ts` (`server_hello`, `ack`, `event`, `resync_required`, per-session `seq`).
 
 ## Commands

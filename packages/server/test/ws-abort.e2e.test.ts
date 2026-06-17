@@ -29,7 +29,7 @@ import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
-import { IPromptService, PromptService } from '@moonshot-ai/services';
+import { IPromptService, PromptService } from '@moonshot-ai/agent-core';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
 import { rawDataToString } from '../src/ws/rawData';

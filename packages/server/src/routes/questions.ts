@@ -39,13 +39,9 @@ import {
   questionResolveRequestSchema,
   questionResolveResultSchema,
 } from '@moonshot-ai/protocol';
-import {
-  IQuestionService,
-  questionToAgentCoreResponse,
-} from '@moonshot-ai/services';
+import { IQuestionService, questionToAgentCoreResponse, type IInstantiationService } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

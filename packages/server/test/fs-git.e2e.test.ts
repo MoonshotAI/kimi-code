@@ -14,7 +14,7 @@ import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
-import { parsePorcelain, parseNumstat } from '@moonshot-ai/services';
+import { parsePorcelain, parseNumstat } from '@moonshot-ai/agent-core';
 
 let tmpDir: string;
 let lockPath: string;

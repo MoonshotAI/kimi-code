@@ -17,15 +17,9 @@ const builtins = new Set([
   ...builtinModules.map((name) => `node:${name}`),
 ]);
 const optionalNativeDependencies = new Set(['cpu-features']);
-const nativeExternalDependencies = new Set([
-  ...optionalNativeDependencies,
-  '@fastify/swagger',
-  '@fastify/swagger-ui',
-]);
 
 function shouldAlwaysBundle(id: string): boolean {
   if (builtins.has(id) || id.startsWith('node:')) return false;
-  if (nativeExternalDependencies.has(id)) return false;
   if (optionalNativeDependencies.has(id)) return false;
   // Everything else is force-bundled, which covers `@moonshot-ai/*` (incl.
   // vis-server for `kimi vis`) plus its transitive `hono` / `@hono/node-server`
@@ -62,7 +56,7 @@ export default defineConfig({
   },
   deps: {
     alwaysBundle: shouldAlwaysBundle,
-    neverBundle: [...nativeExternalDependencies],
+    neverBundle: [...optionalNativeDependencies],
     onlyBundle: false,
   },
   outputOptions: {

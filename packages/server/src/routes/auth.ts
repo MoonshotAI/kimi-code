@@ -16,8 +16,7 @@
  */
 
 import { authSummarySchema } from '@moonshot-ai/protocol';
-import { IAuthSummaryService } from '@moonshot-ai/services';
-import type { IInstantiationService } from '@moonshot-ai/agent-core';
+import { IAuthSummaryService, type IInstantiationService } from '@moonshot-ai/agent-core';
 
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

@@ -3,11 +3,10 @@
 import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import type { Socket } from 'node:net';
 
-import { Disposable } from '@moonshot-ai/agent-core';
+import { Disposable, ILogService } from '@moonshot-ai/agent-core';
 import { WebSocketServer, type WebSocket } from 'ws';
 
 import { IConnectionRegistry } from './connectionRegistry';
-import { ILogService } from '@moonshot-ai/services';
 import { IRestGateway } from './restGateway';
 import { ISessionClientsService } from './sessionClients';
 import { IWSBroadcastService } from './wsBroadcast';
@@ -68,13 +67,17 @@ export class WSGateway extends Disposable implements IWSGateway {
       socket.destroy();
       return;
     }
-    this.wss.handleUpgrade(req, socket, head, (ws) => this.onConnect(ws));
+    this.wss.handleUpgrade(req, socket, head, (ws) => this.onConnect(ws, req));
   }
 
-  private onConnect(socket: WebSocket): void {
+  private onConnect(socket: WebSocket, req: IncomingMessage): void {
+    const remoteAddress = req.socket.remoteAddress ?? null;
+    const userAgent = req.headers['user-agent'] ?? null;
     const conn = new WsConnection({
       socket,
       logger: this.logger,
+      remoteAddress,
+      userAgent,
       sessionClients: this.sessionClients,
       wsBroadcast: this.wsBroadcast,
       ...(this.abortHandler !== undefined ? { abortHandler: this.abortHandler } : {}),
@@ -88,7 +91,11 @@ export class WSGateway extends Disposable implements IWSGateway {
         : {}),
     });
     this.registry.add(conn);
-    socket.on('close', () => this.registry.remove(conn.id));
+    this.options.onConnectionCountChange?.(this.registry.size());
+    socket.on('close', () => {
+      this.registry.remove(conn.id);
+      this.options.onConnectionCountChange?.(this.registry.size());
+    });
   }
 
   get size(): number {

@@ -1,5 +1,4 @@
-import { Disposable } from '@moonshot-ai/agent-core';
-import { ILogService } from '@moonshot-ai/services';
+import { Disposable, ILogService } from '@moonshot-ai/agent-core';
 import { pino, type Logger, type LoggerOptions } from 'pino';
 import prettyStream from 'pino-pretty';
 

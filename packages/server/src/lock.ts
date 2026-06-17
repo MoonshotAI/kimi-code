@@ -137,6 +137,18 @@ function readLockContents(path: string): LockContents | undefined {
 }
 
 /**
+ * Read the lock file and return its contents only when it describes a *live*
+ * server (parseable JSON whose recorded pid still exists). Returns `undefined`
+ * when the file is missing, unparseable, or stale (dead pid) — i.e. when there
+ * is no daemon to reuse. Read-only: never mutates the lock.
+ */
+export function getLiveLock(lockPath: string = DEFAULT_LOCK_PATH): LockContents | undefined {
+  const contents = readLockContents(lockPath);
+  if (!contents) return undefined;
+  return pidAlive(contents.pid) ? contents : undefined;
+}
+
+/**
  * Try `O_WRONLY | O_CREAT | O_EXCL` to create the lock file with the contents.
  * Returns true on success, false on EEXIST. Throws on any other fs error.
  */

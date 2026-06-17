@@ -143,7 +143,7 @@ kimi acp
 
 Run, install, and manage the local Kimi server — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin. The parent command is split into a foreground entrypoint (`run`) and an OS-managed service lifecycle (`install`, `uninstall`, `start`, `stop`, `restart`, `status`). Background operation is **never** spawned implicitly by a foreground command; you opt in via `install` + `start`.
 
-When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. The Swagger UI is separate and is mounted at `/documentation` only when the server is started with `--swagger`.
+When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document.
 
 ```sh
 kimi server run                # foreground (logs off unless --log-level is set)
@@ -159,7 +159,6 @@ kimi server status             # snapshot of installed/running state
 | `--port <port>` | Bind port; defaults to `7878` |
 | `--log-level <level>` | Enable foreground logs at the selected level; omitted by default |
 | `--debug-endpoints` | Mount `/api/v1/debug/*` routes (off by default) |
-| `--swagger` | Mount the Swagger UI at `/documentation` (off by default) |
 | `--open` | Open the web UI in the default browser once the server is healthy |
 
 `kimi server run` binds to local loopback only and does not return — it stays attached to the current terminal and shuts down cleanly on `SIGINT` / `SIGTERM`. For background operation, use the OS-service path below.
@@ -200,7 +199,7 @@ kimi web                        # foreground + open browser
 kimi web --no-open              # equivalent to `kimi server run`
 ```
 
-The same `--port`, `--log-level`, `--debug-endpoints`, and `--swagger` flags work as on `kimi server run`.
+The same `--port`, `--log-level`, and `--debug-endpoints` flags work as on `kimi server run`.
 
 ### `kimi doctor`
 

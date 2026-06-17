@@ -2,21 +2,12 @@
 
 import { ulid } from 'ulid';
 
-import { Disposable, DisposableMap, type IDisposable } from '@moonshot-ai/agent-core';
+import { Disposable, DisposableMap, IEventService, IQuestionService, questionDismissedResult, questionToBrokerRequest, ILogService, type IDisposable, type QuestionRequest, type QuestionResult } from '@moonshot-ai/agent-core';
 import type {
   Event,
   QuestionRequest as ProtocolQuestionRequest,
 } from '@moonshot-ai/protocol';
-import {
-  IEventService,
-  IQuestionService,
-  questionDismissedResult,
-  questionToBrokerRequest,
-  type QuestionRequest,
-  type QuestionResult,
-} from '@moonshot-ai/services';
 
-import { ILogService } from '@moonshot-ai/services';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _typeAnchor: typeof IQuestionService = IQuestionService;
