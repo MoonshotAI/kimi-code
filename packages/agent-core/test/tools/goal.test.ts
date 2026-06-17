@@ -29,6 +29,7 @@ function fakeAgent(opts: { type?: 'main' | 'sub'; goal?: GoalMode } = {}): Agent
     emitEvent: () => {},
     telemetry: { track: () => {} },
     context: { appendSystemReminder: () => {} },
+    permission: { mode: 'manual' },
   } as unknown as Agent;
   (agent as { goal: GoalMode }).goal = opts.goal ?? new GoalMode(agent);
   return agent;

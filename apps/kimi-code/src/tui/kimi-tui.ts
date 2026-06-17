@@ -1477,7 +1477,12 @@ export class KimiTUI {
     request: ApprovalRequest,
     response: ApprovalResponse,
   ): void {
-    if (request.toolName === 'ExitPlanMode' || request.display.kind === 'plan_review') return;
+    if (
+      request.toolName === 'ExitPlanMode' ||
+      request.display.kind === 'plan_review' ||
+      request.display.kind === 'goal_start'
+    )
+      return;
     const parts: string[] = [];
     switch (response.decision) {
       case 'approved':

@@ -211,6 +211,56 @@ describe('approval adapter', () => {
     ]);
   });
 
+  it('renders the /goal start menu for a CreateGoal approval in manual mode', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-goal',
+      toolName: 'CreateGoal',
+      action: 'Creating a goal',
+      display: {
+        kind: 'goal_start',
+        objective: 'Fix the failing auth tests',
+        completionCriterion: 'npm test -- auth exits 0',
+        mode: 'manual',
+      },
+    });
+
+    // Objective + criterion are previewed as a brief block.
+    expect(adapted.display).toEqual([
+      {
+        type: 'brief',
+        text: 'Start goal: Fix the failing auth tests\nDone when: npm test -- auth exits 0',
+      },
+    ]);
+    // Choices mirror the manual-mode /goal start menu; mode options approve and
+    // carry the mode in selected_label, "Do not start" cancels.
+    expect(adapted.choices).toEqual([
+      { label: 'Switch to Auto and start', response: 'approved', selected_label: 'auto' },
+      { label: 'Switch to YOLO and start', response: 'approved', selected_label: 'yolo' },
+      { label: 'Start in Manual', response: 'approved', selected_label: 'manual' },
+      { label: 'Do not start', response: 'cancelled', selected_label: 'cancel' },
+    ]);
+  });
+
+  it('renders the yolo-mode /goal start menu for a CreateGoal approval', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-goal-yolo',
+      toolName: 'CreateGoal',
+      action: 'Creating a goal',
+      display: {
+        kind: 'goal_start',
+        objective: 'Ship the feature',
+        mode: 'yolo',
+      },
+    });
+
+    expect(adapted.display).toEqual([{ type: 'brief', text: 'Start goal: Ship the feature' }]);
+    expect(adapted.choices).toEqual([
+      { label: 'Switch to Auto and start', response: 'approved', selected_label: 'auto' },
+      { label: 'Keep YOLO and start', response: 'approved', selected_label: 'yolo' },
+      { label: 'Do not start', response: 'cancelled', selected_label: 'cancel' },
+    ]);
+  });
+
   it('maps approved-for-session responses into core approval payloads', () => {
     expect(
       adaptPanelResponse({
