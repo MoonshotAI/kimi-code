@@ -8,12 +8,14 @@ import {
   SUB_SKILL_REVIEW,
 } from './sub-skill';
 import { UPDATE_CONFIG_SKILL } from './update-config';
+import { WRITE_GOAL_SKILL } from './write-goal';
 
 export function registerBuiltinSkills(registry: SessionSkillRegistry): void {
   registry.registerBuiltinSkill(MCP_CONFIG_SKILL);
   registry.registerBuiltinSkill(IMPORT_FROM_CC_CODEX_SKILL);
   registry.registerBuiltinSkill(UPDATE_CONFIG_SKILL);
   registry.registerBuiltinSkill(CUSTOM_THEME_SKILL);
+  registry.registerBuiltinSkill(WRITE_GOAL_SKILL);
   registry.registerBuiltinSkill(SUB_SKILL_PARENT);
   registry.registerBuiltinSkill(SUB_SKILL_REVIEW);
   registry.registerBuiltinSkill(SUB_SKILL_CONSOLIDATE);
@@ -27,4 +29,5 @@ export {
   SUB_SKILL_PARENT,
   SUB_SKILL_REVIEW,
   UPDATE_CONFIG_SKILL,
+  WRITE_GOAL_SKILL,
 };
