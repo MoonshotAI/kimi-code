@@ -314,7 +314,7 @@ function isUuid(value: string): boolean {
 }
 
 function isVolatileDurationKey(key: string): boolean {
-  return key === 'llmFirstTokenLatencyMs' || key === 'llmStreamDurationMs';
+  return key === 'llmFirstTokenLatencyMs' || key === 'llmStreamDurationMs' || key === 'durationMs';
 }
 
 function isPlanModeReminder(value: string): boolean {

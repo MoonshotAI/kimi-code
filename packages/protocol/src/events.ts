@@ -382,6 +382,7 @@ export interface TurnEndedEvent {
   readonly turnId: number;
   readonly reason: TurnEndReason;
   readonly error?: KimiErrorPayload;
+  readonly durationMs?: number;
 }
 
 export interface TurnStepStartedEvent {
@@ -1007,6 +1008,7 @@ export const turnEndedEventSchema = z.object({
   turnId: z.number(),
   reason: turnEndReasonSchema,
   error: kimiErrorPayloadSchema.optional(),
+  durationMs: z.number().optional(),
 }) satisfies z.ZodType<TurnEndedEvent>;
 
 export const turnStepStartedEventSchema = z.object({
