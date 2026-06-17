@@ -237,3 +237,82 @@ describe('WS gateway handshake + heartbeat (W5.1)', () => {
     await expect(openConn(badUrl)).rejects.toBeInstanceOf(Error);
   });
 });
+
+async function waitForCount(
+  counts: readonly number[],
+  target: number,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (counts.includes(target)) return;
+    await new Promise((res) => {
+      setTimeout(res, 10);
+    });
+  }
+  throw new Error(`count ${String(target)} not observed; got ${JSON.stringify(counts)}`);
+}
+
+describe('WS gateway connection-count observer', () => {
+  it('reports size 1 after a connect and size 0 after the last disconnect', async () => {
+    const counts: number[] = [];
+    const r = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      lockPath,
+      logger: pino({ level: 'silent' }),
+      coreProcessOptions: { homeDir: bridgeHome },
+      wsGatewayOptions: {
+        pingIntervalMs: 60,
+        pongTimeoutMs: 200,
+        onConnectionCountChange: (size) => {
+          counts.push(size);
+        },
+      },
+    });
+    running.push(r);
+
+    const conn = await openConn(wsUrl(r.address));
+    await receiveType(conn, 'server_hello', 1000);
+    await waitForCount(counts, 1, 1000);
+
+    conn.ws.close();
+    await conn.closed;
+    await waitForCount(counts, 0, 1000);
+
+    expect(counts.at(-1)).toBe(0);
+  });
+
+  it('tracks multiple concurrent connections independently', async () => {
+    const counts: number[] = [];
+    const r = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      lockPath,
+      logger: pino({ level: 'silent' }),
+      coreProcessOptions: { homeDir: bridgeHome },
+      wsGatewayOptions: {
+        pingIntervalMs: 60,
+        pongTimeoutMs: 200,
+        onConnectionCountChange: (size) => {
+          counts.push(size);
+        },
+      },
+    });
+    running.push(r);
+
+    const a = await openConn(wsUrl(r.address));
+    await receiveType(a, 'server_hello', 1000);
+    const b = await openConn(wsUrl(r.address));
+    await receiveType(b, 'server_hello', 1000);
+    await waitForCount(counts, 2, 1000);
+
+    a.ws.close();
+    await a.closed;
+    await waitForCount(counts, 1, 1000);
+
+    b.ws.close();
+    await b.closed;
+    await waitForCount(counts, 0, 1000);
+  });
+});

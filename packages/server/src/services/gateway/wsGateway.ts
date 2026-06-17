@@ -24,4 +24,11 @@ export interface WSGatewayOptions {
   pingIntervalMs?: number;
 
   pongTimeoutMs?: number;
+
+  /**
+   * Optional observer invoked after a client connects or disconnects, with the
+   * live connection count. The daemon host uses it to detect the "last client
+   * left" transition and start its idle-shutdown grace timer.
+   */
+  onConnectionCountChange?: (size: number) => void;
 }

@@ -87,7 +87,11 @@ export class WSGateway extends Disposable implements IWSGateway {
         : {}),
     });
     this.registry.add(conn);
-    socket.on('close', () => this.registry.remove(conn.id));
+    this.options.onConnectionCountChange?.(this.registry.size());
+    socket.on('close', () => {
+      this.registry.remove(conn.id);
+      this.options.onConnectionCountChange?.(this.registry.size());
+    });
   }
 
   get size(): number {

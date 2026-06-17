@@ -14,6 +14,13 @@ export const DEFAULT_SERVER_ORIGIN = serverOrigin(DEFAULT_SERVER_HOST, DEFAULT_S
 export const DEFAULT_LOG_LEVEL: ServerLogLevel = 'info';
 export const DEFAULT_FOREGROUND_LOG_LEVEL: ServerLogLevel = 'silent';
 
+/**
+ * Default idle-shutdown grace for the background daemon: once the last web
+ * client disconnects, the daemon waits this long before exiting. Overridable
+ * via the internal `--idle-grace-ms` flag (used by tests).
+ */
+export const DEFAULT_IDLE_GRACE_MS = 60_000;
+
 export const VALID_LOG_LEVELS: readonly ServerLogLevel[] = [
   'fatal',
   'error',
@@ -29,6 +36,10 @@ export interface ParsedServerOptions {
   port: number;
   logLevel: ServerLogLevel;
   debugEndpoints: boolean;
+  /** Internal: run as an idle-exiting background daemon instead of foreground. */
+  daemon: boolean;
+  /** Internal: idle-shutdown grace in ms (daemon mode only). */
+  idleGraceMs: number;
 }
 
 export interface ServerCliOptions {
@@ -36,6 +47,10 @@ export interface ServerCliOptions {
   port?: string;
   logLevel?: string;
   debugEndpoints?: boolean;
+  /** Internal flag set by the daemon spawner (`kimi web`). */
+  daemon?: boolean;
+  /** Internal flag set by the daemon spawner / tests. */
+  idleGraceMs?: string;
 }
 
 export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions {
@@ -44,7 +59,18 @@ export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions 
     port: parsePort(opts.port, '--port', DEFAULT_SERVER_PORT),
     logLevel: parseLogLevel(opts.logLevel ?? DEFAULT_FOREGROUND_LOG_LEVEL),
     debugEndpoints: opts.debugEndpoints === true,
+    daemon: opts.daemon === true,
+    idleGraceMs: parseIdleGraceMs(opts.idleGraceMs),
   };
+}
+
+function parseIdleGraceMs(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_IDLE_GRACE_MS;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`error: invalid --idle-grace-ms value: ${raw}`);
+  }
+  return n;
 }
 
 export function parsePort(raw: string | undefined, label: string, fallback: number): number {
