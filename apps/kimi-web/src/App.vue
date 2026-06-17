@@ -61,6 +61,53 @@ const activeWorkspaceSessionCount = computed<number>(
 // running: true when activity is not idle
 const running = computed(() => client.activity.value !== 'idle');
 
+// Auth readiness gates the main app. Once the first load finishes and auth is
+// still missing, show a full-page login entry instead of an in-app banner.
+const authReady = computed(() => client.authReady.value);
+const showAuthGate = computed(() => client.initialized.value && !authReady.value);
+const LOGIN_PATH = '/login';
+const authReturnPath = ref<string | null>(null);
+const authLogoRef = ref<SVGSVGElement | null>(null);
+let authLogoBlinkTimer: ReturnType<typeof setTimeout> | null = null;
+
+function currentPathWithSuffix(): string {
+  if (typeof window === 'undefined') return '/';
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+}
+
+function replaceBrowserPath(path: string): void {
+  if (typeof window === 'undefined') return;
+  window.history.replaceState(window.history.state, '', path);
+}
+
+watch(showAuthGate, (show) => {
+  if (typeof window === 'undefined') return;
+  if (show) {
+    if (window.location.pathname !== LOGIN_PATH) {
+      authReturnPath.value = currentPathWithSuffix();
+      replaceBrowserPath(LOGIN_PATH);
+    }
+    return;
+  }
+  if (window.location.pathname === LOGIN_PATH) {
+    replaceBrowserPath(authReturnPath.value ?? '/');
+    authReturnPath.value = null;
+  }
+}, { immediate: true });
+
+function blinkAuthLogo(): void {
+  const el = authLogoRef.value;
+  if (!el) return;
+  el.classList.remove('blink-now');
+  void el.getBoundingClientRect();
+  el.classList.add('blink-now');
+  if (authLogoBlinkTimer !== null) clearTimeout(authLogoBlinkTimer);
+  authLogoBlinkTimer = setTimeout(() => {
+    authLogoBlinkTimer = null;
+    el.classList.remove('blink-now');
+  }, 300);
+}
+
 
 // Dynamic page title: session title first, then workspace name, then app name.
 // Prefix an animated spinner when the agent is running so users can see activity
@@ -92,6 +139,7 @@ watch(running, (isRunning) => {
 
 const pageTitle = computed<string>(() => {
   const prefix = running.value ? `${SPINNER_FRAMES[spinnerFrame.value]} ` : '';
+  if (showAuthGate.value) return `${prefix}${t('app.authPageTitle')} - Kimi Code Web`;
   const sessionTitle = activeSessionTitle.value;
   if (sessionTitle) return `${prefix}${sessionTitle} - Kimi Code Web`;
   const workspaceName = client.visibleWorkspace.value?.name;
@@ -130,6 +178,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
   stopSpinner();
+  if (authLogoBlinkTimer !== null) clearTimeout(authLogoBlinkTimer);
 });
 
 // Escape closes whichever transient right-side detail panel is open.
@@ -539,9 +588,6 @@ watch(client.activeSessionId, () => {
 // Reference to ConversationPane so we can imperatively switch tabs
 const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(null);
 
-// Auth readiness — drives onboarding banner
-const authReady = computed(() => client.authReady.value);
-
 // Shift-multi-selected workspace ids; when >1 are selected the main pane
 // shows a "coming soon" placeholder instead of the conversation.
 const selectedWorkspaceIds = ref<string[]>([]);
@@ -560,6 +606,12 @@ const showSessions = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
+
+type SubmitPayload = {
+  text: string;
+  attachments: { fileId: string; kind: 'image' | 'video' }[];
+};
+const pendingWorkspaceSubmit = ref<SubmitPayload | null>(null);
 
 // Any of these modal/overlay layers, when open, owns Escape. The global
 // capture-phase handler must NOT close a background side panel out from under an
@@ -785,13 +837,34 @@ function handleEditQueued(index: number): void {
   client.unqueue(index);
 }
 
-async function handleSubmit(payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }): Promise<void> {
+async function handleSubmit(payload: SubmitPayload): Promise<void> {
   const wsId = client.activeWorkspaceId.value;
   if (!client.activeSessionId.value && wsId) {
     await client.startSessionAndSendPrompt(wsId, payload.text, payload.attachments);
     return;
   }
+  if (!client.activeSessionId.value && !wsId) {
+    pendingWorkspaceSubmit.value = payload;
+    showAddWorkspace.value = true;
+    return;
+  }
   void client.sendPrompt(payload.text, payload.attachments);
+}
+
+async function handleAddWorkspace(root: string): Promise<void> {
+  showAddWorkspace.value = false;
+  await client.addWorkspaceByPath(root);
+  const pending = pendingWorkspaceSubmit.value;
+  pendingWorkspaceSubmit.value = null;
+  const wsId = client.activeWorkspaceId.value;
+  if (pending && wsId) {
+    await client.startSessionAndSendPrompt(wsId, pending.text, pending.attachments);
+  }
+}
+
+function handleCloseAddWorkspace(): void {
+  pendingWorkspaceSubmit.value = null;
+  showAddWorkspace.value = false;
 }
 
 // Primary "+ New": enter the draft state in the current workspace so the
@@ -821,23 +894,36 @@ function openPr(url: string): void {
 
 <template>
   <div class="app-shell">
-    <!-- Onboarding banner: shown when the daemon has no auth configured. It sits
-         in the layout flow at the very top so it reserves height instead of
-         overlapping the desktop ChatHeader / mobile top bar. -->
-    <div v-if="!authReady" class="auth-banner">
-      <div class="auth-banner-inner">
-        <div class="auth-banner-icon">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="var(--blue)" stroke-width="1.5">
-            <circle cx="10" cy="10" r="8"/>
-            <line x1="10" y1="6" x2="10" y2="10"/>
-            <circle cx="10" cy="13" r="1" fill="var(--blue)"/>
-          </svg>
+    <section v-if="showAuthGate" class="auth-page">
+      <div class="auth-page-inner">
+        <svg ref="authLogoRef" class="auth-page-logo ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @mousedown.prevent @click="blinkAuthLogo">
+          <defs>
+            <mask id="authKimiEyes" maskUnits="userSpaceOnUse">
+              <rect x="0" y="0" width="32" height="22" fill="#fff" />
+              <g class="ch-eyes" fill="#000">
+                <rect class="ch-eye" x="11.8" y="7" width="2.8" height="8" rx="1.4" />
+                <rect class="ch-eye" x="17.4" y="7" width="2.8" height="8" rx="1.4" />
+              </g>
+            </mask>
+          </defs>
+          <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#authKimiEyes)" />
+        </svg>
+        <div class="auth-page-copy">
+          <h1>{{ t('app.authPageTitle') }}</h1>
+          <p>{{ t('app.authPageMessage') }}</p>
         </div>
-        <span class="auth-banner-msg">{{ t('app.authBannerMessage') }}</span>
-        <button class="auth-banner-btn" @click="openLogin">{{ t('app.authBannerLogin') }}</button>
+        <button type="button" class="auth-page-btn" @click="openLogin">
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 3h5a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H6" />
+            <path d="M9 8H2" />
+            <path d="M5 5l3 3-3 3" />
+          </svg>
+          <span>{{ t('app.authPageLogin') }}</span>
+        </button>
       </div>
-    </div>
+    </section>
     <div
+      v-else
       class="app"
       :class="{ mobile: isMobile, 'sidebar-collapsed': sidebarCollapsed && !isMobile }"
       :style="{ '--side-w': sideWidth + 'px', '--preview-w': previewWidth + 'px' }"
@@ -1120,16 +1206,6 @@ function openPr(url: string): void {
       @close="showProviders = false"
     />
 
-    <!-- Login Dialog overlay -->
-    <LoginDialog
-      v-if="showLogin"
-      :on-start-o-auth-login="handleStartOAuthLogin"
-      :on-poll-o-auth-login="handlePollOAuthLogin"
-      :on-cancel-o-auth-login="handleCancelOAuthLogin"
-      @success="handleLoginSuccess"
-      @close="showLogin = false"
-    />
-
     <!-- New Session Dialog overlay (fallback cwd-typing path) -->
     <NewSessionDialog
       v-if="showNewSession"
@@ -1166,8 +1242,8 @@ function openPr(url: string): void {
       :browse-fs="client.browseFs"
       :get-fs-home="client.getFsHome"
       :default-path="client.visibleWorkspace.value?.root ?? client.status.value.cwd"
-      @add="(root) => { showAddWorkspace = false; void client.addWorkspaceByPath(root); }"
-      @close="showAddWorkspace = false"
+      @add="handleAddWorkspace($event)"
+      @close="handleCloseAddWorkspace"
     />
 
     <!-- Global connecting splash on first load (until the daemon round-trips) -->
@@ -1177,7 +1253,7 @@ function openPr(url: string): void {
 
     <!-- First-run onboarding overlay (theme / language / welcome greeting) -->
     <Onboarding
-      v-if="showOnboarding"
+      v-if="showOnboarding && !showAuthGate"
       :theme="client.theme.value"
       @set-theme="client.setTheme($event)"
       @complete="completeOnboarding"
@@ -1231,10 +1307,19 @@ function openPr(url: string): void {
       @set-color-scheme="client.setColorScheme($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
       @set-beta-toc="client.setBetaToc($event)"
-      @login="openLogin"
+      @login="() => { showMobileSettings = false; openLogin(); }"
       @logout="client.logout"
     />
     </div>
+    <!-- Login Dialog overlay. It is outside `.app` so `/login` can open it too. -->
+    <LoginDialog
+      v-if="showLogin"
+      :on-start-o-auth-login="handleStartOAuthLogin"
+      :on-poll-o-auth-login="handlePollOAuthLogin"
+      :on-cancel-o-auth-login="handleCancelOAuthLogin"
+      @success="handleLoginSuccess"
+      @close="showLogin = false"
+    />
   </div>
 </template>
 
@@ -1243,14 +1328,85 @@ function openPr(url: string): void {
 .gload-fade-leave-active { transition: opacity 0.28s ease; }
 .gload-fade-leave-to { opacity: 0; }
 
-/* Outer shell: the auth banner (when shown) stacks above the app grid in normal
-   flow so it reserves height instead of overlapping the header/top bar. */
 .app-shell {
   height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   box-sizing: border-box;
+}
+.auth-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: var(--bg);
+  color: var(--ink);
+  box-sizing: border-box;
+}
+.auth-page-inner {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+}
+.auth-page-logo {
+  width: 64px;
+  height: 44px;
+  flex: none;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.18s ease;
+}
+.auth-page-logo:hover {
+  transform: scale(1.06);
+}
+.auth-page-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.auth-page-copy h1 {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 30px;
+  line-height: 1.15;
+  font-weight: 650;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+.auth-page-copy p {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: var(--ui-font-size-lg);
+  line-height: 1.55;
+  color: var(--dim);
+}
+.auth-page-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid var(--blue);
+  border-radius: 8px;
+  background: var(--blue);
+  color: var(--bg);
+  font-family: var(--mono);
+  font-size: var(--ui-font-size);
+  cursor: pointer;
+}
+.auth-page-btn:hover {
+  background: var(--blue2);
+  border-color: var(--blue2);
+}
+.auth-page-btn:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
 }
 .app {
   --side-w: 248px;
@@ -1359,36 +1515,6 @@ function openPr(url: string): void {
   border-top: 2px solid var(--ink);
 }
 
-/* Auth onboarding banner — in-flow at the top of the shell (full width, above
-   both the desktop sidebar/header and the mobile top bar). */
-.auth-banner {
-  flex: none;
-  background: var(--soft);
-  border-bottom: 1px solid var(--bd);
-}
-.auth-banner-inner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 16px;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-}
-.auth-banner-icon { display: flex; align-items: center; flex: none; }
-.auth-banner-msg { flex: 1; color: var(--text); }
-.auth-banner-btn {
-  background: var(--blue);
-  border: none;
-  border-radius: 3px;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  padding: 4px 14px;
-  color: var(--bg);
-  cursor: pointer;
-  flex: none;
-}
-.auth-banner-btn:hover { background: var(--blue2); }
-
 /* Multi-workspace selection placeholder */
 .coming-soon {
   display: flex;
@@ -1405,24 +1531,20 @@ function openPr(url: string): void {
 .cs-text { font-size: var(--ui-font-size); }
 
 @media (max-width: 640px) {
-  .auth-banner-inner {
+  .auth-page {
     align-items: flex-start;
-    flex-wrap: wrap;
     padding:
-      8px
-      max(12px, env(safe-area-inset-right))
-      8px
-      max(12px, env(safe-area-inset-left));
+      max(48px, env(safe-area-inset-top))
+      max(20px, env(safe-area-inset-right))
+      max(24px, env(safe-area-inset-bottom))
+      max(20px, env(safe-area-inset-left));
   }
-  .auth-banner-msg {
-    min-width: 0;
-    flex: 1 1 calc(100% - 34px);
-    line-height: 1.45;
+  .auth-page-copy h1 {
+    font-size: 26px;
   }
-  .auth-banner-btn {
-    margin-left: 24px;
-    max-width: calc(100% - 24px);
-    white-space: normal;
+  .auth-page-btn {
+    width: 100%;
+    justify-content: center;
   }
 }
 </style>

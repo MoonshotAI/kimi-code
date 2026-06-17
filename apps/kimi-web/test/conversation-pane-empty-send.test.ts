@@ -74,6 +74,18 @@ afterEach(() => {
 });
 
 describe('ConversationPane empty-session send', () => {
+  it('offers an add-workspace action when no workspace exists', async () => {
+    const wrapper = mountPane({ workspaces: [], activeWorkspaceId: null });
+    await nextTick();
+
+    const addWorkspace = wrapper.find('.empty-add-workspace');
+    expect(addWorkspace.exists()).toBe(true);
+
+    await addWorkspace.trigger('click');
+
+    expect(wrapper.emitted('addWorkspace')).toHaveLength(1);
+  });
+
   it('clears the empty composer and keeps the new-session draft empty after send', async () => {
     const wrapper = mountPane({ sessionId: '' });
     await nextTick();

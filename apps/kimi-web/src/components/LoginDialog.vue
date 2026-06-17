@@ -354,10 +354,10 @@ function formatSeconds(s: number): string {
 }
 
 .dialog {
+  position: relative;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-top: 2px solid var(--blue);
-  border-radius: 4px;
+  border-radius: 6px;
   width: 480px;
   max-width: calc(100vw - 32px);
   height: 420px;
@@ -366,6 +366,7 @@ function formatSeconds(s: number): string {
   flex-direction: column;
   font-family: var(--mono);
   box-shadow: 0 8px 32px rgba(0,0,0,0.14);
+  overflow: hidden;
 }
 
 /* Header */

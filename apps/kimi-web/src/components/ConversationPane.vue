@@ -126,6 +126,8 @@ const activeWorkspaceLabel = computed(() => {
   return w?.name ?? props.workspaceName ?? '';
 });
 
+const hasWorkspaces = computed(() => (props.workspaces?.length ?? 0) > 0);
+
 const visibleWorkspaces = computed(() =>
   getVisibleWorkspaces(props.workspaces ?? [], props.activeWorkspaceId, wsPickExpanded.value),
 );
@@ -843,7 +845,7 @@ defineExpose({ loadComposerForEdit });
               <span class="empty-hint-title">{{ t('composer.emptyConversationTitle') }}</span>
               <span class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
               <!-- Workspace picker: choose where this new conversation starts. -->
-              <div v-if="(workspaces?.length ?? 0) > 0" class="ws-pick">
+              <div v-if="hasWorkspaces" class="ws-pick">
                 <button type="button" class="ws-pick-btn" :title="t('conversation.switchWorkspace')" @click.stop="wsPickOpen = !wsPickOpen">
                   <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
                     <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
@@ -888,6 +890,19 @@ defineExpose({ loadComposerForEdit });
                   </button>
                 </div>
               </div>
+              <button
+                v-else
+                type="button"
+                class="empty-add-workspace"
+                @click="emit('addWorkspace')"
+              >
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+                  <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
+                  <path d="M1 5.5h12"/>
+                  <path d="M8 7.25v4.5M5.75 9.5h4.5"/>
+                </svg>
+                <span>{{ t('conversation.addWorkspace') }}</span>
+              </button>
             </div>
             <Composer
               ref="emptyComposerRef"
@@ -1285,6 +1300,32 @@ defineExpose({ loadComposerForEdit });
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.empty-add-workspace {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: var(--ui-font-size-sm);
+  cursor: pointer;
+}
+.empty-add-workspace:hover {
+  border-color: var(--bd);
+  color: var(--ink);
+}
+.empty-add-workspace:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.empty-add-workspace svg {
+  flex: none;
 }
 
 /* Empty-composer workspace picker */
