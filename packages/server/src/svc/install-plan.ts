@@ -45,6 +45,7 @@ export function buildInstallPlan(input: BuildInstallPlanInput): InstallPlan {
       input.program,
       'server',
       'run',
+      '--foreground',
       '--port',
       String(input.port),
       '--log-level',

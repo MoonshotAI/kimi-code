@@ -154,6 +154,7 @@ describe('launchd manager — install', () => {
     const xml = readFileSync(plistPath, 'utf8');
     expect(xml).toContain(`<string>${KIMI_SERVER_LABEL}</string>`);
     expect(xml).toContain('<string>/usr/local/bin/kimi</string>');
+    expect(xml).toContain('<string>--foreground</string>');
     expect(xml).toContain('<string>58627</string>');
 
     expect(calls.length).toBe(1);

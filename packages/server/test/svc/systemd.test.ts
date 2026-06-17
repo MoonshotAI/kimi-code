@@ -47,17 +47,27 @@ function makeStubExec(responses: ReadonlyArray<ExecResult>) {
 function makeDeps(
   responses: ReadonlyArray<ExecResult>,
   workDir: string,
-): { deps: SystemdManagerDeps; calls: StubCall[]; unitPath: string; logPath: string } {
+  loginctlResponses: ReadonlyArray<ExecResult> = [],
+): {
+  deps: SystemdManagerDeps;
+  calls: StubCall[];
+  loginctlCalls: StubCall[];
+  unitPath: string;
+  logPath: string;
+} {
   const { execSystemctl, calls } = makeStubExec(responses);
+  const { execSystemctl: execLoginctl, calls: loginctlCalls } = makeStubExec(loginctlResponses);
   const unitPath = join(workDir, 'systemd', 'user', KIMI_SERVER_SYSTEMD_UNIT);
   const logPath = join(workDir, 'server', 'server.log');
   const deps: SystemdManagerDeps = {
     execSystemctl,
+    execLoginctl,
     resolveProgram: () => '/usr/local/bin/kimi',
     unitPath: () => unitPath,
     logPath: () => logPath,
+    userName: () => 'alice',
   };
-  return { deps, calls, unitPath, logPath };
+  return { deps, calls, loginctlCalls, unitPath, logPath };
 }
 
 let workDir: string;
@@ -113,6 +123,21 @@ describe('buildSystemdUnit', () => {
     expect(unit).toContain('Environment=FOO=bar');
     expect(unit).toContain('Environment=BAZ=qux');
   });
+
+  it('renders StandardOutput/StandardError append lines when logPath is set', () => {
+    const unit = buildSystemdUnit({
+      programArguments: ['/usr/bin/kimi'],
+      logPath: '/home/alice/.kimi/server/server.log',
+    });
+    expect(unit).toContain('StandardOutput=append:/home/alice/.kimi/server/server.log');
+    expect(unit).toContain('StandardError=append:/home/alice/.kimi/server/server.log');
+  });
+
+  it('omits StandardOutput/StandardError when logPath is unset', () => {
+    const unit = buildSystemdUnit({ programArguments: ['/usr/bin/kimi'] });
+    expect(unit).not.toContain('StandardOutput');
+    expect(unit).not.toContain('StandardError');
+  });
 });
 
 describe('parseSystemctlShow', () => {
@@ -149,7 +174,7 @@ describe('systemd manager — install', () => {
     expect(result.unitPath).toBe(unitPath);
     expect(existsSync(unitPath)).toBe(true);
     const text = readFileSync(unitPath, 'utf8');
-    expect(text).toContain('ExecStart=/usr/local/bin/kimi server run --port 58627 --log-level info');
+    expect(text).toContain('ExecStart=/usr/local/bin/kimi server run --foreground --port 58627 --log-level info');
     expect(text).not.toContain('--host');
 
     expect(calls.length).toBe(3);
@@ -185,7 +210,7 @@ describe('systemd manager — install', () => {
     const result = await mgr.install({ host: '0.0.0.0', port: 9999, logLevel: 'debug', force: true });
     expect(result.status).toBe('replaced');
     const text = readFileSync(unitPath, 'utf8');
-    expect(text).toContain('ExecStart=/usr/local/bin/kimi server run --port 9999 --log-level debug');
+    expect(text).toContain('ExecStart=/usr/local/bin/kimi server run --foreground --port 9999 --log-level debug');
     expect(text).not.toContain('0.0.0.0');
   });
 
@@ -355,5 +380,90 @@ describe('systemd manager — status', () => {
     expect(status.installed).toBe(true);
     expect(status.running).toBe(false);
     expect(status.notes?.[0]).toMatch(/systemctl --user show failed/);
+  });
+});
+
+describe('systemd manager — lingering', () => {
+  it('enables linger on install when not yet enabled', async () => {
+    const { deps, calls, loginctlCalls } = makeDeps(
+      [
+        { stdout: '', stderr: '', code: 0 },
+        { stdout: '', stderr: '', code: 0 },
+        { stdout: '', stderr: '', code: 0 },
+      ],
+      workDir,
+      [
+        { stdout: 'Linger=no', stderr: '', code: 0 },
+        { stdout: '', stderr: '', code: 0 },
+      ],
+    );
+    const mgr = createSystemdManager(deps);
+    const result = await mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' });
+    expect(result.status).toBe('installed');
+    expect(result.message).not.toMatch(/could not enable linger/);
+    expect(loginctlCalls.map((c) => c.args)).toEqual([
+      ['show-user', 'alice', '--property=Linger'],
+      ['enable-linger', 'alice'],
+    ]);
+    expect(calls.length).toBe(3);
+  });
+
+  it('does not call enable-linger when already lingering', async () => {
+    const { deps, loginctlCalls } = makeDeps(
+      [
+        { stdout: '', stderr: '', code: 0 },
+        { stdout: '', stderr: '', code: 0 },
+        { stdout: '', stderr: '', code: 0 },
+      ],
+      workDir,
+      [{ stdout: 'Linger=yes', stderr: '', code: 0 }],
+    );
+    const mgr = createSystemdManager(deps);
+    await mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' });
+    expect(loginctlCalls.map((c) => c.args)).toEqual([['show-user', 'alice', '--property=Linger']]);
+  });
+
+  it('surfaces a note when enable-linger fails', async () => {
+    const { deps } = makeDeps(
+      [
+        { stdout: '', stderr: '', code: 0 },
+        { stdout: '', stderr: '', code: 0 },
+        { stdout: '', stderr: '', code: 0 },
+      ],
+      workDir,
+      [
+        { stdout: 'Linger=no', stderr: '', code: 0 },
+        { stdout: '', stderr: 'Access denied', code: 1 },
+      ],
+    );
+    const mgr = createSystemdManager(deps);
+    const result = await mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' });
+    expect(result.status).toBe('installed');
+    expect(result.message).toMatch(/could not enable linger/);
+    expect(result.message).toMatch(/sudo loginctl enable-linger alice/);
+  });
+
+  it('reports linger state in status notes', async () => {
+    const showOutput = ['ActiveState=active', 'SubState=running', 'MainPID=42'].join('\n');
+    const { deps, unitPath } = makeDeps(
+      [{ stdout: showOutput, stderr: '', code: 0 }],
+      workDir,
+      [{ stdout: 'Linger=yes', stderr: '', code: 0 }],
+    );
+    mkdirSync(unitPath.replace(/\/[^/]+$/, ''), { recursive: true });
+    writeFileSync(unitPath, '# stub');
+    writeInstallPlan({
+      host: '127.0.0.1',
+      port: 58627,
+      logLevel: 'info',
+      program: '/usr/local/bin/kimi',
+      programArguments: [],
+      logPath: '/tmp/x',
+      installedAt: '2026-06-11T00:00:00.000Z',
+    });
+    const mgr = createSystemdManager(deps);
+    const status = await mgr.status();
+    expect(status.running).toBe(true);
+    expect(status.notes?.some((n) => n.includes('linger: enabled'))).toBe(true);
   });
 });
