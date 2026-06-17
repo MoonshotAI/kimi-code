@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/App.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Sidebar from './components/Sidebar.vue';
 import ResizeHandle from './components/ResizeHandle.vue';
@@ -57,6 +57,18 @@ const activeSessionTitle = computed<string>(() => {
 const activeWorkspaceSessionCount = computed<number>(
   () => client.visibleWorkspace.value?.sessionCount ?? 0,
 );
+
+// Dynamic page title: session title first, then workspace name, then app name.
+const pageTitle = computed<string>(() => {
+  const sessionTitle = activeSessionTitle.value;
+  if (sessionTitle) return `${sessionTitle} - Kimi Code Web`;
+  const workspaceName = client.visibleWorkspace.value?.name;
+  if (workspaceName) return `${workspaceName} - Kimi Code Web`;
+  return 'Kimi Code Web';
+});
+watchEffect(() => {
+  if (typeof document !== 'undefined') document.title = pageTitle.value;
+});
 
 // Thinking is on/off (TUI parity — no effort-level cycling). The /thinking
 // command flips between off and the backend default effort ('high').
