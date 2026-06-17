@@ -276,6 +276,32 @@ kimi upgrade
 
 对全局 npm、pnpm、yarn、bun 以及 macOS / Linux native 安装，`kimi upgrade` 会展示更新选项；选择 `Install update now` 后运行对应的前台安装命令。当前安装方式无法自动升级时（如 Windows native 安装），改为打印手动更新命令。
 
+### `kimi vis`
+
+在浏览器中启动会话可视化工具，直观查看一次会话的全过程。命令会启动一个指向本地会话的进程内服务器，打印访问地址并打开浏览器，持续运行直到你按下 `Ctrl-C`。
+
+```sh
+kimi vis [sessionId] [options]
+```
+
+| 参数 / 选项 | 说明 |
+| --- | --- |
+| `sessionId` | 直接打开指定会话的可视化页面。省略时打开列出所有会话的首页 |
+| `--port <number>` | 绑定的端口。默认自动挑选一个空闲端口 |
+| `--host <host>` | 绑定的主机。默认 `127.0.0.1` |
+| `--no-open` | 不自动打开浏览器，仅打印访问地址 |
+
+```sh
+# 启动可视化工具并在浏览器中打开首页
+kimi vis
+
+# 直接打开指定会话
+kimi vis 01HZ...XYZ
+
+# 绑定固定主机和端口且不打开浏览器（例如在远程主机上）
+kimi vis --host 0.0.0.0 --port 8123 --no-open
+```
+
 ### `kimi provider`
 
 在 shell 中管理供应商，相当于 TUI 中 `/provider` 的非交互版本。适合脚本化部署、CI 初始化，以及在新机器上一行完成配置。

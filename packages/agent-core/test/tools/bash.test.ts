@@ -34,14 +34,20 @@ function processWithOutput(
   } = {},
 ): KaosProcess {
   const exitCode = options.exitCode ?? 0;
+  const stdout = Readable.from(options.stdout === undefined ? [] : [options.stdout]);
+  const stderr = Readable.from(options.stderr === undefined ? [] : [options.stderr]);
   return {
     stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
-    stdout: Readable.from(options.stdout === undefined ? [] : [options.stdout]),
-    stderr: Readable.from(options.stderr === undefined ? [] : [options.stderr]),
+    stdout,
+    stderr,
     pid: 123,
     exitCode,
     wait: vi.fn(options.wait ?? (async () => exitCode)),
     kill: vi.fn(options.kill ?? (async () => {})),
+    dispose: vi.fn(async () => {
+      stdout.destroy();
+      stderr.destroy();
+    }),
   };
 }
 
@@ -78,6 +84,10 @@ function processWithInterleavedOutput(
     exitCode,
     wait: vi.fn(async () => waitPromise),
     kill: vi.fn(async () => {}),
+    dispose: vi.fn(async () => {
+      stdout.destroy();
+      stderr.destroy();
+    }),
   };
 }
 
@@ -101,6 +111,7 @@ function processWithVisibleExitBeforeWait(exitCode = 0): {
     },
     wait: vi.fn(async () => waitPromise),
     kill: vi.fn(async () => {}),
+    dispose: vi.fn(async () => {}),
   };
 
   return {
@@ -115,14 +126,20 @@ function processWithVisibleExitBeforeWait(exitCode = 0): {
 }
 
 function processThatNeverExits(): KaosProcess {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
   return {
     stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
+    stdout,
+    stderr,
     pid: 126,
     exitCode: null,
     wait: vi.fn(async () => new Promise<number>(() => {})),
     kill: vi.fn(async () => {}),
+    dispose: vi.fn(async () => {
+      stdout.destroy();
+      stderr.destroy();
+    }),
   };
 }
 
@@ -132,11 +149,13 @@ function processWithOpenStreamsThatExitOnKill(): KaosProcess {
   const waitPromise = new Promise<number>((resolve) => {
     resolveWait = resolve;
   });
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
 
   return {
     stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
+    stdout,
+    stderr,
     pid: 127,
     get exitCode(): number | null {
       return currentExitCode;
@@ -145,6 +164,10 @@ function processWithOpenStreamsThatExitOnKill(): KaosProcess {
     kill: vi.fn(async () => {
       currentExitCode = 143;
       resolveWait(143);
+    }),
+    dispose: vi.fn(async () => {
+      stdout.destroy();
+      stderr.destroy();
     }),
   };
 }

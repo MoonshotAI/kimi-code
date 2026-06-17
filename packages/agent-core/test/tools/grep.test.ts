@@ -65,14 +65,20 @@ const SENSITIVE_RG_ARGS = [
 ] as const;
 
 function processWithOutput(stdout: string, stderr = '', exitCode = 0): KaosProcess {
+  const stdoutStream = Readable.from([stdout]);
+  const stderrStream = Readable.from([stderr]);
   return {
     stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
-    stdout: Readable.from([stdout]),
-    stderr: Readable.from([stderr]),
+    stdout: stdoutStream,
+    stderr: stderrStream,
     pid: 123,
     exitCode,
     wait: vi.fn().mockResolvedValue(exitCode),
     kill: vi.fn(async () => {}),
+    dispose: vi.fn(async () => {
+      stdoutStream.destroy();
+      stderrStream.destroy();
+    }),
   };
 }
 
@@ -97,11 +103,13 @@ function processThatExitsOnKill(stdout: string, stderr = '', exitCode = 143): Ka
   const waitPromise = new Promise<number>((resolve) => {
     resolveWait = resolve;
   });
+  const stdoutStream = Readable.from(stdout === '' ? [] : [stdout]);
+  const stderrStream = Readable.from(stderr === '' ? [] : [stderr]);
 
   return {
     stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
-    stdout: Readable.from(stdout === '' ? [] : [stdout]),
-    stderr: Readable.from(stderr === '' ? [] : [stderr]),
+    stdout: stdoutStream,
+    stderr: stderrStream,
     pid: 123,
     get exitCode() {
       return currentExitCode;
@@ -110,6 +118,10 @@ function processThatExitsOnKill(stdout: string, stderr = '', exitCode = 143): Ka
     kill: vi.fn(async () => {
       currentExitCode = exitCode;
       resolveWait(exitCode);
+    }),
+    dispose: vi.fn(async () => {
+      stdoutStream.destroy();
+      stderrStream.destroy();
     }),
   };
 }
