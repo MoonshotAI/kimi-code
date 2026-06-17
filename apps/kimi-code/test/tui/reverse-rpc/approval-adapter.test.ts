@@ -232,12 +232,36 @@ describe('approval adapter', () => {
       },
     ]);
     // Choices mirror the manual-mode /goal start menu; mode options approve and
-    // carry the mode in selected_label, "Do not start" cancels.
+    // carry the mode in selected_label, "Do not start" cancels. Each keeps the
+    // /goal menu's description.
     expect(adapted.choices).toEqual([
-      { label: 'Switch to Auto and start', response: 'approved', selected_label: 'auto' },
-      { label: 'Switch to YOLO and start', response: 'approved', selected_label: 'yolo' },
-      { label: 'Start in Manual', response: 'approved', selected_label: 'manual' },
-      { label: 'Do not start', response: 'cancelled', selected_label: 'cancel' },
+      {
+        label: 'Switch to Auto and start',
+        response: 'approved',
+        selected_label: 'auto',
+        description:
+          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+      },
+      {
+        label: 'Switch to YOLO and start',
+        response: 'approved',
+        selected_label: 'yolo',
+        description:
+          'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
+      },
+      {
+        label: 'Start in Manual',
+        response: 'approved',
+        selected_label: 'manual',
+        description:
+          'Keep approvals on. Kimi Code will ask before risky actions, so the goal may stop and wait for you.',
+      },
+      {
+        label: 'Do not start',
+        response: 'cancelled',
+        selected_label: 'cancel',
+        description: 'Return to the input box with your goal command.',
+      },
     ]);
   });
 
@@ -255,9 +279,26 @@ describe('approval adapter', () => {
 
     expect(adapted.display).toEqual([{ type: 'brief', text: 'Start goal: Ship the feature' }]);
     expect(adapted.choices).toEqual([
-      { label: 'Switch to Auto and start', response: 'approved', selected_label: 'auto' },
-      { label: 'Keep YOLO and start', response: 'approved', selected_label: 'yolo' },
-      { label: 'Do not start', response: 'cancelled', selected_label: 'cancel' },
+      {
+        label: 'Switch to Auto and start',
+        response: 'approved',
+        selected_label: 'auto',
+        description:
+          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+      },
+      {
+        label: 'Keep YOLO and start',
+        response: 'approved',
+        selected_label: 'yolo',
+        description:
+          'Tools and plan changes stay approved automatically. Kimi Code may still ask you questions.',
+      },
+      {
+        label: 'Do not start',
+        response: 'cancelled',
+        selected_label: 'cancel',
+        description: 'Return to the input box with your goal command.',
+      },
     ]);
   });
 

@@ -360,8 +360,18 @@ function adaptGoalStartChoices(
   // not start" declines so no goal is created.
   return goalStartOptions(display.mode).map((option) =>
     option.value === 'cancel'
-      ? { label: option.label, response: 'cancelled', selected_label: 'cancel' }
-      : { label: option.label, response: 'approved', selected_label: option.value },
+      ? {
+          label: option.label,
+          response: 'cancelled',
+          selected_label: 'cancel',
+          description: option.description,
+        }
+      : {
+          label: option.label,
+          response: 'approved',
+          selected_label: option.value,
+          description: option.description,
+        },
   );
 }
 
