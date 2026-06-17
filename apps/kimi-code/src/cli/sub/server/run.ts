@@ -47,16 +47,16 @@ export interface RunCliOptions extends ServerCliOptions {
 
 export interface StartForegroundHooks {
   /** Fires once the server is listening, before the foreground runner blocks. */
-  onReady?(origin: string): void;
+  onReady?: (origin: string) => void;
 }
 
 export interface RunCommandDeps {
   startServerBackground(options: ParsedServerOptions): Promise<{ origin: string }>;
   /** Foreground runner; defaults to the real in-process runner when omitted. */
-  startServerForeground?(
+  startServerForeground?: (
     options: ParsedServerOptions,
     hooks?: StartForegroundHooks,
-  ): Promise<never>;
+  ) => Promise<never>;
   openUrl(url: string): void;
   stdout: Pick<NodeJS.WriteStream, 'write'>;
   stderr: Pick<NodeJS.WriteStream, 'write'>;
