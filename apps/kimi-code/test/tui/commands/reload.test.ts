@@ -97,6 +97,9 @@ auto_install = false
 
     expect(host.state.appState.language).toBe('zh-CN');
     expect(setLocale).toHaveBeenCalledWith('zh-CN');
+    // Rebuild the autocomplete snapshot so the `/` command menu picks up the
+    // reloaded locale without a restart (see applyReloadedTuiConfig).
+    expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalled();
 
     setLocale.mockRestore();
   });

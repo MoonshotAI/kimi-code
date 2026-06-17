@@ -492,6 +492,10 @@ export async function applyLanguageChoice(host: LanguageHost, language: TuiLangu
   // Flip the live UI locale and repaint so every component — footer, chrome,
   // and any open dialog — re-renders in the new language without a restart.
   i18n.setLocale(resolveLocale(language));
+  // The `/` autocomplete holds a one-time snapshot of localized command
+  // descriptions (see setupAutocomplete); rebuild it so the command menu
+  // follows the new locale immediately instead of only after a restart.
+  host.refreshSlashCommandAutocomplete();
   host.state.ui.requestRender();
   host.track('language_switch', { language });
   host.showStatus(`Language set to "${language}".`);
@@ -604,6 +608,7 @@ type LanguageHost = {
   setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'language'>): void;
   showStatus(msg: string, color?: string): void;
   track: SlashCommandHost['track'];
+  refreshSlashCommandAutocomplete: SlashCommandHost['refreshSlashCommandAutocomplete'];
 };
 
 type UpdatePreferenceHost = {

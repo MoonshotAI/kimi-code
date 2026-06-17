@@ -23,6 +23,7 @@ function makeHost() {
   const setAppState = vi.fn();
   const showStatus = vi.fn();
   const track = vi.fn();
+  const refreshSlashCommandAutocomplete = vi.fn();
   const host = {
     state: {
       appState: {
@@ -38,15 +39,16 @@ function makeHost() {
     setAppState,
     showStatus,
     track,
+    refreshSlashCommandAutocomplete,
   };
-  return { host, requestRender, setAppState, showStatus, track };
+  return { host, requestRender, setAppState, showStatus, track, refreshSlashCommandAutocomplete };
 }
 
 describe('language commands', () => {
   it('persists, switches runtime locale, and re-renders when the language changes', async () => {
     mocks.saveTuiConfig.mockClear();
     const setLocale = vi.spyOn(i18n, 'setLocale');
-    const { host, requestRender, setAppState } = makeHost();
+    const { host, requestRender, setAppState, refreshSlashCommandAutocomplete } = makeHost();
 
     await applyLanguageChoice(host, 'zh-CN');
 
@@ -60,6 +62,10 @@ describe('language commands', () => {
     expect(setAppState).toHaveBeenCalledWith({ language: 'zh-CN' });
     expect(setLocale).toHaveBeenCalledWith('zh-CN');
     expect(requestRender).toHaveBeenCalled();
+    // The slash-command autocomplete holds a snapshot of localized descriptions
+    // built once via setupAutocomplete(); flipping the locale must rebuild it so
+    // the `/` menu follows the new language without a restart.
+    expect(refreshSlashCommandAutocomplete).toHaveBeenCalled();
 
     setLocale.mockRestore();
   });

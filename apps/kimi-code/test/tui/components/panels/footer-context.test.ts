@@ -171,7 +171,7 @@ describe('FooterComponent — locale rendering', () => {
     const out = strip(fc.render(120).join(''));
 
     expect(out).toContain('上下文: 50.0%');
-    expect(out).toContain('思考中');
+    expect(out).toContain('思考模式');
     expect(out).toContain('个后台任务运行中');
     expect(out).not.toContain('context:');
   });

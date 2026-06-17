@@ -22,7 +22,7 @@ export const components: MessageTree = {
   },
   footer: {
     context: '上下文',
-    thinking: '思考中',
+    thinking: '思考模式',
     taskRunning: '{count} 个后台任务运行中',
     tasksRunning: '{count} 个后台任务运行中',
     agentRunning: '{count} 个后台子代理运行中',
