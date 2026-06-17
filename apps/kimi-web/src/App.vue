@@ -59,12 +59,14 @@ const activeWorkspaceSessionCount = computed<number>(
 );
 
 // Dynamic page title: session title first, then workspace name, then app name.
+// Prefix a dot when the agent is running so users can see activity at a glance.
 const pageTitle = computed<string>(() => {
+  const prefix = running.value ? '● ' : '';
   const sessionTitle = activeSessionTitle.value;
-  if (sessionTitle) return `${sessionTitle} - Kimi Code Web`;
+  if (sessionTitle) return `${prefix}${sessionTitle} - Kimi Code Web`;
   const workspaceName = client.visibleWorkspace.value?.name;
-  if (workspaceName) return `${workspaceName} - Kimi Code Web`;
-  return 'Kimi Code Web';
+  if (workspaceName) return `${prefix}${workspaceName} - Kimi Code Web`;
+  return `${prefix}Kimi Code Web`;
 });
 watchEffect(() => {
   if (typeof document !== 'undefined') document.title = pageTitle.value;
