@@ -17,7 +17,7 @@
     "typecheck": "pnpm run build:packages && pnpm -r --filter './packages/*' run typecheck && pnpm --filter @moonshot-ai/kimi-code run typecheck && pnpm --filter @moonshot-ai/kimi-web run typecheck && pnpm --filter @moonshot-ai/vis-server run typecheck && pnpm --filter @moonshot-ai/vis-web run typecheck",
     "lint": "oxlint --type-aware",
     "lint:fix": "pnpm run lint --fix",
-    "lint:pkg": "pnpm -r --filter '!@moonshot-ai/monorepo' exec publint && pnpm -r --filter './packages/*' exec attw --pack . --profile node16",
+    "lint:pkg": "pnpm --filter @moonshot-ai/kimi-code exec publint && npm_config_cache=${TMPDIR:-/tmp}/kimi-code-npm-cache pnpm --filter @moonshot-ai/kimi-code exec attw --pack . --profile node16",
     "sherif": "sherif",
     "test": "vitest run",
     "test:watch": "vitest",
