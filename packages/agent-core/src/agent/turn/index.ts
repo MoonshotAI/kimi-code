@@ -193,6 +193,21 @@ export class TurnFlow {
     this.activeTurn = 'resuming';
   }
 
+  /**
+   * Raise the turn counter to cover a turnId observed in a replayed loop event.
+   * This is the authoritative source of the restored counter: every turn that
+   * ran — a prompted turn, a goal continuation, or a steer-launched turn —
+   * emits loop events carrying its real turnId, even though only prompted turns
+   * write a `turn.prompt` record. Resuming then continues from `max + 1`. Only
+   * ever raises the counter, never lowers it, so the live path (where `turnId`
+   * is already allocated before any loop event) is unaffected.
+   */
+  observeRestoredTurnId(turnId: number): void {
+    if (Number.isInteger(turnId) && turnId > this.turnId) {
+      this.turnId = turnId;
+    }
+  }
+
   restoreSteer(input: readonly ContentPart[], origin: PromptOrigin): void {
     if (this.activeTurn) {
       this.steerBuffer.push({ input, origin });
