@@ -77,7 +77,7 @@ export async function listReviewCommits(kaos: Kaos): Promise<readonly ReviewComm
     'log',
     '-50',
     '--shortstat',
-    `--format=${COMMIT_RS}%H${COMMIT_FS}%an${COMMIT_FS}%aI${COMMIT_FS}%s${COMMIT_FS}%b`,
+    `--format=${COMMIT_RS}%H${COMMIT_FS}%an${COMMIT_FS}%ae${COMMIT_FS}%aI${COMMIT_FS}%D${COMMIT_FS}%s${COMMIT_FS}%b`,
   ]);
   return raw
     .split(COMMIT_RS)
@@ -93,7 +93,8 @@ const SHORTSTAT_RE =
   /^\s*(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/;
 
 function parseReviewCommitRecord(record: string): ReviewCommit {
-  const [sha = '', author = '', date = '', subject = '', ...rest] = record.split(COMMIT_FS);
+  const [sha = '', author = '', email = '', date = '', refsRaw = '', subject = '', ...rest] =
+    record.split(COMMIT_FS);
   // Everything after the subject is the body, with the shortstat line trailing.
   const bodyLines: string[] = [];
   let stats: { filesChanged: number; additions: number; deletions: number } | undefined;
@@ -109,16 +110,29 @@ function parseReviewCommitRecord(record: string): ReviewCommit {
       bodyLines.push(line);
     }
   }
+  const refs = parseRefNames(refsRaw);
+  const body = bodyLines.join('\n').trim();
   return {
     sha: sha.trim(),
     title: subject,
     author: author || undefined,
+    authorEmail: email || undefined,
     date: date || undefined,
+    refs: refs.length > 0 ? refs : undefined,
+    body: body.length > 0 ? body : undefined,
     filesChanged: stats?.filesChanged,
     additions: stats?.additions,
     deletions: stats?.deletions,
-    hasBody: bodyLines.join('\n').trim().length > 0,
+    hasBody: body.length > 0,
   };
+}
+
+/** Parse `%D` ("HEAD -> main, origin/main, tag: v1") into bare ref names. */
+function parseRefNames(refsRaw: string): string[] {
+  return refsRaw
+    .split(',')
+    .map((ref) => ref.trim().replace(/^HEAD -> /, '').replace(/^tag: /, ''))
+    .filter((ref) => ref.length > 0 && ref !== 'HEAD');
 }
 
 export async function getReviewScopeSummary(kaos: Kaos): Promise<ReviewScopeSummary> {

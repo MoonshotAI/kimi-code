@@ -253,6 +253,26 @@ describe('review git target resolver', () => {
     });
   });
 
+  it('captures author email, ref names, and body for commit search', async () => {
+    await withGitRepo(async (repo) => {
+      await writeFile(join(repo, 'a.ts'), 'a\n');
+      await git(repo, 'add', '.');
+      await git(repo, 'commit', '-m', 'tagged commit', '-m', 'detailed rationale here');
+      await git(repo, 'tag', 'v1.0');
+      await git(repo, 'switch', '-c', 'feature/login');
+
+      const commits = await listReviewCommits(testKaos.withCwd(repo));
+
+      expect(commits[0]).toMatchObject({
+        title: 'tagged commit',
+        authorEmail: 'review@example.test',
+        body: 'detailed rationale here',
+      });
+      expect(commits[0]?.refs).toEqual(expect.arrayContaining(['v1.0', 'feature/login']));
+      expect(commits[0]?.refs).not.toContain('HEAD');
+    });
+  });
+
   it('summarizes review scope context for the first selector', async () => {
     await withGitRepo(async (repo) => {
       await writeFile(join(repo, 'a.ts'), 'base\n');

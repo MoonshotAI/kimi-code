@@ -212,7 +212,12 @@ export interface ReviewCommit {
   readonly sha: string;
   readonly title: string;
   readonly author?: string;
+  readonly authorEmail?: string;
   readonly date?: string;
+  /** Branch/tag names pointing at this commit (from `%D`), for ref search. */
+  readonly refs?: readonly string[];
+  /** Commit message body (beyond the subject), for message search. */
+  readonly body?: string;
   /** Files changed by this commit (from `--shortstat`); undefined for merges. */
   readonly filesChanged?: number;
   readonly additions?: number;
