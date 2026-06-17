@@ -75,6 +75,7 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
     },
     requireSession: vi.fn(() => session),
     setAppState: vi.fn(),
+    setReviewActive: vi.fn(),
     patchLivePane: vi.fn(),
     resetLivePane: vi.fn(),
     showError: vi.fn(),

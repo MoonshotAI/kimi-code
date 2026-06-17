@@ -52,6 +52,7 @@ describe('createTUIState', () => {
     expect(state.activityContainer).toBeDefined();
     expect(state.todoPanelContainer).toBeDefined();
     expect(state.queueContainer).toBeDefined();
+    expect(state.reviewStatusContainer).toBeDefined();
     expect(state.editorContainer).toBeDefined();
     expect(state.editor).toBeDefined();
     expect(state.footer).toBeDefined();
@@ -80,5 +81,6 @@ describe('createTUIState', () => {
     expect(state.loadingSessions).toBe(false);
     expect(state.sessionsScope).toBe('cwd');
     expect(state.activitySpinner).toBeNull();
+    expect(state.reviewResultPending).toBe(false);
   });
 });

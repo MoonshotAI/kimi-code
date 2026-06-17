@@ -168,6 +168,74 @@ describe('ToolCallComponent', () => {
     expect(expanded).not.toContain('task tools');
   });
 
+  it('renders review tool calls as complete actions without a generic Used prefix', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_review_read',
+        name: 'ReadFileVersion',
+        args: {
+          path: 'packages/agent-core/src/review/prompts.ts',
+          version: 'current',
+          line_offset: 1,
+        },
+      },
+      {
+        tool_call_id: 'call_review_read',
+        output: 'content',
+        is_error: false,
+      },
+    );
+
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out).toContain('Read current file state (packages/agent-core/src/review/prompts.ts · from line 1)');
+    expect(out).not.toContain('Used file version');
+    expect(out).not.toContain('Used ReadFileVersion');
+    expect(out).not.toContain('Used Read current file state');
+  });
+
+  it('renders review subagent tool activity without a generic Used prefix', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_review',
+        name: 'Agent',
+        args: { description: 'Review changes' },
+      },
+      undefined,
+      stubTui(24),
+    );
+    component.onSubagentSpawned({
+      agentId: 'agent-review-1',
+      agentName: 'reviewer',
+      runInBackground: false,
+    });
+    component.onSubagentStarted({
+      agentId: 'agent-review-1',
+      agentName: 'reviewer',
+      runInBackground: false,
+    });
+    component.appendSubToolCall({
+      id: 'sub_read_current',
+      name: 'ReadFileVersion',
+      args: {
+        path: 'packages/agent-core/src/review/prompts.ts',
+        version: 'current',
+        line_offset: 1,
+      },
+    });
+    component.finishSubToolCall({
+      tool_call_id: 'sub_read_current',
+      output: 'content',
+      is_error: false,
+    });
+
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out).toContain('Read current file state (packages/agent-core/src/review/prompts.ts · from line 1)');
+    expect(out).not.toContain('Used file version');
+    expect(out).not.toContain('Used Read current file state');
+  });
+
   it('hides <system-prefixed output even when the tool result is an error', () => {
     const component = new ToolCallComponent(
       {
@@ -775,6 +843,73 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('lines');
   });
 
+  it('renders review tool display metadata instead of raw argument previews', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_review_diff',
+        name: 'ReadDiff',
+        args: { paths: ['src/a.ts'], section_id: 'section-2', context_lines: 5 },
+        display: {
+          kind: 'generic',
+          summary: 'changed section',
+          detail: 'section 2 · 5 nearby lines',
+        },
+      },
+      undefined,
+    );
+
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
+    expect(out).not.toContain('Using ReadDiff');
+    expect(out).not.toContain('section_id');
+    expect(out).not.toContain('context_lines');
+  });
+
+  it('renders legacy ReadPatch records without raw argument previews', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_review_patch',
+        name: 'ReadPatch',
+        args: { path: 'src/a.ts', hunk_id: 'hunk-2', context_lines: 5 },
+      },
+      undefined,
+    );
+
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
+    expect(out).not.toContain('Using ReadPatch');
+    expect(out).not.toContain('hunk_id');
+  });
+
+  it('shortens full refs in ReadFileVersion labels only', () => {
+    const fullRef = '3980a555807687914079243f9476fef93cbfd081';
+    const component = new ToolCallComponent(
+      {
+        id: 'call_review_file_version',
+        name: 'ReadFileVersion',
+        args: { path: 'AGENTS.md', ref: fullRef, line_offset: 1 },
+      },
+      undefined,
+    );
+    const symbolic = new ToolCallComponent(
+      {
+        id: 'call_review_file_symbolic',
+        name: 'ReadFileVersion',
+        args: { path: 'AGENTS.md', ref: 'origin/main', line_offset: 1 },
+      },
+      undefined,
+    );
+
+    const out = strip(component.render(120).join('\n'));
+    const symbolicOut = strip(symbolic.render(120).join('\n'));
+
+    expect(out).toContain('Read file at ref (AGENTS.md · ref 3980a55 · from line 1)');
+    expect(out).not.toContain(fullRef);
+    expect(symbolicOut).toContain('Read file at ref (AGENTS.md · ref origin/main · from line 1)');
+  });
+
   it('renders a single foreground subagent without the generic Agent tool header', () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
@@ -835,6 +970,123 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('Used Agent');
     expect(out).not.toContain('parent duplicate result');
     expect(out).not.toContain('summary fallback');
+  });
+
+  it('renders nested review tool display metadata in single-subagent activity', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_review_tools',
+        name: 'Agent',
+        args: { description: 'review changes' },
+      },
+      undefined,
+    );
+
+    component.onSubagentSpawned({
+      agentId: 'sub_review',
+      agentName: 'reviewer',
+      runInBackground: false,
+    });
+    component.appendSubToolCall({
+      id: 'sub_review:read-diff',
+      name: 'ReadDiff',
+      args: { paths: ['src/a.ts'], section_id: 'section-2', context_lines: 5 },
+      display: {
+        kind: 'generic',
+        summary: 'changed section',
+        detail: 'section 2 · 5 nearby lines',
+      },
+    });
+
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
+    expect(out).not.toContain('Using ReadDiff');
+    expect(out).not.toContain('section_id');
+  });
+
+  it('renders the same nested review label before and after display metadata arrives', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_review_fallback',
+        name: 'Agent',
+        args: { description: 'review changes' },
+      },
+      undefined,
+    );
+
+    component.onSubagentSpawned({
+      agentId: 'sub_review_fallback',
+      agentName: 'reviewer',
+      runInBackground: false,
+    });
+    component.appendSubToolCall({
+      id: 'sub_review_fallback:read-diff',
+      name: 'ReadDiff',
+      args: { paths: ['src/a.ts'], section_id: 'section-2', context_lines: 5 },
+    });
+
+    let out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
+    expect(out).not.toContain('Using ReadDiff');
+
+    component.finishSubToolCall({
+      tool_call_id: 'sub_review_fallback:read-diff',
+      output: JSON.stringify({ path: 'src/a.ts' }),
+      is_error: false,
+    });
+
+    out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Read changed section (src/a.ts · section 2 · 5 nearby lines)');
+    expect(out).not.toContain('Used ReadDiff');
+  });
+
+  it('does not preview successful nested review tool JSON output', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_review_json',
+        name: 'Agent',
+        args: { description: 'review changes' },
+      },
+      undefined,
+    );
+
+    component.onSubagentSpawned({
+      agentId: 'sub_review_json',
+      agentName: 'reviewer',
+      runInBackground: false,
+    });
+    component.appendSubToolCall({
+      id: 'sub_review_json:get-assignment',
+      name: 'GetAssignment',
+      args: {},
+      display: {
+        kind: 'generic',
+        summary: 'review assignment',
+      },
+    });
+    component.finishSubToolCall({
+      tool_call_id: 'sub_review_json:get-assignment',
+      output: JSON.stringify({
+        id: 'review-assignment-1',
+        role: 'reviewer',
+        assignedFiles: ['src/a.ts'],
+      }, null, 2),
+      is_error: false,
+    });
+
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out).toContain('Loaded review assignment');
+    expect(out).not.toContain('"id"');
+    expect(out).not.toContain('"role"');
+    expect(out).not.toContain('review-assignment-1');
   });
 
   it('keeps the single subagent tool area to the latest four activities', () => {

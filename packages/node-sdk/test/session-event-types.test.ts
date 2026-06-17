@@ -41,6 +41,19 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'cron.fired'>['origin']['kind']>().toEqualTypeOf<'cron_job'>();
   });
 
+  it('narrows review events by type', () => {
+    expectTypeOf<EventByType<'review.started'>['intensity']>().toEqualTypeOf<
+      'standard' | 'thorough' | 'deep'
+    >();
+    expectTypeOf<EventByType<'review.started'>['agentSwarm']>().toEqualTypeOf<
+      { readonly toolCallId: string; readonly args: Record<string, unknown> } | undefined
+    >();
+    expectTypeOf<EventByType<'review.assignment.progress'>['progress']['status']>()
+      .toEqualTypeOf<'active' | 'complete' | 'blocked'>();
+    expectTypeOf<EventByType<'review.completed'>['comments'][number]['title']>()
+      .toEqualTypeOf<string>();
+  });
+
   it('exposes approval and question reverse-RPC requests', () => {
     expectTypeOf<ApprovalRequest['turnId']>().toEqualTypeOf<number | undefined>();
     expectTypeOf<ApprovalRequest['toolName']>().toEqualTypeOf<string>();
@@ -57,6 +70,16 @@ describe('Event public types', () => {
         case 'agent.status.updated':
         case 'session.meta.updated':
         case 'goal.updated':
+        case 'review.started':
+        case 'review.assignment.started':
+        case 'review.assignment.progress':
+        case 'review.comment.added':
+        case 'review.comment.merged':
+        case 'review.comment.dismissed':
+        case 'review.comment.rejected':
+        case 'review.completed':
+        case 'review.cancelled':
+        case 'review.failed':
         case 'skill.activated':
         case 'error':
         case 'warning':

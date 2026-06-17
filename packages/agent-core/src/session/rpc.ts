@@ -12,16 +12,22 @@ import type {
   GetBackgroundPayload,
   McpServerInfo,
   McpStartupMetrics,
+  PreviewReviewPlanPayload,
+  PreviewReviewTargetPayload,
   PromptPayload,
+  ReadReviewPayload,
   ReconnectMcpServerPayload,
+  RejectReviewCommentPayload,
   RenameSessionPayload,
   RegisterToolPayload,
+  RestoreReviewCommentPayload,
   SessionAPI,
   SetActiveToolsPayload,
   SetModelPayload,
   SetPermissionPayload,
   SetThinkingPayload,
   SkillSummary,
+  StartReviewPayload,
   SteerPayload,
   StopBackgroundPayload,
   UndoHistoryPayload,
@@ -88,6 +94,54 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   generateAgentsMd(_payload: EmptyPayload): Promise<void> {
     return this.session.generateAgentsMd();
+  }
+
+  getReviewScopeSummary(_payload: EmptyPayload) {
+    return this.session.getReviewScopeSummary();
+  }
+
+  listReviewBaseRefs(_payload: EmptyPayload) {
+    return this.session.listReviewBaseRefs();
+  }
+
+  listReviewCommits(_payload: EmptyPayload) {
+    return this.session.listReviewCommits();
+  }
+
+  previewReviewTarget(payload: PreviewReviewTargetPayload) {
+    return this.session.previewReviewTarget(payload.target);
+  }
+
+  previewReviewPlan(payload: PreviewReviewPlanPayload) {
+    return this.session.previewReviewPlan(payload);
+  }
+
+  startReview(payload: StartReviewPayload) {
+    return this.session.startReview(payload);
+  }
+
+  runPilotedReview(payload: StartReviewPayload) {
+    return this.session.runPilotedReview(payload);
+  }
+
+  cancelReview(_payload: EmptyPayload): void {
+    this.session.cancelReview();
+  }
+
+  listReviews(_payload: EmptyPayload) {
+    return this.session.listReviews();
+  }
+
+  readReview(payload: ReadReviewPayload) {
+    return this.session.readReview(payload.id);
+  }
+
+  rejectReviewComment(payload: RejectReviewCommentPayload) {
+    return this.session.rejectReviewComment(payload.id, payload.commentId, payload.note);
+  }
+
+  restoreReviewComment(payload: RestoreReviewCommentPayload) {
+    return this.session.restoreReviewComment(payload.id, payload.commentId);
   }
 
 

@@ -14,6 +14,7 @@ import { AssistantMessageComponent } from '../components/messages/assistant-mess
 import { BackgroundAgentStatusComponent } from '../components/messages/background-agent-status';
 import { CronMessageComponent } from '../components/messages/cron-message';
 import { ReadGroupComponent } from '../components/messages/read-group';
+import { ReviewSwarmProgressComponent } from '../components/messages/review-swarm-progress';
 import { SkillActivationComponent } from '../components/messages/skill-activation';
 import { ThinkingComponent } from '../components/messages/thinking';
 import { ToolCallComponent } from '../components/messages/tool-call';
@@ -404,6 +405,8 @@ function isUndoContextEntry(entry: TranscriptEntry): boolean {
       return true;
     case 'status':
     case 'goal':
+    case 'review':
+    case 'review-summary':
       return entry.turnId !== undefined;
     case 'welcome':
       return false;
@@ -457,6 +460,7 @@ function isUndoContextComponent(child: Component): boolean {
     child instanceof ToolCallComponent ||
     child instanceof AgentGroupComponent ||
     child instanceof AgentSwarmProgressComponent ||
+    child instanceof ReviewSwarmProgressComponent ||
     child instanceof ReadGroupComponent ||
     child instanceof SkillActivationComponent ||
     child instanceof BackgroundAgentStatusComponent ||

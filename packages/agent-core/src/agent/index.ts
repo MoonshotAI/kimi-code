@@ -11,6 +11,7 @@ import type { EnabledPluginSessionStart } from '#/plugin';
 import type { McpConnectionManager } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
+import type { ReviewAgentFacade, ReviewFanOutRunner } from '../review';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
@@ -67,6 +68,8 @@ export interface AgentOptions {
   readonly type?: AgentType;
   readonly generate?: typeof generate;
   readonly toolServices?: ToolServices;
+  readonly review?: ReviewAgentFacade;
+  readonly reviewFanOut?: ReviewFanOutRunner;
   readonly compactionStrategy?: CompactionStrategy;
   readonly microCompaction?: Partial<MicroCompactionConfig>;
   readonly modelProvider?: ModelProvider | undefined;
@@ -94,6 +97,8 @@ export class Agent {
   readonly homedir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
   readonly toolServices?: ToolServices;
+  readonly review?: ReviewAgentFacade;
+  readonly reviewFanOut?: ReviewFanOutRunner;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
   readonly rawGenerate: typeof generate;
   readonly modelProvider?: ModelProvider;
@@ -131,6 +136,8 @@ export class Agent {
     this.homedir = options.homedir;
     this.rpc = options.rpc;
     this.toolServices = options.toolServices;
+    this.review = options.review;
+    this.reviewFanOut = options.reviewFanOut;
     this.pluginSessionStarts = options.pluginSessionStarts ?? [];
     this.rawGenerate = options.generate ?? generate;
     this.modelProvider = options.modelProvider;

@@ -13,6 +13,8 @@ import {
   calculateAgentSwarmGridLayout,
 } from '#/tui/components/messages/agent-swarm-progress';
 import { AgentSwarmProgressEstimator } from '#/tui/components/messages/agent-swarm-progress-estimator';
+import { ReviewSwarmProgressComponent } from '#/tui/components/messages/review-swarm-progress';
+import { SwarmProgressComponent } from '#/tui/components/messages/swarm-progress';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 
 const DEFAULT_DESCRIPTION = 'Review changed files';
@@ -156,6 +158,24 @@ describe('calculateAgentSwarmGridLayout', () => {
 });
 
 describe('AgentSwarmProgressComponent', () => {
+  it('keeps the default AgentSwarm shell after extraction', () => {
+    const component = createComponent();
+
+    component.updateArgs({
+      description: 'Review changed files',
+      items: ['src/a.ts'],
+    });
+    component.markInputComplete();
+
+    const output = renderText(component, 100);
+
+    expect(output).toContain('Agent Swarm');
+    expect(output).toContain('Review changed files');
+    expect(output).toContain('001 Queued...');
+    expect(output).toContain('Working...');
+    expect(output).not.toContain('Reviewing...');
+  });
+
   it('renders an orchestrating panel before subagents spawn', () => {
     const component = createComponent();
 
@@ -846,6 +866,134 @@ describe('AgentSwarmProgressComponent', () => {
 
     expect(agentSwarmDescriptionFromArgs(args)).toBe('Review changed files');
     expect(agentSwarmItemsFromArgs(args)).toEqual(['src/a.ts', '123']);
+  });
+});
+
+describe('SwarmProgressComponent', () => {
+  it('renders the reusable header, wrapped legend, custom ids, labels, and footer', () => {
+    const component = new SwarmProgressComponent({
+      title: 'Review Swarm',
+      description: 'Deep Review reviewers',
+      legend: [
+        { label: 'A Correctness and regressions' },
+        { label: 'B Security and data safety' },
+        { label: 'C Reliability and edge cases' },
+      ],
+      statusLabels: { working: 'Reviewing...' },
+      formatMemberId: ({ index }) => `R-${String(index).padStart(2, '0')}`,
+      cellLabel: ({ member }) => ({
+        text: member.latestModelText.length > 0 ? member.latestModelText : 'Waiting for reviewer',
+      }),
+      footerBar: ({ width }) => '2/3 files ' + '━'.repeat(Math.max(1, width - '2/3 files '.length)),
+    });
+
+    component.setMemberCount(3);
+    component.setMemberItemTexts(['src/a.ts', 'src/b.ts', 'src/c.ts']);
+    component.markInputComplete();
+    component.registerMember({ runtimeId: 'agent-1', memberIndex: 1 });
+    component.markStarted('agent-1');
+    component.appendModelDelta({ runtimeId: 'agent-1', delta: 'Reading src/a.ts' });
+
+    const output = strip(component.render(58).join('\n'));
+
+    expect(output).toContain('Review Swarm');
+    expect(output).toContain('Deep Review reviewers');
+    expect(output).toContain('A Correctness and regressions');
+    expect(output).toContain('B Security and data safety');
+    expect(output).toContain('R-01 [');
+    expect(output).toContain('Reading src/a.ts');
+    expect(output).toContain('Reviewing...');
+    expect(output).toContain('2/3 files');
+  });
+});
+
+describe('ReviewSwarmProgressComponent', () => {
+  it('renders review ids, legend, latest comments, and finite file progress', () => {
+    const component = new ReviewSwarmProgressComponent({
+      description: 'Deep Review reviewers',
+      args: {
+        review_swarm: {
+          perspectives: [
+            'Correctness and regressions',
+            'Security and data safety',
+          ],
+          fileGroups: [
+            { id: 'group-1', name: 'Files 1-2', files: ['src/a.ts', 'src/b.ts'] },
+          ],
+          items: [
+            {
+              index: 1,
+              perspective: 'Correctness and regressions',
+              fileGroupId: 'group-1',
+              fileGroupName: 'Files 1-2',
+              assignedFiles: ['src/a.ts', 'src/b.ts'],
+            },
+            {
+              index: 2,
+              perspective: 'Security and data safety',
+              fileGroupId: 'group-1',
+              fileGroupName: 'Files 1-2',
+              assignedFiles: ['src/a.ts', 'src/b.ts'],
+            },
+          ],
+        },
+      },
+    });
+
+    component.handleAssignmentStarted({
+      id: 'review-assignment-1',
+      role: 'reviewer',
+      perspective: 'Correctness and regressions',
+      assignedFiles: ['src/a.ts', 'src/b.ts'],
+      requiredCoverage: 'full_file',
+      group: 'group-1',
+    });
+    component.handleAssignmentStarted({
+      id: 'review-assignment-2',
+      role: 'reviewer',
+      perspective: 'Security and data safety',
+      assignedFiles: ['src/a.ts', 'src/b.ts'],
+      requiredCoverage: 'full_file',
+      group: 'group-1',
+    });
+    component.handleCommentAdded({
+      id: 'review-comment-1',
+      assignmentId: 'review-assignment-1',
+      state: 'candidate',
+      severity: 'important',
+      path: 'src/a.ts',
+      line: 7,
+      title: 'Validate request',
+      body: 'The request should be validated.',
+    });
+    component.handleCommentAdded({
+      id: 'review-comment-2',
+      assignmentId: 'review-assignment-1',
+      state: 'candidate',
+      severity: 'minor',
+      path: 'src/b.ts',
+      line: 11,
+      title: 'Trim output',
+      body: 'The output can be shorter.',
+    });
+    component.handleAssignmentProgress({
+      assignmentId: 'review-assignment-1',
+      status: 'complete',
+      summary: 'Reviewed correctness.',
+    });
+
+    const output = strip(component.render(112).join('\n'));
+
+    expect(output).toContain('Agent Swarm');
+    expect(output).toContain('Deep Review reviewers');
+    expect(output).toContain('A Correctness and regressions');
+    expect(output).toContain('B Security and data safety');
+    expect(output).toContain('A-01');
+    expect(output).toContain('B-01');
+    expect(output).toContain('2 comments: minor: src/b.ts:11 Trim o');
+    expect(output).toMatch(/A-01 \[⣿+]/);
+    expect(output).toContain('Reviewing...');
+    expect(output).toContain('0/2 files reviewed');
   });
 });
 

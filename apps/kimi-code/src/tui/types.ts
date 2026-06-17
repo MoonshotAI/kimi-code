@@ -128,6 +128,39 @@ export type GoalTranscriptData =
   | { readonly kind: 'created' }
   | { readonly kind: 'lifecycle'; readonly change: GoalChange };
 
+export interface ReviewSummaryComment {
+  readonly severity: 'critical' | 'important' | 'minor';
+  readonly path: string;
+  readonly line: number;
+  readonly title: string;
+  readonly rejected: boolean;
+}
+
+export interface ReviewSummaryTranscriptData {
+  /** 'completed' = the post-review compact block; 'browsed' = the after-reading note. */
+  readonly variant?: 'completed' | 'browsed';
+  readonly fileCount: number;
+  readonly additions: number;
+  readonly deletions: number;
+  readonly handle?: string;
+  /** Fallback text shown when there are no comments. */
+  readonly summary: string;
+  readonly comments: readonly ReviewSummaryComment[];
+}
+
+export interface ReviewTranscriptData {
+  readonly state:
+    | 'started'
+    | 'assignment'
+    | 'progress'
+    | 'comment'
+    | 'completed'
+    | 'cancelled'
+    | 'failed';
+  readonly title: string;
+  readonly detail?: string;
+}
+
 export type TranscriptEntryKind =
   | 'welcome'
   | 'user'
@@ -137,7 +170,9 @@ export type TranscriptEntryKind =
   | 'status'
   | 'skill_activation'
   | 'cron'
-  | 'goal';
+  | 'goal'
+  | 'review'
+  | 'review-summary';
 
 export type SkillActivationTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
 
@@ -154,6 +189,8 @@ export interface TranscriptEntry {
   compactionData?: CompactionTranscriptData;
   cronData?: CronTranscriptData;
   goalData?: GoalTranscriptData;
+  reviewData?: ReviewTranscriptData;
+  reviewSummaryData?: ReviewSummaryTranscriptData;
   imageAttachmentIds?: readonly number[];
   skillActivationId?: string;
   skillName?: string;

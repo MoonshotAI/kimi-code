@@ -700,6 +700,7 @@ describe('Permission policy chain', () => {
   it('keeps built-in policies in document order', () => {
     expect(createPermissionDecisionPolicies({} as Agent).map((policy) => policy.name)).toEqual([
       'pre-tool-call-hook',
+      'review-mode-guard-deny',
       'agent-swarm-exclusive-deny',
       'auto-mode-ask-user-question-deny',
       'plan-mode-guard-deny',
@@ -714,6 +715,7 @@ describe('Permission policy chain', () => {
       'git-control-path-access-ask',
       'yolo-mode-approve',
       'swarm-mode-agent-swarm-approve',
+      'review-mode-tool-approve',
       'default-tool-approve',
       'git-cwd-write-approve',
       'fallback-ask',

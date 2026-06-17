@@ -273,6 +273,10 @@ function renderBtwPanel(driver: MessageDriver): string {
   return driver.state.btwPanelContainer.render(120).join('\n');
 }
 
+function renderReviewStatus(driver: MessageDriver): string {
+  return driver.state.reviewStatusContainer.render(120).join('\n');
+}
+
 function getMountedBtwPanel(driver: MessageDriver): BtwPanelComponent {
   const panel = driver.state.btwPanelContainer.children.find(
     (child) => child instanceof BtwPanelComponent,
@@ -1175,6 +1179,61 @@ command = "vim"
     expect(driver.state.queuedMessages).toEqual([{ text: 'queued message', agentId: 'main' }]);
     expect(driver.state.queueContainer.children.length).toBeGreaterThan(0);
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
+  });
+
+  it('queues editor input instead of prompting while a review is active', async () => {
+    const { driver, session, harness } = await makeDriver();
+    driver.state.reviewActive = true;
+    harness.track.mockClear();
+
+    driver.handleUserInput('queued during review');
+
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([{ text: 'queued during review', agentId: 'main' }]);
+    expect(driver.state.queueContainer.children.length).toBeGreaterThan(0);
+    expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
+  });
+
+  it('shows a transient review status above the editor while review events are active', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    expect(stripSgr(renderReviewStatus(driver))).toBe('');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'review.started',
+        sessionId: 'ses-1',
+        agentId: 'main',
+        target: { scope: 'working_tree' },
+        intensity: 'standard',
+        stats: {
+          fileCount: 1,
+          additions: 2,
+          deletions: 1,
+          files: [{ path: 'src/a.ts', status: 'modified', additions: 2, deletions: 1 }],
+        },
+      } as Event,
+      sendQueued,
+    );
+
+    const statusLines = stripSgr(renderReviewStatus(driver)).split('\n');
+    expect(statusLines[0]?.trim()).toBe('');
+    expect(statusLines[1]).toContain('● Reviewing...');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'review.completed',
+        sessionId: 'ses-1',
+        agentId: 'main',
+        status: 'complete',
+        summary: 'Review completed.',
+        comments: [],
+      } as Event,
+      sendQueued,
+    );
+
+    expect(stripSgr(renderReviewStatus(driver))).toBe('');
   });
 
   it('cancels active streaming from Escape and Ctrl-C editor shortcuts', async () => {

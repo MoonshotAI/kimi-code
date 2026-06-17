@@ -23,6 +23,16 @@ import type {
   ReloadSummary,
   ResumedSessionState,
   ResumedSessionSummary,
+  ReviewArtifact,
+  ReviewArtifactSummary,
+  ReviewBaseRef,
+  ReviewCommit,
+  ReviewPlanPreview,
+  ReviewResult,
+  ReviewScopeSummary,
+  ReviewStartInput,
+  ReviewTarget,
+  ReviewTargetPreview,
   SessionPlan,
   SessionStatus,
   SessionSummary,
@@ -236,6 +246,70 @@ export class Session {
   async listSkills(): Promise<readonly SkillSummary[]> {
     this.ensureOpen();
     return this.rpc.listSkills({ sessionId: this.id });
+  }
+
+  async listReviewBaseRefs(): Promise<readonly ReviewBaseRef[]> {
+    this.ensureOpen();
+    return this.rpc.listReviewBaseRefs({ sessionId: this.id });
+  }
+
+  async getReviewScopeSummary(): Promise<ReviewScopeSummary> {
+    this.ensureOpen();
+    return this.rpc.getReviewScopeSummary({ sessionId: this.id });
+  }
+
+  async listReviewCommits(): Promise<readonly ReviewCommit[]> {
+    this.ensureOpen();
+    return this.rpc.listReviewCommits({ sessionId: this.id });
+  }
+
+  async previewReviewTarget(target: ReviewTarget): Promise<ReviewTargetPreview> {
+    this.ensureOpen();
+    return this.rpc.previewReviewTarget({ sessionId: this.id, target });
+  }
+
+  async previewReviewPlan(input: ReviewStartInput): Promise<ReviewPlanPreview> {
+    this.ensureOpen();
+    return this.rpc.previewReviewPlan({ sessionId: this.id, ...input });
+  }
+
+  async runPilotedReview(input: ReviewStartInput): Promise<ReviewResult | undefined> {
+    this.ensureOpen();
+    return this.rpc.runPilotedReview({ sessionId: this.id, ...input });
+  }
+
+  async startReview(input: ReviewStartInput): Promise<ReviewResult> {
+    this.ensureOpen();
+    return this.rpc.startReview({ sessionId: this.id, ...input });
+  }
+
+  async cancelReview(): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.cancelReview({ sessionId: this.id });
+  }
+
+  async listReviews(): Promise<readonly ReviewArtifactSummary[]> {
+    this.ensureOpen();
+    return this.rpc.listReviews({ sessionId: this.id });
+  }
+
+  async readReview(id: number): Promise<ReviewArtifact | undefined> {
+    this.ensureOpen();
+    return this.rpc.readReview({ sessionId: this.id, id });
+  }
+
+  async rejectReviewComment(
+    id: number,
+    commentId: string,
+    note?: string,
+  ): Promise<ReviewArtifact | undefined> {
+    this.ensureOpen();
+    return this.rpc.rejectReviewComment({ sessionId: this.id, id, commentId, note });
+  }
+
+  async restoreReviewComment(id: number, commentId: string): Promise<ReviewArtifact | undefined> {
+    this.ensureOpen();
+    return this.rpc.restoreReviewComment({ sessionId: this.id, id, commentId });
   }
 
   /**

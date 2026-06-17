@@ -1,0 +1,1 @@
+Add one candidate review comment for a line you have already read. Use this only for discrete, actionable issues introduced by the reviewed change. The body should explain the concrete scenario, why the code is wrong or risky, and the expected impact.

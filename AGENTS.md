@@ -12,6 +12,10 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - Keep changes focused. Do not slip in unrelated refactors along the way.
 - When committing, do not add any co-author attribution, and do not reveal the identity of the agent in commit messages, PR descriptions, or any explanatory text.
 
+## Project Terminology
+
+- In this repository, `swarm` refers to `AgentSwarm` unless the user explicitly says otherwise.
+
 ## Project Map
 
 - `apps/kimi-code`: the CLI / TUI application. It consumes core capabilities through `@moonshot-ai/kimi-code-sdk` and must not depend directly on `@moonshot-ai/agent-core`. When writing or modifying its terminal UI, use the `write-tui` skill (`.agents/skills/write-tui/SKILL.md`).

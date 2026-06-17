@@ -157,6 +157,22 @@ describe('approval adapter', () => {
     ]);
   });
 
+  it('uses generic review display summary and detail as the approval description', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-review-diff',
+      toolName: 'ReadDiff',
+      action: 'Reading review diff',
+      display: {
+        kind: 'generic',
+        summary: 'changed section',
+        detail: 'section 2 · 5 nearby lines',
+      },
+    });
+
+    expect(adapted.description).toBe('changed section (section 2 · 5 nearby lines)');
+    expect(adapted.display).toEqual([]);
+  });
+
   it('omits plan review content from the approval panel while keeping Python-style choices', () => {
     const adapted = adaptApprovalRequest({
       toolCallId: 'tc-plan',

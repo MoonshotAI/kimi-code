@@ -175,11 +175,12 @@ max_context_size = 1047576
 
 ## `experimental`
 
-`experimental` 存放实验功能 flag 的持久化覆盖。目前 `micro_compaction` 是唯一用户可见的字段，默认值为 `true`；只有在需要关闭自动清理较旧的大型工具结果时，才需要把它设为 `false`。
+`experimental` 存放实验功能 flag 的持久化覆盖。这些字段也可以在 TUI 的 `/experiments` 中修改，或通过环境变量只覆盖当前进程。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `micro_compaction` | `boolean` | `true` | 清理较旧的大型工具结果内容，同时保留最近对话 |
+| `code_review` | `boolean` | `false` | 启用用于 Git 变更的内置 `/review` 流程 |
 
 ## `services`
 

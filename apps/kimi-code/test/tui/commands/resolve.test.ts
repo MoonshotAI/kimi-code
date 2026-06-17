@@ -16,6 +16,7 @@ function resolve(
     skillCommandMap: new Map<string, string>(),
     isStreaming: false,
     isCompacting: false,
+    isReviewing: false,
     ...overrides,
   });
 }
@@ -103,6 +104,12 @@ describe('resolveSlashCommandInput', () => {
       commandName: 'swarm',
       reason: 'streaming',
     });
+    setExperimentalFeatures([{ id: 'code_review', enabled: true }]);
+    expect(resolve('/review focus on security', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'review',
+      reason: 'streaming',
+    });
   });
 
   it('blocks model and session pickers while compacting', () => {
@@ -135,6 +142,20 @@ describe('resolveSlashCommandInput', () => {
       kind: 'blocked',
       commandName: 'swarm',
       reason: 'compacting',
+    });
+  });
+
+  it('blocks idle-only built-ins while a review is running', () => {
+    expect(resolve('/new', { isReviewing: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'new',
+      reason: 'reviewing',
+    });
+    setExperimentalFeatures([{ id: 'code_review', enabled: true }]);
+    expect(resolve('/review focus on security', { isReviewing: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'review',
+      reason: 'reviewing',
     });
   });
 
@@ -229,6 +250,21 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
+  it('hides review while code_review is disabled and resolves it when enabled', () => {
+    expect(resolve('/review focus on security')).toEqual({
+      kind: 'message',
+      input: '/review focus on security',
+    });
+
+    setExperimentalFeatures([{ id: 'code_review', enabled: true }]);
+
+    expect(resolve('/review focus on security')).toMatchObject({
+      kind: 'builtin',
+      name: 'review',
+      args: 'focus on security',
+    });
+  });
+
   it('resolves /swarm without an experimental flag', () => {
     expect(resolve('/swarm Ship feature X')).toMatchObject({
       kind: 'builtin',
@@ -287,9 +323,11 @@ describe('slash command busy helpers', () => {
   });
 
   it('formats busy messages', () => {
-    expect(slashCommandBusyReason({ isStreaming: true, isCompacting: false })).toBe('streaming');
-    expect(slashCommandBusyReason({ isStreaming: false, isCompacting: true })).toBe('compacting');
+    expect(slashCommandBusyReason({ isStreaming: true, isCompacting: false, isReviewing: false })).toBe('streaming');
+    expect(slashCommandBusyReason({ isStreaming: false, isCompacting: true, isReviewing: false })).toBe('compacting');
+    expect(slashCommandBusyReason({ isStreaming: false, isCompacting: false, isReviewing: true })).toBe('reviewing');
     expect(slashBusyMessage('new', 'streaming')).toContain('Cannot /new while streaming');
     expect(slashBusyMessage('new', 'compacting')).toContain('Cannot /new while compacting');
+    expect(slashBusyMessage('new', 'reviewing')).toContain('Cannot /new while a review is running');
   });
 });

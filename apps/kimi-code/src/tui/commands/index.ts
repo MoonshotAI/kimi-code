@@ -32,6 +32,7 @@ export {
 } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
+export { handleReviewCommand } from './review';
 export { handleGoalCommand, parseGoalCommand } from './goal';
 export { goalArgumentCompletions } from './registry';
 export {

@@ -47,6 +47,7 @@ import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import { GutterContainer } from './components/chrome/gutter-container';
 import { MoonLoader, type SpinnerStyle } from './components/chrome/moon-loader';
+import { ReviewStatusComponent } from './components/chrome/review-status';
 import { WelcomeComponent } from './components/chrome/welcome';
 import {
   ApprovalPanelComponent,
@@ -75,6 +76,8 @@ import {
   GoalCompletionMessageComponent,
   GoalSetMessageComponent,
 } from './components/messages/goal-panel';
+import { ReviewProgressComponent } from './components/messages/review-progress';
+import { ReviewSummaryComponent } from './components/messages/review-summary';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
   NoticeMessageComponent,
@@ -123,7 +126,7 @@ import {
   type TUIStartupOptions,
   type TUIStartupState,
 } from './types';
-import { isExpandable } from './utils/component-capabilities';
+import { hasDispose, isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
@@ -220,6 +223,7 @@ export class KimiTUI {
   aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
+  private editorReplacement: (Component & Focusable) | undefined;
   private uninstallRainbowDance: () => void;
   private signalCleanupHandlers: Array<() => void> = [];
   private isShuttingDown = false;
@@ -646,6 +650,7 @@ export class KimiTUI {
     }
     this.reverseRpcDisposers.length = 0;
     this.disposeTerminalTracking();
+    this.disposeEditorReplacement();
     await this.closeSession('shutting down');
     await this.harness.close();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
@@ -731,6 +736,7 @@ export class KimiTUI {
     ui.addChild(this.state.activityContainer);
     ui.addChild(this.state.todoPanelContainer);
     ui.addChild(this.state.queueContainer);
+    ui.addChild(this.state.reviewStatusContainer);
     ui.addChild(this.state.btwPanelContainer);
     ui.addChild(this.state.editorContainer);
     // Footer is mounted later (mountFooter), not here.
@@ -941,7 +947,8 @@ export class KimiTUI {
     if (
       this.deferUserMessages ||
       this.state.appState.streamingPhase !== 'idle' ||
-      this.state.appState.isCompacting
+      this.state.appState.isCompacting ||
+      this.state.reviewActive
     ) {
       this.enqueueMessage(input, options);
       return;
@@ -1049,6 +1056,20 @@ export class KimiTUI {
       this.sessionEventHandler.retryQueuedGoalPromotion();
     }
     this.state.ui.requestRender();
+  }
+
+  setReviewActive(active: boolean): void {
+    if (this.state.reviewActive === active) return;
+    this.state.reviewActive = active;
+    this.updateReviewStatusDisplay();
+    this.state.ui.requestRender();
+  }
+
+  private updateReviewStatusDisplay(): void {
+    this.state.reviewStatusContainer.clear();
+    if (this.state.reviewActive) {
+      this.state.reviewStatusContainer.addChild(new ReviewStatusComponent());
+    }
   }
 
   patchLivePane(patch: Partial<LivePaneState>): void {
@@ -1419,6 +1440,12 @@ export class KimiTUI {
           return buildGoalMarker(entry.goalData.change, this.state.toolOutputExpanded);
         }
         return null;
+      case 'review':
+        if (entry.reviewData === undefined) return null;
+        return new ReviewProgressComponent(entry.reviewData);
+      case 'review-summary':
+        if (entry.reviewSummaryData === undefined) return null;
+        return new ReviewSummaryComponent(entry.reviewSummaryData);
       case 'assistant': {
         if (entry.content.trimStart().startsWith('✓ Goal complete')) {
           return new GoalCompletionMessageComponent(entry.content);
@@ -1537,6 +1564,25 @@ export class KimiTUI {
   showStatus(message: string, color?: ColorToken): void {
     this.state.transcriptContainer.addChild(new StatusMessageComponent(message, color));
     this.state.ui.requestRender();
+  }
+
+  showTransientStatus(message: string, color?: ColorToken): { clear(): void } {
+    const component = new StatusMessageComponent(message, color);
+    this.state.transcriptContainer.addChild(component);
+    this.state.ui.requestRender();
+    let cleared = false;
+    return {
+      clear: () => {
+        if (cleared) return;
+        cleared = true;
+        const children = this.state.transcriptContainer.children;
+        const index = children.indexOf(component);
+        if (index < 0) return;
+        children.splice(index, 1);
+        this.state.transcriptContainer.invalidate();
+        this.state.ui.requestRender();
+      },
+    };
   }
 
   showNotice(title: string, detail?: string): void {
@@ -1815,17 +1861,27 @@ export class KimiTUI {
   // =========================================================================
 
   mountEditorReplacement(panel: Component & Focusable): void {
+    this.disposeEditorReplacement();
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
+    this.editorReplacement = panel;
     this.state.ui.setFocus(panel);
     this.state.ui.requestRender();
   }
 
   restoreEditor(): void {
+    this.disposeEditorReplacement();
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
     this.state.ui.requestRender();
+  }
+
+  private disposeEditorReplacement(): void {
+    if (this.editorReplacement !== undefined && hasDispose(this.editorReplacement)) {
+      this.editorReplacement.dispose();
+    }
+    this.editorReplacement = undefined;
   }
 
   restoreInputText(text: string): void {

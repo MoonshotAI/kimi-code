@@ -1,0 +1,1 @@
+Read the review diff for your assigned changes. This is the review-safe equivalent of running `git diff`: use it to inspect the actual changed lines before adding comments or reconciling findings. It is scoped to the active review target and records coverage for the changed sections it returns.

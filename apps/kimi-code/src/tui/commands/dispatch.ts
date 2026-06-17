@@ -47,6 +47,7 @@ import { handleProviderCommand } from './provider';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handlePluginsCommand } from './plugins';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
+import { handleReviewCommand } from './review';
 import { handleSwarmCommand } from './swarm';
 import {
   handleExportDebugZipCommand,
@@ -88,6 +89,7 @@ export {
 } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
+export { handleReviewCommand } from './review';
 export { handleGoalCommand } from './goal';
 export {
   handleExportDebugZipCommand,
@@ -110,9 +112,11 @@ export interface SlashCommandHost {
   deferUserMessages: boolean;
 
   setAppState(patch: Partial<AppState>): void;
+  setReviewActive(active: boolean): void;
   resetLivePane(): void;
   showError(msg: string): void;
   showStatus(msg: string, color?: ColorToken): void;
+  showTransientStatus(msg: string, color?: ColorToken): { clear(): void };
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   track(event: string, props?: Record<string, unknown>): void;
@@ -174,6 +178,7 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
     skillCommandMap: host.skillCommandMap,
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
+    isReviewing: host.state.reviewActive,
   });
 
   switch (intent.kind) {
@@ -310,6 +315,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'swarm':
       await handleSwarmCommand(host, args);
+      return;
+    case 'review':
+      await handleReviewCommand(host, args);
       return;
     case 'compact':
       await handleCompactCommand(host, args);

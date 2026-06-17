@@ -223,6 +223,18 @@ describe('tool-result registry', () => {
     expect(out.trim()).toBe('');
   });
 
+  it('review tool successes render no raw JSON body', () => {
+    const renderer = pickResultRenderer('GetAssignment');
+    const out = joinRender(
+      renderer(
+        call('GetAssignment'),
+        result(JSON.stringify({ id: 'review-assignment-1', role: 'reviewer' }, null, 2)),
+        ctx,
+      ),
+    );
+    expect(out.trim()).toBe('');
+  });
+
   it('Errors always fall back to truncated renderer regardless of tool', () => {
     const renderer = pickResultRenderer('Read');
     const out = strip(
@@ -240,6 +252,8 @@ describe('tool-result registry', () => {
     expect(isGenericToolResult('Read')).toBe(false);
     expect(isGenericToolResult('Grep')).toBe(false);
     expect(isGenericToolResult('Edit')).toBe(false);
+    expect(isGenericToolResult('GetAssignment')).toBe(false);
+    expect(isGenericToolResult('GetChangedFiles')).toBe(false);
   });
 
   it('truncates unknown tool output by wrapped visual lines, not raw newlines', () => {

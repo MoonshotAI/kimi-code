@@ -48,6 +48,16 @@ import type {
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
+  ReviewArtifact,
+  ReviewArtifactSummary,
+  ReviewBaseRef,
+  ReviewCommit,
+  ReviewPlanPreview,
+  ReviewResult,
+  ReviewScopeSummary,
+  ReviewStartInput,
+  ReviewTarget,
+  ReviewTargetPreview,
   SessionSummary,
   SkillSummary,
   Unsubscribe,
@@ -97,6 +107,14 @@ export interface ActivateSkillRpcInput extends SessionIdRpcInput {
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
   readonly name: string;
 }
+
+export interface PreviewReviewTargetRpcInput extends SessionIdRpcInput {
+  readonly target: ReviewTarget;
+}
+
+export type PreviewReviewPlanRpcInput = SessionIdRpcInput & ReviewStartInput;
+
+export type StartReviewRpcInput = SessionIdRpcInput & ReviewStartInput;
 
 type ResolvedCoreAPI = RPCMethods<CoreAPI>;
 
@@ -437,6 +455,97 @@ export abstract class SDKRpcClientBase {
   async listSkills(input: SessionIdRpcInput): Promise<readonly SkillSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listSkills({ sessionId: input.sessionId });
+  }
+
+  async listReviewBaseRefs(input: SessionIdRpcInput): Promise<readonly ReviewBaseRef[]> {
+    const rpc = await this.getRpc();
+    return rpc.listReviewBaseRefs({ sessionId: input.sessionId });
+  }
+
+  async getReviewScopeSummary(input: SessionIdRpcInput): Promise<ReviewScopeSummary> {
+    const rpc = await this.getRpc();
+    return rpc.getReviewScopeSummary({ sessionId: input.sessionId });
+  }
+
+  async listReviewCommits(input: SessionIdRpcInput): Promise<readonly ReviewCommit[]> {
+    const rpc = await this.getRpc();
+    return rpc.listReviewCommits({ sessionId: input.sessionId });
+  }
+
+  async previewReviewTarget(input: PreviewReviewTargetRpcInput): Promise<ReviewTargetPreview> {
+    const rpc = await this.getRpc();
+    return rpc.previewReviewTarget({
+      sessionId: input.sessionId,
+      target: input.target,
+    });
+  }
+
+  async previewReviewPlan(input: PreviewReviewPlanRpcInput): Promise<ReviewPlanPreview> {
+    const rpc = await this.getRpc();
+    return rpc.previewReviewPlan({
+      sessionId: input.sessionId,
+      target: input.target,
+      intensity: input.intensity,
+      focus: input.focus,
+    });
+  }
+
+  async startReview(input: StartReviewRpcInput): Promise<ReviewResult> {
+    const rpc = await this.getRpc();
+    return rpc.startReview({
+      sessionId: input.sessionId,
+      target: input.target,
+      intensity: input.intensity,
+      focus: input.focus,
+    });
+  }
+
+  async runPilotedReview(input: StartReviewRpcInput): Promise<ReviewResult | undefined> {
+    const rpc = await this.getRpc();
+    return rpc.runPilotedReview({
+      sessionId: input.sessionId,
+      target: input.target,
+      intensity: input.intensity,
+      focus: input.focus,
+    });
+  }
+
+  async cancelReview(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.cancelReview({ sessionId: input.sessionId });
+  }
+
+  async listReviews(input: SessionIdRpcInput): Promise<readonly ReviewArtifactSummary[]> {
+    const rpc = await this.getRpc();
+    return rpc.listReviews({ sessionId: input.sessionId });
+  }
+
+  async readReview(input: SessionIdRpcInput & { id: number }): Promise<ReviewArtifact | undefined> {
+    const rpc = await this.getRpc();
+    return rpc.readReview({ sessionId: input.sessionId, id: input.id });
+  }
+
+  async rejectReviewComment(
+    input: SessionIdRpcInput & { id: number; commentId: string; note?: string },
+  ): Promise<ReviewArtifact | undefined> {
+    const rpc = await this.getRpc();
+    return rpc.rejectReviewComment({
+      sessionId: input.sessionId,
+      id: input.id,
+      commentId: input.commentId,
+      note: input.note,
+    });
+  }
+
+  async restoreReviewComment(
+    input: SessionIdRpcInput & { id: number; commentId: string },
+  ): Promise<ReviewArtifact | undefined> {
+    const rpc = await this.getRpc();
+    return rpc.restoreReviewComment({
+      sessionId: input.sessionId,
+      id: input.id,
+      commentId: input.commentId,
+    });
   }
 
   async listBackgroundTasks(

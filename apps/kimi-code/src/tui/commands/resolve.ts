@@ -43,6 +43,7 @@ export interface ResolveSlashCommandInput {
   readonly skillCommandMap: ReadonlyMap<string, string>;
   readonly isStreaming: boolean;
   readonly isCompacting: boolean;
+  readonly isReviewing: boolean;
 }
 
 export function resolveSlashCommandInput(options: ResolveSlashCommandInput): SlashCommandIntent {
@@ -106,10 +107,11 @@ export function resolveSkillCommand(
 }
 
 export function slashCommandBusyReason(
-  options: Pick<ResolveSlashCommandInput, 'isStreaming' | 'isCompacting'>,
+  options: Pick<ResolveSlashCommandInput, 'isStreaming' | 'isCompacting' | 'isReviewing'>,
 ): SlashCommandBusyReason | undefined {
   if (options.isStreaming) return 'streaming';
   if (options.isCompacting) return 'compacting';
+  if (options.isReviewing) return 'reviewing';
   return undefined;
 }
 
@@ -119,6 +121,9 @@ export function slashBusyMessage(
 ): string {
   if (reason === 'streaming') {
     return `Cannot /${commandName} while streaming — press Esc or Ctrl-C first.`;
+  }
+  if (reason === 'reviewing') {
+    return `Cannot /${commandName} while a review is running — press Esc or Ctrl-C first.`;
   }
   return `Cannot /${commandName} while compacting — wait for compaction to finish first.`;
 }

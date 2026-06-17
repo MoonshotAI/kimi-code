@@ -68,6 +68,11 @@ import type {
   McpStartupMetrics,
   PluginInfo,
   PluginSummary,
+  PreviewReviewPlanPayload,
+  PreviewReviewTargetPayload,
+  ReadReviewPayload,
+  RejectReviewCommentPayload,
+  RestoreReviewCommentPayload,
   PromptPayload,
   ReconnectMcpServerPayload,
   RegisterToolPayload,
@@ -87,6 +92,7 @@ import type {
   SetPluginMcpServerEnabledPayload,
   SetThinkingPayload,
   SkillSummary,
+  StartReviewPayload,
   SteerPayload,
   StopBackgroundPayload,
   UndoHistoryPayload,
@@ -672,6 +678,57 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   generateAgentsMd({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): Promise<void> {
     return this.sessionApi(sessionId).generateAgentsMd(payload);
+  }
+
+  getReviewScopeSummary({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).getReviewScopeSummary(payload);
+  }
+
+  listReviewBaseRefs({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).listReviewBaseRefs(payload);
+  }
+
+  listReviewCommits({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).listReviewCommits(payload);
+  }
+
+  previewReviewTarget({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<PreviewReviewTargetPayload>) {
+    return this.sessionApi(sessionId).previewReviewTarget(payload);
+  }
+
+  previewReviewPlan({ sessionId, ...payload }: SessionScopedPayload<PreviewReviewPlanPayload>) {
+    return this.sessionApi(sessionId).previewReviewPlan(payload);
+  }
+
+  startReview({ sessionId, ...payload }: SessionScopedPayload<StartReviewPayload>) {
+    return this.sessionApi(sessionId).startReview(payload);
+  }
+
+  runPilotedReview({ sessionId, ...payload }: SessionScopedPayload<StartReviewPayload>) {
+    return this.sessionApi(sessionId).runPilotedReview(payload);
+  }
+
+  cancelReview({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): void {
+    return this.sessionApi(sessionId).cancelReview(payload);
+  }
+
+  listReviews({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).listReviews(payload);
+  }
+
+  readReview({ sessionId, ...payload }: SessionScopedPayload<ReadReviewPayload>) {
+    return this.sessionApi(sessionId).readReview(payload);
+  }
+
+  rejectReviewComment({ sessionId, ...payload }: SessionScopedPayload<RejectReviewCommentPayload>) {
+    return this.sessionApi(sessionId).rejectReviewComment(payload);
+  }
+
+  restoreReviewComment({ sessionId, ...payload }: SessionScopedPayload<RestoreReviewCommentPayload>) {
+    return this.sessionApi(sessionId).restoreReviewComment(payload);
   }
 
   startBtw({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>): Promise<string> {

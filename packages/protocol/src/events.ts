@@ -160,6 +160,68 @@ export interface GoalChange {
   readonly actor?: GoalActor;
 }
 
+export interface ReviewEventFileChange {
+  readonly path: string;
+  readonly oldPath?: string;
+  readonly status: 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked';
+  readonly additions: number;
+  readonly deletions: number;
+  readonly binary?: boolean;
+}
+
+export interface ReviewEventDiffStats {
+  readonly fileCount: number;
+  readonly additions: number;
+  readonly deletions: number;
+  readonly files: readonly ReviewEventFileChange[];
+}
+
+export interface ReviewEventAssignment {
+  readonly id: string;
+  readonly role: 'reviewer' | 'reconciliator';
+  readonly perspective?: string;
+  readonly assignedFiles: readonly string[];
+  readonly requiredCoverage: 'patch' | 'full_file';
+  readonly sourceCommentIds?: readonly string[];
+  readonly group?: string;
+}
+
+export interface ReviewEventProgress {
+  readonly assignmentId: string;
+  readonly status: 'active' | 'complete' | 'blocked';
+  readonly summary?: string;
+  readonly blocker?: string;
+}
+
+export interface ReviewEventComment {
+  readonly id: string;
+  readonly assignmentId?: string;
+  readonly sourceCommentIds?: readonly string[];
+  readonly state?: 'candidate' | 'merged' | 'dismissed';
+  readonly severity: 'critical' | 'important' | 'minor';
+  readonly path: string;
+  readonly line: number;
+  readonly title: string;
+  readonly body: string;
+  readonly evidence?: string;
+  readonly suggestedFix?: string;
+}
+
+export interface ReviewEventDismissedComment {
+  readonly commentId: string;
+  readonly reason:
+    | 'duplicate'
+    | 'out_of_scope'
+    | 'pre_existing'
+    | 'unsupported'
+    | 'low_confidence'
+    | 'superseded'
+    | 'not_actionable'
+    | 'rejected_by_user';
+  readonly summary: string;
+  readonly mergedCommentId?: string;
+}
+
 export type KimiErrorCode =
   | 'config.invalid'
   | 'session.not_found'
@@ -308,6 +370,73 @@ export interface GoalUpdatedEvent {
   readonly type: 'goal.updated';
   readonly snapshot: GoalSnapshot | null;
   readonly change?: GoalChange;
+}
+
+export interface ReviewStartedEvent {
+  readonly type: 'review.started';
+  readonly target: unknown;
+  readonly intensity: 'standard' | 'thorough' | 'deep';
+  readonly focus?: string;
+  readonly stats: ReviewEventDiffStats;
+  readonly agentSwarm?: ReviewEventAgentSwarm;
+}
+
+export interface ReviewEventAgentSwarm {
+  readonly toolCallId: string;
+  readonly args: Record<string, unknown>;
+}
+
+export interface ReviewAssignmentStartedEvent {
+  readonly type: 'review.assignment.started';
+  readonly assignment: ReviewEventAssignment;
+}
+
+export interface ReviewAssignmentProgressEvent {
+  readonly type: 'review.assignment.progress';
+  readonly progress: ReviewEventProgress;
+}
+
+export interface ReviewCommentAddedEvent {
+  readonly type: 'review.comment.added';
+  readonly comment: ReviewEventComment;
+}
+
+export interface ReviewCommentMergedEvent {
+  readonly type: 'review.comment.merged';
+  readonly comment: ReviewEventComment;
+}
+
+export interface ReviewCommentDismissedEvent {
+  readonly type: 'review.comment.dismissed';
+  readonly dismissal: ReviewEventDismissedComment;
+}
+
+export interface ReviewCompletedEvent {
+  readonly type: 'review.completed';
+  readonly status: 'complete' | 'blocked';
+  readonly summary: string;
+  readonly comments: readonly ReviewEventComment[];
+  /** Short ordinal of the persisted review artifact, when one was saved. */
+  readonly reviewId?: number;
+}
+
+/** Emitted when the user rejects a persisted review comment from the browser. */
+export interface ReviewCommentRejectedEvent {
+  readonly type: 'review.comment.rejected';
+  readonly reviewId: number;
+  readonly commentId: string;
+  readonly rejected: boolean;
+  readonly note?: string;
+}
+
+export interface ReviewCancelledEvent {
+  readonly type: 'review.cancelled';
+}
+
+export interface ReviewFailedEvent {
+  readonly type: 'review.failed';
+  readonly message: string;
+  readonly error?: KimiErrorPayload;
 }
 
 export interface SkillActivatedEvent {
@@ -556,6 +685,16 @@ export type AgentEvent =
   | ToolResultEvent
   | ToolListUpdatedEvent
   | McpServerStatusEvent
+  | ReviewStartedEvent
+  | ReviewAssignmentStartedEvent
+  | ReviewAssignmentProgressEvent
+  | ReviewCommentAddedEvent
+  | ReviewCommentMergedEvent
+  | ReviewCommentDismissedEvent
+  | ReviewCommentRejectedEvent
+  | ReviewCompletedEvent
+  | ReviewCancelledEvent
+  | ReviewFailedEvent
   | SubagentSpawnedEvent
   | SubagentStartedEvent
   | SubagentSuspendedEvent

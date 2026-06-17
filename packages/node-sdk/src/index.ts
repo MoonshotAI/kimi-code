@@ -62,6 +62,18 @@ export {
 } from '@moonshot-ai/agent-core';
 export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agent-core';
 
+// Review diff helpers — the TUI renders the persisted diff in the reader.
+export {
+  anchorHunkHeader,
+  fileDiffForPath,
+  parseUnifiedDiff,
+} from '@moonshot-ai/agent-core';
+export type {
+  ReviewDiffHunk,
+  ReviewDiffLine,
+  ReviewFileDiff,
+} from '@moonshot-ai/agent-core';
+
 // Process-wide HTTP proxy bootstrap — installed once at CLI startup so all
 // outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.
 export { installGlobalProxyDispatcher } from '@moonshot-ai/agent-core';

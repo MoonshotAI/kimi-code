@@ -71,6 +71,74 @@ describe('ChoicePickerComponent', () => {
     expect(out).toContain('    Automatically approve tool actions and plan transitions.');
   });
 
+  it('keeps compact option spacing by default', () => {
+    const picker = new ChoicePickerComponent({
+      title: 'Pick one',
+      options: [
+        { value: 'a', label: 'Alpha', description: 'First option.' },
+        { value: 'b', label: 'Beta', description: 'Second option.' },
+      ],
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const out = picker.render(120).map(strip);
+    const descriptionIndex = out.indexOf('    First option.');
+    expect(out[descriptionIndex + 1]).toBe('    Beta');
+  });
+
+  it('inserts a blank line between options in relaxed spacing', () => {
+    const picker = new ChoicePickerComponent({
+      title: 'Pick one',
+      optionSpacing: 'relaxed',
+      options: [
+        { value: 'a', label: 'Alpha', description: 'First option.' },
+        { value: 'b', label: 'Beta', description: 'Second option.' },
+      ],
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const out = picker.render(120).map(strip);
+    const descriptionIndex = out.indexOf('    First option.');
+    expect(out[descriptionIndex + 1]).toBe('');
+    expect(out[descriptionIndex + 2]).toBe('    Beta');
+  });
+
+  it('animates wave labels and stops requesting renders after dispose', () => {
+    vi.useFakeTimers();
+    try {
+      const requestRender = vi.fn();
+      const picker = new ChoicePickerComponent({
+        title: 'Pick one',
+        requestRender,
+        options: [
+          { value: 'deep', label: 'Deep Review', labelAnimation: 'wave' },
+        ],
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+      });
+
+      const firstFrame = picker.render(120).join('\n');
+      vi.advanceTimersByTime(180);
+      expect(requestRender).toHaveBeenCalled();
+      const secondFrame = picker.render(120).join('\n');
+
+      expect(strip(firstFrame)).toContain('Deep Review');
+      expect(strip(secondFrame)).toContain('Deep Review');
+      if (firstFrame.includes('\u001B[') && secondFrame.includes('\u001B[')) {
+        expect(secondFrame).not.toBe(firstFrame);
+      }
+
+      requestRender.mockClear();
+      picker.dispose();
+      vi.advanceTimersByTime(360);
+      expect(requestRender).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('renders domain selector wrappers with their configured options', () => {
     const onSelect = vi.fn();
     const onCancel = vi.fn();
@@ -143,5 +211,80 @@ describe('ChoicePickerComponent', () => {
 
     picker.handleInput(' ');
     expect(onSelect).toHaveBeenCalledWith('a');
+  });
+
+  it('renders a custom option row via render() with the pointer prepended', () => {
+    const picker = new ChoicePickerComponent({
+      title: 'Select a commit',
+      options: [
+        {
+          value: 'sha1',
+          label: 'sha1 first',
+          render: (selected) => [`HASH ${selected ? 'sel' : 'unsel'}`, 'meta line'],
+        },
+      ],
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = picker.render(80).map(strip);
+    const head = lines.find((line) => line.includes('HASH'));
+    const meta = lines.find((line) => line.includes('meta line'));
+    expect(head).toBeDefined();
+    expect(meta).toBeDefined();
+    // First (selected) row carries the pointer; the meta line is indented.
+    expect(head).toContain('❯');
+    expect(head).toContain('HASH sel');
+    expect(meta!.startsWith('    ')).toBe(true);
+  });
+});
+
+describe('ChoicePickerComponent scroll mode', () => {
+  const DOWN = '[B';
+
+  function scrollPicker() {
+    return new ChoicePickerComponent({
+      title: 'Select a commit',
+      options: Array.from({ length: 5 }, (_, i) => ({ value: String(i), label: `item-${String(i)}` })),
+      searchable: true,
+      scroll: true,
+      pageSize: 3,
+      endHint: 'Showing the most recent — refine your search.',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+  }
+
+  it('never shows a page indicator', () => {
+    const picker = scrollPicker();
+    expect(strip(picker.render(80).join('\n'))).not.toContain('Page');
+  });
+
+  it('shows a "more" affordance until the end, then the end hint', () => {
+    const picker = scrollPicker();
+    expect(strip(picker.render(80).join('\n'))).toContain('↓ more');
+
+    for (let i = 0; i < 4; i++) picker.handleInput(DOWN); // scroll to the last item
+    const atEnd = strip(picker.render(80).join('\n'));
+    expect(atEnd).toContain('item-4');
+    expect(atEnd).toContain('Showing the most recent — refine your search.');
+    expect(atEnd).not.toContain('↓ more');
+  });
+
+  it('filters by searchText, not just the label', () => {
+    const picker = new ChoicePickerComponent({
+      title: 'Select a commit',
+      options: [
+        { value: '1', label: 'one', searchText: 'one feature/login alice@example.com' },
+        { value: '2', label: 'two', searchText: 'two bugfix bob@example.com' },
+      ],
+      searchable: true,
+      scroll: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    for (const ch of 'login') picker.handleInput(ch);
+    const out = strip(picker.render(80).join('\n'));
+    expect(out).toContain('one');
+    expect(out).not.toContain('two');
   });
 });

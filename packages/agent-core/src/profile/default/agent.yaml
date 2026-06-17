@@ -24,6 +24,7 @@ tools:
   - WebSearch
   - Agent
   - AgentSwarm
+  - RunCodeReview
   - FetchURL
   - AskUserQuestion
   - EnterPlanMode
@@ -41,3 +42,7 @@ subagents:
     description: Fast codebase exploration with prompt-enforced read-only behavior.
   plan:
     description: Read-only implementation planning and architecture design.
+  reviewer:
+    description: Read-only code review worker that inspects assigned changes and submits actionable findings.
+  reconciliator:
+    description: Read-only code review reconciler that merges valid source comments and dismisses weak ones.

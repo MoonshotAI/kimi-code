@@ -3,6 +3,7 @@ export * from './session';
 export * from './rpc';
 export * from './config';
 export * from './flags';
+export * from './review';
 export * from './session/export';
 export * from './telemetry';
 export * from './errors';

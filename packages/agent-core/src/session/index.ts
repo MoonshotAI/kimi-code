@@ -5,7 +5,7 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
 import type { Logger, SessionLogHandle } from '#/logging/types';
-import type { KimiConfig, SDKSessionRPC } from '#/rpc';
+import type { AgentEvent, KimiConfig, SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentOptions, type AgentType } from '../agent';
@@ -40,6 +40,31 @@ import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import { SessionSubagentHost } from './subagent-host';
 import type { ToolServices } from '../tools/support/services';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
+import {
+  buildReviewArtifact,
+  buildReviewFanOutPrompt,
+  buildReviewPilotPrompt,
+  getReviewScopeSummary,
+  listReviewBaseRefs,
+  listReviewCommits,
+  previewReviewOrchestratorPlan,
+  previewReviewOrchestratorTarget,
+  readReviewPatch,
+  ReviewArtifactStore,
+  ReviewOrchestrator,
+  SessionReviewRuntime,
+  type ReviewArtifact,
+  type ReviewArtifactSummary,
+  type ReviewBaseRef,
+  type ReviewCommit,
+  type ReviewFanOutOptions,
+  type ReviewPlanPreview,
+  type ReviewResult,
+  type ReviewScopeSummary,
+  type ReviewStartInput,
+  type ReviewTarget,
+  type ReviewTargetPreview,
+} from '../review';
 import { abortError } from '../utils/abort';
 
 export interface SessionOptions {
@@ -145,6 +170,12 @@ export class Session {
   private readonly logHandle: SessionLogHandle | undefined;
   readonly hookEngine: HookEngine;
   readonly experimentalFlags: ExperimentalFlagResolver;
+  readonly review = new SessionReviewRuntime();
+  private reviewStartInFlight = false;
+  private activeReviewOrchestrator: ReviewOrchestrator | undefined;
+  /** Result of the most recent RunCodeReview fan-out, read back by {@link runPilotedReview}. */
+  private lastPilotedReviewResult: ReviewResult | undefined;
+  private reviewStoreCache: ReviewArtifactStore | undefined;
   private toolKaos: Kaos;
   private persistenceKaos: Kaos;
   private agentIdCounter = 0;
@@ -174,6 +205,23 @@ export class Session {
       this.logHandle?.logger ??
       (options.id === undefined ? log : log.createChild({ sessionId: options.id }));
     this.rpc = options.rpc;
+    this.review.setEventSink({
+      assignmentStarted: (assignment) => {
+        this.emitReviewEvent({ type: 'review.assignment.started', assignment });
+      },
+      progressUpdated: (progress) => {
+        this.emitReviewEvent({ type: 'review.assignment.progress', progress });
+      },
+      commentAdded: (comment) => {
+        this.emitReviewEvent({ type: 'review.comment.added', comment });
+      },
+      commentMerged: (comment) => {
+        this.emitReviewEvent({ type: 'review.comment.merged', comment });
+      },
+      commentDismissed: (dismissal) => {
+        this.emitReviewEvent({ type: 'review.comment.dismissed', dismissal });
+      },
+    });
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
     this.hookEngine = new HookEngine(options.hooks, {
       cwd: options.kaos.getcwd(),
@@ -441,6 +489,221 @@ export class Session {
     }
   }
 
+  async listReviewBaseRefs(): Promise<readonly ReviewBaseRef[]> {
+    this.assertCodeReviewEnabled();
+    const mainAgent = await this.ensureAgentResumed('main');
+    return listReviewBaseRefs(mainAgent.kaos);
+  }
+
+  async getReviewScopeSummary(): Promise<ReviewScopeSummary> {
+    this.assertCodeReviewEnabled();
+    const mainAgent = await this.ensureAgentResumed('main');
+    return getReviewScopeSummary(mainAgent.kaos);
+  }
+
+  async listReviewCommits(): Promise<readonly ReviewCommit[]> {
+    this.assertCodeReviewEnabled();
+    const mainAgent = await this.ensureAgentResumed('main');
+    return listReviewCommits(mainAgent.kaos);
+  }
+
+  async previewReviewTarget(target: ReviewTarget): Promise<ReviewTargetPreview> {
+    this.assertCodeReviewEnabled();
+    const mainAgent = await this.ensureAgentResumed('main');
+    return previewReviewOrchestratorTarget(mainAgent.kaos, target);
+  }
+
+  async previewReviewPlan(input: ReviewStartInput): Promise<ReviewPlanPreview> {
+    this.assertCodeReviewEnabled();
+    const mainAgent = await this.ensureAgentResumed('main');
+    return previewReviewOrchestratorPlan(mainAgent.kaos, input);
+  }
+
+  async startReview(input: ReviewStartInput): Promise<ReviewResult> {
+    this.assertCodeReviewEnabled();
+    if (
+      this.reviewStartInFlight
+      || this.activeReviewOrchestrator !== undefined
+      || this.review.getActiveRun() !== null
+      || this.hasActiveTurn
+    ) {
+      throw new KimiError(
+        ErrorCodes.TURN_AGENT_BUSY,
+        'Cannot start a review while another turn is running',
+      );
+    }
+    this.reviewStartInFlight = true;
+    try {
+      const mainAgent = await this.ensureAgentResumed('main');
+      const orchestrator = new ReviewOrchestrator({
+        kaos: mainAgent.kaos,
+        systemKaos: this.systemContextKaos(mainAgent.kaos.getcwd()),
+        kimiHomeDir: this.options.kimiHomeDir,
+        runtime: this.review,
+        launcher: mainAgent.subagentHost!,
+        parentToolCallId: 'review',
+        emitEvent: (event) => {
+          this.emitReviewEvent(event);
+        },
+      });
+      this.activeReviewOrchestrator = orchestrator;
+      try {
+        const result = await orchestrator.start(input);
+        return await this.persistReviewResult(mainAgent.kaos, result);
+      } finally {
+        if (this.activeReviewOrchestrator === orchestrator) {
+          this.activeReviewOrchestrator = undefined;
+        }
+      }
+    } finally {
+      this.reviewStartInFlight = false;
+    }
+  }
+
+  /**
+   * Runs the reviewer fan-out from inside a main-agent turn (driven by the
+   * `RunCodeReview` tool). Unlike {@link startReview}, this does not guard on
+   * `hasActiveTurn` — it is expected to run during a turn — and cancellation
+   * is the caller's tool-call signal rather than {@link cancelReview}.
+   */
+  async runReviewFanOut(input: ReviewStartInput, options: ReviewFanOutOptions): Promise<ReviewResult> {
+    this.assertCodeReviewEnabled();
+    const mainAgent = await this.ensureAgentResumed('main');
+    const orchestrator = new ReviewOrchestrator({
+      kaos: mainAgent.kaos,
+      systemKaos: this.systemContextKaos(mainAgent.kaos.getcwd()),
+      kimiHomeDir: this.options.kimiHomeDir,
+      runtime: this.review,
+      launcher: mainAgent.subagentHost!,
+      parentToolCallId: options.parentToolCallId,
+      signal: options.signal,
+      emitEvent: (event) => {
+        this.emitReviewEvent(event);
+      },
+    });
+    const result = await orchestrator.start(input);
+    const persisted = await this.persistReviewResult(mainAgent.kaos, result);
+    this.lastPilotedReviewResult = persisted;
+    return persisted;
+  }
+
+  /**
+   * Drives the two-turn piloted review: turn 1 has the main agent study the
+   * changes and write a background briefing + directions; turn 2 has it call
+   * RunCodeReview to fan out the reviewers. Both turns are ordinary, persisted
+   * conversation turns. Returns the fan-out result, or undefined if the pilot
+   * turn did not complete or the agent never ran the review.
+   */
+  async runPilotedReview(input: ReviewStartInput): Promise<ReviewResult | undefined> {
+    this.assertCodeReviewEnabled();
+    if (this.hasActiveTurn || this.reviewStartInFlight || this.review.getActiveRun() !== null) {
+      throw new KimiError(
+        ErrorCodes.TURN_AGENT_BUSY,
+        'Cannot start a review while another turn is running',
+      );
+    }
+    const mainAgent = await this.ensureAgentResumed('main');
+    const preview = await previewReviewOrchestratorTarget(mainAgent.kaos, input.target);
+
+    mainAgent.turn.prompt(
+      [{
+        type: 'text',
+        text: buildReviewPilotPrompt({
+          target: preview.target,
+          stats: preview.stats,
+          intensity: input.intensity,
+          focus: input.focus,
+        }),
+      }],
+      { kind: 'system_trigger', name: 'review_pilot' },
+    );
+    const pilotEnd = await mainAgent.turn.waitForCurrentTurn();
+    if (pilotEnd.event.reason !== 'completed') return undefined;
+
+    this.lastPilotedReviewResult = undefined;
+    mainAgent.turn.prompt(
+      [{
+        type: 'text',
+        text: buildReviewFanOutPrompt({ target: preview.target, intensity: input.intensity }),
+      }],
+      { kind: 'system_trigger', name: 'review_fanout' },
+    );
+    await mainAgent.turn.waitForCurrentTurn();
+    return this.lastPilotedReviewResult;
+  }
+
+  cancelReview(): void {
+    this.assertCodeReviewEnabled();
+    if (this.activeReviewOrchestrator === undefined) {
+      if (this.review.getActiveRun() !== null) this.review.clear();
+      return;
+    }
+    this.activeReviewOrchestrator.cancel();
+  }
+
+  async listReviews(): Promise<readonly ReviewArtifactSummary[]> {
+    this.assertCodeReviewEnabled();
+    return this.reviewStore.list();
+  }
+
+  async readReview(id: number): Promise<ReviewArtifact | undefined> {
+    this.assertCodeReviewEnabled();
+    return this.reviewStore.read(id);
+  }
+
+  async rejectReviewComment(
+    id: number,
+    commentId: string,
+    note?: string,
+  ): Promise<ReviewArtifact | undefined> {
+    this.assertCodeReviewEnabled();
+    const artifact = await this.reviewStore.rejectComment(id, commentId, note);
+    if (artifact !== undefined) {
+      this.emitReviewEvent({
+        type: 'review.comment.rejected',
+        reviewId: id,
+        commentId,
+        rejected: true,
+        ...(note === undefined ? {} : { note }),
+      });
+    }
+    return artifact;
+  }
+
+  async restoreReviewComment(id: number, commentId: string): Promise<ReviewArtifact | undefined> {
+    this.assertCodeReviewEnabled();
+    const artifact = await this.reviewStore.restoreComment(id, commentId);
+    if (artifact !== undefined) {
+      this.emitReviewEvent({
+        type: 'review.comment.rejected',
+        reviewId: id,
+        commentId,
+        rejected: false,
+      });
+    }
+    return artifact;
+  }
+
+  private get reviewStore(): ReviewArtifactStore {
+    this.reviewStoreCache ??= new ReviewArtifactStore(this.persistenceKaos, this.options.homedir);
+    return this.reviewStoreCache;
+  }
+
+  /** Persist a finished review and stamp the returned result with its ordinal. */
+  private async persistReviewResult(kaos: Kaos, result: ReviewResult): Promise<ReviewResult> {
+    if (result.comments.length === 0) return result;
+    try {
+      const diff = await readReviewPatch(kaos, result.target);
+      const artifact = await this.reviewStore.save(
+        buildReviewArtifact({ result, createdAt: new Date().toISOString(), diff }),
+      );
+      return { ...result, reviewId: artifact.id, reviewSlug: artifact.slug };
+    } catch (error) {
+      this.log.error('review artifact persist failed', error);
+      return result;
+    }
+  }
+
   get hasActiveTurn(): boolean {
     for (const agent of this.readyAgents()) {
       if (agent.turn.hasActiveTurn) return true;
@@ -568,6 +831,11 @@ export class Session {
       type,
       kaos: this.toolKaos.withCwd(cwd),
       toolServices: this.options.toolServices,
+      review: config.review,
+      reviewFanOut:
+        type === 'main' && this.experimentalFlags.enabled('code_review')
+          ? (input, options) => this.runReviewFanOut(input, options)
+          : undefined,
       config: this.options.config,
       homedir,
       skills: this.skills,
@@ -680,6 +948,18 @@ export class Session {
       throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
     return agent;
+  }
+
+  private assertCodeReviewEnabled(): void {
+    if (this.experimentalFlags.enabled('code_review')) return;
+    throw new KimiError(
+      ErrorCodes.REQUEST_INVALID,
+      'Code review is experimental. Enable KIMI_CODE_EXPERIMENTAL_CODE_REVIEW to use review RPC methods.',
+    );
+  }
+
+  private emitReviewEvent(event: AgentEvent): void {
+    void this.rpc.emitEvent({ agentId: 'main', ...event });
   }
 
   private async triggerSessionStart(source: 'startup' | 'resume'): Promise<void> {

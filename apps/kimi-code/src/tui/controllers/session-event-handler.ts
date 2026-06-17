@@ -14,6 +14,15 @@ import type {
   GoalChange,
   GoalUpdatedEvent,
   HookResultEvent,
+  ReviewAssignmentProgressEvent,
+  ReviewAssignmentStartedEvent,
+  ReviewCancelledEvent,
+  ReviewCommentAddedEvent,
+  ReviewCommentDismissedEvent,
+  ReviewCommentMergedEvent,
+  ReviewCompletedEvent,
+  ReviewFailedEvent,
+  ReviewStartedEvent,
   Session,
   SessionMetaUpdatedEvent,
   SkillActivatedEvent,
@@ -42,6 +51,10 @@ import {
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
 import { buildGoalCompletionMessage } from '../utils/goal-completion';
+import {
+  formatReviewStats,
+  THOROUGH_REVIEW_PERSPECTIVE_LABELS,
+} from '../utils/review-options';
 import {
   argsRecord,
   formatErrorPayload,
@@ -95,6 +108,7 @@ export interface SessionEventHost {
 
   requireSession(): Session;
   setAppState(patch: Partial<AppState>): void;
+  setReviewActive(active: boolean): void;
   patchLivePane(patch: Partial<LivePaneState>): void;
   resetLivePane(): void;
   showError(msg: string): void;
@@ -135,6 +149,12 @@ export class SessionEventHandler {
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
+  private reviewAgentSwarmToolCallId: string | undefined;
+  private readonly reviewAgentSwarmReviewerAssignmentIds = new Set<string>();
+  private activeReviewIntensity: ReviewStartedEvent['intensity'] | undefined;
+  private reviewCommentsAdded = 0;
+  private readonly reviewAssignmentRoles = new Map<string, ReviewAssignmentStartedEvent['assignment']['role']>();
+  private readonly pendingReviewAssignmentProgress = new Map<string, ReviewAssignmentProgressEvent['progress']>();
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
   private currentTurnHasAssistantText = false;
@@ -150,12 +170,19 @@ export class SessionEventHandler {
     this.renderedSkillActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
+    this.reviewAgentSwarmToolCallId = undefined;
+    this.reviewAgentSwarmReviewerAssignmentIds.clear();
+    this.activeReviewIntensity = undefined;
+    this.reviewAssignmentRoles.clear();
+    this.pendingReviewAssignmentProgress.clear();
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
     this.currentTurnHasAssistantText = false;
     this.pendingModelBlockedFallback = undefined;
     this.queuedGoalPromotionPending = false;
     this.queuedGoalPromotionInFlight = false;
+    this.host.setReviewActive(false);
+    this.host.state.reviewResultPending = false;
     this.clearQueuedGoalPromotionTimer();
     this.stopAllMcpServerStatusSpinners();
   }
@@ -251,6 +278,15 @@ export class SessionEventHandler {
       case 'agent.status.updated': this.handleStatusUpdate(event); break;
       case 'session.meta.updated': this.handleSessionMetaChanged(event); break;
       case 'goal.updated': this.handleGoalUpdated(event); break;
+      case 'review.started': this.handleReviewStarted(event); break;
+      case 'review.assignment.started': this.handleReviewAssignmentStarted(event); break;
+      case 'review.assignment.progress': this.handleReviewAssignmentProgress(event); break;
+      case 'review.comment.added': this.handleReviewCommentAdded(event); break;
+      case 'review.comment.merged': this.handleReviewCommentMerged(event); break;
+      case 'review.comment.dismissed': this.handleReviewCommentDismissed(event); break;
+      case 'review.completed': this.handleReviewCompleted(event); break;
+      case 'review.cancelled': this.handleReviewCancelled(event); break;
+      case 'review.failed': this.handleReviewFailed(event); break;
       case 'skill.activated': this.handleSkillActivated(event); break;
       case 'error': this.handleSessionError(event); break;
       case 'warning': this.handleSessionWarning(event); break;
@@ -318,6 +354,200 @@ export class SessionEventHandler {
         stale: event.origin.stale,
       },
     });
+  }
+
+  private handleReviewStarted(event: ReviewStartedEvent): void {
+    this.host.setReviewActive(true);
+    this.activeReviewIntensity = event.intensity;
+    this.reviewCommentsAdded = 0;
+    if (event.agentSwarm !== undefined) {
+      this.reviewAgentSwarmToolCallId = event.agentSwarm.toolCallId;
+      this.subAgentEventHandler.handleReviewSwarmToolCallStarted(
+        event.agentSwarm.toolCallId,
+        argsRecord(event.agentSwarm.args),
+      );
+    }
+    this.appendReviewProgress({
+      state: 'started',
+      title: 'Code review started',
+      detail: `${formatReviewStats(event.stats)} · ${event.intensity}`,
+    });
+    this.appendReviewProgress({
+      state: 'assignment',
+      title: reviewersStartedTitle(event.intensity),
+      detail: event.intensity === 'thorough' ? thoroughReviewDetail(event.stats) : undefined,
+    });
+  }
+
+  private handleReviewAssignmentStarted(event: ReviewAssignmentStartedEvent): void {
+    this.reviewAssignmentRoles.set(event.assignment.id, event.assignment.role);
+    if (this.reviewAgentSwarmToolCallId !== undefined) {
+      this.subAgentEventHandler.handleReviewSwarmAssignmentStarted(
+        this.reviewAgentSwarmToolCallId,
+        event.assignment,
+      );
+    }
+    const pendingProgress = this.pendingReviewAssignmentProgress.get(event.assignment.id);
+    this.pendingReviewAssignmentProgress.delete(event.assignment.id);
+    if (
+      this.reviewAgentSwarmToolCallId !== undefined &&
+      event.assignment.role === 'reviewer'
+    ) {
+      this.reviewAgentSwarmReviewerAssignmentIds.add(event.assignment.id);
+      return;
+    }
+    if (this.activeReviewIntensity === 'thorough' && event.assignment.group === 'thorough') {
+      if (event.assignment.role === 'reviewer') return;
+      this.appendReviewProgress({
+        state: 'assignment',
+        title: 'Reconciliation running',
+        detail: assignmentDetail(
+          event.assignment.assignedFiles.length,
+          event.assignment.perspective,
+        ),
+      });
+      if (pendingProgress !== undefined) {
+        this.appendReviewAssignmentProgress(pendingProgress, event.assignment.role);
+      }
+      return;
+    }
+    // Reviewers are announced once at review start (see handleReviewStarted),
+    // so we don't emit a per-reviewer "started" line here.
+    if (event.assignment.role !== 'reviewer') {
+      this.appendReviewProgress({
+        state: 'assignment',
+        title: `${reviewWorkerRoleLabel(event.assignment.role)} started`,
+        detail: assignmentDetail(event.assignment.assignedFiles.length, event.assignment.perspective),
+      });
+    }
+    if (pendingProgress !== undefined) {
+      this.appendReviewAssignmentProgress(pendingProgress, event.assignment.role);
+    }
+  }
+
+  private handleReviewAssignmentProgress(event: ReviewAssignmentProgressEvent): void {
+    if (this.reviewAgentSwarmToolCallId !== undefined) {
+      this.subAgentEventHandler.handleReviewSwarmAssignmentProgress(
+        this.reviewAgentSwarmToolCallId,
+        event.progress,
+      );
+    }
+    if (event.progress.status === 'active') return;
+    if (this.reviewAgentSwarmReviewerAssignmentIds.has(event.progress.assignmentId)) return;
+    const role = this.reviewAssignmentRoles.get(event.progress.assignmentId);
+    if (role === undefined) {
+      this.pendingReviewAssignmentProgress.set(event.progress.assignmentId, event.progress);
+      return;
+    }
+    if (this.activeReviewIntensity === 'thorough' && role === 'reviewer') return;
+    this.appendReviewAssignmentProgress(event.progress, role);
+  }
+
+  private appendReviewAssignmentProgress(
+    progress: ReviewAssignmentProgressEvent['progress'],
+    role: ReviewAssignmentStartedEvent['assignment']['role'],
+  ): void {
+    this.appendReviewProgress({
+      state: 'progress',
+      title: `${reviewWorkerRoleLabel(role)} ${progress.status}`,
+      detail: progress.summary ?? progress.blocker,
+    });
+  }
+
+  private handleReviewCommentAdded(event: ReviewCommentAddedEvent): void {
+    if (this.reviewAgentSwarmToolCallId !== undefined) {
+      this.subAgentEventHandler.handleReviewSwarmCommentAdded(
+        this.reviewAgentSwarmToolCallId,
+        event.comment,
+      );
+    }
+    // Don't insert one line per comment — just count, and announce the total
+    // once when the review completes (see handleReviewCompleted).
+    this.reviewCommentsAdded += 1;
+  }
+
+  private handleReviewCommentMerged(_event: ReviewCommentMergedEvent): void {
+    // Reconciliation internals: a merge/dismiss per finding is noise. The
+    // reconciliator renders as its own sub-agent element and emits a single
+    // "Reconciled N into M" completion summary, which is what users want.
+  }
+
+  private handleReviewCommentDismissed(_event: ReviewCommentDismissedEvent): void {
+    // See handleReviewCommentMerged — suppressed in favor of the summary.
+  }
+
+  private handleReviewCompleted(event: ReviewCompletedEvent): void {
+    const commandOwnsFinalReviewResult = this.host.state.reviewResultPending;
+    this.host.setReviewActive(false);
+    this.finishReviewAgentSwarm('', false);
+    this.reviewAgentSwarmReviewerAssignmentIds.clear();
+    this.activeReviewIntensity = undefined;
+    this.reviewAssignmentRoles.clear();
+    this.pendingReviewAssignmentProgress.clear();
+    if (this.reviewCommentsAdded > 0) {
+      this.appendReviewProgress({ state: 'comment', title: commentsAddedTitle(this.reviewCommentsAdded) });
+    }
+    this.reviewCommentsAdded = 0;
+    if (commandOwnsFinalReviewResult) return;
+    this.appendReviewProgress({
+      state: 'completed',
+      title: event.status === 'complete' ? 'Review completed' : 'Review blocked',
+      detail: event.summary,
+    });
+  }
+
+  private handleReviewCancelled(_event: ReviewCancelledEvent): void {
+    this.host.setReviewActive(false);
+    this.markActiveAgentSwarmsCancelled();
+    this.reviewAgentSwarmToolCallId = undefined;
+    this.reviewAgentSwarmReviewerAssignmentIds.clear();
+    this.activeReviewIntensity = undefined;
+    this.reviewAssignmentRoles.clear();
+    this.pendingReviewAssignmentProgress.clear();
+    this.appendReviewProgress({
+      state: 'cancelled',
+      title: 'Review cancelled',
+    });
+  }
+
+  private handleReviewFailed(event: ReviewFailedEvent): void {
+    this.host.setReviewActive(false);
+    this.finishReviewAgentSwarm(event.message, true);
+    this.reviewAgentSwarmReviewerAssignmentIds.clear();
+    this.activeReviewIntensity = undefined;
+    this.reviewAssignmentRoles.clear();
+    this.pendingReviewAssignmentProgress.clear();
+    this.appendReviewProgress({
+      state: 'failed',
+      title: reviewFailureTitle(event),
+      detail: reviewFailureDetail(event),
+    });
+  }
+
+  private appendReviewProgress(data: NonNullable<TranscriptEntry['reviewData']>): void {
+    this.host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'review',
+      renderMode: 'notice',
+      content: data.title,
+      reviewData: data,
+    });
+  }
+
+  private finishReviewAgentSwarm(output: string, isError: boolean): void {
+    const toolCallId = this.reviewAgentSwarmToolCallId;
+    if (toolCallId === undefined) return;
+    this.subAgentEventHandler.handleAgentSwarmToolResult(
+      toolCallId,
+      {
+        tool_call_id: toolCallId,
+        output,
+        is_error: isError,
+        synthetic: true,
+      },
+      isError,
+    );
+    this.reviewAgentSwarmToolCallId = undefined;
   }
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
@@ -1062,4 +1292,65 @@ export class SessionEventHandler {
     state.footer.setBackgroundCounts({ bashTasks, agentTasks });
     state.ui.requestRender();
   }
+}
+
+function reviewFailureTitle(event: ReviewFailedEvent): string {
+  return event.error?.code.startsWith('provider.') === true
+    ? 'Review stopped'
+    : 'Review failed';
+}
+
+function reviewFailureDetail(event: ReviewFailedEvent): string {
+  const error = event.error;
+  if (error === undefined) return event.message;
+  const formatted = formatErrorPayload(error);
+  switch (error.code) {
+    case 'provider.rate_limit':
+      return `The reviewer model returned a rate-limit error. You can retry the review or continue chatting. ${formatted}`;
+    case 'provider.api_error':
+    case 'provider.auth_error':
+    case 'provider.connection_error':
+      return `The reviewer model returned an error. You can retry the review or continue chatting. ${formatted}`;
+    default:
+      return formatted;
+  }
+}
+
+function assignmentDetail(fileCount: number, perspective: string | undefined): string {
+  const files = `${String(fileCount)} ${fileCount === 1 ? 'file' : 'files'}`;
+  return perspective === undefined ? files : `${perspective} · ${files}`;
+}
+
+function thoroughReviewDetail(stats: ReviewStartedEvent['stats']): string {
+  return [
+    `${String(THOROUGH_REVIEW_PERSPECTIVE_LABELS.length)} reviewer agents running in parallel`,
+    `Perspectives: ${THOROUGH_REVIEW_PERSPECTIVE_LABELS.join(', ')}`,
+    formatReviewStats(stats),
+  ].join(' · ');
+}
+
+function reviewWorkerRoleLabel(role: ReviewAssignmentStartedEvent['assignment']['role']): string {
+  return role === 'reconciliator' ? 'Reconciliator' : 'Reviewer';
+}
+
+function reviewersStartedTitle(intensity: ReviewStartedEvent['intensity']): string {
+  switch (intensity) {
+    case 'standard':
+      return 'Sub-agent reviewer started';
+    case 'thorough':
+      return 'Sub-agent reviewers started';
+    case 'deep':
+      return 'Swarm reviewers started';
+  }
+}
+
+const NUMBER_WORDS = [
+  'Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
+];
+
+function commentsAddedTitle(count: number): string {
+  const word = count >= 0 && count <= 10 ? NUMBER_WORDS[count]! : String(count);
+  const noun = count === 1 ? 'review comment' : 'review comments';
+  const verb = count === 1 ? 'was' : 'were';
+  return `${word} ${noun} ${verb} added`;
 }

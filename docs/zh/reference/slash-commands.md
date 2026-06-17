@@ -48,6 +48,7 @@
 | `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。 | 是 |
 | `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到 `auto` 或 `yolo`。 | 否 |
 | `/goal [...]` | — | 开始或管理目标模式 | 见下文 |
+| `/review [<focus>]` | — | 审查选定的代码变更；可选 focus 文本用于说明审查重点。需要启用 `code_review` 实验功能 | 否 |
 
 ::: warning 注意
 `/yolo` 会跳过普通工具调用的审批确认，使用前请确保了解可能的风险。Plan 模式的退出审批不会被 `/yolo` 跳过；Plan 模式下的 `Bash` 也按 `/yolo` 的普通放行规则处理。
@@ -90,6 +91,18 @@ kimi -p "/goal 修复 checkout 测试失败"
 ```
 
 Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `3` 退出，在目标暂停时以 `6` 退出。其它 `/goal` 子命令，包括 `next`，都是 TUI 控制命令，不由 `kimi -p` 处理。
+
+## 代码审查
+
+`/review [<focus>]` 会为选定的本地变更启动只读代码审查流程。该命令只有在启用 `code_review` 实验功能后可用。你可以在 `/experiments` 中开启，也可以在 `config.toml` 中设置 `[experimental].code_review = true`，或用 `KIMI_CODE_EXPERIMENTAL_CODE_REVIEW=1` 启动 CLI。
+
+命令会先询问审查范围：未提交的工作区变更、当前分支相对某个分支、tag 或 commit 的变更、当前分支超出 upstream 分支的所有 commit，或者某个指定 commit 的变更。随后它会预览变更文件数和增删行数，再询问审查强度：
+
+- **Standard**：一个 reviewer，适合日常变更。
+- **Thorough**：多个有不同重点的 reviewer，然后通过一个协调步骤合并或驳回候选评论。
+- **Deep Review**：基于 `AgentSwarm` 的审查，把文件拆成有重叠的重点 reviewer 分组，并按审查视角分组协调评论。
+
+可选 focus 文本用于说明优先级，例如 `/review focus on security` 或 `/review check API compatibility`。审查进行中按 `Esc` 时，会先要求确认取消，而不是立刻停止审查。最终评论会保留指向来源审查评论的链接。
 
 ## 信息与状态
 

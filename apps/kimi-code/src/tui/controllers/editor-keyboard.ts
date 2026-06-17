@@ -1,9 +1,11 @@
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
+import type { Component, Focusable } from '@earendil-works/pi-tui';
 
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
 import { parseImageMeta } from '#/utils/image/image-mime';
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 
+import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
   CTRL_C_HINT,
   CTRL_D_HINT,
@@ -15,6 +17,7 @@ import { formatErrorMessage } from '../utils/event-payload';
 import type { ImageAttachmentStore } from '../utils/image-attachment-store';
 import type { PendingExit } from '../types';
 import type { TUIState } from '../tui-state';
+import type { ColorToken } from '../theme';
 import type { BtwPanelController } from './btw-panel';
 
 export interface EditorKeyboardHost {
@@ -27,6 +30,9 @@ export interface EditorKeyboardHost {
   steerMessage(session: Session, input: string[]): void;
   recallLastQueued(): string | undefined;
   showError(msg: string): void;
+  showStatus(msg: string, color?: ColorToken): void;
+  mountEditorReplacement(panel: Component & Focusable): void;
+  restoreEditor(): void;
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
   updateQueueDisplay(): void;
@@ -127,6 +133,10 @@ export class EditorKeyboardController {
         return;
       }
       if (host.btwPanelController.closeOrCancel()) {
+        return;
+      }
+      if (host.state.reviewActive) {
+        this.confirmCancelReview();
         return;
       }
       if (host.state.appState.streamingPhase !== 'idle') {
@@ -235,6 +245,38 @@ export class EditorKeyboardController {
 
   private cancelCurrentStream(): void {
     void this.host.session?.cancel();
+  }
+
+  private confirmCancelReview(): void {
+    this.host.mountEditorReplacement(
+      new ChoicePickerComponent({
+        title: 'Stop review?',
+        notice: 'Running reviewers will be cancelled. Partial review comments may be lost.',
+        options: [
+          {
+            value: 'stop',
+            label: 'Stop review',
+            tone: 'danger',
+          },
+          {
+            value: 'continue',
+            label: 'Continue review',
+          },
+        ],
+        onSelect: (value) => {
+          this.host.restoreEditor();
+          if (value !== 'stop') return;
+          void this.host.session?.cancelReview().catch((error: unknown) => {
+            const message = formatErrorMessage(error);
+            this.host.showError(`Failed to cancel review: ${message}`);
+          });
+          this.host.showStatus('Stopping review…');
+        },
+        onCancel: () => {
+          this.host.restoreEditor();
+        },
+      }),
+    );
   }
 
   private cancelCurrentCompaction(): void {
