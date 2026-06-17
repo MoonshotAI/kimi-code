@@ -234,6 +234,7 @@ async function runCommand(
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: options.env ? { ...process.env, ...options.env } : process.env,
+      windowsHide: true,
     });
     let stdout = '';
     let stderr = '';
