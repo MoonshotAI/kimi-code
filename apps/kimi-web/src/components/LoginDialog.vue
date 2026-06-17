@@ -158,12 +158,6 @@ async function retryFlow(): Promise<void> {
   await startFlow();
 }
 
-function openBrowser(): void {
-  if (flow.value) {
-    window.open(flow.value.verificationUriComplete, '_blank', 'noopener,noreferrer');
-  }
-}
-
 async function copyCode(): Promise<void> {
   if (!flow.value) return;
   try {
@@ -224,34 +218,39 @@ function formatSeconds(s: number): string {
 
       <!-- Device-code step -->
       <template v-else-if="step === 'device-code' && flow">
-        <div class="dc-body">
-          <div class="dc-instruction">
-            {{ t('login.instruction') }}
-          </div>
+        <div class="nb">
+          <div class="nb-lead">{{ t('login.lead') }}</div>
 
-          <!-- Verification URI -->
-          <div class="dc-uri-row">
-            <a
-              :href="flow.verificationUriComplete"
-              class="dc-uri-btn"
-              target="_blank"
-              rel="noopener noreferrer"
-              :title="flow.verificationUriComplete"
-            >
-              <svg class="dc-link-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M5 2H2a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V7"/>
-                <path d="M8 1h3v3M11 1 6 6"/>
-              </svg>
-              {{ flow.verificationUri }}
-            </a>
-          </div>
+          <!-- Primary path: open the complete URI (device code already embedded) -->
+          <a
+            class="nb-primary"
+            :href="flow.verificationUriComplete"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {{ t('login.authorizeInBrowser') }}
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M6 2H2.5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8"/>
+              <path d="M9.5 1.5h3v3M12.5 1.5 7 7"/>
+            </svg>
+          </a>
 
-          <!-- User code box -->
-          <div class="dc-code-wrap">
-            <div class="dc-code-label">{{ t('login.deviceCode') }}</div>
-            <div class="dc-code-row">
-              <span class="dc-code-value">{{ flow.userCode }}</span>
-              <button class="dc-copy-btn" :class="{ 'is-copied': copied }" @click="copyCode">
+          <!-- Divider -->
+          <div class="nb-or">{{ t('login.orDivider') }}</div>
+
+          <!-- Fallback path: open the plain URI and type the code manually -->
+          <div class="nb-fallback">
+            <div class="nb-fb-text">
+              {{ t('login.fallbackPrefix') }}<a
+                class="nb-fb-link"
+                :href="flow.verificationUri"
+                target="_blank"
+                rel="noopener noreferrer"
+              >{{ flow.verificationUri }}</a>{{ t('login.fallbackSuffix') }}
+            </div>
+            <div class="nb-code-row">
+              <span class="nb-code">{{ flow.userCode }}</span>
+              <button class="nb-copy" :class="{ 'is-copied': copied }" @click="copyCode">
                 <template v-if="copied">
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="1,6 4,9 11,2"/>
@@ -269,25 +268,19 @@ function formatSeconds(s: number): string {
             </div>
           </div>
 
-          <!-- Status row -->
-          <div class="dc-status-row">
-            <span class="dc-spinner" :aria-label="t('login.waitingAuth')">
+          <!-- Status -->
+          <div class="nb-status">
+            <span class="nb-spinner" :aria-label="t('login.waitingAuth')">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="var(--blue)" stroke-width="1.5">
                 <circle cx="7" cy="7" r="5" stroke-dasharray="20 12" stroke-linecap="round">
                   <animateTransform attributeName="transform" type="rotate" from="0 7 7" to="360 7 7" dur="1s" repeatCount="indefinite"/>
                 </circle>
               </svg>
             </span>
-            <span class="dc-status-text">{{ t('login.waitingAuthEllipsis') }}</span>
-            <span class="dc-countdown">{{ formatSeconds(secondsLeft) }}</span>
+            <span class="nb-status-text">{{ t('login.waitingAutoClose') }}</span>
+            <span class="nb-countdown">{{ formatSeconds(secondsLeft) }}</span>
           </div>
         </div>
-
-        <div class="actions">
-          <button class="act-btn" @click="openBrowser">{{ t('login.openBrowser') }}</button>
-          <button class="act-btn" @click="close">{{ t('login.cancel') }}</button>
-        </div>
-        <div class="footer-hint">{{ t('login.footerHint') }}</div>
       </template>
 
       <!-- Success -->
@@ -317,7 +310,6 @@ function formatSeconds(s: number): string {
           <button class="act-btn primary" @click="retryFlow">{{ t('login.retry') }}</button>
           <button class="act-btn" @click="close">{{ t('login.closeBtn') }}</button>
         </div>
-        <div class="footer-hint">{{ t('login.escClose') }}</div>
       </template>
 
       <!-- Error (endpoint missing or network failure) -->
@@ -335,7 +327,6 @@ function formatSeconds(s: number): string {
           <button class="act-btn primary" @click="retryFlow">{{ t('login.retry') }}</button>
           <button class="act-btn" @click="close">{{ t('login.closeBtn') }}</button>
         </div>
-        <div class="footer-hint">{{ t('login.escClose') }}</div>
       </template>
 
     </div>
@@ -420,72 +411,96 @@ function formatSeconds(s: number): string {
 }
 
 /* Device-code body */
-.dc-body {
-  padding: 16px 16px 8px;
+.nb {
+  padding: 18px 16px 14px;
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
-.dc-instruction {
+.nb-lead {
   font-size: var(--ui-font-size);
   color: var(--text);
   line-height: 1.6;
 }
-.dc-uri-row { display: flex; }
-.dc-uri-btn {
-  display: inline-flex;
+
+/* Primary path: open the complete URI (device code embedded) */
+.nb-primary {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  background: var(--blue);
+  color: var(--bg);
+  border: 1px solid var(--blue);
+  border-radius: 5px;
   font-family: var(--mono);
   font-size: var(--ui-font-size);
-  color: var(--blue);
-  background: var(--soft);
-  border: 1px solid var(--bd);
-  border-radius: 3px;
-  padding: 5px 10px;
+  font-weight: 600;
+  padding: 11px 14px;
   cursor: pointer;
   text-decoration: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
 }
-.dc-uri-btn:hover { background: var(--bd); }
-.dc-link-icon { flex: none; }
+.nb-primary:hover { background: var(--blue2); border-color: var(--blue2); }
 
-.dc-code-wrap {
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--panel);
-  padding: 10px 12px;
-}
-.dc-code-label {
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
+/* "or" divider */
+.nb-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 6px;
+  font-size: max(9px, calc(var(--ui-font-size) - 2.5px));
+  letter-spacing: 0.06em;
 }
-.dc-code-row {
+.nb-or::before,
+.nb-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+/* Fallback path: open plain URI, type the code */
+.nb-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.nb-fb-text {
+  font-size: calc(var(--ui-font-size) - 1.5px);
+  color: var(--dim);
+  line-height: 1.6;
+}
+.nb-fb-link {
+  color: var(--blue);
+  text-decoration: none;
+  border-bottom: 1px solid var(--bd);
+}
+.nb-fb-link:hover { border-bottom-color: var(--blue); }
+.nb-code-row {
   display: flex;
   align-items: center;
   gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 9px 11px;
 }
-.dc-code-value {
-  font-size: calc(var(--ui-font-size) + 8px);
-  font-weight: 700;
-  color: var(--ink);
-  letter-spacing: 0.12em;
+.nb-code {
   flex: 1;
   font-family: var(--mono);
+  font-size: calc(var(--ui-font-size) + 5px);
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.14em;
 }
-.dc-copy-btn {
+.nb-copy {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   font-family: var(--mono);
   font-size: calc(var(--ui-font-size) - 2.5px);
-  padding: 4px 10px;
+  padding: 5px 11px;
   border: 1px solid var(--line);
   border-radius: 3px;
   background: none;
@@ -494,19 +509,20 @@ function formatSeconds(s: number): string {
   flex: none;
   transition: background 0.1s;
 }
-.dc-copy-btn:hover { background: var(--soft); }
-.dc-copy-btn.is-copied { color: var(--ok); border-color: var(--ok); }
+.nb-copy:hover { background: var(--soft); }
+.nb-copy.is-copied { color: var(--ok); border-color: var(--ok); }
 
-.dc-status-row {
+/* Status */
+.nb-status {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 0;
+  padding-top: 11px;
   border-top: 1px solid var(--line2);
 }
-.dc-spinner { display: flex; align-items: center; }
-.dc-status-text { font-size: var(--ui-font-size); color: var(--dim); flex: 1; }
-.dc-countdown {
+.nb-spinner { display: flex; align-items: center; }
+.nb-status-text { font-size: calc(var(--ui-font-size) - 1.5px); color: var(--dim); flex: 1; }
+.nb-countdown {
   font-size: calc(var(--ui-font-size) - 2.5px);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
@@ -536,16 +552,6 @@ function formatSeconds(s: number): string {
 }
 .act-btn.primary:hover { background: var(--blue2); }
 
-/* Footer */
-.footer-hint {
-  padding: 6px 14px;
-  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
-  color: var(--faint);
-  border-top: 1px solid var(--line2);
-  background: var(--panel);
-  border-radius: 0 0 4px 4px;
-}
-
 @media (max-width: 640px) {
   .backdrop {
     align-items: stretch;
@@ -563,24 +569,27 @@ function formatSeconds(s: number): string {
     overflow: hidden;
   }
   .center-body,
-  .dc-body {
+  .nb {
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
-  .dc-code-row,
-  .dc-status-row,
+  .nb-code-row,
+  .nb-status,
   .actions {
     flex-wrap: wrap;
   }
-  .dc-code-value {
+  .nb-code {
     min-width: 0;
     overflow-wrap: anywhere;
     letter-spacing: 0.08em;
   }
-  .dc-copy-btn {
+  .nb-copy {
     min-height: 34px;
   }
-  .dc-status-text {
+  .nb-primary {
+    min-height: 44px;
+  }
+  .nb-status-text {
     min-width: 0;
   }
   .actions {
