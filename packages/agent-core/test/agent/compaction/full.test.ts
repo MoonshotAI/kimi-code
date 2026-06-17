@@ -6,8 +6,12 @@ import {
   APIConnectionError,
   APIContextOverflowError,
   APIStatusError,
+  generate as runKosongGenerate,
   UNKNOWN_CAPABILITY,
+  type ChatProvider,
   type Message,
+  type StreamedMessage,
+  type StreamedMessagePart,
   type ToolCall,
 } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -544,8 +548,13 @@ describe('FullCompaction', () => {
     await completed;
 
     expect(attempts).toBe(3);
+    // Each empty summary shrinks the compacted prefix before retrying, so the
+    // recovered summary compacts only the older exchange and leaves the recent
+    // one in history.
     expect(ctx.compactHistory()).toEqual([
       { role: 'assistant', text: 'Recovered compacted summary.' },
+      { role: 'user', text: 'recent user two' },
+      { role: 'assistant', text: 'recent assistant two' },
     ]);
     expect(
       ctx.allEvents.filter((event) => event.event === 'compaction.completed'),
@@ -557,6 +566,99 @@ describe('FullCompaction', () => {
       }),
     ]);
     await ctx.expectResumeMatches();
+  });
+
+  it('reduces the compacted prefix and retries when the model returns only thinking content', async () => {
+    // End-to-end through the real kosong generate(): a think-only stream (think
+    // parts, no text, no tool calls) makes generate() itself throw
+    // APIEmptyResponseError. Compaction must treat that like a truncated summary
+    // — shrink the compacted prefix and retry — rather than resend the identical
+    // request that produced no summary.
+    vi.useFakeTimers();
+    const firstThinkOnly = deferred<void>();
+    const inputs: string[][] = [];
+    const generate = realKosongGenerate((attempt, history) => {
+      inputs.push(inputHistorySnapshot(history));
+      if (attempt === 1) {
+        firstThinkOnly.resolve();
+        return mockStreamedMessage([
+          { type: 'think', think: 'Reasoning about the summary but never writing it...' },
+        ]);
+      }
+      return mockStreamedMessage([{ type: 'text', text: 'Recovered compacted summary.' }]);
+    });
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const compacted = ctx.once('context.apply_compaction');
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await firstThinkOnly.promise;
+    await vi.advanceTimersByTimeAsync(10_000);
+    await compacted;
+    await completed;
+
+    expect(inputs).toHaveLength(2);
+    // The retry compacts a strictly smaller prefix than the first attempt.
+    expect(inputs[1]!.length).toBeLessThan(inputs[0]!.length);
+    expect(ctx.compactHistory()).toEqual([
+      { role: 'assistant', text: 'Recovered compacted summary.' },
+      { role: 'user', text: 'recent user two' },
+      { role: 'assistant', text: 'recent assistant two' },
+    ]);
+    await ctx.expectResumeMatches();
+  });
+
+  it('fails after exhausting retries when the model only ever returns thinking content', async () => {
+    // End-to-end through the real kosong generate(): every attempt is think-only,
+    // so generate() keeps throwing APIEmptyResponseError. Compaction shrinks the
+    // prefix on each retry but eventually exhausts MAX_COMPACTION_RETRY_ATTEMPTS
+    // and fails without ever applying a summary.
+    vi.useFakeTimers();
+    const records: TelemetryRecord[] = [];
+    const inputs: string[][] = [];
+    const generate = realKosongGenerate((_attempt, history) => {
+      inputs.push(inputHistorySnapshot(history));
+      return mockStreamedMessage([
+        { type: 'think', think: 'Still only thinking, no summary produced.' },
+      ]);
+    });
+    const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await vi.advanceTimersByTimeAsync(60_000);
+    await failed;
+
+    // MAX_COMPACTION_RETRY_ATTEMPTS attempts, with prefix reduction between them.
+    expect(inputs).toHaveLength(5);
+    expect(inputs[1]!.length).toBeLessThan(inputs[0]!.length);
+    expect(records).toContainEqual({
+      event: 'compaction_failed',
+      properties: expect.objectContaining({
+        source: 'manual',
+        retryCount: 4,
+        errorType: 'APIEmptyResponseError',
+      }),
+    });
+    // No summary was ever applied; the original history is left intact.
+    expect(ctx.compactHistory()).toEqual([
+      { role: 'user', text: 'old user one' },
+      { role: 'assistant', text: 'old assistant one' },
+      { role: 'user', text: 'recent user two' },
+      { role: 'assistant', text: 'recent assistant two' },
+    ]);
   });
 
   it('waits before retrying compaction generation after a retryable failure', async () => {
@@ -1908,6 +2010,47 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
     },
     finishReason: 'completed',
     rawFinishReason: 'stop',
+  };
+}
+
+function mockStreamedMessage(parts: readonly StreamedMessagePart[]): StreamedMessage {
+  return {
+    get id(): string | null {
+      return 'mock-stream';
+    },
+    get usage() {
+      return null;
+    },
+    finishReason: null,
+    rawFinishReason: null,
+    async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
+      for (const part of parts) {
+        yield part;
+      }
+    },
+  };
+}
+
+// Runs the REAL kosong generate() over a scripted provider stream so think-only
+// and empty responses exercise kosong's actual APIEmptyResponseError path rather
+// than a mocked generate function that throws directly.
+function realKosongGenerate(
+  script: (attempt: number, history: readonly Message[]) => StreamedMessage,
+): GenerateFn {
+  let attempt = 0;
+  return (chat, systemPrompt, tools, history, callbacks, options) => {
+    attempt += 1;
+    const currentAttempt = attempt;
+    const provider: ChatProvider = {
+      name: 'mock-think-only',
+      modelName: chat.modelName,
+      thinkingEffort: chat.thinkingEffort,
+      generate: () => Promise.resolve(script(currentAttempt, history)),
+      withThinking() {
+        return provider;
+      },
+    };
+    return runKosongGenerate(provider, systemPrompt, tools, history, callbacks, options);
   };
 }
 
