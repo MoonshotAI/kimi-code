@@ -1,5 +1,17 @@
 # @moonshot-ai/kimi-code
 
+## 0.17.1
+
+### Patch Changes
+
+- [#861](https://github.com/MoonshotAI/kimi-code/pull/861) [`bd09795`](https://github.com/MoonshotAI/kimi-code/commit/bd0979578bcad5fe3bf989e022b7823824f3f25c) - Prevent the web login dialog from closing when clicking the backdrop.
+
+- [#860](https://github.com/MoonshotAI/kimi-code/pull/860) [`0e2877b`](https://github.com/MoonshotAI/kimi-code/commit/0e2877bee347466ed6cc8afda9f9faf338069012) - Stop the background local server from locking the directory it was started in.
+
+- [#860](https://github.com/MoonshotAI/kimi-code/pull/860) [`0e2877b`](https://github.com/MoonshotAI/kimi-code/commit/0e2877bee347466ed6cc8afda9f9faf338069012) - Fix the local server failing to start in the background on the native binary.
+
+- [#861](https://github.com/MoonshotAI/kimi-code/pull/861) [`bd09795`](https://github.com/MoonshotAI/kimi-code/commit/bd0979578bcad5fe3bf989e022b7823824f3f25c) - Group the default model dropdown in web settings by provider.
+
 ## 0.17.0
 
 ### Minor Changes
