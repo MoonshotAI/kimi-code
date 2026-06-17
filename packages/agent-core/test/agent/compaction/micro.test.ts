@@ -478,16 +478,16 @@ describe('MicroCompaction', () => {
       message_count: 9,
       cache_age_ms: 61 * MINUTE,
       truncatedToolResultCount: 2,
-      beforeTokens: expect.any(Number),
-      afterTokens: expect.any(Number),
-      contextTokensBefore: expect.any(Number),
-      contextTokensAfter: expect.any(Number),
+      truncatedToolResultTokensBefore: expect.any(Number),
+      truncatedToolResultTokensAfter: expect.any(Number),
+      tokensBefore: expect.any(Number),
+      tokensAfter: expect.any(Number),
     });
-    expect(numberProperty(event, 'beforeTokens')).toBeGreaterThan(
-      numberProperty(event, 'afterTokens'),
+    expect(numberProperty(event, 'truncatedToolResultTokensBefore')).toBeGreaterThan(
+      numberProperty(event, 'truncatedToolResultTokensAfter'),
     );
-    expect(numberProperty(event, 'contextTokensBefore')).toBeGreaterThan(
-      numberProperty(event, 'contextTokensAfter'),
+    expect(numberProperty(event, 'tokensBefore')).toBeGreaterThan(
+      numberProperty(event, 'tokensAfter'),
     );
 
     expect(ctx.agent.context.messages).toHaveLength(9);
@@ -533,8 +533,8 @@ describe('MicroCompaction', () => {
       previous_cutoff: 4,
       cutoff: 7,
       truncatedToolResultCount: 2,
-      contextTokensBefore: expectedContextTokensBefore,
-      contextTokensAfter: estimateTokensForMessages(ctx.agent.context.messages),
+      tokensBefore: expectedContextTokensBefore,
+      tokensAfter: estimateTokensForMessages(ctx.agent.context.messages),
     });
   });
 

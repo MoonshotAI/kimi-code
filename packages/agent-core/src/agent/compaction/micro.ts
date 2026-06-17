@@ -73,15 +73,19 @@ export class MicroCompaction {
       // Whole-context length before/after this cutoff change, mirroring the
       // `tokensBefore`/`tokensAfter` fields on `compaction_finished` so the
       // two compaction paths can be compared on the same axis.
-      const contextTokensBefore =
-        rawContextTokens - previousEffect.beforeTokens + previousEffect.afterTokens;
-      const contextTokensAfter =
-        rawContextTokens - effect.beforeTokens + effect.afterTokens;
+      const tokensBefore =
+        rawContextTokens -
+        previousEffect.truncatedToolResultTokensBefore +
+        previousEffect.truncatedToolResultTokensAfter;
+      const tokensAfter =
+        rawContextTokens -
+        effect.truncatedToolResultTokensBefore +
+        effect.truncatedToolResultTokensAfter;
       this.agent.telemetry.track('micro_compaction_finished', {
         ...config,
         ...effect,
-        contextTokensBefore,
-        contextTokensAfter,
+        tokensBefore,
+        tokensAfter,
         previous_cutoff: previousCutoff,
         cutoff: nextCutoff,
         message_count: history.length,
@@ -121,8 +125,8 @@ export class MicroCompaction {
   ) {
     let markerTokenCount: number | undefined;
     let truncatedToolResultCount = 0;
-    let beforeTokens = 0;
-    let afterTokens = 0;
+    let truncatedToolResultTokensBefore = 0;
+    let truncatedToolResultTokensAfter = 0;
     for (let i = 0; i < messages.length && i < cutoff; i++) {
       const message = messages[i];
       if (message?.role !== 'tool' || message.toolCallId === undefined) continue;
@@ -134,9 +138,13 @@ export class MicroCompaction {
         { type: 'text', text: this.config.truncatedMarker },
       ]);
       truncatedToolResultCount += 1;
-      beforeTokens += contentTokens;
-      afterTokens += markerTokenCount;
+      truncatedToolResultTokensBefore += contentTokens;
+      truncatedToolResultTokensAfter += markerTokenCount;
     }
-    return { truncatedToolResultCount, beforeTokens, afterTokens };
+    return {
+      truncatedToolResultCount,
+      truncatedToolResultTokensBefore,
+      truncatedToolResultTokensAfter,
+    };
   }
 }
