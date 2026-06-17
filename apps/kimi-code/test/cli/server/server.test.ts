@@ -612,6 +612,31 @@ describe('resolveDaemonPort', () => {
   });
 });
 
+describe('resolveDaemonProgram', () => {
+  it('uses the absolute script path outside SEA mode', async () => {
+    const { resolveDaemonProgram } = await import('#/cli/sub/server/daemon');
+    expect(resolveDaemonProgram(['node', '/opt/kimi/dist/cli.mjs'], '/tmp', '/usr/bin/node', false)).toBe('/opt/kimi/dist/cli.mjs');
+  });
+
+  it('normalizes a relative executable path against cwd outside SEA mode', async () => {
+    const { resolveDaemonProgram } = await import('#/cli/sub/server/daemon');
+    expect(resolveDaemonProgram(['node', './kimi'], '/tmp/kimi-bin', '/usr/bin/node', false)).toBe('/tmp/kimi-bin/kimi');
+  });
+
+  it('returns execPath in SEA mode when argv[1] is a bare command name', async () => {
+    // Reproduces `kimi web` from the shell: argv[1] is the invoked command
+    // name (`kimi`), not a path. Resolving it against cwd produced `<cwd>/kimi`
+    // and crashed the spawn with ENOENT.
+    const { resolveDaemonProgram } = await import('#/cli/sub/server/daemon');
+    expect(resolveDaemonProgram(['/Users/x/.kimi-code/bin/kimi', 'kimi', 'web'], '/Users/x', '/Users/x/.kimi-code/bin/kimi', true)).toBe('/Users/x/.kimi-code/bin/kimi');
+  });
+
+  it('returns execPath in SEA mode for a spawned `server` child', async () => {
+    const { resolveDaemonProgram } = await import('#/cli/sub/server/daemon');
+    expect(resolveDaemonProgram(['/Users/x/.kimi-code/bin/kimi', 'server', 'run'], '/Users/x', '/Users/x/.kimi-code/bin/kimi', true)).toBe('/Users/x/.kimi-code/bin/kimi');
+  });
+});
+
 describe('createIdleShutdownHandler', () => {
   beforeEach(() => {
     vi.useFakeTimers();

@@ -17,7 +17,8 @@
  */
 
 import { spawn } from 'node:child_process';
-import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, openSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
@@ -127,17 +128,51 @@ export async function resolveDaemonPort(
   return getFreePort(host);
 }
 
+interface NodeSeaModule {
+  isSea(): boolean;
+}
+
+const nodeRequire = createRequire(import.meta.url);
+let cachedSea: NodeSeaModule | null | undefined;
+
+function loadSeaModule(): NodeSeaModule | null {
+  if (cachedSea !== undefined) return cachedSea;
+  try {
+    cachedSea = nodeRequire('node:sea') as NodeSeaModule;
+  } catch {
+    cachedSea = null;
+  }
+  return cachedSea;
+}
+
+/** True when running as a compiled single-executable (SEA / native) binary. */
+function detectSea(): boolean {
+  const sea = loadSeaModule();
+  if (sea === null) return false;
+  try {
+    return sea.isSea();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Absolute path to the CLI entry that should be re-execed to run the daemon.
  * Mirrors `resolveSupervisorProgram` in `packages/server/src/svc/program.ts`:
- * when the CLI is a compiled single binary, `argv[1]` is literally `server`
- * and we must fall back to `process.execPath`.
+ * when the CLI is a compiled single binary, `argv[1]` is the invoked command
+ * name (e.g. `kimi`) or the first user argument — never a script path — so we
+ * must re-exec `process.execPath` itself.
  */
-function resolveDaemonProgram(
+export function resolveDaemonProgram(
   argv: readonly string[] = process.argv,
   cwd: string = process.cwd(),
   execPath: string = process.execPath,
+  isSea: boolean = detectSea(),
 ): string {
+  // In a SEA binary `argv[1]` is not a script path, so resolving it against
+  // `cwd` would produce a bogus path (e.g. `<cwd>/kimi`) and crash the spawn
+  // with ENOENT. Always re-exec the binary itself.
+  if (isSea) return execPath;
   const candidate = argv[1] === 'server' ? execPath : (argv[1] ?? execPath);
   return isAbsolute(candidate) ? candidate : resolve(cwd, candidate);
 }
@@ -171,6 +206,17 @@ function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
   const logFd = openSync(logPath, 'a');
   try {
     const child = spawn(program, args, { detached: true, stdio: ['ignore', logFd, logFd] });
+    child.once('error', (error) => {
+      // A spawn failure (e.g. ENOENT) surfaces asynchronously on the child,
+      // not as a thrown error. Without a listener Node would crash the parent
+      // with an unhandled 'error' event; record it instead and let the polling
+      // loop in `ensureDaemon` report the timeout.
+      try {
+        appendFileSync(logPath, `[spawner] failed to launch daemon: ${error.message}\n`);
+      } catch {
+        // Best-effort; the log directory may already be gone.
+      }
+    });
     child.unref();
   } finally {
     // `spawn` dups the fd into the child; the parent must not keep it open.

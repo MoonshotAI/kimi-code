@@ -140,6 +140,20 @@ describe('resolveSupervisorProgram', () => {
   it('normalizes a relative executable path to an absolute path', () => {
     expect(resolveSupervisorProgram(['node', './kimi'], '/tmp/kimi-bin')).toBe('/tmp/kimi-bin/kimi');
   });
+
+  it('uses the absolute script path outside SEA mode', () => {
+    expect(resolveSupervisorProgram(['node', '/opt/kimi/dist/cli.mjs'], '/tmp', '/usr/bin/node', false)).toBe('/opt/kimi/dist/cli.mjs');
+  });
+
+  it('returns execPath in SEA mode even when argv[1] is a bare command name', () => {
+    // Reproduces `kimi web` from the shell: argv[1] is the invoked command
+    // name, not a path — resolving it against cwd produced `<cwd>/kimi` (ENOENT).
+    expect(resolveSupervisorProgram(['/Users/x/.kimi-code/bin/kimi', 'kimi', 'web'], '/Users/x', '/Users/x/.kimi-code/bin/kimi', true)).toBe('/Users/x/.kimi-code/bin/kimi');
+  });
+
+  it('returns execPath in SEA mode for a spawned `server` child', () => {
+    expect(resolveSupervisorProgram(['/Users/x/.kimi-code/bin/kimi', 'server', 'run'], '/Users/x', '/Users/x/.kimi-code/bin/kimi', true)).toBe('/Users/x/.kimi-code/bin/kimi');
+  });
 });
 
 describe('launchd manager — install', () => {
