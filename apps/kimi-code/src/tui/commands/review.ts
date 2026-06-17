@@ -299,6 +299,8 @@ async function resolveReviewTargetFromScope(
         title: 'Select a commit',
         options: commits.map((entry) => reviewCommitChoice(entry, statAlign)),
         searchable: true,
+        scroll: true,
+        endHint: 'Showing the 50 most recent commits — refine your search by hash, branch, tag, author, or message.',
       });
       return commit === undefined ? undefined : { scope: 'single_commit', commit };
     }
@@ -392,6 +394,8 @@ function promptChoice(
     readonly options: readonly ReviewChoice[];
     readonly searchable?: boolean;
     readonly optionSpacing?: 'compact' | 'relaxed';
+    readonly scroll?: boolean;
+    readonly endHint?: string;
   },
 ): Promise<string | undefined> {
   return new Promise((resolve) => {
@@ -402,6 +406,8 @@ function promptChoice(
         options: input.options.map(toChoiceOption),
         searchable: input.searchable,
         optionSpacing: input.optionSpacing,
+        scroll: input.scroll,
+        endHint: input.endHint,
         requestRender: () => {
           host.state.ui.requestRender();
         },
@@ -423,6 +429,7 @@ function toChoiceOption(choice: ReviewChoice): ChoiceOption {
     value: choice.value,
     label: choice.label,
     description: choice.description,
+    searchText: choice.searchText,
     render: choice.render,
   };
 }

@@ -160,6 +160,24 @@ describe('reviewCommitChoice', () => {
     expect(choice.label).toBe('3980a555 feat(review): run deep review through AgentSwarm');
   });
 
+  it('builds search text from hash, message, author, email, and refs', () => {
+    const choice = reviewCommitChoice({
+      ...base,
+      author: 'Ada Lovelace',
+      authorEmail: 'ada@example.com',
+      body: 'rationale in the body',
+      refs: ['feature/login', 'v1.2.0'],
+    });
+    const search = choice.searchText ?? '';
+    expect(search).toContain(base.sha); // full hash
+    expect(search).toContain('3980a555'); // short hash
+    expect(search).toContain('Ada Lovelace');
+    expect(search).toContain('ada@example.com');
+    expect(search).toContain('rationale in the body');
+    expect(search).toContain('feature/login');
+    expect(search).toContain('v1.2.0');
+  });
+
   it('renders the hash, bold title, and colored stats line', () => {
     const [head, meta] = reviewCommitChoice(base).render!(false, 120).map(strip);
     expect(head).toContain('3980a555');

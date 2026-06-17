@@ -37,6 +37,8 @@ export interface ChoiceOption {
    * the default styled label + description. `width` is the content width.
    */
   readonly render?: (selected: boolean, width: number) => readonly string[];
+  /** Text the option is fuzzy-matched against; defaults to label + description. */
+  readonly searchText?: string;
 }
 
 export interface ChoicePickerOptions {
@@ -50,6 +52,15 @@ export interface ChoicePickerOptions {
   readonly searchable?: boolean;
   /** Items per page. Lists longer than this paginate. */
   readonly pageSize?: number;
+  /**
+   * When true, the list scrolls continuously (a window that slides with the
+   * cursor) instead of paginating — no page numbers, no total count. Use for
+   * lists where the loaded set is deliberately capped, so pagination would
+   * misleadingly imply completeness.
+   */
+  readonly scroll?: boolean;
+  /** Note shown once the bottom of a `scroll` list is reached. */
+  readonly endHint?: string;
   readonly optionSpacing?: 'compact' | 'relaxed';
   readonly requestRender?: () => void;
   readonly onSelect: (value: string) => void;
@@ -58,6 +69,8 @@ export interface ChoicePickerOptions {
 
 const WAVE_LABEL_TOKENS: readonly ColorToken[] = ['primary', 'accent', 'success'];
 const WAVE_LABEL_INTERVAL_MS = 120;
+/** Visible rows for a scroll-mode list when no pageSize is given. */
+const DEFAULT_VISIBLE = 8;
 
 function wrapDescription(text: string, width: number): string[] {
   const maxWidth = Math.max(1, width);
@@ -95,7 +108,7 @@ export class ChoicePickerComponent extends Container implements Focusable {
     const currentIdx = opts.options.findIndex((o) => o.value === opts.currentValue);
     this.list = new SearchableList({
       items: opts.options,
-      toSearchText: (o) => `${o.label} ${o.description ?? ''}`,
+      toSearchText: (o) => o.searchText ?? `${o.label} ${o.description ?? ''}`,
       pageSize: opts.pageSize,
       initialIndex: Math.max(currentIdx, 0),
       searchable: opts.searchable === true,
@@ -144,14 +157,22 @@ export class ChoicePickerComponent extends Container implements Focusable {
 
   override render(width: number): string[] {
     const searchable = this.opts.searchable === true;
+    const scroll = this.opts.scroll === true;
     const view = this.list.view();
     const options = view.items;
+
+    // In scroll mode the window slides with the cursor; otherwise it paginates.
+    const windowSize = Math.max(1, this.opts.pageSize ?? DEFAULT_VISIBLE);
+    const start = scroll
+      ? Math.min(Math.max(0, view.selectedIndex - Math.floor(windowSize / 2)), Math.max(0, options.length - windowSize))
+      : view.page.start;
+    const end = scroll ? Math.min(start + windowSize, options.length) : view.page.end;
 
     // Header mirrors the model dialog (see model-selector.ts): border, title
     // with a "(type to search)" suffix until you type, the hint, a blank, then
     // the search line. Key vocabulary is lowercase to match every list dialog.
     const navParts = ['↑↓ navigate'];
-    if (view.page.pageCount > 1) navParts.push('←→ page');
+    if (!scroll && view.page.pageCount > 1) navParts.push('←→ page');
     navParts.push('Enter select', 'Esc cancel');
     const hint = this.opts.hint ?? navParts.join(' · ');
 
@@ -175,7 +196,7 @@ export class ChoicePickerComponent extends Container implements Focusable {
     if (options.length === 0) {
       lines.push(currentTheme.fg('textMuted', '   No matches'));
     }
-    for (let i = view.page.start; i < view.page.end; i++) {
+    for (let i = start; i < end; i++) {
       const opt = options[i]!;
       const isSelected = i === view.selectedIndex;
       const isCurrent = opt.value === this.opts.currentValue;
@@ -187,7 +208,7 @@ export class ChoicePickerComponent extends Container implements Focusable {
         if (isCurrent) first += ' ' + currentTheme.fg('success', CURRENT_MARK);
         lines.push(first);
         for (const extra of rendered.slice(1)) lines.push('    ' + extra);
-        if (this.opts.optionSpacing === 'relaxed' && i < view.page.end - 1) lines.push('');
+        if (this.opts.optionSpacing === 'relaxed' && i < end - 1) lines.push('');
         continue;
       }
       const labelStyle = optionLabelStyle(opt, isSelected, this.animationPhase);
@@ -203,13 +224,19 @@ export class ChoicePickerComponent extends Container implements Focusable {
           lines.push(currentTheme.fg('textMuted', `    ${descLine}`));
         }
       }
-      if (this.opts.optionSpacing === 'relaxed' && i < view.page.end - 1) {
+      if (this.opts.optionSpacing === 'relaxed' && i < end - 1) {
         lines.push('');
       }
     }
 
     lines.push('');
-    if (view.page.pageCount > 1) {
+    if (scroll) {
+      if (end < options.length) {
+        lines.push(currentTheme.fg('textMuted', '   ↓ more'));
+      } else if (this.opts.endHint !== undefined && options.length > 0) {
+        lines.push(currentTheme.fg('textMuted', `   ${this.opts.endHint}`));
+      }
+    } else if (view.page.pageCount > 1) {
       lines.push(
         currentTheme.fg('textMuted',
           ` Page ${String(view.page.page + 1)}/${String(view.page.pageCount)}`,

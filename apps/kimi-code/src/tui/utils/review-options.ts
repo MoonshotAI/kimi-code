@@ -20,6 +20,8 @@ export interface ReviewChoice {
   readonly value: string;
   readonly label: string;
   readonly description?: string;
+  /** Text the option is fuzzy-matched against; defaults to label + description. */
+  readonly searchText?: string;
   /** Custom row renderer (content lines); the picker adds the pointer. */
   readonly render?: (selected: boolean, width: number) => readonly string[];
 }
@@ -139,8 +141,24 @@ export function reviewCommitChoice(commit: ReviewCommit, align?: CommitStatAlign
     value: commit.sha,
     // Plain text used for search; the visible row is drawn by `render`.
     label: `${shortSha} ${commit.title}`,
+    searchText: commitSearchText(commit),
     render: (selected, width) => renderCommitRow(commit, selected, width, stats),
   };
+}
+
+/** Everything a commit can be searched by: hash, message, author, email, refs. */
+function commitSearchText(commit: ReviewCommit): string {
+  return [
+    commit.sha,
+    commit.sha.slice(0, 8),
+    commit.title,
+    commit.body ?? '',
+    commit.author ?? '',
+    commit.authorEmail ?? '',
+    ...(commit.refs ?? []),
+  ]
+    .filter((part) => part.length > 0)
+    .join(' ');
 }
 
 /** Two-line commit row: orange hash + bold one-line title, then stats + relative time. */
