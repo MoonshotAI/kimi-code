@@ -1057,6 +1057,7 @@ defineExpose({ loadComposerForEdit });
   min-width: 0;
   height: 100%;
   position: relative;
+  container-type: inline-size;
 }
 
 .panes {
@@ -1241,7 +1242,7 @@ defineExpose({ loadComposerForEdit });
   opacity: 0;
   transform: translateX(4px);
 }
-@media (max-width: 1180px) {
+@container (max-width: 920px) {
   .conversation-toc {
     display: none;
   }
