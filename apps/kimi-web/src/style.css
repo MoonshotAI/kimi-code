@@ -787,6 +787,8 @@ html[data-theme="kimi"] {
   --soft: rgba(0, 0, 0, 0.05);   /* color.fills.f2: selected = fill, not a blue tint */
   --bd: transparent;             /* no ring on selected rows (surface over stroke) */
   --logo: rgba(0, 0, 0, 0.9);    /* logo-system.md: the mark uses labels.primary */
+  --link: #0f6fe0;
+  --link-hover: #075fc2;
   /* user bubble = color.others.bubbleGrayPc — gray, never blue; border
      matches the fill so the bubble reads borderless without layout shift */
   --bluebg: #f5f5f5;
@@ -829,6 +831,8 @@ html[data-color-scheme="dark"][data-theme="kimi"] {
   --soft: rgba(255, 255, 255, 0.1);
   --bd: transparent;
   --logo: rgba(255, 255, 255, 0.84);
+  --link: #58a6ff;
+  --link-hover: #79b8ff;
   --bluebg: #292929;
   --blueln: #292929;
   --ok: #16c456;
@@ -855,6 +859,8 @@ html[data-color-scheme="dark"][data-theme="kimi"] {
     --soft: rgba(255, 255, 255, 0.1);
     --bd: transparent;
     --logo: rgba(255, 255, 255, 0.84);
+    --link: #58a6ff;
+    --link-hover: #79b8ff;
     --bluebg: #292929;
     --blueln: #292929;
     --ok: #16c456;
@@ -993,6 +999,21 @@ html[data-color-scheme="dark"][data-theme="kimi"] ::selection {
   }
 }
 
+/* Links are a sanctioned Kimi-blue use in chat prose. The theme's interaction
+   accent is kimiDark (black/white), so the shared .md link rule otherwise makes
+   URLs look like normal text under the native theme. */
+html[data-theme="kimi"] .md a,
+html[data-theme="kimi"] .md .md-file-link {
+  color: var(--link);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+html[data-theme="kimi"] .md a:hover,
+html[data-theme="kimi"] .md .md-file-link:hover {
+  color: var(--link-hover);
+  text-decoration-thickness: 2px;
+}
 
 /* ---- Kimi Code logo (sidebar header): lively eyes — glance left/right + the
    occasional blink. The two bars are mask cutouts, so animating them moves /
