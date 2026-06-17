@@ -21,7 +21,7 @@ import {
   undoSessionResponseSchema,
   workspaceIdSchema,
 } from '@moonshot-ai/protocol';
-import { IPromptService, ISessionService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IWorkspaceRegistry, WorkspaceNotFoundError, type IInstantiationService } from '@moonshot-ai/agent-core';
+import { IPromptService, ISessionService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IWorkspaceRegistry, WorkspaceNotFoundError, type IInstantiationService, type SessionClientTelemetry } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -34,7 +34,7 @@ interface SessionRouteHost {
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
     handler: (
-      req: { id: string; body: unknown; params: unknown },
+      req: { id: string; body: unknown; params: unknown; headers: Record<string, unknown> },
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
@@ -134,6 +134,26 @@ const sessionActionRequestSchema = z.preprocess(
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
+function clientTelemetryFromHeaders(
+  headers: Record<string, unknown>,
+): SessionClientTelemetry | undefined {
+  const client: SessionClientTelemetry = {
+    id: headerString(headers, 'x-kimi-client-id'),
+    name: headerString(headers, 'x-kimi-client-name'),
+    version: headerString(headers, 'x-kimi-client-version'),
+    uiMode: headerString(headers, 'x-kimi-client-ui-mode'),
+  };
+  return Object.values(client).some((value) => value !== undefined) ? client : undefined;
+}
+
+function headerString(headers: Record<string, unknown>, key: string): string | undefined {
+  const value = headers[key];
+  const raw = Array.isArray(value) ? value.find((item) => typeof item === 'string') : value;
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
+}
+
 export function registerSessionsRoutes(
   app: SessionRouteHost,
   ix: IInstantiationService,
@@ -216,7 +236,9 @@ export function registerSessionsRoutes(
         }
 
         const session = await ix.invokeFunction((a) =>
-          a.get(ISessionService).create(normalized),
+          a.get(ISessionService).create(normalized, {
+            client: clientTelemetryFromHeaders(req.headers),
+          }),
         );
         reply.send(okEnvelope(session, req.id));
       } catch (err) {

@@ -58,8 +58,10 @@ afterEach(async () => {
     // ignore
   }
   server = undefined;
-  rmSync(tmpDir, { recursive: true, force: true });
-  rmSync(bridgeHome, { recursive: true, force: true });
+  // The daemon's core process may still flush files into the sandboxed home
+  // briefly after close(), so retry removals to ride out EBUSY/ENOTEMPTY races.
+  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  rmSync(bridgeHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 });
 
 async function bootDaemon(): Promise<RunningServer> {
