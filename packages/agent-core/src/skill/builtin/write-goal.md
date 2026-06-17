@@ -25,14 +25,20 @@ The strongest goals share one shape: they define **proof, not effort**. "Keep im
 2. **Proof** — the observable evidence that the end state holds. Prefer things the agent can run and you can inspect afterward: a command's exit code, a test count, a `grep`/`rg` with no hits, a file that now exists, a metric over a threshold.
 3. **Boundaries** — what the work may and may not touch. Name the scope (which module, which directory) and the off-limits actions (do not edit the spec, do not change unrelated files, do not make destructive data changes).
 4. **The loop** — when the work is iterative, say how to iterate: rerun the check after each change, work through the queue item by item, replay the failing cases until they pass.
-5. **The stop rule** — how to end honestly when "done" is not reachable. Add a turn or budget cap, a "stop and ask before widening scope" clause, and an explicit blocked path ("if an external service is down, record it and move on") so the agent reports instead of faking a pass or looping forever.
+5. **The stop rule** — how to end honestly when "done" is not reachable. A "stop and ask before widening scope" clause and an explicit blocked path ("if an external service is down, record it and move on") let the agent report instead of faking a pass or looping forever. This is about *honesty*, not a spending limit — keep it separate from any budget (see below).
 
 Two habits make almost any goal better:
 
 - **Make it queue-shaped.** Goals that shrink a list work best: failing tests, open issues, error traces, files to migrate, rows to process. A queue gives the agent a worklist and gives you a countable definition of done.
 - **Lean on existing verification.** Tests, CI, type-checks, lint, eval suites, browser audits, and zero-match searches are leverage — they are what let a goal run unattended and still be trusted. If a task has no way to prove completion, help the user add one or reconsider whether goal mode fits.
 
-Longer runs are not better runs. A tight contract that finishes in twenty turns beats an open-ended one that burns hours re-running the whole suite after every edit.
+Longer runs are not better runs. A tight contract that finishes in a handful of turns beats an open-ended one that burns hours re-running the whole suite after every edit.
+
+## Budgets are opt-in
+
+Goal mode can run under a turn or token budget, but **do not set one by default, and never bake a turn cap into the objective text.** A well-specified goal already stops on its own — when the proof passes or a blocker is hit — so an arbitrary cap usually does nothing except risk cutting off work midway.
+
+When a budget is genuinely useful — typically an open-ended or exploratory goal that could run long unattended — you may suggest one, framed around the number users actually feel: token cost. Let the user choose the value, and sanity-check it against the work. A cap far larger than the task needs (say a thousand turns for a goal that will finish in a few) is not a safety net; it just invites wasted tokens. If the user asks for a value that looks oversized, say so and offer a smaller one, but respect their final call.
 
 ## Workflow
 
@@ -52,15 +58,14 @@ Done when <command/search/state that proves it>.
 Scope: only <files/area>; do not <off-limits action>.
 Loop: <how to iterate — rerun the check after each change, etc.>.
 If <blocking condition>, stop and report instead of forcing a pass.
-Stop after <N> turns and summarize what remains.
 ```
 
-Not every goal needs every line. A small, well-scoped task can be a single clear sentence. Add structure as the work grows or the cost of a wrong autonomous run rises.
+Not every goal needs every line, and none of them is a turn cap — the goal stops when the proof passes or a blocker is hit. A small, well-scoped task can be a single clear sentence. Add structure as the work grows or the cost of a wrong autonomous run rises.
 
 ## Weak to strong
 
 - Weak: `Find all bugs in this codebase.` — no finish line, no proof, no stop. The agent may block at once or run far past what you wanted.
-  Strong: `Fix every test in test/auth that currently fails, rerun npm test until it exits 0, change no file outside test/ or src/auth, and stop after 20 turns with a summary of anything still failing.`
+  Strong: `Fix every test in test/auth that currently fails, rerun npm test until it exits 0, change no file outside test/ or src/auth, and report anything you cannot fix with its location and why.`
 - Weak: `Optimize the project.` — no scope, no measure.
   Strong: `Migrate the payment module to the new API, make npm test -- payment exit 0, keep the diff limited to payment-related files, and stop and ask before touching shared infrastructure.`
 - Weak: `Make it faster.`
@@ -75,5 +80,6 @@ Not every goal needs every line. A small, well-scoped task can be a single clear
 | Running the goal before the user has seen the exact text | Show the full draft and get agreement first |
 | Polishing the goal silently against the user's stated wishes | Note the trade-off once, then write the goal they asked for |
 | Specifying effort ("keep improving X") | Specify proof ("done when check X passes") |
-| No stop or blocked path | Add a turn/budget cap and an explicit "stop and report" rule |
+| Baking a turn cap into the objective or setting a budget unprompted | Let the goal stop on its proof; suggest a budget only when useful, framed on token cost |
+| No blocked path | Add an explicit "stop and report" rule for blockers |
 | A goal with no way to verify completion | Anchor it to tests, a search, a metric, or another inspectable check |
