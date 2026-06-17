@@ -9,7 +9,7 @@ to a local **server** over REST + WebSocket. Vue 3 + Vite + TypeScript.
 
 ```bash
 # 1) Against a REAL server (the server must be running and reachable)
-WEB_PORT=5197 KIMI_SERVER_URL=http://192.168.97.91:7878 pnpm -C apps/kimi-web run dev
+WEB_PORT=5197 KIMI_SERVER_URL=http://127.0.0.1:7878 pnpm -C apps/kimi-web run dev
 #   …or from the repo root:  pnpm dev:web   (uses the defaults below)
 
 # 2) Offline / no server — a stub that fakes the server API + event stream
@@ -31,8 +31,8 @@ proxies** `/api/v1` (HTTP + WS) to the server (`vite.config.ts`):
 | `WEB_PORT`        | `5175`                   | port the dev server listens on           |
 | `KIMI_SERVER_URL` | `http://127.0.0.1:7878`  | where `/api/v1` (and `/api/v1/ws`) is forwarded |
 
-> Behind a corporate HTTP proxy, also set `NO_PROXY=<server-host>` (e.g.
-> `NO_PROXY=192.168.97.91`) so the proxy forward reaches the server directly.
+> Behind a corporate HTTP proxy, also set `NO_PROXY=<server-host>` (for example,
+> `NO_PROXY=127.0.0.1,localhost`) so the proxy forward reaches the server directly.
 
 ---
 
@@ -86,27 +86,6 @@ The server's wire protocol has a few things that will bite you if forgotten:
 - **Workspaces** = real folders. `GET/POST/PATCH/DELETE /workspaces`,
   `GET /fs:browse?path=`, `GET /fs:home` back the rail + folder picker.
 
----
-
-## What's still missing / blocked on the server
-
-See **`docs/main-flow-gaps.md`** (the main-flow gap audit) and
-**`docs/backend-workspace-session-asks.md`** (the endpoint asks for the backend).
-
-Server endpoints that are **not live yet** (probed; the web degrades gracefully):
-
-- `/sessions/{id}:compact`, `:fork`, `:steer`, `/undo` → `400` (no such action)
-- line-by-line `diff` → `404`
-- `GET /sessions/{id}/status` → `404` (the `/status` panel is rendered from
-  client state instead)
-- `/goal`, `/btw`, `/mcp`, `/init`, `/reload`, `/settings`, `/plugins` → absent
-
-Everything client-side (workspace rail, sessions, chat/stream, approvals,
-tools/diff/files, model/provider/login, thinking/plan/permission controls,
-`/status`, queue edit, syntax highlighting, i18n) is implemented.
-
----
-
 ## Release & deployment
 
 Kimi Web is **not published as a standalone package**. It ships as the built-in
@@ -145,13 +124,3 @@ release.
 - **Ensure the web build is exercised in CI.** The root `build` script already
   builds every workspace, so `pnpm run build` in CI covers `apps/kimi-web`.
   Keep it that way; do not bypass the web build in release pipelines.
-
-## Design docs
-
-Living under `docs/` (design rationale + plans):
-
-- `docs/workspace-session-design.html` — workspace ⇄ session model + flows
-- `docs/dual-sidebar-exploration.html` — sidebar layout options (Variant B shipped)
-- `docs/kimi-web-final-form.html` — target-state UI mockup
-- `docs/main-flow-gaps.md` — feature gap audit (what to build next)
-- `docs/backend-workspace-session-asks.md` — endpoints the server still needs
