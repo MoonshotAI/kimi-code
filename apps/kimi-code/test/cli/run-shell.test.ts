@@ -12,6 +12,7 @@ type CreateKimiDeviceId = typeof createKimiDeviceIdFn;
 const mocks = vi.hoisted(() => {
   type TuiConfigFallback = {
     theme: 'dark' | 'light' | 'auto';
+    language?: 'auto' | 'en' | 'zh-CN';
     editorCommand: string | null;
     notifications: { enabled: boolean; condition: 'unfocused' | 'always' };
   };
@@ -451,6 +452,7 @@ describe('runShell', () => {
     mocks.loadTuiConfig.mockRejectedValue(
       new mocks.TuiConfigParseError({
         theme: 'auto',
+        language: 'en',
         editorCommand: 'vim',
         notifications: { enabled: true, condition: 'always' },
       }),
@@ -482,6 +484,39 @@ describe('runShell', () => {
         editorCommand: 'vim',
         notifications: { enabled: true, condition: 'always' },
       },
+    });
+  });
+
+  it('renders the config parse warning in the configured locale (zh-CN)', async () => {
+    mocks.loadTuiConfig.mockRejectedValue(
+      new mocks.TuiConfigParseError({
+        theme: 'auto',
+        language: 'zh-CN',
+        editorCommand: null,
+        notifications: { enabled: true, condition: 'unfocused' },
+      }),
+    );
+    mocks.detectTerminalTheme.mockResolvedValue('light');
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(
+      {
+        session: '',
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: [],
+      },
+      '1.2.3-test',
+    );
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({
+      startupNotice: '~/.kimi-code/tui.toml 中的 TUI 配置无效，已使用默认值。',
     });
   });
 

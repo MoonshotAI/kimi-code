@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { I18n, resolveLocale } from '#/tui/i18n';
+import { INVALID_TUI_CONFIG_MESSAGE } from '#/tui/config';
+import { i18n, I18n, resolveLocale } from '#/tui/i18n';
 
 const messages = {
   en: {
@@ -54,6 +55,22 @@ describe('I18n', () => {
     i18n.setLocale('zh-CN');
 
     expect(i18n.t('components.footer.context')).toBe('上下文');
+  });
+});
+
+describe('cli config notice (bundled packs)', () => {
+  it('keeps the English config-parse notice in sync with INVALID_TUI_CONFIG_MESSAGE', () => {
+    i18n.setLocale('en');
+
+    expect(i18n.t('cli.config.invalidTuiConfig')).toBe(INVALID_TUI_CONFIG_MESSAGE);
+  });
+
+  it('renders the config-parse notice in Chinese under zh-CN', () => {
+    i18n.setLocale('zh-CN');
+
+    const notice = i18n.t('cli.config.invalidTuiConfig');
+    expect(notice).not.toBe(INVALID_TUI_CONFIG_MESSAGE);
+    expect(notice).toContain('默认值');
   });
 });
 
