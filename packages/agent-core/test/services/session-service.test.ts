@@ -286,6 +286,7 @@ function makePromptServiceStub(): {
     onDidComplete: emitter.event as unknown as IPromptService['onDidComplete'],
     onDidAbort: emitter.event as unknown as IPromptService['onDidAbort'],
     getAgentStateSnapshot: vi.fn().mockReturnValue(undefined) as unknown as IPromptService['getAgentStateSnapshot'],
+    startBtw: vi.fn() as unknown as IPromptService['startBtw'],
   };
   return { promptService, calls, activePromptIds };
 }

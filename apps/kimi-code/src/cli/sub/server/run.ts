@@ -215,7 +215,11 @@ export async function startServerDaemon(options: ParsedServerOptions): Promise<n
     coreProcessOptions: {
       identity: createKimiCodeHostIdentity(version),
     },
-    wsGatewayOptions: { onConnectionCountChange: idle.onConnectionCountChange },
+    wsGatewayOptions: {
+      onConnectionCountChange: (size) => {
+        idle.onConnectionCountChange(size);
+      },
+    },
   });
 
   process.once('SIGINT', () => {

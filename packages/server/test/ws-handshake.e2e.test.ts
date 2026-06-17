@@ -314,5 +314,7 @@ describe('WS gateway connection-count observer', () => {
     b.ws.close();
     await b.closed;
     await waitForCount(counts, 0, 1000);
+
+    expect(counts).toEqual([1, 2, 1, 0]);
   });
 });

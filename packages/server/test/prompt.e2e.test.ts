@@ -122,6 +122,7 @@ function createPromptServiceOverride(
     getCurrentPromptId: () => undefined,
     applyAgentState: async () => undefined,
     getAgentStateSnapshot: () => undefined,
+    startBtw: async () => 'prompt_btw_test',
     onDidComplete: noopComplete,
     onDidAbort: noopAbort,
   };

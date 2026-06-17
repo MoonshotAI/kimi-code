@@ -307,7 +307,7 @@ export class PromptService
       this.sessionService.onDidClose(({ sessionId }) => {
         this._agentState.delete(sessionId);
         this._dispatchLog.delete(sessionId);
-        for (const key of [...this._queued.keys()]) {
+        for (const key of this._queued.keys()) {
           if (key.startsWith(`${sessionId}\u0000`)) this._queued.delete(key);
         }
       }),

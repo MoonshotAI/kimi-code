@@ -8,6 +8,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppSession,
+  AppSessionSnapshot,
   KimiEventHandlers,
   KimiWebApi,
 } from '../src/api/types';
@@ -141,9 +142,9 @@ describe('startSessionAndSendPrompt', () => {
 
     // Hold the snapshot open so we can observe the state between selecting the
     // freshly created session and the user's message landing.
-    let resolveSnap!: (value: unknown) => void;
-    (api.getSessionSnapshot as ReturnType<typeof vi.fn>).mockImplementation(
-      () => new Promise((resolve) => { resolveSnap = resolve; }),
+    let resolveSnap!: (value: AppSessionSnapshot) => void;
+    vi.mocked(api.getSessionSnapshot).mockImplementation(
+      () => new Promise<AppSessionSnapshot>((resolve) => { resolveSnap = resolve; }),
     );
 
     const flow = client.startSessionAndSendPrompt('ws_repo', 'hello world');
