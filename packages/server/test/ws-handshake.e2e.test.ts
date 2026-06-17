@@ -19,18 +19,45 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
+import type { TelemetryClient, TelemetryProperties } from '@moonshot-ai/agent-core';
 import { pino } from 'pino';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
-import {
-  IConnectionRegistry,
-  IWSGateway,
-  startServer,
-  type RunningServer,
-} from '../src';
+import { IConnectionRegistry, IWSGateway, startServer, type RunningServer } from '../src';
 import { rawDataToString } from '../src/ws/rawData';
+
+interface TelemetryRecord {
+  readonly event: string;
+  readonly properties?: TelemetryProperties;
+}
+
+function recordingTelemetry(records: TelemetryRecord[]): TelemetryClient {
+  const client: TelemetryClient = {
+    track: (event, properties) => {
+      records.push({ event, properties });
+    },
+    withContext: () => client,
+    setContext: () => {},
+  };
+  return client;
+}
+
+async function waitForEvent(
+  records: readonly TelemetryRecord[],
+  event: string,
+  timeoutMs: number,
+): Promise<TelemetryRecord> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const found = records.find((r) => r.event === event);
+    if (found !== undefined) return found;
+    await new Promise((res) => {
+      setTimeout(res, 10);
+    });
+  }
+  throw new Error(`event ${event} not observed; got ${JSON.stringify(records)}`);
+}
 
 let tmpDir: string;
 let lockPath: string;
@@ -316,5 +343,43 @@ describe('WS gateway connection-count observer', () => {
     await waitForCount(counts, 0, 1000);
 
     expect(counts).toEqual([1, 2, 1, 0]);
+  });
+});
+
+describe('WS gateway telemetry (ws_connected / ws_disconnected)', () => {
+  it('emits ws_connected on connect and ws_disconnected on close', async () => {
+    const records: TelemetryRecord[] = [];
+    const r = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      lockPath,
+      logger: pino({ level: 'silent' }),
+      coreProcessOptions: { homeDir: bridgeHome },
+      wsGatewayOptions: {
+        pingIntervalMs: 60,
+        pongTimeoutMs: 200,
+        telemetry: recordingTelemetry(records),
+      },
+    });
+    running.push(r);
+
+    const conn = await openConn(wsUrl(r.address));
+    await receiveType(conn, 'server_hello', 1000);
+
+    const connected = await waitForEvent(records, 'ws_connected', 1000);
+    expect(connected.properties).toMatchObject({
+      connection_id: expect.any(String),
+      connection_count: 1,
+    });
+
+    conn.ws.close();
+    await conn.closed;
+
+    const disconnected = await waitForEvent(records, 'ws_disconnected', 1000);
+    expect(disconnected.properties).toMatchObject({
+      connection_id: expect.any(String),
+      connection_count: 0,
+      duration_ms: expect.any(Number),
+    });
   });
 });

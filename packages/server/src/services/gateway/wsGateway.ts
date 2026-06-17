@@ -1,5 +1,5 @@
+import { createDecorator, type TelemetryClient } from '@moonshot-ai/agent-core';
 
-import { createDecorator } from '@moonshot-ai/agent-core';
 import type { AbortHandler, FsWatchHandler, TerminalHandler } from '#/ws/connection';
 
 export const WS_PATH = '/api/v1/ws';
@@ -20,7 +20,6 @@ export interface IWSGateway {
 export const IWSGateway = createDecorator<IWSGateway>('wsGateway');
 
 export interface WSGatewayOptions {
-
   pingIntervalMs?: number;
 
   pongTimeoutMs?: number;
@@ -31,4 +30,12 @@ export interface WSGatewayOptions {
    * left" transition and start its idle-shutdown grace timer.
    */
   onConnectionCountChange?: (size: number) => void;
+
+  /**
+   * Optional telemetry client used to emit `ws_connected` / `ws_disconnected`
+   * events. Hosts that already bootstrap telemetry (e.g. the CLI server
+   * command) hand in the same client they pass to `coreProcessOptions` so all
+   * web-path events share one sink + context.
+   */
+  telemetry?: TelemetryClient;
 }

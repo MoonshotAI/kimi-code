@@ -1,22 +1,21 @@
-
-
 import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import type { Socket } from 'node:net';
 
 import { Disposable, ILogService } from '@moonshot-ai/agent-core';
 import { WebSocketServer, type WebSocket } from 'ws';
 
-import { IConnectionRegistry } from './connectionRegistry';
-import { IRestGateway } from './restGateway';
-import { ISessionClientsService } from './sessionClients';
-import { IWSBroadcastService } from './wsBroadcast';
-import { IWSGateway, type WSGatewayOptions, WS_PATH } from './wsGateway';
 import {
   WsConnection,
   type AbortHandler,
   type FsWatchHandler,
   type TerminalHandler,
 } from '#/ws/connection';
+
+import { IConnectionRegistry } from './connectionRegistry';
+import { IRestGateway } from './restGateway';
+import { ISessionClientsService } from './sessionClients';
+import { IWSBroadcastService } from './wsBroadcast';
+import { IWSGateway, type WSGatewayOptions, WS_PATH } from './wsGateway';
 
 export class WSGateway extends Disposable implements IWSGateway {
   readonly _serviceBrand: undefined;
@@ -30,7 +29,6 @@ export class WSGateway extends Disposable implements IWSGateway {
   private detached = false;
 
   constructor(
-
     private readonly options: WSGatewayOptions,
     @IWSBroadcastService private readonly wsBroadcast: IWSBroadcastService,
     @IRestGateway private readonly restGateway: IRestGateway,
@@ -59,11 +57,9 @@ export class WSGateway extends Disposable implements IWSGateway {
   }
 
   private onUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): void {
-
     const url = req.url ?? '';
     const path = url.split('?', 1)[0];
     if (path !== WS_PATH) {
-
       socket.destroy();
       return;
     }
@@ -92,9 +88,21 @@ export class WSGateway extends Disposable implements IWSGateway {
     });
     this.registry.add(conn);
     this.options.onConnectionCountChange?.(this.registry.size());
+
+    const connectedAt = Date.now();
+    this.options.telemetry?.track('ws_connected', {
+      connection_id: conn.id,
+      connection_count: this.registry.size(),
+    });
+
     socket.on('close', () => {
       this.registry.remove(conn.id);
       this.options.onConnectionCountChange?.(this.registry.size());
+      this.options.telemetry?.track('ws_disconnected', {
+        connection_id: conn.id,
+        connection_count: this.registry.size(),
+        duration_ms: Date.now() - connectedAt,
+      });
     });
   }
 
@@ -107,22 +115,16 @@ export class WSGateway extends Disposable implements IWSGateway {
 
     try {
       this.registry.closeAll('server shutting down');
-    } catch {
-
-    }
+    } catch {}
 
     try {
       this.wss.close();
-    } catch {
-
-    }
+    } catch {}
 
     if (!this.detached) {
       try {
         this.server.off('upgrade', this.upgradeListener);
-      } catch {
-
-      }
+      } catch {}
       this.detached = true;
     }
     super.dispose();

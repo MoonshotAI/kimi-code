@@ -9,12 +9,10 @@
  * registered in `./web-alias.ts`.
  */
 
-import chalk from 'chalk';
-import { Option, type Command } from 'commander';
-import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
-
 import { join } from 'node:path';
 
+import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import {
   ServerLockedError,
   resolveServiceManager,
@@ -22,11 +20,15 @@ import {
   type RunningServer,
   type ServiceStatus,
 } from '@moonshot-ai/server';
+import chalk from 'chalk';
+import { Option, type Command } from 'commander';
 
+import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_UI_MODE } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 
+import { initializeServerTelemetry } from '../../telemetry';
 import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../../version';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
@@ -135,6 +137,7 @@ export async function startServerForeground(
   options: ParsedServerOptions,
 ): Promise<{ origin: string }> {
   const version = getVersion();
+  const telemetry = initializeServerTelemetry({ version });
   const running = await startServer({
     host: options.host,
     port: options.port,
@@ -143,13 +146,20 @@ export async function startServerForeground(
     webAssetsDir: serverWebAssetsDir(),
     coreProcessOptions: {
       identity: createKimiCodeHostIdentity(version),
+      telemetry,
+    },
+    wsGatewayOptions: {
+      telemetry,
     },
   });
+
+  track('server_started', { ui_mode: WEB_UI_MODE, daemon: false });
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     running.logger.info({ signal }, 'server shutting down');
     try {
       await running.close();
+      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
       process.exit(0);
     } catch (error) {
       running.logger.error(
@@ -179,6 +189,7 @@ export async function startServerForeground(
  */
 export async function startServerDaemon(options: ParsedServerOptions): Promise<never> {
   const version = getVersion();
+  const telemetry = initializeServerTelemetry({ version });
 
   let running: RunningServer | undefined;
   let stopping = false;
@@ -197,6 +208,7 @@ export async function startServerDaemon(options: ParsedServerOptions): Promise<n
     running?.logger.info({ reason }, 'server shutting down');
     try {
       await running?.close();
+      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     } catch (error) {
       running?.logger.error(
         { err: error instanceof Error ? error : new Error(String(error)) },
@@ -214,13 +226,17 @@ export async function startServerDaemon(options: ParsedServerOptions): Promise<n
     webAssetsDir: serverWebAssetsDir(),
     coreProcessOptions: {
       identity: createKimiCodeHostIdentity(version),
+      telemetry,
     },
     wsGatewayOptions: {
+      telemetry,
       onConnectionCountChange: (size) => {
         idle.onConnectionCountChange(size);
       },
     },
   });
+
+  track('server_started', { ui_mode: WEB_UI_MODE, daemon: true });
 
   process.once('SIGINT', () => {
     void shutdown('SIGINT');
@@ -248,10 +264,7 @@ export async function startServerDaemon(options: ParsedServerOptions): Promise<n
  * cancels the pending exit. The initial "no clients yet" state never arms the
  * timer (so a freshly-spawned daemon is not killed before anyone connects).
  */
-export function createIdleShutdownHandler(opts: {
-  graceMs: number;
-  onIdle: () => void;
-}): {
+export function createIdleShutdownHandler(opts: { graceMs: number; onIdle: () => void }): {
   onConnectionCountChange(size: number): void;
   cancel(): void;
 } {
@@ -307,8 +320,12 @@ function describeAlreadyRunning(
   return {
     mode,
     pid: existing.pid,
-    url: serverOrigin(host === '0.0.0.0' ? DEFAULT_SERVER_HOST : host, status?.port ?? existing.port),
-    stopCommand: mode === 'background' ? 'kimi server stop' : formatForegroundStopCommand(existing.pid),
+    url: serverOrigin(
+      host === '0.0.0.0' ? DEFAULT_SERVER_HOST : host,
+      status?.port ?? existing.port,
+    ),
+    stopCommand:
+      mode === 'background' ? 'kimi server stop' : formatForegroundStopCommand(existing.pid),
   };
 }
 
