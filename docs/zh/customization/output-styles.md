@@ -15,8 +15,10 @@
 
 在某个 output-styles 目录下新建一个 `.md` 文件：
 
-- **项目作用域** —— `<项目>/.kimi-code/output-styles/`
+- **项目作用域** —— `<git-根>/.kimi-code/output-styles/`，其中 `<git-根>` 是工作目录向上最近的、包含 `.git` 的祖先目录（若不在 git 仓库中，则为工作目录本身）。其他子目录中的风格文件不会被扫描。
 - **用户作用域** —— `~/.kimi-code/output-styles/`，或在设置了 `KIMI_CODE_HOME` 环境变量时为 `$KIMI_CODE_HOME/output-styles/`
+
+风格文件从本地文件系统读取；当你通过 SSH 等方式连接远程主机运行 Kimi Code 时，请把风格文件放在本地机器上。
 
 目录不存在就自己建一个。当 frontmatter 中没有写 `name` 时，**文件名就是风格名**：`socratic.md` 会成为风格 `socratic`。
 
@@ -50,11 +52,11 @@ description: 用引导式提问代替直接给出答案。
 output_style = "concise"
 ```
 
-该风格会在下次启动时（或执行 `/reload` 后）对主 Agent 及其子 Agent 生效。不设置 `output_style` 即为默认行为。
+`output_style` 在构建 Agent 的系统提示时生效。**新会话**的主 Agent 使用当前值，子 Agent 则在每次生成时读取当前值。已在运行的会话会保留其主 Agent 的系统提示，因此 `/reload` 和恢复（resume）**不会**改变主 Agent 的风格——要应用更改请开启新会话。不设置 `output_style` 即为默认行为。
 
 ## 出错时会发生什么
 
 输出风格的设计目标是绝不阻塞启动：
 
-- **无效或空的风格文件**（frontmatter 格式错误、正文为空）：该文件会被跳过并给出警告；其余风格照常加载。
+- **无效或空的风格文件**（frontmatter 格式错误、正文为空）：该文件会被跳过；其余风格照常加载。
 - **`output_style` 指向一个不存在的风格**：不会注入任何风格，Kimi Code 以默认行为运行。

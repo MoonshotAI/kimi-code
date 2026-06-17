@@ -15,8 +15,10 @@ Built-in styles always exist. A style file you create with the same name overrid
 
 Add a `.md` file to an output-styles directory:
 
-- **Project scope** — `<project>/.kimi-code/output-styles/`
+- **Project scope** — `<git-root>/.kimi-code/output-styles/`, where `<git-root>` is the nearest ancestor of the working directory that contains a `.git` directory (or the working directory itself when there is no git repository). Style files in other subdirectories are not scanned.
 - **User scope** — `~/.kimi-code/output-styles/`, or `$KIMI_CODE_HOME/output-styles/` when the `KIMI_CODE_HOME` environment variable is set
+
+Style files are read from the local filesystem, so when you run Kimi Code against a remote host (for example over SSH), keep your style files on the local machine.
 
 Create the directory if it does not exist. The **filename is the style name** when no `name` is set in the frontmatter: `socratic.md` becomes the style `socratic`.
 
@@ -51,11 +53,11 @@ Set `output_style` to the style name in `config.toml`:
 output_style = "concise"
 ```
 
-The style applies to the main agent and to its subagents on the next start, or after `/reload`. Leave `output_style` unset for the default behavior.
+`output_style` is applied when an agent's system prompt is built. A **new session's** main agent uses the current value, and subagents pick it up on every spawn. An already-running session keeps its main agent's system prompt, so `/reload` and resume do **not** change the main agent's style — start a new session to apply a change. Leave `output_style` unset for the default behavior.
 
 ## What happens on errors
 
 Output styles are designed never to block startup:
 
-- **An invalid or empty style file** (malformed YAML frontmatter, empty body): that file is skipped with a warning; the other styles still load.
+- **An invalid or empty style file** (malformed YAML frontmatter, empty body): that file is skipped; the other styles still load.
 - **`output_style` names a style that does not exist**: no style is injected, and Kimi Code runs with its default behavior.
