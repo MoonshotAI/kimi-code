@@ -25,7 +25,7 @@ typed `DaemonClient` you can reuse in vitest e2e files.
 ```ts
 import { DaemonClient } from '@moonshot-ai/server-e2e';
 
-const client = new DaemonClient(); // http://127.0.0.1:7878 by default
+const client = new DaemonClient(); // http://127.0.0.1:58627 by default
 
 const session = await client.createSession({ metadata: { cwd: process.cwd() } });
 await client.connect();              // server_hello + client_hello ack
@@ -54,7 +54,7 @@ pnpm --filter @moonshot-ai/server-e2e docker:e2e      # run server + scenarios i
 ```
 
 Both `test` and `test:scenarios` require a running server (set `KIMI_SERVER_URL`
-to override the default `http://127.0.0.1:7878`). The vitest suite skips its
+to override the default `http://127.0.0.1:58627`). The vitest suite skips its
 live-dependent cases when no server is reachable so CI stays green. Scenarios
 are run via `tsx` because they execute TypeScript directly.
 
@@ -67,10 +67,10 @@ can stay concise while the full wire trace remains available.
 
 `docker:e2e` builds `kimi-server:dev` from the root `Dockerfile`, layers
 `packages/server-e2e/Dockerfile` on top, then runs a one-shot Docker container.
-The container starts the server on container-local `127.0.0.1:7878` and runs
+The container starts the server on container-local `127.0.0.1:58627` and runs
 `pnpm test:scenarios` in the same container. The launcher intentionally does
 not pass `-p` / `--publish`, so it does not expose a server port on the host and
-can coexist with the `docker-compose.yml` server that publishes host port 7878.
+can coexist with the `docker-compose.yml` server that publishes host port 58627.
 Reports are written under
 `~/.kimi-code-server-dev/server-e2e-reports/docker/<run-id>/latest/index.html`;
 the server log is written beside them as `server.log`.

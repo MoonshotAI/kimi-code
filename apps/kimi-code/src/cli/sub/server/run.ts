@@ -1,9 +1,11 @@
 /**
- * `kimi server run` — runs the local server in the foreground.
+ * `kimi server run` — starts the local server.
  *
- * Background ("daemonized") operation is not handled here. Use
- * `kimi server install` + `kimi server start` to register the server as an
- * OS-managed service (launchd / systemd / schtasks) instead.
+ * By default this ensures a single background daemon is running (spawning a
+ * detached `kimi server run --daemon` child when needed) and returns once it is
+ * healthy. Pass `--foreground` to run the server in-process and keep this
+ * terminal attached until SIGINT/SIGTERM. OS-managed background operation
+ * (launchd / systemd / schtasks) lives in `kimi server install` + `kimi server start`.
  *
  * `kimi web` is an alias of this command with `--open` defaulted to `true`,
  * registered in `./web-alias.ts`.
@@ -39,10 +41,22 @@ const READY_PANEL_WIDTH = 72;
 
 export interface RunCliOptions extends ServerCliOptions {
   open?: boolean;
+  /** Run the server in-process instead of spawning a background daemon. */
+  foreground?: boolean;
+}
+
+export interface StartForegroundHooks {
+  /** Fires once the server is listening, before the foreground runner blocks. */
+  onReady?(origin: string): void;
 }
 
 export interface RunCommandDeps {
   startServerBackground(options: ParsedServerOptions): Promise<{ origin: string }>;
+  /** Foreground runner; defaults to the real in-process runner when omitted. */
+  startServerForeground?(
+    options: ParsedServerOptions,
+    hooks?: StartForegroundHooks,
+  ): Promise<never>;
   openUrl(url: string): void;
   stdout: Pick<NodeJS.WriteStream, 'write'>;
   stderr: Pick<NodeJS.WriteStream, 'write'>;
@@ -58,11 +72,16 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
     )
     .option(
       '--log-level <level>',
-      `Log level for the background daemon: ${VALID_LOG_LEVELS.join('|')}. Omit to keep logs off.`,
+      `Server log level: ${VALID_LOG_LEVELS.join('|')}. Omit to keep logs off.`,
     )
     .option(
       '--debug-endpoints',
       'Mount /api/v1/debug/* routes for test introspection. OFF by default; production callers leave this unset.',
+      false,
+    )
+    .option(
+      '--foreground',
+      'Run the server in the foreground and keep this terminal attached until SIGINT/SIGTERM (do not daemonize).',
       false,
     )
     .option(
@@ -101,6 +120,23 @@ export async function handleRunCommand(
     return;
   }
   const startedAt = Date.now();
+  if (opts.foreground === true) {
+    const run = deps.startServerForeground ?? startServerForeground;
+    await run(parsed, {
+      onReady: (origin) => {
+        const readyMs = Date.now() - startedAt;
+        deps.stdout.write(
+          parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
+            ? formatReadyBanner(origin, readyMs)
+            : `Kimi server: ${origin}\n`,
+        );
+        if (opts.open === true) {
+          deps.openUrl(origin);
+        }
+      },
+    });
+    return;
+  }
   const { origin } = await deps.startServerBackground(parsed);
   const readyMs = Date.now() - startedAt;
   deps.stdout.write(
@@ -141,23 +177,49 @@ export async function startServerBackground(
  * Resolves only via `process.exit`.
  */
 export async function startServerDaemon(options: ParsedServerOptions): Promise<never> {
+  return runServerInProcess(options, { daemon: true });
+}
+
+/**
+ * `kimi server run --foreground` — runs the local server in-process, attached
+ * to the current terminal. Resolves only via `process.exit` (SIGINT/SIGTERM).
+ */
+export async function startServerForeground(
+  options: ParsedServerOptions,
+  hooks: StartForegroundHooks = {},
+): Promise<never> {
+  return runServerInProcess(options, { daemon: false }, hooks.onReady);
+}
+
+/**
+ * Start the server in the current process and block until shutdown. Shared by
+ * the detached daemon (`daemon: true`, with idle-exit) and the foreground
+ * runner (`daemon: false`). `onReady` fires once the server is listening.
+ */
+async function runServerInProcess(
+  options: ParsedServerOptions,
+  mode: { daemon: boolean },
+  onReady?: (origin: string) => void,
+): Promise<never> {
   const version = getVersion();
   const telemetry = initializeServerTelemetry({ version });
 
   let running: RunningServer | undefined;
   let stopping = false;
 
-  const idle = createIdleShutdownHandler({
-    graceMs: options.idleGraceMs,
-    onIdle: () => {
-      void shutdown('idle');
-    },
-  });
+  const idle = mode.daemon
+    ? createIdleShutdownHandler({
+        graceMs: options.idleGraceMs,
+        onIdle: () => {
+          void shutdown('idle');
+        },
+      })
+    : undefined;
 
   async function shutdown(reason: string): Promise<void> {
     if (stopping) return;
     stopping = true;
-    idle.cancel();
+    idle?.cancel();
     running?.logger.info({ reason }, 'server shutting down');
     try {
       await running?.close();
@@ -183,13 +245,15 @@ export async function startServerDaemon(options: ParsedServerOptions): Promise<n
     },
     wsGatewayOptions: {
       telemetry,
-      onConnectionCountChange: (size) => {
-        idle.onConnectionCountChange(size);
-      },
+      onConnectionCountChange: idle
+        ? (size) => {
+            idle.onConnectionCountChange(size);
+          }
+        : undefined,
     },
   });
 
-  track('server_started', { ui_mode: WEB_UI_MODE, daemon: true });
+  track('server_started', { ui_mode: WEB_UI_MODE, daemon: mode.daemon });
 
   process.once('SIGINT', () => {
     void shutdown('SIGINT');
@@ -198,10 +262,12 @@ export async function startServerDaemon(options: ParsedServerOptions): Promise<n
     void shutdown('SIGTERM');
   });
 
-  running.logger.info(
-    { address: running.address, idleGraceMs: options.idleGraceMs },
-    'daemon ready',
-  );
+  const readyFields = mode.daemon
+    ? { address: running.address, idleGraceMs: options.idleGraceMs }
+    : { address: running.address };
+  running.logger.info(readyFields, mode.daemon ? 'daemon ready' : 'server ready');
+
+  onReady?.(running.address);
 
   return new Promise<never>(() => {
     // Keeps the event loop alive; the process ends via shutdown()/process.exit.
@@ -314,6 +380,7 @@ function displayOrigin(origin: string): string {
 
 const DEFAULT_RUN_COMMAND_DEPS: RunCommandDeps = {
   startServerBackground,
+  startServerForeground,
   openUrl: defaultOpenUrl,
   stdout: process.stdout,
   stderr: process.stderr,

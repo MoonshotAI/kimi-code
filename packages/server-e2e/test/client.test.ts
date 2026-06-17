@@ -1,6 +1,6 @@
 /**
  * Self-tests for `DaemonClient` against a live server at
- * `process.env.KIMI_SERVER_URL ?? http://127.0.0.1:7878`.
+ * `process.env.KIMI_SERVER_URL ?? http://127.0.0.1:58627`.
  *
  * Every test gates on a `daemonReachable()` check so CI / dev machines
  * without a running server stay green. Run a server (`pnpm dev:server` from
@@ -29,7 +29,7 @@ import { DaemonClient, EnvelopeError } from '../src/index.js';
 import { fetchWithReport } from '../src/report.js';
 import { createCaseLogger, errorForLog } from './log.js';
 
-const BASE_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:7878';
+const BASE_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:58627';
 const PROMPT_TIMEOUT_MS = 120_000;
 
 async function daemonReachable(): Promise<boolean> {

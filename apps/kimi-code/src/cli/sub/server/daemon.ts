@@ -96,16 +96,34 @@ function getFreePort(host: string): Promise<number> {
 }
 
 /**
+ * How many consecutive `preferred + n` ports to probe before giving up and
+ * asking the OS for any free port. Mirrors `PORT_RETRY_LIMIT` in the server's
+ * own bind retry so the spawner and the daemon agree on the policy.
+ */
+export const DAEMON_PORT_SCAN_LIMIT = 100;
+
+/**
  * Pick a port for a new daemon: prefer `preferred` when it is free, otherwise
- * fall back to an OS-assigned free port. Reusing an already-live daemon is
- * handled by `ensureDaemon` before this runs, so this only executes when no
- * daemon currently holds the lock.
+ * walk `preferred + 1`, `+ 2`, … upward and take the first free one. Only when
+ * the whole scan window is saturated do we fall back to an OS-assigned free
+ * port.
+ *
+ * Reusing an already-live daemon is handled by `ensureDaemon` before this runs,
+ * so a busy port here is held by a third-party process — bumping by one (rather
+ * than jumping to a random ephemeral port) keeps the URL predictable, matching
+ * the server's own "port busy ⇒ +1" bind retry.
  */
 export async function resolveDaemonPort(
   host: string = DEFAULT_SERVER_HOST,
   preferred: number = DEFAULT_SERVER_PORT,
 ): Promise<number> {
-  if (await canBind(host, preferred)) return preferred;
+  for (
+    let candidate = preferred;
+    candidate < preferred + DAEMON_PORT_SCAN_LIMIT && candidate <= 65535;
+    candidate++
+  ) {
+    if (await canBind(host, candidate)) return candidate;
+  }
   return getFreePort(host);
 }
 

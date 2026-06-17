@@ -81,6 +81,15 @@ export interface AcquireLockResult {
   release(): void;
   /** Absolute path of the lock file that was acquired. */
   lockPath: string;
+  /**
+   * Rewrite the lock file's recorded `port` to the one actually bound. Used
+   * when the requested port was busy (held by a third-party process) and the
+   * server retried on `port + 1`: the lock must advertise the real port so
+   * `kimi server status` / `kill` / `ps` can find the daemon. Best-effort and
+   * ownership-guarded — a no-op when the file is missing, owned by another
+   * pid, or already records `port`.
+   */
+  updatePort(port: number): void;
 }
 
 /** Error thrown when another server is already holding the lock. */
@@ -251,6 +260,17 @@ function makeReleaseHandle(lockPath: string, ownerPid: number): AcquireLockResul
         unlinkSync(lockPath);
       } catch {
         // Best-effort: file may have vanished between existsSync and unlinkSync.
+      }
+    },
+    updatePort(port: number): void {
+      if (!existsSync(lockPath)) return;
+      const contents = readLockContents(lockPath);
+      // Only rewrite our own lock, and only when the port actually changed.
+      if (!contents || contents.pid !== ownerPid || contents.port === port) return;
+      try {
+        writeFileSync(lockPath, JSON.stringify({ ...contents, port }));
+      } catch {
+        // Best-effort: a concurrent release/takeover may have removed the file.
       }
     },
   };

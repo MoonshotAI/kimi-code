@@ -10,7 +10,7 @@
  *   - `waitForFrame` / `waitForSessionStatus` convenience waits
  *
  * **What it is NOT**: a server bootstrap helper. Connect to a server process
- * that's already running at `baseUrl` (default `http://127.0.0.1:7878`).
+ * that's already running at `baseUrl` (default `http://127.0.0.1:58627`).
  */
 import type {
   ApprovalRequest,
@@ -66,7 +66,7 @@ import { DEFAULT_FRAME_TIMEOUT_MS, waitForSessionStatus } from './wait.js';
 import { type AnyFrame, WsClient } from './ws.js';
 
 export interface DaemonClientOptions {
-  /** Default `http://127.0.0.1:7878`. */
+  /** Default `http://127.0.0.1:58627`. */
   baseUrl?: string;
   /** Default `/api/v1`. WS endpoint is `${apiPrefix}/ws`. */
   apiPrefix?: string;
@@ -90,7 +90,7 @@ export interface SubmitAndWaitOptions {
 
 type UploadFileData = Blob | ArrayBuffer | Uint8Array | string;
 
-const DEFAULT_BASE_URL = 'http://127.0.0.1:7878';
+const DEFAULT_BASE_URL = 'http://127.0.0.1:58627';
 const DEFAULT_API_PREFIX = '/api/v1';
 const DEFAULT_CONTROL_ACK_TIMEOUT_MS = 5_000;
 

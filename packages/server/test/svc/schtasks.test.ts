@@ -84,12 +84,12 @@ describe('buildScheduledTaskXml', () => {
     const xml = buildScheduledTaskXml({
       description: 'test desc',
       command: 'C:\\bin\\kimi.exe',
-      arguments: 'server run --port 7878',
+      arguments: 'server run --port 58627',
     });
     expect(xml).toContain('<?xml version="1.0" encoding="UTF-16"?>');
     expect(xml).toContain('<Description>test desc</Description>');
     expect(xml).toContain('<Command>C:\\bin\\kimi.exe</Command>');
-    expect(xml).toContain('<Arguments>server run --port 7878</Arguments>');
+    expect(xml).toContain('<Arguments>server run --port 58627</Arguments>');
     expect(xml).toContain('<LogonTrigger>');
     expect(xml).toContain('<RunLevel>LeastPrivilege</RunLevel>');
   });
@@ -161,14 +161,14 @@ describe('schtasks manager — install', () => {
       false,
     );
     const mgr = createSchtasksManager(deps);
-    const result = await mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' });
+    const result = await mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' });
 
     expect(result.status).toBe('installed');
     expect(result.taskName).toBe(KIMI_SERVER_TASK_NAME);
     expect(writtenXmls.length).toBe(1);
     expect(writtenXmls[0]).toContain(`<Description>Kimi Code local server`);
     expect(writtenXmls[0]).not.toContain('--host');
-    expect(writtenXmls[0]).toContain('--port 7878');
+    expect(writtenXmls[0]).toContain('--port 58627');
 
     expect(calls.length).toBe(2);
     expect(calls[0]?.args.slice(0, 4)).toEqual([
@@ -183,7 +183,7 @@ describe('schtasks manager — install', () => {
   it('refuses to overwrite without --force', async () => {
     const { deps, calls } = makeDeps([], workDir, true);
     const mgr = createSchtasksManager(deps);
-    const result = await mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' });
+    const result = await mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' });
     expect(result.status).toBe('already-installed');
     expect(calls.length).toBe(0);
   });
@@ -213,7 +213,7 @@ describe('schtasks manager — install', () => {
       false,
     );
     const mgr = createSchtasksManager(deps);
-    const result = await mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' });
+    const result = await mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' });
     expect(result.status).toBe('installed');
     expect(result.message).toMatch(/\/Run failed/);
   });
@@ -271,7 +271,7 @@ describe('schtasks manager — lifecycle', () => {
     );
     writeInstallPlan({
       host: '127.0.0.1',
-      port: 7878,
+      port: 58627,
       logLevel: 'info',
       program: 'C:\\kimi.exe',
       programArguments: ['C:\\kimi.exe', 'server', 'run'],
@@ -308,7 +308,7 @@ describe('schtasks manager — status', () => {
     const { deps } = makeDeps([{ stdout: csv, stderr: '', code: 0 }], workDir, true);
     writeInstallPlan({
       host: '127.0.0.1',
-      port: 7878,
+      port: 58627,
       logLevel: 'info',
       program: 'C:\\kimi.exe',
       programArguments: [],
@@ -321,7 +321,7 @@ describe('schtasks manager — status', () => {
     expect(status.installed).toBe(true);
     expect(status.running).toBe(true);
     expect(status.host).toBe('127.0.0.1');
-    expect(status.port).toBe(7878);
+    expect(status.port).toBe(58627);
   });
 
   it('reports installed=true, running=false when /Query fails', async () => {

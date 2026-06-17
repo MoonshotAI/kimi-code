@@ -8,7 +8,7 @@
 import type { ServerLogLevel } from '@moonshot-ai/server';
 
 export const DEFAULT_SERVER_HOST = '127.0.0.1';
-export const DEFAULT_SERVER_PORT = 7878;
+export const DEFAULT_SERVER_PORT = 58627;
 export const DEFAULT_SERVER_ORIGIN = serverOrigin(DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT);
 
 export const DEFAULT_LOG_LEVEL: ServerLogLevel = 'info';

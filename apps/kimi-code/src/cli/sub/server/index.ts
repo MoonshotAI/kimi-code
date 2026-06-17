@@ -1,6 +1,7 @@
 /**
  * `kimi server` parent command. Mounts:
- *   - `server run` (foreground; also used as the detached daemon child)
+ *   - `server run` (background daemon by default; `--foreground` to attach; the
+ *     detached daemon child runs the same command with `--daemon`)
  *
  * The OS service-manager subcommands (`install/uninstall/start/stop/restart/
  * status`) are temporarily NOT registered — see the commented
@@ -24,7 +25,7 @@ export function registerServerCommand(program: Command): void {
     .description('Run the local Kimi server (REST + WebSocket + web UI).');
 
   buildRunCommand(
-    server.command('run').description('Start the Kimi server as a background daemon.'),
+    server.command('run').description('Start the Kimi server (background daemon; use --foreground to attach).'),
     { defaultOpen: false },
   );
 

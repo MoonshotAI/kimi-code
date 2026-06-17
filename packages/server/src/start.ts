@@ -340,9 +340,16 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
   pinoLogger.info('core process ready');
 
+  const restGateway = ix.invokeFunction((a) => a.get(IRestGateway));
   let address: string;
+  let boundPort: number;
   try {
-    address = await ix.invokeFunction((a) => a.get(IRestGateway).listen(opts.host, opts.port));
+    ({ address, port: boundPort } = await listenWithPortRetry({
+      gateway: restGateway,
+      host: opts.host,
+      port: opts.port,
+      logger: pinoLogger,
+    }));
   } catch (error) {
     try {
       ix.dispose();
@@ -352,7 +359,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     lockHandle.release();
     throw error;
   }
-  pinoLogger.info({ address, lockPath: lockHandle.lockPath }, 'server listening');
+  // If we retried onto a different port, advertise the real one in the lock so
+  // `kimi server status` / `kill` / `ps` can find this daemon.
+  if (boundPort !== opts.port) {
+    lockHandle.updatePort(boundPort);
+  }
+  pinoLogger.info(
+    { address, port: boundPort, lockPath: lockHandle.lockPath },
+    'server listening',
+  );
 
   let closed = false;
   const doClose = async (): Promise<void> => {
@@ -404,6 +419,71 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     services: ix,
     close: doClose,
   };
+}
+
+/**
+ * Maximum consecutive `EADDRINUSE` retries when the requested port is busy.
+ * Caps the `port + 1` walk so a permanently-saturated range cannot loop
+ * forever; 100 matches the daemon spawner's own scan window in `resolveDaemonPort`.
+ */
+export const PORT_RETRY_LIMIT = 100;
+
+export interface ListenWithPortRetryOptions {
+  gateway: IRestGateway;
+  host: string;
+  port: number;
+  logger: ServerLogger;
+  /** Override the retry cap — used by tests to keep the walk short. */
+  maxRetries?: number;
+}
+
+/**
+ * Bind the gateway, retrying on `port + 1` when the port is held by a
+ * third-party process.
+ *
+ * Why this is the right layer: {@link startServer} acquires the single-instance
+ * lock *before* listening, so by the time we reach `listen` a live kimi server
+ * would already have thrown `ServerLockedError`. Any `EADDRINUSE` here is
+ * therefore a third-party listener, and bumping the port is the desired policy
+ * ("if the port is taken by something other than kimi server itself, +1").
+ *
+ * Port `0` (OS-assigned ephemeral) is never retried: the kernel already picks a
+ * free port, so `EADDRINUSE` cannot arise from a specific-port conflict.
+ */
+export async function listenWithPortRetry(
+  opts: ListenWithPortRetryOptions,
+): Promise<{ address: string; port: number }> {
+  // Ephemeral bind: the OS chooses a free port, so there is nothing to retry.
+  if (opts.port === 0) {
+    const address = await opts.gateway.listen(opts.host, 0);
+    return { address, port: 0 };
+  }
+
+  const maxRetries = opts.maxRetries ?? PORT_RETRY_LIMIT;
+  let port = opts.port;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const address = await opts.gateway.listen(opts.host, port);
+      if (port !== opts.port) {
+        opts.logger.warn(
+          { requestedPort: opts.port, port, host: opts.host },
+          'requested port was busy; server bound to a higher port',
+        );
+      }
+      return { address, port };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EADDRINUSE' || attempt >= maxRetries || port >= 65535) {
+        throw err;
+      }
+      const next = port + 1;
+      opts.logger.warn(
+        { host: opts.host, port, next },
+        'port in use by another process, trying next port',
+      );
+      port = next;
+    }
+  }
 }
 
 function toPosixRelativeForCwd(cwd: string, abs: string): string {

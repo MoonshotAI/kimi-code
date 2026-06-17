@@ -34,8 +34,8 @@ The public entry point is `startServer(opts)` in `src/start.ts`, which returns a
 has no `dev` script of its own — always start it from the repo root or via the
 CLI.
 
-By default the server listens on `127.0.0.1:7878`; e2e clients target it with
-`KIMI_SERVER_URL` (default `http://127.0.0.1:7878`).
+By default the server listens on `127.0.0.1:58627`; e2e clients target it with
+`KIMI_SERVER_URL` (default `http://127.0.0.1:58627`).
 
 ## Architecture
 

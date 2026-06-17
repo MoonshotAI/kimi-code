@@ -13,14 +13,14 @@ This file contains package-local rules for `packages/server-e2e`.
 
 - When adding or changing a server-e2e case, update that case's observability at the same time.
 - Do not add a new scenario solely to print data that an existing scenario or Vitest case should already expose.
-- Run the relevant server-e2e tests against `KIMI_SERVER_URL=http://127.0.0.1:7878` when a server is available, and confirm the output includes the case-scoped diagnostic blocks.
+- Run the relevant server-e2e tests against `KIMI_SERVER_URL=http://127.0.0.1:58627` when a server is available, and confirm the output includes the case-scoped diagnostic blocks.
 - Run Docker e2e with `pnpm --filter @moonshot-ai/server-e2e docker:e2e`; each run must derive its Docker runner name/namespace from the current workspace to avoid cross-workspace conflicts.
 
 ## Command Reference
 
 - Start a local server from the repo root before validating live cases: `pnpm dev:server`.
-- Run only the undo helper/live e2e coverage: `KIMI_SERVER_URL=http://127.0.0.1:7878 pnpm --filter @moonshot-ai/server-e2e test -- test/client.test.ts -t undoSession`.
-- Run the full server client Vitest file: `KIMI_SERVER_URL=http://127.0.0.1:7878 pnpm --filter @moonshot-ai/server-e2e test -- test/client.test.ts`.
-- Run all server-e2e Vitest tests: `KIMI_SERVER_URL=http://127.0.0.1:7878 pnpm --filter @moonshot-ai/server-e2e test`.
-- Run all executable scenarios against the local server: `KIMI_SERVER_URL=http://127.0.0.1:7878 pnpm --filter @moonshot-ai/server-e2e test:scenarios`.
+- Run only the undo helper/live e2e coverage: `KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm --filter @moonshot-ai/server-e2e test -- test/client.test.ts -t undoSession`.
+- Run the full server client Vitest file: `KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm --filter @moonshot-ai/server-e2e test -- test/client.test.ts`.
+- Run all server-e2e Vitest tests: `KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm --filter @moonshot-ai/server-e2e test`.
+- Run all executable scenarios against the local server: `KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm --filter @moonshot-ai/server-e2e test:scenarios`.
 - Run type checking for this package: `pnpm --filter @moonshot-ai/server-e2e typecheck`.

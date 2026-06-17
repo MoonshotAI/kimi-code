@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 
 import { DaemonClient, recordReportEvent, type AnyFrame } from '../src/index';
 
-const KIMI_SERVER_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:7878';
+const KIMI_SERVER_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:58627';
 const TERMINAL_SHELL = process.env['KIMI_SERVER_E2E_TERMINAL_SHELL'] ?? '/bin/sh';
 const OUTPUT_TIMEOUT_MS = 20_000;
 const EXIT_TIMEOUT_MS = 5_000;

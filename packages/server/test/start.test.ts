@@ -19,12 +19,15 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { pino } from 'pino';
+
+import { listenWithPortRetry } from '../src/start';
 
 import {
   ServerLockedError,
@@ -74,6 +77,50 @@ function silentLogger() {
   return pino({ level: 'silent' });
 }
 
+function listenOnPort(host: string, port: number): Promise<Server> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen({ host, port }, () => resolve(server));
+  });
+}
+
+function closeNetServer(server: Server): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()));
+}
+
+/** Find `port` such that both `port` and `port + 1` are free to bind. */
+async function allocateAdjacentFreePair(
+  host = '127.0.0.1',
+): Promise<{ port: number; next: number }> {
+  for (let i = 0; i < 30; i++) {
+    const a = await listenOnPort(host, 0);
+    const address = a.address();
+    const port = typeof address === 'object' && address !== null ? address.port : 0;
+    await closeNetServer(a);
+    if (port <= 0 || port >= 65535) continue;
+    const probe = await listenOnPort(host, port + 1).catch(() => null);
+    if (probe === null) continue;
+    await closeNetServer(probe);
+    return { port, next: port + 1 };
+  }
+  throw new Error('could not allocate an adjacent free port pair');
+}
+
+function fakeGateway(
+  listen: (host: string, port: number) => Promise<string>,
+): Parameters<typeof listenWithPortRetry>[0]['gateway'] {
+  return { _serviceBrand: undefined, app: undefined, listen } as unknown as Parameters<
+    typeof listenWithPortRetry
+  >[0]['gateway'];
+}
+
+function addrInUse(): NodeJS.ErrnoException {
+  const err = new Error('listen EADDRINUSE') as NodeJS.ErrnoException;
+  err.code = 'EADDRINUSE';
+  return err;
+}
+
 async function spawn(): Promise<RunningServer> {
   const r = await startServer({
     host: '127.0.0.1',
@@ -112,6 +159,125 @@ describe('startServer — lock + healthz smoke', () => {
     await r.close();
     await r.close(); // second call is a no-op (would throw on double-app.close otherwise)
     expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it('retries on port+1 and updates the lock when the requested port is held by a third party', async () => {
+    // Occupy the requested port with a raw TCP server (a "third-party" process
+    // from the server's point of view — it does NOT hold the lock).
+    const { port, next } = await allocateAdjacentFreePair();
+    const occupant = await listenOnPort('127.0.0.1', port);
+    // Distinct lock path: the global single-instance lock is not what we are
+    // testing here; the port conflict must come from the TCP bind alone.
+    const thirdPartyLockPath = join(tmpDir, 'lock-third-party');
+    try {
+      const r = await startServer({
+        host: '127.0.0.1',
+        port,
+        lockPath: thirdPartyLockPath,
+        logger: silentLogger(),
+        coreProcessOptions: { homeDir: bridgeHome },
+      });
+      running.push(r);
+
+      // Bound to the next port, and the lock advertises it so status/kill/ps work.
+      expect(r.address).toBe(`http://127.0.0.1:${String(next)}`);
+      const stored = JSON.parse(readFileSync(thirdPartyLockPath, 'utf8')) as LockContents;
+      expect(stored.port).toBe(next);
+    } finally {
+      await closeNetServer(occupant);
+    }
+  });
+});
+
+describe('listenWithPortRetry', () => {
+  it('returns the requested port when the first listen succeeds', async () => {
+    const attempts: number[] = [];
+    const gateway = fakeGateway(async (_host, port) => {
+      attempts.push(port);
+      return `http://127.0.0.1:${String(port)}`;
+    });
+
+    const result = await listenWithPortRetry({
+      gateway,
+      host: '127.0.0.1',
+      port: 5000,
+      logger: silentLogger(),
+    });
+
+    expect(result.port).toBe(5000);
+    expect(attempts).toEqual([5000]);
+  });
+
+  it('retries with port+1 on EADDRINUSE until a bind succeeds', async () => {
+    const attempts: number[] = [];
+    const gateway = fakeGateway(async (_host, port) => {
+      attempts.push(port);
+      if (port < 5002) throw addrInUse();
+      return `http://127.0.0.1:${String(port)}`;
+    });
+
+    const result = await listenWithPortRetry({
+      gateway,
+      host: '127.0.0.1',
+      port: 5000,
+      logger: silentLogger(),
+    });
+
+    expect(result.port).toBe(5002);
+    expect(result.address).toBe('http://127.0.0.1:5002');
+    expect(attempts).toEqual([5000, 5001, 5002]);
+  });
+
+  it('does not retry on non-EADDRINUSE errors', async () => {
+    const attempts: number[] = [];
+    const boom = Object.assign(new Error('listen EACCES'), { code: 'EACCES' });
+    const gateway = fakeGateway(async (_host, port) => {
+      attempts.push(port);
+      throw boom;
+    });
+
+    await expect(
+      listenWithPortRetry({ gateway, host: '127.0.0.1', port: 5000, logger: silentLogger() }),
+    ).rejects.toBe(boom);
+    expect(attempts).toEqual([5000]);
+  });
+
+  it('throws after exhausting maxRetries', async () => {
+    const attempts: number[] = [];
+    const gateway = fakeGateway(async (_host, port) => {
+      attempts.push(port);
+      throw addrInUse();
+    });
+
+    await expect(
+      listenWithPortRetry({
+        gateway,
+        host: '127.0.0.1',
+        port: 5000,
+        logger: silentLogger(),
+        maxRetries: 3,
+      }),
+    ).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    // initial attempt + 3 retries, then the cap throws.
+    expect(attempts).toEqual([5000, 5001, 5002, 5003]);
+  });
+
+  it('does not walk ports when the requested port is 0 (ephemeral)', async () => {
+    const attempts: number[] = [];
+    const gateway = fakeGateway(async (_host, port) => {
+      attempts.push(port);
+      return 'http://127.0.0.1:54321';
+    });
+
+    const result = await listenWithPortRetry({
+      gateway,
+      host: '127.0.0.1',
+      port: 0,
+      logger: silentLogger(),
+    });
+
+    expect(result.port).toBe(0);
+    expect(attempts).toEqual([0]);
   });
 });
 

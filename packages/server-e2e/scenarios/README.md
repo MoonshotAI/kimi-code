@@ -5,7 +5,7 @@ single user-facing flow against a running server.
 
 ## Running
 
-Default base URL is `http://127.0.0.1:7878`. Start a server (`pnpm dev:server`
+Default base URL is `http://127.0.0.1:58627`. Start a server (`pnpm dev:server`
 from the repo root) before invoking scenarios.
 
 Scenarios import directly from the package's `src/*.ts` so they need a TS

@@ -2,7 +2,7 @@
  * `@moonshot-ai/server-e2e` — wire-level test client for the kimi-code server.
  *
  * Use this package from scenarios (`scenarios/*.ts`) and vitest e2e tests
- * to drive a real server process at `http://127.0.0.1:7878` (or any baseUrl
+ * to drive a real server process at `http://127.0.0.1:58627` (or any baseUrl
  * you pass via `DaemonClientOptions.baseUrl`).
  *
  * Public surface:

@@ -14,7 +14,7 @@ import type { QuestionAnswer } from '@moonshot-ai/protocol';
 
 import { DaemonClient, type AnyFrame } from '../src/index';
 
-const KIMI_SERVER_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:7878';
+const KIMI_SERVER_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:58627';
 const PROMPT_TIMEOUT_MS = 120_000;
 const CANARY = `KIMI_SERVER_E2E_PENDING_${process.pid}`;
 

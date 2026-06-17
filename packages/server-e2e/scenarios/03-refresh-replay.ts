@@ -32,7 +32,7 @@
  *   - Phase 5: a new prompt over the third connection delivers events on WS.
  *
  * Usage:
- *   KIMI_SERVER_URL=http://127.0.0.1:7878 npx tsx scenarios/03-refresh-replay.ts
+ *   KIMI_SERVER_URL=http://127.0.0.1:58627 npx tsx scenarios/03-refresh-replay.ts
  *
  * Exit codes:
  *   0  — pass
@@ -44,7 +44,7 @@ import { DaemonClient, WsClient, type AnyFrame } from '../src/index';
 import { fetchWithReport } from '../src/report';
 import { WebSocket as WsWebSocket } from 'ws';
 
-const KIMI_SERVER_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:7878';
+const KIMI_SERVER_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:58627';
 const API_PREFIX = '/api/v1';
 const HANDSHAKE_TIMEOUT_MS = 5_000;
 const PROMPT_TIMEOUT_MS = 60_000;

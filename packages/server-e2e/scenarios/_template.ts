@@ -3,7 +3,7 @@
  * Template scenario — copy-paste starting point.
  *
  * Usage:
- *   KIMI_SERVER_URL=http://127.0.0.1:7878 npx tsx scenarios/_template.ts
+ *   KIMI_SERVER_URL=http://127.0.0.1:58627 npx tsx scenarios/_template.ts
  *
  * (`tsx` is a workspace devDependency; it handles the `.ts` imports below.
  * Plain `node` won't resolve them.)
@@ -16,7 +16,7 @@
  */
 import { DaemonClient } from '../src/index';
 
-const KIMI_SERVER_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:7878';
+const KIMI_SERVER_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:58627';
 
 async function main() {
   const client = new DaemonClient({

@@ -22,7 +22,7 @@ BASE_IMAGE="${KIMI_SERVER_E2E_BASE_IMAGE:-kimi-server-e2e-base:${RUN_ID}}"
 IMAGE="${KIMI_SERVER_E2E_IMAGE:-kimi-server-e2e:${RUN_ID}}"
 CONTAINER="${KIMI_SERVER_E2E_CONTAINER:-kimi-server-e2e-${RUN_ID}}"
 STATE_ROOT="${KIMI_SERVER_E2E_STATE_ROOT:-${HOME}/.kimi-code-server-dev}"
-PORT="${KIMI_SERVER_E2E_PORT:-7878}"
+PORT="${KIMI_SERVER_E2E_PORT:-58627}"
 
 KIMI_HOME_HOST="${KIMI_SERVER_E2E_KIMI_HOME_HOST:-${STATE_ROOT}/docker-e2e/${RUN_ID}/kimi-code-home}"
 KIMI_HOME_CONTAINER="/data/docker-e2e/kimi-code-home"

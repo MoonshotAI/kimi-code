@@ -59,6 +59,7 @@ describe('kimi server', () => {
     expect(longs).toContain('--port');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
+    expect(longs).toContain('--foreground');
     // run defaults to NOT opening the browser → option is the positive --open
     expect(longs).toContain('--open');
   });
@@ -100,7 +101,7 @@ describe('`kimi server` lifecycle exits with ESERVICE_UNSUPPORTED on unsupported
     const { resolveServiceManager, ServiceUnsupportedError } = await import('@moonshot-ai/server');
     const mgr = resolveServiceManager('freebsd');
     await expect(
-      mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' }),
+      mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' }),
     ).rejects.toBeInstanceOf(ServiceUnsupportedError);
     await expect(mgr.status()).rejects.toBeInstanceOf(ServiceUnsupportedError);
   });
@@ -245,7 +246,7 @@ describe('`kimi server` lifecycle output', () => {
           installed: true,
           running: false,
           host: '127.0.0.1',
-          port: 7878,
+          port: 58627,
           logPath: '/tmp/server.log',
           label: 'ai.moonshot.kimi-server',
           notes: ['launchd state: spawn scheduled', 'last exit code: 78 EX_CONFIG'],
@@ -267,7 +268,7 @@ describe('`kimi server` lifecycle output', () => {
 
     await program.parseAsync(['node', 'kimi', 'server', 'start']);
 
-    expect(stdout).toContain('URL: http://127.0.0.1:7878');
+    expect(stdout).toContain('URL: http://127.0.0.1:58627');
     expect(stdout).toContain('Status: not running');
     expect(stdout).toContain('launchd state: spawn scheduled');
     expect(stdout).toContain('last exit code: 78 EX_CONFIG');
@@ -281,11 +282,11 @@ describe('`kimi server run` background start', () => {
     let parsed: unknown;
 
     await handleRunCommand(
-      { port: '7878' },
+      { port: '58627' },
       {
         startServerBackground: async (options) => {
           parsed = options;
-          return { origin: 'http://127.0.0.1:7878' };
+          return { origin: 'http://127.0.0.1:58627' };
         },
         openUrl: vi.fn(),
         stdout: {
@@ -309,11 +310,11 @@ describe('`kimi server run` background start', () => {
     let parsed: unknown;
 
     await handleRunCommand(
-      { port: '7878', logLevel: 'debug' },
+      { port: '58627', logLevel: 'debug' },
       {
         startServerBackground: async (options) => {
           parsed = options;
-          return { origin: 'http://127.0.0.1:7878' };
+          return { origin: 'http://127.0.0.1:58627' };
         },
         openUrl: vi.fn(),
         stdout: {
@@ -337,9 +338,9 @@ describe('`kimi server run` background start', () => {
     let stdout = '';
 
     await handleRunCommand(
-      { port: '7878' },
+      { port: '58627' },
       {
-        startServerBackground: async () => ({ origin: 'http://127.0.0.1:7878' }),
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
         openUrl: vi.fn(),
         stdout: {
           write(chunk: string | Uint8Array) {
@@ -362,7 +363,7 @@ describe('`kimi server run` background start', () => {
     expect(plain).toContain('▐█████▌');
     expect(plain).toContain('Kimi server ready');
     expect(plain).toContain('URL:');
-    expect(plain).toContain('http://127.0.0.1:7878/');
+    expect(plain).toContain('http://127.0.0.1:58627/');
     expect(plain).toContain('Network:');
     expect(plain).toContain('local only');
     expect(plain).toContain('Logs:');
@@ -381,9 +382,9 @@ describe('`kimi server run` background start', () => {
 
     try {
       await handleRunCommand(
-        { port: '7878' },
+        { port: '58627' },
         {
-          startServerBackground: async () => ({ origin: 'http://127.0.0.1:7878' }),
+          startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
           openUrl: vi.fn(),
           stdout: {
             write(chunk: string | Uint8Array) {
@@ -405,9 +406,80 @@ describe('`kimi server run` background start', () => {
     const color = new Chalk({ level: 3 });
     expect(stdout).toContain(color.hex(darkColors.primary)('▐█▛█▛█▌'));
     expect(stdout).toContain(color.bold.hex(darkColors.primary)('Kimi server ready'));
-    expect(stdout).toContain(color.hex(darkColors.accent)('http://127.0.0.1:7878/'));
+    expect(stdout).toContain(color.hex(darkColors.accent)('http://127.0.0.1:58627/'));
     expect(stdout).toContain(color.bold.hex(darkColors.textDim)('URL:      '));
     expect(stdout).toContain(color.hex(darkColors.textMuted)('local only'));
+  });
+});
+
+describe('`kimi server run --foreground`', () => {
+  it('runs the server in-process instead of spawning a background daemon', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let foregroundOptions: unknown;
+    let backgroundCalled = false;
+
+    await handleRunCommand(
+      { port: '58627', foreground: true },
+      {
+        startServerBackground: async () => {
+          backgroundCalled = true;
+          return { origin: 'http://127.0.0.1:58627' };
+        },
+        startServerForeground: async (options) => {
+          foregroundOptions = options;
+          return undefined as unknown as never;
+        },
+        openUrl: vi.fn(),
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      },
+    );
+
+    expect(backgroundCalled).toBe(false);
+    expect(foregroundOptions).toMatchObject({ port: 58627, logLevel: 'silent' });
+  });
+
+  it('prints the ready banner and opens the browser once listening', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+    const openUrl = vi.fn();
+
+    await handleRunCommand(
+      { port: '58627', foreground: true, open: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+        startServerForeground: async (options, hooks) => {
+          void options;
+          hooks?.onReady?.('http://127.0.0.1:58627');
+          return undefined as unknown as never;
+        },
+        openUrl,
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      },
+    );
+
+    const plain = stripAnsi(stdout);
+    expect(plain).toContain('Kimi server ready');
+    expect(plain).toContain('http://127.0.0.1:58627/');
+    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627');
   });
 });
 
@@ -422,10 +494,10 @@ describe('`kimi server` does not register a legacy `daemon` command', () => {
 describe('shared parsers stay strict', () => {
   it('rejects out-of-range --port', async () => {
     const { parsePort } = await import('#/cli/sub/server/shared');
-    expect(() => parsePort('99999', '--port', 7878)).toThrow(/invalid --port/);
-    expect(() => parsePort('-1', '--port', 7878)).toThrow(/invalid --port/);
-    expect(parsePort(undefined, '--port', 7878)).toBe(7878);
-    expect(parsePort('8080', '--port', 7878)).toBe(8080);
+    expect(() => parsePort('99999', '--port', 58627)).toThrow(/invalid --port/);
+    expect(() => parsePort('-1', '--port', 58627)).toThrow(/invalid --port/);
+    expect(parsePort(undefined, '--port', 58627)).toBe(58627);
+    expect(parsePort('8080', '--port', 58627)).toBe(8080);
   });
 
   it('rejects unknown --log-level values', async () => {
@@ -468,6 +540,30 @@ async function allocateFreePort(host = '127.0.0.1'): Promise<number> {
   return port;
 }
 
+/**
+ * Find the start of a run of `count` consecutive free ports
+ * (`start`, `start + 1`, …, `start + count - 1` all bindable).
+ */
+async function allocateAdjacentFreeRun(count: number, host = '127.0.0.1'): Promise<number> {
+  for (let i = 0; i < 50; i++) {
+    const start = await allocateFreePort(host);
+    if (start <= 0 || start + count - 1 > 65535) continue;
+    const held: Server[] = [];
+    let ok = true;
+    for (let offset = 1; offset < count; offset++) {
+      const probe = await listenOnce(host, start + offset).catch(() => null);
+      if (probe === null) {
+        ok = false;
+        break;
+      }
+      held.push(probe);
+    }
+    for (const server of held) await closeServer(server);
+    if (ok) return start;
+  }
+  throw new Error('could not allocate a run of adjacent free ports');
+}
+
 describe('resolveDaemonPort', () => {
   it('returns the preferred port when it is free', async () => {
     const { resolveDaemonPort } = await import('#/cli/sub/server/daemon');
@@ -485,6 +581,33 @@ describe('resolveDaemonPort', () => {
       expect(port).toBeGreaterThan(0);
     } finally {
       await closeServer(holder);
+    }
+  });
+
+  it('walks to preferred+1 when only the preferred port is busy', async () => {
+    const { resolveDaemonPort } = await import('#/cli/sub/server/daemon');
+    const start = await allocateAdjacentFreeRun(2);
+    const holder = await listenOnce('127.0.0.1', start);
+    try {
+      const port = await resolveDaemonPort('127.0.0.1', start);
+      expect(port).toBe(start + 1);
+    } finally {
+      await closeServer(holder);
+    }
+  });
+
+  it('skips past a run of busy ports to the first free one', async () => {
+    const { resolveDaemonPort } = await import('#/cli/sub/server/daemon');
+    const start = await allocateAdjacentFreeRun(3);
+    // Hold both `start` and `start+1`; the resolver should land on `start+2`.
+    const holderA = await listenOnce('127.0.0.1', start);
+    const holderB = await listenOnce('127.0.0.1', start + 1);
+    try {
+      const port = await resolveDaemonPort('127.0.0.1', start);
+      expect(port).toBe(start + 2);
+    } finally {
+      await closeServer(holderA);
+      await closeServer(holderB);
     }
   });
 });
@@ -552,9 +675,9 @@ describe('kimi web (shares `server run` call stack)', () => {
     const openUrl = vi.fn();
 
     await handleRunCommand(
-      { port: '7878', open: true },
+      { port: '58627', open: true },
       {
-        startServerBackground: async () => ({ origin: 'http://127.0.0.1:7878' }),
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
         openUrl,
         stdout: {
           write(chunk: string | Uint8Array) {
@@ -571,14 +694,14 @@ describe('kimi web (shares `server run` call stack)', () => {
     );
 
     expect(stripAnsi(stdout)).toContain('Kimi server ready');
-    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:7878');
+    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627');
   });
 
   it('does not open the browser when open is false', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     const openUrl = vi.fn();
     await handleRunCommand(
-      { port: '7878' },
+      { port: '58627' },
       {
         startServerBackground: async () => ({ origin: 'http://127.0.0.1:9000' }),
         openUrl,
@@ -644,7 +767,7 @@ function makeKillDeps(overrides: Partial<KillCommandDeps> = {}): {
 }
 
 describe('`kimi server kill`', () => {
-  const liveLock = { pid: 1234, started_at: '2026-06-17T00:00:00.000Z', port: 7878 };
+  const liveLock = { pid: 1234, started_at: '2026-06-17T00:00:00.000Z', port: 58627 };
 
   it('prints "No running Kimi server." and sends no signal when no live lock exists', async () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');

@@ -27,7 +27,7 @@ Service conventions (naming, file layout, registration) live in `packages/agent-
 
 - `src/services/serviceCollection.ts` `createServerServiceCollection(...)` seeds a `ServiceCollection` with `...getSingletonServiceDescriptors()` plus server-owned gateway singletons (`ConnectionRegistry`, `SessionClientsService`, `WSBroadcastService`) and overrides `IApprovalService` / `IQuestionService`.
 - `services.set(...)` overrides: `ILogService` (Pino adapter), `IRestGateway` (`FastifyRestGateway(app)`), `IEnvironmentService`; then `IWSGateway` / `ICoreProcessService` as `SyncDescriptor`s with options; then `server.serviceOverrides` last (the test seam — later registration wins).
-- `start.ts` builds `new InstantiationService(services)`, eagerly resolves services inside `ix.invokeFunction(...)`, wires `wsGw.setAbortHandler/setTerminalHandler/setFsWatchHandler`, manually creates + registers `FsWatcherService`, awaits `coreProcess.ready()`, then `IRestGateway.listen(host, port)`.
+- `start.ts` builds `new InstantiationService(services)`, eagerly resolves services inside `ix.invokeFunction(...)`, wires `wsGw.setAbortHandler/setTerminalHandler/setFsWatchHandler`, manually creates + registers `FsWatcherService`, awaits `coreProcess.ready()`, then binds via `listenWithPortRetry(...)` (wraps `IRestGateway.listen`).
 
 ## Wire layer
 
@@ -43,12 +43,13 @@ Service conventions (naming, file layout, registration) live in `packages/agent-
 - `pnpm --filter @moonshot-ai/server test` — `vitest run`.
 - `pnpm --filter @moonshot-ai/server clean` — `rm -rf dist`.
 - Dev server: `pnpm dev:server` at the repo root.
-- E2E: in-process tests live in `test/*.e2e.test.ts` and boot `startServer` directly. Live e2e against a running server lives in `packages/server-e2e` (default `http://127.0.0.1:7878`, override with `KIMI_SERVER_URL`).
+- E2E: in-process tests live in `test/*.e2e.test.ts` and boot `startServer` directly. Live e2e against a running server lives in `packages/server-e2e` (default `http://127.0.0.1:58627`, override with `KIMI_SERVER_URL`).
 
 ## Gotchas / hard rules
 
 - **Path alias:** `#/*` maps to `./src/*.ts` (with `#/services/...` variants). Use `#/...`, not `@/`.
 - **Single-instance lock:** `start.ts` calls `acquireLock`; a second start throws `ServerLockedError`. Tests must pass a unique `lockPath`/`port` and use `serviceOverrides`.
+- **Port-busy policy:** the lock is acquired *before* binding, so any `EADDRINUSE` from `listen` is a third-party listener (never another kimi server). `listenWithPortRetry` then walks `port + 1`, `+ 2`, … (capped by `PORT_RETRY_LIMIT`) and calls `lockHandle.updatePort(boundPort)` so the lock advertises the real port. Port `0` (ephemeral) is never retried. The daemon spawner mirrors this in `resolveDaemonPort` (`apps/kimi-code`).
 - **Uniform response envelope** `{ code, msg, data, request_id }` (`envelope.ts`, `error-handler.ts`); request id comes from `request-id.ts` / `genReqId`.
 - **`:action` URL convention** is handled by `routes/action-suffix.ts` (`parseActionSuffix`) — Fastify cannot disambiguate `:id` from `:id:action` on its own.
 - **`FsWatcherService` is created manually and `services.set`-registered after the collection is built** — this is ordering-sensitive; keep the boot wiring in `start.ts`.

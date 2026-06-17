@@ -5,11 +5,11 @@
 // read from stdin SIGTERMs the child and respawns after it has cleanly exited.
 // SIGTERM triggers the server's own `shutdown()` handler
 // (apps/kimi-code/src/cli/sub/server/run.ts) which releases the port lock and
-// closes WS conns before exit, so a fresh start can re-acquire 7878 without a
+// closes WS conns before exit, so a fresh start can re-acquire 58627 without a
 // stale-lock fight.
 //
 // CLI args after `--` (or any extras) are passed straight through, so:
-//   pnpm dev:server:restart -- --host 0.0.0.0 --port 7878 --log-level debug
+//   pnpm dev:server:restart -- --host 0.0.0.0 --port 58627 --log-level debug
 // is equivalent to `pnpm dev:server` with that arg list, but with the restart
 // loop on top.
 

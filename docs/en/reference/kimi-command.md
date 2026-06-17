@@ -141,12 +141,13 @@ kimi acp
 
 ### `kimi server`
 
-Run, install, and manage the local Kimi server — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin. The parent command is split into a foreground entrypoint (`run`) and an OS-managed service lifecycle (`install`, `uninstall`, `start`, `stop`, `restart`, `status`). Background operation is **never** spawned implicitly by a foreground command; you opt in via `install` + `start`.
+Run, install, and manage the local Kimi server — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin. The parent command is split into an on-demand entrypoint (`run`) and an OS-managed service lifecycle (`install`, `uninstall`, `start`, `stop`, `restart`, `status`). `kimi server run` ensures a single background daemon is running and returns once it is healthy; pass `--foreground` to keep the server attached to the current terminal instead.
 
 When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document.
 
 ```sh
-kimi server run                # foreground (logs off unless --log-level is set)
+kimi server run                # start or reuse a background daemon
+kimi server run --foreground   # run attached to the current terminal
 kimi server install            # register with launchd / systemd / schtasks
 kimi server start              # start the OS-managed service
 kimi server status             # snapshot of installed/running state
@@ -156,12 +157,13 @@ kimi server status             # snapshot of installed/running state
 
 | Option | Description |
 | --- | --- |
-| `--port <port>` | Bind port; defaults to `7878` |
-| `--log-level <level>` | Enable foreground logs at the selected level; omitted by default |
+| `--port <port>` | Bind port; defaults to `58627` |
+| `--log-level <level>` | Enable server logs at the selected level; omitted by default |
 | `--debug-endpoints` | Mount `/api/v1/debug/*` routes (off by default) |
+| `--foreground` | Run in the foreground instead of spawning a background daemon |
 | `--open` | Open the web UI in the default browser once the server is healthy |
 
-`kimi server run` binds to local loopback only and does not return — it stays attached to the current terminal and shuts down cleanly on `SIGINT` / `SIGTERM`. For background operation, use the OS-service path below.
+`kimi server run` binds to local loopback only. By default it spawns a single background daemon (reused across runs) and exits once the daemon is healthy; the daemon shuts itself down after the last web client disconnects. Pass `--foreground` to run the server in the current process instead — it then stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM`.
 
 #### `kimi server install`
 
@@ -173,7 +175,7 @@ Register the server as an OS-managed service so it starts at login and restarts 
 
 | Option | Description |
 | --- | --- |
-| `--port <port>` | Bind port the supervised server uses; defaults to `7878` |
+| `--port <port>` | Bind port the supervised server uses; defaults to `58627` |
 | `--log-level <level>` | Log level recorded in the generated unit |
 | `--force` | Replace an existing install instead of failing |
 | `--json` | Output JSON instead of a human-readable line |

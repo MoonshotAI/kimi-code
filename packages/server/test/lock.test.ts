@@ -38,7 +38,7 @@ describe('acquireLock — basic acquire / release', () => {
   it('writes pid/started_at/port JSON and release deletes the file', () => {
     const handle = acquireLock({
       lockPath,
-      port: 7878,
+      port: 58627,
       nowIso: '2026-06-05T00:00:00.000Z',
     });
     expect(handle.lockPath).toBe(lockPath);
@@ -48,7 +48,7 @@ describe('acquireLock — basic acquire / release', () => {
     expect(stored).toEqual({
       pid: process.pid,
       started_at: '2026-06-05T00:00:00.000Z',
-      port: 7878,
+      port: 58627,
     });
 
     handle.release();
@@ -87,22 +87,22 @@ describe('acquireLock — concurrent-instance protection', () => {
     const existing: LockContents = {
       pid: process.pid,
       started_at: '2026-06-05T00:00:00.000Z',
-      port: 7878,
+      port: 58627,
     };
     writeFileSync(lockPath, JSON.stringify(existing));
 
     // Same-pid double-acquire is also a conflict (single-server-per-process
     // invariant). Caller must release the previous handle first.
-    expect(() => acquireLock({ lockPath, port: 7878 })).toThrow(ServerLockedError);
+    expect(() => acquireLock({ lockPath, port: 58627 })).toThrow(ServerLockedError);
 
     try {
-      acquireLock({ lockPath, port: 7878 });
+      acquireLock({ lockPath, port: 58627 });
     } catch (err) {
       const e = err as ServerLockedError;
       expect(e.code).toBe('ESERVER_LOCKED');
       expect(e.exitCode).toBe(2);
       expect(e.message).toContain(`pid=${process.pid}`);
-      expect(e.message).toContain('port=7878');
+      expect(e.message).toContain('port=58627');
       expect(e.existing).toEqual(existing);
     }
   });
@@ -116,14 +116,14 @@ describe('acquireLock — concurrent-instance protection', () => {
       JSON.stringify({
         pid: stalePid,
         started_at: '2025-01-01T00:00:00.000Z',
-        port: 7878,
+        port: 58627,
       } satisfies LockContents),
     );
 
-    const handle = acquireLock({ lockPath, port: 7878 });
+    const handle = acquireLock({ lockPath, port: 58627 });
     const stored = JSON.parse(readFileSync(lockPath, 'utf8')) as LockContents;
     expect(stored.pid).toBe(process.pid);
-    expect(stored.port).toBe(7878);
+    expect(stored.port).toBe(58627);
     handle.release();
   });
 
@@ -149,6 +149,79 @@ describe('acquireLock — concurrent-instance protection', () => {
   });
 });
 
+describe('acquireLock — updatePort', () => {
+  it('rewrites the recorded port when our pid owns the lock', () => {
+    const handle = acquireLock({ lockPath, port: 7878 });
+
+    handle.updatePort(7879);
+
+    const stored = JSON.parse(readFileSync(lockPath, 'utf8')) as LockContents;
+    expect(stored.port).toBe(7879);
+    expect(stored.pid).toBe(process.pid);
+    handle.release();
+  });
+
+  it('preserves unrelated fields when rewriting the port', () => {
+    const handle = acquireLock({
+      lockPath,
+      port: 7878,
+      host: '127.0.0.1',
+      hostVersion: '1.2.3',
+      entry: '/usr/local/bin/kimi',
+      nowIso: '2026-06-05T00:00:00.000Z',
+    });
+
+    handle.updatePort(7880);
+
+    const stored = JSON.parse(readFileSync(lockPath, 'utf8')) as LockContents;
+    expect(stored).toEqual({
+      pid: process.pid,
+      started_at: '2026-06-05T00:00:00.000Z',
+      host: '127.0.0.1',
+      port: 7880,
+      host_version: '1.2.3',
+      entry: '/usr/local/bin/kimi',
+    });
+    handle.release();
+  });
+
+  it('is a no-op when the port is unchanged', () => {
+    const handle = acquireLock({ lockPath, port: 7878 });
+    const before = readFileSync(lockPath, 'utf8');
+
+    handle.updatePort(7878);
+
+    expect(readFileSync(lockPath, 'utf8')).toBe(before);
+    handle.release();
+  });
+
+  it('is a no-op when the lock file is missing', () => {
+    const handle = acquireLock({ lockPath, port: 7878 });
+    rmSync(lockPath);
+
+    expect(() => {
+      handle.updatePort(7879);
+    }).not.toThrow();
+    expect(existsSync(lockPath)).toBe(false);
+    handle.release();
+  });
+
+  it('does NOT rewrite the port when a third party owns the lock', () => {
+    const handle = acquireLock({ lockPath, port: 7878 });
+    // Simulate another server clobbering the file with its own pid+port.
+    writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: 0x7ffffff0, started_at: 'x', port: 7878 } satisfies LockContents),
+    );
+
+    handle.updatePort(7879);
+
+    const stored = JSON.parse(readFileSync(lockPath, 'utf8')) as LockContents;
+    expect(stored.port).toBe(7878); // untouched — we don't own it anymore
+    handle.release();
+  });
+});
+
 describe('acquireLock — defaults', () => {
   it('DEFAULT_LOCK_PATH points under the kimi-code home', () => {
     expect(DEFAULT_LOCK_PATH).toMatch(/[/\\]\.kimi-code[/\\]server[/\\]lock$/);
@@ -171,7 +244,7 @@ describe('getLiveLock', () => {
       JSON.stringify({
         pid: 0x7fffffff,
         started_at: '2025-01-01T00:00:00.000Z',
-        port: 7878,
+        port: 58627,
       } satisfies LockContents),
     );
     expect(getLiveLock(lockPath)).toBeUndefined();

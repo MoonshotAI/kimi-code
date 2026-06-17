@@ -19,7 +19,7 @@ import { DaemonClient, EnvelopeError, type AnyFrame } from '../src/index.js';
 import { fetchWithReport } from '../src/report.js';
 import { createCaseLogger, errorForLog } from './log.js';
 
-const BASE_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:7878';
+const BASE_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:58627';
 const API_PREFIX = '/api/v1';
 const PROMPT_TIMEOUT_MS = 120_000;
 const SHORT_TIMEOUT_MS = 30_000;

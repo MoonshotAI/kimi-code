@@ -141,12 +141,13 @@ kimi acp
 
 ### `kimi server`
 
-运行并管理本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI。父命令拆成前台入口 (`run`) 与 OS 级生命周期管理 (`install`、`uninstall`、`start`、`stop`、`restart`、`status`)。前台命令**不会**隐式 spawn 后台进程；只有显式 `install` + `start` 才会让服务被 OS 接管。
+运行并管理本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI。父命令拆成按需入口 (`run`) 与 OS 级生命周期管理 (`install`、`uninstall`、`start`、`stop`、`restart`、`status`)。`kimi server run` 会确保一个后台守护进程在运行、健康后返回；如需把服务挂在当前终端，请加 `--foreground`。
 
 服务运行时，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。
 
 ```sh
-kimi server run                # 前台运行（除非设置 --log-level，否则不输出日志）
+kimi server run                # 启动或复用一个后台守护进程
+kimi server run --foreground   # 挂在当前终端前台运行
 kimi server install            # 注册到 launchd / systemd / schtasks
 kimi server start              # 启动 OS 管理的服务
 kimi server status             # 查看安装与运行状态
@@ -156,12 +157,13 @@ kimi server status             # 查看安装与运行状态
 
 | 选项 | 说明 |
 | --- | --- |
-| `--port <port>` | 绑定端口；默认 `7878` |
-| `--log-level <level>` | 按所选级别开启前台日志；默认不输出 |
+| `--port <port>` | 绑定端口；默认 `58627` |
+| `--log-level <level>` | 按所选级别开启服务日志；默认不输出 |
 | `--debug-endpoints` | 挂载 `/api/v1/debug/*` 调试路由（默认关闭） |
+| `--foreground` | 前台运行，不 spawn 后台守护进程 |
 | `--open` | 服务健康后用默认浏览器打开 web UI |
 
-`kimi server run` 只绑定本机 loopback 地址，不会返回——保持挂在当前终端，在 `SIGINT` / `SIGTERM` 时干净退出。后台运行请走下面的 OS 服务方式。
+`kimi server run` 只绑定本机 loopback 地址。默认会 spawn 一个后台守护进程（多次运行会复用同一个），健康后即退出；守护进程在最后一个 web 客户端断开后自行关闭。加 `--foreground` 则在当前进程中运行——保持挂在终端，在 `SIGINT` / `SIGTERM` 时干净退出。
 
 #### `kimi server install`
 
@@ -173,7 +175,7 @@ kimi server status             # 查看安装与运行状态
 
 | 选项 | 说明 |
 | --- | --- |
-| `--port <port>` | 被托管的服务绑定端口；默认 `7878` |
+| `--port <port>` | 被托管的服务绑定端口；默认 `58627` |
 | `--log-level <level>` | 写入生成 unit 的日志级别 |
 | `--force` | 已安装时强制覆盖 |
 | `--json` | 用 JSON 替代人类可读输出 |

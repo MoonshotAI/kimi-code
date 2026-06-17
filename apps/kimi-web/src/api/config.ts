@@ -35,7 +35,7 @@ function defaultServerOrigin(): string {
   if (typeof window !== 'undefined' && window.location?.origin) {
     return window.location.origin;
   }
-  return 'http://127.0.0.1:7878';
+  return 'http://127.0.0.1:58627';
 }
 
 export function normalizeServerOrigin(value: string | undefined): string {
@@ -47,7 +47,7 @@ export function normalizeServerOrigin(value: string | undefined): string {
   return url.toString().replace(/\/$/, '');
 }
 
-/** Strip the scheme for a compact display origin: `http://127.0.0.1:7878` → `127.0.0.1:7878`. */
+/** Strip the scheme for a compact display origin: `http://127.0.0.1:58627` → `127.0.0.1:58627`. */
 function shortOrigin(origin: string): string {
   return origin.replace(/^https?:\/\//, '').replace(/\/$/, '');
 }

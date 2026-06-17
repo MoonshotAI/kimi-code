@@ -85,7 +85,7 @@ describe('buildLaunchAgentPlist', () => {
   it('renders a well-formed plist with label, ProgramArguments, and stdio paths', () => {
     const xml = buildLaunchAgentPlist({
       label: KIMI_SERVER_LABEL,
-      programArguments: ['/usr/local/bin/kimi', 'server', 'run', '--port', '7878'],
+      programArguments: ['/usr/local/bin/kimi', 'server', 'run', '--port', '58627'],
       stdoutPath: '/tmp/x.log',
       stderrPath: '/tmp/x.log',
     });
@@ -95,7 +95,7 @@ describe('buildLaunchAgentPlist', () => {
     expect(xml).toContain('<string>run</string>');
     expect(xml).not.toContain('<string>--host</string>');
     expect(xml).toContain('<string>--port</string>');
-    expect(xml).toContain('<string>7878</string>');
+    expect(xml).toContain('<string>58627</string>');
     expect(xml).toContain('<key>StandardOutPath</key>\n    <string>/tmp/x.log</string>');
     expect(xml).toContain('<key>RunAtLoad</key>\n    <true/>');
     expect(xml).toContain('<key>KeepAlive</key>\n    <true/>');
@@ -146,7 +146,7 @@ describe('launchd manager — install', () => {
   it('writes the plist and bootstraps via launchctl', async () => {
     const { deps, calls, plistPath } = makeDeps([{ stdout: '', stderr: '', code: 0 }], workDir);
     const mgr = createLaunchdManager(deps);
-    const result = await mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' });
+    const result = await mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' });
 
     expect(result.status).toBe('installed');
     expect(result.plistPath).toBe(plistPath);
@@ -154,7 +154,7 @@ describe('launchd manager — install', () => {
     const xml = readFileSync(plistPath, 'utf8');
     expect(xml).toContain(`<string>${KIMI_SERVER_LABEL}</string>`);
     expect(xml).toContain('<string>/usr/local/bin/kimi</string>');
-    expect(xml).toContain('<string>7878</string>');
+    expect(xml).toContain('<string>58627</string>');
 
     expect(calls.length).toBe(1);
     expect(calls[0]?.args).toEqual(['bootstrap', 'gui/501', plistPath]);
@@ -166,7 +166,7 @@ describe('launchd manager — install', () => {
     writeFileSync(plistPath, '<stub/>');
 
     const mgr = createLaunchdManager(deps);
-    const result = await mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' });
+    const result = await mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' });
     expect(result.status).toBe('already-installed');
     expect(calls.length).toBe(0); // never invoked launchctl
   });
@@ -196,7 +196,7 @@ describe('launchd manager — install', () => {
     const { deps } = makeDeps([{ stdout: '', stderr: 'GUI session unavailable', code: 5 }], workDir);
     const mgr = createLaunchdManager(deps);
     await expect(
-      mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' }),
+      mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' }),
     ).rejects.toThrow(/launchctl bootstrap failed/);
   });
 
@@ -206,7 +206,7 @@ describe('launchd manager — install', () => {
       workDir,
     );
     const mgr = createLaunchdManager(deps);
-    const result = await mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' });
+    const result = await mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' });
     expect(result.status).toBe('installed');
   });
 });
@@ -253,7 +253,7 @@ describe('launchd manager — lifecycle', () => {
     writeFileSync(plistPath, '<stub/>');
     writeInstallPlan({
       host: '127.0.0.1',
-      port: 7878,
+      port: 58627,
       logLevel: 'info',
       program: '/usr/local/bin/kimi',
       programArguments: ['/usr/local/bin/kimi', 'server', 'run'],
@@ -292,7 +292,7 @@ describe('launchd manager — status', () => {
     writeFileSync(plistPath, '<stub/>');
     writeInstallPlan({
       host: '127.0.0.1',
-      port: 7878,
+      port: 58627,
       logLevel: 'info',
       program: '/usr/local/bin/kimi',
       programArguments: [],
@@ -306,7 +306,7 @@ describe('launchd manager — status', () => {
     expect(status.running).toBe(true);
     expect(status.pid).toBe(9876);
     expect(status.host).toBe('127.0.0.1');
-    expect(status.port).toBe(7878);
+    expect(status.port).toBe(58627);
   });
 
   it('reports installed=true, running=false when `launchctl print` fails', async () => {

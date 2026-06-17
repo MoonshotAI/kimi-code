@@ -9,7 +9,7 @@ to a local **server** over REST + WebSocket. Vue 3 + Vite + TypeScript.
 
 ```bash
 # 1) Against a REAL server (the server must be running and reachable)
-WEB_PORT=5197 KIMI_SERVER_URL=http://127.0.0.1:7878 pnpm -C apps/kimi-web run dev
+WEB_PORT=5197 KIMI_SERVER_URL=http://192.168.97.91:58627 pnpm -C apps/kimi-web run dev
 #   …or from the repo root:  pnpm dev:web   (uses the defaults below)
 
 # 2) Offline / no server — a stub that fakes the server API + event stream
@@ -29,7 +29,7 @@ proxies** `/api/v1` (HTTP + WS) to the server (`vite.config.ts`):
 | env var           | default                  | meaning                                  |
 | ----------------- | ------------------------ | ---------------------------------------- |
 | `WEB_PORT`        | `5175`                   | port the dev server listens on           |
-| `KIMI_SERVER_URL` | `http://127.0.0.1:7878`  | where `/api/v1` (and `/api/v1/ws`) is forwarded |
+| `KIMI_SERVER_URL` | `http://127.0.0.1:58627`  | where `/api/v1` (and `/api/v1/ws`) is forwarded |
 
 > Behind a corporate HTTP proxy, also set `NO_PROXY=<server-host>` (for example,
 > `NO_PROXY=127.0.0.1,localhost`) so the proxy forward reaches the server directly.

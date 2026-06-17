@@ -19,7 +19,7 @@
  * turn while queued prompts are submitted.
  *
  * Usage:
- *   KIMI_SERVER_URL=http://127.0.0.1:7878 npx tsx scenarios/12-send-and-cancel.ts
+ *   KIMI_SERVER_URL=http://127.0.0.1:58627 npx tsx scenarios/12-send-and-cancel.ts
  *
  * Exit codes:
  *   0  — pass
@@ -30,7 +30,7 @@ import assert from 'node:assert/strict';
 import { DaemonClient } from '../src/index';
 import { fetchWithReport } from '../src/report';
 
-const KIMI_SERVER_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:7878';
+const KIMI_SERVER_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:58627';
 const API_PREFIX = '/api/v1';
 const PROMPT_TIMEOUT_MS = 120_000;
 

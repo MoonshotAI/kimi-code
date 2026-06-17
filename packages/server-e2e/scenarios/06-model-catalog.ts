@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 
 import { DaemonClient } from '../src/index';
 
-const KIMI_SERVER_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:7878';
+const KIMI_SERVER_URL = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:58627';
 
 async function main() {
   console.log(`▶ server at ${KIMI_SERVER_URL}`);

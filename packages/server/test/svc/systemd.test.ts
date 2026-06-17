@@ -81,13 +81,13 @@ afterEach(() => {
 describe('buildSystemdUnit', () => {
   it('renders the standard [Unit]/[Service]/[Install] triple', () => {
     const unit = buildSystemdUnit({
-      programArguments: ['/usr/local/bin/kimi', 'server', 'run', '--port', '7878'],
+      programArguments: ['/usr/local/bin/kimi', 'server', 'run', '--port', '58627'],
     });
     expect(unit).toContain('[Unit]');
     expect(unit).toContain('[Service]');
     expect(unit).toContain('[Install]');
     expect(unit).toContain('Description=Kimi Code local server');
-    expect(unit).toContain('ExecStart=/usr/local/bin/kimi server run --port 7878');
+    expect(unit).toContain('ExecStart=/usr/local/bin/kimi server run --port 58627');
     expect(unit).toContain('Restart=always');
     expect(unit).toContain('WantedBy=default.target');
   });
@@ -143,13 +143,13 @@ describe('systemd manager — install', () => {
       workDir,
     );
     const mgr = createSystemdManager(deps);
-    const result = await mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' });
+    const result = await mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' });
 
     expect(result.status).toBe('installed');
     expect(result.unitPath).toBe(unitPath);
     expect(existsSync(unitPath)).toBe(true);
     const text = readFileSync(unitPath, 'utf8');
-    expect(text).toContain('ExecStart=/usr/local/bin/kimi server run --port 7878 --log-level info');
+    expect(text).toContain('ExecStart=/usr/local/bin/kimi server run --port 58627 --log-level info');
     expect(text).not.toContain('--host');
 
     expect(calls.length).toBe(3);
@@ -164,7 +164,7 @@ describe('systemd manager — install', () => {
     writeFileSync(unitPath, '# stub');
 
     const mgr = createSystemdManager(deps);
-    const result = await mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' });
+    const result = await mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' });
     expect(result.status).toBe('already-installed');
     expect(calls.length).toBe(0);
   });
@@ -203,7 +203,7 @@ describe('systemd manager — install', () => {
     const mgr = createSystemdManager(deps);
 
     await expect(
-      mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' }),
+      mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' }),
     ).rejects.toBeInstanceOf(ServiceUnavailableError);
 
     expect(calls).toEqual([{ args: ['show-environment'], options: undefined }]);
@@ -221,7 +221,7 @@ describe('systemd manager — install', () => {
     );
     const mgr = createSystemdManager(deps);
     await expect(
-      mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' }),
+      mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' }),
     ).rejects.toThrow(/daemon-reload failed/);
   });
 
@@ -236,7 +236,7 @@ describe('systemd manager — install', () => {
     );
     const mgr = createSystemdManager(deps);
     await expect(
-      mgr.install({ host: '127.0.0.1', port: 7878, logLevel: 'info' }),
+      mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' }),
     ).rejects.toThrow(/enable --now failed/);
   });
 });
@@ -289,7 +289,7 @@ describe('systemd manager — lifecycle', () => {
     writeFileSync(unitPath, '# stub');
     writeInstallPlan({
       host: '127.0.0.1',
-      port: 7878,
+      port: 58627,
       logLevel: 'info',
       program: '/usr/local/bin/kimi',
       programArguments: ['/usr/local/bin/kimi', 'server', 'run'],
@@ -326,7 +326,7 @@ describe('systemd manager — status', () => {
     writeFileSync(unitPath, '# stub');
     writeInstallPlan({
       host: '127.0.0.1',
-      port: 7878,
+      port: 58627,
       logLevel: 'info',
       program: '/usr/local/bin/kimi',
       programArguments: [],
@@ -340,7 +340,7 @@ describe('systemd manager — status', () => {
     expect(status.running).toBe(true);
     expect(status.pid).toBe(9876);
     expect(status.host).toBe('127.0.0.1');
-    expect(status.port).toBe(7878);
+    expect(status.port).toBe(58627);
   });
 
   it('reports installed=true, running=false when `systemctl show` fails', async () => {

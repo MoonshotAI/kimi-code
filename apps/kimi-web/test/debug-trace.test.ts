@@ -64,7 +64,7 @@ describe('client-side error capture', () => {
 describe('REST tracing via DaemonHttpClient', () => {
   it('records request + response with envelope code, status, duration and requestId', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => okEnvelope({ id: 'ses_1' })));
-    const http = new DaemonHttpClient('http://example.test:7878');
+    const http = new DaemonHttpClient('http://example.test:58627');
 
     await http.post('/sessions', { metadata: { cwd: '/repo' } });
 
@@ -87,7 +87,7 @@ describe('REST tracing via DaemonHttpClient', () => {
   it('sends client identity headers when configured', async () => {
     const fetchMock = vi.fn(async () => okEnvelope({ id: 'ses_1' }));
     vi.stubGlobal('fetch', fetchMock);
-    const http = new DaemonHttpClient('http://example.test:7878', {
+    const http = new DaemonHttpClient('http://example.test:58627', {
       clientId: 'web_test_client',
       clientName: 'kimi-code-web',
       clientVersion: '0.1.1',
@@ -106,7 +106,7 @@ describe('REST tracing via DaemonHttpClient', () => {
 
   it('redacts sensitive request fields (api_key / authorization)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => okEnvelope({})));
-    const http = new DaemonHttpClient('http://example.test:7878');
+    const http = new DaemonHttpClient('http://example.test:58627');
 
     await http.post('/providers', { api_key: 'YOUR_API_KEY', authorization: 'Bearer x' });
 
@@ -118,7 +118,7 @@ describe('REST tracing via DaemonHttpClient', () => {
 
   it('records a daemon API error (non-zero envelope code) as rest:error', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => errEnvelope(40401, 'session does not exist')));
-    const http = new DaemonHttpClient('http://example.test:7878');
+    const http = new DaemonHttpClient('http://example.test:58627');
 
     await expect(http.get('/sessions/ses_x')).rejects.toThrow();
 
@@ -130,7 +130,7 @@ describe('REST tracing via DaemonHttpClient', () => {
 
   it('records a network failure with its phase', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new TypeError('Failed to fetch'))));
-    const http = new DaemonHttpClient('http://example.test:7878');
+    const http = new DaemonHttpClient('http://example.test:58627');
 
     await expect(http.get('/healthz')).rejects.toThrow();
 
@@ -141,7 +141,7 @@ describe('REST tracing via DaemonHttpClient', () => {
 
   it('records a JSON parse failure with HTTP status', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>busy</html>', { status: 502 })));
-    const http = new DaemonHttpClient('http://example.test:7878');
+    const http = new DaemonHttpClient('http://example.test:58627');
 
     await expect(http.get('/healthz')).rejects.toThrow();
 
