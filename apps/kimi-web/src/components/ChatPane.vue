@@ -828,10 +828,13 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
 .ai .pr { color: var(--ok); font-weight: 700; font-size: calc(var(--ui-font-size) - 1.5px); }
 .who { color: var(--muted); font-size: calc(var(--ui-font-size) - 1.5px); }
 .turn-duration {
+  display: inline-flex;
+  align-items: center;
   margin-left: 8px;
   font-size: calc(var(--ui-font-size) - 3px);
   color: var(--muted);
   font-family: var(--mono);
+  line-height: 1;
 }
 
 /* Copy button: always visible, text shows on hover */
@@ -1167,7 +1170,7 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
 }
 .a-msg-ft {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
   align-items: center;
   gap: 8px;
   height: auto;
@@ -1175,8 +1178,11 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
   overflow: visible;
 }
 .a-duration {
+  display: inline-flex;
+  align-items: center;
   font-size: calc(var(--ui-font-size) - 3px);
   color: var(--muted);
+  line-height: 1;
 }
 
 .a-cpbtn {

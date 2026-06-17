@@ -29,6 +29,39 @@ import { i18n } from '../../i18n';
 import { toAppMessageContent } from './mappers';
 import type { WireMessageContent } from './wire';
 
+const TURN_START_TIME_STORAGE_KEY = 'kimiWeb.turnStartTime';
+
+function turnStartStorageKey(sessionId: string): string {
+  return `${TURN_START_TIME_STORAGE_KEY}.${sessionId}`;
+}
+
+function readStoredTurnStartTime(sessionId: string): number | undefined {
+  try {
+    const raw = localStorage.getItem(turnStartStorageKey(sessionId));
+    if (raw === null) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function storeTurnStartTime(sessionId: string, time: number): void {
+  try {
+    localStorage.setItem(turnStartStorageKey(sessionId), String(time));
+  } catch {
+    // localStorage may be unavailable (private mode / quota) — fall back to in-memory only.
+  }
+}
+
+function clearStoredTurnStartTime(sessionId: string): void {
+  try {
+    localStorage.removeItem(turnStartStorageKey(sessionId));
+  } catch {
+    // ignore
+  }
+}
+
 // Subagent turns share the parent session id: their turn / step / delta / tool
 // frames stream over the SAME session channel, each tagged with the subagent's
 // own agentId (the main agent's is 'main'). They must NOT be folded into the
@@ -487,6 +520,7 @@ export function createAgentProjector(): AgentProjector {
 
   function reset(sessionId: string): void {
     sessions.set(sessionId, createSessionState());
+    clearStoredTurnStartTime(sessionId);
   }
 
   function markSideChannelAgent(agentId: string): void {
@@ -660,9 +694,12 @@ export function createAgentProjector(): AgentProjector {
           s.turnPromptId.set(turnId, existingPromptId);
         }
         // Fresh turn → fresh per-turn stream offsets and client-side timer.
+        // Persist the start time to localStorage so other open web tabs can
+        // compute a consistent duration if they join mid-turn.
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
         s.turnStartTime = Date.now();
+        storeTurnStartTime(sessionId, s.turnStartTime);
 
         out.push({
           type: 'sessionStatusChanged',
@@ -905,8 +942,9 @@ export function createAgentProjector(): AgentProjector {
       case 'turn.ended': {
         const msgId = s.currentAssistantMsgId;
         const reason: string = p?.reason ?? 'completed';
+        const startTime = s.turnStartTime ?? readStoredTurnStartTime(sessionId);
         const durationMs =
-          s.turnStartTime !== undefined ? Math.max(0, Date.now() - s.turnStartTime) : undefined;
+          startTime !== undefined ? Math.max(0, Date.now() - startTime) : undefined;
 
         if (msgId) {
           finishAssistantMessage(s, msgId);
@@ -943,6 +981,7 @@ export function createAgentProjector(): AgentProjector {
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
         s.turnStartTime = undefined;
+        clearStoredTurnStartTime(sessionId);
         break;
       }
 
