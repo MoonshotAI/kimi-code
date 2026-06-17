@@ -47,6 +47,10 @@ export interface EnsureDaemonOptions {
   port?: number;
   /** Pino log level for the spawned daemon (defaults to `info`). */
   logLevel?: string;
+  /** Mount `/api/v1/debug/*` routes on the spawned daemon. */
+  debugEndpoints?: boolean;
+  /** Idle-shutdown grace in ms for the spawned daemon (daemon mode only). */
+  idleGraceMs?: number;
 }
 
 export interface EnsureDaemonResult {
@@ -120,17 +124,35 @@ function resolveDaemonProgram(
   return isAbsolute(candidate) ? candidate : resolve(cwd, candidate);
 }
 
-function spawnDaemonChild(port: number, logLevel: string): void {
+interface SpawnDaemonChildOptions {
+  port: number;
+  logLevel: string;
+  debugEndpoints?: boolean;
+  idleGraceMs?: number;
+}
+
+function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
   const program = resolveDaemonProgram();
   const logPath = daemonLogPath();
   mkdirSync(dirname(logPath), { recursive: true });
+  const args = [
+    'server',
+    'run',
+    '--daemon',
+    '--port',
+    String(options.port),
+    '--log-level',
+    options.logLevel,
+  ];
+  if (options.debugEndpoints === true) {
+    args.push('--debug-endpoints');
+  }
+  if (options.idleGraceMs !== undefined) {
+    args.push('--idle-grace-ms', String(options.idleGraceMs));
+  }
   const logFd = openSync(logPath, 'a');
   try {
-    const child = spawn(
-      program,
-      ['server', 'run', '--daemon', '--port', String(port), '--log-level', logLevel],
-      { detached: true, stdio: ['ignore', logFd, logFd] },
-    );
+    const child = spawn(program, args, { detached: true, stdio: ['ignore', logFd, logFd] });
     child.unref();
   } finally {
     // `spawn` dups the fd into the child; the parent must not keep it open.
@@ -167,7 +189,12 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
 
   // 2. No reusable daemon — pick a free port and spawn one detached.
   const port = await resolveDaemonPort(DEFAULT_SERVER_HOST, preferred);
-  spawnDaemonChild(port, logLevel);
+  spawnDaemonChild({
+    port,
+    logLevel,
+    debugEndpoints: options.debugEndpoints,
+    idleGraceMs: options.idleGraceMs,
+  });
 
   // 3. Wait until some live daemon (ours, or a racer that won the lock) is up.
   const deadline = Date.now() + SPAWN_TIMEOUT_MS;

@@ -13,13 +13,7 @@ import { join } from 'node:path';
 
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
-import {
-  ServerLockedError,
-  resolveServiceManager,
-  startServer,
-  type RunningServer,
-  type ServiceStatus,
-} from '@moonshot-ai/server';
+import { startServer, type RunningServer } from '@moonshot-ai/server';
 import chalk from 'chalk';
 import { Option, type Command } from 'commander';
 
@@ -30,12 +24,11 @@ import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 
 import { initializeServerTelemetry } from '../../telemetry';
 import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../../version';
+import { ensureDaemon } from './daemon';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
-  DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
   parseServerOptions,
-  serverOrigin,
   VALID_LOG_LEVELS,
   type ParsedServerOptions,
   type ServerCliOptions,
@@ -49,8 +42,7 @@ export interface RunCliOptions extends ServerCliOptions {
 }
 
 export interface RunCommandDeps {
-  startServerForeground(options: ParsedServerOptions): Promise<{ origin: string }>;
-  getServiceStatus(): Promise<ServiceStatus | undefined>;
+  startServerBackground(options: ParsedServerOptions): Promise<{ origin: string }>;
   openUrl(url: string): void;
   stdout: Pick<NodeJS.WriteStream, 'write'>;
   stderr: Pick<NodeJS.WriteStream, 'write'>;
@@ -66,7 +58,7 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
     )
     .option(
       '--log-level <level>',
-      `Enable foreground logs at level: ${VALID_LOG_LEVELS.join('|')}. Omit to keep logs off.`,
+      `Log level for the background daemon: ${VALID_LOG_LEVELS.join('|')}. Omit to keep logs off.`,
     )
     .option(
       '--debug-endpoints',
@@ -108,80 +100,41 @@ export async function handleRunCommand(
     await startServerDaemon(parsed);
     return;
   }
-  let outcome: { origin: string };
   const startedAt = Date.now();
-  try {
-    outcome = await deps.startServerForeground(parsed);
-  } catch (error) {
-    if (error instanceof ServerLockedError) {
-      const status = await deps.getServiceStatus();
-      const alreadyRunning = describeAlreadyRunning(error.existing, status);
-      deps.stdout.write(formatAlreadyRunning(alreadyRunning));
-      deps.openUrl(alreadyRunning.url);
-      return;
-    }
-    throw error;
-  }
+  const { origin } = await deps.startServerBackground(parsed);
   const readyMs = Date.now() - startedAt;
   deps.stdout.write(
     parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-      ? formatForegroundReadyBanner(outcome.origin, readyMs)
-      : `Kimi server: ${outcome.origin}\n`,
+      ? formatReadyBanner(origin, readyMs)
+      : `Kimi server: ${origin}\n`,
   );
   if (opts.open === true) {
-    deps.openUrl(outcome.origin);
+    deps.openUrl(origin);
   }
 }
 
-export async function startServerForeground(
+/**
+ * `kimi server run` (non-daemon) — ensures a background daemon is running
+ * (spawning a detached `kimi server run --daemon` child if needed), then
+ * returns its origin so the caller can print the ready banner and exit. The
+ * server keeps running in the background after this returns.
+ */
+export async function startServerBackground(
   options: ParsedServerOptions,
 ): Promise<{ origin: string }> {
-  const version = getVersion();
-  const telemetry = initializeServerTelemetry({ version });
-  const running = await startServer({
-    host: options.host,
+  const { origin } = await ensureDaemon({
     port: options.port,
     logLevel: options.logLevel,
     debugEndpoints: options.debugEndpoints,
-    webAssetsDir: serverWebAssetsDir(),
-    coreProcessOptions: {
-      identity: createKimiCodeHostIdentity(version),
-      telemetry,
-    },
-    wsGatewayOptions: {
-      telemetry,
-    },
+    idleGraceMs: options.idleGraceMs,
   });
-
-  track('server_started', { ui_mode: WEB_UI_MODE, daemon: false });
-
-  const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
-    running.logger.info({ signal }, 'server shutting down');
-    try {
-      await running.close();
-      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
-      process.exit(0);
-    } catch (error) {
-      running.logger.error(
-        { err: error instanceof Error ? error : new Error(String(error)) },
-        'server shutdown error',
-      );
-      process.exit(1);
-    }
-  };
-  const handleSignal = (signal: NodeJS.Signals): void => {
-    void shutdown(signal);
-  };
-  process.once('SIGINT', handleSignal);
-  process.once('SIGTERM', handleSignal);
-
-  return { origin: serverOrigin(options.host, options.port) };
+  return { origin };
 }
 
 /**
  * `kimi server run --daemon` — runs the local server as a background daemon.
  *
- * Identical bootstrap to {@link startServerForeground}, but the process is
+ * Spawned as a detached child by {@link startServerBackground}. The process is
  * expected to be detached (no controlling terminal) and self-terminates after
  * the last web client disconnects and a grace period elapses. The grace timer
  * is driven by the WS connection count reported through `wsGatewayOptions`.
@@ -304,59 +257,7 @@ export function resolveServerWebAssetsDir(
   return nativeWebAssetsDir ?? join(getHostPackageRoot(), WEB_ASSETS_DIR);
 }
 
-interface AlreadyRunningDetails {
-  readonly mode: 'background' | 'foreground';
-  readonly pid: number;
-  readonly url: string;
-  readonly stopCommand: string;
-}
-
-function describeAlreadyRunning(
-  existing: { readonly pid: number; readonly port: number; readonly host?: string },
-  status: ServiceStatus | undefined,
-): AlreadyRunningDetails {
-  const mode = isBackgroundServer(existing, status) ? 'background' : 'foreground';
-  const host = status?.host ?? existing.host ?? DEFAULT_SERVER_HOST;
-  return {
-    mode,
-    pid: existing.pid,
-    url: serverOrigin(
-      host === '0.0.0.0' ? DEFAULT_SERVER_HOST : host,
-      status?.port ?? existing.port,
-    ),
-    stopCommand:
-      mode === 'background' ? 'kimi server stop' : formatForegroundStopCommand(existing.pid),
-  };
-}
-
-function isBackgroundServer(
-  existing: { readonly pid: number; readonly port: number },
-  status: ServiceStatus | undefined,
-): boolean {
-  if (status?.running !== true) return false;
-  if (status.pid !== undefined) return status.pid === existing.pid;
-  if (status.port !== undefined) return status.port === existing.port;
-  return status.installed;
-}
-
-export function formatForegroundStopCommand(
-  pid: number,
-  platform: NodeJS.Platform = process.platform,
-): string {
-  if (platform === 'win32') return `taskkill /PID ${String(pid)} /T /F`;
-  return `kill -TERM ${String(pid)}`;
-}
-
-function formatAlreadyRunning(details: AlreadyRunningDetails): string {
-  return [
-    `Kimi server already running in ${details.mode} (pid ${String(details.pid)}).`,
-    `URL: ${details.url}`,
-    `Stop: ${details.stopCommand}`,
-    '',
-  ].join('\n');
-}
-
-function formatForegroundReadyBanner(origin: string, readyMs: number): string {
+function formatReadyBanner(origin: string, readyMs: number): string {
   const primary = (text: string): string => chalk.hex(darkColors.primary)(text);
   const title = (text: string): string => chalk.bold.hex(darkColors.primary)(text);
   const dim = (text: string): string => chalk.hex(darkColors.textDim)(text);
@@ -383,7 +284,7 @@ function formatForegroundReadyBanner(origin: string, readyMs: number): string {
     label('URL:      ') + url,
     label('Network:  ') + muted('local only'),
     label('Logs:     ') + muted('off') + dim('  use --log-level info to enable'),
-    label('Stop:     ') + muted('Ctrl+C'),
+    label('Stop:     ') + muted('kimi server kill'),
     label('Ready:    ') + muted(`${String(Math.max(0, readyMs))} ms`),
     label('Version:  ') + muted(getVersion()),
   ];
@@ -412,14 +313,7 @@ function displayOrigin(origin: string): string {
 }
 
 const DEFAULT_RUN_COMMAND_DEPS: RunCommandDeps = {
-  startServerForeground,
-  getServiceStatus: async () => {
-    try {
-      return await resolveServiceManager().status();
-    } catch {
-      return undefined;
-    }
-  },
+  startServerBackground,
   openUrl: defaultOpenUrl,
   stdout: process.stdout,
   stderr: process.stderr,

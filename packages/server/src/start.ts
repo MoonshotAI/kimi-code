@@ -20,6 +20,7 @@ import { registerApiV1Routes } from './routes/registerApiV1Routes';
 import {
   IConnectionRegistry,
   IRestGateway,
+  IServerShutdownService,
   ISessionClientsService,
   IWSBroadcastService,
   IWSGateway,
@@ -354,36 +355,54 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   pinoLogger.info({ address, lockPath: lockHandle.lockPath }, 'server listening');
 
   let closed = false;
+  const doClose = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+
+    try {
+      ix.invokeFunction((a) => a.get(IWSGateway));
+
+      ix.invokeFunction((a) => a.get(IConnectionRegistry).closeAll('server shutting down'));
+    } catch {
+
+    }
+
+    try {
+      await app.close();
+    } catch {
+
+    }
+
+    try {
+      ix.dispose();
+    } catch {
+
+    }
+
+    lockHandle.release();
+  };
+
+  // Expose process-terminating shutdown to routes via DI. Respect a
+  // `serviceOverrides` entry so tests can observe the request without exiting.
+  const hasShutdownOverride = opts.serviceOverrides?.some(
+    ([id]) => id === IServerShutdownService,
+  );
+  if (!hasShutdownOverride) {
+    services.set(IServerShutdownService, {
+      _serviceBrand: undefined,
+      requestShutdown: async (reason: string) => {
+        pinoLogger.info({ reason }, 'server shutdown requested');
+        await doClose();
+        process.exit(0);
+      },
+    });
+  }
+
   return {
     address,
     logger: pinoLogger,
     services: ix,
-    close: async () => {
-      if (closed) return;
-      closed = true;
-
-      try {
-        ix.invokeFunction((a) => a.get(IWSGateway));
-
-        ix.invokeFunction((a) => a.get(IConnectionRegistry).closeAll('server shutting down'));
-      } catch {
-
-      }
-
-      try {
-        await app.close();
-      } catch {
-
-      }
-
-      try {
-        ix.dispose();
-      } catch {
-
-      }
-
-      lockHandle.release();
-    },
+    close: doClose,
   };
 }
 

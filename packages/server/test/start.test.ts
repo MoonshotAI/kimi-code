@@ -35,6 +35,7 @@ import {
   ILogService,
   IQuestionService,
   IRestGateway,
+  IServerShutdownService,
   ISessionClientsService,
   IWSBroadcastService,
   IWSGateway,
@@ -240,5 +241,50 @@ describe('startServer — DI container wiring', () => {
     const bridge = r.services.invokeFunction((a) => a.get(ICoreProcessService));
     await r.close();
     await expect(bridge.rpc.getCoreInfo({})).rejects.toThrow(/disposed/);
+  });
+});
+
+describe('POST /api/v1/shutdown', () => {
+  it('responds ok and triggers the shutdown service', async () => {
+    let resolveCalled!: () => void;
+    const called = new Promise<void>((res) => {
+      resolveCalled = res;
+    });
+    const reasons: string[] = [];
+    const fake = {
+      _serviceBrand: undefined,
+      requestShutdown: async (reason: string) => {
+        reasons.push(reason);
+        resolveCalled();
+      },
+    };
+
+    const r = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      lockPath,
+      logger: silentLogger(),
+      coreProcessOptions: { homeDir: bridgeHome },
+      // Override the real shutdown service so the route does not exit the
+      // test runner via `process.exit(0)`.
+      serviceOverrides: [[IServerShutdownService, fake] as const],
+    });
+    running.push(r);
+
+    const res = await fetch(`${r.address}/api/v1/shutdown`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body['code']).toBe(0);
+    expect(body['data']).toEqual({ ok: true });
+
+    // The route defers shutdown via setImmediate so the response can flush.
+    await called;
+    expect(reasons).toEqual(['api']);
+  });
+
+  it('registers a real shutdown service by default', async () => {
+    const r = await spawn();
+    const service = r.services.invokeFunction((a) => a.get(IServerShutdownService));
+    expect(typeof service.requestShutdown).toBe('function');
   });
 });

@@ -23,6 +23,7 @@ export type {
 export { IRestGateway } from '#/services/gateway';
 export { IConnectionRegistry } from '#/services/gateway';
 export { ISessionClientsService } from '#/services/gateway';
+export { IServerShutdownService } from '#/services/gateway';
 export { IWSGateway } from '#/services/gateway';
 export { IWSBroadcastService } from '#/services/gateway';
 

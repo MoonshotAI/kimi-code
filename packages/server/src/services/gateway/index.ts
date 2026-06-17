@@ -19,3 +19,4 @@ export { IConnectionRegistry } from './connectionRegistry';
 export { ConnectionRegistry } from './connectionRegistryService';
 export { ISessionClientsService } from './sessionClients';
 export { SessionClientsService } from './sessionClientsService';
+export { IServerShutdownService } from './serverShutdown';

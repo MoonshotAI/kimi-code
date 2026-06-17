@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerServerCommand } from '#/cli/sub/server';
 import { addLifecycleCommands } from '#/cli/sub/server/lifecycle';
+import type { KillCommandDeps } from '#/cli/sub/server/kill';
 import { darkColors } from '#/tui/theme/colors';
 
 function stripAnsi(text: string): string {
@@ -39,12 +40,12 @@ describe('kimi server', () => {
     expect(packageJson.optionalDependencies).toHaveProperty('pino-pretty');
   });
 
-  it('registers `server` with only `run` while lifecycle commands are hidden', () => {
+  it('registers the expected `server` subcommands while lifecycle commands are hidden', () => {
     const program = makeProgram();
     const server = program.commands.find((c) => c.name() === 'server');
     expect(server).toBeDefined();
     const subs = server?.commands.map((c) => c.name()).toSorted();
-    expect(subs).toEqual(['run']);
+    expect(subs).toEqual(['kill', 'ps', 'run']);
   });
 
   it('`server run` exposes local-only foreground options', () => {
@@ -274,19 +275,18 @@ describe('`kimi server` lifecycle output', () => {
   });
 });
 
-describe('`kimi server run` already-running handling', () => {
-  it('defaults foreground logs off', async () => {
+describe('`kimi server run` background start', () => {
+  it('defaults the daemon log level to silent', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let parsed: unknown;
 
     await handleRunCommand(
       { port: '7878' },
       {
-        startServerForeground: async (options) => {
+        startServerBackground: async (options) => {
           parsed = options;
           return { origin: 'http://127.0.0.1:7878' };
         },
-        getServiceStatus: async () => undefined,
         openUrl: vi.fn(),
         stdout: {
           write() {
@@ -304,18 +304,17 @@ describe('`kimi server run` already-running handling', () => {
     expect(parsed).toMatchObject({ logLevel: 'silent' });
   });
 
-  it('enables foreground logs only when --log-level is provided', async () => {
+  it('passes --log-level through to the background daemon', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let parsed: unknown;
 
     await handleRunCommand(
       { port: '7878', logLevel: 'debug' },
       {
-        startServerForeground: async (options) => {
+        startServerBackground: async (options) => {
           parsed = options;
           return { origin: 'http://127.0.0.1:7878' };
         },
-        getServiceStatus: async () => undefined,
         openUrl: vi.fn(),
         stdout: {
           write() {
@@ -333,15 +332,14 @@ describe('`kimi server run` already-running handling', () => {
     expect(parsed).toMatchObject({ logLevel: 'debug' });
   });
 
-  it('prints a TUI-style welcome panel when foreground logs are off', async () => {
+  it('prints a TUI-style ready panel once the daemon is up', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let stdout = '';
 
     await handleRunCommand(
       { port: '7878' },
       {
-        startServerForeground: async () => ({ origin: 'http://127.0.0.1:7878' }),
-        getServiceStatus: async () => undefined,
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:7878' }),
         openUrl: vi.fn(),
         stdout: {
           write(chunk: string | Uint8Array) {
@@ -370,12 +368,12 @@ describe('`kimi server run` already-running handling', () => {
     expect(plain).toContain('Logs:');
     expect(plain).toContain('off');
     expect(plain).toContain('Stop:');
-    expect(plain).toContain('Ctrl+C');
+    expect(plain).toContain('kimi server kill');
     expect(plain).not.toContain('➜');
     expect(plain).not.toContain('Kimi server:');
   });
 
-  it('uses the TUI dark palette for the foreground ready banner', async () => {
+  it('uses the TUI dark palette for the ready banner', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let stdout = '';
     const previousChalkLevel = chalk.level;
@@ -385,8 +383,7 @@ describe('`kimi server run` already-running handling', () => {
       await handleRunCommand(
         { port: '7878' },
         {
-          startServerForeground: async () => ({ origin: 'http://127.0.0.1:7878' }),
-          getServiceStatus: async () => undefined,
+          startServerBackground: async () => ({ origin: 'http://127.0.0.1:7878' }),
           openUrl: vi.fn(),
           stdout: {
             write(chunk: string | Uint8Array) {
@@ -411,104 +408,6 @@ describe('`kimi server run` already-running handling', () => {
     expect(stdout).toContain(color.hex(darkColors.accent)('http://127.0.0.1:7878/'));
     expect(stdout).toContain(color.bold.hex(darkColors.textDim)('URL:      '));
     expect(stdout).toContain(color.hex(darkColors.textMuted)('local only'));
-  });
-
-  it('reports a background service conflict, suggests server stop, and opens the existing URL', async () => {
-    const { ServerLockedError } = await import('@moonshot-ai/server');
-    const { handleRunCommand } = await import('#/cli/sub/server/run');
-    let stdout = '';
-    const openUrl = vi.fn();
-
-    await handleRunCommand(
-      { port: '7878' },
-      {
-        startServerForeground: async () => {
-          throw new ServerLockedError('locked', {
-            pid: 1234,
-            started_at: '2026-06-11T00:00:00.000Z',
-            host: '127.0.0.1',
-            port: 9999,
-          });
-        },
-        getServiceStatus: async () => ({
-          platform: 'darwin',
-          installed: true,
-          running: true,
-          pid: 1234,
-          host: '127.0.0.1',
-          port: 9999,
-        }),
-        openUrl,
-        stdout: {
-          write(chunk: string | Uint8Array) {
-            stdout += String(chunk);
-            return true;
-          },
-        },
-        stderr: {
-          write() {
-            return true;
-          },
-        },
-      },
-    );
-
-    expect(stdout).toContain('already running in background');
-    expect(stdout).toContain('URL: http://127.0.0.1:9999');
-    expect(stdout).toContain('Stop: kimi server stop');
-    expect(stdout).not.toContain('pkill');
-    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:9999');
-  });
-
-  it('reports a foreground process conflict, suggests a pid-based stop command, and opens the existing URL', async () => {
-    const { ServerLockedError } = await import('@moonshot-ai/server');
-    const { handleRunCommand } = await import('#/cli/sub/server/run');
-    let stdout = '';
-    const openUrl = vi.fn();
-
-    await handleRunCommand(
-      { port: '7878' },
-      {
-        startServerForeground: async () => {
-          throw new ServerLockedError('locked', {
-            pid: 5678,
-            started_at: '2026-06-11T00:00:00.000Z',
-            port: 10001,
-          });
-        },
-        getServiceStatus: async () => ({
-          platform: 'darwin',
-          installed: false,
-          running: false,
-        }),
-        openUrl,
-        stdout: {
-          write(chunk: string | Uint8Array) {
-            stdout += String(chunk);
-            return true;
-          },
-        },
-        stderr: {
-          write() {
-            return true;
-          },
-        },
-      },
-    );
-
-    expect(stdout).toContain('already running in foreground');
-    expect(stdout).toContain('URL: http://127.0.0.1:10001');
-    expect(stdout).toContain('Stop: kill -TERM 5678');
-    expect(stdout).not.toContain('kimi server stop');
-    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:10001');
-  });
-
-  it('formats foreground stop commands by platform and pid', async () => {
-    const { formatForegroundStopCommand } = await import('#/cli/sub/server/run');
-
-    expect(formatForegroundStopCommand(1234, 'darwin')).toBe('kill -TERM 1234');
-    expect(formatForegroundStopCommand(1234, 'linux')).toBe('kill -TERM 1234');
-    expect(formatForegroundStopCommand(1234, 'win32')).toBe('taskkill /PID 1234 /T /F');
   });
 });
 
@@ -646,17 +545,16 @@ describe('createIdleShutdownHandler', () => {
   });
 });
 
-describe('kimi web (handleWebCommand)', () => {
-  it('ensures the daemon, prints the origin, and opens the browser by default', async () => {
-    const { handleWebCommand } = await import('#/cli/sub/server/web-alias');
-    const ensureDaemon = vi.fn(async () => ({ origin: 'http://127.0.0.1:7878' }));
-    const openUrl = vi.fn();
+describe('kimi web (shares `server run` call stack)', () => {
+  it('prints the ready banner and opens the browser by default', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
     let stdout = '';
+    const openUrl = vi.fn();
 
-    await handleWebCommand(
-      {},
+    await handleRunCommand(
+      { port: '7878', open: true },
       {
-        ensureDaemon,
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:7878' }),
         openUrl,
         stdout: {
           write(chunk: string | Uint8Array) {
@@ -664,38 +562,138 @@ describe('kimi web (handleWebCommand)', () => {
             return true;
           },
         },
+        stderr: {
+          write() {
+            return true;
+          },
+        },
       },
     );
 
-    expect(ensureDaemon).toHaveBeenCalledWith({ port: 7878, logLevel: undefined });
+    expect(stripAnsi(stdout)).toContain('Kimi server ready');
     expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:7878');
-    expect(stdout).toContain('http://127.0.0.1:7878');
   });
 
-  it('does not open the browser when --no-open is set', async () => {
-    const { handleWebCommand } = await import('#/cli/sub/server/web-alias');
+  it('does not open the browser when open is false', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
     const openUrl = vi.fn();
-    await handleWebCommand(
-      { open: false },
+    await handleRunCommand(
+      { port: '7878' },
       {
-        ensureDaemon: vi.fn(async () => ({ origin: 'http://127.0.0.1:9000' })),
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:9000' }),
         openUrl,
         stdout: { write: () => true },
+        stderr: { write: () => true },
       },
     );
     expect(openUrl).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid --log-level before touching the daemon', async () => {
-    const { handleWebCommand } = await import('#/cli/sub/server/web-alias');
-    const ensureDaemon = vi.fn();
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    const startServerBackground = vi.fn();
     await expect(
-      handleWebCommand(
+      handleRunCommand(
         { logLevel: 'shout' },
-        { ensureDaemon, openUrl: vi.fn(), stdout: { write: () => true } },
+        {
+          startServerBackground,
+          openUrl: vi.fn(),
+          stdout: { write: () => true },
+          stderr: { write: () => true },
+        },
       ),
     ).rejects.toThrow(/invalid --log-level/);
-    expect(ensureDaemon).not.toHaveBeenCalled();
+    expect(startServerBackground).not.toHaveBeenCalled();
+  });
+});
+
+function makeKillDeps(overrides: Partial<KillCommandDeps> = {}): {
+  deps: KillCommandDeps;
+  writes: string[];
+  signals: Array<{ pid: number; signal: NodeJS.Signals }>;
+  state: { shutdownCalls: number };
+  clock: { t: number };
+} {
+  const writes: string[] = [];
+  const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+  const state = { shutdownCalls: 0 };
+  const clock = { t: 0 };
+  const deps: KillCommandDeps = {
+    getLiveLock: () => undefined,
+    requestShutdown: async () => {
+      state.shutdownCalls += 1;
+    },
+    signalPid: (pid, signal) => {
+      signals.push({ pid, signal });
+      return true;
+    },
+    pidAlive: () => false,
+    sleep: async (ms) => {
+      clock.t += ms;
+    },
+    stdout: {
+      write(chunk: string | Uint8Array) {
+        writes.push(String(chunk));
+        return true;
+      },
+    },
+    now: () => clock.t,
+    ...overrides,
+  };
+  return { deps, writes, signals, state, clock };
+}
+
+describe('`kimi server kill`', () => {
+  const liveLock = { pid: 1234, started_at: '2026-06-17T00:00:00.000Z', port: 7878 };
+
+  it('prints "No running Kimi server." and sends no signal when no live lock exists', async () => {
+    const { handleKillCommand } = await import('#/cli/sub/server/kill');
+    const { deps, writes, signals } = makeKillDeps({ getLiveLock: () => undefined });
+
+    await handleKillCommand(deps);
+
+    expect(writes.join('')).toContain('No running Kimi server.');
+    expect(signals).toEqual([]);
+  });
+
+  it('attempts the API shutdown, then stops after SIGTERM when the pid exits promptly', async () => {
+    const { handleKillCommand } = await import('#/cli/sub/server/kill');
+    const { deps, writes, signals, state, clock } = makeKillDeps({
+      getLiveLock: () => liveLock,
+      pidAlive: () => clock.t < 50,
+    });
+
+    await handleKillCommand(deps);
+
+    expect(state.shutdownCalls).toBe(1);
+    expect(signals).toEqual([{ pid: 1234, signal: 'SIGTERM' }]);
+    expect(writes.join('')).toContain('pid 1234');
+    expect(writes.join('')).toContain('stopped.');
+  });
+
+  it('escalates to SIGKILL when the pid survives SIGTERM', async () => {
+    const { handleKillCommand } = await import('#/cli/sub/server/kill');
+    const { deps, writes, signals, clock } = makeKillDeps({
+      getLiveLock: () => ({ ...liveLock, pid: 5678 }),
+      // Survives the 3s SIGTERM grace, dies during the 2s SIGKILL grace.
+      pidAlive: () => clock.t < 3100,
+    });
+
+    await handleKillCommand(deps);
+
+    expect(signals.map((s) => s.signal)).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(writes.join('')).toContain('pid 5678');
+    expect(writes.join('')).toContain('killed.');
+  });
+
+  it('throws a permissions error when the pid survives SIGKILL', async () => {
+    const { handleKillCommand } = await import('#/cli/sub/server/kill');
+    const { deps } = makeKillDeps({
+      getLiveLock: () => ({ ...liveLock, pid: 9999 }),
+      pidAlive: () => true,
+    });
+
+    await expect(handleKillCommand(deps)).rejects.toThrow(/insufficient permissions/);
   });
 });
 

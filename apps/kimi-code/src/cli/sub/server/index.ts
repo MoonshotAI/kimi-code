@@ -14,6 +14,7 @@
 import type { Command } from 'commander';
 
 import { registerPsCommand } from './ps';
+import { registerKillCommand } from './kill';
 import { buildRunCommand } from './run';
 import { registerWebAliasCommand } from './web-alias';
 
@@ -23,11 +24,13 @@ export function registerServerCommand(program: Command): void {
     .description('Run the local Kimi server (REST + WebSocket + web UI).');
 
   buildRunCommand(
-    server.command('run').description('Run the Kimi server in the foreground.'),
+    server.command('run').description('Start the Kimi server as a background daemon.'),
     { defaultOpen: false },
   );
 
   registerPsCommand(server);
+
+  registerKillCommand(server);
 
   // OS service-manager commands (`install/uninstall/start/stop/restart/status`)
   // are temporarily hidden — the product now favors the on-demand background
