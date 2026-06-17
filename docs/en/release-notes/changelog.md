@@ -6,6 +6,18 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.17.1 (2026-06-17)
+
+### Bug Fixes
+
+- Fix the local server failing to start in the background on the native binary.
+- Stop the background local server from locking the directory it was started in.
+- Prevent the web login dialog from closing when clicking the backdrop.
+
+### Polish
+
+- Group the default model dropdown in web settings by provider.
+
 ## 0.17.0 (2026-06-17)
 
 ### Features
