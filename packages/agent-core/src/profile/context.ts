@@ -1,8 +1,11 @@
+import { homedir } from 'node:os';
+
 import { dirname, join } from 'pathe';
 
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import { listDirectory } from '../tools/support/list-directory';
+import { loadConfiguredOutputStyleBody } from '../output-style';
 import type { SystemPromptContext } from './types';
 
 const AGENTS_MD_MAX_BYTES = 32 * 1024;
@@ -11,17 +14,27 @@ const AGENTS_MD_TRUNCATION_MARKER =
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
-export type PreparedSystemPromptContext = Pick<SystemPromptContext, 'cwdListing' | 'agentsMd'>;
+export type PreparedSystemPromptContext = Pick<
+  SystemPromptContext,
+  'cwdListing' | 'agentsMd' | 'outputStyleBody'
+>;
 
 export async function prepareSystemPromptContext(
   kaos: Kaos,
   brandHome?: string,
+  outputStyleName?: string,
 ): Promise<PreparedSystemPromptContext> {
-  const [cwdListing, agentsMd] = await Promise.all([
+  const [cwdListing, agentsMd, outputStyleBody] = await Promise.all([
     listDirectory(kaos, undefined, { collapseHiddenDirs: true }),
     loadAgentsMd(kaos, brandHome),
+    loadConfiguredOutputStyleBody({
+      name: outputStyleName,
+      userHomeDir: homedir(),
+      brandHomeDir: brandHome,
+      workDir: kaos.getcwd(),
+    }),
   ]);
-  return { cwdListing, agentsMd };
+  return { cwdListing, agentsMd, outputStyleBody };
 }
 
 export async function loadAgentsMd(kaos: Kaos, brandHome?: string): Promise<string> {

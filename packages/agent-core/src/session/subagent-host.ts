@@ -365,6 +365,7 @@ export class SessionSubagentHost {
     const context = await prepareSystemPromptContext(
       this.session.systemContextKaos(child.kaos.getcwd()),
       this.session.options.kimiHomeDir,
+      this.session.options.config?.outputStyle,
     );
     child.useProfile(profile, context);
     child.tools.inheritUserTools(parent.tools);
