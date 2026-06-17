@@ -61,10 +61,37 @@ const activeWorkspaceSessionCount = computed<number>(
 // running: true when activity is not idle
 const running = computed(() => client.activity.value !== 'idle');
 
+
 // Dynamic page title: session title first, then workspace name, then app name.
-// Prefix a dot when the agent is running so users can see activity at a glance.
+// Prefix an animated spinner when the agent is running so users can see activity
+// at a glance.
+const SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
+const spinnerFrame = ref(0);
+let spinnerTimer: ReturnType<typeof setInterval> | null = null;
+
+function startSpinner(): void {
+  if (spinnerTimer !== null) return;
+  spinnerFrame.value = 0;
+  spinnerTimer = setInterval(() => {
+    spinnerFrame.value = (spinnerFrame.value + 1) % SPINNER_FRAMES.length;
+  }, 250);
+}
+
+function stopSpinner(): void {
+  if (spinnerTimer !== null) {
+    clearInterval(spinnerTimer);
+    spinnerTimer = null;
+  }
+  spinnerFrame.value = 0;
+}
+
+watch(running, (isRunning) => {
+  if (isRunning) startSpinner();
+  else stopSpinner();
+}, { immediate: true });
+
 const pageTitle = computed<string>(() => {
-  const prefix = running.value ? '● ' : '';
+  const prefix = running.value ? `${SPINNER_FRAMES[spinnerFrame.value]} ` : '';
   const sessionTitle = activeSessionTitle.value;
   if (sessionTitle) return `${prefix}${sessionTitle} - Kimi Code Web`;
   const workspaceName = client.visibleWorkspace.value?.name;
@@ -102,6 +129,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
+  stopSpinner();
 });
 
 // Escape closes whichever transient right-side detail panel is open.
