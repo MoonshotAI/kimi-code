@@ -259,7 +259,7 @@ export class SessionService extends Disposable implements ISessionService {
       includeArchive: query.includeArchive,
     };
     const all = await this.core.rpc.listSessions(corePayload);
-    const sorted = all.toSorted((a, b) => b.createdAt - a.createdAt);
+    const sorted = all.toSorted((a, b) => b.updatedAt - a.updatedAt);
 
     let pivotIndex = -1;
     if (query.before_id !== undefined) {
@@ -370,7 +370,7 @@ export class SessionService extends Disposable implements ISessionService {
   async listChildren(id: string, query: SessionListQuery): Promise<PageResponse<Session>> {
     await this.get(id);
     const all = await this.core.rpc.listSessions({});
-    const sorted = all.toSorted((a, b) => b.createdAt - a.createdAt);
+    const sorted = all.toSorted((a, b) => b.updatedAt - a.updatedAt);
     const children = sorted.filter(
       (summary) =>
         summary.metadata?.['parent_session_id'] === id &&

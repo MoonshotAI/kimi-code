@@ -1777,13 +1777,15 @@ const workspace = computed<Workspace>(() => {
 
 const sessions = computed<Session[]>(() => {
   void sessionTimeClock.value;
-  return rawState.sessions.map((s) => ({
-    id: s.id,
-    title: s.title,
-    time: formatTime(s.updatedAt, s.status),
-    status: s.status,
-    busy: isSessionEffectivelyRunning(s.id),
-  }));
+  return rawState.sessions
+    .toSorted((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .map((s) => ({
+      id: s.id,
+      title: s.title,
+      time: formatTime(s.updatedAt, s.status),
+      status: s.status,
+      busy: isSessionEffectivelyRunning(s.id),
+    }));
 });
 
 const activeSessionId = computed<string>(() => rawState.activeSessionId ?? '');
@@ -2408,7 +2410,9 @@ const sessionsForView = computed<Session[]>(() => {
 const workspaceGroups = computed<WorkspaceGroup[]>(() => {
   void sessionTimeClock.value;
   const byId = new Map<string, Session[]>();
-  for (const s of rawState.sessions) {
+  for (const s of rawState.sessions.toSorted(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+  )) {
     if (s.parentSessionId) continue; // child sessions stay out of the list
     const wid = workspaceIdForSession(s);
     const view: Session = {

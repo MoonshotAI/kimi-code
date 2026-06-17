@@ -290,7 +290,6 @@ function makePromptServiceStub(): {
     onDidComplete: emitter.event as unknown as IPromptService['onDidComplete'],
     onDidAbort: emitter.event as unknown as IPromptService['onDidAbort'],
     getAgentStateSnapshot: vi.fn().mockReturnValue(undefined) as unknown as IPromptService['getAgentStateSnapshot'],
-    startBtw: vi.fn() as unknown as IPromptService['startBtw'],
   };
   return { promptService, calls, activePromptIds };
 }
@@ -540,7 +539,7 @@ describe('SessionService.list', () => {
     await svc.create({ metadata: { cwd: '/tmp/c' } });
   });
 
-  it('returns descending-by-createdAt order with default page size', async () => {
+  it('returns descending-by-updatedAt order with default page size', async () => {
     const page = await svc.list({});
     expect(page.items).toHaveLength(3);
     expect(page.items[0]!.metadata.cwd).toBe('/tmp/c');
@@ -554,14 +553,14 @@ describe('SessionService.list', () => {
     expect(page.has_more).toBe(true);
   });
 
-  it('before_id returns older sessions only', async () => {
+  it('before_id returns less-recent sessions only', async () => {
     const all = await svc.list({});
     const pivotId = all.items[0]!.id;
     const olderPage = await svc.list({ before_id: pivotId });
     expect(olderPage.items.map((s) => s.metadata.cwd)).toEqual(['/tmp/b', '/tmp/a']);
   });
 
-  it('after_id returns newer sessions only', async () => {
+  it('after_id returns more-recent sessions only', async () => {
     const all = await svc.list({});
     const pivotId = all.items[2]!.id;
     const newerPage = await svc.list({ after_id: pivotId });
