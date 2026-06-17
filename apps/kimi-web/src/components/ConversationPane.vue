@@ -1180,7 +1180,7 @@ defineExpose({ loadComposerForEdit });
 .toc-bubble.active::after {
   content: '';
   position: absolute;
-  inset: -2px -4px -2px -2px;
+  inset: -2px;
   border: 2px solid var(--blue);
   border-radius: 10px;
   pointer-events: none;
