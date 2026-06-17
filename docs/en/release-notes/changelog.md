@@ -10,7 +10,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Bug Fixes
 
-- Fix the local server failing to start in the background on the native binary.
+- Fix the `kimi web` command failing to start in the background.
 - Stop the background local server from locking the directory it was started in.
 - Prevent the web login dialog from closing when clicking the backdrop.
 
