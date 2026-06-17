@@ -693,6 +693,9 @@ export class Session {
     const messages: string[] = [];
     for (const result of results) {
       if (result.action !== 'allow') continue;
+      if (result.timedOut === true || (result.exitCode !== undefined && result.exitCode !== 0)) {
+        continue;
+      }
       const text = (result.message ?? result.stdout ?? '').trim();
       if (text.length > 0) messages.push(text);
     }

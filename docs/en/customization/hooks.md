@@ -109,7 +109,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `PostToolUseFailure` | Tool name | — | Triggered after a tool fails or is blocked (observation only) |
 | `PermissionRequest` | Tool name | — | Triggered just before waiting for user approval (observation only) |
 | `PermissionResult` | Tool name | — | Triggered after approval completes (observation only) |
-| `SessionStart` | `startup` or `resume` | ✓ (since v0.14.0) | Triggered after a new session starts or a previous session resumes; non-empty stdout or `message` is appended to the main agent context |
+| `SessionStart` | `startup` or `resume` | — | Triggered after a new session starts or a previous session resumes; non-empty stdout or `message` is appended to the main agent context (since v0.14.0). It cannot block startup |
 | `SessionEnd` | `exit` | — | Triggered after a session closes |
 | `SubagentStart` | Sub-agent name | — | Triggered before a sub-agent starts running |
 | `SubagentStop` | Sub-agent name | — | Triggered after a sub-agent completes successfully (observation only) |
