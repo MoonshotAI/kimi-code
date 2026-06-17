@@ -13,6 +13,7 @@
 
 import type { Command } from 'commander';
 
+import { registerPsCommand } from './ps';
 import { buildRunCommand } from './run';
 import { registerWebAliasCommand } from './web-alias';
 
@@ -25,6 +26,8 @@ export function registerServerCommand(program: Command): void {
     server.command('run').description('Run the Kimi server in the foreground.'),
     { defaultOpen: false },
   );
+
+  registerPsCommand(server);
 
   // OS service-manager commands (`install/uninstall/start/stop/restart/status`)
   // are temporarily hidden — the product now favors the on-demand background

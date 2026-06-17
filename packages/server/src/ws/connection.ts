@@ -113,6 +113,12 @@ export interface WsConnectionOptions {
   pongTimeoutMs?: number;
 
   maxEventBufferSize?: number;
+
+  /** Peer address from the upgrade socket. Null when unavailable. */
+  remoteAddress?: string | null;
+
+  /** `User-Agent` header from the upgrade request. Null when absent. */
+  userAgent?: string | null;
 }
 
 const DEFAULT_PING_INTERVAL_MS = 30_000;
@@ -128,6 +134,15 @@ export class WsConnection {
 
   /** Last cursor each subscribed session was synced from (client-claimed). */
   public readonly cursorsBySession = new Map<string, SessionCursor>();
+
+  /** ISO 8601 UTC timestamp the socket was accepted at. */
+  public readonly connectedAt: string;
+
+  /** Peer address from the upgrade socket. Null when unavailable. */
+  public readonly remoteAddress: string | null;
+
+  /** `User-Agent` header from the upgrade request. Null when absent. */
+  public readonly userAgent: string | null;
 
   private readonly socket: WebSocket;
   private readonly logger: ILogService;
@@ -147,6 +162,9 @@ export class WsConnection {
 
   constructor(opts: WsConnectionOptions) {
     this.id = `conn_${ulid()}`;
+    this.connectedAt = new Date().toISOString();
+    this.remoteAddress = opts.remoteAddress ?? null;
+    this.userAgent = opts.userAgent ?? null;
     this.socket = opts.socket;
     this.logger = opts.logger.child({ connId: this.id });
     this.sessionClients = opts.sessionClients;

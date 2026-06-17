@@ -58,7 +58,7 @@ export function daemonLogPath(): string {
   return join(DEFAULT_LOCK_DIR, SERVER_LOG_FILENAME);
 }
 
-function lockConnectHost(lock: LockContents): string {
+export function lockConnectHost(lock: LockContents): string {
   const host = lock.host ?? DEFAULT_SERVER_HOST;
   return host === '0.0.0.0' ? DEFAULT_SERVER_HOST : host;
 }
