@@ -8,8 +8,11 @@
  * Foreground startup behavior is exercised end-to-end in `server-e2e/`.
  */
 
-import { readFileSync } from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 import chalk, { Chalk } from 'chalk';
 import { Command } from 'commander';
@@ -19,6 +22,11 @@ import { registerServerCommand } from '#/cli/sub/server';
 import { addLifecycleCommands } from '#/cli/sub/server/lifecycle';
 import type { KillCommandDeps } from '#/cli/sub/server/kill';
 import { darkColors } from '#/tui/theme/colors';
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, spawn: vi.fn() };
+});
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -634,6 +642,44 @@ describe('resolveDaemonProgram', () => {
   it('returns execPath in SEA mode for a spawned `server` child', async () => {
     const { resolveDaemonProgram } = await import('#/cli/sub/server/daemon');
     expect(resolveDaemonProgram(['/Users/x/.kimi-code/bin/kimi', 'server', 'run'], '/Users/x', '/Users/x/.kimi-code/bin/kimi', true)).toBe('/Users/x/.kimi-code/bin/kimi');
+  });
+});
+
+describe('spawnDaemonChild', () => {
+  let workDir: string;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), 'kimi-daemon-cwd-'));
+    prevHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = workDir;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) {
+      delete process.env['KIMI_CODE_HOME'];
+    } else {
+      process.env['KIMI_CODE_HOME'] = prevHome;
+    }
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  it('spawns the daemon with cwd set to the server log directory', async () => {
+    const { spawn } = await import('node:child_process');
+    const spawnMock = vi.mocked(spawn);
+    spawnMock.mockClear();
+    spawnMock.mockReturnValue({ unref: vi.fn(), once: vi.fn() } as unknown as ChildProcess);
+
+    const { spawnDaemonChild, daemonLogPath } = await import('#/cli/sub/server/daemon');
+    spawnDaemonChild({ port: 58627, logLevel: 'info' });
+
+    expect(spawnMock).toHaveBeenCalledOnce();
+    const [program, args, options] = spawnMock.mock.calls[0]!;
+    expect(program).toBeTruthy();
+    expect(args).toEqual(expect.arrayContaining(['server', 'run', '--daemon']));
+    expect(options).toMatchObject({ detached: true, cwd: dirname(daemonLogPath()) });
+    expect(options?.cwd).not.toBe(process.cwd());
   });
 });
 

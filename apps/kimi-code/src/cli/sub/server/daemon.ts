@@ -184,10 +184,11 @@ interface SpawnDaemonChildOptions {
   idleGraceMs?: number;
 }
 
-function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
+export function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
   const program = resolveDaemonProgram();
   const logPath = daemonLogPath();
-  mkdirSync(dirname(logPath), { recursive: true });
+  const logDir = dirname(logPath);
+  mkdirSync(logDir, { recursive: true });
   const args = [
     'server',
     'run',
@@ -205,7 +206,14 @@ function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
   }
   const logFd = openSync(logPath, 'a');
   try {
-    const child = spawn(program, args, { detached: true, stdio: ['ignore', logFd, logFd] });
+    const child = spawn(program, args, {
+      detached: true,
+      // Run from the server log directory instead of inheriting the caller's
+      // cwd, so the long-lived daemon does not pin the directory it was
+      // launched from (notably blocking its deletion on Windows).
+      cwd: logDir,
+      stdio: ['ignore', logFd, logFd],
+    });
     child.once('error', (error) => {
       // A spawn failure (e.g. ENOENT) surfaces asynchronously on the child,
       // not as a thrown error. Without a listener Node would crash the parent
