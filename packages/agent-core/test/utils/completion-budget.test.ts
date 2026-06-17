@@ -248,3 +248,92 @@ describe('resolveCompletionBudget', () => {
     expect(budget?.fallback).toBe(32000);
   });
 });
+
+describe('compaction budget resolution', () => {
+  // Simulates the budget resolution logic from full.ts compactionRound():
+  //   const compactionOutputCap =
+  //     maxOutputSize ?? (maxCtx > 0 ? Math.min(Math.floor(maxCtx / 4), 8192) : undefined);
+  // This ensures compaction never requests the full context window as
+  // max_completion_tokens when maxOutputSize is not explicitly configured.
+  function resolveCompactionBudget(args: {
+    readonly maxOutputSize?: number;
+    readonly maxCtx: number;
+    readonly reservedContextSize?: number;
+    readonly env?: NodeJS.ProcessEnv;
+  }): ReturnType<typeof resolveCompletionBudget> {
+    const compactionOutputCap =
+      args.maxOutputSize ?? (args.maxCtx > 0 ? Math.min(Math.floor(args.maxCtx / 4), 8192) : undefined);
+    return resolveCompletionBudget({
+      maxOutputSize: compactionOutputCap,
+      reservedContextSize: args.reservedContextSize,
+      env: args.env,
+    });
+  }
+
+  it('uses a conservative fallback cap when maxOutputSize is undefined', () => {
+    const budget = resolveCompactionBudget({
+      maxCtx: 262_144,
+      reservedContextSize: 50_000,
+      env: {},
+    });
+    // 262144 / 4 = 65536, min(65536, 8192) = 8192
+    expect(budget?.hardCap).toBe(8192);
+  });
+
+  it('caps at 8192 even for very large context windows', () => {
+    const budget = resolveCompactionBudget({
+      maxCtx: 1_000_000,
+      reservedContextSize: 50_000,
+      env: {},
+    });
+    expect(budget?.hardCap).toBe(8192);
+  });
+
+  it('uses 1/4 of context when context is small', () => {
+    const budget = resolveCompactionBudget({
+      maxCtx: 20_000,
+      reservedContextSize: 50_000,
+      env: {},
+    });
+    // 20000 / 4 = 5000, min(5000, 8192) = 5000
+    expect(budget?.hardCap).toBe(5000);
+  });
+
+  it('uses explicit maxOutputSize when configured', () => {
+    const budget = resolveCompactionBudget({
+      maxOutputSize: 131_072,
+      maxCtx: 1_000_000,
+      reservedContextSize: 50_000,
+      env: {},
+    });
+    expect(budget?.hardCap).toBe(131_072);
+  });
+
+  it('respects KIMI_MODEL_MAX_COMPLETION_TOKENS over the fallback cap', () => {
+    const budget = resolveCompactionBudget({
+      maxCtx: 262_144,
+      reservedContextSize: 50_000,
+      env: { KIMI_MODEL_MAX_COMPLETION_TOKENS: '4096' },
+    });
+    expect(budget?.hardCap).toBe(4096);
+  });
+
+  it('produces a hardCap that computeCompletionBudgetCap will use instead of maxCtx', () => {
+    const maxCtx = 262_144;
+    const budget = resolveCompactionBudget({
+      maxCtx,
+      reservedContextSize: 50_000,
+      env: {},
+    });
+    // The budget should have a hardCap, not just a fallback
+    expect(budget?.hardCap).toBeDefined();
+    expect(budget?.hardCap).not.toBe(maxCtx);
+    // computeCompletionBudgetCap should use the hardCap, not the context window
+    const cap = computeCompletionBudgetCap({
+      budget: budget!,
+      capability: makeCapability(maxCtx),
+    });
+    expect(cap).toBe(8192);
+    expect(cap).toBeLessThan(maxCtx);
+  });
+});
