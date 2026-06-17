@@ -3,18 +3,18 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  createKimiHarness,
+  log,
+  type KimiHarness,
+  type TelemetryClient,
+} from '@moonshot-ai/kimi-code-sdk';
+import {
   setCrashPhase,
   setTelemetryContext,
   shutdownTelemetry,
   track,
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
-import {
-  createKimiHarness,
-  log,
-  type KimiHarness,
-  type TelemetryClient,
-} from '@moonshot-ai/kimi-code-sdk';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
 import { detectPendingMigration } from '#/migration/index';
@@ -24,6 +24,7 @@ import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { KimiTUI } from '#/tui/index';
 import { currentTheme, getColorPalette } from '#/tui/theme';
 import { combineStartupNotice } from '#/tui/utils/startup';
+import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 
 import type { CLIOptions } from './options';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
@@ -139,8 +140,15 @@ export async function runShell(
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     const gutter = ' '.repeat(CHROME_GUTTER);
     process.stdout.write(`${gutter}Bye!\n`);
+    const hints: string[] = [];
     if (sessionId !== '' && hasContent) {
-      process.stderr.write(`\n${gutter}To resume this session: kimi -r ${sessionId}\n`);
+      hints.push(`${gutter}To resume this session: kimi -r ${sessionId}`);
+    }
+    if (tui.exitOpenUrl !== undefined) {
+      hints.push(`${gutter}open ${toTerminalHyperlink(tui.exitOpenUrl, tui.exitOpenUrl)}`);
+    }
+    if (hints.length > 0) {
+      process.stderr.write(`\n${hints.join('\n')}\n`);
     }
     process.exit(exitCode);
   };

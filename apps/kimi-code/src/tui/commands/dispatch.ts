@@ -130,6 +130,7 @@ export interface SlashCommandHost {
 
   // Dispatch
   stop(exitCode?: number): Promise<void>;
+  setExitOpenUrl(url: string): void;
   showHelpPanel(): void;
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;

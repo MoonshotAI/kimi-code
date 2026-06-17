@@ -63,7 +63,9 @@ export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
     return;
   }
 
-  openUrl(webSessionUrl(origin, sessionId));
+  const url = webSessionUrl(origin, sessionId);
+  openUrl(url);
+  host.setExitOpenUrl(url);
   await host.stop();
 }
 
