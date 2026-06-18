@@ -2260,6 +2260,36 @@ describe('Agent-local approve for session', () => {
     expect(manager.sessionApprovalRulePatterns).toContain('Custom');
   });
 
+  it('reuses approve-for-session for Write to different paths in the same session (#437)', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+      scope: 'session',
+      selectedLabel: 'Approve for this session',
+    }));
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_write_a',
+          toolName: 'Write',
+          args: { path: '/workspace/pkg/a.ts', content: 'a' },
+        }),
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_write_b',
+          toolName: 'Write',
+          args: { path: '/workspace/pkg/b.ts', content: 'b' },
+        }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(manager.sessionApprovalRulePatterns).toContain('Write');
+  });
+
   it('stores runtime rules with literal glob escaping', async () => {
     const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
