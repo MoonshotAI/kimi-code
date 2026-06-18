@@ -1,5 +1,6 @@
-import type { Agent } from '..';
 import { createDecorator } from '../../di';
+import { IContextService } from '../context';
+import { IRecordsService } from '../records';
 
 import SWARM_MODE_ENTER_REMINDER from './enter-reminder.md?raw';
 import SWARM_MODE_EXIT_REMINDER from './exit-reminder.md?raw';
@@ -14,19 +15,23 @@ export type SwarmModeTrigger = 'manual' | 'task' | 'tool';
 export class SwarmMode {
   protected active: SwarmModeTrigger | null = null;
 
-  constructor(protected readonly agent: Agent) {}
+  constructor(
+    private readonly emitStatusUpdated?: () => void,
+    @IRecordsService private readonly records?: IRecordsService,
+    @IContextService private readonly context?: IContextService,
+  ) {}
 
   enter(trigger: SwarmModeTrigger): void {
     if (this.active !== null) return;
-    this.agent.records.logRecord({ type: 'swarm_mode.enter', trigger });
+    this.records?.logRecord({ type: 'swarm_mode.enter', trigger });
     this.active = trigger;
     if (trigger !== 'tool') {
-      this.agent.context.appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
+      this.context?.appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
         kind: 'injection',
         variant: 'swarm_mode',
       });
     }
-    this.agent.emitStatusUpdated();
+    this.emitStatusUpdated?.();
   }
 
   restoreEnter(trigger: SwarmModeTrigger): void {
@@ -35,16 +40,16 @@ export class SwarmMode {
 
   exit(): void {
     if (this.active === null) return;
-    this.agent.records.logRecord({ type: 'swarm_mode.exit' });
+    this.records?.logRecord({ type: 'swarm_mode.exit' });
     const trigger = this.active;
     this.active = null;
-    this.agent.emitStatusUpdated();
+    this.emitStatusUpdated?.();
     if (trigger === 'tool') return;
-    if (this.agent.context.popMatchedMessage((origin) => origin?.kind === 'injection' && origin.variant === 'swarm_mode')) {
+    if (this.context?.popMatchedMessage((origin) => origin?.kind === 'injection' && origin.variant === 'swarm_mode')) {
       return;
     }
-    if (!this.agent.records.restoring) {
-      this.agent.context.appendSystemReminder(SWARM_MODE_EXIT_REMINDER, {
+    if (!this.records?.restoring) {
+      this.context?.appendSystemReminder(SWARM_MODE_EXIT_REMINDER, {
         kind: 'injection',
         variant: 'swarm_mode_exit',
       });

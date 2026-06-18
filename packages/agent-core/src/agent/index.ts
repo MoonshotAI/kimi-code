@@ -187,8 +187,14 @@ export class Agent {
       IPermissionService,
       new SyncDescriptor(PermissionService, [this, options.permission]),
     );
-    perAgentServices.set(IPlanService, new SyncDescriptor(PlanService, [this]));
-    perAgentServices.set(ISwarmService, new SyncDescriptor(SwarmService, [this]));
+    perAgentServices.set(
+      IPlanService,
+      new SyncDescriptor(PlanService, [this.kaos, this.homedir, () => this.emitStatusUpdated()]),
+    );
+    perAgentServices.set(
+      ISwarmService,
+      new SyncDescriptor(SwarmService, [() => this.emitStatusUpdated()]),
+    );
     perAgentServices.set(
       IUsageService,
       new SyncDescriptor(UsageService, [() => this.emitStatusUpdated()]),
@@ -198,8 +204,11 @@ export class Agent {
       IBackgroundService,
       new SyncDescriptor(BackgroundService, [this, backgroundPersistence]),
     );
-    perAgentServices.set(IReplayService, new SyncDescriptor(ReplayService, [this, options.replay]));
-    perAgentServices.set(IGoalService, new SyncDescriptor(GoalService, [this]));
+    perAgentServices.set(IReplayService, new SyncDescriptor(ReplayService, [options.replay]));
+    perAgentServices.set(
+      IGoalService,
+      new SyncDescriptor(GoalService, [this.telemetry, (event: AgentEvent) => this.emitEvent(event)]),
+    );
     if (options.skills !== undefined) {
       perAgentServices.set(
         IAgentSkillService,

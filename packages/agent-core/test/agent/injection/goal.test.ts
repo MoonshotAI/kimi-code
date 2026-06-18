@@ -12,7 +12,7 @@ function makeStore() {
     emitEvent: () => {},
     telemetry: { track: () => {} },
   } as unknown as Agent;
-  return new GoalService(agent);
+  return new GoalService(agent.telemetry, (e) => agent.emitEvent(e), agent.records, agent.replayBuilder, agent.context);
 }
 
 /** Fake agent exposing a goal store and a capturing context, for getInjection tests. */

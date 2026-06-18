@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'pathe';
 
-import type { Agent } from '..';
+import type { Kaos } from '@moonshot-ai/kaos';
 import { createDecorator } from '../../di';
+import { IAgentConfigService } from '../config';
+import { IRecordsService } from '../records';
+import { IReplayService } from '../replay';
 import { generateHeroSlug } from '../../utils/hero-slug';
 
 export type PlanData = null | {
@@ -17,7 +20,14 @@ export class PlanMode {
   protected _planId: null | string = null;
   protected _planFilePath: PlanFilePath = null;
 
-  constructor(protected readonly agent: Agent) {}
+  constructor(
+    private readonly kaos?: Kaos,
+    private readonly homedir?: string,
+    private readonly emitStatusUpdated?: () => void,
+    @IRecordsService private readonly records?: IRecordsService,
+    @IReplayService private readonly replayBuilder?: IReplayService,
+    @IAgentConfigService private readonly config?: IAgentConfigService,
+  ) {}
 
   createPlanId(): string {
     return generateHeroSlug(randomUUID(), new Set());
@@ -37,7 +47,7 @@ export class PlanMode {
       const planFilePath = this.planFilePathFor(id);
       this._planFilePath = planFilePath;
       await this.ensurePlanDirectory(planFilePath);
-      this.agent.records.logRecord({ type: 'plan_mode.enter', id });
+      this.records?.logRecord({ type: 'plan_mode.enter', id });
       enterRecorded = true;
       if (createFile) {
         await this.writeEmptyPlanFile(planFilePath);
@@ -53,11 +63,11 @@ export class PlanMode {
       throw error;
     }
 
-    if (emitStatus) this.agent.emitStatusUpdated();
+    if (emitStatus) this.emitStatusUpdated?.();
   }
 
   restoreEnter({ id }: { readonly id: string }): void {
-    this.agent.replayBuilder.push({
+    this.replayBuilder?.push({
       type: 'plan_updated',
       enabled: true,
     });
@@ -68,15 +78,15 @@ export class PlanMode {
   }
 
   cancel(id?: string): void {
-    this.agent.records.logRecord({ type: 'plan_mode.cancel', id });
-    this.agent.replayBuilder.push({
+    this.records?.logRecord({ type: 'plan_mode.cancel', id });
+    this.replayBuilder?.push({
       type: 'plan_updated',
       enabled: false,
     });
     this._isActive = false;
     this._planId = null;
     this._planFilePath = null;
-    this.agent.emitStatusUpdated();
+    this.emitStatusUpdated?.();
   }
 
   async clear(): Promise<void> {
@@ -85,15 +95,15 @@ export class PlanMode {
   }
 
   exit(id?: string): void {
-    this.agent.records.logRecord({ type: 'plan_mode.exit', id });
-    this.agent.replayBuilder.push({
+    this.records?.logRecord({ type: 'plan_mode.exit', id });
+    this.replayBuilder?.push({
       type: 'plan_updated',
       enabled: false,
     });
     this._isActive = false;
     this._planId = null;
     this._planFilePath = null;
-    this.agent.emitStatusUpdated();
+    this.emitStatusUpdated?.();
   }
 
   get isActive() {
@@ -108,7 +118,7 @@ export class PlanMode {
     if (!this._planId || !this._planFilePath) return null;
     let content = '';
     try {
-      content = await this.agent.kaos.readText(this._planFilePath);
+      content = (await this.kaos?.readText(this._planFilePath)) ?? '';
     } catch (error) {
       if (!isMissingFileError(error)) throw error;
     }
@@ -121,11 +131,11 @@ export class PlanMode {
 
   private async writeEmptyPlanFile(path: string): Promise<void> {
     await this.ensurePlanDirectory(path);
-    await this.agent.kaos.writeText(path, '');
+    await this.kaos?.writeText(path, '');
   }
 
   private async ensurePlanDirectory(path: string): Promise<void> {
-    await this.agent.kaos.mkdir(dirname(path), {
+    await this.kaos?.mkdir(dirname(path), {
       parents: true,
       existOk: true,
     });
@@ -133,9 +143,9 @@ export class PlanMode {
 
   private planFilePathFor(id: string): string {
     const plansDir =
-      this.agent.homedir === undefined
-        ? join(this.agent.config.cwd, 'plan')
-        : join(this.agent.homedir, 'plans');
+      this.homedir === undefined
+        ? join(this.config?.cwd ?? '', 'plan')
+        : join(this.homedir, 'plans');
     return join(plansDir, `${id}.md`);
   }
 }

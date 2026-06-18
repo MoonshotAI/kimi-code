@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
 import { ErrorCodes, KimiError } from '#/errors';
-import type { Agent } from '..';
+import type { AgentEvent } from '#/rpc';
 import type { AgentRecordOf } from '../records/types';
+import { IContextService } from '../context';
+import { IRecordsService } from '../records';
+import { IReplayService } from '../replay';
 import {
+  type TelemetryClient,
   type TelemetryProperties,
 } from '../../telemetry';
 import { createDecorator } from '../../di';
@@ -219,8 +223,13 @@ interface GoalReasonInput {
 export class GoalMode {
   private state: GoalState | undefined;
 
-  constructor(private readonly agent: Agent) {
-  }
+  constructor(
+    private readonly telemetry?: TelemetryClient,
+    private readonly emitEvent?: (event: AgentEvent) => void,
+    @IRecordsService private readonly records?: IRecordsService,
+    @IReplayService private readonly replayBuilder?: IReplayService,
+    @IContextService private readonly context?: IContextService,
+  ) {}
 
   /**
    * Reconciles replayed goal state with runtime reality on agent resume.
@@ -266,7 +275,7 @@ export class GoalMode {
       budgetLimits: {},
     };
     this.state = state;
-    this.agent.replayBuilder.push({
+    this.replayBuilder?.push({
       type: 'goal_updated',
       snapshot: this.toSnapshot(state),
       change: { kind: 'created' },
@@ -292,7 +301,7 @@ export class GoalMode {
     if (record.budgetLimits !== undefined) state.budgetLimits = record.budgetLimits;
     if (status === undefined) return;
 
-    this.agent.replayBuilder.push({
+    this.replayBuilder?.push({
       type: 'goal_updated',
       snapshot: this.toSnapshot(state),
       change: status === 'complete'
@@ -320,7 +329,7 @@ export class GoalMode {
     const hadGoal = this.state !== undefined;
     this.state = undefined;
     if (!hadGoal) return;
-    this.agent.context.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
+    this.context?.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
       kind: 'system_trigger',
       name: 'goal_fork_cleared',
     });
@@ -384,7 +393,7 @@ export class GoalMode {
     };
 
     this.persistState(state);
-    this.agent.records.logRecord({
+    this.records?.logRecord({
       type: 'goal.create',
       goalId: state.goalId,
       objective: state.objective,
@@ -482,7 +491,7 @@ export class GoalMode {
     const snapshot = this.toSnapshot(state);
     this.clearInternal(actor);
     if (actor === 'user') {
-      this.agent.context.appendSystemReminder(GOAL_CANCELLED_REMINDER, {
+      this.context?.appendSystemReminder(GOAL_CANCELLED_REMINDER, {
         kind: 'system_trigger',
         name: 'goal_cancelled',
       });
@@ -593,7 +602,7 @@ export class GoalMode {
     const state = this.state;
     if (state === undefined) return; // idempotent
     this.persistState(undefined, { silent: opts.emit === false });
-    this.agent.records.logRecord({ type: 'goal.clear' });
+    this.records?.logRecord({ type: 'goal.clear' });
     if (opts.track !== false) {
       this.track('goal_cleared', { actor });
     }
@@ -619,7 +628,7 @@ export class GoalMode {
   private appendGoalUpdate(
     update: Omit<AgentRecordOf<'goal.update'>, 'type' | 'time'>,
   ): void {
-    this.agent.records.logRecord({
+    this.records?.logRecord({
       type: 'goal.update',
       ...update,
     });
@@ -636,7 +645,7 @@ export class GoalMode {
   }
 
   private track(event: string, properties: TelemetryProperties): void {
-    this.agent.telemetry.track(event, properties);
+    this.telemetry?.track(event, properties);
   }
 
   private applyStatus(
@@ -682,7 +691,7 @@ export class GoalMode {
   }
 
   private emitGoalUpdated(snapshot: GoalSnapshot | null, change?: GoalChange): void {
-    this.agent.emitEvent({ type: 'goal.updated', snapshot, change });
+    this.emitEvent?.({ type: 'goal.updated', snapshot, change });
   }
 
   /** Counter snapshot for a {@link GoalChange}. */

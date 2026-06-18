@@ -30,7 +30,7 @@ function fakeAgent(opts: { type?: 'main' | 'sub'; goal?: IGoalService } = {}): A
     telemetry: { track: () => {} },
     context: { appendSystemReminder: () => {} },
   } as unknown as Agent;
-  (agent as { goal: IGoalService }).goal = opts.goal ?? new GoalService(agent);
+  (agent as { goal: IGoalService }).goal = opts.goal ?? new GoalService(agent.telemetry, (e) => agent.emitEvent(e), agent.records, agent.replayBuilder, agent.context);
   return agent;
 }
 

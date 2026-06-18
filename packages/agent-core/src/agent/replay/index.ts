@@ -1,5 +1,5 @@
-import type { Agent } from '..';
 import { createDecorator } from '../../di';
+import { IRecordsService } from '../records';
 import type { AgentReplayRecord, AgentReplayRecordPayload } from '../../rpc/resumed';
 import type { ContextMessage } from '../context';
 
@@ -22,16 +22,16 @@ export class ReplayBuilder {
   private segmentStart = 0;
 
   constructor(
-    public readonly agent: Agent,
     private readonly options: ReplayBuilderOptions = {},
+    @IRecordsService private readonly agentRecords?: IRecordsService,
   ) {}
 
   push(record: AgentReplayRecordPayload): void {
-    if (this.captureLiveRecords || this.agent.records.restoring || this.postRestoring) {
+    if (this.captureLiveRecords || this.agentRecords?.restoring || this.postRestoring) {
       if (this.frozen) return;
       const stamped: AgentReplayRecord = {
         ...record,
-        time: this.agent.records.restoring?.time ?? Date.now(),
+        time: this.agentRecords?.restoring?.time ?? Date.now(),
       };
       this.records.push(stamped);
     }
@@ -42,7 +42,7 @@ export class ReplayBuilder {
     patch: Partial<Extract<AgentReplayRecord, { type: T }>>,
   ): void {
     if (this.frozen) return;
-    if (this.agent.records.restoring) {
+    if (this.agentRecords?.restoring) {
       const last = this.records.at(-1);
       if (last && last.type === type) {
         Object.assign(last, patch);

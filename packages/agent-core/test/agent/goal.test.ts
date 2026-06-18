@@ -49,7 +49,7 @@ function makeGoalMode() {
   } as unknown as Agent;
 
   return {
-    goals: new GoalMode(agent),
+    goals: new GoalMode(agent.telemetry, (e) => agent.emitEvent(e), agent.records, agent.replayBuilder, agent.context),
     records,
     replay,
     events,
