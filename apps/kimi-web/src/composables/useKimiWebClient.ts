@@ -2394,10 +2394,13 @@ const visibleWorkspace = computed<WorkspaceView | null>(() => {
  */
 const sessionsForView = computed<Session[]>(() => {
   void sessionTimeClock.value;
+  const visibleWorkspaceIds = new Set(workspacesView.value.map((w) => w.id));
   // Child ("side chat") sessions never appear in the main list — they live in
-  // the side-chat panel only.
+  // the side-chat panel only. Sessions under a removed (hidden) workspace are
+  // excluded too, so this flat list matches what the grouped sidebar renders
+  // and sidebar search can't resurrect sessions from a removed workspace.
   return rawState.sessions
-    .filter((s) => !s.parentSessionId)
+    .filter((s) => !s.parentSessionId && visibleWorkspaceIds.has(workspaceIdForSession(s)))
     .map((s) => ({
       id: s.id,
       title: s.title,

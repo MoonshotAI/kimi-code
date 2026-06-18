@@ -173,4 +173,26 @@ describe('load() session listing', () => {
     await expect(client.load()).resolves.toBeUndefined();
     expect(client.sessions.value).toEqual([]);
   });
+
+  it('excludes hidden-workspace sessions from sessionsForView (sidebar search source)', async () => {
+    const { client } = await setup({
+      pages: [
+        {
+          items: [session('a1', { cwd: '/repo/a' }), session('b1', { cwd: '/repo/b' })],
+          hasMore: false,
+        },
+      ],
+    });
+
+    await client.load();
+    expect(client.sessionsForView.value.map((s) => s.id).sort()).toEqual(['a1', 'b1']);
+
+    // Hide the /repo/b workspace — its sessions must drop out of the flat list
+    // that the sidebar search filters, mirroring the grouped sidebar.
+    const wsB = client.workspacesView.value.find((w) => w.root === '/repo/b');
+    expect(wsB).toBeDefined();
+    await client.deleteWorkspace(wsB!.id);
+
+    expect(client.sessionsForView.value.map((s) => s.id)).toEqual(['a1']);
+  });
 });
