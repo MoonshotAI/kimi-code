@@ -80,7 +80,10 @@ function formatSwarmMode(swarmMode: boolean, value: Colorize, muted: Colorize): 
 
 function formatGoalStatus(goal: GoalSnapshot | null | undefined): string | undefined {
   if (goal === null || goal === undefined) return undefined;
-  const objective = goal.objective.length > 40 ? `${goal.objective.slice(0, 40)}…` : goal.objective;
+  // Truncate by Unicode code points so a surrogate pair (e.g. an emoji) is
+  // never split in half at the cut boundary.
+  const chars = Array.from(goal.objective);
+  const objective = chars.length > 40 ? `${chars.slice(0, 40).join('')}…` : goal.objective;
   return `${objective} · ${goal.status}`;
 }
 

@@ -147,4 +147,49 @@ describe('status panel report lines', () => {
 
     expect(lines.join('\n')).toContain('Swarm        on');
   });
+
+  it('truncates a long goal objective without splitting a surrogate pair', () => {
+    // 50 rocket emojis (each a surrogate pair); the truncation point at 40
+    // code points must fall between pairs, never inside one.
+    const objective = '🚀'.repeat(50);
+    const lines = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinking: false,
+      permissionMode: 'manual',
+      planMode: false,
+      swarmMode: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+      availableProviders: {},
+      goal: {
+        goalId: 'g1',
+        objective,
+        status: 'active',
+        turnsUsed: 0,
+        tokensUsed: 0,
+        wallClockMs: 0,
+        budget: {
+          tokenBudget: null,
+          turnBudget: null,
+          wallClockBudgetMs: null,
+          remainingTokens: null,
+          remainingTurns: null,
+          remainingWallClockMs: null,
+          tokenBudgetReached: false,
+          turnBudgetReached: false,
+          wallClockBudgetReached: false,
+          overBudget: false,
+        },
+      },
+    }).map(strip);
+
+    // 40 emojis + ellipsis, and every emoji intact (no lone surrogate halves).
+    expect(lines.join('\n')).toContain('🚀'.repeat(40) + '…');
+  });
 });
