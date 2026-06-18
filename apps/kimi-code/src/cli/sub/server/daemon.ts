@@ -204,9 +204,16 @@ export function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
   if (options.idleGraceMs !== undefined) {
     args.push('--idle-grace-ms', String(options.idleGraceMs));
   }
+  // On Windows `.mjs` files are not executable PE binaries, so we must run
+  // the script through the Node binary rather than spawning it directly. In
+  // SEA mode or when re-spawning from an already-running daemon, `program` is
+  // `process.execPath` itself, so no script argument is needed.
+  const execPath = process.execPath;
+  const spawnArgs = program === execPath ? args : [program, ...args];
+
   const logFd = openSync(logPath, 'a');
   try {
-    const child = spawn(program, args, {
+    const child = spawn(execPath, spawnArgs, {
       detached: true,
       // Run from the server log directory instead of inheriting the caller's
       // cwd, so the long-lived daemon does not pin the directory it was
