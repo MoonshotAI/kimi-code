@@ -47,6 +47,7 @@ describe('createTUIState', () => {
 
     // UI objects are created.
     expect(state.ui).toBeDefined();
+    expect(state.ui.getShowHardwareCursor()).toBe(true);
     expect(state.terminal).toBeDefined();
     expect(state.transcriptContainer).toBeDefined();
     expect(state.activityContainer).toBeDefined();
