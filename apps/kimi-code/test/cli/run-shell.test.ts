@@ -191,6 +191,7 @@ describe('runShell', () => {
           userAgentProduct: 'kimi-code-cli',
           version: '1.2.3-test',
         }),
+        sessionStartedProperties: { yolo: true, auto: false, plan: true, afk: false },
       }),
     );
     expect(mocks.harnessEnsureConfigFile).toHaveBeenCalledOnce();
@@ -228,15 +229,7 @@ describe('runShell', () => {
       workDir: process.cwd(),
     });
     expect(mocks.tuiStart).toHaveBeenCalledOnce();
-    expect(mocks.harnessTrack).not.toHaveBeenCalledWith('started', expect.anything());
     expect(mocks.withTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses-startup' });
-    expect(mocks.lifecycleTrack).toHaveBeenCalledWith('started', {
-      resumed: false,
-      yolo: true,
-      auto: false,
-      plan: true,
-      afk: false,
-    });
     expect(mocks.lifecycleTrack).toHaveBeenCalledWith('startup_perf', {
       duration_ms: expect.any(Number),
       config_ms: expect.any(Number),
@@ -327,39 +320,6 @@ describe('runShell', () => {
     expect(mocks.harnessTrack).toHaveBeenCalledWith('first_launch');
   });
 
-  it('marks resumed lifecycle starts from session flags', async () => {
-    mocks.loadTuiConfig.mockResolvedValue({
-      theme: 'dark',
-      editorCommand: null,
-      notifications: { enabled: true, condition: 'unfocused' },
-    });
-    mocks.tuiStart.mockResolvedValue(undefined);
-    mocks.tuiGetCurrentSessionId.mockReturnValue('ses-1');
-
-    await runShell(
-      {
-        session: 'ses-1',
-        continue: false,
-        yolo: false,
-        auto: false,
-        plan: false,
-        model: undefined,
-        outputFormat: undefined,
-        prompt: undefined,
-        skillsDirs: [],
-      },
-      '1.2.3-test',
-    );
-
-    expect(mocks.lifecycleTrack).toHaveBeenCalledWith('started', {
-      resumed: true,
-      yolo: false,
-      auto: false,
-      plan: false,
-      afk: false,
-    });
-  });
-
   it('binds startup_perf to the session captured before MCP metrics resolve', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
@@ -389,9 +349,9 @@ describe('runShell', () => {
       '1.2.3-test',
     );
 
-    expect(mocks.withTelemetryContext).toHaveBeenNthCalledWith(1, { sessionId: 'ses-startup' });
-    expect(mocks.withTelemetryContext).toHaveBeenNthCalledWith(2, { sessionId: 'ses-startup' });
-    expect(mocks.lifecycleTrack).toHaveBeenNthCalledWith(2, 'startup_perf', {
+    expect(mocks.withTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses-startup' });
+    expect(mocks.withTelemetryContext).not.toHaveBeenCalledWith({ sessionId: 'ses-later' });
+    expect(mocks.lifecycleTrack).toHaveBeenCalledWith('startup_perf', {
       duration_ms: expect.any(Number),
       config_ms: expect.any(Number),
       init_ms: expect.any(Number),
