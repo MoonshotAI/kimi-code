@@ -26,4 +26,7 @@ export default {
   showMore: 'Show more ({count})',
   collapseSidebar: 'Collapse sidebar',
   expandSidebar: 'Expand sidebar',
+  searchPlaceholder: 'Search sessions',
+  searchClear: 'Clear search',
+  searchNoResults: 'No matching sessions',
 } as const;

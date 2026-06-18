@@ -17,6 +17,8 @@ export interface Session {
   busy: boolean;
   /** ISO timestamp for recency-based filtering (e.g. default visible sessions). */
   updatedAt?: string;
+  /** Text of the most recent user prompt, used by sidebar search. */
+  lastPrompt?: string;
 }
 
 export interface Workspace {

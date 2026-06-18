@@ -3,14 +3,14 @@
      The old workspace rail and workspace tabs have been removed;
      workspace switching, folding and renaming all live in the group header. -->
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
 
 const { t } = useI18n();
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     activeWorkspace: WorkspaceView | null;
     activeWorkspaceId: string | null;
@@ -50,7 +50,32 @@ const emit = defineEmits<{
   collapse: [];
 }>();
 
+// ---------------------------------------------------------------------------
+// Session search (title + last prompt, instant client-side filter)
+// ---------------------------------------------------------------------------
+const searchQuery = ref('');
 
+const trimmedQuery = computed(() => searchQuery.value.trim());
+const isSearching = computed(() => trimmedQuery.value.length > 0);
+
+const searchResults = computed<Session[]>(() => {
+  const q = trimmedQuery.value.toLowerCase();
+  if (!q) return [];
+  return props.sessions.filter((s) => {
+    const title = (s.title ?? '').toLowerCase();
+    const last = (s.lastPrompt ?? '').toLowerCase();
+    return title.includes(q) || last.includes(q);
+  });
+});
+
+function clearSearch(): void {
+  searchQuery.value = '';
+}
+
+function onSelectResult(sessionId: string): void {
+  clearSearch();
+  onSelectSession(sessionId);
+}
 
 // ---------------------------------------------------------------------------
 // Collapse groups
@@ -399,6 +424,33 @@ function blinkOnce(): void {
         </button>
       </div>
 
+      <!-- Session search -->
+      <div class="search">
+        <svg class="search-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="7" cy="7" r="5" />
+          <path d="M11 11l3 3" />
+        </svg>
+        <input
+          v-model="searchQuery"
+          class="search-input"
+          type="text"
+          :placeholder="t('sidebar.searchPlaceholder')"
+          :aria-label="t('sidebar.searchPlaceholder')"
+        />
+        <button
+          v-if="isSearching"
+          type="button"
+          class="search-clear"
+          :title="t('sidebar.searchClear')"
+          :aria-label="t('sidebar.searchClear')"
+          @click.stop="clearSearch"
+        >
+          <svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
+          </svg>
+        </button>
+      </div>
+
       <!-- New chat + new workspace buttons -->
       <div class="btn-wrap">
         <button class="btn-new-chat" @click.stop="emit('create')">
@@ -422,8 +474,30 @@ function blinkOnce(): void {
         </button>
       </div>
 
+      <!-- Search results (flat, across all workspaces) -->
+      <div v-if="isSearching" class="sessions">
+        <template v-if="searchResults.length > 0">
+          <SessionRow
+            v-for="s in searchResults"
+            :key="s.id"
+            :session="s"
+            :active="s.id === activeId"
+            :approval-count="pendingBySession[s.id]?.approvals ?? 0"
+            :question-count="pendingBySession[s.id]?.questions ?? 0"
+            :unread="unreadBySession[s.id] ?? false"
+            @select="onSelectResult($event)"
+            @rename="(id, title) => emit('rename', id, title)"
+            @archive="emit('archive', $event)"
+            @fork="emit('fork', $event)"
+          />
+        </template>
+        <div v-else class="empty">
+          {{ t('sidebar.searchNoResults') }}
+        </div>
+      </div>
+
       <!-- Session list — grouped by workspace -->
-      <div class="sessions">
+      <div v-else class="sessions">
         <!-- Empty state — only when no workspace is registered at all; empty
              workspaces still render their group header (with the + button). -->
         <div v-if="groups.length === 0" class="empty">
@@ -614,7 +688,7 @@ function blinkOnce(): void {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px 4px;
+  padding: 8px 12px;
   width: 100%;
   box-sizing: border-box;
 }
@@ -680,7 +754,7 @@ function blinkOnce(): void {
  .btn-wrap {
   display: flex;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 0 12px 8px;
 }
 .btn-wrap button {
   display: inline-flex;
@@ -731,6 +805,58 @@ function blinkOnce(): void {
   border-color: var(--bd);
   color: var(--dim);
 }
+
+/* Session search */
+.search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 12px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+}
+.search:focus-within {
+  border-color: var(--bd);
+  color: var(--ink);
+}
+.search-icon {
+  flex: none;
+}
+.search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: calc(var(--ui-font-size) - 1px);
+}
+.search-input::placeholder {
+  color: var(--faint);
+}
+.search-clear {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.search-clear:hover {
+  background: var(--soft);
+  color: var(--ink);
+}
+
 /* Sessions */
 .sessions {
   flex: 1;

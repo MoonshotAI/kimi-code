@@ -2404,6 +2404,7 @@ const sessionsForView = computed<Session[]>(() => {
       time: formatTime(s.updatedAt, s.status),
       status: s.status,
       busy: isSessionEffectivelyRunning(s.id),
+      lastPrompt: s.lastPrompt,
     }));
 });
 

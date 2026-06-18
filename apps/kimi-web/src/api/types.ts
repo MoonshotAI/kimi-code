@@ -67,6 +67,8 @@ export interface AppSession {
   status: AppSessionStatus;
   archived: boolean;
   currentPromptId?: string;
+  /** Text of the most recent user prompt, for search/preview. */
+  lastPrompt?: string;
   cwd: string;
   model: string;
   usage: AppSessionUsage;

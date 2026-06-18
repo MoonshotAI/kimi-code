@@ -26,4 +26,7 @@ export default {
   showMore: '展开更多 ({count})',
   collapseSidebar: '收起侧边栏',
   expandSidebar: '展开侧边栏',
+  searchPlaceholder: '搜索会话',
+  searchClear: '清除搜索',
+  searchNoResults: '没有匹配的会话',
 };

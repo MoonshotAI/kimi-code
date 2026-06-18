@@ -118,6 +118,14 @@ describe('sessionSchema', () => {
     const parsed = sessionSchema.parse(withoutArchived);
     expect(parsed.archived).toBeUndefined();
   });
+
+  it('accepts the optional last_prompt field', () => {
+    const withPrompt = { ...fullSession, last_prompt: 'hello world' };
+    expect(sessionSchema.parse(withPrompt).last_prompt).toBe('hello world');
+
+    const parsed = sessionSchema.parse(fullSession);
+    expect(parsed.last_prompt).toBeUndefined();
+  });
 });
 
 describe('sessionCreateSchema', () => {
