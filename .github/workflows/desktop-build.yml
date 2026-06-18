@@ -1,12 +1,20 @@
 name: desktop-build
 
-# Builds the unsigned Kimi Desktop (Electron) installers for macOS, Windows and
-# Linux. Each runner builds the matching-platform SEA backend first, then
-# packages it into the Electron app with electron-builder. Manual trigger for
-# now; v1 does not sign / notarize / auto-update.
+# Builds the Kimi Desktop (Electron) installers for macOS, Windows and Linux.
+# Each runner builds the matching-platform SEA backend first, then packages it
+# with electron-builder.
+#
+# macOS is signed with a Developer ID certificate + notarized (so it opens on
+# any Mac without the "app is damaged" Gatekeeper block) when `sign-macos` is
+# true and the Apple secrets are configured. Windows/Linux ship unsigned in v1.
 on:
   workflow_dispatch:
     inputs:
+      sign-macos:
+        description: 'Sign + notarize macOS (needs Apple secrets)'
+        required: false
+        type: boolean
+        default: true
       retention-days:
         description: 'Artifact retention in days'
         required: false
@@ -56,14 +64,46 @@ jobs:
           pnpm --filter @moonshot-ai/kimi-web run build
           node apps/kimi-code/scripts/copy-web-assets.mjs
 
-      - name: Build native executable (local profile, unsigned)
+      - name: Build native executable (local profile)
+        # The Electron app signs the SEA itself (electron-builder, inside-out),
+        # so the native build stays unsigned here.
         run: pnpm --filter @moonshot-ai/kimi-code run build:native:sea
 
-      - name: Build & package desktop app (unsigned)
+      - name: Setup macOS keychain (Developer ID)
+        if: runner.os == 'macOS' && inputs.sign-macos
+        uses: ./.github/actions/macos-keychain-setup
+        with:
+          certificate-p12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Prepare notarization API key (macOS)
+        if: runner.os == 'macOS' && inputs.sign-macos
+        shell: bash
         env:
-          # Never let electron-builder try to discover a signing identity.
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          APPLE_NOTARIZATION_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/notary-AuthKey.p8"
+          printf '%s' "$APPLE_NOTARIZATION_KEY_P8" | base64 -d > "$key_path"
+          echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
+
+      - name: Build & package desktop app
+        shell: bash
+        env:
+          # macOS signing is driven by env: when sign-macos, electron-builder
+          # signs with the keychain's Developer ID and notarizes via the notary
+          # API key; otherwise it builds unsigned.
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ (runner.os == 'macOS' && inputs.sign-macos) && 'true' || 'false' }}
+          CSC_KEYCHAIN: ${{ env.APPLE_KEYCHAIN_PATH }}
+          CSC_NAME: ${{ env.APPLE_SIGNING_IDENTITY }}
+          KIMI_DESKTOP_NOTARIZE: ${{ (runner.os == 'macOS' && inputs.sign-macos) && 'true' || 'false' }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
         run: pnpm --filter @moonshot-ai/kimi-desktop run dist
+
+      - name: Cleanup macOS keychain
+        if: always() && runner.os == 'macOS' && inputs.sign-macos
+        uses: ./.github/actions/macos-keychain-cleanup
 
       - name: Upload installers
         uses: actions/upload-artifact@v7

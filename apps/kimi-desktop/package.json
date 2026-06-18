@@ -12,7 +12,7 @@
     "start": "electron .",
     "dev": "tsdown && electron .",
     "typecheck": "tsc --noEmit",
-    "dist": "tsdown && electron-builder"
+    "dist": "tsdown && electron-builder --config electron-builder.config.cjs"
   },
   "devDependencies": {
     "electron": "33.4.11",

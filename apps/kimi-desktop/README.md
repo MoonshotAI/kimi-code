@@ -51,24 +51,55 @@ Checks:
 pnpm -C apps/kimi-desktop run typecheck
 ```
 
-## Package (unsigned)
+## Package
 
 `dist` builds the main process and runs electron-builder for the **current**
 platform. `scripts/before-pack.cjs` stages the matching-platform SEA into the
 app's resources (`<resources>/bin/<target>/`).
 
 ```bash
-pnpm -C apps/kimi-desktop run dist     # -> apps/kimi-desktop/dist-app/
+# unsigned local build (for your own machine):
+CSC_IDENTITY_AUTO_DISCOVERY=false pnpm -C apps/kimi-desktop run dist
+# -> apps/kimi-desktop/dist-app/
 ```
+
+> Do **not** rename a built `.app` bundle — renaming invalidates its code
+> signature and macOS will report it as "damaged".
 
 Cross-platform installers are produced in CI (`.github/workflows/desktop-build.yml`),
 which builds the SEA on each platform runner and packages there. SEA injection
 is per-platform (the blob is injected into the host Node binary), so each OS must
 be built on its own runner.
 
+### macOS signing + notarization
+
+An **unsigned** macOS build shows *"app is damaged and can't be opened"* once it
+has been transferred to another Mac (Gatekeeper quarantine). To distribute it,
+the app must be signed with a **Developer ID Application** certificate and
+notarized by Apple. The config (`electron-builder.config.cjs`) applies the
+hardened runtime + entitlements (`build/entitlements.mac.plist`) to the app and
+the nested SEA, and signing/notarization are environment-driven:
+
+```bash
+KIMI_DESKTOP_NOTARIZE=true \
+CSC_NAME="Developer ID Application: … (TEAMID)" \
+APPLE_API_KEY=/path/AuthKey_XXX.p8 APPLE_API_KEY_ID=XXXX APPLE_API_ISSUER=…uuid… \
+pnpm -C apps/kimi-desktop run dist
+```
+
+In CI, run the **desktop-build** workflow with `sign-macos: true`; it reuses the
+same Apple secrets / keychain action as the TUI native build
+(`APPLE_CERTIFICATE_P12`, `APPLE_NOTARIZATION_KEY_*`). The resulting `.dmg` opens
+on any Mac without warnings.
+
+> An `Apple Development` certificate is **not** enough — it can sign for your own
+> machine but cannot be notarized. You need a `Developer ID Application` cert.
+
 ## v1 scope / not done yet
 
-- **Unsigned**: no code signing, notarization, or auto-update (v2).
+- **Auto-update**: not implemented (v2).
+- **Windows / Linux signing**: unsigned in v1 (Windows shows a SmartScreen
+  prompt). Only macOS is signed + notarized.
 - **Default icon**: ships the default Electron icon — no Kimi brand art ≥256px
   exists in the repo yet (v2).
 - **First launch may need network**: the SEA resolves its native sidecars
