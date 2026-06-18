@@ -368,6 +368,34 @@ describe('discoverSkills shape and ordering', () => {
     expect(skills.find((s) => s.name === 'outer.inner')?.metadata.isSubSkill).toBe(true);
   });
 
+  it('dedupes identical SKILL.md files discovered via flattened subskill copies', async () => {
+    const { repoDir } = await makeWorkspace();
+    const root = path.join(repoDir, '.kimi-code', 'skills');
+    const childContent = [
+      '---',
+      'name: legacy-child',
+      'description: Nested skill',
+      '---',
+      '',
+      'Child body.',
+    ];
+    await writeSkill(root, path.join('outer', 'SKILL.md'), [
+      '---',
+      'name: outer',
+      'description: Parent skill',
+      'has-sub-skill: true',
+      '---',
+      '',
+      'Outer body.',
+    ]);
+    await writeSkill(root, path.join('outer', 'child', 'SKILL.md'), childContent);
+    await writeSkill(root, path.join('outer__child', 'SKILL.md'), childContent);
+
+    const skills = await discoverSkills({ roots: [{ path: root, source: 'user' }] });
+
+    expect(skills.map((s) => s.name)).toEqual(['outer', 'outer.legacy-child']);
+  });
+
   it('does not discover nested SKILL.md files when the parent bundle disables sub-skills', async () => {
     const { repoDir } = await makeWorkspace();
     const root = path.join(repoDir, '.kimi-code', 'skills');
