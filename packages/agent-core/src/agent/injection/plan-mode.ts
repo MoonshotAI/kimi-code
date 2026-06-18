@@ -83,7 +83,7 @@ function withPlanFileFooter(body: string, planFilePath: PlanFilePath): string {
   return `${body}\n\nPlan file: ${planFilePath}`;
 }
 
-function fullReminder(planFilePath: PlanFilePath): string {
+export function fullReminder(planFilePath: PlanFilePath): string {
   if (planFilePath === null || planFilePath.length === 0) {
     return inlineFullReminder();
   }
@@ -176,6 +176,6 @@ Before proceeding:
 Your turn must end with either AskUserQuestion (to clarify requirements) or ExitPlanMode (to request plan approval).`;
 }
 
-function exitReminder(): string {
+export function exitReminder(): string {
   return `Plan mode is no longer active. The read-only and plan-file-only restrictions from plan mode no longer apply. Continue with the approved plan using the normal tool and permission rules.`;
 }

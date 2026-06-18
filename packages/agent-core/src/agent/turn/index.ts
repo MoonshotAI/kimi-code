@@ -637,6 +637,11 @@ export class TurnFlow {
               this.agent.microCompaction.detect();
               await this.agent.fullCompaction.beforeStep(stepSignal);
               await this.agent.injection.inject();
+              await this.agent.lifecycle.fireBeforePrompt({
+                turnId,
+                injectSystemReminder: (content, origin) =>
+                  this.agent.context.appendSystemReminder(content, origin),
+              });
               deduper.beginStep();
               return;
             },

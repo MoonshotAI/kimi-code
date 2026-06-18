@@ -22,6 +22,8 @@ import {
   type IInstantiationService,
 } from '../di';
 import { BackgroundService, BackgroundTaskPersistence, IBackgroundService } from './background';
+import { AgentEventBus, IAgentEventBus } from './event-bus';
+import { ILifecycleService, LifecycleService } from './lifecycle';
 import {
   CompactionService,
   MicroCompactionService,
@@ -127,6 +129,8 @@ export class Agent {
   readonly planMode: IPlanService;
   readonly swarmMode: ISwarmService;
   readonly usage: IUsageService;
+  readonly eventBus: IAgentEventBus;
+  readonly lifecycle: ILifecycleService;
   private readonly scope: IInstantiationService;
   readonly skills: IAgentSkillService | null;
   readonly tools: IAgentToolService;
@@ -206,8 +210,17 @@ export class Agent {
     );
     perAgentServices.set(IReplayService, new SyncDescriptor(ReplayService, [options.replay]));
     perAgentServices.set(
+      IAgentEventBus,
+      new SyncDescriptor(AgentEventBus, [
+        (event: AgentEvent) => {
+          if (!this.records.restoring) void this.rpc?.emitEvent?.(event);
+        },
+      ]),
+    );
+    perAgentServices.set(ILifecycleService, new SyncDescriptor(LifecycleService, []));
+    perAgentServices.set(
       IGoalService,
-      new SyncDescriptor(GoalService, [this.telemetry, (event: AgentEvent) => this.emitEvent(event)]),
+      new SyncDescriptor(GoalService, [this.telemetry, (event: AgentEvent) => this.eventBus.publish(event)]),
     );
     if (options.skills !== undefined) {
       perAgentServices.set(
@@ -222,6 +235,8 @@ export class Agent {
       perAgentServices,
     );
 
+    this.eventBus = this.scope.invokeFunction((accessor) => accessor.get(IAgentEventBus));
+    this.lifecycle = this.scope.invokeFunction((accessor) => accessor.get(ILifecycleService));
     this.records = this.scope.invokeFunction((accessor) => accessor.get(IRecordsService));
     this.fullCompaction = this.scope.invokeFunction((accessor) => accessor.get(ICompactionService));
     this.microCompaction = this.scope.invokeFunction((accessor) =>
@@ -449,8 +464,7 @@ export class Agent {
   }
 
   emitEvent(event: AgentEvent): void {
-    if (this.records.restoring) return;
-    void this.rpc?.emitEvent?.(event);
+    this.eventBus.publish(event);
   }
 
   emitStatusUpdated(): void {
@@ -466,7 +480,7 @@ export class Agent {
     const usage: UsageStatus | undefined = this.usage.status();
     const model = this.config.model;
 
-    this.emitEvent({
+    this.eventBus.publish({
       type: 'agent.status.updated',
       model,
       contextTokens,

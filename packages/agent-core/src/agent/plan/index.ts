@@ -4,8 +4,10 @@ import { dirname, join } from 'pathe';
 import type { Kaos } from '@moonshot-ai/kaos';
 import { createDecorator } from '../../di';
 import { IAgentConfigService } from '../config';
+import { ILifecycleService } from '../lifecycle';
 import { IRecordsService } from '../records';
 import { IReplayService } from '../replay';
+import { exitReminder, fullReminder } from '../injection/plan-mode';
 import { generateHeroSlug } from '../../utils/hero-slug';
 
 export type PlanData = null | {
@@ -19,6 +21,7 @@ export class PlanMode {
   protected _isActive = false;
   protected _planId: null | string = null;
   protected _planFilePath: PlanFilePath = null;
+  private wasActive = false;
 
   constructor(
     private readonly kaos?: Kaos,
@@ -27,7 +30,26 @@ export class PlanMode {
     @IRecordsService private readonly records?: IRecordsService,
     @IReplayService private readonly replayBuilder?: IReplayService,
     @IAgentConfigService private readonly config?: IAgentConfigService,
-  ) {}
+    @ILifecycleService lifecycle?: ILifecycleService,
+  ) {
+    lifecycle?.onBeforePrompt((ctx) => {
+      if (this._isActive) {
+        if (!this.wasActive) {
+          this.wasActive = true;
+          ctx.injectSystemReminder(fullReminder(this._planFilePath), {
+            kind: 'injection',
+            variant: 'plan_mode',
+          });
+        }
+      } else if (this.wasActive) {
+        this.wasActive = false;
+        ctx.injectSystemReminder(exitReminder(), {
+          kind: 'injection',
+          variant: 'plan_mode',
+        });
+      }
+    });
+  }
 
   createPlanId(): string {
     return generateHeroSlug(randomUUID(), new Set());
