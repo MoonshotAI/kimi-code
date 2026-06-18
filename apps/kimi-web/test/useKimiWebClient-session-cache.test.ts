@@ -429,6 +429,34 @@ describe('session view-model status / busy', () => {
     );
     expect(client.unreadBySession.value['sess_bg']).toBe(true);
   });
+
+  it('loads older messages on demand and prepends them in chronological order', async () => {
+    const msg1 = userMessage('sess_1', 'msg_1');
+    const msg2 = userMessage('sess_1', 'msg_2');
+    const older1 = userMessage('sess_1', 'msg_0');
+    const { api, client } = await setup([msg1, msg2]);
+    api.getSessionSnapshot = vi.fn(async () => ({
+      asOfSeq: 0,
+      epoch: 'ep_test',
+      session: session('sess_1'),
+      messages: [msg1, msg2],
+      hasMoreMessages: true,
+      inFlightTurn: null,
+      pendingApprovals: [],
+      pendingQuestions: [],
+    }));
+    api.listMessages = vi.fn(async () => ({ items: [older1], hasMore: false }));
+
+    await client.selectSession('sess_1');
+    expect(client.hasMoreMessages.value).toBe(true);
+
+    await client.loadOlderMessages('sess_1');
+
+    expect(api.listMessages).toHaveBeenCalledWith('sess_1', { beforeId: 'msg_1', pageSize: 50 });
+    expect(client.turns.value.map((t) => t.id)).toEqual(['msg_0', 'msg_1', 'msg_2']);
+    expect(client.hasMoreMessages.value).toBe(false);
+    expect(client.loadingMoreMessages.value).toBe(false);
+  });
 });
 
 describe('unread persistence across reload', () => {

@@ -48,6 +48,12 @@ const props = defineProps<{
   sessionLoading?: boolean;
   /** Live compaction state of the active session (non-null while running). */
   compaction?: { status: 'running' } | null;
+  /** Whether there are older messages available to load when scrolling up. */
+  hasMoreMessages?: boolean;
+  /** True while older messages are being fetched (scroll-up lazy load). */
+  loadingMore?: boolean;
+  /** Callback to fetch the next older page of messages. */
+  loadOlderMessages?: (sessionId: string) => Promise<void>;
   /** Available models for the quick-switch dropdown in the composer toolbar. */
   models?: AppModel[];
   /** Starred model ids shown at the top of the composer's quick-switch dropdown. */
@@ -473,6 +479,28 @@ function scrollToBottom(smooth = false): void {
   lastScrollTop = el.scrollTop;
   following.value = true;
   showPill.value = false;
+}
+
+async function handleLoadOlderMessages(): Promise<void> {
+  if (
+    !props.sessionId ||
+    !props.loadOlderMessages ||
+    props.loadingMore ||
+    !props.hasMoreMessages
+  ) {
+    return;
+  }
+  const el = panesRef.value;
+  const oldHeight = el?.scrollHeight ?? 0;
+  const oldTop = el?.scrollTop ?? 0;
+
+  await props.loadOlderMessages(props.sessionId);
+  await nextTick();
+
+  const el2 = panesRef.value;
+  if (!el2) return;
+  const addedHeight = el2.scrollHeight - oldHeight;
+  el2.scrollTop = oldTop + addedHeight;
 }
 
 function attrEscape(value: string): string {
@@ -957,6 +985,8 @@ defineExpose({ loadComposerForEdit });
               :fast-moon="fastMoon"
               :session-loading="sessionLoading"
               :compaction="compaction"
+              :has-more-messages="hasMoreMessages"
+              :loading-more="loadingMore"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
               @copy-conversation-copied="handleCopyConversationCopied"
@@ -964,6 +994,7 @@ defineExpose({ loadComposerForEdit });
               @open-compaction="emit('openCompaction', $event)"
               @open-agent="emit('openAgent', $event)"
               @edit-message="emit('editMessage', $event)"
+              @load-older-messages="handleLoadOlderMessages"
             />
             <div v-if="activeSwarms.length > 0" class="swarm-stack">
               <SwarmCard v-for="group in activeSwarms" :key="group.id" :group="group" />

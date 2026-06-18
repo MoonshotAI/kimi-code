@@ -472,6 +472,10 @@ interface ExtendedState extends KimiClientState {
   sideChatSendingByAgent: Record<string, boolean>;
   /** User message ids sent through BTW so they can be hidden from the main transcript. */
   sideChatUserMessageIdsBySession: Record<string, string[]>;
+  /** True when older messages are being fetched for a session (scroll-up lazy load). */
+  messagesLoadingMoreBySession: Record<string, boolean>;
+  /** Whether the server has more older messages than currently loaded per session. */
+  messagesHasMoreBySession: Record<string, boolean>;
 }
 
 const rawState: ExtendedState = reactive({
@@ -505,6 +509,8 @@ const rawState: ExtendedState = reactive({
   sideChatMessagesByAgent: {},
   sideChatSendingByAgent: {},
   sideChatUserMessageIdsBySession: {},
+  messagesLoadingMoreBySession: {},
+  messagesHasMoreBySession: {},
 });
 
 // Models + Providers reactive state (lazy-loaded, cached)
@@ -1197,6 +1203,8 @@ async function handleSessionNotFound(sessionId: string): Promise<void> {
   delete rawState.gitStatusBySession[sessionId];
   delete rawState.lastSeqBySession[sessionId];
   delete rawState.compactionBySession[sessionId];
+  delete rawState.messagesLoadingMoreBySession[sessionId];
+  delete rawState.messagesHasMoreBySession[sessionId];
   delete epochBySession[sessionId];
   sessionsKnownEmpty.delete(sessionId);
 
@@ -1232,6 +1240,10 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       ...rawState.messagesBySession,
       [sessionId]: snap.messages,
     };
+    rawState.messagesHasMoreBySession = {
+      ...rawState.messagesHasMoreBySession,
+      [sessionId]: snap.hasMoreMessages,
+    };
     rawState.approvalsBySession = {
       ...rawState.approvalsBySession,
       [sessionId]: snap.pendingApprovals,
@@ -1265,6 +1277,46 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       sessionId,
     });
     return 'failed';
+  }
+}
+
+const MESSAGES_PAGE_SIZE = 50;
+
+async function loadOlderMessages(sessionId: string): Promise<void> {
+  if (rawState.messagesLoadingMoreBySession[sessionId]) return;
+  const current = rawState.messagesBySession[sessionId];
+  if (!current || current.length === 0) return;
+
+  const beforeId = current[0]!.id;
+  rawState.messagesLoadingMoreBySession = {
+    ...rawState.messagesLoadingMoreBySession,
+    [sessionId]: true,
+  };
+  try {
+    const page = await getKimiWebApi().listMessages(sessionId, {
+      beforeId,
+      pageSize: MESSAGES_PAGE_SIZE,
+    });
+    // Server returns newest-first; the UI keeps messages in chronological order.
+    const older = [...page.items].reverse();
+    // Live events may have appended messages while the request was in flight;
+    // read the latest array so those messages are not overwritten.
+    const latest = rawState.messagesBySession[sessionId] ?? current;
+    rawState.messagesBySession = {
+      ...rawState.messagesBySession,
+      [sessionId]: [...older, ...latest],
+    };
+    rawState.messagesHasMoreBySession = {
+      ...rawState.messagesHasMoreBySession,
+      [sessionId]: page.hasMore,
+    };
+  } catch (err) {
+    pushOperationFailure('loadOlderMessages', err, { sessionId });
+  } finally {
+    rawState.messagesLoadingMoreBySession = {
+      ...rawState.messagesLoadingMoreBySession,
+      [sessionId]: false,
+    };
   }
 }
 
@@ -2109,6 +2161,14 @@ const connection = computed<ConnectionState>(() => rawState.connection);
 
 const loading = computed<boolean>(() => rawState.loading);
 const sessionLoading = computed<boolean>(() => rawState.sessionLoading);
+const loadingMoreMessages = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? rawState.messagesLoadingMoreBySession[sid] ?? false : false;
+});
+const hasMoreMessages = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? rawState.messagesHasMoreBySession[sid] ?? false : false;
+});
 const serverVersion = computed<string>(() => rawState.serverVersion);
 
 const permission = computed<PermissionMode>(() => rawState.permission);
@@ -4294,6 +4354,8 @@ export function useKimiWebClient() {
     connection,
     loading,
     sessionLoading,
+    loadingMoreMessages,
+    hasMoreMessages,
     serverVersion,
     initialized,
     permission,
@@ -4340,6 +4402,7 @@ export function useKimiWebClient() {
     load,
     selectSession,
     createSession,
+    loadOlderMessages,
 
     // Workspace actions
     loadWorkspaces,

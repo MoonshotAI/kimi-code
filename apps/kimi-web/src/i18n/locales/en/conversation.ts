@@ -21,4 +21,6 @@ export default {
   confirm: 'Confirm',
   cancel: 'Cancel',
   yesterday: 'Yesterday',
+  loadOlder: 'Load earlier messages',
+  loadingOlder: 'Loading earlier messages…',
 } as const;
