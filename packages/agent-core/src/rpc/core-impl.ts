@@ -47,6 +47,10 @@ import {
   type TelemetryClient,
   type TelemetryProperties,
 } from '../telemetry';
+import {
+  InstantiationService,
+  type IInstantiationService,
+} from '../di';
 import type { CoreRPCClient } from './client';
 import type {
   ActivateSkillPayload,
@@ -128,6 +132,7 @@ export interface KimiCoreOptions {
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly appVersion?: string;
+  readonly instantiationService?: IInstantiationService | undefined;
 }
 
 export class KimiCore implements PromisableMethods<CoreAPI> {
@@ -136,6 +141,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   readonly configPath: string;
   readonly sessions = new Map<string, Session>();
   readonly telemetry: TelemetryClient;
+  private readonly scope: IInstantiationService;
 
   private kaos: Promise<Kaos> | undefined;
   private runtime: ToolServices | undefined;
@@ -170,6 +176,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.skillDirs = options.skillDirs ?? [];
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.appVersion = options.appVersion;
+    this.scope = options.instantiationService ?? new InstantiationService(undefined, true);
     ensureKimiHome(this.homeDir);
     // Schema errors degrade (invalid sections are dropped with warnings) so a
     // typo cannot prevent startup, but a file that cannot be used at all —
@@ -265,6 +272,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       telemetry: sessionTelemetry,
       pluginSessionStarts,
       appVersion: this.appVersion,
+      instantiationService: this.scope,
     });
     try {
       session.metadata = {
@@ -375,6 +383,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       initializeMainAgent: false,
       pluginSessionStarts,
       appVersion: this.appVersion,
+      instantiationService: this.scope,
     });
     let warning: string | undefined;
     try {

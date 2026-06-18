@@ -9,14 +9,14 @@ import type { KimiConfig, SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentOptions, type AgentType } from '../agent';
-import { HookEngine, HookService, type HookDef, type IHookService } from './hooks';
+import { HookService, IHookService, type HookDef } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
 import { makeErrorPayload } from '../errors';
 import {
   McpConnectionService,
   McpOAuthService,
-  type IMcpConnectionService,
+  IMcpConnectionService,
   type McpServerEntry,
   type SessionMcpConfig,
 } from '../mcp';
@@ -31,19 +31,24 @@ import {
 import type { IProviderService } from './provider-manager';
 import {
   registerBuiltinSkills,
-  SessionSkillRegistry,
   SkillRegistryService,
   resolveSkillRoots,
   summarizeSkill,
-  type ISkillRegistryService,
+  ISkillRegistryService,
   type SkillRoot,
   type SkillSummary,
 } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
-import { SubagentHostService, type ISubagentHostService } from './subagent-host';
+import { SubagentHostService } from './subagent-host';
 import type { ToolServices } from '../tools/support/services';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import { abortError } from '../utils/abort';
+import {
+  InstantiationService,
+  ServiceCollection,
+  SyncDescriptor,
+  type IInstantiationService,
+} from '../di';
 
 export interface SessionOptions {
   readonly kaos: Kaos;
@@ -65,6 +70,7 @@ export interface SessionOptions {
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
+  readonly instantiationService?: IInstantiationService | undefined;
 }
 
 export interface SessionSkillConfig {
@@ -142,6 +148,7 @@ export class Session {
   readonly rpc: SDKSessionRPC;
   readonly telemetry: TelemetryClient;
   readonly skills: ISkillRegistryService;
+  private readonly scope: IInstantiationService;
   readonly agents: Map<string, AgentEntry> = new Map();
   readonly mcp: IMcpConnectionService;
   readonly log: Logger;
@@ -178,20 +185,36 @@ export class Session {
       (options.id === undefined ? log : log.createChild({ sessionId: options.id }));
     this.rpc = options.rpc;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
-    this.hookEngine = new HookService(options.hooks, {
-      cwd: options.kaos.getcwd(),
-      sessionId: options.id,
-    });
+    const sessionServices = new ServiceCollection();
+    sessionServices.set(
+      IHookService,
+      new SyncDescriptor(HookService, [
+        options.hooks,
+        { cwd: options.kaos.getcwd(), sessionId: options.id },
+      ]),
+    );
+    sessionServices.set(
+      ISkillRegistryService,
+      new SyncDescriptor(SkillRegistryService, [{ sessionId: options.id }]),
+    );
+    sessionServices.set(
+      IMcpConnectionService,
+      new SyncDescriptor(McpConnectionService, [
+        {
+          oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
+          log: this.log,
+        },
+      ]),
+    );
+    this.scope = (options.instantiationService ?? new InstantiationService(undefined, true)).createChild(
+      sessionServices,
+    );
+    this.hookEngine = this.scope.invokeFunction((accessor) => accessor.get(IHookService));
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.toolKaos = options.kaos;
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
-    this.skills = new SkillRegistryService({
-      sessionId: options.id,
-    });
-    this.mcp = new McpConnectionService({
-      oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
-      log: this.log,
-    });
+    this.skills = this.scope.invokeFunction((accessor) => accessor.get(ISkillRegistryService));
+    this.mcp = this.scope.invokeFunction((accessor) => accessor.get(IMcpConnectionService));
     this.mcp.onStatusChange((entry) => {
       this.onMcpServerStatusChange(entry);
     });
@@ -577,13 +600,14 @@ export class Session {
       rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
       modelProvider: this.options.providerManager,
       hookEngine: config.hookEngine ?? this.hookEngine,
-      subagentHost: config.subagentHost ?? new SubagentHostService(this, id),
+      subagentHost: config.subagentHost ?? this.scope.createInstance(SubagentHostService, this, id),
       mcp: this.mcp,
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
       experimentalFlags: this.experimentalFlags,
+      instantiationService: this.scope,
     });
   }
 
