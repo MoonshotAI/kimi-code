@@ -36,6 +36,9 @@ jobs:
       - name: Build package dependencies
         run: pnpm run build:packages
 
+      - name: Build Kimi web assets
+        run: pnpm --filter @moonshot-ai/kimi-web run build
+
       - name: Generate Kimi Code built-in catalog
         shell: bash
         run: |

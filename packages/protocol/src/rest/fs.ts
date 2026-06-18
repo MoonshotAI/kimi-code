@@ -36,11 +36,31 @@
  *     Errors: 40401, 41303, 41304, 41305 (>30s grep timeout)
  *   POST /v1/sessions/{sid}/fs:git_status
  *     Body: FsGitStatusRequest  { paths? }
- *     Response data: FsGitStatusResponse  { branch, ahead, behind, entries }
+ *     Response data: FsGitStatusResponse  { branch, ahead, behind, entries,
+ *                                           additions, deletions }
  *     Errors: 40401, 40908 (not a git repo), 41304
+ *
+ *   POST /v1/sessions/{sid}/fs:diff
+ *     Body: FsDiffRequest  { path }
+ *     Response data: FsDiffResponse  { path, diff, truncated }
+ *     Errors: 40401, 40409, 40908 (not a git repo), 41304
  *
  *   GET /v1/sessions/{sid}/fs/{path}:download
  *     Response: binary stream or envelope (40401 / 40409 / 41304)
+ *
+ *   POST /v1/sessions/{sid}/fs:open
+ *     Body: FsOpenRequest
+ *     Response data: FsOpenResponse
+ *
+ *   POST /v1/sessions/{sid}/fs:reveal
+ *     Body: FsRevealRequest
+ *     Response data: FsRevealResponse
+ *
+ *   POST /v1/sessions/{sid}/fs:mkdir
+ *     Body: FsMkdirRequest  { path, recursive? }
+ *     Response data: FsEntry (the created directory)
+ *     Errors: 40401, 40409 (parent missing), 40919 (already exists),
+ *             41304 (path escapes cwd)
  */
 
 import { z } from 'zod';
@@ -105,6 +125,57 @@ export const fsReadResponseSchema = z.object({
   is_binary: z.boolean(),
 });
 export type FsReadResponse = z.infer<typeof fsReadResponseSchema>;
+
+export const fsOpenRequestSchema = z.object({
+  path: z.string().min(1),
+  line: z.number().int().positive().optional(),
+});
+export type FsOpenRequest = z.infer<typeof fsOpenRequestSchema>;
+
+export const fsOpenResponseSchema = z.object({
+  opened: z.literal(true),
+});
+export type FsOpenResponse = z.infer<typeof fsOpenResponseSchema>;
+
+export const fsRevealRequestSchema = z.object({
+  path: z.string().min(1),
+});
+export type FsRevealRequest = z.infer<typeof fsRevealRequestSchema>;
+
+export const fsRevealResponseSchema = z.object({
+  revealed: z.literal(true),
+});
+export type FsRevealResponse = z.infer<typeof fsRevealResponseSchema>;
+
+export const fsMkdirRequestSchema = z.object({
+  path: z.string().min(1),
+  recursive: z.boolean().default(false),
+});
+export type FsMkdirRequest = z.infer<typeof fsMkdirRequestSchema>;
+
+export const fsMkdirResponseSchema = fsEntrySchema;
+export type FsMkdirResponse = z.infer<typeof fsMkdirResponseSchema>;
+
+export const fsOpenInAppIdSchema = z.enum([
+  'finder',
+  'cursor',
+  'vscode',
+  'iterm',
+  'terminal',
+]);
+export type FsOpenInAppId = z.infer<typeof fsOpenInAppIdSchema>;
+
+export const fsOpenInRequestSchema = z.object({
+  app_id: fsOpenInAppIdSchema,
+  path: z.string().min(1),
+  line: z.number().int().positive().optional(),
+});
+export type FsOpenInRequest = z.infer<typeof fsOpenInRequestSchema>;
+
+export const fsOpenInResponseSchema = z.object({
+  opened: z.literal(true),
+});
+export type FsOpenInResponse = z.infer<typeof fsOpenInResponseSchema>;
 
 export const fsListManyRequestSchema = z.object({
   paths: z.array(z.string().min(1)).min(1).max(100),
@@ -191,13 +262,41 @@ export const fsGitStatusRequestSchema = z.object({
 });
 export type FsGitStatusRequest = z.infer<typeof fsGitStatusRequestSchema>;
 
+export const fsPullRequestSchema = z.object({
+  number: z.number().int().positive(),
+  state: z.enum(['open', 'merged', 'closed']),
+  url: z.string().url(),
+});
+export type FsPullRequest = z.infer<typeof fsPullRequestSchema>;
+
 export const fsGitStatusResponseSchema = z.object({
   branch: z.string(),
   ahead: z.number().int().nonnegative(),
   behind: z.number().int().nonnegative(),
   entries: z.record(z.string(), fsGitStatusSchema),
+  // Aggregate working-tree diff against HEAD (`git diff --numstat HEAD`):
+  // summed added/deleted lines across all changed files. Binary files (numstat
+  // `-`) contribute 0. Both 0 for a clean tree or a repo with no commits yet.
+  additions: z.number().int().nonnegative(),
+  deletions: z.number().int().nonnegative(),
+  // GitHub pull request for the current branch, looked up via `gh pr view`.
+  // Null when not a GitHub repo, `gh` is unavailable/unauthenticated, the
+  // branch has no PR, or the lookup failed/timed out. Never fails the request.
+  pullRequest: fsPullRequestSchema.nullable(),
 });
 export type FsGitStatusResponse = z.infer<typeof fsGitStatusResponseSchema>;
+
+export const fsDiffRequestSchema = z.object({
+  path: z.string().min(1),
+});
+export type FsDiffRequest = z.infer<typeof fsDiffRequestSchema>;
+
+export const fsDiffResponseSchema = z.object({
+  path: z.string(),
+  diff: z.string(),
+  truncated: z.boolean(),
+});
+export type FsDiffResponse = z.infer<typeof fsDiffResponseSchema>;
 
 export const fsDownloadParamsSchema = z.object({
   path: z.string().min(1),

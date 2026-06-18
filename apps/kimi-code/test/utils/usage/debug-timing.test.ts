@@ -27,6 +27,26 @@ describe('formatStepDebugTiming', () => {
     expect(result).toBe('[Debug] TTFT: 800ms | TPS: 40.0 tok/s (200 tokens in 5.0s)');
   });
 
+  it('omits TPS when the streamed window is too short to measure', () => {
+    const result = formatStepDebugTiming({
+      llmFirstTokenLatencyMs: 1200,
+      llmStreamDurationMs: 1,
+      usage: { output: 44 },
+    });
+    expect(result).toBe(
+      '[Debug] TTFT: 1.2s | 44 tokens in 1ms (stream too short for TPS)',
+    );
+  });
+
+  it('computes TPS once the streamed window reaches the reliability threshold', () => {
+    const result = formatStepDebugTiming({
+      llmFirstTokenLatencyMs: 200,
+      llmStreamDurationMs: 50,
+      usage: { output: 20 },
+    });
+    expect(result).toBe('[Debug] TTFT: 200ms | TPS: 400.0 tok/s (20 tokens in 50ms)');
+  });
+
   it('formats durations under 1s as milliseconds', () => {
     const result = formatStepDebugTiming({
       llmFirstTokenLatencyMs: 50,

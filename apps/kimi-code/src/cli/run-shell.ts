@@ -6,18 +6,18 @@ import { removeWorktree } from '#/utils/git/worktree';
 import { quoteShellArg } from '#/utils/shell-quote';
 
 import {
+  createKimiHarness,
+  log,
+  type KimiHarness,
+  type TelemetryClient,
+} from '@moonshot-ai/kimi-code-sdk';
+import {
   setCrashPhase,
   setTelemetryContext,
   shutdownTelemetry,
   track,
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
-import {
-  createKimiHarness,
-  log,
-  type KimiHarness,
-  type TelemetryClient,
-} from '@moonshot-ai/kimi-code-sdk';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
 import { detectPendingMigration } from '#/migration/index';
@@ -27,6 +27,7 @@ import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { KimiTUI } from '#/tui/index';
 import { currentTheme, getColorPalette } from '#/tui/theme';
 import { combineStartupNotice } from '#/tui/utils/startup';
+import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 
 import type { CLIOptions } from './options';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
@@ -74,6 +75,7 @@ export async function runShell(
         reason: outcome.reason,
       });
     },
+    sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
   });
   log.info('kimi-code starting', {
     version,
@@ -118,7 +120,6 @@ export async function runShell(
   });
   setCrashPhase('runtime');
 
-  const resumed = opts.continue || opts.session !== undefined;
   const trackLifecycleForSession = (
     sessionId: string,
     event: string,
@@ -155,12 +156,19 @@ export async function runShell(
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     const gutter = ' '.repeat(CHROME_GUTTER);
     process.stdout.write(`${gutter}Bye!\n`);
+    const hints: string[] = [];
     if (sessionId !== '' && hasContent) {
       const resumeCommand =
         opts.worktreePath !== undefined
           ? `cd ${quoteShellArg(process.cwd())} && kimi -r ${sessionId}`
           : `kimi -r ${sessionId}`;
-      process.stderr.write(`\n${gutter}To resume this session: ${resumeCommand}\n`);
+      hints.push(`${gutter}To resume this session: ${resumeCommand}`);
+    }
+    if (tui.exitOpenUrl !== undefined) {
+      hints.push(`${gutter}open ${toTerminalHyperlink(tui.exitOpenUrl, tui.exitOpenUrl)}`);
+    }
+    if (hints.length > 0) {
+      process.stderr.write(`\n${hints.join('\n')}\n`);
     }
     process.exit(exitCode);
   };
@@ -173,13 +181,6 @@ export async function runShell(
     const initStartedAt = Date.now();
     await tui.start();
     const initMs = Date.now() - initStartedAt;
-    trackLifecycle('started', {
-      resumed,
-      yolo: opts.yolo,
-      auto: opts.auto,
-      plan: opts.plan,
-      afk: false,
-    });
     const startupSessionId = tui.getCurrentSessionId();
     const mcpMs = await tui.getStartupMcpMs();
     trackLifecycleForSession(startupSessionId, 'startup_perf', {

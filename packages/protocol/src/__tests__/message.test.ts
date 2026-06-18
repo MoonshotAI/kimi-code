@@ -10,6 +10,7 @@ import {
   thinkingContentSchema,
   toolResultContentSchema,
   toolUseContentSchema,
+  videoContentSchema,
 } from '../message';
 
 describe('messageRoleSchema', () => {
@@ -64,6 +65,30 @@ describe('messageContentSchema variants', () => {
     expect(parsed.source.kind).toBe('base64');
   });
 
+  it('parses video url source', () => {
+    const parsed = videoContentSchema.parse({
+      type: 'video',
+      source: { kind: 'url', url: 'https://example.com/a.mp4' },
+    });
+    expect(parsed.source.kind).toBe('url');
+  });
+
+  it('parses video base64 source', () => {
+    const parsed = videoContentSchema.parse({
+      type: 'video',
+      source: { kind: 'base64', media_type: 'video/mp4', data: 'aGVsbG8=' },
+    });
+    expect(parsed.source.kind).toBe('base64');
+  });
+
+  it('parses video file source', () => {
+    const parsed = videoContentSchema.parse({
+      type: 'video',
+      source: { kind: 'file', file_id: 'file_video_01' },
+    });
+    expect(parsed.source.kind).toBe('file');
+  });
+
   it('parses file content', () => {
     const parsed = fileContentSchema.parse({
       type: 'file',
@@ -86,6 +111,14 @@ describe('messageContentSchema variants', () => {
   it('messageContentSchema discriminates by type', () => {
     const parsed = messageContentSchema.parse({ type: 'text', text: 'hi' });
     expect(parsed.type).toBe('text');
+  });
+
+  it('messageContentSchema accepts mixed text and video content', () => {
+    const parsed = messageContentSchema.parse({
+      type: 'video',
+      source: { kind: 'url', url: 'https://example.com/a.mp4' },
+    });
+    expect(parsed.type).toBe('video');
   });
 
   it('rejects unknown content type', () => {
