@@ -47,7 +47,7 @@ export class AgentEventBus implements IAgentEventBus {
     }
     const h = handler as AnyHandler;
     set.add(h);
-    return { dispose: () => set!.delete(h) };
+    return { dispose: () => set.delete(h) };
   }
 
   subscribeAll(handler: (event: AgentEvent) => void): IDisposable {

@@ -193,15 +193,15 @@ export class Agent {
     );
     perAgentServices.set(
       IPlanService,
-      new SyncDescriptor(PlanService, [this.kaos, this.homedir, () => this.emitStatusUpdated()]),
+      new SyncDescriptor(PlanService, [this.kaos, this.homedir, () => { this.emitStatusUpdated(); }]),
     );
     perAgentServices.set(
       ISwarmService,
-      new SyncDescriptor(SwarmService, [() => this.emitStatusUpdated()]),
+      new SyncDescriptor(SwarmService, [() => { this.emitStatusUpdated(); }]),
     );
     perAgentServices.set(
       IUsageService,
-      new SyncDescriptor(UsageService, [() => this.emitStatusUpdated()]),
+      new SyncDescriptor(UsageService, [() => { this.emitStatusUpdated(); }]),
     );
     perAgentServices.set(IAgentToolService, new SyncDescriptor(AgentToolService, [this]));
     perAgentServices.set(
@@ -220,7 +220,7 @@ export class Agent {
     perAgentServices.set(ILifecycleService, new SyncDescriptor(LifecycleService, []));
     perAgentServices.set(
       IGoalService,
-      new SyncDescriptor(GoalService, [this.telemetry, (event: AgentEvent) => this.eventBus.publish(event)]),
+      new SyncDescriptor(GoalService, [this.telemetry, (event: AgentEvent) => { this.eventBus.publish(event); }]),
     );
     if (options.skills !== undefined) {
       perAgentServices.set(

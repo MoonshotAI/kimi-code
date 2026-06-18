@@ -110,7 +110,7 @@ Do NOT use AskUserQuestion to ask about plan approval or reference "the plan" â€
   return withPlanFileFooter(body, planFilePath);
 }
 
-function sparseReminder(planFilePath: PlanFilePath): string {
+export function sparseReminder(planFilePath: PlanFilePath): string {
   if (planFilePath === null || planFilePath.length === 0) {
     return inlineSparseReminder();
   }
@@ -119,7 +119,7 @@ function sparseReminder(planFilePath: PlanFilePath): string {
   return withPlanFileFooter(body, planFilePath);
 }
 
-function reentryReminder(planFilePath: PlanFilePath): string {
+export function reentryReminder(planFilePath: PlanFilePath): string {
   if (planFilePath === null || planFilePath.length === 0) {
     return inlineReentryReminder();
   }

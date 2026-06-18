@@ -28,6 +28,11 @@ export class InjectionManager {
     for (const injector of this.injectors) {
       await injector.inject();
     }
+    await this.agent.lifecycle.fireBeforePrompt({
+      injectSystemReminder: (content, origin) => {
+        this.agent.context.appendSystemReminder(content, origin);
+      },
+    });
   }
 
   /**

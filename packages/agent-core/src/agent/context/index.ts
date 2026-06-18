@@ -114,6 +114,7 @@ export class ContextMemory {
       removedMessages.add(message);
       this._history.splice(i, 1);
       this.agent.injection.onContextMessageRemoved(i);
+      this.agent.lifecycle.fireContextMessageRemoved(i);
 
       if (i < this.tokenCountCoveredMessageCount) {
         this.tokenCountCoveredMessageCount--;

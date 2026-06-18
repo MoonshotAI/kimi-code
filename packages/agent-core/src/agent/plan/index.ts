@@ -4,10 +4,11 @@ import { dirname, join } from 'pathe';
 import type { Kaos } from '@moonshot-ai/kaos';
 import { createDecorator } from '../../di';
 import { IAgentConfigService } from '../config';
+import { IContextService } from '../context';
 import { ILifecycleService } from '../lifecycle';
 import { IRecordsService } from '../records';
 import { IReplayService } from '../replay';
-import { exitReminder, fullReminder } from '../injection/plan-mode';
+import { exitReminder, fullReminder, reentryReminder, sparseReminder } from '../injection/plan-mode';
 import { generateHeroSlug } from '../../utils/hero-slug';
 
 export type PlanData = null | {
@@ -17,11 +18,15 @@ export type PlanData = null | {
 };
 export type PlanFilePath = string | null;
 
+const PLAN_MODE_DEDUP_MIN_TURNS = 2;
+const PLAN_MODE_FULL_REFRESH_TURNS = 5;
+
 export class PlanMode {
   protected _isActive = false;
   protected _planId: null | string = null;
   protected _planFilePath: PlanFilePath = null;
   private wasActive = false;
+  private injectedAt: number | null = null;
 
   constructor(
     private readonly kaos?: Kaos,
@@ -31,22 +36,24 @@ export class PlanMode {
     @IReplayService private readonly replayBuilder?: IReplayService,
     @IAgentConfigService private readonly config?: IAgentConfigService,
     @ILifecycleService lifecycle?: ILifecycleService,
+    @IContextService private readonly context?: IContextService,
   ) {
-    lifecycle?.onBeforePrompt((ctx) => {
-      if (this._isActive) {
-        if (!this.wasActive) {
-          this.wasActive = true;
-          ctx.injectSystemReminder(fullReminder(this._planFilePath), {
-            kind: 'injection',
-            variant: 'plan_mode',
-          });
-        }
-      } else if (this.wasActive) {
-        this.wasActive = false;
-        ctx.injectSystemReminder(exitReminder(), {
+    lifecycle?.onBeforePrompt(async (ctx) => {
+      const reminder = await this.computeReminder();
+      if (reminder !== undefined) {
+        this.injectedAt = this.context?.history.length ?? null;
+        ctx.injectSystemReminder(reminder, {
           kind: 'injection',
           variant: 'plan_mode',
         });
+      }
+    });
+    lifecycle?.onContextMessageRemoved((index) => {
+      if (this.injectedAt === null) return;
+      if (index < this.injectedAt) {
+        this.injectedAt -= 1;
+      } else if (index === this.injectedAt) {
+        this.injectedAt = null;
       }
     });
   }
@@ -149,6 +156,56 @@ export class PlanMode {
       content,
       path: this._planFilePath,
     };
+  }
+
+  private async computeReminder(): Promise<string | undefined> {
+    if (!this._isActive) {
+      if (!this.wasActive) return undefined;
+      this.wasActive = false;
+      this.injectedAt = null;
+      return exitReminder();
+    }
+    if (!this.wasActive) {
+      this.injectedAt = null;
+      this.wasActive = true;
+      if (await this.hasCurrentPlanContent()) {
+        return reentryReminder(this._planFilePath);
+      }
+    }
+    const variant = this.getVariant();
+    if (variant === null) return undefined;
+    return variant === 'full'
+      ? fullReminder(this._planFilePath)
+      : variant === 'sparse'
+        ? sparseReminder(this._planFilePath)
+        : reentryReminder(this._planFilePath);
+  }
+
+  private getVariant(): 'full' | 'sparse' | 'reentry' | null {
+    if (this.injectedAt === null) return 'full';
+    const history = this.context?.history ?? [];
+    let assistantTurnsSince = 0;
+    for (let i = this.injectedAt + 1; i < history.length; i++) {
+      const msg = history[i];
+      if (msg === undefined) continue;
+      if (msg.role === 'assistant') {
+        assistantTurnsSince += 1;
+        continue;
+      }
+      if (msg.role === 'user') return 'full';
+    }
+    if (assistantTurnsSince >= PLAN_MODE_FULL_REFRESH_TURNS) return 'full';
+    if (assistantTurnsSince >= PLAN_MODE_DEDUP_MIN_TURNS) return 'sparse';
+    return null;
+  }
+
+  private async hasCurrentPlanContent(): Promise<boolean> {
+    try {
+      const data = await this.data();
+      return data !== null && data.content.trim().length > 0;
+    } catch {
+      return false;
+    }
   }
 
   private async writeEmptyPlanFile(path: string): Promise<void> {
