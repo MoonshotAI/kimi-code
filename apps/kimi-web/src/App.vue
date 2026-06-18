@@ -1028,6 +1028,7 @@ function openPr(url: string): void {
       :compaction="client.compaction.value"
       :has-more-messages="client.hasMoreMessages.value"
       :loading-more="client.loadingMoreMessages.value"
+      :loading-more-error="client.loadMoreMessagesError.value"
       :load-older-messages="client.loadOlderMessages"
       :workspace-name="client.visibleWorkspace.value?.name"
       :workspace-root="client.visibleWorkspace.value?.root ?? client.status.value.cwd"

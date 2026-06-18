@@ -198,8 +198,12 @@ describe('ConversationPane follow — history prepend', () => {
     wrapper: ReturnType<typeof mountMobilePane>,
     turns: ChatTurn[],
     loadOlderMessages: ReturnType<typeof vi.fn<(sessionId: string) => Promise<void>>>,
+    afterLoad?: () => void,
   ) {
-    loadOlderMessages.mockImplementation(() => wrapper.setProps({ turns }));
+    loadOlderMessages.mockImplementation(async () => {
+      await wrapper.setProps({ turns });
+      afterLoad?.();
+    });
 
     await wrapper.find('.load-older').trigger('click');
     await flushPromises();
@@ -252,6 +256,33 @@ describe('ConversationPane follow — history prepend', () => {
 
     expect(pane.scrollTop).toBe(300);
     expect(wrapper.find('.newmsg-pill').exists()).toBe(false);
+  });
+
+  it('falls back to scroll-height delta when the old anchor turn id disappears', async () => {
+    const loadOlderMessages = vi.fn<(sessionId: string) => Promise<void>>();
+    const { wrapper, pane } = await settledPane(
+      { scrollHeight: 2000, clientHeight: 500 },
+      {
+        sessionId: 'sess_1',
+        hasMoreMessages: true,
+        loadOlderMessages,
+      },
+      { chatPaneStub: LoadOlderChatPane },
+    );
+
+    scrollUpTo(pane, 300);
+    await nextTick();
+
+    await loadOlderAndSettle(
+      wrapper,
+      [turn(0, 'older'), turn(1, 'hi')],
+      loadOlderMessages,
+      () => {
+        mockPaneGeometry(pane, { scrollHeight: 2600, clientHeight: 500, scrollTop: 300 });
+      },
+    );
+
+    expect(pane.scrollTop).toBe(900);
   });
 });
 

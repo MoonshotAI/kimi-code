@@ -52,6 +52,8 @@ const props = defineProps<{
   hasMoreMessages?: boolean;
   /** True while older messages are being fetched (scroll-up lazy load). */
   loadingMore?: boolean;
+  /** True when the last older-message fetch failed; blocks sentinel auto-retry. */
+  loadingMoreError?: boolean;
   /** Callback to fetch the next older page of messages. */
   loadOlderMessages?: (sessionId: string) => Promise<void>;
   /** Available models for the quick-switch dropdown in the composer toolbar. */
@@ -509,6 +511,7 @@ async function handleLoadOlderMessages(): Promise<void> {
   const requestedSessionId = props.sessionId;
   const el = panesRef.value;
   const oldTop = el?.scrollTop ?? 0;
+  const oldHeight = el?.scrollHeight ?? 0;
   const oldAnchor = el ? findTopAnchor(el, oldTop) : null;
 
   historyLoadInProgress.value = true;
@@ -538,6 +541,10 @@ async function handleLoadOlderMessages(): Promise<void> {
       delta = newAnchor.offsetTop - oldAnchor.top;
     }
   }
+  // If the page boundary split an assistant/tool turn, messagesToTurns may
+  // rebuild that turn with a new id. Fall back to the overall height delta so
+  // the viewport does not jump into the inserted history.
+  if (delta === 0) delta = el2.scrollHeight - oldHeight;
   el2.scrollTop = oldTop + delta;
 }
 
@@ -1066,6 +1073,7 @@ defineExpose({ loadComposerForEdit });
               :compaction="compaction"
               :has-more-messages="hasMoreMessages"
               :loading-more="loadingMore"
+              :loading-more-error="loadingMoreError"
               :is-following="following"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"

@@ -476,6 +476,8 @@ interface ExtendedState extends KimiClientState {
   messagesLoadingMoreBySession: Record<string, boolean>;
   /** Whether the server has more older messages than currently loaded per session. */
   messagesHasMoreBySession: Record<string, boolean>;
+  /** True when the last older-message fetch failed for a session. */
+  messagesLoadMoreErrorBySession: Record<string, boolean>;
 }
 
 const rawState: ExtendedState = reactive({
@@ -511,6 +513,7 @@ const rawState: ExtendedState = reactive({
   sideChatUserMessageIdsBySession: {},
   messagesLoadingMoreBySession: {},
   messagesHasMoreBySession: {},
+  messagesLoadMoreErrorBySession: {},
 });
 
 // Models + Providers reactive state (lazy-loaded, cached)
@@ -1205,6 +1208,7 @@ async function handleSessionNotFound(sessionId: string): Promise<void> {
   delete rawState.compactionBySession[sessionId];
   delete rawState.messagesLoadingMoreBySession[sessionId];
   delete rawState.messagesHasMoreBySession[sessionId];
+  delete rawState.messagesLoadMoreErrorBySession[sessionId];
   delete epochBySession[sessionId];
   sessionsKnownEmpty.delete(sessionId);
 
@@ -1292,6 +1296,10 @@ async function loadOlderMessages(sessionId: string): Promise<void> {
     ...rawState.messagesLoadingMoreBySession,
     [sessionId]: true,
   };
+  rawState.messagesLoadMoreErrorBySession = {
+    ...rawState.messagesLoadMoreErrorBySession,
+    [sessionId]: false,
+  };
   try {
     const page = await getKimiWebApi().listMessages(sessionId, {
       beforeId,
@@ -1311,6 +1319,10 @@ async function loadOlderMessages(sessionId: string): Promise<void> {
       [sessionId]: page.hasMore,
     };
   } catch (err) {
+    rawState.messagesLoadMoreErrorBySession = {
+      ...rawState.messagesLoadMoreErrorBySession,
+      [sessionId]: true,
+    };
     pushOperationFailure('loadOlderMessages', err, { sessionId });
   } finally {
     rawState.messagesLoadingMoreBySession = {
@@ -2168,6 +2180,10 @@ const loadingMoreMessages = computed<boolean>(() => {
 const hasMoreMessages = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
   return sid ? rawState.messagesHasMoreBySession[sid] ?? false : false;
+});
+const loadMoreMessagesError = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? rawState.messagesLoadMoreErrorBySession[sid] ?? false : false;
 });
 const serverVersion = computed<string>(() => rawState.serverVersion);
 
@@ -4356,6 +4372,7 @@ export function useKimiWebClient() {
     sessionLoading,
     loadingMoreMessages,
     hasMoreMessages,
+    loadMoreMessagesError,
     serverVersion,
     initialized,
     permission,

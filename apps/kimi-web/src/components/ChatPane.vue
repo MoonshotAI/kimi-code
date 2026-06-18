@@ -80,6 +80,10 @@ const props = withDefaults(
      */
     loadingMore?: boolean;
     /**
+     * True when the last older-message fetch failed; blocks automatic sentinel retries.
+     */
+    loadingMoreError?: boolean;
+    /**
      * True when the conversation pane is currently following the bottom (auto-scroll).
      * Used to prevent the top sentinel from eagerly loading older messages on open.
      */
@@ -98,6 +102,7 @@ const props = withDefaults(
     compaction: null,
     hasMoreMessages: false,
     loadingMore: false,
+    loadingMoreError: false,
     isFollowing: false,
   },
 );
@@ -124,6 +129,7 @@ function observeTopSentinel(): void {
         entry?.isIntersecting &&
         props.hasMoreMessages &&
         !props.loadingMore &&
+        !props.loadingMoreError &&
         !props.sessionLoading &&
         !props.isFollowing
       ) {
@@ -141,7 +147,7 @@ onUnmounted(() => {
   topSentinelObserver = null;
 });
 watch(
-  () => [props.hasMoreMessages, props.loadingMore],
+  () => [props.hasMoreMessages, props.loadingMore, props.loadingMoreError],
   () => {
     // Re-attach the observer after a load so that a still-visible sentinel
     // (e.g. the page was not tall enough to scroll) triggers another page.
