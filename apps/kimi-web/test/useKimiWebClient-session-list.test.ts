@@ -1,12 +1,13 @@
 // apps/kimi-web/test/useKimiWebClient-session-list.test.ts
 //
-// load() must list sessions per workspace and follow pagination, so a session
-// that falls outside the global top-N is still reachable from the sidebar.
+// load() must drain every session page (not just the first), so a session
+// beyond the initial page is still reachable from the sidebar. A single global
+// walk is used so sessions whose cwd is not a registered workspace root are
+// included too.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppSession,
-  AppWorkspace,
   KimiEventHandlers,
   KimiWebApi,
   Page,
@@ -40,18 +41,10 @@ function session(id: string, overrides?: Partial<AppSession>): AppSession {
   };
 }
 
-function workspace(id: string, root: string): AppWorkspace {
-  return { id, root, name: id, isGitRepo: false, sessionCount: 0 };
-}
-
 interface SetupOpts {
-  workspaces: AppWorkspace[];
-  /** Map of workspaceId -> pages, or undefined -> global fallback pages. */
-  pagesByWorkspace: Record<string, Array<Page<AppSession>>>;
-  /** Pages used by the global fallback when no workspaces are returned. */
-  globalPages?: Array<Page<AppSession>>;
-  /** workspaceIds whose listSessions call should reject. */
-  failingWorkspaces?: Set<string>;
+  pages: Array<Page<AppSession>>;
+  listWorkspaces?: () => Promise<unknown[]>;
+  listSessionsError?: Error;
 }
 
 async function setup(opts: SetupOpts) {
@@ -69,25 +62,13 @@ async function setup(opts: SetupOpts) {
     close: vi.fn(),
   };
 
-  // Per-workspace page cursors (mutable so repeated calls walk pages).
-  const cursors = new Map<string, number>();
-  const globalCursor = { value: 0 };
-
+  let cursor = 0;
   const listSessions = vi.fn(
-    async (input?: { workspaceId?: string; beforeId?: string; pageSize?: number }) => {
-      if (input?.workspaceId) {
-        if (opts.failingWorkspaces?.has(input.workspaceId)) {
-          throw new Error('boom');
-        }
-        const pages = opts.pagesByWorkspace[input.workspaceId] ?? [];
-        const idx = cursors.get(input.workspaceId) ?? 0;
-        cursors.set(input.workspaceId, idx + 1);
-        return pages[idx] ?? { items: [], hasMore: false };
-      }
-      const pages = opts.globalPages ?? [];
-      const idx = globalCursor.value;
-      globalCursor.value += 1;
-      return pages[idx] ?? { items: [], hasMore: false };
+    async (_input?: { workspaceId?: string; beforeId?: string; pageSize?: number }) => {
+      if (opts.listSessionsError) throw opts.listSessionsError;
+      const page = opts.pages[cursor] ?? { items: [], hasMore: false };
+      cursor += 1;
+      return page;
     },
   );
 
@@ -96,7 +77,7 @@ async function setup(opts: SetupOpts) {
     getMeta: vi.fn(async () => ({ daemonVersion: 't', serverId: 's', startedAt: t0, capabilities: {} })),
     getAuth: vi.fn(async () => ({ ready: true, defaultModel: 'kimi-test', managedProvider: null })),
     listModels: vi.fn(async () => []),
-    listWorkspaces: vi.fn(async () => opts.workspaces),
+    listWorkspaces: vi.fn(opts.listWorkspaces ?? (async () => [])),
     getFsHome: vi.fn(async () => ({ home: '/home', recentRoots: [] })),
     listSessions,
     getSession: vi.fn(async (id: string) => session(id)),
@@ -150,91 +131,12 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
-describe('load() per-workspace session listing', () => {
-  it('fans out to each workspace with the correct workspaceId', async () => {
-    const wsA = workspace('ws_a', '/repo/a');
-    const wsB = workspace('ws_b', '/repo/b');
+describe('load() session listing', () => {
+  it('drains every page using the beforeId cursor', async () => {
     const { api, client } = await setup({
-      workspaces: [wsA, wsB],
-      pagesByWorkspace: {
-        ws_a: [{ items: [session('sess_a1')], hasMore: false }],
-        ws_b: [{ items: [session('sess_b1'), session('sess_b2')], hasMore: false }],
-      },
-    });
-
-    await client.load();
-
-    const calls = (api.listSessions as ReturnType<typeof vi.fn>).mock.calls;
-    const workspaceIds = calls.map(([input]) => input?.workspaceId).sort();
-    expect(workspaceIds).toEqual(['ws_a', 'ws_b']);
-
-    const ids = client.sessions.value.map((s) => s.id).sort();
-    expect(ids).toEqual(['sess_a1', 'sess_b1', 'sess_b2']);
-  });
-
-  it('follows pagination within a workspace using beforeId', async () => {
-    const ws = workspace('ws_a', '/repo/a');
-    const { api, client } = await setup({
-      workspaces: [ws],
-      pagesByWorkspace: {
-        ws_a: [
-          { items: [session('sess_1'), session('sess_2')], hasMore: true },
-          { items: [session('sess_3')], hasMore: false },
-        ],
-      },
-    });
-
-    await client.load();
-
-    const calls = (api.listSessions as ReturnType<typeof vi.fn>).mock.calls;
-    expect(calls).toHaveLength(2);
-    expect(calls[0]![0]).toMatchObject({ workspaceId: 'ws_a', beforeId: undefined });
-    expect(calls[1]![0]).toMatchObject({ workspaceId: 'ws_a', beforeId: 'sess_2' });
-
-    const ids = client.sessions.value.map((s) => s.id).sort();
-    expect(ids).toEqual(['sess_1', 'sess_2', 'sess_3']);
-  });
-
-  it('sorts merged sessions by updatedAt descending across workspaces', async () => {
-    const wsA = workspace('ws_a', '/repo/a');
-    const wsB = workspace('ws_b', '/repo/b');
-    const { client } = await setup({
-      workspaces: [wsA, wsB],
-      pagesByWorkspace: {
-        ws_a: [
-          {
-            items: [
-              session('sess_old', { updatedAt: '2026-06-10T00:00:00.000Z' }),
-              session('sess_newest', { updatedAt: '2026-06-12T00:00:00.000Z' }),
-            ],
-            hasMore: false,
-          },
-        ],
-        ws_b: [
-          {
-            items: [session('sess_mid', { updatedAt: '2026-06-11T00:00:00.000Z' })],
-            hasMore: false,
-          },
-        ],
-      },
-    });
-
-    await client.load();
-
-    expect(client.sessions.value.map((s) => s.id)).toEqual([
-      'sess_newest',
-      'sess_mid',
-      'sess_old',
-    ]);
-  });
-
-  it('falls back to a global paginated list when no workspaces are returned', async () => {
-    const { api, client } = await setup({
-      workspaces: [],
-      pagesByWorkspace: {},
-      globalPages: [
-        { items: [session('sess_g1')], hasMore: true },
-        { items: [session('sess_g2')], hasMore: false },
+      pages: [
+        { items: [session('sess_1'), session('sess_2')], hasMore: true },
+        { items: [session('sess_3')], hasMore: false },
       ],
     });
 
@@ -243,25 +145,32 @@ describe('load() per-workspace session listing', () => {
     const calls = (api.listSessions as ReturnType<typeof vi.fn>).mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls[0]![0]).toMatchObject({ beforeId: undefined });
-    expect(calls[0]![0]?.workspaceId).toBeUndefined();
-    expect(calls[1]![0]).toMatchObject({ beforeId: 'sess_g1' });
+    expect(calls[1]![0]).toMatchObject({ beforeId: 'sess_2' });
 
     const ids = client.sessions.value.map((s) => s.id).sort();
-    expect(ids).toEqual(['sess_g1', 'sess_g2']);
+    expect(ids).toEqual(['sess_1', 'sess_2', 'sess_3']);
   });
 
-  it('isolates a failing workspace so other workspaces still load', async () => {
-    const wsA = workspace('ws_a', '/repo/a');
-    const wsB = workspace('ws_b', '/repo/b');
+  it('never passes a workspaceId so unregistered-cwd sessions are included', async () => {
+    const { api, client } = await setup({
+      pages: [{ items: [session('sess_orphan', { cwd: '/tmp/scratch' })], hasMore: false }],
+    });
+
+    await client.load();
+
+    const calls = (api.listSessions as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]?.workspaceId).toBeUndefined();
+    expect(client.sessions.value.map((s) => s.id)).toEqual(['sess_orphan']);
+  });
+
+  it('surfaces an empty list when listSessions rejects', async () => {
     const { client } = await setup({
-      workspaces: [wsA, wsB],
-      pagesByWorkspace: {
-        ws_b: [{ items: [session('sess_b1')], hasMore: false }],
-      },
-      failingWorkspaces: new Set(['ws_a']),
+      pages: [],
+      listSessionsError: new Error('boom'),
     });
 
     await expect(client.load()).resolves.toBeUndefined();
-    expect(client.sessions.value.map((s) => s.id)).toEqual(['sess_b1']);
+    expect(client.sessions.value).toEqual([]);
   });
 });

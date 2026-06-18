@@ -2668,29 +2668,12 @@ async function updateConfig(patch: Partial<AppConfig>): Promise<boolean> {
 const initialized = ref(false);
 
 // Backend max page size for GET /sessions. Bigger pages mean fewer round-trips
-// when draining a workspace.
+// when draining the full session list.
 const SESSION_PAGE_SIZE = 100;
 
-/** Drain every page of sessions for a single workspace, newest first. */
-async function listAllSessionsForWorkspace(workspaceId: string): Promise<AppSession[]> {
-  const api = getKimiWebApi();
-  const items: AppSession[] = [];
-  let beforeId: string | undefined;
-  for (;;) {
-    const page = await api.listSessions({
-      workspaceId,
-      pageSize: SESSION_PAGE_SIZE,
-      beforeId,
-    });
-    items.push(...page.items);
-    if (!page.hasMore || page.items.length === 0) break;
-    beforeId = page.items[page.items.length - 1]!.id;
-  }
-  return items;
-}
-
-/** Drain every page of sessions across all workspaces (fallback when the daemon
- *  exposes no workspaces). */
+/** Drain every page of sessions, newest first. A single global walk (instead of
+ *  per-workspace) so sessions whose cwd is not a registered workspace root are
+ *  still reachable after a refresh. */
 async function listAllSessionsGlobal(): Promise<AppSession[]> {
   const api = getKimiWebApi();
   const items: AppSession[] = [];
@@ -2722,30 +2705,13 @@ async function load(): Promise<void> {
     await checkAuth();
     await loadConfig();
 
-    // Load workspaces first so sessions can be listed per workspace. Each
-    // workspace is drained independently so a session beyond the global top-N
-    // is still reachable from the sidebar.
-    await loadWorkspaces();
-
-    let sessions: AppSession[];
-    if (rawState.workspaces.length > 0) {
-      const perWorkspace = await Promise.all(
-        rawState.workspaces.map((w) =>
-          listAllSessionsForWorkspace(w.id).catch(() => [] as AppSession[]),
-        ),
-      );
-      const seen = new Set<string>();
-      sessions = [];
-      for (const s of perWorkspace.flat()) {
-        if (seen.has(s.id)) continue;
-        seen.add(s.id);
-        sessions.push(s);
-      }
-      sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    } else {
-      sessions = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
-    }
+    // Drain every session via a single global walk so sessions whose cwd is not
+    // a registered workspace root are still reachable after a refresh.
+    const sessions = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
     rawState.sessions = sessions;
+
+    // Load workspaces (real if available, else derived from session cwds).
+    await loadWorkspaces();
 
     // First load: pick the workspace of the most-recent session, unless the
     // user already has a persisted active workspace that still exists.
