@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/ChatPane.vue -->
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, TurnBlock } from '../types';
 import ToolCall from './ToolCall.vue';
@@ -131,7 +131,9 @@ watch(
   () => {
     // Re-attach the observer after a load so that a still-visible sentinel
     // (e.g. the page was not tall enough to scroll) triggers another page.
-    observeTopSentinel();
+    // Wait for the next render tick because the sentinel is rendered by v-if
+    // and may not exist when this watcher first fires.
+    void nextTick().then(observeTopSentinel);
   },
 );
 
