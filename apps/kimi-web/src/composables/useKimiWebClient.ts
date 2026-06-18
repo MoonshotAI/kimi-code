@@ -2109,6 +2109,7 @@ const connection = computed<ConnectionState>(() => rawState.connection);
 
 const loading = computed<boolean>(() => rawState.loading);
 const sessionLoading = computed<boolean>(() => rawState.sessionLoading);
+const serverVersion = computed<string>(() => rawState.serverVersion);
 
 const permission = computed<PermissionMode>(() => rawState.permission);
 const thinking = computed<ThinkingLevel>(() => rawState.thinking);
@@ -4271,6 +4272,7 @@ export function useKimiWebClient() {
     connection,
     loading,
     sessionLoading,
+    serverVersion,
     initialized,
     permission,
     thinking,

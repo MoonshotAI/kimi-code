@@ -1181,6 +1181,7 @@ function openPr(url: string): void {
       :config="client.config.value"
       :models="client.models.value"
       :config-saving="configSaving"
+      :server-version="client.serverVersion.value"
       @set-theme="client.setTheme($event)"
       @set-color-scheme="client.setColorScheme($event)"
       @set-ui-font-size="client.setUiFontSize($event)"

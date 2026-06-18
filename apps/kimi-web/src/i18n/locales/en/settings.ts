@@ -37,6 +37,7 @@ export default {
   configUnavailable: 'The server did not return config yet. These settings are unavailable.',
   advanced: 'Advanced',
   build: 'Build',
+  serverVersion: 'Server version',
   exportLog: 'Troubleshooting log',
   logHint: 'Enable with ?debug=1 to capture',
   exportLogBtn: 'Export log',

@@ -93,6 +93,7 @@ function mountDialog() {
       config,
       models,
       configSaving: false,
+      serverVersion: '1.2.3',
     },
     global: {
       plugins: [i18n],
@@ -180,6 +181,14 @@ describe('SettingsDialog config controls', () => {
     const openaiOptions = groups[1]!.findAll('option');
     expect(openaiOptions.some((o) => o.attributes('value') === 'openai/gpt-5')).toBe(true);
   });
+
+  it('renders server version on the General tab', () => {
+    const wrapper = mountDialog();
+
+    // General is the default active tab.
+    expect(wrapper.text()).toContain('Server version');
+    expect(wrapper.text()).toContain('1.2.3');
+  });
 });
 
 describe('SettingsDialog dialog focus', () => {
@@ -202,6 +211,7 @@ describe('SettingsDialog dialog focus', () => {
         config,
         models,
         configSaving: false,
+        serverVersion: '1.2.3',
       },
       global: { plugins: [i18n], stubs: { LanguageSwitcher: true } },
       attachTo: document.body,

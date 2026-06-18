@@ -32,6 +32,8 @@ const props = defineProps<{
   models?: AppModel[];
   /** True while POST /api/v1/config is saving. */
   configSaving?: boolean;
+  /** Server version reported by GET /api/v1/meta. */
+  serverVersion?: string;
 }>();
 
 const emit = defineEmits<{
@@ -276,6 +278,14 @@ function setTab(tab: SettingsTab): void {
                 <button type="button" class="act" @click="emit('openOnboarding'); emit('close')">{{ t('onboarding.reopen') }}</button>
                 <button v-if="authReady" type="button" class="act danger" @click="emit('logout')">{{ t('sidebar.signOut') }}</button>
                 <button v-else type="button" class="act signin" @click="emit('login')">{{ t('sidebar.signIn') }}</button>
+              </div>
+            </section>
+
+            <section class="sec">
+              <h3 class="sec-title">{{ t('settings.build') }}</h3>
+              <div class="row">
+                <span class="rlabel">{{ t('settings.serverVersion') }}</span>
+                <span class="rvalue mono">{{ serverVersion || '-' }}</span>
               </div>
             </section>
           </section>

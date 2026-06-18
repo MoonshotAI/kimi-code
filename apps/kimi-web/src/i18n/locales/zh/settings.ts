@@ -37,6 +37,7 @@ export default {
   configUnavailable: '当前服务端没有返回 config，设置项暂不可用。',
   advanced: '高级',
   build: '构建',
+  serverVersion: '服务端版本',
   exportLog: '故障排查日志',
   logHint: '加 ?debug=1 开启采集',
   exportLogBtn: '导出日志',
