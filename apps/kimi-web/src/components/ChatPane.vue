@@ -80,6 +80,11 @@ const props = withDefaults(
      */
     loadingMore?: boolean;
     /**
+     * True when the conversation pane is currently following the bottom (auto-scroll).
+     * Used to prevent the top sentinel from eagerly loading older messages on open.
+     */
+    isFollowing?: boolean;
+    /**
      * @deprecated No longer used — Composer is rendered by ConversationPane.
      */
   }>(),
@@ -93,6 +98,7 @@ const props = withDefaults(
     compaction: null,
     hasMoreMessages: false,
     loadingMore: false,
+    isFollowing: false,
   },
 );
 
@@ -112,7 +118,15 @@ function observeTopSentinel(): void {
   topSentinelObserver = new IntersectionObserver(
     (entries) => {
       const entry = entries[0];
-      if (entry?.isIntersecting && props.hasMoreMessages && !props.loadingMore) {
+      // Only trigger when the user has intentionally scrolled away from the
+      // bottom (isFollowing=false) and the initial snapshot is no longer loading.
+      if (
+        entry?.isIntersecting &&
+        props.hasMoreMessages &&
+        !props.loadingMore &&
+        !props.sessionLoading &&
+        !props.isFollowing
+      ) {
         emit('loadOlderMessages');
       }
     },

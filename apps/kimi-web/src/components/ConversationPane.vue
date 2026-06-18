@@ -496,8 +496,13 @@ async function handleLoadOlderMessages(): Promise<void> {
   const oldHeight = el?.scrollHeight ?? 0;
   const oldTop = el?.scrollTop ?? 0;
 
-  await props.loadOlderMessages(props.sessionId);
-  await nextTick();
+  historyLoadInProgress.value = true;
+  try {
+    await props.loadOlderMessages(props.sessionId);
+    await nextTick();
+  } finally {
+    historyLoadInProgress.value = false;
+  }
 
   const el2 = panesRef.value;
   if (!el2) return;
@@ -668,8 +673,12 @@ let observedContent: Element | null = null;
 let observedDock: HTMLElement | null = null;
 let scrollRaf = 0;
 let pillEligible = false;
+const historyLoadInProgress = ref(false);
 
 function scheduleFollow(allowPill: boolean): void {
+  // Prepending older history changes turns.length but is not new bottom content;
+  // suppress the "new messages" pill until the scroll position is restored.
+  if (historyLoadInProgress.value) return;
   pillEligible = pillEligible || allowPill;
   if (scrollRaf) return;
   const schedule = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 16) as unknown as number;
@@ -989,6 +998,7 @@ defineExpose({ loadComposerForEdit });
               :compaction="compaction"
               :has-more-messages="hasMoreMessages"
               :loading-more="loadingMore"
+              :is-following="following"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
               @copy-conversation-copied="handleCopyConversationCopied"
