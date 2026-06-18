@@ -604,24 +604,58 @@ function scheduleStableFollow(maxFrames = 36): void {
   stableFollowRaf = raf(tick);
 }
 
-const scrollKey = computed(() => {
+type ScrollKey = {
+  length: number;
+  firstId: string;
+  lastId: string;
+  lastTextLen: number;
+  lastThinkingLen: number;
+  lastToolsLen: number;
+  approvalIds: string;
+};
+
+function isHistoryPrependOnly(prev: ScrollKey | undefined, next: ScrollKey): boolean {
+  return (
+    prev !== undefined &&
+    prev.length > 0 &&
+    next.length > prev.length &&
+    prev.firstId !== next.firstId &&
+    prev.lastId === next.lastId &&
+    prev.lastTextLen === next.lastTextLen &&
+    prev.lastThinkingLen === next.lastThinkingLen &&
+    prev.lastToolsLen === next.lastToolsLen &&
+    prev.approvalIds === next.approvalIds
+  );
+}
+
+const scrollKey = computed<ScrollKey>(() => {
   const approvalIds = (props.approvals ?? []).map((a) => a.approvalId).join(',');
   const t = props.turns;
-  if (t.length === 0) return `0|${approvalIds}`;
-  const last = t.at(-1)!;
-  const thinkingLen = last.thinking?.length ?? 0;
+  const last = t.at(-1);
+  const thinkingLen = last?.thinking?.length ?? 0;
   const toolsLen =
-    last.tools?.reduce(
+    last?.tools?.reduce(
       (n, tool) => n + tool.name.length + (tool.arg?.length ?? 0) + (tool.output?.join('').length ?? 0),
       0,
     ) ?? 0;
-  return `${t.length}:${last.text.length}:${thinkingLen}:${toolsLen}|${approvalIds}`;
+  return {
+    length: t.length,
+    firstId: t[0]?.id ?? '',
+    lastId: last?.id ?? '',
+    lastTextLen: last?.text.length ?? 0,
+    lastThinkingLen: thinkingLen,
+    lastToolsLen: toolsLen,
+    approvalIds,
+  };
 });
 
-watch(scrollKey, async () => {
-  // Prepending older history changes this key; do not treat it as new bottom
-  // content and do not auto-scroll while the scroll anchor is being restored.
-  if (historyLoadInProgress.value) return;
+watch(scrollKey, async (next, prev) => {
+  // Prepending older history changes this key; suppress only that exact case so
+  // concurrent bottom appends still raise the new-message pill.
+  if (historyLoadInProgress.value && isHistoryPrependOnly(prev, next)) {
+    updateTocViewport();
+    return;
+  }
   await nextTick();
   if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
   else showPill.value = true;

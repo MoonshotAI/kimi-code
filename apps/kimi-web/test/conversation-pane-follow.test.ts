@@ -1,7 +1,7 @@
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { createI18n } from 'vue-i18n';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { nextTick } from 'vue';
+import { nextTick, type Component } from 'vue';
 
 import ConversationPane from '../src/components/ConversationPane.vue';
 import ChatDock from '../src/components/ChatDock.vue';
@@ -38,7 +38,10 @@ function fireResize(): void {
   for (const cb of resizeCallbacks) cb([], {} as ResizeObserver);
 }
 
-function mountMobilePane(extraProps: Record<string, unknown>) {
+function mountMobilePane(
+  extraProps: Record<string, unknown>,
+  options: { chatPaneStub?: Component | boolean } = {},
+) {
   const i18n = createI18n({
     legacy: false,
     locale: 'en',
@@ -64,7 +67,7 @@ function mountMobilePane(extraProps: Record<string, unknown>) {
       // only the heavy leaf renderers are stubbed.
       stubs: {
         ChatHeader: true,
-        ChatPane: true,
+        ChatPane: options.chatPaneStub ?? true,
         Composer: true,
         GoalStrip: true,
         TasksPane: true,
@@ -125,8 +128,12 @@ afterEach(() => {
 
 /** Mount, let the initial stable-follow loop settle, then return the (geometry-
     mocked) scroller pre-positioned at the bottom and "following". */
-async function settledPane(geo: { scrollHeight: number; clientHeight: number }, props: Record<string, unknown> = {}) {
-  const wrapper = mountMobilePane({ turns: [turn(1, 'hi')], ...props });
+async function settledPane(
+  geo: { scrollHeight: number; clientHeight: number },
+  props: Record<string, unknown> = {},
+  options: { chatPaneStub?: Component | boolean } = {},
+) {
+  const wrapper = mountMobilePane({ turns: [turn(1, 'hi')], ...props }, options);
   await nextTick();
   vi.advanceTimersByTime(200); // initial scheduleStableFollow loop completes
   await nextTick();
@@ -157,6 +164,10 @@ function scrollUpTo(pane: HTMLElement, top: number): void {
   pane.dispatchEvent(new Event('scroll'));
 }
 
+const LoadOlderChatPane = {
+  template: '<button class="load-older" type="button" @click="$emit(\'loadOlderMessages\')">load older</button>',
+};
+
 describe('ConversationPane follow — user scrolls up (req 2)', () => {
   it('stops auto-follow and shows the pill instead of yanking the view back', async () => {
     const { wrapper, pane, geo } = await settledPane({ scrollHeight: 2000, clientHeight: 500 });
@@ -178,6 +189,70 @@ describe('ConversationPane follow — user scrolls up (req 2)', () => {
     await pushTurns(wrapper, [turn(1, 'hi'), turn(2, 'streaming… more')]);
 
     expect(pane.scrollTop).toBe(2000);
+    expect(wrapper.find('.newmsg-pill').exists()).toBe(false);
+  });
+});
+
+describe('ConversationPane follow — history prepend', () => {
+  async function loadOlderAndSettle(
+    wrapper: ReturnType<typeof mountMobilePane>,
+    turns: ChatTurn[],
+    loadOlderMessages: ReturnType<typeof vi.fn>,
+  ) {
+    loadOlderMessages.mockImplementation(async () => {
+      await wrapper.setProps({ turns });
+    });
+
+    await wrapper.find('.load-older').trigger('click');
+    await flushPromises();
+    await nextTick();
+    vi.advanceTimersByTime(40);
+    await nextTick();
+  }
+
+  it('keeps the new-message pill when bottom content arrives during a prepend', async () => {
+    const loadOlderMessages = vi.fn();
+    const { wrapper, pane } = await settledPane(
+      { scrollHeight: 2000, clientHeight: 500 },
+      {
+        sessionId: 'sess_1',
+        hasMoreMessages: true,
+        loadOlderMessages,
+      },
+      { chatPaneStub: LoadOlderChatPane },
+    );
+
+    scrollUpTo(pane, 300);
+    await nextTick();
+
+    await loadOlderAndSettle(
+      wrapper,
+      [turn(0, 'older'), turn(1, 'hi'), turn(2, 'new bottom')],
+      loadOlderMessages,
+    );
+
+    expect(pane.scrollTop).toBe(300);
+    expect(wrapper.find('.newmsg-pill').exists()).toBe(true);
+  });
+
+  it('does not show the new-message pill for a prepend-only update', async () => {
+    const loadOlderMessages = vi.fn();
+    const { wrapper, pane } = await settledPane(
+      { scrollHeight: 2000, clientHeight: 500 },
+      {
+        sessionId: 'sess_1',
+        hasMoreMessages: true,
+        loadOlderMessages,
+      },
+      { chatPaneStub: LoadOlderChatPane },
+    );
+
+    scrollUpTo(pane, 300);
+    await nextTick();
+
+    await loadOlderAndSettle(wrapper, [turn(0, 'older'), turn(1, 'hi')], loadOlderMessages);
+
+    expect(pane.scrollTop).toBe(300);
     expect(wrapper.find('.newmsg-pill').exists()).toBe(false);
   });
 });
