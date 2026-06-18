@@ -42,7 +42,18 @@ const cliArgs = process.argv.slice(2);
 if (cliArgs[0] === '--') cliArgs.shift();
 const child = spawn(
   process.execPath,
-  [tsxCli, '--import', '../../build/register-raw-text-loader.mjs', './src/main.ts', ...cliArgs],
+  [
+    tsxCli,
+    // Use the dev tsconfig whose `include` covers packages/*/src, so tsx's
+    // esbuild transform sees `experimentalDecorators: true` for DI parameter
+    // decorators in agent-core. Mirrors `dev:server` in package.json.
+    '--tsconfig',
+    './tsconfig.dev.json',
+    '--import',
+    '../../build/register-raw-text-loader.mjs',
+    './src/main.ts',
+    ...cliArgs,
+  ],
   {
     cwd: APP_ROOT,
     env,

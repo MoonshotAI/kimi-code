@@ -413,9 +413,15 @@ export class TurnFlow {
     origin: PromptOrigin,
   ): Promise<TurnEndedEvent> {
     this.agent.usage.beginTurn();
+    const startedAt = Date.now();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
     this.agent.context.appendUserMessage(input, origin);
-    const ended: TurnEndedEvent = { type: 'turn.ended', turnId, reason: 'completed' };
+    const ended: TurnEndedEvent = {
+      type: 'turn.ended',
+      turnId,
+      reason: 'completed',
+      durationMs: Date.now() - startedAt,
+    };
     this.agent.usage.endTurn();
     this.agent.emitEvent(ended);
     return ended;
@@ -454,7 +460,7 @@ export class TurnFlow {
     // sits just past the turn.ended boundary that consumers watch for.
     let errorEvent: AgentEvent | undefined;
     try {
-      const promptHookEnded = await this.applyUserPromptHook(turnId, input, origin, signal);
+      const promptHookEnded = await this.applyUserPromptHook(turnId, input, origin, signal, startedAt);
       if (promptHookEnded !== undefined) {
         ended = promptHookEnded.event;
         blockedByUserPromptHook = promptHookEnded.blocked;
@@ -465,18 +471,19 @@ export class TurnFlow {
           type: 'turn.ended',
           turnId,
           reason: stopReason === 'aborted' ? 'cancelled' : 'completed',
+          durationMs: Date.now() - startedAt,
         };
       }
     } catch (error) {
       if (isAbortError(error)) {
-        ended = { type: 'turn.ended', turnId, reason: 'cancelled' };
+        ended = { type: 'turn.ended', turnId, reason: 'cancelled', durationMs: Date.now() - startedAt };
       } else {
         const summary = summarizeTurnError(error, turnId);
         void this.agent.hooks?.fireAndForgetTrigger('StopFailure', {
           matcherValue: summary.name,
           inputData: { errorType: summary.name, errorMessage: summary.message },
         });
-        ended = { type: 'turn.ended', turnId, reason: 'failed', error: summary };
+        ended = { type: 'turn.ended', turnId, reason: 'failed', error: summary, durationMs: Date.now() - startedAt };
         errorEvent = { type: 'error', ...summary };
         if (this.shouldTrackApiError(turnId)) {
           const classification = classifyApiError(error, summary);
@@ -541,6 +548,7 @@ export class TurnFlow {
     input: readonly ContentPart[],
     origin: PromptOrigin,
     signal: AbortSignal,
+    startedAt: number,
   ): Promise<PromptHookEndResult | undefined> {
     if (origin.kind !== 'user') return undefined;
     signal.throwIfAborted();
@@ -567,7 +575,10 @@ export class TurnFlow {
       });
       // The terminal turn.ended is emitted by runOneTurn (synchronously with the
       // activeTurn clear), not here, so the session is idle the moment it fires.
-      return { event: { type: 'turn.ended', turnId, reason: 'completed' }, blocked: true };
+      return {
+        event: { type: 'turn.ended', turnId, reason: 'completed', durationMs: Date.now() - startedAt },
+        blocked: true,
+      };
     }
 
     const hookResult = renderUserPromptHookResult(promptHookResults);

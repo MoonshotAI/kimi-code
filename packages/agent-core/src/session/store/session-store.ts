@@ -11,6 +11,7 @@ import type { JsonObject, ListSessionsPayload, SessionSummary } from '#/rpc/core
 import { FileSystemAgentRecordPersistence, type AgentRecordOf } from '../../agent/records';
 
 const SessionSummaryStateSchema = z.object({
+  archived: z.boolean().optional(),
   customTitle: z.string().optional(),
   isCustomTitle: z.boolean().optional(),
   lastPrompt: z.string().optional(),
@@ -140,27 +141,55 @@ export class SessionStore {
     await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
   }
 
+  async archive(id: string): Promise<SessionSummary> {
+    const entry = await this.findExistingSessionEntry(id);
+    const statePath = join(entry.sessionDir, 'state.json');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readFile(statePath, 'utf-8')) as unknown;
+    } catch (error) {
+      throw new KimiError(ErrorCodes.SESSION_STATE_NOT_FOUND, `Session "${id}" state.json was not found`, {
+        cause: error,
+      });
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, `Session "${id}" state.json is invalid`);
+    }
+    const now = new Date().toISOString();
+    const next: Record<string, unknown> = {
+      ...(parsed as Record<string, unknown>),
+      archived: true,
+      updatedAt: now,
+    };
+    await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+    return this.summaryFromDir(id, entry.sessionDir, entry.workDir);
+  }
+
   async list(options: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
     const workDir =
       options.workDir === undefined ? undefined : normalizeRequiredWorkDir(options.workDir);
     const sessionId = normalizeOptionalSessionId(options.sessionId);
+    const includeArchive = options.includeArchive === true;
 
     if (workDir !== undefined) {
       if (sessionId !== undefined) {
-        const local = await this.summaryFromWorkDirSession(sessionId, workDir);
+        const local = await this.summaryFromWorkDirSession(sessionId, workDir, includeArchive);
         if (local !== undefined) return [local];
-        return this.listSessionId(sessionId);
+        return this.listSessionId(sessionId, includeArchive);
       }
-      return this.listWorkDir(workDir);
+      return this.listWorkDir(workDir, includeArchive);
     }
 
     if (sessionId !== undefined) {
-      return this.listSessionId(sessionId);
+      return this.listSessionId(sessionId, includeArchive);
     }
-    return this.listAll();
+    return this.listAll(includeArchive);
   }
 
-  private async listWorkDir(workDir: string): Promise<readonly SessionSummary[]> {
+  private async listWorkDir(
+    workDir: string,
+    includeArchive: boolean,
+  ): Promise<readonly SessionSummary[]> {
     const bucketDir = join(this.sessionsDir, encodeWorkDirKey(workDir));
     let entries;
     try {
@@ -175,15 +204,22 @@ export class SessionStore {
       const id = entry.name;
       if (!isSafeSessionId(id)) continue;
       const dir = join(bucketDir, id);
-      sessions.push(await this.summaryFromDir(id, dir, workDir));
+      const summary = await this.summaryFromDir(id, dir, workDir);
+      if (!includeArchive && summary.archived === true) continue;
+      sessions.push(summary);
     }
     sessions.sort(compareSessionSummary);
     return sessions;
   }
 
-  private async listSessionId(sessionId: string): Promise<readonly SessionSummary[]> {
+  private async listSessionId(
+    sessionId: string,
+    includeArchive: boolean,
+  ): Promise<readonly SessionSummary[]> {
     try {
-      return [await this.get(sessionId)];
+      const summary = await this.get(sessionId);
+      if (!includeArchive && summary.archived === true) return [];
+      return [summary];
     } catch (error) {
       if (error instanceof KimiError && error.code === ErrorCodes.SESSION_NOT_FOUND) {
         return [];
@@ -192,12 +228,14 @@ export class SessionStore {
     }
   }
 
-  private async listAll(): Promise<readonly SessionSummary[]> {
+  private async listAll(includeArchive: boolean): Promise<readonly SessionSummary[]> {
     const index = await readSessionIndex(this.homeDir, this.sessionsDir);
     const sessions: SessionSummary[] = [];
     for (const entry of index.values()) {
       if (!(await isDirectory(entry.sessionDir))) continue;
-      sessions.push(await this.summaryFromDir(entry.sessionId, entry.sessionDir, entry.workDir));
+      const summary = await this.summaryFromDir(entry.sessionId, entry.sessionDir, entry.workDir);
+      if (!includeArchive && summary.archived === true) continue;
+      sessions.push(summary);
     }
     sessions.sort(compareSessionSummary);
     return sessions;
@@ -206,11 +244,14 @@ export class SessionStore {
   private async summaryFromWorkDirSession(
     sessionId: string,
     workDir: string,
+    includeArchive: boolean,
   ): Promise<SessionSummary | undefined> {
     if (!isSafeSessionId(sessionId)) return undefined;
     const sessionDir = this.sessionDirFor({ id: sessionId, workDir });
     if (!(await isDirectory(sessionDir))) return undefined;
-    return this.summaryFromDir(sessionId, sessionDir, workDir);
+    const summary = await this.summaryFromDir(sessionId, sessionDir, workDir);
+    if (!includeArchive && summary.archived === true) return undefined;
+    return summary;
   }
 
   async assertDirectory(id: string): Promise<string> {
@@ -295,6 +336,7 @@ export class SessionStore {
         wireInfo?.mtimeMs ?? 0,
         agentsWireMtime ?? 0,
       ),
+      archived: state?.archived === true,
       title: titleFromState(state),
       lastPrompt: state?.lastPrompt,
       metadata: metadataFromState(state),

@@ -26,3 +26,17 @@ export const providerCatalogItemSchema = z.object({
   models: z.array(z.string().min(1)).optional(),
 });
 export type ProviderCatalogItem = z.infer<typeof providerCatalogItemSchema>;
+
+export const providerRefreshChangeSchema = z.object({
+  provider_id: z.string().min(1),
+  provider_name: z.string().min(1),
+  added: z.number().int().min(0),
+  removed: z.number().int().min(0),
+});
+export type ProviderRefreshChange = z.infer<typeof providerRefreshChangeSchema>;
+
+export const providerRefreshFailureSchema = z.object({
+  provider: z.string().min(1),
+  reason: z.string().min(1),
+});
+export type ProviderRefreshFailure = z.infer<typeof providerRefreshFailureSchema>;

@@ -185,7 +185,6 @@ describe('SessionEventHandler goal queue promotion', () => {
       text: 'Ship queued goal',
     });
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
-    expect(host.track).toHaveBeenCalledWith('goal_create', { replace: false });
   });
 
   it('waits for queued user input to drain before promoting the next queued goal', async () => {

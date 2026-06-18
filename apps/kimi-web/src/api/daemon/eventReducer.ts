@@ -1,0 +1,595 @@
+// apps/kimi-web/src/api/daemon/eventReducer.ts
+// Pure TypeScript state reducer for KimiClient.
+// Operates on plain TS state — no Vue reactivity here.
+// The reducer consumes AppEvent (camelCase), produced by toAppEvent() in mappers.ts.
+//
+// No-op-but-known events (tool.*, assistant streaming, assistant.completed)
+// are mapped to { type: 'unknown', raw: { _noop: true, ... } } by mappers.ts.
+// The reducer detects `_noop: true` and silently advances lastSeqBySession
+// without pushing a warning.
+
+import type {
+  AppApprovalRequest,
+  AppConfig,
+  AppEvent,
+  AppGoal,
+  AppMessage,
+  AppMessageContent,
+  AppWarning,
+  AppQuestionRequest,
+  AppSession,
+  AppTask,
+  CompactionMarkerMetadata,
+} from '../types';
+import { COMPACTION_MARKER_METADATA_KEY } from '../types';
+import { i18n } from '../../i18n';
+
+const OPTIMISTIC_USER_MESSAGE_METADATA_KEY = 'kimiWeb.optimisticUserMessage';
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+/** Live compaction progress for a session: present (status 'running') only
+    while the daemon is compacting. Completion is recorded as a persistent
+    divider marker message in the transcript, not as transient status. */
+export interface CompactionStatus {
+  status: 'running';
+  trigger: 'manual' | 'auto';
+}
+
+export interface KimiClientState {
+  sessions: AppSession[];
+  activeSessionId?: string;
+  messagesBySession: Record<string, AppMessage[]>;
+  approvalsBySession: Record<string, AppApprovalRequest[]>;
+  questionsBySession: Record<string, AppQuestionRequest[]>;
+  tasksBySession: Record<string, AppTask[]>;
+  goalBySession: Record<string, AppGoal>;
+  lastSeqBySession: Record<string, number>;
+  compactionBySession: Record<string, CompactionStatus>;
+  config?: AppConfig | null;
+  warnings: AppWarning[];
+}
+
+export function createInitialState(): KimiClientState {
+  return {
+    sessions: [],
+    activeSessionId: undefined,
+    messagesBySession: {},
+    approvalsBySession: {},
+    questionsBySession: {},
+    tasksBySession: {},
+    goalBySession: {},
+    lastSeqBySession: {},
+    compactionBySession: {},
+    warnings: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function cloneState(s: KimiClientState): KimiClientState {
+  return {
+    ...s,
+    sessions: [...s.sessions],
+    messagesBySession: { ...s.messagesBySession },
+    approvalsBySession: { ...s.approvalsBySession },
+    questionsBySession: { ...s.questionsBySession },
+    tasksBySession: { ...s.tasksBySession },
+    goalBySession: { ...s.goalBySession },
+    lastSeqBySession: { ...s.lastSeqBySession },
+    compactionBySession: { ...s.compactionBySession },
+    warnings: [...s.warnings],
+  };
+}
+
+function advanceSeq(state: KimiClientState, sessionId: string | undefined, seq: number | undefined): void {
+  if (sessionId !== undefined && seq !== undefined && seq > 0) {
+    const prev = state.lastSeqBySession[sessionId] ?? 0;
+    if (seq > prev) {
+      state.lastSeqBySession[sessionId] = seq;
+    }
+  }
+}
+
+function isOptimisticUserMessage(message: AppMessage): boolean {
+  return (
+    message.role === 'user' &&
+    message.metadata?.[OPTIMISTIC_USER_MESSAGE_METADATA_KEY] === true
+  );
+}
+
+function sameMessageContent(a: AppMessage, b: AppMessage): boolean {
+  return JSON.stringify(a.content) === JSON.stringify(b.content);
+}
+
+/** Concatenated text + count of image/file parts — a serialization-independent
+    shape of a user message. The daemon's echo carries images as a resolved
+    URL/base64 while our optimistic copy carries `{kind:'file',fileId}`, so the
+    raw content never matches; comparing (text, image-count) does. */
+function userMessageShape(m: AppMessage): { text: string; media: number } {
+  let text = '';
+  let media = 0;
+  for (const c of m.content) {
+    if (c.type === 'text') text += c.text;
+    else if (c.type === 'image' || c.type === 'file') media += 1;
+  }
+  return { text, media };
+}
+
+function sameUserMessageLoosely(a: AppMessage, b: AppMessage): boolean {
+  const sa = userMessageShape(a);
+  const sb = userMessageShape(b);
+  return sa.text === sb.text && sa.media === sb.media;
+}
+
+function findOptimisticUserEchoIndex(messages: AppMessage[], message: AppMessage): number {
+  // Prefer matching by prompt_id: image content serializes differently between
+  // our optimistic copy ({source:{kind:'file',fileId}}) and the daemon's echo
+  // (a resolved URL/base64), so content-equality alone lets an image steer's
+  // echo slip through as a duplicate. The submit response's prompt_id is stamped
+  // onto the optimistic message, so a shared prompt_id is the reliable match.
+  const promptId = message.promptId;
+  if (promptId !== undefined) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const candidate = messages[i]!;
+      if (isOptimisticUserMessage(candidate) && candidate.promptId === promptId) {
+        return i;
+      }
+    }
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const candidate = messages[i]!;
+    if (isOptimisticUserMessage(candidate) && sameMessageContent(candidate, message)) {
+      return i;
+    }
+  }
+  // Loose fallback for image steers: the daemon's messageCreated echo can arrive
+  // over the WS *before* submitPrompt resolves and stamps the prompt_id onto the
+  // optimistic copy, so neither the prompt_id nor the exact-content match fires —
+  // and because the image serializes differently, the echo used to slip through
+  // as a SECOND user bubble. Match on (text, image-count) instead so the echo
+  // still reconciles into the optimistic message.
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const candidate = messages[i]!;
+    if (isOptimisticUserMessage(candidate) && sameUserMessageLoosely(candidate, message)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function appendToolOutputToMessages(messages: AppMessage[], toolCallId: string, outputChunk: string): AppMessage[] {
+  let changed = false;
+  const next = messages.map((message) => {
+    let contentChanged = false;
+    const content = message.content.map((part) => {
+      if (part.type !== 'toolUse' || part.toolCallId !== toolCallId) return part;
+      contentChanged = true;
+      return {
+        ...part,
+        outputLines: [...(part.outputLines ?? []), outputChunk],
+      };
+    });
+    if (!contentChanged) return message;
+    changed = true;
+    return { ...message, content };
+  });
+  return changed ? next : messages;
+}
+
+// ---------------------------------------------------------------------------
+// Reducer
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply a single AppEvent to the state, returning a new state object.
+ * The event carries `_wireSeq` and `_wireSessionId` as hidden extras when
+ * produced by the client wrapper, but the reducer only depends on the
+ * AppEvent.type discriminant.
+ *
+ * Extra metadata attached by the caller:
+ *   meta.sessionId — wire session_id for lastSeqBySession update
+ *   meta.seq       — wire seq for lastSeqBySession update
+ */
+export interface EventMeta {
+  sessionId: string;
+  seq: number;
+}
+
+export function reduceAppEvent(
+  state: KimiClientState,
+  event: AppEvent,
+  meta: EventMeta,
+): KimiClientState {
+  const next = cloneState(state);
+
+  // Always advance lastSeqBySession for every event that carries seq info.
+  advanceSeq(next, meta.sessionId, meta.seq);
+
+  switch (event.type) {
+    // -------------------------------------------------------------------------
+    case 'sessionCreated': {
+      const exists = next.sessions.some((s) => s.id === event.session.id);
+      if (!exists) {
+        next.sessions = [event.session, ...next.sessions];
+      }
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'sessionUpdated': {
+      next.sessions = next.sessions.map((s) =>
+        s.id === event.session.id ? event.session : s,
+      );
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'sessionDeleted': {
+      const id = event.sessionId;
+      next.sessions = next.sessions.filter((s) => s.id !== id);
+      delete next.messagesBySession[id];
+      delete next.tasksBySession[id];
+      delete next.goalBySession[id];
+      delete next.approvalsBySession[id];
+      delete next.questionsBySession[id];
+      delete next.lastSeqBySession[id];
+      if (next.activeSessionId === id) {
+        next.activeSessionId = undefined;
+      }
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'sessionStatusChanged': {
+      next.sessions = next.sessions.map((s) => {
+        if (s.id !== event.sessionId) return s;
+        return {
+          ...s,
+          status: event.status,
+          currentPromptId: event.currentPromptId,
+        };
+      });
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'sessionMetaUpdated': {
+      // Lightweight title patch — the daemon's auto-generated title (or a title
+      // changed by another client) arrives via session.meta.updated. We patch
+      // only the title field; the full session object stays as-is.
+      next.sessions = next.sessions.map((s) =>
+        s.id === event.sessionId ? { ...s, title: event.title } : s,
+      );
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'sessionUsageUpdated': {
+      next.sessions = next.sessions.map((s) => {
+        if (s.id !== event.sessionId) return s;
+        // The live model name (from agent.status.updated) rides along with usage.
+        // Only overwrite model when a non-empty one is supplied.
+        const model = event.model && event.model.length > 0 ? event.model : s.model;
+        return { ...s, usage: event.usage, model };
+      });
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'historyCompacted': {
+      // Only advance lastSeqBySession; actual reload is triggered by client wrapper
+      // when it sees this event type (before_seq is in event.beforeSeq).
+      // The advanceSeq at top already handled seq update.
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'compactionStarted': {
+      next.compactionBySession = {
+        ...next.compactionBySession,
+        [event.sessionId]: { status: 'running', trigger: event.trigger },
+      };
+      break;
+    }
+
+    case 'compactionCompleted': {
+      const sid = event.sessionId;
+      const prev = next.compactionBySession[sid];
+      const { [sid]: _doneEntry, ...rest } = next.compactionBySession;
+      next.compactionBySession = rest;
+
+      // Append a persistent "context compacted" divider to the loaded
+      // transcript (TUI parity: the scrollback is kept untouched; only a
+      // one-line marker records that compaction happened). The marker id is
+      // derived from the wire seq so an event replay after reconnect can't
+      // duplicate it.
+      if (Object.prototype.hasOwnProperty.call(next.messagesBySession, sid)) {
+        const msgs = next.messagesBySession[sid] ?? [];
+        const markerId = `compaction_${sid}_${meta.seq}`;
+        if (!msgs.some((m) => m.id === markerId)) {
+          const marker: CompactionMarkerMetadata = {
+            trigger: prev?.trigger ?? 'auto',
+            tokensBefore: event.tokensBefore,
+            tokensAfter: event.tokensAfter,
+          };
+          next.messagesBySession[sid] = [
+            ...msgs,
+            {
+              id: markerId,
+              sessionId: sid,
+              role: 'assistant',
+              content: event.summary ? [{ type: 'text', text: event.summary }] : [],
+              createdAt: new Date().toISOString(),
+              metadata: {
+                origin: { kind: 'compaction_summary' },
+                [COMPACTION_MARKER_METADATA_KEY]: marker,
+              },
+            },
+          ];
+        }
+      }
+      break;
+    }
+
+    case 'compactionCancelled': {
+      const { [event.sessionId]: _gone, ...rest } = next.compactionBySession;
+      next.compactionBySession = rest;
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'messageCreated': {
+      const sid = event.message.sessionId;
+      const msgs = next.messagesBySession[sid] ?? [];
+      const exists = msgs.some((m) => m.id === event.message.id);
+      if (!exists) {
+        if (event.message.role === 'user') {
+          const optimisticIndex = findOptimisticUserEchoIndex(msgs, event.message);
+          if (optimisticIndex !== -1) {
+            const updated = [...msgs];
+            const optimistic = updated[optimisticIndex]!;
+            updated[optimisticIndex] = {
+              ...event.message,
+              id: optimistic.id,
+              promptId: event.message.promptId ?? optimistic.promptId,
+              metadata: {
+                ...event.message.metadata,
+                ...optimistic.metadata,
+              },
+            };
+            next.messagesBySession[sid] = updated;
+            break;
+          }
+        }
+        next.messagesBySession[sid] = [...msgs, event.message];
+      }
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'messageUpdated': {
+      const sid = event.sessionId;
+      const msgs = next.messagesBySession[sid] ?? [];
+      next.messagesBySession[sid] = msgs.map((m) => {
+        if (m.id !== event.messageId) return m;
+        return {
+          ...m,
+          content: event.content,
+          durationMs: event.durationMs ?? m.durationMs,
+        };
+      });
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'assistantDelta': {
+      const sid = event.sessionId;
+      const msgs = next.messagesBySession[sid] ?? [];
+      next.messagesBySession[sid] = msgs.map((m) => {
+        if (m.id !== event.messageId) return m;
+        const content = [...m.content];
+        const idx = event.contentIndex;
+        // Ensure the slot exists
+        while (content.length <= idx) {
+          content.push({ type: 'text', text: '' });
+        }
+        const existing = content[idx]!;
+        let patched: AppMessageContent;
+        if (event.delta.text !== undefined) {
+          if (existing.type === 'text') {
+            patched = { type: 'text', text: existing.text + event.delta.text };
+          } else {
+            patched = { type: 'text', text: event.delta.text };
+          }
+        } else if (event.delta.thinking !== undefined) {
+          if (existing.type === 'thinking') {
+            patched = {
+              type: 'thinking',
+              thinking: existing.thinking + event.delta.thinking,
+              signature: existing.signature,
+            };
+          } else {
+            patched = { type: 'thinking', thinking: event.delta.thinking };
+          }
+        } else {
+          patched = existing;
+        }
+        content[idx] = patched;
+        return { ...m, content };
+      });
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'toolOutput': {
+      const sid = event.sessionId;
+      const msgs = next.messagesBySession[sid] ?? [];
+      next.messagesBySession[sid] = appendToolOutputToMessages(msgs, event.toolCallId, event.outputChunk);
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'approvalRequested': {
+      const sid = event.sessionId;
+      const list = next.approvalsBySession[sid] ?? [];
+      const exists = list.some((a) => a.approvalId === event.approval.approvalId);
+      if (!exists) {
+        next.approvalsBySession[sid] = [...list, event.approval];
+      }
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'approvalResolved':
+    case 'approvalExpired': {
+      const sid = event.sessionId;
+      const aid = event.approvalId;
+      const list = next.approvalsBySession[sid] ?? [];
+      next.approvalsBySession[sid] = list.filter((a) => a.approvalId !== aid);
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'questionRequested': {
+      const sid = event.sessionId;
+      const list = next.questionsBySession[sid] ?? [];
+      const exists = list.some((q) => q.questionId === event.question.questionId);
+      if (!exists) {
+        next.questionsBySession[sid] = [...list, event.question];
+      }
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'questionAnswered':
+    case 'questionDismissed':
+    case 'questionExpired': {
+      const sid = event.sessionId;
+      const qid = event.questionId;
+      const list = next.questionsBySession[sid] ?? [];
+      next.questionsBySession[sid] = list.filter((q) => q.questionId !== qid);
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'taskCreated': {
+      const sid = event.sessionId;
+      const list = next.tasksBySession[sid] ?? [];
+      const idx = list.findIndex((t) => t.id === event.task.id);
+      if (idx === -1) {
+        next.tasksBySession[sid] = [...list, event.task];
+      } else {
+        const patched = [...list];
+        patched[idx] = event.task;
+        next.tasksBySession[sid] = patched;
+      }
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'taskProgress': {
+      const sid = event.sessionId;
+      const list = next.tasksBySession[sid] ?? [];
+      next.tasksBySession[sid] = list.map((t) => {
+        if (t.id !== event.taskId) return t;
+        const outputLines = t.outputLines ?? [];
+        if (outputLines.at(-1) === event.outputChunk) return t;
+        return {
+          ...t,
+          outputLines: [...outputLines, event.outputChunk].slice(-40),
+        };
+      });
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'taskCompleted': {
+      const sid = event.sessionId;
+      const list = next.tasksBySession[sid] ?? [];
+      next.tasksBySession[sid] = list.map((t) => {
+        if (t.id !== event.taskId) return t;
+        return {
+          ...t,
+          status: event.status,
+          outputPreview: event.outputPreview,
+          outputBytes: event.outputBytes,
+        };
+      });
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'goalUpdated': {
+      const sid = event.sessionId;
+      if (event.goal === null || event.goal.status === 'complete') {
+        delete next.goalBySession[sid];
+      } else {
+        next.goalBySession[sid] = event.goal;
+      }
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'configChanged': {
+      next.config = event.config;
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    // Agent-scoped side-channel events (e.g. BTW side chat) are consumed by the
+    // web layer, not the session reducer. Advance seq silently.
+    case 'agentDelta':
+    case 'agentTurnEnded':
+      break;
+
+    case 'unknown': {
+      // Distinguish no-op known events (sentinel _noop) from agent errors/warnings
+      // and truly unknown events.
+      const raw = event.raw as {
+        _noop?: boolean;
+        _agentError?: boolean;
+        _agentWarning?: boolean;
+        code?: string;
+        message?: string;
+        type?: string;
+      } | null;
+      if (raw && raw._noop === true) {
+        // No-op streaming/tool event — seq already advanced, nothing else to do
+      } else if (raw && (raw._agentError || raw._agentWarning)) {
+        // Surface the agent's real error/warning message (e.g. a 403 from the
+        // model provider) instead of a useless "Unhandled event".
+        const label = raw._agentError
+          ? i18n.global.t('warnings.errorLabel')
+          : i18n.global.t('warnings.noteLabel');
+        const msg = raw.message ?? raw.code ?? 'agent error';
+        next.warnings = [...next.warnings, `${label}: ${msg}`];
+      } else {
+        // Truly unknown — push a warning
+        const wireType = raw?.type ?? '(unknown)';
+        next.warnings = [...next.warnings, `Unhandled event: ${wireType}`];
+      }
+      break;
+    }
+
+    // Workspace lifecycle events are handled in the composable (rawState), not
+    // here — listed explicitly to keep the switch exhaustive.
+    case 'workspaceCreated':
+    case 'workspaceUpdated':
+    case 'workspaceDeleted':
+      break;
+
+    default: {
+      // TypeScript exhaustiveness guard — should not reach here
+      const _exhaustive: never = event;
+      void _exhaustive;
+      break;
+    }
+  }
+
+  return next;
+}

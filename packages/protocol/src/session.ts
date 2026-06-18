@@ -67,6 +67,9 @@ export const sessionAgentConfigSchema = z.object({
   thinking: promptThinkingSchema.optional(),
   permission_mode: promptPermissionModeSchema.optional(),
   plan_mode: z.boolean().optional(),
+  swarm_mode: z.boolean().optional(),
+  goal_objective: z.string().optional(),
+  goal_control: z.enum(['pause', 'resume', 'cancel']).optional(),
 });
 
 export type SessionAgentConfig = z.infer<typeof sessionAgentConfigSchema>;
@@ -89,6 +92,7 @@ export const sessionSchema = z.object({
   created_at: isoDateTimeSchema,
   updated_at: isoDateTimeSchema,
   status: sessionStatusSchema,
+  archived: z.boolean().optional(),
   current_prompt_id: z.string().min(1).optional(),
   metadata: sessionMetadataSchema,
   agent_config: sessionAgentConfigSchema,

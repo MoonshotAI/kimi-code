@@ -119,7 +119,7 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`server`（运行并管理本地 REST/WebSocket/web 服务）、`web`（`kimi server run --open` 的别名）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
 
 ### `kimi login`
 
@@ -138,6 +138,73 @@ kimi login
 ```sh
 kimi acp
 ```
+
+### `kimi server`
+
+运行并管理本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI。父命令拆成按需入口 (`run`) 与 OS 级生命周期管理 (`install`、`uninstall`、`start`、`stop`、`restart`、`status`)。`kimi server run` 会确保一个后台守护进程在运行、健康后返回；如需把服务挂在当前终端，请加 `--foreground`。
+
+服务运行时，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。
+
+```sh
+kimi server run                # 启动或复用一个后台守护进程
+kimi server run --foreground   # 挂在当前终端前台运行
+kimi server install            # 注册到 launchd / systemd / schtasks
+kimi server start              # 启动 OS 管理的服务
+kimi server status             # 查看安装与运行状态
+```
+
+#### `kimi server run`
+
+| 选项 | 说明 |
+| --- | --- |
+| `--port <port>` | 绑定端口；默认 `58627` |
+| `--log-level <level>` | 按所选级别开启服务日志；默认不输出 |
+| `--debug-endpoints` | 挂载 `/api/v1/debug/*` 调试路由（默认关闭） |
+| `--foreground` | 前台运行，不 spawn 后台守护进程 |
+| `--open` | 服务健康后用默认浏览器打开 web UI |
+
+`kimi server run` 只绑定本机 loopback 地址。默认会 spawn 一个后台守护进程（多次运行会复用同一个），健康后即退出；守护进程在最后一个 web 客户端断开后自行关闭。加 `--foreground` 则在当前进程中运行——保持挂在终端，在 `SIGINT` / `SIGTERM` 时干净退出。
+
+#### `kimi server install`
+
+把服务注册成 OS 管理的进程，开机自启、崩溃后自动重启。根据当前平台选择对应后端：
+
+- **macOS**：写 LaunchAgent plist 到 `~/Library/LaunchAgents/ai.moonshot.kimi-server.plist`，并通过 `launchctl bootstrap gui/<uid>` 启动。
+- **Linux**：写 `--user` systemd unit 到 `~/.config/systemd/user/kimi-server.service`，并执行 `systemctl --user enable --now`。
+- **Windows**：通过 `schtasks /Create /XML` 注册名为 `KimiServer` 的计划任务。
+
+| 选项 | 说明 |
+| --- | --- |
+| `--port <port>` | 被托管的服务绑定端口；默认 `58627` |
+| `--log-level <level>` | 写入生成 unit 的日志级别 |
+| `--force` | 已安装时强制覆盖 |
+| `--json` | 用 JSON 替代人类可读输出 |
+
+本机地址、选定的端口和日志级别会写入 `~/.kimi-code/server/install.json`，即便服务停掉 `kimi server status` 也能读到。
+
+#### 生命周期子命令
+
+| 命令 | 说明 |
+| --- | --- |
+| `kimi server uninstall` | 停止并移除 OS 服务定义。幂等。 |
+| `kimi server start` | 启动 OS 管理的服务。未安装时会报错。 |
+| `kimi server stop` | 停止 OS 管理的服务。 |
+| `kimi server restart` | 重启 OS 管理的服务。 |
+| `kimi server status` | 打印 installed / running / pid / port / log-path；`--json` 用于脚本。 |
+
+#### `kimi web`
+
+在浏览器中打开 Kimi 的图形会话界面，作为终端 TUI 的替代入口。
+
+等价于 `kimi server run --open`：在后台启动本地 Kimi 服务（若已运行则复用），用默认浏览器打开 web UI，随后命令返回，服务驻留后台。与 `kimi server run` 的唯一区别是默认启用 `--open`（自动打开浏览器），其余行为一致。
+
+```sh
+kimi web                 # 后台启动服务并打开浏览器（已运行则复用）
+kimi web --no-open       # 不打开浏览器，等同 `kimi server run`
+kimi web --foreground    # 在当前终端前台运行，同时打开浏览器
+```
+
+停止服务使用 `kimi server kill`，查看活动连接使用 `kimi server ps`；`--port`、`--log-level` 等选项与 `kimi server run` 一致。
 
 ### `kimi doctor`
 

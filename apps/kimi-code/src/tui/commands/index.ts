@@ -6,10 +6,7 @@ export * from './skills';
 export * from './types';
 
 export { dispatchInput, type SlashCommandHost } from './dispatch';
-export {
-  handleLoginCommand,
-  handleLogoutCommand,
-} from './auth';
+export { handleLoginCommand, handleLogoutCommand } from './auth';
 export { handleBtwCommand } from './btw';
 export {
   handleCompactCommand,
@@ -24,22 +21,14 @@ export {
   showSettingsSelector,
 } from './config';
 export { handleSwarmCommand } from './swarm';
-export {
-  handleFeedbackCommand,
-  showMcpServers,
-  showStatusReport,
-  showUsage,
-} from './info';
+export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
 export { handleGoalCommand, parseGoalCommand } from './goal';
 export { goalArgumentCompletions } from './registry';
-export {
-  handleForkCommand,
-  handleInitCommand,
-  handleTitleCommand,
-} from './session';
+export { handleForkCommand, handleInitCommand, handleTitleCommand } from './session';
 export { handleUndoCommand } from './undo';
+export { handleWebCommand } from './web';
 export {
   promptApiKey,
   promptCatalogProviderSelection,

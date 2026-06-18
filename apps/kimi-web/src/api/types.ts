@@ -1,0 +1,701 @@
+// apps/kimi-web/src/api/types.ts
+// App-facing camelCase model + KimiWebApi interface.
+// No daemon wire details here — Vue components consume only these types.
+
+// ---------------------------------------------------------------------------
+// Pagination
+// ---------------------------------------------------------------------------
+
+export interface Page<T> {
+  items: T[];
+  hasMore: boolean;
+}
+
+export interface PageRequest {
+  beforeId?: string;
+  afterId?: string;
+  pageSize?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Notices
+// ---------------------------------------------------------------------------
+
+export type AppNoticeSeverity = 'info' | 'warning' | 'error';
+
+export interface AppNoticeDetail {
+  label: string;
+  value: string;
+}
+
+export interface AppNotice {
+  severity: AppNoticeSeverity;
+  title: string;
+  message?: string;
+  details?: AppNoticeDetail[];
+}
+
+export type AppWarning = string | AppNotice;
+
+// ---------------------------------------------------------------------------
+// Session
+// ---------------------------------------------------------------------------
+
+export type AppSessionStatus =
+  | 'idle'
+  | 'running'
+  | 'awaitingApproval'
+  | 'awaitingQuestion'
+  | 'aborted';
+
+export interface AppSessionUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalCostUsd: number;
+  contextTokens: number;
+  contextLimit: number;
+  turnCount: number;
+}
+
+export interface AppSession {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  status: AppSessionStatus;
+  archived: boolean;
+  currentPromptId?: string;
+  cwd: string;
+  model: string;
+  usage: AppSessionUsage;
+  messageCount: number;
+  lastSeq: number;
+  /**
+   * The workspace this session belongs to. Present once the daemon ships the
+   * workspace registry (returns `workspace_id` on Session). Until then it is
+   * undefined and the composable maps sessions to workspaces by cwd === root.
+   */
+  workspaceId?: string;
+  /**
+   * Set on a child ("side chat") session — the id of the parent it was forked
+   * from. Used to keep child sessions out of the main session list.
+   */
+  parentSessionId?: string;
+}
+
+/**
+ * Live runtime state from GET /sessions/{id}/status — the source of truth for
+ * the current model + context usage (Session.agent_config.model can be "").
+ */
+export interface AppSessionRuntimeStatus {
+  /** Current model alias, or null if the daemon couldn't resolve it. */
+  model: string | null;
+  thinkingLevel: string;
+  permission: string;
+  planMode: boolean;
+  swarmMode: boolean;
+  contextTokens: number;
+  maxContextTokens: number;
+  contextUsage: number;
+}
+
+// ---------------------------------------------------------------------------
+// Workspace — a real folder the client organizes sessions by.
+// 1 Workspace : N Sessions. A session inherits the workspace's root as its cwd.
+// ---------------------------------------------------------------------------
+
+export interface AppWorkspace {
+  /** Stable id. In fallback mode (derived from session cwds) this IS the root. */
+  id: string;
+  /** Absolute path to the project root. */
+  root: string;
+  /** Display name — defaults to basename(root), may be renamed on the daemon. */
+  name: string;
+  /** Whether root is inside a git repository. */
+  isGitRepo: boolean;
+  /** Current branch, when known. */
+  branch?: string;
+  /** ISO timestamp of when this workspace was last opened. */
+  lastOpenedAt?: string;
+  /** Number of sessions belonging to this workspace. */
+  sessionCount: number;
+}
+
+/** One directory entry from the daemon folder browser (fs:browse). */
+export interface FsBrowseEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  isGitRepo: boolean;
+  branch?: string;
+}
+
+export interface FsBrowseResult {
+  path: string;
+  parent: string | null;
+  entries: FsBrowseEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Message
+// ---------------------------------------------------------------------------
+
+export type AppMessageRole = 'user' | 'assistant' | 'tool' | 'system';
+
+export type AppMessageContent =
+  | { type: 'text'; text: string }
+  | { type: 'toolUse'; toolCallId: string; toolName: string; input: unknown; outputLines?: string[] }
+  | { type: 'toolResult'; toolCallId: string; output: unknown; isError?: boolean }
+  | { type: 'image'; source: ImageSource }
+  | { type: 'video'; source: ImageSource }
+  | { type: 'file'; fileId: string; name: string; mediaType: string; size: number }
+  | { type: 'thinking'; thinking: string; signature?: string }
+  | { type: 'unknown'; raw: unknown };
+
+export type ImageSource =
+  | { kind: 'url'; url: string }
+  | { kind: 'base64'; mediaType: string; data: string }
+  | { kind: 'file'; fileId: string };
+
+export interface AppMessage {
+  id: string;
+  sessionId: string;
+  role: AppMessageRole;
+  content: AppMessageContent[];
+  createdAt: string;
+  promptId?: string;
+  parentMessageId?: string;
+  /** Client-side measured duration from turn.started to turn.ended (ms). */
+  durationMs?: number;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Metadata key of the client-side compaction marker message appended on
+ * compactionCompleted. The transcript keeps all prior messages (TUI parity);
+ * this marker renders as a "context compacted" divider. Snapshot-loaded
+ * summary messages (origin kind 'compaction_summary') render the same way
+ * but carry no token stats.
+ */
+export const COMPACTION_MARKER_METADATA_KEY = 'kimiWeb.compaction';
+
+export interface CompactionMarkerMetadata {
+  trigger: 'manual' | 'auto';
+  tokensBefore?: number;
+  tokensAfter?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Prompt
+// ---------------------------------------------------------------------------
+
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface PromptSubmission {
+  content: AppMessageContent[];
+  metadata?: Record<string, unknown>;
+  /** Optional non-main agent id, used by BTW side-channel prompts. */
+  agentId?: string;
+  /** The daemon requires these on every prompt (per-prompt, not session-level). */
+  model?: string;
+  thinking?: ThinkingLevel;
+  permissionMode?: 'manual' | 'auto' | 'yolo';
+  planMode?: boolean;
+  swarmMode?: boolean;
+  goalObjective?: string;
+  goalControl?: 'pause' | 'resume' | 'cancel';
+}
+
+export interface PromptSubmitResult {
+  promptId: string;
+  userMessageId: string;
+  /** 'running' when the prompt started a turn immediately; 'queued' when
+      another prompt is active and the daemon parked it (steerable). */
+  status?: 'running' | 'queued';
+}
+
+// ---------------------------------------------------------------------------
+// Approval
+// ---------------------------------------------------------------------------
+
+export type ApprovalDecision = 'approved' | 'rejected' | 'cancelled';
+
+export interface ApprovalResponse {
+  decision: ApprovalDecision;
+  scope?: 'session';
+  feedback?: string;
+  selectedLabel?: string;
+}
+
+export interface AppApprovalRequest {
+  approvalId: string;
+  sessionId: string;
+  turnId?: number;
+  toolCallId: string;
+  toolName: string;
+  action: string;
+  display: unknown; // ToolInputDisplay — Web renders what it knows, falls back to generic
+  expiresAt: string;
+  createdAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Question
+// ---------------------------------------------------------------------------
+
+export interface QuestionOption {
+  id: string;
+  label: string;
+  description?: string;
+  recommended?: boolean;
+}
+
+export interface QuestionItem {
+  id: string;
+  question: string;
+  header?: string;
+  body?: string;
+  options: QuestionOption[];
+  multiSelect?: boolean;
+  allowOther?: boolean;
+  otherLabel?: string;
+  otherDescription?: string;
+}
+
+export interface AppQuestionRequest {
+  questionId: string;
+  sessionId: string;
+  turnId?: number;
+  toolCallId?: string;
+  questions: QuestionItem[];
+  expiresAt: string;
+  createdAt: string;
+}
+
+export type QuestionAnswer =
+  | { kind: 'single'; optionId: string }
+  | { kind: 'multi'; optionIds: string[] }
+  | { kind: 'other'; text: string }
+  | { kind: 'multiWithOther'; optionIds: string[]; otherText: string }
+  | { kind: 'skipped' };
+
+export interface QuestionResponse {
+  answers: Record<string, QuestionAnswer>;
+  method?: 'enter' | 'space' | 'number_key' | 'click';
+  note?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Background Task
+// ---------------------------------------------------------------------------
+
+export type AppTaskStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+export type AppSubagentPhase = 'queued' | 'working' | 'suspended' | 'completed' | 'failed';
+
+export interface AppTask {
+  id: string;
+  sessionId: string;
+  kind: 'subagent' | 'bash' | 'tool';
+  description: string;
+  status: AppTaskStatus;
+  command?: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  outputPreview?: string;
+  outputBytes?: number;
+  outputLines?: string[]; // accumulated by eventReducer from task.progress chunks
+  subagentPhase?: AppSubagentPhase;
+  subagentType?: string;
+  parentToolCallId?: string;
+  suspendedReason?: string;
+  swarmIndex?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Goal
+// ---------------------------------------------------------------------------
+
+export type AppGoalStatus = 'active' | 'paused' | 'blocked' | 'complete';
+
+export interface AppGoal {
+  goalId: string;
+  objective: string;
+  completionCriterion?: string;
+  status: AppGoalStatus;
+  turnsUsed: number;
+  tokensUsed: number;
+  wallClockMs: number;
+  terminalReason?: string;
+  budget: {
+    tokenBudget: number | null;
+    remainingTokens: number | null;
+    turnBudget: number | null;
+    remainingTurns: number | null;
+    wallClockBudgetMs: number | null;
+    remainingWallClockMs: number | null;
+    overBudget: boolean;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Terminal
+// ---------------------------------------------------------------------------
+
+export type AppTerminalStatus = 'running' | 'exited';
+
+export interface AppTerminal {
+  id: string;
+  sessionId: string;
+  cwd: string;
+  shell: string;
+  cols: number;
+  rows: number;
+  status: AppTerminalStatus;
+  createdAt: string;
+  exitedAt?: string;
+  exitCode?: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// File System
+// ---------------------------------------------------------------------------
+
+export type FsKind = 'file' | 'directory' | 'symlink';
+
+export interface FsEntry {
+  path: string;
+  name: string;
+  kind: FsKind;
+  size?: number;
+  modifiedAt: string;
+  etag?: string;
+  mime?: string;
+  languageId?: string;
+  isBinary?: boolean;
+  isSymlinkTo?: string;
+  gitStatus?: string;
+  childCount?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Events (app-facing, camelCase)
+// ---------------------------------------------------------------------------
+
+export type AppEvent =
+  | { type: 'sessionCreated'; session: AppSession }
+  | { type: 'workspaceCreated'; workspace: AppWorkspace }
+  | { type: 'workspaceUpdated'; workspace: AppWorkspace }
+  | { type: 'workspaceDeleted'; workspaceId: string; root: string }
+  | { type: 'sessionUpdated'; session: AppSession; changedFields: string[] }
+  | { type: 'sessionDeleted'; sessionId: string }
+  | { type: 'sessionStatusChanged'; sessionId: string; status: AppSessionStatus; previousStatus: AppSessionStatus; currentPromptId?: string }
+  | { type: 'sessionMetaUpdated'; sessionId: string; title: string }
+  | { type: 'sessionUsageUpdated'; sessionId: string; usage: AppSessionUsage; model?: string; swarmMode?: boolean; planMode?: boolean }
+  | { type: 'historyCompacted'; sessionId: string; beforeSeq: number; reason: string; summaryMessageId?: string }
+  | { type: 'compactionStarted'; sessionId: string; trigger: 'manual' | 'auto'; instruction?: string }
+  | { type: 'compactionCompleted'; sessionId: string; tokensBefore?: number; tokensAfter?: number; summary?: string }
+  | { type: 'compactionCancelled'; sessionId: string }
+  | { type: 'messageCreated'; message: AppMessage }
+  | { type: 'messageUpdated'; sessionId: string; messageId: string; content: AppMessageContent[]; status: 'pending' | 'completed' | 'error'; durationMs?: number }
+  | { type: 'assistantDelta'; sessionId: string; messageId: string; contentIndex: number; delta: { text?: string; thinking?: string } }
+  // Side-channel / non-main-agent streaming: carries text/thinking deltas for a
+  // specific agent (e.g. a BTW side chat) without folding them into the parent
+  // transcript. The web layer routes these to the side-chat panel.
+  | { type: 'agentDelta'; sessionId: string; agentId: string; delta: { text?: string; thinking?: string } }
+  | { type: 'agentTurnEnded'; sessionId: string; agentId: string; reason?: string }
+  | { type: 'toolOutput'; sessionId: string; toolCallId: string; outputChunk: string; stream: 'stdout' | 'stderr' }
+  | { type: 'approvalRequested'; sessionId: string; approval: AppApprovalRequest }
+  | { type: 'approvalResolved'; sessionId: string; approvalId: string; decision: ApprovalDecision; resolvedAt: string }
+  | { type: 'approvalExpired'; sessionId: string; approvalId: string }
+  | { type: 'questionRequested'; sessionId: string; question: AppQuestionRequest }
+  | { type: 'questionAnswered'; sessionId: string; questionId: string; resolvedAt: string }
+  | { type: 'questionDismissed'; sessionId: string; questionId: string; dismissedAt: string }
+  | { type: 'questionExpired'; sessionId: string; questionId: string }
+  | { type: 'taskCreated'; sessionId: string; task: AppTask }
+  | { type: 'taskProgress'; sessionId: string; taskId: string; outputChunk: string; stream: 'stdout' | 'stderr' }
+  | { type: 'taskCompleted'; sessionId: string; taskId: string; status: AppTaskStatus; outputPreview?: string; outputBytes?: number }
+  | { type: 'goalUpdated'; sessionId: string; goal: AppGoal | null }
+  | { type: 'configChanged'; changedFields: string[]; config: AppConfig }
+  | { type: 'unknown'; raw: unknown };
+
+// ---------------------------------------------------------------------------
+// WebSocket connection helpers
+// ---------------------------------------------------------------------------
+
+/** Per-session sync cursor (v2): durable seq + journal epoch. */
+export interface AppSessionCursor {
+  seq: number;
+  epoch?: string;
+}
+
+/** In-flight (mid-turn) state recovered from the session snapshot. */
+export interface AppInFlightToolCall {
+  toolCallId: string;
+  name: string;
+  args?: unknown;
+  description?: string;
+  lastProgress?: { kind: string; text?: string; percent?: number };
+}
+
+export interface AppInFlightTurn {
+  turnId: number;
+  assistantText: string;
+  thinkingText: string;
+  runningTools: AppInFlightToolCall[];
+  /** Authoritative daemon prompt_id for the active prompt, if known. */
+  promptId?: string;
+}
+
+/**
+ * IM-style initial sync result: everything needed to rebuild a session's UI
+ * state, consistent at `asOfSeq`. The standard flow is
+ * `getSessionSnapshot()` → `subscribe(sessionId, {seq: asOfSeq, epoch})`.
+ */
+export interface AppSessionSnapshot {
+  asOfSeq: number;
+  epoch: string;
+  session: AppSession;
+  /** Most recent messages, chronological ascending. */
+  messages: AppMessage[];
+  hasMoreMessages: boolean;
+  inFlightTurn: AppInFlightTurn | null;
+  pendingApprovals: AppApprovalRequest[];
+  pendingQuestions: AppQuestionRequest[];
+}
+
+export interface KimiEventHandlers {
+  onEvent(event: AppEvent, meta: { sessionId: string; seq: number }): void;
+  onResync(sessionId: string, currentSeq: number, epoch?: string): void;
+  onError(code: number, msg: string, fatal: boolean): void;
+  onConnectionChange(connected: boolean): void;
+  onTerminalOutput?(sessionId: string, terminalId: string, data: string, seq: number): void;
+  onTerminalExit?(sessionId: string, terminalId: string, exitCode: number | null): void;
+}
+
+export interface KimiEventConnection {
+  subscribe(sessionId: string, cursor?: AppSessionCursor): void;
+  unsubscribe(sessionId: string): void;
+  /**
+   * Bind the real daemon prompt_id to the next turn for a session, so the
+   * client-side projector stops synthesizing a random promptId on turn.started.
+   * Call right after submitPrompt() returns.
+   */
+  bindNextPromptId(sessionId: string, promptId: string): void;
+  /**
+   * Seed the client-side projector with a snapshot's in-flight turn so a
+   * reconnecting client renders mid-turn state immediately; emits the
+   * corresponding AppEvents through `onEvent`. Resets per-session projector
+   * state first — call BEFORE subscribe(), with the snapshot's cursor.
+   */
+  seedSnapshot(sessionId: string, snapshot: AppSessionSnapshot): void;
+  abort(sessionId: string, promptId: string): void;
+  terminalAttach(sessionId: string, terminalId: string, sinceSeq?: number): void;
+  terminalInput(sessionId: string, terminalId: string, data: string): void;
+  terminalResize(sessionId: string, terminalId: string, cols: number, rows: number): void;
+  terminalDetach(sessionId: string, terminalId: string): void;
+  terminalClose(sessionId: string, terminalId: string): void;
+  /**
+   * Mark an agent as a side-channel (e.g. BTW side chat). The client-side
+   * projector will then emit its text/thinking deltas as agent-scoped events
+   * instead of dropping them like background subagents.
+   */
+  markSideChannelAgent(agentId: string): void;
+  close(): void;
+}
+
+// ---------------------------------------------------------------------------
+// Model + Provider (app-facing, camelCase)
+// PRESUMED — not in current daemon docs; isolated in adapter, swap when backend defines them.
+// ---------------------------------------------------------------------------
+
+export interface AppModel {
+  /** Unique identifier for this model (the string passed to PATCH session agent_config.model) */
+  id: string;
+  /** Provider id this model belongs to */
+  provider: string;
+  /** Raw model name (e.g. "moonshot-v1-128k") */
+  model: string;
+  /** Optional human-readable display name */
+  displayName?: string;
+  /** Maximum context size in tokens */
+  maxContextSize: number;
+  /** Optional capability tags (e.g. ["vision", "thinking"]) */
+  capabilities?: string[];
+}
+
+export interface AppProvider {
+  /** Provider id */
+  id: string;
+  /** Provider type (e.g. "moonshot", "anthropic", "openai", "custom") */
+  type: string;
+  /** Optional custom base URL */
+  baseUrl?: string;
+  /** Optional default model alias */
+  defaultModel?: string;
+  /** Whether an API key is stored for this provider */
+  hasApiKey: boolean;
+  /** Provider connectivity status */
+  status: 'connected' | 'error' | 'unconfigured';
+  /** Model ids available from this provider */
+  models?: string[];
+}
+
+export interface ProviderRefreshResult {
+  changed: Array<{
+    providerId: string;
+    providerName: string;
+    added: number;
+    removed: number;
+  }>;
+  unchanged: string[];
+  failed: Array<{ provider: string; reason: string }>;
+}
+
+export interface AppConfigProvider {
+  type: string;
+  baseUrl?: string;
+  defaultModel?: string;
+  hasApiKey: boolean;
+}
+
+export interface AppConfig {
+  providers: Record<string, AppConfigProvider>;
+  defaultProvider?: string;
+  defaultModel?: string;
+  models?: Record<string, unknown>;
+  thinking?: unknown;
+  planMode?: boolean;
+  yolo?: boolean;
+  defaultThinking?: boolean;
+  defaultPermissionMode?: string;
+  defaultPlanMode?: boolean;
+  permission?: unknown;
+  hooks?: unknown[];
+  services?: unknown;
+  mergeAllAvailableSkills?: boolean;
+  extraSkillDirs?: string[];
+  loopControl?: unknown;
+  background?: unknown;
+  experimental?: Record<string, boolean>;
+  telemetry?: boolean;
+  raw?: Record<string, unknown>;
+}
+
+/** A session-scoped skill the user can invoke from the slash menu. */
+export interface AppSkill {
+  name: string;
+  description: string;
+  /** Skill source (e.g. 'builtin' | 'project' | 'plugin') for grouping/labels. */
+  source: string;
+}
+
+// ---------------------------------------------------------------------------
+// KimiWebApi — the app-facing interface
+// ---------------------------------------------------------------------------
+
+export interface KimiWebApi {
+  getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
+  getMeta(): Promise<{ serverVersion: string; serverId: string; startedAt: string; capabilities: Record<string, boolean>; openInApps: string[] }>;
+  listSessions(input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string; includeArchive?: boolean }): Promise<Page<AppSession>>;
+  createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string }): Promise<AppSession>;
+  /** Fetch one session by id (deep links beyond the first listSessions page). */
+  getSession(sessionId: string): Promise<AppSession>;
+  updateSession(sessionId: string, input: { title?: string; cwd?: string; model?: string; permissionMode?: string; planMode?: boolean; swarmMode?: boolean; goalObjective?: string; goalControl?: 'pause' | 'resume' | 'cancel'; thinking?: string }): Promise<AppSession>;
+  getSessionStatus(sessionId: string): Promise<AppSessionRuntimeStatus>;
+  archiveSession(sessionId: string): Promise<{ archived: true }>;
+  listMessages(sessionId: string, input?: PageRequest & { role?: AppMessageRole }): Promise<Page<AppMessage>>;
+  /** v2 initial sync: atomic session state + `asOfSeq` watermark + epoch. */
+  getSessionSnapshot(sessionId: string): Promise<AppSessionSnapshot>;
+  submitPrompt(sessionId: string, input: PromptSubmission): Promise<PromptSubmitResult>;
+  /** Steer daemon-queued prompts into the active turn (TUI ctrl+s). */
+  steerPrompts(sessionId: string, promptIds: string[]): Promise<{ steered: boolean; promptIds: string[] }>;
+  abortPrompt(sessionId: string, promptId: string): Promise<{ aborted: boolean; atSeq?: number }>;
+  /** Cancel whatever is running in the session, including skill activations. */
+  abortSession(sessionId: string): Promise<{ aborted: boolean }>;
+  compactSession(sessionId: string, instruction?: string): Promise<void>;
+  undoSession(sessionId: string, count?: number): Promise<void>;
+  forkSession(sessionId: string, input?: { title?: string }): Promise<AppSession>;
+  /** Create a child session under a parent — POST /sessions/{id}/children. */
+  createChildSession(sessionId: string, input?: { title?: string }): Promise<AppSession>;
+  /** List a session's child sessions — GET /sessions/{id}/children. */
+  listChildSessions(sessionId: string): Promise<AppSession[]>;
+  /** Start a BTW side-channel agent under the session — POST /sessions/{id}:btw. */
+  startBtw(sessionId: string): Promise<{ agentId: string }>;
+  respondApproval(sessionId: string, approvalId: string, response: ApprovalResponse): Promise<{ resolved: true; resolvedAt: string }>;
+  respondQuestion(sessionId: string, questionId: string, response: QuestionResponse): Promise<{ resolved: true; resolvedAt: string }>;
+  dismissQuestion(sessionId: string, questionId: string): Promise<{ dismissed: true; dismissedAt: string }>;
+  listSkills(sessionId: string): Promise<AppSkill[]>;
+  activateSkill(sessionId: string, skillName: string, args?: string): Promise<{ activated: true; skillName: string }>;
+  listTasks(sessionId: string, status?: AppTaskStatus): Promise<AppTask[]>;
+  getTask(sessionId: string, taskId: string, input?: { withOutput?: boolean; outputBytes?: number }): Promise<AppTask>;
+  cancelTask(sessionId: string, taskId: string): Promise<{ cancelled: true }>;
+  listTerminals(sessionId: string): Promise<AppTerminal[]>;
+  createTerminal(sessionId: string, input?: { cwd?: string; shell?: string; cols?: number; rows?: number }): Promise<AppTerminal>;
+  getTerminal(sessionId: string, terminalId: string): Promise<AppTerminal>;
+  closeTerminal(sessionId: string, terminalId: string): Promise<{ closed: true }>;
+  listDirectory(sessionId: string, input: { path?: string; depth?: number; includeGitStatus?: boolean }): Promise<{ items: FsEntry[]; childrenByPath?: Record<string, FsEntry[]>; truncated: boolean }>;
+  readFile(sessionId: string, input: { path: string; offset?: number; length?: number }): Promise<{ path: string; content: string; encoding: 'utf-8' | 'base64'; size: number; truncated: boolean; etag: string; mime: string; languageId?: string; lineCount?: number; isBinary: boolean }>;
+  searchFiles(sessionId: string, input: { query: string; limit?: number }): Promise<{ items: Array<{ path: string; name: string; kind: FsKind; score: number; matchPositions: number[] }>; truncated: boolean }>;
+  grepFiles(sessionId: string, input: { pattern: string; regex?: boolean; caseSensitive?: boolean }): Promise<{ files: Array<{ path: string; matches: Array<{ line: number; col: number; text: string; before: string[]; after: string[] }> }>; filesScanned: number; truncated: boolean; elapsedMs: number }>;
+  getGitStatus(sessionId: string, paths?: string[]): Promise<{ branch: string; ahead: number; behind: number; entries: Record<string, string>; additions: number; deletions: number; pullRequest: { number: number; state: string; url: string } | null }>;
+  getFileDiff(sessionId: string, path: string): Promise<{ path: string; diff: string }>;
+  getFileDownloadUrl(sessionId: string, path: string): string;
+  openFile(sessionId: string, input: { path: string; line?: number }): Promise<{ opened: true }>;
+  revealFile(sessionId: string, input: { path: string }): Promise<{ revealed: true }>;
+  /** Open the session working directory (or a session-relative path) in an external application. */
+  openInApp(sessionId: string, appId: string, path: string, line?: number): Promise<void>;
+  connectEvents(handlers: KimiEventHandlers): KimiEventConnection;
+
+  // Workspaces + daemon folder browser
+  // PRESUMED — falls back until the daemon ships /workspaces, /fs:browse, /fs:home.
+  listWorkspaces(): Promise<AppWorkspace[]>;
+  addWorkspace(input: { root: string; name?: string }): Promise<AppWorkspace>;
+  deleteWorkspace(id: string): Promise<void>;
+  browseFs(path?: string): Promise<FsBrowseResult>;
+  getFsHome(): Promise<{ home: string; recentRoots: string[] }>;
+
+  // PRESUMED — not in current daemon docs; isolated in adapter, swap when backend defines them.
+  listModels(): Promise<AppModel[]>;
+  listProviders(): Promise<AppProvider[]>;
+  addProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<AppProvider>;
+  deleteProvider(id: string): Promise<{ deleted: true }>;
+  refreshProvider(id: string): Promise<AppProvider>;
+  refreshOAuthProviderModels(): Promise<ProviderRefreshResult>;
+
+  // File upload / download
+  uploadFile(input: { file: Blob; name?: string }): Promise<{ id: string; name: string; mediaType: string; size: number }>;
+  getFileUrl(fileId: string): string;
+
+  // Config — REAL endpoints
+  getConfig(): Promise<AppConfig>;
+  setConfig(patch: Partial<AppConfig>): Promise<AppConfig>;
+
+  // Auth — REAL endpoints
+  getAuth(): Promise<{
+    ready: boolean;
+    providersCount: number;
+    defaultModel: string | null;
+    managedProvider: { status: string } | null;
+  }>;
+  startOAuthLogin(): Promise<{
+    flowId: string;
+    provider: string;
+    verificationUri: string;
+    verificationUriComplete: string;
+    userCode: string;
+    expiresIn: number;
+    interval: number;
+    status: 'pending';
+    expiresAt: string;
+  }>;
+  pollOAuthLogin(): Promise<{
+    flowId: string;
+    status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
+    resolvedAt?: string;
+  } | null>;
+  cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }>;
+  logout(): Promise<{ loggedOut: boolean }>;
+}

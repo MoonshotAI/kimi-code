@@ -469,7 +469,7 @@ describe('MicroCompaction', () => {
       'result three',
     ]);
 
-    const event = singleTelemetryEvent(records, 'micro_compaction_applied');
+    const event = singleTelemetryEvent(records, 'micro_compaction_finished');
     expect(event.properties).toMatchObject({
       ...microCompaction,
       truncatedMarker: DEFAULT_MARKER,
@@ -478,15 +478,64 @@ describe('MicroCompaction', () => {
       message_count: 9,
       cache_age_ms: 61 * MINUTE,
       truncatedToolResultCount: 2,
-      beforeTokens: expect.any(Number),
-      afterTokens: expect.any(Number),
+      truncatedToolResultTokensBefore: expect.any(Number),
+      truncatedToolResultTokensAfter: expect.any(Number),
+      tokensBefore: expect.any(Number),
+      tokensAfter: expect.any(Number),
     });
-    expect(numberProperty(event, 'beforeTokens')).toBeGreaterThan(
-      numberProperty(event, 'afterTokens'),
+    expect(numberProperty(event, 'truncatedToolResultTokensBefore')).toBeGreaterThan(
+      numberProperty(event, 'truncatedToolResultTokensAfter'),
+    );
+    expect(numberProperty(event, 'tokensBefore')).toBeGreaterThan(
+      numberProperty(event, 'tokensAfter'),
     );
 
     expect(ctx.agent.context.messages).toHaveLength(9);
-    expect(records.filter((record) => record.event === 'micro_compaction_applied')).toHaveLength(1);
+    expect(records.filter((record) => record.event === 'micro_compaction_finished')).toHaveLength(1);
+  });
+
+  it('reports context token deltas from the previously compacted projection', () => {
+    vi.useFakeTimers();
+    const records: TelemetryRecord[] = [];
+    const microCompaction = {
+      keepRecentMessages: 2,
+      minContentTokens: 1,
+      cacheMissedThresholdMs: 60 * MINUTE,
+      minContextUsageRatio: 0,
+    };
+    const ctx = testAgent({
+      telemetry: recordingTelemetry(records),
+      microCompaction,
+    });
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, { output: 'result one '.repeat(20) });
+    appendMicroToolExchange(ctx, 2, { output: 'result two '.repeat(20) });
+
+    vi.setSystemTime(61 * MINUTE);
+    ctx.agent.microCompaction.detect();
+    expect(toolTexts(ctx.agent.context.messages)).toEqual([
+      DEFAULT_MARKER,
+      'result two '.repeat(20),
+    ]);
+
+    vi.setSystemTime(62 * MINUTE);
+    appendMicroToolExchange(ctx, 3, { output: 'result three' });
+    const expectedContextTokensBefore = estimateTokensForMessages(ctx.agent.context.messages);
+
+    vi.setSystemTime(123 * MINUTE);
+    ctx.agent.microCompaction.detect();
+
+    const events = records.filter((record) => record.event === 'micro_compaction_finished');
+    expect(events).toHaveLength(2);
+    const secondEvent = events[1]!;
+    expect(secondEvent.properties).toMatchObject({
+      previous_cutoff: 4,
+      cutoff: 7,
+      truncatedToolResultCount: 2,
+      tokensBefore: expectedContextTokensBefore,
+      tokensAfter: estimateTokensForMessages(ctx.agent.context.messages),
+    });
   });
 
   it('leaves context unchanged when the micro_compaction flag is disabled', () => {

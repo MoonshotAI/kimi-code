@@ -6,6 +6,33 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.17.1 (2026-06-17)
+
+### Bug Fixes
+
+- Fix the `kimi web` command failing to start in the background.
+- Stop the background local server from locking the directory it was started in.
+- Prevent the web login dialog from closing when clicking the backdrop.
+
+### Polish
+
+- Group the default model dropdown in web settings by provider.
+
+## 0.17.0 (2026-06-17)
+
+### Features
+
+- Add Kimi Code Web mode, which you can start with `kimi web` or `/web` in the CLI, and continue sessions in a browser chat interface.
+
+### Bug Fixes
+
+- Show the underlying connection error when OAuth token refresh fails after internal retries, instead of prompting for login. Token refresh failures are no longer re-retried at the agent loop level.
+- Restore the turn counter from persisted loop events on resume so post-resume turns no longer reuse turn ids that already appear in history.
+
+### Polish
+
+- Skip debug TPS when the output stream is too short to measure reliably.
+
 ## 0.16.0 (2026-06-16)
 
 ### Features

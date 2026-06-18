@@ -1,0 +1,23 @@
+export default {
+  placeholder: '输入消息…',
+  send: '发送 ↵',
+  queueLabel: '队列',
+  editQueued: '编辑（载入到输入框）',
+  queuedImageOnly: '图片 ×{n}',
+  queuedHasImage: '包含 {n} 张图片 — 只能移除，不能编辑',
+  remove: '移除',
+  removeNamed: '移除 {name}',
+  uploading: '上传中',
+  uploadFailed: '上传失败',
+  attachImage: '附加图片',
+  previewAttachment: '预览 {name}',
+  interrupt: '中断',
+  interruptTitle: '中断当前操作',
+  steerNow: '立即插入 ⌃S',
+  steerTitle: '不等当前回合结束，把消息直接插进正在运行的任务（Ctrl+S / ⌘S）',
+  emptyConversationTitle: 'Kimi Code',
+  emptyConversation: '还没有消息 —— 在下方输入开始对话',
+  quickStartPlaceholder: '输入消息开始新对话…',
+  thinkingSuffix: ' · thinking',
+
+} as const;
