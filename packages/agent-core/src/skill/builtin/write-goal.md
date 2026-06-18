@@ -15,6 +15,7 @@ This skill is about authoring the objective text together with the user. Draftin
 - **Write in the user's language.** Draft the objective in whatever language the user is writing to you in. If the project configuration or a saved memory names a preferred language, honor that instead. Keep the surrounding discussion in the same language.
 - **Show before you start.** Always present the full drafted goal back to the user and get their agreement before anything runs. The user should read the exact text that will become the objective, not a paraphrase of it.
 - **Draft with the user, not for them.** Goal-writing is a conversation. Offer a draft, explain the choices you made, invite changes, and fold the feedback in. Expect more than one round.
+- **Put discrete decisions to the user as a question.** Whenever the choice is between a small set of options — which area to scope, which of two phrasings to use, whether to add a budget and roughly how big, which permission mode to start under — use **AskUserQuestion** so the user can pick directly. Reserve plain prose for genuinely free-form input (e.g. "what counts as done here?"). If `AskUserQuestion` is unavailable (for example in auto mode), ask the same thing as a plain message with clearly labelled options and wait for the reply.
 - **Respect the user's final call.** If, after you have pointed out what is vague or risky, the user still wants a looser or thinner goal, write the goal they asked for. Note the trade-off once; do not keep relitigating it or quietly "improve" the wording against their wishes.
 
 ## What makes a goal good
@@ -42,7 +43,7 @@ When a budget is genuinely useful — typically an open-ended or exploratory goa
 
 ## Workflow
 
-1. **Understand the intention.** Ask what outcome the user actually wants and what would prove it is done. If a finish line or a check is missing, that gap is the first thing to resolve together.
+1. **Understand the intention.** Ask what outcome the user actually wants and what would prove it is done. If a finish line or a check is missing, that gap is the first thing to resolve together. When the open questions reduce to a few concrete options, put them to the user with **AskUserQuestion** rather than prose.
 2. **Draft the goal.** Write a concrete objective in the user's language, covering as many parts of the contract above as the task warrants. Keep it readable — one or a few sentences for simple work, a short structured block (end state, checks, boundaries, stop rule) for larger work.
 3. **Show it and explain.** Present the draft in full and walk through the choices: what you picked as the finish line, what proves it, what you fenced off, when it stops. Point out anything still soft.
 4. **Revise together.** Take the user's edits and produce a new draft. Repeat until they are satisfied. If they want it looser than you would recommend, say so once, then write their version.
@@ -79,6 +80,7 @@ Not every goal needs every line, and none of them is a turn cap — the goal sto
 | Drafting in English when the user is writing in another language | Match the user's language (or the project / memory preference) |
 | Running the goal before the user has seen the exact text | Show the full draft and get agreement first |
 | Polishing the goal silently against the user's stated wishes | Note the trade-off once, then write the goal they asked for |
+| Burying a discrete choice in prose | Offer the options with AskUserQuestion (plain labelled options if it is unavailable) |
 | Specifying effort ("keep improving X") | Specify proof ("done when check X passes") |
 | Baking a turn cap into the objective or setting a budget unprompted | Let the goal stop on its proof; suggest a budget only when useful, framed on token cost |
 | No blocked path | Add an explicit "stop and report" rule for blockers |
