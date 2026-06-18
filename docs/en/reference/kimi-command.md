@@ -194,11 +194,12 @@ The loopback host, chosen port, and log level are recorded to `~/.kimi-code/serv
 
 #### `kimi web`
 
-Alias for `kimi server run` with `--open` defaulted to `true` — runs the server in the foreground and opens the web UI in the default browser once it is healthy. Use `--no-open` to skip the browser launch (effectively turning it back into `kimi server run`).
+Alias for `kimi server run` with `--open` defaulted to `true`: it starts a background daemon (reusing a running one), opens the web UI in the default browser once healthy, and returns, leaving the server resident in the background. Use `--no-open` to skip the browser launch (effectively turning it back into `kimi server run`), or `--foreground` to run attached to the current terminal.
 
 ```sh
-kimi web                        # foreground + open browser
+kimi web                        # background daemon + open browser
 kimi web --no-open              # equivalent to `kimi server run`
+kimi web --foreground           # run attached to the current terminal
 ```
 
 The same `--port`, `--log-level`, and `--debug-endpoints` flags work as on `kimi server run`.
