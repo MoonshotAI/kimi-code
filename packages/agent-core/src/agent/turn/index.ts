@@ -69,6 +69,9 @@ interface TrackedToolCall {
   readonly startedAt: number;
 }
 
+type TurnTelemetryOutcome = 'success' | 'error' | 'cancelled' | 'blocked';
+type TurnBlockedReason = 'user_prompt_hook' | 'goal_budget';
+
 const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
 
 /** Origin tag for the synthetic "continue" prompt that drives each goal turn. */
@@ -430,7 +433,7 @@ export class TurnFlow {
     };
     this.agent.usage.endTurn();
     this.agent.emitEvent(ended);
-    this.trackTurnEnded(turnId, ended, Date.now() - startedAt);
+    this.trackTurnEnded(turnId, ended, Date.now() - startedAt, 'goal_budget');
     this.endTelemetryTurn(turnId);
     return ended;
   }
@@ -541,7 +544,12 @@ export class TurnFlow {
     if (ended.reason !== 'completed') {
       this.trackTurnInterrupted(turnId, this.currentStepByTurn.get(turnId) ?? this.currentStep);
     }
-    this.trackTurnEnded(turnId, ended, Date.now() - startedAt);
+    this.trackTurnEnded(
+      turnId,
+      ended,
+      Date.now() - startedAt,
+      blockedByUserPromptHook ? 'user_prompt_hook' : undefined,
+    );
     this.endTelemetryTurn(turnId);
     return { event: ended, stopReason: completedStopReason, blockedByUserPromptHook };
   }
@@ -627,7 +635,7 @@ export class TurnFlow {
           dispatchEvent: this.buildDispatchEvent(turnId),
           tools: this.agent.tools.loopTools,
           log: this.agent.log,
-          telemetryMode,
+          telemetryMode: () => this.telemetryMode(),
           maxSteps: loopControl?.maxStepsPerTurn,
           maxRetryAttempts: loopControl?.maxRetriesPerStep,
           recordStepUsage: async (usage) => {
@@ -920,13 +928,20 @@ export class TurnFlow {
     return mode;
   }
 
-  private trackTurnEnded(turnId: number, ended: TurnEndedEvent, durationMs: number): void {
-    this.agent.telemetry.track('turn_ended', {
+  private trackTurnEnded(
+    turnId: number,
+    ended: TurnEndedEvent,
+    durationMs: number,
+    blockedReason?: TurnBlockedReason,
+  ): void {
+    const properties: Record<string, TelemetryPropertyValue> = {
       turn_id: turnId,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
-      outcome: telemetryTurnOutcome(ended),
+      outcome: telemetryTurnOutcome(ended, blockedReason),
       duration_ms: durationMs,
-    });
+      blocked_reason: blockedReason,
+    };
+    this.agent.telemetry.track('turn_ended', properties);
   }
 
   private endTelemetryTurn(turnId: number): void {
@@ -1114,7 +1129,11 @@ function currentTurnInputTokens(usage: TokenUsage | undefined): number | undefin
   return inputTotal(usage);
 }
 
-function telemetryTurnOutcome(event: TurnEndedEvent): 'success' | 'error' | 'cancelled' {
+function telemetryTurnOutcome(
+  event: TurnEndedEvent,
+  blockedReason?: TurnBlockedReason,
+): TurnTelemetryOutcome {
+  if (blockedReason !== undefined) return 'blocked';
   switch (event.reason) {
     case 'completed':
       return 'success';

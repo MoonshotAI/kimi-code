@@ -4,6 +4,10 @@ import * as retry from 'retry';
 import type { Logger } from '#/logging/types';
 
 import { abortable } from '../utils/abort';
+import {
+  resolveTelemetryMode,
+  type TelemetryModeResolver,
+} from '../agent/turn/telemetry';
 import type { LoopEventDispatcher } from './events';
 import { isAbortError } from './errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
@@ -21,7 +25,7 @@ export interface ChatWithRetryInput {
   readonly turnId: string;
   readonly currentStep: number;
   readonly stepUuid: string;
-  readonly telemetryMode?: 'agent' | 'plan' | undefined;
+  readonly telemetryMode?: TelemetryModeResolver;
   readonly maxAttempts?: number;
   readonly log?: Logger | undefined;
 }
@@ -98,7 +102,7 @@ function paramsForAttempt(
     telemetryFields: {
       turnId: input.turnId,
       step: input.currentStep,
-      mode: input.telemetryMode,
+      mode: resolveTelemetryMode(input.telemetryMode),
       attemptNo: attempt,
       maxAttempts,
     },

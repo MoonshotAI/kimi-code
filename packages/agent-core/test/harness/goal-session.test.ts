@@ -14,7 +14,9 @@ import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { SessionAPIImpl } from '../../src/session/rpc';
+import type { TelemetryClient } from '../../src/telemetry';
 import { createScriptedGenerate } from '../agent/harness/scripted-generate';
+import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { testKaos } from '../fixtures/test-kaos';
 
 const MOCK_PROVIDER = { type: 'kimi', apiKey: 'test-key', model: 'mock-model' } as const satisfies ProviderConfig;
@@ -81,6 +83,7 @@ async function setupSession(
   generate?: NonNullable<AgentOptions['generate']>,
   hooks?: readonly HookDef[],
   config?: KimiConfig,
+  telemetry?: TelemetryClient,
 ) {
   const scripted = createScriptedGenerate();
   const session = track(
@@ -93,6 +96,7 @@ async function setupSession(
       providerManager: testProviderManager(),
       hooks,
       config,
+      telemetry,
     }),
   );
   const { agent } = await session.createAgent(
@@ -433,13 +437,23 @@ describe('goal session end-to-end', () => {
   it('blocks immediately when a resumed goal is already over budget', async () => {
     const sessionDir = await makeTempDir();
     const events: Array<Record<string, unknown>> = [];
-    const { session, agent, scripted } = await setupSession(sessionDir, events, ['GetGoal']);
+    const records: TelemetryRecord[] = [];
+    const { session, agent, scripted } = await setupSession(
+      sessionDir,
+      events,
+      ['GetGoal'],
+      undefined,
+      undefined,
+      undefined,
+      recordingTelemetry(records),
+    );
     const api = new SessionAPIImpl(session);
     await api.createGoal({ agentId: 'main', objective: 'work' });
     await agent.goal.setBudgetLimits({ budgetLimits: { turnBudget: 1 } }, 'model');
     await agent.goal.incrementTurn();
     await agent.goal.markBlocked({ reason: 'A configured budget was reached' });
     await api.resumeGoal({ agentId: 'main' });
+    records.length = 0;
 
     scripted.mockNextResponse({ type: 'text', text: 'should not run' });
     agent.turn.prompt([{ type: 'text', text: 'continue' }]);
@@ -449,6 +463,16 @@ describe('goal session end-to-end', () => {
     expect(scripted.calls).toHaveLength(0);
     expect(goal?.status).toBe('blocked');
     expect(goal?.turnsUsed).toBe(1);
+    expect(records).toContainEqual({
+      event: 'turn_ended',
+      properties: {
+        turn_id: 0,
+        mode: 'agent',
+        outcome: 'blocked',
+        blocked_reason: 'goal_budget',
+        duration_ms: expect.any(Number),
+      },
+    });
   });
 
   it('stops before another model step when a token budget is reached mid-turn', async () => {

@@ -13,6 +13,7 @@ import type { TokenUsage } from '@moonshot-ai/kosong';
 import type { Logger } from '#/logging/types';
 
 import type { LoopEventDispatcher } from './events';
+import type { TelemetryModeResolver } from '../agent/turn/telemetry';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 import { chatWithRetry } from './retry';
 import { runToolCallBatch, type ToolCallStepContext } from './tool-call';
@@ -38,7 +39,7 @@ export interface ExecuteLoopStepDeps {
   readonly tools?: readonly ExecutableTool[] | undefined;
   readonly hooks?: LoopHooks | undefined;
   readonly log?: Logger | undefined;
-  readonly telemetryMode?: 'agent' | 'plan' | undefined;
+  readonly telemetryMode?: TelemetryModeResolver;
   readonly currentStep: number;
   readonly maxRetryAttempts?: number;
   readonly recordUsage: (usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>;

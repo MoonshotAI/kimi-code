@@ -217,6 +217,40 @@ describe('Agent turn flow', () => {
     });
   });
 
+  it('tracks request-time plan mode for llm requests after EnterPlanMode', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+    ctx.configure({ tools: ['EnterPlanMode'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    records.length = 0;
+
+    const enterPlanModeCall: ToolCall = {
+      type: 'function',
+      id: 'call_enter_plan',
+      name: 'EnterPlanMode',
+      arguments: '{}',
+    };
+    ctx.mockNextResponse({ type: 'text', text: 'I will enter plan mode.' }, enterPlanModeCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Plan mode is active now.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Plan first' }] });
+    await ctx.untilTurnEnd();
+
+    const llmRequests = records.filter((record) => record.event === 'llm_request');
+    expect(llmRequests).toHaveLength(2);
+    expect(llmRequests[0]?.properties).toMatchObject({
+      turn_id: 0,
+      step_no: 1,
+      mode: 'agent',
+      outcome: 'success',
+    });
+    expect(llmRequests[1]?.properties).toMatchObject({
+      turn_id: 0,
+      step_no: 2,
+      mode: 'plan',
+      outcome: 'success',
+    });
+  });
+
   it('tracks duplicate tool-call detection telemetry', async () => {
     const records: TelemetryRecord[] = [];
     const ctx = testAgent({
@@ -737,8 +771,10 @@ describe('Agent turn flow', () => {
         command: "echo 'no profanity' >&2; exit 2",
       },
     ]);
-    const ctx = testAgent({ hookEngine });
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ hookEngine, telemetry: recordingTelemetry(records) });
     ctx.configure();
+    records.length = 0;
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'bad words here' }] });
     const events = await ctx.untilTurnEnd();
@@ -755,6 +791,16 @@ describe('Agent turn flow', () => {
         }),
       }),
     );
+    expect(records).toContainEqual({
+      event: 'turn_ended',
+      properties: {
+        turn_id: 0,
+        mode: 'agent',
+        outcome: 'blocked',
+        blocked_reason: 'user_prompt_hook',
+        duration_ms: expect.any(Number),
+      },
+    });
     expect(ctx.agent.context.data().history).toEqual([
       {
         role: 'user',
@@ -1379,6 +1425,7 @@ describe('Agent turn flow', () => {
   it('falls back to login_required when force-refresh and replay both 401', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
+    const records: TelemetryRecord[] = [];
     const oauthOptions = oauthAgentOptions(
       async (options) => {
         tokenCalls.push(options?.force);
@@ -1397,10 +1444,11 @@ describe('Agent turn flow', () => {
       authKeys.push(options?.auth?.apiKey ?? '<missing>');
       throw new APIStatusError(401, 'Unauthorized', 'req-401');
     };
-    const ctx = testAgent({ ...oauthOptions, generate });
+    const ctx = testAgent({ ...oauthOptions, generate, telemetry: recordingTelemetry(records) });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
+    records.length = 0;
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
     const events = await ctx.untilTurnEnd();
@@ -1423,6 +1471,27 @@ describe('Agent turn flow', () => {
         }),
       }),
     );
+
+    expect(records).toContainEqual({
+      event: 'llm_request',
+      properties: expect.objectContaining({
+        turn_id: 0,
+        step_no: 1,
+        mode: 'agent',
+        attempt_no: 1,
+        max_attempts: 3,
+        outcome: 'error',
+        error_type: 'auth',
+        status_code: 401,
+      }),
+    });
+    expect(records).toContainEqual({
+      event: 'api_error',
+      properties: expect.objectContaining({
+        error_type: 'auth',
+        status_code: 401,
+      }),
+    });
   });
 
   it('keeps non-OAuth provider 401 as provider auth error', async () => {

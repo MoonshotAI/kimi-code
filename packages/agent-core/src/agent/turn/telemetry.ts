@@ -6,9 +6,14 @@ import {
   isContextOverflowStatusError,
 } from '@moonshot-ai/kosong';
 
-import { ErrorCodes, type KimiErrorPayload } from '#/errors';
+import { ErrorCodes, isKimiError, type KimiErrorPayload } from '#/errors';
 
 export type TelemetryMode = 'agent' | 'plan';
+export type TelemetryModeResolver = TelemetryMode | (() => TelemetryMode);
+
+export function resolveTelemetryMode(mode: TelemetryModeResolver | undefined): TelemetryMode | undefined {
+  return typeof mode === 'function' ? mode() : mode;
+}
 
 export interface ApiErrorClassification {
   readonly errorType: string;
@@ -22,17 +27,20 @@ export interface ApiErrorClassification {
  *   `APIStatusError`, `APIConnectionError`), `summary` may be omitted — the
  *   status code / `instanceof` checks carry all the information. This is the
  *   `llm_request` path inside `KosongLLM`.
- * - When `error` is a `KimiError` or an already-serialized payload (the
- *   turn-level `api_error` path, where the error has been summarized), pass
- *   `summary` so the error code (`PROVIDER_RATE_LIMIT`, `PROVIDER_AUTH_ERROR`,
- *   `CONTEXT_OVERFLOW`) can be recognized; otherwise classification falls back
- *   to `'other'`.
+ * - When `error` is a `KimiError`, its `code` and `details.statusCode` are
+ *   recognized directly, so the `llm_request` path can classify wrapped OAuth
+ *   errors without re-summarizing them.
+ * - When `error` is an already-serialized payload (the turn-level `api_error`
+ *   path, where the error has been summarized), pass `summary` so the error
+ *   code (`PROVIDER_RATE_LIMIT`, `PROVIDER_AUTH_ERROR`, `CONTEXT_OVERFLOW`)
+ *   can be recognized; otherwise classification falls back to `'other'`.
  */
 export function classifyApiError(
   error: unknown,
   summary?: KimiErrorPayload | undefined,
 ): ApiErrorClassification {
-  const statusCode = apiStatusCode(error) ?? summaryStatusCode(summary);
+  const errorCode = isKimiError(error) ? error.code : summary?.code;
+  const statusCode = apiStatusCode(error) ?? kimiErrorStatusCode(error) ?? summaryStatusCode(summary);
   if (statusCode !== undefined) {
     if (statusCode === 429) return { errorType: 'rate_limit', statusCode };
     if (statusCode === 401 || statusCode === 403) return { errorType: 'auth', statusCode };
@@ -44,9 +52,11 @@ export function classifyApiError(
     return { errorType: 'api', statusCode };
   }
 
-  if (summary?.code === ErrorCodes.PROVIDER_RATE_LIMIT) return { errorType: 'rate_limit' };
-  if (summary?.code === ErrorCodes.PROVIDER_AUTH_ERROR) return { errorType: 'auth' };
-  if (summary?.code === ErrorCodes.CONTEXT_OVERFLOW) return { errorType: 'context_overflow' };
+  if (errorCode === ErrorCodes.PROVIDER_RATE_LIMIT) return { errorType: 'rate_limit' };
+  if (errorCode === ErrorCodes.PROVIDER_AUTH_ERROR || errorCode === ErrorCodes.AUTH_LOGIN_REQUIRED) {
+    return { errorType: 'auth' };
+  }
+  if (errorCode === ErrorCodes.CONTEXT_OVERFLOW) return { errorType: 'context_overflow' };
   if (isApiConnectionError(error, summary)) return { errorType: 'network' };
   if (isApiTimeoutError(error, summary)) return { errorType: 'timeout' };
   if (isApiEmptyResponseError(error, summary)) return { errorType: 'empty_response' };
@@ -67,6 +77,12 @@ function apiStatusCode(error: unknown): number | undefined {
 
 function summaryStatusCode(summary: KimiErrorPayload | undefined): number | undefined {
   const statusCode = summary?.details?.['statusCode'];
+  return typeof statusCode === 'number' ? statusCode : undefined;
+}
+
+function kimiErrorStatusCode(error: unknown): number | undefined {
+  if (!isKimiError(error)) return undefined;
+  const statusCode = error.details?.['statusCode'];
   return typeof statusCode === 'number' ? statusCode : undefined;
 }
 

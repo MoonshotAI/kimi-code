@@ -10,6 +10,7 @@ import { addUsage, emptyUsage, type TokenUsage } from '@moonshot-ai/kosong';
 
 import type { Logger } from '#/logging/types';
 
+import type { TelemetryModeResolver } from '../agent/turn/telemetry';
 import {
   createMaxStepsExceededError,
   errorMessage,
@@ -38,7 +39,7 @@ export interface RunTurnInput {
   readonly tools?: readonly ExecutableTool[] | undefined;
   readonly hooks?: LoopHooks | undefined;
   readonly log?: Logger | undefined;
-  readonly telemetryMode?: 'agent' | 'plan' | undefined;
+  readonly telemetryMode?: TelemetryModeResolver;
   readonly maxSteps?: number | undefined;
   readonly maxRetryAttempts?: number;
   readonly recordStepUsage?:
