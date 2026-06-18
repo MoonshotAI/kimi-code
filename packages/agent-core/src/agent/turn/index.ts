@@ -1155,7 +1155,7 @@ function telemetryToolOutcome(result: ToolTelemetryResult): 'success' | 'error' 
 
 function telemetryToolErrorType(result: ToolTelemetryResult): string {
   const text = toolResultText(result);
-  if (text.startsWith('Tool "') && text.includes('" not found')) return 'ToolNotFound';
+  if (text.startsWith('Tool "') && (text.includes('" not found') || text.includes('is not available'))) return 'ToolNotFound';
   if (text.startsWith('Invalid args for tool "')) return 'ToolInputError';
   if (text.includes('prepareToolExecution hook failed')) return 'HookError';
   if (text.includes('finalizeToolResult hook failed')) return 'HookError';

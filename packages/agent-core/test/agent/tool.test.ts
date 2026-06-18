@@ -1,6 +1,7 @@
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
+import { ToolManager } from '../../src/agent/tool';
 import { HookEngine } from '../../src/session/hooks';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
@@ -9,6 +10,295 @@ import { createCommandKaos, testAgent } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
+
+describe('ToolManager setActiveTools filtering', () => {
+  it('filters out unregistered profile tools from the active set', () => {
+    const warnings: string[] = [];
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: (msg: string) => { warnings.push(msg); } },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    // Populate builtinTools map directly to simulate registered tools
+    (tm as any).builtinTools.set('Read', { name: 'Read', description: '', parameters: {}, resolveExecution: vi.fn() });
+    (tm as any).builtinTools.set('Write', { name: 'Write', description: '', parameters: {}, resolveExecution: vi.fn() });
+    (tm as any).builtinTools.set('Bash', { name: 'Bash', description: '', parameters: {}, resolveExecution: vi.fn() });
+
+    // Set active tools — WebSearch and NonExistentTool are not registered
+    tm.setActiveTools(['Read', 'Write', 'Bash', 'WebSearch', 'NonExistentTool']);
+
+    // Check active tools via toolInfos
+    const activeNames = [...tm.toolInfos()]
+      .filter((i) => i.active)
+      .map((i) => i.name)
+      .toSorted();
+    expect(activeNames).toEqual(['Bash', 'Read', 'Write']);
+
+    // Check warning was logged with missing tool names
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain('are not available');
+    expect(warnings[0]).toContain('WebSearch');
+    expect(warnings[0]).toContain('NonExistentTool');
+    // Read should not be mentioned as missing
+    expect(warnings[0]).not.toContain('Read');
+  });
+
+  it('keeps all tools when all profile names are registered', () => {
+    const warnings: string[] = [];
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: (msg: string) => { warnings.push(msg); } },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    (tm as any).builtinTools.set('Read', { name: 'Read', description: '', parameters: {}, resolveExecution: vi.fn() });
+    (tm as any).builtinTools.set('Write', { name: 'Write', description: '', parameters: {}, resolveExecution: vi.fn() });
+    (tm as any).builtinTools.set('Bash', { name: 'Bash', description: '', parameters: {}, resolveExecution: vi.fn() });
+    (tm as any).builtinTools.set('Grep', { name: 'Grep', description: '', parameters: {}, resolveExecution: vi.fn() });
+    (tm as any).builtinTools.set('Glob', { name: 'Glob', description: '', parameters: {}, resolveExecution: vi.fn() });
+
+    tm.setActiveTools(['Read', 'Write', 'Bash', 'Grep', 'Glob']);
+
+    const activeNames = [...tm.toolInfos()]
+      .filter((i) => i.active)
+      .map((i) => i.name)
+      .toSorted();
+    expect(activeNames).toEqual(['Bash', 'Glob', 'Grep', 'Read', 'Write']);
+    expect(warnings.length).toBe(0);
+  });
+
+  it('does not warn when all tools are available', () => {
+    const warnings: string[] = [];
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: (msg: string) => { warnings.push(msg); } },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    (tm as any).builtinTools.set('Read', { name: 'Read', description: '', parameters: {}, resolveExecution: vi.fn() });
+
+    tm.setActiveTools(['Read']);
+    expect(warnings.length).toBe(0);
+  });
+
+  it('defers builtin tool names as pending when builtins not yet initialized', () => {
+    const warnings: string[] = [];
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: (msg: string) => { warnings.push(msg); } },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    // builtinTools map is empty — simulate pre-initialization state
+
+    tm.setActiveTools(['Read', 'Write', 'Bash']);
+
+    // No warning because builtins are not yet initialized
+    expect(warnings.length).toBe(0);
+
+    // Active set is empty since no builtins are registered
+    const activeNames = [...tm.toolInfos()]
+      .filter((i) => i.active)
+      .map((i) => i.name);
+    expect(activeNames).toEqual([]);
+
+    // Names should be stored as pending
+    expect((tm as any).pendingBuiltinToolNames).toEqual(['Read', 'Write', 'Bash']);
+  });
+
+  it('resolves previously deferred tools when setActiveTools is recalled after builtin init', () => {
+    const makeTool = (name: string) => ({ name, description: '', parameters: {}, resolveExecution: vi.fn() });
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: vi.fn() },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    // builtinTools empty — pre-init state
+
+    // First call: builtins not initialized — names deferred
+    tm.setActiveTools(['Read', 'Write']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual(['Read', 'Write']);
+
+    // Builtins become available
+    (tm as any).builtinTools.set('Read', makeTool('Read'));
+    (tm as any).builtinTools.set('Write', makeTool('Write'));
+
+    // Second call: builtins populated — names resolve
+    tm.setActiveTools(['Read', 'Write']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual([]);
+
+    const activeNames = [...tm.toolInfos()]
+      .filter((i) => i.active)
+      .map((i) => i.name)
+      .toSorted();
+    expect(activeNames).toEqual(['Read', 'Write']);
+    // No warning because all tools resolved
+    expect(agent.log.warn).not.toHaveBeenCalled();
+  });
+
+  it('warns about tools still missing when builtins were already initialized', () => {
+    const warnings: string[] = [];
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: (msg: string) => { warnings.push(msg); } },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    // Populate builtins BEFORE setActiveTools (simulates initialized state)
+    (tm as any).builtinTools.set('Read', { name: 'Read', description: '', parameters: {}, resolveExecution: vi.fn() });
+
+    // Call setActiveTools with a genuinely missing tool
+    tm.setActiveTools(['Read', 'BogusTool']);
+
+    // Warning should fire immediately (builtins already initialized)
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain('BogusTool');
+    expect(warnings[0]).toContain('not available');
+
+    // Read should be active, BogusTool should not
+    const activeNames = [...tm.toolInfos()]
+      .filter((i) => i.active)
+      .map((i) => i.name);
+    expect(activeNames).toEqual(['Read']);
+  });
+
+  it('only keeps pending builtin names when the replacement set contains unresolved tools', () => {
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: vi.fn(), info: vi.fn() },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    // builtins empty — pre-init state
+
+    // First call: task tools saved as pending (missing builtins)
+    tm.setActiveTools(['Bash', 'TaskList', 'TaskOutput', 'TaskStop']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual([
+      'Bash', 'TaskList', 'TaskOutput', 'TaskStop',
+    ]);
+
+    // Second call: user-tool-only replacement — clears pending because
+    // this is a replacement, not an incremental addition. The new active
+    // set explicitly replaces the previous one.
+    const userTool = {
+      name: 'UserTool', description: '', parameters: {},
+      resolveExecution: vi.fn(),
+    };
+    (tm as any).userTools.set('UserTool', userTool);
+    tm.setActiveTools(['UserTool']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual([]);
+    expect([...tm.toolInfos()].filter((t) => t.active).map((t) => t.name)).toEqual(['UserTool']);
+
+    // Third call: re-establish pending
+    tm.setActiveTools(['Bash', 'TaskList', 'TaskOutput', 'TaskStop']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual([
+      'Bash', 'TaskList', 'TaskOutput', 'TaskStop',
+    ]);
+
+    // Fourth call: MCP-only — no non-MCP names, acts like empty replacement
+    tm.setActiveTools(['mcp__*']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual([]);
+  });
+
+  it('enables Bash background mode when task tools arrive via pendingBuiltinToolNames', async () => {
+    const ctx = testAgent();
+    ctx.configure({ tools: ['Bash'] });
+
+    const tm = ctx.agent.tools;
+    // Simulate deferred profile: task tools are in pending, not in enabledTools
+    (tm as any).pendingBuiltinToolNames = [
+      'Bash', 'TaskList', 'TaskOutput', 'TaskStop',
+    ];
+
+    // Re-initialize builtins — allowBackground computation should pick up
+    // pending task tools and construct Bash with run_in_background=true.
+    tm.initializeBuiltinTools();
+
+    const bashTool = tm.loopTools.find((t) => t.name === 'Bash');
+    expect(bashTool).toBeDefined();
+    expect(bashTool!.description).toContain('run_in_background=true');
+  });
+
+  it('re-resolves deferred pending tool names when they become available in a later initializeBuiltinTools call', () => {
+    const makeTool = (name: string) => ({ name, description: '', parameters: {}, resolveExecution: vi.fn() });
+    const warnings: string[] = [];
+    const infos: string[] = [];
+
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: {
+        hasProvider: false,
+        cwd: '/workspace',
+        provider: {} as import('@moonshot-ai/kosong').ChatProvider,
+        modelCapabilities: {} as import('@moonshot-ai/kosong').ModelCapability,
+      },
+      log: { warn: (msg: string) => { warnings.push(msg); }, info: (msg: string) => { infos.push(msg); } },
+      experimentalFlags: { enabled: () => false },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+      background: {} as unknown as import('../../src/agent').Agent['background'],
+      modelProvider: undefined,
+      cron: undefined,
+      skills: undefined,
+      subagentHost: undefined,
+      toolServices: undefined,
+      rpc: undefined,
+      kaos: createFakeKaos(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+
+    // Step 1: pre-init — setActiveTools defers names not in builtinTools
+    tm.setActiveTools(['Bash', 'ReadMediaFile']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual(['Bash', 'ReadMediaFile']);
+    expect((tm as any).enabledTools.size).toBe(0);
+
+    // Step 2: first initializeBuiltinTools — ReadMediaFile NOT in builtinTools
+    tm.initializeBuiltinTools();
+    // ReadMediaFile stays in pending (not cleared)
+    expect((tm as any).pendingBuiltinToolNames).toEqual(['ReadMediaFile']);
+    // Warning fired
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain('ReadMediaFile');
+    expect(warnings[0]).toContain('not available');
+
+    // Step 3: tool becomes available — model now supports image_in
+    (agent.config as any).modelCapabilities = { image_in: true };
+
+    // Step 4: second initializeBuiltinTools — ReadMediaFile now resolves
+    tm.initializeBuiltinTools();
+    expect((tm as any).pendingBuiltinToolNames).toEqual([]);
+    expect((tm as any).enabledTools.has('ReadMediaFile')).toBe(true);
+    // No second warning
+    expect(warnings.length).toBe(1);
+    // Info logged about re-application (Bash on first call, ReadMediaFile on second)
+    expect(infos.length).toBe(2);
+    expect(infos[1]).toContain('ReadMediaFile');
+  });
+});
 
 describe('Agent tools', () => {
   it('blocks tools through PreToolUse before permission and emits PostToolUseFailure', async () => {

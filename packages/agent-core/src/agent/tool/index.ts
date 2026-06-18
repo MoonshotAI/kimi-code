@@ -39,6 +39,13 @@ export class ToolManager {
   protected enabledTools: Set<string> = new Set();
   /** Glob patterns (e.g. `mcp__*`, `mcp__github__*`) gating which MCP tools the profile exposes. */
   private mcpAccessPatterns: string[] = [];
+  /**
+   * Profile-requested builtin tool names that could not be resolved because
+   * `initializeBuiltinTools()` had not run yet.  Replayed once builtins are
+   * available so tools such as `WebSearch` — which require a service that may
+   * be present at init time — are not silently dropped on first profile apply.
+   */
+  protected pendingBuiltinToolNames: string[] = [];
   protected readonly store: Partial<ToolStoreData> = {};
   private mcpToolStatusUnsubscribe: (() => void) | undefined;
 
@@ -309,7 +316,30 @@ export class ToolManager {
     });
     // MCP entries are glob patterns gated separately; the rest are exact
     // builtin/user tool names. The split keeps every caller on one string[].
-    this.enabledTools = new Set(names.filter((name) => !isMcpToolName(name)));
+    const nonMcpNames = names.filter((name) => !isMcpToolName(name));
+    const availableNames = nonMcpNames.filter(
+      (name) => this.builtinTools.has(name) || this.userTools.has(name),
+    );
+    const missingTools = nonMcpNames.filter((name) => !availableNames.includes(name));
+    if (missingTools.length > 0) {
+      if (this.builtinTools.size > 0) {
+        // Builtins are fully initialized — missing tools are genuinely unavailable.
+        this.agent.log.warn(
+          `The following tools listed in the active profile are not available and will be omitted: ${missingTools.join(', ')}. ` +
+            `They may require additional service configuration.`,
+        );
+      }
+      // Replace pending with the current missing set.  The most recent
+      // pre-init call expressing intent about builtin tools wins, so stale
+      // names from an earlier profile are not re-enabled at init time.
+      this.pendingBuiltinToolNames = [...missingTools];
+    } else {
+      // All requested tools resolved against known builtin/user tools.
+      // This is a replacement call: the new set explicitly replaces the
+      // previous one, so any prior deferred names are no longer relevant.
+      this.pendingBuiltinToolNames = [];
+    }
+    this.enabledTools = new Set(availableNames);
     this.mcpAccessPatterns = names.filter((name) => isMcpToolName(name));
   }
 
@@ -371,10 +401,15 @@ export class ToolManager {
       },
       this.agent.skills?.registry.getSkillRoots() ?? [],
     );
+    const pendingIncludesBackgroundTools =
+      this.pendingBuiltinToolNames.includes('TaskList') &&
+      this.pendingBuiltinToolNames.includes('TaskOutput') &&
+      this.pendingBuiltinToolNames.includes('TaskStop');
     const allowBackground =
-      this.enabledTools.has('TaskList') &&
-      this.enabledTools.has('TaskOutput') &&
-      this.enabledTools.has('TaskStop');
+      (this.enabledTools.has('TaskList') &&
+        this.enabledTools.has('TaskOutput') &&
+        this.enabledTools.has('TaskStop')) ||
+      pendingIncludesBackgroundTools;
     const goalToolsEnabled = this.agent.type === 'main';
     this.builtinTools = new Map(
       [
@@ -422,6 +457,31 @@ export class ToolManager {
         .filter((tool) => !!tool)
         .map((tool) => [tool.name, tool] as const),
     );
+    // Re-apply pending profile tool names that were deferred because builtins
+    // had not been initialized when `setActiveTools` was first called.
+    if (this.pendingBuiltinToolNames.length > 0) {
+      const nowAvailable = this.pendingBuiltinToolNames.filter(
+        (name) => this.builtinTools.has(name) || this.userTools.has(name),
+      );
+      if (nowAvailable.length > 0) {
+        for (const name of nowAvailable) {
+          this.enabledTools.add(name);
+        }
+        this.agent.log.info(
+          `Re-applied pending tool names that are now available: ${nowAvailable.join(', ')}.`,
+        );
+      }
+      const stillMissing = this.pendingBuiltinToolNames.filter(
+        (name) => !nowAvailable.includes(name),
+      );
+      if (stillMissing.length > 0) {
+        this.agent.log.warn(
+          `The following tools listed in the active profile are not available and will be omitted: ${stillMissing.join(', ')}. ` +
+            `They may require additional service configuration.`,
+        );
+      }
+      this.pendingBuiltinToolNames = stillMissing;
+    }
   }
 
   refreshBuiltinTools(): void {
