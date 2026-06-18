@@ -31,7 +31,7 @@ watch(
   <div v-if="items.length > 0" class="slash-menu" role="listbox">
     <div
       v-for="(item, i) in items"
-      ref="itemRefs"
+      :ref="(el) => { if (el) itemRefs[i] = el as HTMLElement }"
       :key="`${item.name}-${i}`"
       class="slash-item"
       :class="{ active: i === props.activeIndex }"
