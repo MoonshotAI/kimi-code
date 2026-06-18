@@ -15,6 +15,7 @@ import { randomBytes } from 'node:crypto';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../..';
+import { createDecorator } from '../../di';
 import { errorMessage } from '../../loop/errors';
 import type { BackgroundTaskOrigin } from '../context';
 import { renderNotificationXml } from '../context/notification-xml';
@@ -668,6 +669,21 @@ export class BackgroundManager {
       timeoutMs: entry.task.timeoutMs,
     };
     return entry.task.toInfo(base);
+  }
+}
+
+export interface IBackgroundService extends Pick<BackgroundManager, keyof BackgroundManager> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): BackgroundManager;
+}
+
+export const IBackgroundService = createDecorator<IBackgroundService>('backgroundService');
+
+export class BackgroundService extends BackgroundManager implements IBackgroundService {
+  readonly _serviceBrand: undefined;
+  unwrap(): BackgroundManager {
+    return this;
   }
 }
 

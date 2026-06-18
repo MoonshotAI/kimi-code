@@ -5,7 +5,7 @@ import { join } from 'pathe';
 import { APIConnectionError, APIStatusError, type ProviderConfig } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ProviderManager } from '../../src/session/provider-manager';
+import { ProviderService, type IProviderService } from '../../src/session/provider-manager';
 import type { AgentOptions } from '../../src/agent';
 import type { KimiConfig } from '../../src/config';
 import { ErrorCodes, KimiError } from '../../src/errors';
@@ -42,8 +42,8 @@ async function makeTempDir(): Promise<string> {
   return dir;
 }
 
-function testProviderManager(): ProviderManager {
-  return new ProviderManager({
+function testProviderManager() : IProviderService {
+  return new ProviderService({
     config: {
       providers: { test: { type: MOCK_PROVIDER.type, apiKey: MOCK_PROVIDER.apiKey } },
       models: { [MOCK_PROVIDER.model]: { provider: 'test', model: MOCK_PROVIDER.model, maxContextSize: 1_000_000 } },

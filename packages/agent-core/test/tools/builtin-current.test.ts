@@ -17,7 +17,7 @@ import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   type QueuedSubagentRunResult,
   type QueuedSubagentTask,
-  type SessionSubagentHost,
+  type ISubagentHostService,
 } from '../../src/session/subagent-host';
 import { SessionSkillRegistry } from '../../src/skill';
 import { TaskListInputSchema } from '../../src/tools/background/task-list';
@@ -67,16 +67,16 @@ function context<Input>(args: Input, toolCallId = 'call_1') {
   return { turnId: '0', toolCallId, args, signal };
 }
 
-function mockSubagentHost<T extends Partial<SessionSubagentHost>>(
+function mockSubagentHost<T extends Partial<ISubagentHostService>>(
   host: T,
-): T & SessionSubagentHost {
+): T & ISubagentHostService {
   return {
     spawn: vi.fn(),
     resume: vi.fn(),
     runQueued: vi.fn(),
     getSwarmItem: vi.fn(),
     ...host,
-  } as unknown as T & SessionSubagentHost;
+  } as unknown as T & ISubagentHostService;
 }
 
 function mockSwarmMode(): SwarmMode {
@@ -515,7 +515,7 @@ describe('current builtin collaboration tools', () => {
     };
     const host = mockSubagentHost({
       getSwarmItem: vi.fn((agentId: string) => persistedItems[agentId]),
-      runQueued: runQueued as unknown as SessionSubagentHost['runQueued'],
+      runQueued: runQueued as unknown as ISubagentHostService['runQueued'],
     });
     const swarmMode = mockSwarmMode();
     const tool = new AgentSwarmTool(host, swarmMode);
@@ -642,7 +642,7 @@ describe('current builtin collaboration tools', () => {
       getSwarmItem: vi.fn((agentId: string) =>
         agentId === 'agent-old-1' ? 'src/old-a.ts' : undefined,
       ),
-      runQueued: runQueued as unknown as SessionSubagentHost['runQueued'],
+      runQueued: runQueued as unknown as ISubagentHostService['runQueued'],
     });
     const swarmMode = mockSwarmMode();
     const tool = new AgentSwarmTool(host, swarmMode);

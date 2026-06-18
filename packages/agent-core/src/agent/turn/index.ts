@@ -16,6 +16,7 @@ import {
 import { basename } from 'pathe';
 
 import type { Agent } from '..';
+import { createDecorator } from '../../di';
 import {
   ErrorCodes,
   type KimiErrorPayload,
@@ -1047,6 +1048,21 @@ function pauseReasonWithMessage(prefix: string, message: string | undefined): st
 
 function toolInputRecord(args: unknown): Record<string, unknown> {
   return isPlainRecord(args) ? args : {};
+}
+
+export interface ITurnService extends Pick<TurnFlow, keyof TurnFlow> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): TurnFlow;
+}
+
+export const ITurnService = createDecorator<ITurnService>('turnService');
+
+export class TurnService extends TurnFlow implements ITurnService {
+  readonly _serviceBrand: undefined;
+  unwrap(): TurnFlow {
+    return this;
+  }
 }
 
 function toolOutputText(output: ExecutableToolResult['output']): string {

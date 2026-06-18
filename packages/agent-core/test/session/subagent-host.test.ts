@@ -244,7 +244,7 @@ describe('SessionSubagentHost', () => {
 
     const child = testAgent({
       type: 'sub',
-      permission: { parent: parent.agent.permission },
+      permission: { parent: parent.agent.permission.unwrap() },
     });
     child.mockNextResponse({ type: 'text', text: 'Investigated the request and completed the child task end to end. The relevant module was located, its behavior traced through every call site, and the requested change applied and verified against the existing test suite.' });
     const session = fakeSession(parent.agent, child.agent);
@@ -826,7 +826,7 @@ describe('SessionSubagentHost', () => {
 
     const child = testAgent({
       type: 'sub',
-      permission: { parent: parent.agent.permission },
+      permission: { parent: parent.agent.permission.unwrap() },
     });
     child.configure({ tools: ['Read'] });
     child.agent.useProfile(

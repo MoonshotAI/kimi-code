@@ -3,10 +3,11 @@ import type { ChatProvider, Tool } from '@moonshot-ai/kosong';
 import picomatch from 'picomatch';
 
 import type { Agent } from '..';
+import { createDecorator } from '../../di';
 import { makeErrorPayload } from '../../errors';
 import type { ExecutableTool } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
-import type { McpConnectionManager, McpServerEntry } from '../../mcp';
+import type { IMcpConnectionService, McpServerEntry } from '../../mcp';
 import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
 import type { MCPClient } from '../../mcp/types';
@@ -203,7 +204,7 @@ export class ToolManager {
     return true;
   }
 
-  private handleMcpServerStatusChange(mcp: McpConnectionManager, entry: McpServerEntry): void {
+  private handleMcpServerStatusChange(mcp: IMcpConnectionService, entry: McpServerEntry): void {
     if (entry.status === 'connected') {
       this.registerConnectedMcpServer(mcp, entry);
       return;
@@ -233,7 +234,7 @@ export class ToolManager {
     }
   }
 
-  private registerNeedsAuthMcpServer(mcp: McpConnectionManager, entry: McpServerEntry): void {
+  private registerNeedsAuthMcpServer(mcp: IMcpConnectionService, entry: McpServerEntry): void {
     // Replace whatever tools (real or synthetic) were registered before; a
     // server flipping to needs-auth means previous tokens were invalidated.
     this.unregisterMcpServer(entry.name);
@@ -264,7 +265,7 @@ export class ToolManager {
     });
   }
 
-  private registerConnectedMcpServer(mcp: McpConnectionManager, entry: McpServerEntry): void {
+  private registerConnectedMcpServer(mcp: IMcpConnectionService, entry: McpServerEntry): void {
     const resolved = mcp.resolved(entry.name);
     if (resolved === undefined) return;
     const result = this.registerMcpServer(
@@ -361,8 +362,9 @@ export class ToolManager {
       kaos,
       toolServices,
       config: { cwd, provider, modelCapabilities },
-      background,
+      background: backgroundService,
     } = this.agent;
+    const background = backgroundService.unwrap();
     const videoUploader = this.createVideoUploader(provider);
     const workspace = extendWorkspaceWithSkillRoots(
       {
@@ -400,9 +402,9 @@ export class ToolManager {
         new b.TaskListTool(background),
         new b.TaskOutputTool(background),
         new b.TaskStopTool(background),
-        this.agent.cron && new b.CronCreateTool(this.agent.cron),
-        this.agent.cron && new b.CronListTool(this.agent.cron),
-        this.agent.cron && new b.CronDeleteTool(this.agent.cron),
+        this.agent.cron && new b.CronCreateTool(this.agent.cron.unwrap()),
+        this.agent.cron && new b.CronListTool(this.agent.cron.unwrap()),
+        this.agent.cron && new b.CronDeleteTool(this.agent.cron.unwrap()),
         this.agent.skills?.registry.listInvocableSkills().length &&
           new b.SkillTool(this.agent),
         this.agent.subagentHost &&
@@ -415,7 +417,7 @@ export class ToolManager {
             },
           ),
         this.agent.subagentHost &&
-          new b.AgentSwarmTool(this.agent.subagentHost, this.agent.swarmMode),
+          new b.AgentSwarmTool(this.agent.subagentHost, this.agent.swarmMode.unwrap()),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),
       ]
@@ -458,5 +460,20 @@ export class ToolManager {
           this.builtinTools.get(name),
       )
       .filter((tool) => !!tool);
+  }
+}
+
+export interface IAgentToolService extends Pick<ToolManager, keyof ToolManager> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): ToolManager;
+}
+
+export const IAgentToolService = createDecorator<IAgentToolService>('agentToolService');
+
+export class AgentToolService extends ToolManager implements IAgentToolService {
+  readonly _serviceBrand: undefined;
+  unwrap(): ToolManager {
+    return this;
   }
 }

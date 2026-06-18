@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'pathe';
 
 import type { Agent } from '..';
+import { createDecorator } from '../../di';
 import { generateHeroSlug } from '../../utils/hero-slug';
 
 export type PlanData = null | {
@@ -136,6 +137,21 @@ export class PlanMode {
         ? join(this.agent.config.cwd, 'plan')
         : join(this.agent.homedir, 'plans');
     return join(plansDir, `${id}.md`);
+  }
+}
+
+export interface IPlanService extends Pick<PlanMode, keyof PlanMode> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): PlanMode;
+}
+
+export const IPlanService = createDecorator<IPlanService>('planService');
+
+export class PlanService extends PlanMode implements IPlanService {
+  readonly _serviceBrand: undefined;
+  unwrap(): PlanMode {
+    return this;
   }
 }
 

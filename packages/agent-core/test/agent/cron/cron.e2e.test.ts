@@ -8,7 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CronManager } from '../../../src/agent/cron';
+import { CronService } from '../../../src/agent/cron';
 import { CronCreateTool } from '../../../src/tools/cron/cron-create';
 import { CronDeleteTool } from '../../../src/tools/cron/cron-delete';
 import { CronListTool } from '../../../src/tools/cron/cron-list';
@@ -62,7 +62,7 @@ describe('Cron — session E2E (P1.9)', () => {
     // only legitimate exception.
     await ctx.agent.cron!.stop();
     const harness = createClocks(LOCAL_ANCHOR_MS);
-    (ctx.agent as unknown as { cron: CronManager }).cron = new CronManager(
+    (ctx.agent as unknown as { cron: CronService }).cron = new CronService(
       ctx.agent,
       {
         clocks: harness.clocks,
@@ -96,7 +96,7 @@ describe('Cron — session E2E (P1.9)', () => {
     // bypass `emitScheduled` telemetry and skip the byte-length /
     // expression checks; that would not be the production code path
     // this commit is meant to smoke.
-    const createTool = new CronCreateTool(ctx.agent.cron!);
+    const createTool = new CronCreateTool(ctx.agent.cron!.unwrap());
     const execution = createTool.resolveExecution({
       cron: '*/5 * * * *',
       prompt: 'cron-fired prompt',
@@ -149,9 +149,9 @@ describe('Cron — session E2E (P1.9)', () => {
     // Optional second case from the P1.9 plan: prove the three-tool
     // surface composes correctly end-to-end on the real manager. No
     // clock manipulation needed — list/delete are time-invariant.
-    const createTool = new CronCreateTool(ctx.agent.cron!);
-    const listTool = new CronListTool(ctx.agent.cron!);
-    const deleteTool = new CronDeleteTool(ctx.agent.cron!);
+    const createTool = new CronCreateTool(ctx.agent.cron!.unwrap());
+    const listTool = new CronListTool(ctx.agent.cron!.unwrap());
+    const deleteTool = new CronDeleteTool(ctx.agent.cron!.unwrap());
     const ctxArgs = {
       turnId: 'p19-tools',
       toolCallId: 'p19-tools-call',

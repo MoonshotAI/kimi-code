@@ -9,6 +9,7 @@ import { appendSessionIndexEntry, readSessionIndex } from '#/session/store/sessi
 import { encodeWorkDirKey, normalizeWorkDir } from '#/session/store/workdir-key';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '#/rpc/core-api';
 import { FileSystemAgentRecordPersistence, type AgentRecordOf } from '../../agent/records';
+import { createDecorator } from '../../di';
 
 const SessionSummaryStateSchema = z.object({
   archived: z.boolean().optional(),
@@ -476,6 +477,21 @@ function remapSessionPath(value: string, sourceDir: string, targetDir: string): 
   if (rel === '') return targetDir;
   if (rel.startsWith('..') || isAbsolute(rel)) return value;
   return join(targetDir, rel);
+}
+
+export interface ISessionStoreService extends Pick<SessionStore, keyof SessionStore> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw store; do not use in new code. */
+  unwrap(): SessionStore;
+}
+
+export const ISessionStoreService = createDecorator<ISessionStoreService>('sessionStoreService');
+
+export class SessionStoreService extends SessionStore implements ISessionStoreService {
+  readonly _serviceBrand: undefined;
+  unwrap(): SessionStore {
+    return this;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,4 +1,5 @@
 import type { Agent } from '..';
+import { createDecorator } from '../../di';
 import { GoalInjector } from './goal';
 import type { DynamicInjector } from './injector';
 import { PermissionModeInjector } from './permission-mode';
@@ -70,5 +71,20 @@ export class InjectionManager {
 
   private activeGoalInjector(): GoalInjector | null {
     return this.goalInjector;
+  }
+}
+
+export interface IInjectionService extends Pick<InjectionManager, keyof InjectionManager> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): InjectionManager;
+}
+
+export const IInjectionService = createDecorator<IInjectionService>('injectionService');
+
+export class InjectionService extends InjectionManager implements IInjectionService {
+  readonly _serviceBrand: undefined;
+  unwrap(): InjectionManager {
+    return this;
   }
 }

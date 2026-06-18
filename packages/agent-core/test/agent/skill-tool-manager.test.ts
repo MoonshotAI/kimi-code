@@ -8,7 +8,7 @@ import { Agent, type AgentRecord } from '../../src/agent';
 import { testKaos } from '../fixtures/test-kaos';
 import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
 import type { AgentRecordPersistence } from '../../src/agent/records';
-import { ProviderManager } from '../../src/session/provider-manager';
+import { ProviderService, type IProviderService } from '../../src/session/provider-manager';
 import type { ApprovalResponse, SDKAgentRPC, SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { SessionSkillRegistry, type SkillDefinition } from '../../src/skill';
@@ -76,8 +76,8 @@ function sessionRpc(): SDKSessionRPC {
   } as unknown as SDKSessionRPC;
 }
 
-function testProviderManager(): ProviderManager {
-  return new ProviderManager({
+function testProviderManager() : IProviderService {
+  return new ProviderService({
     config: {
       providers: {
         test: {

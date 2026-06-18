@@ -2,6 +2,7 @@ import type { UsageStatus } from '#/rpc';
 import { addUsage, type TokenUsage } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
+import { createDecorator } from '../../di';
 
 export type UsageRecordScope = 'session' | 'turn';
 
@@ -67,6 +68,23 @@ export class UsageRecorder {
     return Object.fromEntries(
       Object.entries(this.byModel).map(([model, usage]) => [model, copyUsage(usage)]),
     );
+  }
+}
+
+export interface IUsageService extends Pick<UsageRecorder, keyof UsageRecorder> {
+  readonly _serviceBrand: undefined;
+
+  /** @internal migration bridge — reach the raw recorder; do not use in new code. */
+  unwrap(): UsageRecorder;
+}
+
+export const IUsageService = createDecorator<IUsageService>('usageService');
+
+export class UsageService extends UsageRecorder implements IUsageService {
+  readonly _serviceBrand: undefined;
+
+  unwrap(): UsageRecorder {
+    return this;
   }
 }
 

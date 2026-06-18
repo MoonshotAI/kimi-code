@@ -20,6 +20,7 @@ import {
   userCancellationReason,
 } from '../utils/abort';
 import { collectGitContext } from './git-context';
+import { createDecorator } from '../di';
 import type { Session } from './index';
 import {
   SubagentBatch,
@@ -224,8 +225,8 @@ export class SessionSubagentHost {
       thinkingLevel: parent.config.thinkingLevel,
       systemPrompt: parent.config.systemPrompt,
     });
-    child.tools.copyLoopToolsFrom(parent.tools);
-    child.context.useProjectedHistoryFrom(parent.context);
+    child.tools.copyLoopToolsFrom(parent.tools.unwrap());
+    child.context.useProjectedHistoryFrom(parent.context.unwrap());
     child.context.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER.trim(), {
       kind: 'system_trigger',
       name: 'btw',
@@ -367,7 +368,7 @@ export class SessionSubagentHost {
       this.session.options.kimiHomeDir,
     );
     child.useProfile(profile, context);
-    child.tools.inheritUserTools(parent.tools);
+    child.tools.inheritUserTools(parent.tools.unwrap());
   }
 
   private async triggerSubagentStart(
@@ -491,6 +492,21 @@ function lastAssistantText(agent: Agent): string {
     if (text.trim().length > 0) return text.trim();
   }
   return '';
+}
+
+export interface ISubagentHostService extends Pick<SessionSubagentHost, keyof SessionSubagentHost> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw host; do not use in new code. */
+  unwrap(): SessionSubagentHost;
+}
+
+export const ISubagentHostService = createDecorator<ISubagentHostService>('subagentHostService');
+
+export class SubagentHostService extends SessionSubagentHost implements ISubagentHostService {
+  readonly _serviceBrand: undefined;
+  unwrap(): SessionSubagentHost {
+    return this;
+  }
 }
 
 function shouldSuppressQueuedAttemptFailureEvent(

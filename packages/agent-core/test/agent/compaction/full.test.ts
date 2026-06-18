@@ -19,7 +19,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentOptions } from '../../../src/agent';
 import { DefaultCompactionStrategy, type CompactionStrategy } from '../../../src/agent/compaction';
 import { FLAG_DEFINITIONS, MASTER_ENV } from '../../../src/flags';
-import { HookEngine, type HookEngineTriggerArgs } from '../../../src/session/hooks';
+import { HookService, type HookEngineTriggerArgs, type IHookService } from '../../../src/session/hooks';
 import { estimateTokensForMessages } from '../../../src/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../fixtures/telemetry';
 import type { TestAgentContext, TestAgentOptions } from '../harness/agent';
@@ -396,7 +396,7 @@ describe('FullCompaction', () => {
     const hookLog = join(dir, 'hooks.jsonl');
     const hookCommand = hookPayloadLoggerCommand(hookLog);
     const ctx = testAgent({
-      hookEngine: new HookEngine(
+      hookEngine: new HookService(
         [
           { event: 'PreCompact', matcher: 'auto', command: hookCommand, timeout: 5 },
           { event: 'PostCompact', matcher: 'auto', command: hookCommand, timeout: 5 },
@@ -455,7 +455,7 @@ describe('FullCompaction', () => {
       });
       return [];
     });
-    const ctx = testAgent({ hookEngine: { trigger } as unknown as HookEngine });
+    const ctx = testAgent({ hookEngine: { trigger } as unknown as IHookService });
 
     ctx.configure({
       provider: CATALOGUED_PROVIDER,

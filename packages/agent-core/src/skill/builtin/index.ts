@@ -1,4 +1,4 @@
-import type { SessionSkillRegistry } from '../registry';
+import type { ISkillRegistryService } from '../registry';
 import { CUSTOM_THEME_SKILL } from './custom-theme';
 import { IMPORT_FROM_CC_CODEX_SKILL } from './import-from-cc-codex';
 import { MCP_CONFIG_SKILL } from './mcp-config';
@@ -9,7 +9,7 @@ import {
 } from './sub-skill';
 import { UPDATE_CONFIG_SKILL } from './update-config';
 
-export function registerBuiltinSkills(registry: SessionSkillRegistry): void {
+export function registerBuiltinSkills(registry: ISkillRegistryService): void {
   registry.registerBuiltinSkill(MCP_CONFIG_SKILL);
   registry.registerBuiltinSkill(IMPORT_FROM_CC_CODEX_SKILL);
   registry.registerBuiltinSkill(UPDATE_CONFIG_SKILL);

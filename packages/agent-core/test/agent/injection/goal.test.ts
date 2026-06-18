@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Agent } from '../../../src/agent';
-import { GoalMode } from '../../../src/agent/goal';
+import { GoalService, type IGoalService } from '../../../src/agent/goal';
 import { GoalInjector } from '../../../src/agent/injection/goal';
 import { InMemoryAgentRecordPersistence } from '../../../src/agent/records';
 import { testAgent } from '../harness/agent';
@@ -12,11 +12,11 @@ function makeStore() {
     emitEvent: () => {},
     telemetry: { track: () => {} },
   } as unknown as Agent;
-  return new GoalMode(agent);
+  return new GoalService(agent);
 }
 
 /** Fake agent exposing a goal store and a capturing context, for getInjection tests. */
-function injectorAgent(store: GoalMode): {
+function injectorAgent(store: IGoalService): {
   agent: Agent;
   reminders: string[];
 } {
@@ -36,7 +36,7 @@ function injectorAgent(store: GoalMode): {
   return { agent, reminders };
 }
 
-async function injectOnce(store: GoalMode): Promise<string | undefined> {
+async function injectOnce(store: IGoalService): Promise<string | undefined> {
   const { agent, reminders } = injectorAgent(store);
   await new GoalInjector(agent).inject();
   return reminders.at(-1);

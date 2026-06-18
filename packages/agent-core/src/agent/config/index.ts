@@ -10,6 +10,7 @@ import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '#/config/k
 
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
+import { createDecorator } from '../../di';
 import type { AgentConfigData, AgentConfigUpdateData } from './types';
 import { resolveThinkingEffort, type ThinkingEffort } from './thinking';
 import type { ResolvedRuntimeProvider } from '../../session/provider-manager';
@@ -161,5 +162,20 @@ export class ConfigState {
     } catch {
       return undefined;
     }
+  }
+}
+
+export interface IAgentConfigService extends Pick<ConfigState, keyof ConfigState> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): ConfigState;
+}
+
+export const IAgentConfigService = createDecorator<IAgentConfigService>('agentConfigService');
+
+export class AgentConfigService extends ConfigState implements IAgentConfigService {
+  readonly _serviceBrand: undefined;
+  unwrap(): ConfigState {
+    return this;
   }
 }

@@ -8,44 +8,47 @@ import { generate } from '@moonshot-ai/kosong';
 
 import type { EnabledPluginSessionStart } from '#/plugin';
 
-import type { McpConnectionManager } from '../mcp';
+import type { IMcpConnectionService } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
-import type { SessionSubagentHost } from '../session/subagent-host';
+import type { ISubagentHostService } from '../session/subagent-host';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import type { PromisableMethods } from '../utils/types';
-import { BackgroundManager, BackgroundTaskPersistence } from './background';
+import { BackgroundService, BackgroundTaskPersistence, type IBackgroundService } from './background';
 import {
-  FullCompaction,
-  MicroCompaction,
+  CompactionService,
+  MicroCompactionService,
   type CompactionStrategy,
+  type ICompactionService,
+  type IMicroCompactionService,
   type MicroCompactionConfig,
 } from './compaction';
-import { CronManager } from './cron';
-import { ConfigState } from './config';
-import { ContextMemory } from './context';
-import { GoalMode } from './goal';
-import { HookEngine } from '../session/hooks';
-import { InjectionManager } from './injection/manager';
-import { PermissionManager, type PermissionManagerOptions } from './permission';
-import { PlanMode } from './plan';
+import { CronService, type ICronService } from './cron';
+import { AgentConfigService, type IAgentConfigService } from './config';
+import { ContextService, type IContextService } from './context';
+import { GoalService, type IGoalService } from './goal';
+import { type IHookService } from '../session/hooks';
+import { InjectionService, type IInjectionService } from './injection/manager';
+import { PermissionService, type IPermissionService, type PermissionManagerOptions } from './permission';
+import { PlanService, type IPlanService } from './plan';
 import {
-  AgentRecords,
   BlobStore,
   FileSystemAgentRecordPersistence,
+  RecordsService,
   type AgentRecord,
   type AgentRecordPersistence,
   type AgentRecordsReplayOptions,
+  type IRecordsService,
 } from './records';
-import { ReplayBuilder, type ReplayBuilderOptions } from './replay';
-import { SkillManager } from './skill';
+import { ReplayService, type IReplayService, type ReplayBuilderOptions } from './replay';
+import { AgentSkillService, type IAgentSkillService } from './skill';
 import type { SkillRegistry } from './skill/types';
-import { SwarmMode } from './swarm';
-import { ToolManager } from './tool/index';
-import { TurnFlow } from './turn';
+import { SwarmService, type ISwarmService } from './swarm';
+import { AgentToolService, type IAgentToolService } from './tool/index';
+import { TurnService, type ITurnService } from './turn';
 import { KosongLLM } from './turn/kosong-llm';
-import { UsageRecorder } from './usage';
+import { UsageService, type IUsageService } from './usage';
 import { LlmRequestLogger, splitGenerateOptions } from './llm-request-logger';
 import { resolveCompletionBudget } from '../utils/completion-budget';
 import type { Kaos } from '@moonshot-ai/kaos';
@@ -70,10 +73,10 @@ export interface AgentOptions {
   readonly compactionStrategy?: CompactionStrategy;
   readonly microCompaction?: Partial<MicroCompactionConfig>;
   readonly modelProvider?: ModelProvider | undefined;
-  readonly subagentHost?: SessionSubagentHost | undefined;
+  readonly subagentHost?: ISubagentHostService | undefined;
   readonly skills?: SkillRegistry;
-  readonly mcp?: McpConnectionManager;
-  readonly hookEngine?: HookEngine;
+  readonly mcp?: IMcpConnectionService;
+  readonly hookEngine?: IHookService;
   readonly permission?: PermissionManagerOptions | undefined;
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
@@ -97,32 +100,32 @@ export class Agent {
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
   readonly rawGenerate: typeof generate;
   readonly modelProvider?: ModelProvider;
-  readonly subagentHost?: SessionSubagentHost;
-  readonly mcp?: McpConnectionManager;
-  readonly hooks?: HookEngine;
+  readonly subagentHost?: ISubagentHostService;
+  readonly mcp?: IMcpConnectionService;
+  readonly hooks?: IHookService;
   readonly log: Logger;
   readonly telemetry: TelemetryClient;
   readonly experimentalFlags: ExperimentalFlagResolver;
 
   readonly llmRequestLogger: LlmRequestLogger;
   readonly blobStore: BlobStore | undefined;
-  readonly records: AgentRecords;
-  readonly fullCompaction: FullCompaction;
-  readonly microCompaction: MicroCompaction;
-  readonly context: ContextMemory;
-  readonly config: ConfigState;
-  readonly turn: TurnFlow;
-  readonly injection: InjectionManager;
-  readonly permission: PermissionManager;
-  readonly planMode: PlanMode;
-  readonly swarmMode: SwarmMode;
-  readonly usage: UsageRecorder;
-  readonly skills: SkillManager | null;
-  readonly tools: ToolManager;
-  readonly background: BackgroundManager;
-  readonly cron: CronManager | null;
-  readonly goal: GoalMode;
-  readonly replayBuilder: ReplayBuilder;
+  readonly records: IRecordsService;
+  readonly fullCompaction: ICompactionService;
+  readonly microCompaction: IMicroCompactionService;
+  readonly context: IContextService;
+  readonly config: IAgentConfigService;
+  readonly turn: ITurnService;
+  readonly injection: IInjectionService;
+  readonly permission: IPermissionService;
+  readonly planMode: IPlanService;
+  readonly swarmMode: ISwarmService;
+  readonly usage: IUsageService;
+  readonly skills: IAgentSkillService | null;
+  readonly tools: IAgentToolService;
+  readonly background: IBackgroundService;
+  readonly cron: ICronService | null;
+  readonly goal: IGoalService;
+  readonly replayBuilder: IReplayService;
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
@@ -145,7 +148,7 @@ export class Agent {
     this.blobStore = options.homedir
       ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
       : undefined;
-    this.records = new AgentRecords(
+    this.records = new RecordsService(
       this,
       options.persistence ??
         (options.homedir
@@ -157,25 +160,25 @@ export class Agent {
             })
           : undefined),
     );
-    this.fullCompaction = new FullCompaction(this, options.compactionStrategy);
-    this.microCompaction = new MicroCompaction(this, options.microCompaction);
-    this.context = new ContextMemory(this);
-    this.config = new ConfigState(this);
-    this.turn = new TurnFlow(this);
-    this.injection = new InjectionManager(this);
-    this.permission = new PermissionManager(this, options.permission);
-    this.planMode = new PlanMode(this);
-    this.swarmMode = new SwarmMode(this);
-    this.usage = new UsageRecorder(this);
-    this.skills = options.skills ? new SkillManager(this, options.skills) : null;
-    this.tools = new ToolManager(this);
-    this.background = new BackgroundManager(
+    this.fullCompaction = new CompactionService(this, options.compactionStrategy);
+    this.microCompaction = new MicroCompactionService(this, options.microCompaction);
+    this.context = new ContextService(this);
+    this.config = new AgentConfigService(this);
+    this.turn = new TurnService(this);
+    this.injection = new InjectionService(this);
+    this.permission = new PermissionService(this, options.permission);
+    this.planMode = new PlanService(this);
+    this.swarmMode = new SwarmService(this);
+    this.usage = new UsageService(this);
+    this.skills = options.skills ? new AgentSkillService(this, options.skills) : null;
+    this.tools = new AgentToolService(this);
+    this.background = new BackgroundService(
       this,
       this.homedir === undefined ? undefined : new BackgroundTaskPersistence(this.homedir),
     );
-    this.cron = this.type === 'sub' ? null : new CronManager(this);
-    this.goal = new GoalMode(this);
-    this.replayBuilder = new ReplayBuilder(this, options.replay);
+    this.cron = this.type === 'sub' ? null : new CronService(this);
+    this.goal = new GoalService(this);
+    this.replayBuilder = new ReplayService(this, options.replay);
   }
 
   setKaos(kaos: Kaos) {

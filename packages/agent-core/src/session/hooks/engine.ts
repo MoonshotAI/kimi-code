@@ -1,3 +1,4 @@
+import { createDecorator } from '../../di';
 import { runHook } from './runner';
 import type {
   HookBlockDecision,
@@ -179,6 +180,21 @@ function toHookInputData(input: Record<string, unknown>): Record<string, unknown
     result[camelToSnake(key)] = value;
   }
   return result;
+}
+
+export interface IHookService extends Pick<HookEngine, keyof HookEngine> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw engine; do not use in new code. */
+  unwrap(): HookEngine;
+}
+
+export const IHookService = createDecorator<IHookService>('hookService');
+
+export class HookService extends HookEngine implements IHookService {
+  readonly _serviceBrand: undefined;
+  unwrap(): HookEngine {
+    return this;
+  }
 }
 
 function camelToSnake(value: string): string {

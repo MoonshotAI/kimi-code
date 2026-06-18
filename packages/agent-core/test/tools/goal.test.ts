@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Agent } from '../../src/agent';
-import { GoalMode } from '../../src/agent/goal';
+import { GoalService, type IGoalService } from '../../src/agent/goal';
 import { ErrorCodes } from '../../src/errors';
 import { compileToolArgsValidator, validateToolArgs } from '../../src/tools/args-validator';
 import {
@@ -22,7 +22,7 @@ function makeStore() {
   return fakeAgent().goal;
 }
 
-function fakeAgent(opts: { type?: 'main' | 'sub'; goal?: GoalMode } = {}): Agent {
+function fakeAgent(opts: { type?: 'main' | 'sub'; goal?: IGoalService } = {}): Agent {
   const agent = {
     type: opts.type ?? 'main',
     records: { logRecord: () => {} },
@@ -30,7 +30,7 @@ function fakeAgent(opts: { type?: 'main' | 'sub'; goal?: GoalMode } = {}): Agent
     telemetry: { track: () => {} },
     context: { appendSystemReminder: () => {} },
   } as unknown as Agent;
-  (agent as { goal: GoalMode }).goal = opts.goal ?? new GoalMode(agent);
+  (agent as { goal: IGoalService }).goal = opts.goal ?? new GoalService(agent);
   return agent;
 }
 
@@ -209,7 +209,7 @@ describe('UpdateGoalTool', () => {
   // Terminal paths append follow-up reminders, so the agent needs a context
   // exposing appendSystemReminder.
   function agentWithContext(
-    store: GoalMode,
+    store: IGoalService,
     reminders: Array<{ readonly content: string; readonly origin: unknown }> = [],
   ): Agent {
     return {

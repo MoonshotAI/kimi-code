@@ -13,7 +13,7 @@ import {
   type AgentRecordPersistence,
 } from '../../../src/agent';
 import type { CompactionStrategy } from '../../../src/agent/compaction';
-import type { GoalMode } from '../../../src/agent/goal';
+import type { IGoalService } from '../../../src/agent/goal';
 import type { ApprovalResponse } from '../../../src/agent/permission';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
@@ -97,7 +97,7 @@ export interface TestAgentOptions {
   readonly hookEngine?: AgentOptions['hookEngine'];
   readonly type?: AgentOptions['type'];
   readonly permission?: AgentOptions['permission'];
-  readonly goal?: GoalMode;
+  readonly goal?: IGoalService;
   readonly providerManager?: ProviderManager;
   readonly initialConfig?: KimiConfig;
   readonly providerManagerOverrides?: Omit<ConstructorParameters<typeof ProviderManager>[0], 'config'>;
@@ -199,7 +199,7 @@ export class AgentTestContext {
       experimentalFlags: options.experimentalFlags,
     });
     if (options.goal !== undefined) {
-      (this.agent as unknown as { goal: GoalMode }).goal = options.goal;
+      (this.agent as unknown as { goal: IGoalService }).goal = options.goal;
     }
     this.rpc = this.createPromiseAgentApi(this.agent);
     // The Agent constructor now eagerly binds a SIGUSR1 listener via

@@ -3,6 +3,7 @@ import { discoverSkills, type DiscoverSkillsOptions } from './scanner';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
 import { isInlineSkillType, normalizeSkillName } from './types';
 import type { SkillRegistry as AgentSkillRegistry } from '../agent/skill/types';
+import { createDecorator } from '../di';
 import { escapeXmlAttr } from '../utils/xml-escape';
 
 const LISTING_DESC_MAX = 250;
@@ -140,6 +141,21 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
       lines.push(listing);
     }
     return lines.length === 1 ? '' : lines.join('\n');
+  }
+}
+
+export interface ISkillRegistryService extends Pick<SessionSkillRegistry, keyof SessionSkillRegistry> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw registry; do not use in new code. */
+  unwrap(): SessionSkillRegistry;
+}
+
+export const ISkillRegistryService = createDecorator<ISkillRegistryService>('skillRegistryService');
+
+export class SkillRegistryService extends SessionSkillRegistry implements ISkillRegistryService {
+  readonly _serviceBrand: undefined;
+  unwrap(): SessionSkillRegistry {
+    return this;
   }
 }
 

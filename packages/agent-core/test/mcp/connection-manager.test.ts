@@ -21,7 +21,7 @@ import type {
 import { z } from 'zod';
 
 import { KimiError } from '../../src/errors';
-import { ProviderManager } from '../../src/session/provider-manager';
+import { ProviderService, type IProviderService } from '../../src/session/provider-manager';
 import { McpConnectionManager, type McpServerEntry } from '../../src/mcp/connection-manager';
 import { JsonFileStore, McpOAuthService } from '../../src/mcp/oauth';
 import type { AgentEvent, SDKSessionRPC } from '../../src/rpc';
@@ -921,8 +921,8 @@ describe('Session MCP startup', () => {
   }, 10_000);
 });
 
-function testProviderManager(): ProviderManager {
-  return new ProviderManager({
+function testProviderManager() : IProviderService {
+  return new ProviderService({
     config: {
       providers: {
         test: {

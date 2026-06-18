@@ -1,8 +1,8 @@
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
-import { HookEngine } from '../../src/session/hooks';
-import type { SessionSubagentHost } from '../../src/session/subagent-host';
+import { HookService } from '../../src/session/hooks';
+import type { ISubagentHostService } from '../../src/session/subagent-host';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { createCommandKaos, testAgent } from './harness/agent';
@@ -14,7 +14,7 @@ describe('Agent tools', () => {
   it('blocks tools through PreToolUse before permission and emits PostToolUseFailure', async () => {
     const execWithEnv = vi.fn().mockRejectedValue(new Error('Bash should not execute'));
     const triggered: Array<[string, string, number]> = [];
-    const hookEngine = new HookEngine(
+    const hookEngine = new HookService(
       [
         {
           event: 'PreToolUse',
@@ -55,7 +55,7 @@ describe('Agent tools', () => {
 
   it('emits PostToolUse after successful tools', async () => {
     const triggered: Array<[string, string, number]> = [];
-    const hookEngine = new HookEngine(
+    const hookEngine = new HookService(
       [
         {
           event: 'PostToolUse',
@@ -118,7 +118,7 @@ describe('Agent tools', () => {
         completion,
       }),
       resume: vi.fn(),
-    } as unknown as SessionSubagentHost;
+    } as unknown as ISubagentHostService;
     const ctx = testAgent({ subagentHost });
     ctx.configure({ tools: ['Agent'] });
 
@@ -162,7 +162,7 @@ describe('Agent tools', () => {
       arguments: '{"query":"moon"}',
     };
     const resolved: Array<[string, string, string]> = [];
-    const hookEngine = new HookEngine(
+    const hookEngine = new HookService(
       [
         {
           event: 'PostToolUseFailure',
@@ -253,7 +253,7 @@ describe('Agent tools', () => {
   });
 
   it('exposes AgentSwarm when a subagent host is available', () => {
-    const subagentHost = {} as unknown as SessionSubagentHost;
+    const subagentHost = {} as unknown as ISubagentHostService;
 
     const ctx = testAgent({
       subagentHost,

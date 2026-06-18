@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
 import { trimTrailingOpenToolExchange } from '../../src/agent/context/projector';
-import { ProviderManager } from '../../src/session/provider-manager';
+import { ProviderService, type IProviderService } from '../../src/session/provider-manager';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -612,8 +612,8 @@ async function makeTempDir(): Promise<string> {
   return dir;
 }
 
-function testProviderManager(): ProviderManager {
-  return new ProviderManager({
+function testProviderManager() : IProviderService {
+  return new ProviderService({
     config: {
       providers: {
         test: {

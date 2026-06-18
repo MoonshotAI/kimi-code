@@ -39,6 +39,7 @@
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../index';
+import { createDecorator } from '../../di';
 import type { CronJobOrigin, CronMissedOrigin } from '../context/types';
 import {
   resolveClockSources,
@@ -561,5 +562,20 @@ export class CronManager {
     if (this.sigusr1Handler === null) return;
     process.off('SIGUSR1', this.sigusr1Handler);
     this.sigusr1Handler = null;
+  }
+}
+
+export interface ICronService extends Pick<CronManager, keyof CronManager> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): CronManager;
+}
+
+export const ICronService = createDecorator<ICronService>('cronService');
+
+export class CronService extends CronManager implements ICronService {
+  readonly _serviceBrand: undefined;
+  unwrap(): CronManager {
+    return this;
   }
 }

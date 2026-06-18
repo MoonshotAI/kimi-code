@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
-import { PluginManager } from '#/plugin';
+import { PluginService, type IPluginService } from '#/plugin';
 import { LocalFetchURLProvider } from '#/tools/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
@@ -25,19 +25,21 @@ import {
 } from '../config';
 import {
   FLAG_DEFINITIONS,
-  FlagResolver,
+  FlagService,
   type ExperimentalFeatureState,
+  type IFlagService,
 } from '../flags';
 import type { Logger } from '../logging/types';
 import { resolveSessionMcpConfig, mergeCallerMcpServers, type SessionMcpConfig } from '../mcp';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { exportSessionDirectory } from '../session/export';
 import {
-  ProviderManager, type BearerTokenProvider,
+  ProviderService, type BearerTokenProvider,
+  type IProviderService,
   type OAuthTokenProviderResolver
 } from '../session/provider-manager';
 import { SessionAPIImpl } from '../session/rpc';
-import { normalizeWorkDir, SessionStore } from '../session/store/index';
+import { normalizeWorkDir, SessionStoreService, type ISessionStoreService } from '../session/store/index';
 import {
   noopTelemetryClient,
   withTelemetryContext,
@@ -144,12 +146,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private readonly kimiRequestHeaders: Record<string, string> | undefined;
   private readonly resolveOAuthTokenProvider: OAuthTokenProviderResolver | undefined;
   private readonly skillDirs: readonly string[];
-  private readonly sessionStore: SessionStore;
-  readonly plugins: PluginManager;
+  private readonly sessionStore: ISessionStoreService;
+  readonly plugins: IPluginService;
   private pluginsReady: Promise<void>;
   private pluginsLoadError: Error | undefined;
   private readonly appVersion: string | undefined;
-  private readonly experimentalFlags: FlagResolver;
+  private readonly experimentalFlags: IFlagService;
 
   constructor(
     protected readonly rpcClient: CoreRPCClient,
@@ -182,13 +184,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     if (this.configWarnings.length > 0) {
       log.warn('config load degraded', { warnings: this.configWarnings });
     }
-    this.experimentalFlags = new FlagResolver(
+    this.experimentalFlags = new FlagService(
       process.env,
       FLAG_DEFINITIONS,
       this.config.experimental,
     );
-    this.sessionStore = new SessionStore(this.homeDir);
-    this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
+    this.sessionStore = new SessionStoreService(this.homeDir);
+    this.plugins = new PluginService({ kimiHomeDir: this.homeDir });
     // Capture the error rather than swallow it: mutators and explicit /plugins
     // reads rethrow so the user sees what's wrong; createSession/resumeSession
     // degrade silently (no plugin skills, no sessionStart injections) so the harness still
@@ -839,8 +841,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     };
   }
 
-  private resolveProviderManager(sessionId: string): ProviderManager {
-    return new ProviderManager({
+  private resolveProviderManager(sessionId: string): IProviderService {
+    return new ProviderService({
       config: () => this.config,
       kimiRequestHeaders: this.kimiRequestHeaders,
       resolveOAuthTokenProvider: this.resolveOAuthTokenProvider,

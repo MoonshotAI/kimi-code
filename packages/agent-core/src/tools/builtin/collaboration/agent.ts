@@ -27,7 +27,7 @@ import type { ResolvedAgentProfile } from '../../../profile';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION,
   DEFAULT_SUBAGENT_TIMEOUT_MS,
-  type SessionSubagentHost,
+  type ISubagentHostService,
   type SubagentHandle,
 } from '../../../session/subagent-host';
 import {
@@ -112,7 +112,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentToolInputSchema);
   constructor(
-    private readonly subagentHost: SessionSubagentHost,
+    private readonly subagentHost: ISubagentHostService,
     private readonly backgroundManager?: BackgroundManager | undefined,
     subagents?: ResolvedAgentProfile['subagents'] | undefined,
     options?: {

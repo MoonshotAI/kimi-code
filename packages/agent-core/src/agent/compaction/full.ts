@@ -14,6 +14,7 @@ import {
 } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
+import { createDecorator } from '../../di';
 import { isAbortError } from '../../loop/errors';
 import {
   retryBackoffDelays,
@@ -402,6 +403,21 @@ export class FullCompaction {
     }
     const todoMarkdown = renderTodoList(todos, '## TODO List');
     return `${summary.trim()}\n\n${todoMarkdown}`;
+  }
+}
+
+export interface ICompactionService extends Pick<FullCompaction, keyof FullCompaction> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): FullCompaction;
+}
+
+export const ICompactionService = createDecorator<ICompactionService>('compactionService');
+
+export class CompactionService extends FullCompaction implements ICompactionService {
+  readonly _serviceBrand: undefined;
+  unwrap(): FullCompaction {
+    return this;
   }
 }
 

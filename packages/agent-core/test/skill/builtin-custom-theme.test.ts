@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { CUSTOM_THEME_SKILL, SessionSkillRegistry, registerBuiltinSkills } from '../../src/skill';
+import { CUSTOM_THEME_SKILL, SkillRegistryService, registerBuiltinSkills } from '../../src/skill';
 
 describe('builtin skill: custom-theme', () => {
   it('has the expected identity and inline metadata', () => {
@@ -46,7 +46,7 @@ describe('builtin skill: custom-theme', () => {
   });
 
   it('registers through registerBuiltinSkills but stays out of the model skill listing', () => {
-    const registry = new SessionSkillRegistry();
+    const registry = new SkillRegistryService();
     registerBuiltinSkills(registry);
 
     expect(registry.getSkill('custom-theme')).toBeDefined();

@@ -47,7 +47,7 @@ describe('InjectionManager.onContextCompacted', () => {
     ctx.configure();
     const a = new RecordingInjector(ctx.agent);
     const b = new RecordingInjector(ctx.agent);
-    installInjectors(ctx.agent.injection, [a, b]);
+    installInjectors(ctx.agent.injection.unwrap(), [a, b]);
 
     ctx.agent.injection.onContextCompacted(3);
 
@@ -59,7 +59,7 @@ describe('InjectionManager.onContextCompacted', () => {
     const ctx = testAgent();
     ctx.configure();
     const recorder = new RecordingInjector(ctx.agent);
-    installInjectors(ctx.agent.injection, [new BoomInjector(ctx.agent), recorder]);
+    installInjectors(ctx.agent.injection.unwrap(), [new BoomInjector(ctx.agent), recorder]);
 
     expect(() => {
       ctx.agent.injection.onContextCompacted(2);
@@ -71,7 +71,7 @@ describe('InjectionManager.onContextCompacted', () => {
     const ctx = testAgent();
     ctx.configure();
     const recorder = new RecordingInjector(ctx.agent);
-    installInjectors(ctx.agent.injection, [new BoomInjector(ctx.agent), recorder]);
+    installInjectors(ctx.agent.injection.unwrap(), [new BoomInjector(ctx.agent), recorder]);
 
     expect(() => {
       ctx.agent.injection.onContextCompacted(1);
@@ -86,7 +86,7 @@ describe('InjectionManager.onContextCompacted', () => {
     const ctx = testAgent();
     ctx.configure();
     const recorder = new RecordingInjector(ctx.agent);
-    installInjectors(ctx.agent.injection, [recorder]);
+    installInjectors(ctx.agent.injection.unwrap(), [recorder]);
 
     ctx.agent.records.restore({ type: 'context.clear' });
     ctx.agent.records.restore({

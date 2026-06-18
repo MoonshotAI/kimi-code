@@ -4,6 +4,7 @@ import type { ActivateSkillPayload } from '#/rpc';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
+import { createDecorator } from '../../di';
 import { ErrorCodes, KimiError } from '#/errors';
 import { isUserActivatableSkillType } from '../../skill';
 import type { SkillActivationOrigin } from '../context';
@@ -82,5 +83,20 @@ export class SkillManager {
     if (input !== undefined) {
       this.agent.turn.prompt(input, origin);
     }
+  }
+}
+
+export interface IAgentSkillService extends Pick<SkillManager, keyof SkillManager> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): SkillManager;
+}
+
+export const IAgentSkillService = createDecorator<IAgentSkillService>('agentSkillService');
+
+export class AgentSkillService extends SkillManager implements IAgentSkillService {
+  readonly _serviceBrand: undefined;
+  unwrap(): SkillManager {
+    return this;
   }
 }

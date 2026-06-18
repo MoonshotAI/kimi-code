@@ -1,1 +1,1 @@
-export { CronManager, type CronManagerOptions } from './manager';
+export { CronManager, CronService, type CronManagerOptions, type ICronService } from './manager';

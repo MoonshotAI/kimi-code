@@ -1,4 +1,5 @@
 import type { Agent } from '..';
+import { createDecorator } from '../../di';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
   isNewerWireVersion,
@@ -240,5 +241,20 @@ export class AgentRecords {
 
   async flush(): Promise<void> {
     await this.persistence?.flush();
+  }
+}
+
+export interface IRecordsService extends Pick<AgentRecords, keyof AgentRecords> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): AgentRecords;
+}
+
+export const IRecordsService = createDecorator<IRecordsService>('recordsService');
+
+export class RecordsService extends AgentRecords implements IRecordsService {
+  readonly _serviceBrand: undefined;
+  unwrap(): AgentRecords {
+    return this;
   }
 }

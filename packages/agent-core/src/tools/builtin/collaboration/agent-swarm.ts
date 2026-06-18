@@ -5,7 +5,7 @@ import type { BuiltinTool } from '../../../agent/tool';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   type QueuedSubagentTask,
-  type SessionSubagentHost,
+  type ISubagentHostService,
 } from '../../../session/subagent-host';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
@@ -89,7 +89,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentSwarmToolInputSchema);
 
   constructor(
-    private readonly subagentHost: SessionSubagentHost,
+    private readonly subagentHost: ISubagentHostService,
     private readonly swarmMode: SwarmMode,
   ) {}
 

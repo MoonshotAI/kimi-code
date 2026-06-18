@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ToolAccesses } from '../../src/loop';
 import type { Logger, LogPayload } from '../../src/logging';
 import type { ResolvedAgentProfile } from '../../src/profile';
-import type { SessionSubagentHost } from '../../src/session/subagent-host';
+import type { ISubagentHostService } from '../../src/session/subagent-host';
 import { AgentBackgroundTask } from '../../src/agent/background';
 import { AgentTool, AgentToolInputSchema } from '../../src/tools/builtin/collaboration/agent';
 import { userCancellationReason } from '../../src/utils/abort';
@@ -16,10 +16,10 @@ function context<Input>(args: Input, toolCallId = 'call_agent') {
   return { turnId: '0', toolCallId, args, signal };
 }
 
-function mockSubagentHost<T extends Pick<SessionSubagentHost, 'spawn'> & Partial<SessionSubagentHost>>(
+function mockSubagentHost<T extends Pick<ISubagentHostService, 'spawn'> & Partial<ISubagentHostService>>(
   host: T,
-): T & SessionSubagentHost {
-  return { resume: vi.fn(), ...host } as unknown as T & SessionSubagentHost;
+): T & ISubagentHostService {
+  return { resume: vi.fn(), ...host } as unknown as T & ISubagentHostService;
 }
 
 interface CapturedLogEntry {

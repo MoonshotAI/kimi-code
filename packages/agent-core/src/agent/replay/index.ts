@@ -1,4 +1,5 @@
 import type { Agent } from '..';
+import { createDecorator } from '../../di';
 import type { AgentReplayRecord, AgentReplayRecordPayload } from '../../rpc/resumed';
 import type { ContextMessage } from '../context';
 
@@ -100,5 +101,20 @@ export class ReplayBuilder {
         records.splice(i, 1);
       }
     }
+  }
+}
+
+export interface IReplayService extends Pick<ReplayBuilder, keyof ReplayBuilder> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): ReplayBuilder;
+}
+
+export const IReplayService = createDecorator<IReplayService>('replayService');
+
+export class ReplayService extends ReplayBuilder implements IReplayService {
+  readonly _serviceBrand: undefined;
+  unwrap(): ReplayBuilder {
+    return this;
   }
 }

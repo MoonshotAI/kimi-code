@@ -5,6 +5,7 @@ import type { Logger } from '#/logging/types';
 import type { Tool } from '@moonshot-ai/kosong';
 
 import { abortable } from '../utils/abort';
+import { createDecorator } from '../di';
 import { HttpMcpClient } from './client-http';
 import { isRemoteMcpConfig } from './client-remote';
 import { SseMcpClient } from './client-sse';
@@ -463,6 +464,21 @@ function isUnauthorizedLikeError(error: unknown): boolean {
   // Fall back to a message sniff so server-specific error shapes still flip
   // us into needs-auth instead of failed.
   return /\b401\b/.test(error.message) || /unauthorized/i.test(error.message);
+}
+
+export interface IMcpConnectionService extends Pick<McpConnectionManager, keyof McpConnectionManager> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): McpConnectionManager;
+}
+
+export const IMcpConnectionService = createDecorator<IMcpConnectionService>('mcpConnectionService');
+
+export class McpConnectionService extends McpConnectionManager implements IMcpConnectionService {
+  readonly _serviceBrand: undefined;
+  unwrap(): McpConnectionManager {
+    return this;
+  }
 }
 
 function formatStartupError(error: unknown, client: RuntimeMcpClient | undefined): string {

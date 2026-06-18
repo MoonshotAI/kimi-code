@@ -9,13 +9,14 @@ import type { KimiConfig, SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentOptions, type AgentType } from '../agent';
-import { HookEngine, type HookDef } from './hooks';
+import { HookEngine, HookService, type HookDef, type IHookService } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
 import { makeErrorPayload } from '../errors';
 import {
-  McpConnectionManager,
+  McpConnectionService,
   McpOAuthService,
+  type IMcpConnectionService,
   type McpServerEntry,
   type SessionMcpConfig,
 } from '../mcp';
@@ -27,17 +28,19 @@ import {
   prepareSystemPromptContext,
   type ResolvedAgentProfile,
 } from '../profile';
-import type { ProviderManager } from './provider-manager';
+import type { IProviderService } from './provider-manager';
 import {
   registerBuiltinSkills,
   SessionSkillRegistry,
+  SkillRegistryService,
   resolveSkillRoots,
   summarizeSkill,
+  type ISkillRegistryService,
   type SkillRoot,
   type SkillSummary,
 } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
-import { SessionSubagentHost } from './subagent-host';
+import { SubagentHostService, type ISubagentHostService } from './subagent-host';
 import type { ToolServices } from '../tools/support/services';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import { abortError } from '../utils/abort';
@@ -52,7 +55,7 @@ export interface SessionOptions {
   readonly rpc: SDKSessionRPC;
   readonly toolServices?: ToolServices;
   readonly initializeMainAgent?: boolean | undefined;
-  readonly providerManager?: ProviderManager | undefined;
+  readonly providerManager?: IProviderService | undefined;
   readonly background?: BackgroundConfig | undefined;
   readonly hooks?: readonly HookDef[];
   readonly permissionRules?: readonly PermissionRule[];
@@ -138,12 +141,12 @@ async function waitForSettlementOrTimeout(
 export class Session {
   readonly rpc: SDKSessionRPC;
   readonly telemetry: TelemetryClient;
-  readonly skills: SessionSkillRegistry;
+  readonly skills: ISkillRegistryService;
   readonly agents: Map<string, AgentEntry> = new Map();
-  readonly mcp: McpConnectionManager;
+  readonly mcp: IMcpConnectionService;
   readonly log: Logger;
   private readonly logHandle: SessionLogHandle | undefined;
-  readonly hookEngine: HookEngine;
+  readonly hookEngine: IHookService;
   readonly experimentalFlags: ExperimentalFlagResolver;
   private toolKaos: Kaos;
   private persistenceKaos: Kaos;
@@ -175,17 +178,17 @@ export class Session {
       (options.id === undefined ? log : log.createChild({ sessionId: options.id }));
     this.rpc = options.rpc;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
-    this.hookEngine = new HookEngine(options.hooks, {
+    this.hookEngine = new HookService(options.hooks, {
       cwd: options.kaos.getcwd(),
       sessionId: options.id,
     });
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.toolKaos = options.kaos;
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
-    this.skills = new SessionSkillRegistry({
+    this.skills = new SkillRegistryService({
       sessionId: options.id,
     });
-    this.mcp = new McpConnectionManager({
+    this.mcp = new McpConnectionService({
       oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
       log: this.log,
     });
@@ -574,7 +577,7 @@ export class Session {
       rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
       modelProvider: this.options.providerManager,
       hookEngine: config.hookEngine ?? this.hookEngine,
-      subagentHost: config.subagentHost ?? new SessionSubagentHost(this, id),
+      subagentHost: config.subagentHost ?? new SubagentHostService(this, id),
       mcp: this.mcp,
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: this.telemetry,
@@ -596,7 +599,7 @@ export class Session {
     }
     return {
       ...input,
-      parent: input?.parent ?? this.getReadyAgent(parentAgentId)?.permission,
+      parent: input?.parent ?? this.getReadyAgent(parentAgentId)?.permission?.unwrap(),
     };
   }
 

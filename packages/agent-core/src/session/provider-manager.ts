@@ -2,6 +2,7 @@ import type { Logger } from '#/logging/types';
 import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
 import { APIStatusError, getModelCapability, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
 import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig } from '../config';
+import { createDecorator } from '../di';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
 
 export interface BearerTokenProvider {
@@ -339,6 +340,21 @@ function vertexAILocation(provider: ProviderConfig): string | undefined {
     envValue(provider.env, 'GOOGLE_CLOUD_LOCATION') ??
     locationFromVertexAIBaseUrl(provider.baseUrl)
   );
+}
+
+export interface IProviderService extends Pick<ProviderManager, keyof ProviderManager> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): ProviderManager;
+}
+
+export const IProviderService = createDecorator<IProviderService>('providerService');
+
+export class ProviderService extends ProviderManager implements IProviderService {
+  readonly _serviceBrand: undefined;
+  unwrap(): ProviderManager {
+    return this;
+  }
 }
 
 function providerValue(

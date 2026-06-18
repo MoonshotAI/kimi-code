@@ -1,4 +1,5 @@
 import type { Agent } from '..';
+import { createDecorator } from '../../di';
 
 import SWARM_MODE_ENTER_REMINDER from './enter-reminder.md?raw';
 import SWARM_MODE_EXIT_REMINDER from './exit-reminder.md?raw';
@@ -56,5 +57,21 @@ export class SwarmMode {
 
   get shouldAutoExit(): boolean {
     return this.active === 'task' || this.active === 'tool';
+  }
+}
+
+export interface ISwarmService extends Pick<SwarmMode, keyof SwarmMode> {
+  readonly _serviceBrand: undefined;
+
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): SwarmMode;
+}
+
+export const ISwarmService = createDecorator<ISwarmService>('swarmService');
+
+export class SwarmService extends SwarmMode implements ISwarmService {
+  readonly _serviceBrand: undefined;
+  unwrap(): SwarmMode {
+    return this;
   }
 }

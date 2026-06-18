@@ -1,4 +1,5 @@
 import type { Agent } from '..';
+import { createDecorator } from '../../di';
 import type { PrepareToolExecutionResult } from '../../loop';
 import { createPermissionDecisionPolicies } from './policies';
 import type {
@@ -311,5 +312,20 @@ export class PermissionManager {
       return `${prefix} Try a different approach — don't retry the same call, don't attempt to bypass the restriction.`;
     }
     return prefix;
+  }
+}
+
+export interface IPermissionService extends Pick<PermissionManager, keyof PermissionManager> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): PermissionManager;
+}
+
+export const IPermissionService = createDecorator<IPermissionService>('permissionService');
+
+export class PermissionService extends PermissionManager implements IPermissionService {
+  readonly _serviceBrand: undefined;
+  unwrap(): PermissionManager {
+    return this;
   }
 }

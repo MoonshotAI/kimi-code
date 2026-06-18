@@ -1,4 +1,5 @@
 import { parseBooleanEnv } from '#/config/resolve';
+import { createDecorator } from '../di';
 
 import { FLAG_DEFINITIONS, type FlagId } from './registry';
 import type {
@@ -88,6 +89,21 @@ export class FlagResolver {
       source,
       configValue,
     };
+  }
+}
+
+export interface IFlagService extends Pick<FlagResolver, keyof FlagResolver> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw resolver; do not use in new code. */
+  unwrap(): FlagResolver;
+}
+
+export const IFlagService = createDecorator<IFlagService>('flagService');
+
+export class FlagService extends FlagResolver implements IFlagService {
+  readonly _serviceBrand: undefined;
+  unwrap(): FlagResolver {
+    return this;
   }
 }
 

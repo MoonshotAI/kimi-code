@@ -6,6 +6,7 @@ import type { AgentRecordOf } from '../records/types';
 import {
   type TelemetryProperties,
 } from '../../telemetry';
+import { createDecorator } from '../../di';
 
 /**
  * Durable goal-mode state owned by {@link GoalMode}.
@@ -705,6 +706,22 @@ export class GoalMode {
       budget: computeBudgetReport(state, Date.now()),
       terminalReason: state.terminalReason,
     };
+  }
+}
+
+export interface IGoalService extends Pick<GoalMode, keyof GoalMode> {
+  readonly _serviceBrand: undefined;
+
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): GoalMode;
+}
+
+export const IGoalService = createDecorator<IGoalService>('goalService');
+
+export class GoalService extends GoalMode implements IGoalService {
+  readonly _serviceBrand: undefined;
+  unwrap(): GoalMode {
+    return this;
   }
 }
 

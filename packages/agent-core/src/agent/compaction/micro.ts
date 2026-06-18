@@ -1,6 +1,7 @@
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
+import { createDecorator } from '../../di';
 import type { ContextMessage } from '../context';
 import {
   estimateTokensForContentParts,
@@ -146,5 +147,20 @@ export class MicroCompaction {
       truncatedToolResultTokensBefore,
       truncatedToolResultTokensAfter,
     };
+  }
+}
+
+export interface IMicroCompactionService extends Pick<MicroCompaction, keyof MicroCompaction> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): MicroCompaction;
+}
+
+export const IMicroCompactionService = createDecorator<IMicroCompactionService>('microCompactionService');
+
+export class MicroCompactionService extends MicroCompaction implements IMicroCompactionService {
+  readonly _serviceBrand: undefined;
+  unwrap(): MicroCompaction {
+    return this;
   }
 }

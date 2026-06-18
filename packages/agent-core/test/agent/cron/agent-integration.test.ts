@@ -58,7 +58,7 @@ describe('Agent + Cron integration (P1.7)', () => {
     // killswitch lives in `resolveExecution`, so a direct call is the
     // precise unit being asserted, and it stays robust if the loop /
     // dispatch surface changes around it (P1.8 onwards).
-    const tool = new CronCreateTool(ctx.agent.cron!);
+    const tool = new CronCreateTool(ctx.agent.cron!.unwrap());
     const args: CronCreateInput = {
       cron: '*/5 * * * *',
       prompt: 'x',

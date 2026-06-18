@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { McpServerConfig } from '../config/schema';
+import { createDecorator } from '../di';
 import { discoverSkills, type SkillRoot } from '../skill';
 import { downloadZip, extractZip } from './archive';
 import { resolveGithubSource } from './github-resolver';
@@ -277,6 +278,21 @@ export class PluginManager {
       source: entry.source,
       parsed,
     });
+  }
+}
+
+export interface IPluginService extends Pick<PluginManager, keyof PluginManager> {
+  readonly _serviceBrand: undefined;
+  /** @internal migration bridge — reach the raw manager; do not use in new code. */
+  unwrap(): PluginManager;
+}
+
+export const IPluginService = createDecorator<IPluginService>('pluginService');
+
+export class PluginService extends PluginManager implements IPluginService {
+  readonly _serviceBrand: undefined;
+  unwrap(): PluginManager {
+    return this;
   }
 }
 
