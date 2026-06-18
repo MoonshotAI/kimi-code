@@ -189,7 +189,10 @@ export class Agent {
     );
     perAgentServices.set(IPlanService, new SyncDescriptor(PlanService, [this]));
     perAgentServices.set(ISwarmService, new SyncDescriptor(SwarmService, [this]));
-    perAgentServices.set(IUsageService, new SyncDescriptor(UsageService, [this]));
+    perAgentServices.set(
+      IUsageService,
+      new SyncDescriptor(UsageService, [() => this.emitStatusUpdated()]),
+    );
     perAgentServices.set(IAgentToolService, new SyncDescriptor(AgentToolService, [this]));
     perAgentServices.set(
       IBackgroundService,

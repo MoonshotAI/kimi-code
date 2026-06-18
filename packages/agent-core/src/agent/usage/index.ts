@@ -1,8 +1,8 @@
 import type { UsageStatus } from '#/rpc';
 import { addUsage, type TokenUsage } from '@moonshot-ai/kosong';
 
-import type { Agent } from '..';
 import { createDecorator } from '../../di';
+import { IRecordsService } from '../records';
 
 export type UsageRecordScope = 'session' | 'turn';
 
@@ -14,7 +14,10 @@ export class UsageRecorder {
   private readonly byModel: Record<string, TokenUsage> = {};
   private currentTurn: TokenUsage | undefined;
 
-  constructor(protected readonly agent?: Agent) {}
+  constructor(
+    private readonly emitStatusUpdated?: () => void,
+    @IRecordsService private readonly records?: IRecordsService,
+  ) {}
 
   beginTurn(): void {
     this.currentTurn = undefined;
@@ -25,7 +28,7 @@ export class UsageRecorder {
   }
 
   record(model: string, usage: TokenUsage, scope: UsageRecordScope = 'session'): void {
-    this.agent?.records.logRecord({
+    this.records?.logRecord({
       type: 'usage.record',
       model,
       usage,
@@ -38,7 +41,7 @@ export class UsageRecorder {
       this.currentTurn =
         this.currentTurn === undefined ? copyUsage(usage) : addUsage(this.currentTurn, usage);
     }
-    this.agent?.emitStatusUpdated();
+    this.emitStatusUpdated?.();
   }
 
   data(): UsageStatus {
