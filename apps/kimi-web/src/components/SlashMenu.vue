@@ -1,6 +1,7 @@
 <!-- apps/kimi-web/src/components/SlashMenu.vue -->
 <!-- Popup list of slash commands shown above the Composer textarea. -->
 <script setup lang="ts">
+import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SlashCommand } from '../lib/slashCommands';
 
@@ -15,13 +16,23 @@ const emit = defineEmits<{
   select: [item: SlashCommand];
   hover: [index: number];
 }>();
+
+const itemRefs = ref<HTMLElement[]>([]);
+
+watch(
+  () => props.activeIndex,
+  (idx) => {
+    itemRefs.value[idx]?.scrollIntoView({ block: 'nearest' });
+  },
+);
 </script>
 
 <template>
   <div v-if="items.length > 0" class="slash-menu" role="listbox">
     <div
       v-for="(item, i) in items"
-      :key="item.name"
+      ref="itemRefs"
+      :key="`${item.name}-${i}`"
       class="slash-item"
       :class="{ active: i === props.activeIndex }"
       role="option"
