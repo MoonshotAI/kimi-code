@@ -483,6 +483,20 @@ function scrollToBottom(smooth = false): void {
   showPill.value = false;
 }
 
+function findTopAnchor(
+  container: HTMLElement,
+  scrollTop: number,
+): { id: string; top: number } | null {
+  const anchors = container.querySelectorAll<HTMLElement>('.turn-anchor');
+  for (const anchor of anchors) {
+    if (anchor.offsetTop >= scrollTop) {
+      const id = anchor.dataset.turnId;
+      if (id) return { id, top: anchor.offsetTop };
+    }
+  }
+  return null;
+}
+
 async function handleLoadOlderMessages(): Promise<void> {
   if (
     !props.sessionId ||
@@ -494,8 +508,8 @@ async function handleLoadOlderMessages(): Promise<void> {
   }
   const requestedSessionId = props.sessionId;
   const el = panesRef.value;
-  const oldHeight = el?.scrollHeight ?? 0;
   const oldTop = el?.scrollTop ?? 0;
+  const oldAnchor = el ? findTopAnchor(el, oldTop) : null;
 
   historyLoadInProgress.value = true;
   try {
@@ -511,8 +525,20 @@ async function handleLoadOlderMessages(): Promise<void> {
 
   const el2 = panesRef.value;
   if (!el2) return;
-  const addedHeight = el2.scrollHeight - oldHeight;
-  el2.scrollTop = oldTop + addedHeight;
+
+  // Restore scroll position using a stable anchor near the old viewport top.
+  // This isolates height inserted above the anchor and ignores any new bottom
+  // content (e.g. streaming assistant turns) that arrived during the request.
+  let delta = 0;
+  if (oldAnchor) {
+    const newAnchor = el2.querySelector<HTMLElement>(
+      `.turn-anchor[data-turn-id="${attrEscape(oldAnchor.id)}"]`,
+    );
+    if (newAnchor) {
+      delta = newAnchor.offsetTop - oldAnchor.top;
+    }
+  }
+  el2.scrollTop = oldTop + delta;
 }
 
 function attrEscape(value: string): string {
