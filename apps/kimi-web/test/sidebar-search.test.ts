@@ -84,4 +84,17 @@ describe('Sidebar session search', () => {
     expect(wrapper.find('.search-clear').exists()).toBe(false);
     expect(wrapper.text()).not.toContain('No matching sessions');
   });
+
+  it('clears the query on Escape so it does not bubble to abort a run', async () => {
+    const wrapper = mountSidebar();
+    const input = wrapper.find('.search-input');
+    await input.setValue('refactor');
+    expect(wrapper.find('.search-clear').exists()).toBe(true);
+
+    await input.trigger('keydown', { key: 'Escape' });
+
+    // Query cleared → back to the grouped list, no results panel.
+    expect((input.element as HTMLInputElement).value).toBe('');
+    expect(wrapper.text()).not.toContain('No matching sessions');
+  });
 });

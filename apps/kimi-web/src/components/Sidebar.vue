@@ -436,6 +436,7 @@ function blinkOnce(): void {
           type="text"
           :placeholder="t('sidebar.searchPlaceholder')"
           :aria-label="t('sidebar.searchPlaceholder')"
+          @keydown.esc.stop="clearSearch"
         />
         <button
           v-if="isSearching"
