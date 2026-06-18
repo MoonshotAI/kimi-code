@@ -87,7 +87,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   app.setSerializerCompiler(() => (data) => JSON.stringify(data));
   installErrorHandler(app);
 
-  const serverVersion = getServerVersion();
+  const serverVersion = opts.coreProcessOptions?.identity?.version ?? getServerVersion();
 
   async function registerOpenApi(): Promise<void> {
     const { default: swagger } = await import('@fastify/swagger');

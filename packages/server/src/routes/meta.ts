@@ -13,10 +13,6 @@
  * **Wire shape**: matches `metaResponseSchema` (REST.md §3.1) exactly. The
  * envelope wrap is `okEnvelope(data, req.id)` — `req.id` is the bare 26-char
  * ULID set by Fastify's `genReqId` via `resolveRequestId`.
- *
- * **Anti-corruption**: no SDK package import, no broker / bridge access. The
- * version source is the server's own `package.json` read via
- * `getServerVersion()` — no indirection through services or agent-core.
  */
 
 import { metaResponseSchema } from '@moonshot-ai/protocol';
@@ -45,7 +41,6 @@ interface RouteHost {
 }
 
 export interface MetaRouteOptions {
-  /** Server `package.json` version. Cached at startup. */
   readonly serverVersion: string;
   /** Per-process ULID. Minted once at boot in `start.ts`. */
   readonly serverId: string;

@@ -165,6 +165,24 @@ describe('GET /api/v1/meta — envelope + metaResponseSchema', () => {
   });
 });
 
+describe('GET /api/v1/meta — server_version precedence', () => {
+  it('reports the host kimi-code identity version when provided', async () => {
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      lockPath,
+      logger: pino({ level: 'silent' }),
+      coreProcessOptions: {
+        homeDir: bridgeHome,
+        identity: { userAgentProduct: 'kimi-code-cli', version: '9.9.9-test' },
+      },
+    });
+    const res = await appOf(server).inject({ method: 'GET', url: '/api/v1/meta' });
+    const data = (res.json() as { data: { server_version: string } }).data;
+    expect(data.server_version).toBe('9.9.9-test');
+  });
+});
+
 describe('GET /api/v1/meta — request_id propagation (W4.3 contract)', () => {
   it('echoes a client-supplied valid ULID verbatim', async () => {
     const r = await bootDaemon();
