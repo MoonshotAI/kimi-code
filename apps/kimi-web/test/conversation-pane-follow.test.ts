@@ -258,6 +258,29 @@ describe('ConversationPane follow — history prepend', () => {
     expect(wrapper.find('.newmsg-pill').exists()).toBe(false);
   });
 
+  it('does not show the new-message pill when a same-length prepend changes the first turn id', async () => {
+    const loadOlderMessages = vi.fn<(sessionId: string) => Promise<void>>();
+    const { wrapper, pane } = await settledPane(
+      { scrollHeight: 2000, clientHeight: 500 },
+      {
+        sessionId: 'sess_1',
+        hasMoreMessages: true,
+        loadOlderMessages,
+      },
+      { chatPaneStub: LoadOlderChatPane },
+    );
+
+    await wrapper.setProps({ turns: [turn(1, 'first'), turn(2, 'last')] });
+    await nextTick();
+    scrollUpTo(pane, 300);
+    await nextTick();
+
+    await loadOlderAndSettle(wrapper, [turn(0, 'merged first'), turn(2, 'last')], loadOlderMessages);
+
+    expect(pane.scrollTop).toBe(300);
+    expect(wrapper.find('.newmsg-pill').exists()).toBe(false);
+  });
+
   it('falls back to scroll-height delta when the old anchor turn id disappears', async () => {
     const loadOlderMessages = vi.fn<(sessionId: string) => Promise<void>>();
     const { wrapper, pane } = await settledPane(

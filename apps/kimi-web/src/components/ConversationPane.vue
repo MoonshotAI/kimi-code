@@ -625,7 +625,7 @@ function isHistoryPrependOnly(prev: ScrollKey | undefined, next: ScrollKey): boo
   return (
     prev !== undefined &&
     prev.length > 0 &&
-    next.length > prev.length &&
+    next.length >= prev.length &&
     prev.firstId !== next.firstId &&
     prev.lastId === next.lastId &&
     prev.lastTextLen === next.lastTextLen &&
