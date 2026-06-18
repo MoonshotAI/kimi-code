@@ -12,6 +12,7 @@ import {
 } from '@earendil-works/pi-tui';
 import { formatSessionLabel } from '#/migration/index';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
@@ -224,7 +225,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     }
 
     if (this.sessions.length === 0) {
-      const hintParts = [scopeHint, 'Esc cancel'].filter(
+      const hintParts = [scopeHint, i18n.t('common.hints.cancel')].filter(
         (item): item is string => item !== undefined,
       );
       lines.push(currentTheme.boldFg('primary', truncateToWidth(title, width, ELLIPSIS)));
@@ -243,11 +244,11 @@ export class SessionPickerComponent extends Container implements Focusable {
     const titleSuffix =
       view.query.length === 0 ? currentTheme.fg('textMuted', '  (type to search)') : '';
     const hintParts = [
-      ...(view.query.length > 0 ? ['Backspace clear'] : []),
-      '↑↓ navigate',
+      ...(view.query.length > 0 ? [i18n.t('common.hints.clearSearch')] : []),
+      i18n.t('common.hints.navigate'),
       scopeHint,
-      'Enter select',
-      'Esc cancel',
+      i18n.t('common.hints.select'),
+      i18n.t('common.hints.cancel'),
     ].filter((item): item is string => item !== undefined);
 
     lines.push(currentTheme.boldFg('primary', title) + titleSuffix);

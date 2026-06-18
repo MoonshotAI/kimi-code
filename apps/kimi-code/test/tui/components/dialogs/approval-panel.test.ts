@@ -1,7 +1,8 @@
 import { CURSOR_MARKER } from '@earendil-works/pi-tui';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
+import { i18n } from '#/tui/i18n';
 import type {
   DiffDisplayBlock,
   FileContentDisplayBlock,
@@ -413,6 +414,47 @@ describe('ApprovalPanelComponent', () => {
     } finally {
       stderr.restore();
     }
+  });
+
+  describe('locale rendering', () => {
+    afterEach(() => {
+      i18n.setLocale('en');
+    });
+
+    function makeBashPending(): PendingApproval {
+      return {
+        data: {
+          id: 'approval_bash',
+          tool_call_id: 'tool_bash',
+          tool_name: 'Bash',
+          action: 'run',
+          description: '',
+          display: [
+            { type: 'shell', language: 'bash', command: 'ls', danger: 'recursive delete' },
+          ],
+          choices: [{ label: 'Approve once', response: 'approved' }],
+        },
+      };
+    }
+
+    it('renders the header and hints in English by default', () => {
+      const dialog = new ApprovalPanelComponent(makeBashPending(), () => {});
+      const out = strip(dialog.render(80).join('\n'));
+      expect(out).toContain('Run this command?');
+      expect(out).toContain('select');
+      expect(out).toContain('choose');
+      expect(out).toContain('confirm');
+    });
+
+    it('renders the header and hints in Simplified Chinese under zh-CN', () => {
+      i18n.setLocale('zh-CN');
+      const dialog = new ApprovalPanelComponent(makeBashPending(), () => {});
+      const out = strip(dialog.render(80).join('\n'));
+      expect(out).toContain('运行此命令？');
+      expect(out).toContain('确认');
+      expect(out).not.toContain('Run this command?');
+      expect(out).not.toContain('confirm');
+    });
   });
 
   it('returns feedback for plan-review revise choice', () => {

@@ -19,6 +19,15 @@ export const INVALID_TUI_CONFIG_MESSAGE =
 
 export const TuiThemeSchema = z.string();
 
+/**
+ * User-facing language preference for the TUI.
+ * `'auto'` resolves a concrete locale from the system environment at startup;
+ * `'en'` / `'zh-CN'` pin the interface to that locale.
+ */
+export const TuiLanguageSchema = z.enum(['auto', 'en', 'zh-CN']);
+
+export type TuiLanguage = z.infer<typeof TuiLanguageSchema>;
+
 export const NotificationConditionSchema = z.enum(['unfocused', 'always']);
 
 export const NotificationsConfigSchema = z.object({
@@ -32,6 +41,7 @@ export const UpgradePreferencesSchema = z.object({
 
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
+  language: TuiLanguageSchema.optional(),
   editor: z
     .object({
       command: z.string().optional(),
@@ -52,6 +62,7 @@ export const TuiConfigFileSchema = z.object({
 
 export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
+  language: TuiLanguageSchema,
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
@@ -73,6 +84,7 @@ export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
 
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   theme: 'auto',
+  language: 'auto',
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
@@ -132,6 +144,7 @@ export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
   const command = config.editor?.command?.trim();
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
+    language: config.language ?? DEFAULT_TUI_CONFIG.language,
     editorCommand: command === undefined || command.length === 0 ? null : command,
     notifications: {
       enabled: config.notifications?.enabled ?? DEFAULT_NOTIFICATIONS_CONFIG.enabled,
@@ -150,6 +163,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
 
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
+language = "${config.language}" # "auto" | "en" | "zh-CN"
 
 [editor]
 command = "${escapeTomlBasicString(config.editorCommand ?? '')}" # Empty uses $VISUAL / $EDITOR

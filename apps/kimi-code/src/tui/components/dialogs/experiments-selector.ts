@@ -9,6 +9,7 @@ import {
 import type { ExperimentalFeatureState } from '@moonshot-ai/kimi-code-sdk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
@@ -67,10 +68,10 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
     const view = this.list.view();
     const titleSuffix =
       view.query.length === 0 ? currentTheme.fg('textMuted', '  (type to search)') : '';
-    const hintParts = ['↑↓ navigate'];
+    const hintParts = [i18n.t('common.hints.navigate')];
     if (view.page.pageCount > 1) hintParts.push('PgUp/PgDn page');
-    hintParts.push('Space toggle', 'Enter apply', 'Esc cancel');
-    if (view.query.length > 0) hintParts.push('Backspace clear');
+    hintParts.push('Space toggle', 'Enter apply', i18n.t('common.hints.cancel'));
+    if (view.query.length > 0) hintParts.push(i18n.t('common.hints.clearSearch'));
 
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),

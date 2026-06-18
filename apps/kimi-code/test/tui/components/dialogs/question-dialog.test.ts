@@ -1,9 +1,10 @@
 import { CURSOR_MARKER } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { QuestionDialogComponent } from '#/tui/components/dialogs/question-dialog';
 import type { PendingQuestion } from '#/tui/reverse-rpc/types';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 
 function strip(text: string): string {
@@ -428,6 +429,51 @@ describe('QuestionDialogComponent', () => {
     dialog.handleInput('\u000F'); // Ctrl+O
     expect(toggles).toBe(1);
     expect(collected).toEqual([]);
+  });
+
+  describe('locale rendering', () => {
+    afterEach(() => {
+      i18n.setLocale('en');
+    });
+
+    function singleQuestion(): PendingQuestion {
+      return makePending([
+        {
+          question: 'Pick one?',
+          multi_select: false,
+          options: [{ label: 'A' }, { label: 'B' }],
+        },
+      ]);
+    }
+
+    it('renders the question tab heading and Other option in English by default', () => {
+      const { dialog } = makeDialog(singleQuestion());
+      const out = strip(dialog.render(80).join('\n'));
+      expect(out).toContain('question');
+      expect(out).toContain('Other');
+    });
+
+    it('renders the question tab in Simplified Chinese under zh-CN', () => {
+      i18n.setLocale('zh-CN');
+      const { dialog } = makeDialog(singleQuestion());
+      const out = strip(dialog.render(80).join('\n'));
+      expect(out).toContain('问题');
+      expect(out).toContain('其他');
+      expect(out).not.toContain('Other');
+    });
+
+    it('renders the submit/review tab in Simplified Chinese under zh-CN', () => {
+      i18n.setLocale('zh-CN');
+      const { dialog } = makeDialog(singleQuestion());
+      dialog.handleInput('\r'); // answer and auto-advance to the submit tab
+      const out = strip(dialog.render(80).join('\n'));
+      expect(out).toContain('提交前请检查你的回答');
+      expect(out).toContain('确认提交你的回答？');
+      expect(out).toContain('提交');
+      expect(out).toContain('取消');
+      expect(out).not.toContain('Submit');
+      expect(out).not.toContain('Review your answer before submit');
+    });
   });
 
   describe('long-content wrapping', () => {

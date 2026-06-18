@@ -21,6 +21,7 @@ import { detectPendingMigration } from '#/migration/index';
 import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
+import { i18n, resolveLocale } from '#/tui/i18n';
 import { KimiTUI } from '#/tui/index';
 import { currentTheme, getColorPalette } from '#/tui/theme';
 import { combineStartupNotice } from '#/tui/utils/startup';
@@ -38,18 +39,28 @@ export async function runShell(
   const startedAt = Date.now();
   const configStartedAt = startedAt;
   let tuiConfig: TuiConfig;
-  let configWarning: string | undefined;
+  // The config-parse notice is rendered through i18n *after* the locale is
+  // resolved below — config load runs before we know the language, so we only
+  // record that it failed here and translate once the locale is available.
+  let configParseFailed = false;
   try {
     tuiConfig = await loadTuiConfig();
   } catch (error) {
     if (!(error instanceof TuiConfigParseError)) throw error;
     tuiConfig = error.fallback;
-    configWarning = error.message;
+    configParseFailed = true;
   }
 
   // Initialise the global Theme singleton before pi-tui grabs stdin.
   const palette = await getColorPalette(tuiConfig.theme);
   currentTheme.setPalette(palette);
+
+  // Initialise the global I18n singleton alongside the theme: resolve the
+  // configured language (including `'auto'`) to a concrete locale so the TUI
+  // renders in the right language from the first frame.
+  i18n.setLocale(resolveLocale(tuiConfig.language));
+
+  let configWarning = configParseFailed ? i18n.t('cli.config.invalidTuiConfig') : undefined;
 
   const workDir = process.cwd();
   const telemetryBootstrap = createCliTelemetryBootstrap();

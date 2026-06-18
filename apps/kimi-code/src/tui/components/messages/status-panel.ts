@@ -5,9 +5,11 @@
  * separate from the TUI orchestration layer.
  */
 
+import { visibleWidth } from '@earendil-works/pi-tui';
 import type { ModelAlias, PermissionMode, SessionStatus } from '@moonshot-ai/kimi-code-sdk';
 
 import { PRODUCT_NAME } from '#/constant/app';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import {
   formatTokenCount,
@@ -16,6 +18,7 @@ import {
   safeUsageRatio,
 } from '#/utils/usage/usage-format';
 
+import { padEndToWidth } from './field-column';
 import { buildManagedUsageReportLines, type ManagedUsageReport } from './usage-panel';
 
 interface FieldRow {
@@ -52,12 +55,12 @@ function displayModelName(alias: string, models: Record<string, ModelAlias>): st
 
 function formatModelStatus(options: StatusReportOptions): string {
   const model = options.status?.model ?? options.model;
-  if (model.trim().length === 0) return 'not set';
+  if (model.trim().length === 0) return i18n.t('components.status.values.notSet');
 
-  const thinking = (options.status?.thinkingLevel ?? (options.thinking ? 'on' : 'off')) === 'off'
-    ? 'off'
-    : 'on';
-  return `${displayModelName(model, options.availableModels)} (thinking ${thinking})`;
+  const thinkingOn = (options.status?.thinkingLevel ?? (options.thinking ? 'on' : 'off')) !== 'off';
+  const thinkingLabel = i18n.t('components.status.values.thinking');
+  const thinkingState = i18n.t(`components.status.values.${thinkingOn ? 'on' : 'off'}`);
+  return `${displayModelName(model, options.availableModels)} (${thinkingLabel} ${thinkingState})`;
 }
 
 function addFieldRows(
@@ -67,10 +70,10 @@ function addFieldRows(
   value: Colorize,
   errorStyle: Colorize,
 ): void {
-  const labelWidth = Math.max(10, ...rows.map((row) => row.label.length));
+  const labelWidth = Math.max(10, ...rows.map((row) => visibleWidth(row.label)));
   for (const row of rows) {
     const colorize = row.severity === 'error' ? errorStyle : value;
-    lines.push(`  ${muted(row.label.padEnd(labelWidth, ' '))}  ${colorize(row.value)}`);
+    lines.push(`  ${muted(padEndToWidth(row.label, labelWidth))}  ${colorize(row.value)}`);
   }
 }
 
@@ -94,20 +97,31 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
   const severityToken = (sev: 'ok' | 'warn' | 'danger'): 'error' | 'warning' | 'success' =>
     sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
 
+  const onOff = (flag: boolean): string =>
+    i18n.t(`components.status.values.${flag ? 'on' : 'off'}`);
   const permission = options.status?.permission ?? options.permissionMode;
   const planMode = options.status?.planMode ?? options.planMode;
-  const sessionId = options.sessionId.trim().length > 0 ? options.sessionId : 'none';
+  const sessionId =
+    options.sessionId.trim().length > 0
+      ? options.sessionId
+      : i18n.t('components.status.values.none');
   const rows: FieldRow[] = [
-    { label: 'Model', value: formatModelStatus(options) },
-    { label: 'Directory', value: options.workDir },
-    { label: 'Permissions', value: permission },
-    { label: 'Plan mode', value: planMode ? 'on' : 'off' },
-    { label: 'Session', value: sessionId },
+    { label: i18n.t('components.status.fields.model'), value: formatModelStatus(options) },
+    { label: i18n.t('components.status.fields.directory'), value: options.workDir },
+    { label: i18n.t('components.status.fields.permissions'), value: permission },
+    { label: i18n.t('components.status.fields.planMode'), value: onOff(planMode) },
+    { label: i18n.t('components.status.fields.session'), value: sessionId },
   ];
   const title = options.sessionTitle?.trim();
-  if (title !== undefined && title.length > 0) rows.push({ label: 'Title', value: title });
+  if (title !== undefined && title.length > 0) {
+    rows.push({ label: i18n.t('components.status.fields.title'), value: title });
+  }
   if (options.statusError !== undefined) {
-    rows.push({ label: 'Warning', value: options.statusError, severity: 'error' });
+    rows.push({
+      label: i18n.t('components.status.fields.warning'),
+      value: options.statusError,
+      severity: 'error',
+    });
   }
 
   const lines: string[] = [
@@ -118,7 +132,7 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
 
   const { ratio, tokens, maxTokens } = contextValues(options);
   lines.push('');
-  lines.push(accent('Context window'));
+  lines.push(accent(i18n.t('components.usage.contextWindow')));
   if (maxTokens > 0) {
     const safeRatio = safeUsageRatio(ratio);
     const bar = renderProgressBar(safeRatio, 20);
@@ -128,7 +142,7 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
         muted(`(${formatTokenCount(tokens)} / ${formatTokenCount(maxTokens)})`),
     );
   } else {
-    lines.push(`  ${muted('No context window data available.')}`);
+    lines.push(`  ${muted(i18n.t('components.status.noContextData'))}`);
   }
 
   const managedSection = buildManagedUsageReportLines({

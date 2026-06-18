@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { adaptApprovalRequest, adaptPanelResponse } from '#/tui/reverse-rpc/approval/adapter';
+import { i18n } from '#/tui/i18n';
 
 describe('approval adapter', () => {
   it('adapts generic command displays into shell blocks with approval choices', () => {
@@ -209,6 +210,50 @@ describe('approval adapter', () => {
         requires_feedback: true,
       },
     ]);
+  });
+
+  describe('locale rendering', () => {
+    afterEach(() => {
+      i18n.setLocale('en');
+    });
+
+    it('localizes default choice labels and danger labels under zh-CN', () => {
+      i18n.setLocale('zh-CN');
+      const adapted = adaptApprovalRequest({
+        toolCallId: 'tc-zh',
+        toolName: 'Bash',
+        action: 'run',
+        display: {
+          kind: 'generic',
+          summary: 'run',
+          detail: { command: 'sudo rm -rf /tmp/cache' },
+        },
+      });
+
+      expect(adapted.choices.map((choice) => choice.label)).toEqual([
+        '批准一次',
+        '本次会话内批准',
+        '拒绝',
+        '拒绝并反馈',
+      ]);
+      expect(adapted.display).toMatchObject([{ danger: '递归删除' }]);
+    });
+
+    it('localizes plan-review labels while keeping selected_label stable', () => {
+      i18n.setLocale('zh-CN');
+      const adapted = adaptApprovalRequest({
+        toolCallId: 'tc-plan-zh',
+        toolName: 'ExitPlanMode',
+        action: 'Review plan',
+        display: { kind: 'plan_review', plan: '# Plan', path: '/tmp/p.md' },
+      });
+
+      expect(adapted.choices).toEqual([
+        { label: '批准', response: 'approved', selected_label: 'Approve' },
+        { label: '拒绝', response: 'rejected', selected_label: 'Reject' },
+        { label: '修订', response: 'rejected', selected_label: 'Revise', requires_feedback: true },
+      ]);
+    });
   });
 
   it('maps approved-for-session responses into core approval payloads', () => {

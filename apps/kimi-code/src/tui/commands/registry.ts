@@ -1,44 +1,50 @@
 import type { AutocompleteItem } from '@earendil-works/pi-tui';
 
+import { i18n } from '#/tui/i18n';
+
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
 import type { KimiSlashCommand, SlashCommandAvailability } from './types';
 
-/** Subcommands offered when autocompleting `/goal <…>`. */
-const GOAL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
-  { value: 'status', description: 'Show the current goal' },
-  { value: 'pause', description: 'Pause the active goal' },
-  { value: 'resume', description: 'Resume a paused goal' },
-  { value: 'cancel', description: 'Cancel and remove the current goal' },
-  { value: 'replace', description: 'Replace the current goal with a new objective' },
-  { value: 'next', description: 'Queue an upcoming goal' },
-];
+/**
+ * Subcommand argument-completion specs, built at call time so descriptions
+ * follow the active locale. `value` is an identifier and stays untranslated;
+ * only `description` is localized via `commands.args.*`.
+ */
+function goalArgCompletions(): ArgCompletionSpec[] {
+  return ['status', 'pause', 'resume', 'cancel', 'replace', 'next'].map((value) => ({
+    value,
+    description: i18n.t(`commands.args.goal.${value}`),
+  }));
+}
 
-const GOAL_NEXT_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
-  { value: 'manage', description: 'Manage upcoming goals' },
-];
+function goalNextArgCompletions(): ArgCompletionSpec[] {
+  return [{ value: 'manage', description: i18n.t('commands.args.goal.manage') }];
+}
 
-const SWARM_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
-  { value: 'on', description: 'Turn swarm mode on' },
-  { value: 'off', description: 'Turn swarm mode off' },
-];
+function swarmArgCompletions(): ArgCompletionSpec[] {
+  return ['on', 'off'].map((value) => ({
+    value,
+    description: i18n.t(`commands.args.swarm.${value}`),
+  }));
+}
 
 /** Argument autocompletion for the `/goal` command (subcommands). */
 export function goalArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   const nextMatch = argumentPrefix.match(/^next\s+(\S*)$/i);
   if (nextMatch !== null) {
     return (
-      completeLeadingArg(GOAL_NEXT_ARG_COMPLETIONS, nextMatch[1] ?? '')?.map((item) => ({
+      completeLeadingArg(goalNextArgCompletions(), nextMatch[1] ?? '')?.map((item) => ({
         ...item,
         value: `next ${item.value}`,
       })) ?? null
     );
   }
-  return completeLeadingArg(GOAL_ARG_COMPLETIONS, argumentPrefix);
+  return completeLeadingArg(goalArgCompletions(), argumentPrefix);
 }
 
 /** Argument autocompletion for the `/swarm` command (subcommands). */
 export function swarmArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
-  return completeLeadingArg(SWARM_ARG_COMPLETIONS, argumentPrefix);
+  return completeLeadingArg(swarmArgCompletions(), argumentPrefix);
 }
 
 export const BUILTIN_SLASH_COMMANDS = [
@@ -307,6 +313,23 @@ export function findBuiltInSlashCommand(commandName: string): BuiltinSlashComman
   return commands.find(
     (command) => command.name === commandName || command.aliases.includes(commandName),
   ) as BuiltinSlashCommand | undefined;
+}
+
+/**
+ * Builtin commands with their `description` resolved for the active locale.
+ *
+ * The static `description` strings on `BUILTIN_SLASH_COMMANDS` are the English
+ * source of truth; display surfaces (autocomplete + the `/help` panel) call
+ * this so the description follows `i18n.setLocale(...)` at render time, exactly
+ * as components call `i18n.t(...)`. Command names / aliases are identifiers and
+ * are never translated. Skill-provided commands keep their own descriptions —
+ * only the framework's own builtins are localized here.
+ */
+export function localizedBuiltinSlashCommands(): readonly KimiSlashCommand[] {
+  return BUILTIN_SLASH_COMMANDS.map((command) => ({
+    ...command,
+    description: i18n.t(`commands.descriptions.${command.name}`),
+  }));
 }
 
 export function resolveSlashCommandAvailability(

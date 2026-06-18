@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 
 import type { KimiSlashCommand } from '#/tui/commands/index';
 import { HelpPanelComponent } from '#/tui/components/dialogs/help-panel';
+import { i18n } from '#/tui/i18n';
 
 function cmd(name: string, description: string, aliases: string[] = []): KimiSlashCommand {
   return {
@@ -99,5 +100,66 @@ describe('HelpPanelComponent', () => {
     panel.handleInput('\u001B[A'); // ↑
     const out2 = strip(panel.render(80).join('\n'));
     expect(out2).toMatch(/showing 2-7 of/);
+  });
+
+  describe('locale rendering', () => {
+    afterEach(() => {
+      i18n.setLocale('en');
+    });
+
+    it('renders section headers and greeting in English by default', () => {
+      const panel = new HelpPanelComponent({
+        commands: [cmd('exit', 'Exit', ['quit', 'q'])],
+        onClose: () => {},
+      });
+      const out = strip(panel.render(80).join('\n'));
+      expect(out).toContain('Keyboard shortcuts');
+      expect(out).toContain('Slash commands');
+      expect(out).toMatch(/ready to help/i);
+    });
+
+    it('renders section headers and greeting in Simplified Chinese under zh-CN', () => {
+      i18n.setLocale('zh-CN');
+      const panel = new HelpPanelComponent({
+        commands: [cmd('exit', 'Exit', ['quit', 'q'])],
+        onClose: () => {},
+      });
+      const out = strip(panel.render(80).join('\n'));
+      expect(out).toContain('键盘快捷键');
+      expect(out).toContain('斜杠命令');
+      expect(out).not.toContain('Keyboard shortcuts');
+      expect(out).not.toContain('Slash commands');
+    });
+
+    it('translates default keyboard-shortcut descriptions under zh-CN while keeping the keys', () => {
+      i18n.setLocale('zh-CN');
+      const panel = new HelpPanelComponent({
+        commands: [],
+        onClose: () => {},
+      });
+      const out = strip(panel.render(80).join('\n'));
+      // Keys (identifiers) stay verbatim …
+      expect(out).toContain('Shift-Tab');
+      expect(out).toContain('Ctrl-G');
+      // … but their descriptions are localized.
+      expect(out).toContain('切换计划模式');
+      expect(out).not.toContain('Toggle plan mode');
+    });
+
+    it('translates the dismiss hint and scroll tail under zh-CN', () => {
+      i18n.setLocale('zh-CN');
+      const many = Array.from({ length: 30 }, (_, i) => cmd(`cmd${String(i)}`, 'd'));
+      const panel = new HelpPanelComponent({
+        commands: many,
+        onClose: () => {},
+        maxVisible: 6,
+      });
+      const out = strip(panel.render(80).join('\n'));
+      expect(out).toContain('滚动');
+      expect(out).not.toMatch(/to cancel/);
+      // Scroll tail keeps its numbers but localizes the surrounding words.
+      expect(out).toMatch(/显示第 1-6 项，共 \d+ 项/);
+      expect(out).not.toMatch(/showing 1-6 of/);
+    });
   });
 });

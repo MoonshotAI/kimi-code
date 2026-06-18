@@ -1,8 +1,9 @@
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import { visibleWidth } from '@earendil-works/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import { darkColors } from '#/tui/theme/colors';
 
@@ -253,5 +254,34 @@ describe('ModelSelectorComponent', () => {
         expect(visibleWidth(line)).toBeLessThanOrEqual(width);
       }
     }
+  });
+});
+
+describe('ModelSelectorComponent — locale rendering', () => {
+  afterEach(() => {
+    i18n.setLocale('en');
+  });
+
+  it('renders the shared footer hints in Chinese via the common namespace', () => {
+    i18n.setLocale('zh-CN');
+    const picker = new ModelSelectorComponent({
+      models: { kimi: model('Kimi K2') },
+      currentValue: 'kimi',
+      currentThinking: true,
+      searchable: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    // Type a query so the Backspace-clear hint surfaces too.
+    picker.handleInput('k');
+
+    const out = text(picker);
+
+    expect(out).toContain('↑↓ 导航');
+    expect(out).toContain('Enter 选择');
+    expect(out).toContain('Esc 取消');
+    expect(out).toContain('Backspace 清除');
+    expect(out).not.toContain('navigate');
+    expect(out).not.toContain('Esc cancel');
   });
 });

@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import chalk from 'chalk';
 
 import { FooterComponent, formatFooterGitBadge, buildWeightedTips } from '#/tui/components/chrome/footer';
+import { i18n } from '#/tui/i18n';
 import { darkColors } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
 
@@ -142,6 +143,37 @@ describe('FooterComponent — context NaN resilience', () => {
     } finally {
       chalk.level = previousLevel;
     }
+  });
+});
+
+describe('FooterComponent — locale rendering', () => {
+  afterEach(() => {
+    i18n.setLocale('en');
+  });
+
+  it('renders footer status labels in English by default', () => {
+    const fc = new FooterComponent(baseState({ contextUsage: 0.5, thinking: true }));
+    fc.setBackgroundCounts({ bashTasks: 1, agentTasks: 0 });
+
+    const out = strip(fc.render(120).join(''));
+
+    expect(out).toContain('context: 50.0%');
+    expect(out).toContain('thinking');
+    expect(out).toContain('[1 task running]');
+  });
+
+  it('renders footer status labels in Simplified Chinese when the locale is zh-CN', () => {
+    i18n.setLocale('zh-CN');
+
+    const fc = new FooterComponent(baseState({ contextUsage: 0.5, thinking: true }));
+    fc.setBackgroundCounts({ bashTasks: 1, agentTasks: 0 });
+
+    const out = strip(fc.render(120).join(''));
+
+    expect(out).toContain('上下文: 50.0%');
+    expect(out).toContain('思考模式');
+    expect(out).toContain('个后台任务运行中');
+    expect(out).not.toContain('context:');
   });
 });
 

@@ -9,6 +9,7 @@ import {
 import type { PluginInfo, PluginMcpServerInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import { formatPluginSourceLabel, pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 import { printableChar } from '#/tui/utils/printable-key';
@@ -419,7 +420,7 @@ export class PluginRemoveConfirmComponent extends ChoicePickerComponent {
       options: [
         {
           value: REMOVE_CONFIRM_CANCEL,
-          label: 'Cancel',
+          label: i18n.t('common.cancel'),
           description: 'Keep this plugin installed.',
         },
         {

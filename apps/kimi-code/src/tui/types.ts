@@ -8,7 +8,7 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { NotificationsConfig, UpgradePreferences } from './config';
+import type { NotificationsConfig, TuiLanguage, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
 
@@ -39,6 +39,8 @@ export interface AppState {
   streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing';
   streamingStartTime: number;
   theme: ThemeName;
+  /** Active language preference; drives the i18n locale for the session. */
+  language: TuiLanguage;
   version: string;
   editorCommand: string | null;
   notifications: NotificationsConfig;

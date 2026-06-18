@@ -1,13 +1,16 @@
 import {
   BUILTIN_SLASH_COMMANDS,
   findBuiltInSlashCommand,
+  goalArgumentCompletions,
+  localizedBuiltinSlashCommands,
   parseSlashInput,
   resolveSlashCommandAvailability,
   sortSlashCommands,
   swarmArgumentCompletions,
   type KimiSlashCommand,
 } from '#/tui/commands/index';
-import { describe, expect, it } from 'vitest';
+import { i18n } from '#/tui/i18n';
+import { afterEach, describe, expect, it } from 'vitest';
 
 describe('parseSlashInput', () => {
   it('parses command names and trimmed args', () => {
@@ -154,6 +157,73 @@ describe('built-in slash command registry', () => {
         'yolo',
       ]),
     );
+  });
+
+  describe('localized argument-completion descriptions', () => {
+    afterEach(() => {
+      i18n.setLocale('en');
+    });
+
+    it('keeps swarm subcommand values and labels untranslated under zh-CN', () => {
+      i18n.setLocale('zh-CN');
+      const off = swarmArgumentCompletions('of');
+      expect(off).toEqual([{ value: 'off', label: 'off', description: '关闭蜂群模式' }]);
+    });
+
+    it('localizes goal subcommand descriptions under zh-CN while keeping values', () => {
+      i18n.setLocale('zh-CN');
+      const status = goalArgumentCompletions('')?.find((item) => item.value === 'status');
+      expect(status?.value).toBe('status');
+      expect(status?.description).toBe('显示当前目标');
+      expect(status?.description).not.toBe('Show the current goal');
+    });
+  });
+
+  describe('localized descriptions', () => {
+    afterEach(() => {
+      i18n.setLocale('en');
+    });
+
+    it('resolves builtin descriptions from the en locale by default', () => {
+      const byName = new Map(localizedBuiltinSlashCommands().map((c) => [c.name, c.description]));
+      expect(byName.get('settings')).toBe('Open TUI settings');
+      expect(byName.get('help')).toBe('Show available commands and shortcuts');
+    });
+
+    it('resolves builtin descriptions in Simplified Chinese under zh-CN', () => {
+      i18n.setLocale('zh-CN');
+      const byName = new Map(localizedBuiltinSlashCommands().map((c) => [c.name, c.description]));
+      expect(byName.get('settings')).toBe('打开 TUI 设置');
+      expect(byName.get('settings')).not.toBe('Open TUI settings');
+    });
+
+    it('keeps command names and aliases untranslated under zh-CN', () => {
+      i18n.setLocale('zh-CN');
+      const settings = localizedBuiltinSlashCommands().find((c) => c.name === 'settings');
+      expect(settings?.name).toBe('settings');
+      expect(settings?.aliases).toEqual(['config']);
+    });
+
+    it('has a description key for every builtin command in both locales', () => {
+      for (const locale of ['en', 'zh-CN'] as const) {
+        i18n.setLocale(locale);
+        for (const command of localizedBuiltinSlashCommands()) {
+          // A missing key falls back to the raw dotted key — assert it resolved.
+          expect(command.description).not.toContain('commands.descriptions.');
+          expect(command.description.length).toBeGreaterThan(0);
+        }
+      }
+    });
+
+    it('translates no English description through into the zh-CN pack', () => {
+      i18n.setLocale('zh-CN');
+      const englishByName = new Map<string, string>(
+        BUILTIN_SLASH_COMMANDS.map((c) => [c.name, c.description]),
+      );
+      for (const command of localizedBuiltinSlashCommands()) {
+        expect(command.description).not.toBe(englishByName.get(command.name));
+      }
+    });
   });
 
   it('keeps TUI reload always available and full reload idle-only', () => {

@@ -1,5 +1,6 @@
 import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 
+import { i18n, resolveLocale } from '#/tui/i18n';
 import { currentTheme, lightColors } from '#/tui/theme';
 import { loadTuiConfig, type TuiConfig } from '../config';
 import type { SlashCommandHost } from './dispatch';
@@ -22,8 +23,9 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
 
   const config = await host.harness.getConfig({ reload: true });
   setExperimentalFeatures(await host.harness.getExperimentalFeatures());
-  host.refreshSlashCommandAutocomplete();
   applyRuntimeConfig(host, config);
+  // applyReloadedTuiConfig rebuilds the slash-command autocomplete, picking up
+  // both the refreshed experimental-flag gating above and the reloaded locale.
   await applyReloadedTuiConfig(host, tuiConfig);
 
   if (session === undefined) {
@@ -43,10 +45,19 @@ export async function applyReloadedTuiConfig(
     : undefined;
   await host.applyTheme(config.theme, resolved);
   host.refreshTerminalThemeTracking();
+  // Re-apply the language alongside the theme: update the persisted preference
+  // in app state and flip the live i18n locale so a reloaded `language` takes
+  // effect without a process restart.
+  i18n.setLocale(resolveLocale(config.language));
+  // Rebuild the `/` autocomplete snapshot so its localized command descriptions
+  // follow the reloaded locale. `/reload` already refreshes it separately, but
+  // `/reload-tui` reaches this helper directly, so refresh here too.
+  host.refreshSlashCommandAutocomplete();
   host.setAppState({
     editorCommand: config.editorCommand,
     notifications: config.notifications,
     upgrade: config.upgrade,
+    language: config.language,
   });
 }
 

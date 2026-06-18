@@ -14,8 +14,10 @@ import {
   renderProgressBar,
   safeUsageRatio,
 } from '#/utils/usage/usage-format';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
+import { padEndToWidth } from './field-column';
 
 const LEFT_MARGIN = 2;
 const SIDE_PADDING = 1;
@@ -73,7 +75,15 @@ function buildSessionUsageSection(
   const byModel = (usage as { readonly byModel?: Record<string, TokenUsage> } | undefined)
     ?.byModel;
   const entries = Object.entries(byModel ?? {});
-  if (entries.length === 0) return [muted('  No token usage recorded yet.')];
+  if (entries.length === 0) return [muted(`  ${i18n.t('components.usage.noTokenUsage')}`)];
+
+  const inputLabel = i18n.t('components.usage.input');
+  const outputLabel = i18n.t('components.usage.output');
+  const totalLabel = i18n.t('components.usage.total');
+  const formatRow = (label: string, input: number, output: number): string =>
+    `  ${muted(label)}  ${inputLabel} ${value(formatTokenCount(input))}  ${outputLabel} ${value(
+      formatTokenCount(output),
+    )}  ${totalLabel} ${value(formatTokenCount(input + output))}`;
 
   const lines: string[] = [];
   let totalInput = 0;
@@ -83,18 +93,10 @@ function buildSessionUsageSection(
     const output = usageNumber(row.output);
     totalInput += input;
     totalOutput += output;
-    lines.push(
-      `  ${muted(model)}  input ${value(formatTokenCount(input))}  output ${value(
-        formatTokenCount(output),
-      )}  total ${value(formatTokenCount(input + output))}`,
-    );
+    lines.push(formatRow(model, input, output));
   }
   if (entries.length > 1) {
-    lines.push(
-      `  ${muted('total')}  input ${value(formatTokenCount(totalInput))}  output ${value(
-        formatTokenCount(totalOutput),
-      )}  total ${value(formatTokenCount(totalInput + totalOutput))}`,
-    );
+    lines.push(formatRow(totalLabel, totalInput, totalOutput));
   }
   return lines;
 }
@@ -107,11 +109,12 @@ function buildManagedUsageSection(
   muted: Colorize,
   errorStyle: Colorize,
 ): string[] {
-  if (error !== undefined) return [accent('Plan usage'), errorStyle(`  ${error}`)];
+  const planUsage = i18n.t('components.usage.planUsage');
+  if (error !== undefined) return [accent(planUsage), errorStyle(`  ${error}`)];
   if (usage === undefined) return [];
   const { summary, limits } = usage;
   if (summary === null && limits.length === 0) {
-    return [accent('Plan usage'), muted('  No usage data available.')];
+    return [accent(planUsage), muted(`  ${i18n.t('components.usage.noUsageData')}`)];
   }
 
   const rows: ManagedUsageRow[] = [];
@@ -119,19 +122,22 @@ function buildManagedUsageSection(
   rows.push(...limits);
   const usedRatio = (r: ManagedUsageRow): number =>
     r.limit > 0 ? Math.max(0, Math.min(r.used / r.limit, 1)) : 0;
-  const labelWidth = Math.max(10, ...rows.map((r) => r.label.length));
-  const pctWidth = Math.max(...rows.map((r) => `${Math.round(usedRatio(r) * 100)}% used`.length));
+  const pctText = (r: ManagedUsageRow): string =>
+    i18n.t('components.usage.percentUsed', { pct: Math.round(usedRatio(r) * 100) });
+  const labelWidth = Math.max(10, ...rows.map((r) => visibleWidth(r.label)));
+  const pctWidth = Math.max(...rows.map((r) => visibleWidth(pctText(r))));
   const severityColor = (sev: 'ok' | 'warn' | 'danger'): 'success' | 'warning' | 'error' =>
     sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
-  const out: string[] = [accent('Plan usage')];
+  const out: string[] = [accent(planUsage)];
   for (const row of rows) {
     const ratioUsed = usedRatio(row);
     const bar = renderProgressBar(ratioUsed, 20);
-    const pct = `${Math.round(ratioUsed * 100)}% used`;
     const barColoured = currentTheme.fg(severityColor(ratioSeverity(ratioUsed)), bar);
-    const label = row.label.padEnd(labelWidth, ' ');
+    const label = padEndToWidth(row.label, labelWidth);
     const resetStr = row.resetHint ? `  ${muted(row.resetHint)}` : '';
-    out.push(`  ${muted(label)}  ${barColoured}  ${value(pct.padEnd(pctWidth, ' '))}${resetStr}`);
+    out.push(
+      `  ${muted(label)}  ${barColoured}  ${value(padEndToWidth(pctText(row), pctWidth))}${resetStr}`,
+    );
   }
   return out;
 }
@@ -161,7 +167,7 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
     sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
 
   const lines: string[] = [
-    accent('Session usage'),
+    accent(i18n.t('components.usage.sessionUsage')),
     ...buildSessionUsageSection(
       options.sessionUsage,
       options.sessionUsageError,
@@ -177,7 +183,7 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
     const pct = `${(ratio * 100).toFixed(1)}%`;
     const barColoured = currentTheme.fg(severityColor(ratioSeverity(ratio)), bar);
     lines.push('');
-    lines.push(accent('Context window'));
+    lines.push(accent(i18n.t('components.usage.contextWindow')));
     lines.push(
       `  ${barColoured}  ${value(pct.padStart(6, ' '))}  ` +
         muted(
@@ -207,7 +213,7 @@ export class UsagePanelComponent implements Component {
   constructor(
     private readonly buildLines: () => readonly string[],
     private readonly borderToken: ColorToken,
-    private readonly title: string = ' Usage ',
+    private readonly title: string = i18n.t('components.usage.panelTitle'),
   ) {
     this.lines = buildLines();
   }

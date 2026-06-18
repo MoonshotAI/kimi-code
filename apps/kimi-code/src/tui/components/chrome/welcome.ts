@@ -8,6 +8,7 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
 import { isRainbowDancing, renderDanceWelcomeHeader } from '#/tui/easter-eggs/dance';
+import { i18n } from '#/tui/i18n';
 import type { AppState } from '#/tui/types';
 import { currentTheme } from '#/tui/theme';
 
@@ -27,14 +28,15 @@ export class WelcomeComponent implements Component {
     const activeModel = this.state.availableModels[this.state.model];
 
     if (safeWidth < 24) {
-      const title = chalk.bold.hex(currentTheme.palette.primary)('Welcome to Kimi Code!');
+      const title = chalk.bold.hex(currentTheme.palette.primary)(i18n.t('components.welcome.title'));
       const prompt = isLoggedOut
-        ? chalk.hex(currentTheme.palette.warning)('Run /login or /provider to get started.')
-        : chalk.hex(currentTheme.palette.textDim)('Send /help for help information.');
+        ? chalk.hex(currentTheme.palette.warning)(i18n.t('components.welcome.getStarted'))
+        : chalk.hex(currentTheme.palette.textDim)(i18n.t('components.welcome.helpHint'));
       const model = isLoggedOut
-        ? chalk.hex(currentTheme.palette.warning)('not set, run /login or /provider')
+        ? chalk.hex(currentTheme.palette.warning)(i18n.t('components.welcome.modelNotSet'))
         : (activeModel?.displayName ?? activeModel?.model ?? this.state.model);
-      return ['', title, prompt, `Model: ${model}`].map((line) =>
+      const modelLabel = i18n.t('components.welcome.labels.model');
+      return ['', title, prompt, `${modelLabel}: ${model}`].map((line) =>
         truncateToWidth(line, safeWidth, '…'),
       );
     }
@@ -49,14 +51,18 @@ export class WelcomeComponent implements Component {
     const textWidth = Math.max(4, innerWidth - logoWidth - gap.length);
 
     const rightRow0 = truncateToWidth(
-      chalk.bold.hex(currentTheme.palette.primary)('Welcome to Kimi Code!'),
+      chalk.bold.hex(currentTheme.palette.primary)(i18n.t('components.welcome.title')),
       textWidth,
       '…',
     );
     const dim = chalk.hex(currentTheme.palette.textDim);
     const labelStyle = chalk.bold.hex(currentTheme.palette.textDim);
     const rightRow1 = truncateToWidth(
-      dim(isLoggedOut ? 'Run /login or /provider to get started.' : 'Send /help for help information.'),
+      dim(
+        isLoggedOut
+          ? i18n.t('components.welcome.getStarted')
+          : i18n.t('components.welcome.helpHint'),
+      ),
       textWidth,
       '…',
     );
@@ -70,19 +76,28 @@ export class WelcomeComponent implements Component {
     }
 
     const modelValue = isLoggedOut
-      ? chalk.hex(currentTheme.palette.warning)('not set, run /login or /provider')
+      ? chalk.hex(currentTheme.palette.warning)(i18n.t('components.welcome.modelNotSet'))
       : (activeModel?.displayName ?? activeModel?.model ?? this.state.model);
 
-    const infoLines = [
-      labelStyle('Directory: ') + this.state.workDir,
-      labelStyle('Session:   ') + this.state.sessionId,
-      labelStyle('Model:     ') + modelValue,
-      labelStyle('Version:   ') + this.state.version,
+    const label = (key: string): string => `${i18n.t(`components.welcome.labels.${key}`)}:`;
+    const infoFields: Array<[label: string, value: string]> = [
+      [label('directory'), this.state.workDir],
+      [label('session'), this.state.sessionId],
+      [label('model'), modelValue],
+      [label('version'), this.state.version],
     ];
-
     if (this.state.mcpServersSummary) {
-      infoLines.push(labelStyle('MCP:       ') + this.state.mcpServersSummary);
+      infoFields.push([label('mcp'), this.state.mcpServersSummary]);
     }
+
+    // Pad each label to a common display width (not char count) plus one gap,
+    // so the value column lines up regardless of locale — CJK labels are
+    // double-width.
+    const labelColWidth = Math.max(...infoFields.map(([text]) => visibleWidth(text))) + 1;
+    const infoLines = infoFields.map(([text, value]) => {
+      const padding = ' '.repeat(Math.max(0, labelColWidth - visibleWidth(text)));
+      return labelStyle(text + padding) + value;
+    });
 
     const contentLines: string[] = [...renderedHeaderLines, '', ...infoLines];
 

@@ -3,6 +3,7 @@ import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 export type SettingsSelection =
   | 'model'
   | 'theme'
+  | 'language'
   | 'editor'
   | 'permission'
   | 'experiments'
@@ -24,6 +25,11 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     value: 'theme',
     label: 'Theme',
     description: 'Change the terminal UI theme.',
+  },
+  {
+    value: 'language',
+    label: 'Language',
+    description: 'Choose the interface language (Auto / English / 简体中文).',
   },
   {
     value: 'editor',
@@ -51,6 +57,7 @@ function isSettingsSelection(value: string): value is SettingsSelection {
   return (
     value === 'model' ||
     value === 'theme' ||
+    value === 'language' ||
     value === 'editor' ||
     value === 'permission' ||
     value === 'experiments' ||

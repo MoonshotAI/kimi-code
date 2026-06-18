@@ -8,6 +8,7 @@ import {
 } from '@earendil-works/pi-tui';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
@@ -66,7 +67,11 @@ export class UndoSelectorComponent extends Container implements Focusable {
 
   override render(width: number): string[] {
     const view = this.list.view();
-    const hintParts = ['↑↓ navigate', 'Enter select', 'Esc cancel'];
+    const hintParts = [
+      i18n.t('common.hints.navigate'),
+      i18n.t('common.hints.select'),
+      i18n.t('common.hints.cancel'),
+    ];
 
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),

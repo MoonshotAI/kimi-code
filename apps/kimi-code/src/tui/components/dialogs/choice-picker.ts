@@ -17,6 +17,7 @@ import {
   type Focusable,
 } from '@earendil-works/pi-tui';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
@@ -122,9 +123,9 @@ export class ChoicePickerComponent extends Container implements Focusable {
     // Header mirrors the model dialog (see model-selector.ts): border, title
     // with a "(type to search)" suffix until you type, the hint, a blank, then
     // the search line. Key vocabulary is lowercase to match every list dialog.
-    const navParts = ['↑↓ navigate'];
+    const navParts = [i18n.t('common.hints.navigate')];
     if (view.page.pageCount > 1) navParts.push('←→ page');
-    navParts.push('Enter select', 'Esc cancel');
+    navParts.push(i18n.t('common.hints.select'), i18n.t('common.hints.cancel'));
     const hint = this.opts.hint ?? navParts.join(' · ');
 
     const titleSuffix =

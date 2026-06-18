@@ -34,9 +34,9 @@ import { quoteShellArg } from '#/utils/shell-quote';
 import { BannerProvider } from './banner/banner-provider';
 import { readBannerDisplayState, writeBannerDisplayState } from './banner/state';
 import {
-  BUILTIN_SLASH_COMMANDS,
   buildSkillSlashCommands,
   isExperimentalFlagEnabled,
+  localizedBuiltinSlashCommands,
   setExperimentalFeatures,
   sortSlashCommands,
   type KimiSlashCommand,
@@ -179,6 +179,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     streamingPhase: 'idle',
     streamingStartTime: 0,
     theme: input.tuiConfig.theme,
+    language: input.tuiConfig.language,
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     notifications: input.tuiConfig.notifications,
@@ -311,7 +312,7 @@ export class KimiTUI {
   // =========================================================================
 
   private getSlashCommands(): readonly KimiSlashCommand[] {
-    const builtins = sortSlashCommands(BUILTIN_SLASH_COMMANDS).filter((command) =>
+    const builtins = sortSlashCommands(localizedBuiltinSlashCommands()).filter((command) =>
       isExperimentalFlagEnabled(command.experimentalFlag),
     );
     return [...builtins, ...this.skillCommands];

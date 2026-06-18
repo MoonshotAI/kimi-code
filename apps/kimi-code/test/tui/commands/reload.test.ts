@@ -8,6 +8,7 @@ import {
   handleReloadCommand,
   handleReloadTuiCommand,
 } from '#/tui/commands/reload';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import type { SlashCommandHost } from '#/tui/commands';
 import {
@@ -87,6 +88,22 @@ auto_install = false
     });
   });
 
+  it('re-reads the language and re-applies it via setAppState + i18n.setLocale', async () => {
+    await writeTuiConfig('language = "zh-CN"\n');
+    const setLocale = vi.spyOn(i18n, 'setLocale');
+    const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.state.appState.language).toBe('zh-CN');
+    expect(setLocale).toHaveBeenCalledWith('zh-CN');
+    // Rebuild the autocomplete snapshot so the `/` command menu picks up the
+    // reloaded locale without a restart (see applyReloadedTuiConfig).
+    expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalled();
+
+    setLocale.mockRestore();
+  });
+
   it('awaits the async theme application before refreshing terminal tracking', async () => {
     await writeTuiConfig('theme = "auto"\n');
     const host = makeHost();
@@ -129,6 +146,7 @@ function makeHost({
   const state = {
     appState: {
       theme: 'dark',
+      language: 'auto',
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },

@@ -10,6 +10,7 @@ import {
 
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
@@ -177,9 +178,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
     // surfaces the backspace shortcut once a query is active.
     const hintParts: string[] = [];
     if (this.opts.providerSwitchHint) hintParts.push('Tab toggle provider');
-    hintParts.push('↑↓ navigate');
-    if (searchable && view.query.length > 0) hintParts.push('Backspace clear');
-    hintParts.push('Enter select', 'Esc cancel');
+    hintParts.push(i18n.t('common.hints.navigate'));
+    if (searchable && view.query.length > 0) hintParts.push(i18n.t('common.hints.clearSearch'));
+    hintParts.push(i18n.t('common.hints.select'), i18n.t('common.hints.cancel'));
 
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),

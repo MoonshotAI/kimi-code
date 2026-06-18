@@ -16,6 +16,7 @@ import {
   type Focusable,
   truncateToWidth,
 } from '@earendil-works/pi-tui';
+import { i18n } from '#/tui/i18n';
 import { currentTheme } from '#/tui/theme';
 
 export interface KeyboardShortcut {
@@ -29,19 +30,26 @@ export interface HelpPanelCommand {
   readonly description: string;
 }
 
-/** Static list — keep in sync with the global editor bindings. */
-export const DEFAULT_KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
-  { keys: 'Shift-Tab', description: 'Toggle plan mode' },
-  { keys: 'Ctrl-G', description: 'Edit in external editor ($VISUAL / $EDITOR)' },
-  { keys: 'Ctrl-O', description: 'Toggle tool output expansion' },
-  { keys: 'Ctrl-S', description: 'Steer — inject a follow-up during streaming' },
-  { keys: 'Shift-Enter / Ctrl-J', description: 'Insert newline' },
-  { keys: 'Ctrl-C', description: 'Interrupt stream / clear input' },
-  { keys: 'Ctrl-D', description: 'Exit (on empty input)' },
-  { keys: 'Esc', description: 'Close dialogs / interrupt streaming' },
-  { keys: '↑ / ↓', description: 'Browse input history' },
-  { keys: 'Enter', description: 'Submit' },
-];
+/**
+ * Default keyboard shortcuts — keep in sync with the global editor bindings.
+ *
+ * Built at call time so the descriptions follow the active locale; the keys
+ * (`Shift-Tab`, `Ctrl-G`, …) are identifiers and stay verbatim in every locale.
+ */
+export function defaultKeyboardShortcuts(): readonly KeyboardShortcut[] {
+  return [
+    { keys: 'Shift-Tab', description: i18n.t('commands.help.shortcuts.planMode') },
+    { keys: 'Ctrl-G', description: i18n.t('commands.help.shortcuts.externalEditor') },
+    { keys: 'Ctrl-O', description: i18n.t('commands.help.shortcuts.toolOutput') },
+    { keys: 'Ctrl-S', description: i18n.t('commands.help.shortcuts.steer') },
+    { keys: 'Shift-Enter / Ctrl-J', description: i18n.t('commands.help.shortcuts.newline') },
+    { keys: 'Ctrl-C', description: i18n.t('commands.help.shortcuts.interrupt') },
+    { keys: 'Ctrl-D', description: i18n.t('commands.help.shortcuts.exit') },
+    { keys: 'Esc', description: i18n.t('commands.help.shortcuts.closeDialogs') },
+    { keys: '↑ / ↓', description: i18n.t('commands.help.shortcuts.history') },
+    { keys: 'Enter', description: i18n.t('commands.help.shortcuts.submit') },
+  ];
+}
 
 export interface HelpPanelOptions {
   readonly commands: readonly HelpPanelCommand[];
@@ -96,7 +104,7 @@ export class HelpPanelComponent extends Container implements Focusable {
     const kbdColor = (text: string) => currentTheme.fg('warning', text);
     const slashColor = (text: string) => currentTheme.fg('primary', text);
 
-    const shortcuts = this.opts.shortcuts ?? DEFAULT_KEYBOARD_SHORTCUTS;
+    const shortcuts = this.opts.shortcuts ?? defaultKeyboardShortcuts();
     const kbdWidth = Math.max(8, ...shortcuts.map((s) => s.keys.length));
     const sortedCmds = [...this.opts.commands].toSorted(compareSlashCommandsForDisplay);
     const cmdLabels = sortedCmds.map((c) => {
@@ -106,17 +114,18 @@ export class HelpPanelComponent extends Container implements Focusable {
     const cmdWidth = Math.max(12, ...cmdLabels.map((l) => l.length));
     const lines: string[] = [
       accent('─'.repeat(width)),
-      currentTheme.boldFg('primary', ' help ') + muted('· Esc / Enter / q to cancel · ↑↓ scroll'),
+      currentTheme.boldFg('primary', ` ${i18n.t('commands.help.title')} `) +
+        muted(i18n.t('commands.help.dismiss')),
       '',
       // Greeting
-      `  ${dim('Sure, Kimi is ready to help! Just send a message to get started.')}`,
+      `  ${dim(i18n.t('commands.help.greeting'))}`,
       '',
       // Section: keyboard shortcuts
-      `  ${currentTheme.bold('Keyboard shortcuts')}`,
+      `  ${currentTheme.bold(i18n.t('commands.help.keyboardShortcuts'))}`,
       ...shortcuts.map((s) => `    ${kbdColor(s.keys.padEnd(kbdWidth))}  ${dim(s.description)}`),
       '',
       // Section: slash commands
-      `  ${currentTheme.bold('Slash commands')}`,
+      `  ${currentTheme.bold(i18n.t('commands.help.slashCommands'))}`,
       ...sortedCmds.map((cmd, i) => {
         const label = cmdLabels[i] ?? `/${cmd.name}`;
         return `    ${slashColor(label.padEnd(cmdWidth))}  ${dim(cmd.description)}`;
@@ -132,7 +141,12 @@ export class HelpPanelComponent extends Container implements Focusable {
       this.scrollTop = Math.max(0, Math.min(this.scrollTop, content.length - maxVisible));
       const slice = content.slice(this.scrollTop, this.scrollTop + maxVisible);
       const scrollInfo = muted(
-        ` showing ${String(this.scrollTop + 1)}-${String(this.scrollTop + slice.length)} of ${String(content.length)}`,
+        ' ' +
+          i18n.t('commands.help.showing', {
+            start: this.scrollTop + 1,
+            end: this.scrollTop + slice.length,
+            total: content.length,
+          }),
       );
       return [lines[0] ?? '', ...slice, scrollInfo, lines.at(-1) ?? ''].map((line) =>
         truncateToWidth(line, width),

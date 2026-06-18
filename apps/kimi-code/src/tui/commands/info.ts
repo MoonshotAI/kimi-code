@@ -18,6 +18,7 @@ import {
 } from '../constant/feedback';
 import { isManagedUsageProvider } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { i18n } from '#/tui/i18n';
 import { openUrl } from '#/utils/open-url';
 import { promptFeedbackInput } from './prompts';
 import type { SlashCommandHost } from './dispatch';
@@ -125,7 +126,11 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     managedUsage: managedUsage?.usage,
     managedUsageError: managedUsage?.error,
   };
-  const panel = new UsagePanelComponent(() => buildStatusReportLines(reportArgs), 'primary', ' Status ');
+  const panel = new UsagePanelComponent(
+    () => buildStatusReportLines(reportArgs),
+    'primary',
+    i18n.t('components.status.panelTitle'),
+  );
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
 }

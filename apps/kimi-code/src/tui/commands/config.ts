@@ -6,6 +6,7 @@ import type {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
+import { LanguageSelectorComponent } from '../components/dialogs/language-selector';
 import {
   ExperimentsSelectorComponent,
   type ExperimentalFeatureDraftChange,
@@ -16,6 +17,8 @@ import { SettingsSelectorComponent, type SettingsSelection } from '../components
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
 import { saveTuiConfig } from '../config';
+import type { TuiLanguage } from '../config';
+import { i18n, resolveLocale } from '#/tui/i18n';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
@@ -274,6 +277,7 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
   try {
     await saveTuiConfig({
       theme: host.state.appState.theme,
+      language: host.state.appState.language,
       editorCommand,
       notifications: host.state.appState.notifications,
       upgrade: host.state.appState.upgrade,
@@ -424,6 +428,7 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   try {
     await saveTuiConfig({
       theme,
+      language: host.state.appState.language,
       editorCommand: host.state.appState.editorCommand,
       notifications: host.state.appState.notifications,
       upgrade: host.state.appState.upgrade,
@@ -444,6 +449,56 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   host.track('theme_switch', { theme });
   const detail = theme === 'auto' ? ` (tracking terminal; current: ${resolved})` : '';
   host.showStatus(`Theme set to "${theme}"${detail}.`);
+}
+
+function showLanguagePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new LanguageSelectorComponent({
+      currentValue: host.state.appState.language,
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyLanguageChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+export async function applyLanguageChoice(host: LanguageHost, language: TuiLanguage): Promise<void> {
+  if (language === host.state.appState.language) {
+    host.showStatus(`Language unchanged: "${language}".`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({
+      theme: host.state.appState.theme,
+      language,
+      editorCommand: host.state.appState.editorCommand,
+      notifications: host.state.appState.notifications,
+      upgrade: host.state.appState.upgrade,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save language: ${formatErrorMessage(error)}`,
+      'error',
+    );
+    return;
+  }
+
+  host.setAppState({ language });
+  // Flip the live UI locale and repaint so every component — footer, chrome,
+  // and any open dialog — re-renders in the new language without a restart.
+  i18n.setLocale(resolveLocale(language));
+  // The `/` autocomplete holds a one-time snapshot of localized command
+  // descriptions (see setupAutocomplete); rebuild it so the command menu
+  // follows the new locale immediately instead of only after a restart.
+  host.refreshSlashCommandAutocomplete();
+  host.state.ui.requestRender();
+  host.track('language_switch', { language });
+  host.showStatus(`Language set to "${language}".`);
 }
 
 export function showPermissionPicker(host: SlashCommandHost): void {
@@ -542,11 +597,25 @@ function mountExperimentsPanel(
   );
 }
 
+type LanguageHost = {
+  readonly state: {
+    readonly appState: Pick<
+      SlashCommandHost['state']['appState'],
+      'theme' | 'language' | 'editorCommand' | 'notifications' | 'upgrade'
+    >;
+    readonly ui: Pick<SlashCommandHost['state']['ui'], 'requestRender'>;
+  };
+  setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'language'>): void;
+  showStatus(msg: string, color?: string): void;
+  track: SlashCommandHost['track'];
+  refreshSlashCommandAutocomplete: SlashCommandHost['refreshSlashCommandAutocomplete'];
+};
+
 type UpdatePreferenceHost = {
   readonly state: {
     readonly appState: Pick<
       SlashCommandHost['state']['appState'],
-      'theme' | 'editorCommand' | 'notifications' | 'upgrade'
+      'theme' | 'language' | 'editorCommand' | 'notifications' | 'upgrade'
     >;
   };
   setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'upgrade'>): void;
@@ -567,6 +636,7 @@ export async function applyUpdatePreferenceChoice(
   try {
     await saveTuiConfig({
       theme: host.state.appState.theme,
+      language: host.state.appState.language,
       editorCommand: host.state.appState.editorCommand,
       notifications: host.state.appState.notifications,
       upgrade,
@@ -621,6 +691,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'model': showModelPicker(host); return;
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
+    case 'language': showLanguagePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'experiments': void showExperimentsPanel(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;
