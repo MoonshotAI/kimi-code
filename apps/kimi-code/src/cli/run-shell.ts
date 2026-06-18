@@ -72,6 +72,7 @@ export async function runShell(
         reason: outcome.reason,
       });
     },
+    sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
   });
   log.info('kimi-code starting', {
     version,
@@ -116,7 +117,6 @@ export async function runShell(
   });
   setCrashPhase('runtime');
 
-  const resumed = opts.continue || opts.session !== undefined;
   const trackLifecycleForSession = (
     sessionId: string,
     event: string,
@@ -161,13 +161,6 @@ export async function runShell(
     const initStartedAt = Date.now();
     await tui.start();
     const initMs = Date.now() - initStartedAt;
-    trackLifecycle('started', {
-      resumed,
-      yolo: opts.yolo,
-      auto: opts.auto,
-      plan: opts.plan,
-      afk: false,
-    });
     const startupSessionId = tui.getCurrentSessionId();
     const mcpMs = await tui.getStartupMcpMs();
     trackLifecycleForSession(startupSessionId, 'startup_perf', {

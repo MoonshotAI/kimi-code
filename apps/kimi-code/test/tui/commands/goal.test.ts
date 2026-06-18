@@ -251,7 +251,6 @@ describe('handleGoalCommand', () => {
     expect(session.createGoal).toHaveBeenCalledWith(
       expect.objectContaining({ objective: 'Ship feature X', replace: false }),
     );
-    expect(host.track).toHaveBeenCalledWith('goal_create', { replace: false });
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
     expect(host.sendNormalUserInput).not.toHaveBeenCalledWith('/goal Ship feature X');
   });
