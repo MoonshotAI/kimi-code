@@ -247,10 +247,10 @@ function tocTitle(turn: ChatTurn): string {
   if (turn.role === 'compaction') return t('conversation.compactedPlain');
   if (turn.role === 'user') {
     if (turn.skillActivation) return `/${turn.skillActivation.name}`;
-    const text = turn.text.trim().replace(/\s+/g, ' ');
+    const text = turn.text.trim().replaceAll(/\s+/g, ' ');
     return text.length > 0 ? text : 'user';
   }
-  const text = (turn.text || turn.thinking || '').trim().replace(/\s+/g, ' ');
+  const text = (turn.text || turn.thinking || '').trim().replaceAll(/\s+/g, ' ');
   if (text.length > 0) return text;
   if ((turn.tools?.length ?? 0) > 0) return `${turn.tools!.length} tools`;
   return 'kimi';
@@ -315,7 +315,7 @@ function updateTocViewport(): void {
   const pane = panesRef.value;
   if (!pane) return;
   const anchors = pane.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id]');
-  if (!anchors.length) return;
+  if (anchors.length === 0) return;
   const paneRect = pane.getBoundingClientRect();
   const paneMiddle = paneRect.height / 2;
   let bestId: string | null = null;
@@ -543,7 +543,7 @@ async function handleLoadOlderMessages(): Promise<void> {
 
 function attrEscape(value: string): string {
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
-  return value.replace(/["\\]/g, '\\$&');
+  return value.replaceAll(/["\\]/g, '\\$&');
 }
 
 function scrollToTurn(turnId: string): void {

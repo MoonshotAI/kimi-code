@@ -197,11 +197,9 @@ describe('ConversationPane follow — history prepend', () => {
   async function loadOlderAndSettle(
     wrapper: ReturnType<typeof mountMobilePane>,
     turns: ChatTurn[],
-    loadOlderMessages: ReturnType<typeof vi.fn>,
+    loadOlderMessages: ReturnType<typeof vi.fn<(sessionId: string) => Promise<void>>>,
   ) {
-    loadOlderMessages.mockImplementation(async () => {
-      await wrapper.setProps({ turns });
-    });
+    loadOlderMessages.mockImplementation(() => wrapper.setProps({ turns }));
 
     await wrapper.find('.load-older').trigger('click');
     await flushPromises();
@@ -211,7 +209,7 @@ describe('ConversationPane follow — history prepend', () => {
   }
 
   it('keeps the new-message pill when bottom content arrives during a prepend', async () => {
-    const loadOlderMessages = vi.fn();
+    const loadOlderMessages = vi.fn<(sessionId: string) => Promise<void>>();
     const { wrapper, pane } = await settledPane(
       { scrollHeight: 2000, clientHeight: 500 },
       {
@@ -236,7 +234,7 @@ describe('ConversationPane follow — history prepend', () => {
   });
 
   it('does not show the new-message pill for a prepend-only update', async () => {
-    const loadOlderMessages = vi.fn();
+    const loadOlderMessages = vi.fn<(sessionId: string) => Promise<void>>();
     const { wrapper, pane } = await settledPane(
       { scrollHeight: 2000, clientHeight: 500 },
       {
