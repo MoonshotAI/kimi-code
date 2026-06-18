@@ -331,6 +331,20 @@ describe('BashTool', () => {
     expect(execWithEnv.mock.calls[0]?.[0]).toEqual(['/bin/bash', '-c', 'pwd']);
   });
 
+  it('resolves a relative args.cwd against the tool cwd before spawning', async () => {
+    const execWithEnv = vi.fn().mockResolvedValue(processWithOutput({ stdout: 'sub\n' }));
+    const kaos = createFakeKaos({ execWithEnv, osEnv: posixEnv });
+    const withCwd = vi.fn((cwd: string) =>
+      createFakeKaos({ execWithEnv, getcwd: () => cwd, osEnv: posixEnv }),
+    );
+    const tool = new BashTool({ ...kaos, withCwd }, '/workspace/kimi-code');
+
+    await executeTool(tool, context({ command: 'pwd', cwd: 'packages/agent-core', timeout: 60 }));
+
+    expect(withCwd).toHaveBeenCalledWith('/workspace/kimi-code/packages/agent-core');
+    expect(execWithEnv.mock.calls[0]?.[0]).toEqual(['/bin/bash', '-c', 'pwd']);
+  });
+
   it('keeps cwd out of the shell command string', async () => {
     const execWithEnv = vi.fn().mockResolvedValue(processWithOutput());
     const cwd = "/tmp/project-$(touch injected); `touch injected-too` & unsafe's";
