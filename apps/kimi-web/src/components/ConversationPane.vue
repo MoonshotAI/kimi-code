@@ -492,17 +492,22 @@ async function handleLoadOlderMessages(): Promise<void> {
   ) {
     return;
   }
+  const requestedSessionId = props.sessionId;
   const el = panesRef.value;
   const oldHeight = el?.scrollHeight ?? 0;
   const oldTop = el?.scrollTop ?? 0;
 
   historyLoadInProgress.value = true;
   try {
-    await props.loadOlderMessages(props.sessionId);
+    await props.loadOlderMessages(requestedSessionId);
     await nextTick();
   } finally {
     historyLoadInProgress.value = false;
   }
+
+  // If the user switched sessions while the request was in flight, do not
+  // restore scroll position on the newly selected session's pane.
+  if (props.sessionId !== requestedSessionId) return;
 
   const el2 = panesRef.value;
   if (!el2) return;
@@ -588,6 +593,9 @@ const scrollKey = computed(() => {
 });
 
 watch(scrollKey, async () => {
+  // Prepending older history changes this key; do not treat it as new bottom
+  // content and do not auto-scroll while the scroll anchor is being restored.
+  if (historyLoadInProgress.value) return;
   await nextTick();
   if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
   else showPill.value = true;
