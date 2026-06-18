@@ -378,6 +378,7 @@ const pendingApproval = computed(() =>
 const panesRef = ref<HTMLElement | null>(null);
 const dockRef = ref<HTMLElement | null>(null);
 const panesScrollbarWidth = ref(0);
+const dockHeight = ref(0);
 const chatDockStyle = computed(() => ({
   '--panes-scrollbar-width': `${panesScrollbarWidth.value}px`,
 }));
@@ -393,6 +394,7 @@ function toHtmlEl(el: RefArg): HTMLElement | null {
 function updatePanesScrollbarWidth(): void {
   const el = panesRef.value;
   panesScrollbarWidth.value = el ? Math.max(0, el.offsetWidth - el.clientWidth) : 0;
+  dockHeight.value = dockRef.value?.offsetHeight ?? 0;
 }
 
 function bindChatPane(el: RefArg): void {
@@ -1066,6 +1068,7 @@ defineExpose({ loadComposerForEdit });
       <button
         v-if="showPill"
         class="newmsg-pill"
+        :style="{ bottom: `${dockHeight + 12}px` }"
         :aria-label="t('conversation.jumpToLatestAria')"
         @click="scrollToBottom(true)"
       >
