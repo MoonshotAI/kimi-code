@@ -20,7 +20,7 @@ import type { SkillActivationOrigin } from '../../../agent/context';
 import { renderModelToolSkillPrompt } from '../../../agent/skill/prompt';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
-import { isInlineSkillType, type SkillDefinition } from '../../../skill';
+import { isInlineSkillType, normalizeSkillName, type SkillDefinition } from '../../../skill';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { matchesGlobRuleSubject } from '../../support/rule-match';
@@ -81,10 +81,22 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
   });
   readonly parameters: Record<string, unknown> = toInputJsonSchema(SkillToolInputSchema);
 
+  /** Tracks skills already loaded in the current context to avoid redundant injection. */
+  private readonly loadedSkills = new Set<string>();
+
   constructor(
     private readonly agent: Agent,
     private readonly options: SkillToolOptions = {},
   ) {}
+
+  /**
+   * Clear the dedup set. Called after compaction or context reset because
+   * the skill content may have been summarized/truncated out of the context
+   * window, and the model may need to re-load previously loaded skills.
+   */
+  clearLoadedSkills(): void {
+    this.loadedSkills.clear();
+  }
 
   resolveExecution(args: SkillToolInput): ToolExecution {
     return {
@@ -120,12 +132,13 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
       if (results.length === 0) {
         return { output: `No skills found matching "${query}". Try broader keywords.` };
       }
-      const lines = [`Found ${String(results.length)} skill(s) matching "${query}":`];
+      const lines = [`${String(results.length)} skill(s) for "${query}":`];
       for (const r of results) {
-        const wt = r.whenToUse ? ` (When: ${r.whenToUse})` : '';
-        lines.push(`- ${r.name}: ${r.description}${wt}  [score: ${String(r.score)}]`);
+        // Compact format: tier + compact + match reason
+        // Skip whenToUse in output to save tokens — the compact desc is enough
+        lines.push(`${r.tier} ${r.compact} [score: ${String(r.score)}]`);
       }
-      lines.push('', 'Call again with action:"load" and the skill name to load its instructions.');
+      lines.push('', 'Load with action:"load" + skill name. 🔴 = best match.');
       return { output: lines.join('\n') };
     }
 
@@ -167,6 +180,15 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
       );
     }
 
+    // Dedup: if this exact skill (same name + same args) was already loaded
+    // in the current context, skip re-injection to save tokens.
+    const dedupKey = `${normalizeSkillName(skill.name)}\0${skillArgs}`;
+    if (this.loadedSkills.has(dedupKey)) {
+      return {
+        output: `Skill "${skill.name}" is already loaded in context. Follow its instructions. Do not load it again.`,
+      };
+    }
+
     const origin = skillOrigin(skill, skillArgs, currentDepth);
     const promptTrigger = origin.trigger === 'nested-skill' ? 'nested-skill' : 'model-tool';
     skills.recordActivation(origin);
@@ -187,6 +209,10 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
       ],
       origin,
     );
+
+    // Mark as loaded for dedup.
+    this.loadedSkills.add(dedupKey);
+
     return {
       output: `Skill "${skill.name}" loaded inline. Follow its instructions.`,
     };

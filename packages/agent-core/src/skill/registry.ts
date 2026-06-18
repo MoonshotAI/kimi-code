@@ -40,6 +40,11 @@ export interface SkillRegistryOptions {
   readonly sessionId?: string;
   readonly compactListingThreshold?: number;
   readonly namesOnlyListingThreshold?: number;
+  /**
+   * If true, do not inject any skill catalogue into the system prompt.
+   * The model must use the Skill tool's search action to discover skills.
+   */
+  readonly disableModelSkillListing?: boolean;
 }
 
 export class SessionSkillRegistry implements AgentSkillRegistry {
@@ -53,6 +58,7 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
   private readonly searchIndex = new SkillSearchIndex();
   private readonly compactListingThreshold: number;
   private readonly namesOnlyListingThreshold: number;
+  private readonly disableModelSkillListing: boolean;
 
   private indexDirty = false;
   private modelSkillListingCache: string | undefined;
@@ -63,6 +69,7 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     this.sessionId = options.sessionId;
     this.compactListingThreshold = options.compactListingThreshold ?? COMPACT_LISTING_THRESHOLD;
     this.namesOnlyListingThreshold = options.namesOnlyListingThreshold ?? NAMES_ONLY_LISTING_THRESHOLD;
+    this.disableModelSkillListing = options.disableModelSkillListing ?? false;
   }
 
   async loadRoots(roots: readonly SkillRoot[]): Promise<void> {
@@ -215,31 +222,19 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
       (skill) => skill.metadata.isSubSkill !== true,
     );
 
-    // Auto-detect: small catalogue → legacy full listing.
-    // Large catalogue → compact/names-only + search-first.
     let listing: string;
-    if (invocable.length <= this.compactListingThreshold) {
-      const lines = ['DISREGARD any earlier skill listings. Current available skills:'];
-      const rendered = renderGroupedSkills(invocable, formatModelSkill);
-      if (rendered.length > 0) lines.push(rendered);
-      listing = lines.length === 1 ? '' : lines.join('\n');
-    } else {
-      // Tier 2+3: Large catalogue — search-first.
-      const count = invocable.length;
-      const format = count > this.namesOnlyListingThreshold
-        ? formatNameOnlySkill
-        : formatCompactSkill;
-      const lines = [
-        `You have access to ${String(count)} registered skills.`,
-        'To find relevant skills, call the `Skill` tool with `action: "search"` and keywords from the user\'s request.',
-        'Do NOT guess skill names — always search first, then load with `action: "load"`.',
-        '',
-        'Skill names by scope:',
-      ];
-      const rendered = renderGroupedSkills(invocable, format);
-      if (rendered.length > 0) lines.push(rendered);
-      listing = lines.join('\n');
-    }
+    // Always use search-only mode: do not dump skill names/descriptions into
+    // the system prompt. The model must use the Skill tool's search action
+    // to discover skills. This saves significant context tokens and prevents
+    // attention dilution from large catalogues.
+    //
+    // Inspired by Karpathy's context engineering principle: "fill the context
+    // window with just the right information for the next step."
+    listing = [
+      `You have access to ${String(invocable.length)} registered skills.`,
+      'To find relevant skills, call the `Skill` tool with `action: "search"` and keywords from the user\'s request.',
+      'Do NOT guess skill names — always search first, then load with `action: "load"`.',
+    ].join('\n');
 
     this.modelSkillListingCache = listing;
     return listing;

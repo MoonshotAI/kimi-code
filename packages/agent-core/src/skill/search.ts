@@ -103,6 +103,20 @@ function splitCompoundIdentifier(token: string): string[] {
   return parts.length > 1 ? parts : [token.toLowerCase()];
 }
 
+function toStringArray(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === 'string');
+  if (typeof value === 'string') {
+    // Some real-world skill files have YAML frontmatter like `tags: a, b, c`
+    // or a bare bracket-looking string. Split on commas and whitespace.
+    return value
+      .split(/[,\s]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+  return [];
+}
+
 function tokenize(text: string, options: { removeStopwords?: boolean } = {}): string[] {
   const raw = text
     .toLowerCase()
@@ -140,6 +154,10 @@ export interface SkillSearchResult {
   readonly source: string;
   readonly path: string;
   readonly score: number;
+  /** Compact one-liner for LLM consumption: "name — short desc". */
+  readonly compact: string;
+  /** Relevance tier emoji for quick visual filtering. */
+  readonly tier: string;
 }
 
 // ── Index ───────────────────────────────────────────────────────────
@@ -176,8 +194,8 @@ export class SkillSearchIndex {
       const descriptionTokens = tokenize(skill.description, { removeStopwords: true });
       const whenToUseTokens = tokenize(skill.metadata.whenToUse ?? '', { removeStopwords: true });
       const bodySnippetTokens = tokenize(skill.bodySnippet ?? '', { removeStopwords: true });
-      const aliasesTokens = tokenize((skill.metadata.aliases ?? []).join(' '), { removeStopwords: true });
-      const tagsTokens = tokenize((skill.metadata.tags ?? []).join(' '), { removeStopwords: true });
+      const aliasesTokens = tokenize(toStringArray(skill.metadata.aliases).join(' '), { removeStopwords: true });
+      const tagsTokens = tokenize(toStringArray(skill.metadata.tags).join(' '), { removeStopwords: true });
 
       // Weighted term frequency: a term appearing in the name contributes
       // more than the same term appearing only in the description.
@@ -288,15 +306,31 @@ export class SkillSearchIndex {
 
     candidates.sort((a, b) => b.score - a.score);
 
-    return candidates.slice(0, limit).map(({ index, score }) => {
+    return candidates.slice(0, limit).map(({ index, score }, rank) => {
       const entry = this.entries[index]!;
+      const desc = entry.skill.description;
+      const shortDesc = desc.length > 60 ? `${desc.slice(0, 57)}...` : desc;
+      const compact = `${entry.skill.name} — ${shortDesc}`;
+
+      // Relevance tier for quick LLM filtering
+      const avgScore = candidates.length > 0
+        ? candidates.reduce((s, c) => s + c.score, 0) / candidates.length
+        : 0;
+      const tier = rank === 0 && score > avgScore * 2
+        ? '🔴'
+        : rank < 3 && score > avgScore * 1.5
+          ? '🟡'
+          : '⚪';
+
       return {
         name: entry.skill.name,
-        description: entry.skill.description.slice(0, 200),
+        description: desc.slice(0, 200),
         whenToUse: entry.skill.metadata.whenToUse ?? '',
         source: entry.skill.source,
         path: entry.skill.path,
         score: Math.round(score * 100) / 100,
+        compact,
+        tier,
       };
     });
   }
