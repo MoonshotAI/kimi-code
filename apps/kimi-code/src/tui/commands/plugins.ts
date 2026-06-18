@@ -95,7 +95,7 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
       }
       await session.setPluginMcpServerEnabled(id, server, action === 'enable');
       host.showStatus(
-        `${action === 'enable' ? 'Enabled' : 'Disabled'} MCP server ${server} for ${id}. Run /new to apply.`,
+        `${action === 'enable' ? 'Enabled' : 'Disabled'} MCP server ${server} for ${id}. Run /new or /reload to apply.`,
       );
       return;
     }
@@ -274,7 +274,7 @@ async function applyPluginEnabled(
       ? ` Some MCP servers are disabled; re-enable with /plugins mcp enable ${id} <server>.`
       : '';
   if (showStatus) {
-    host.showStatus(`${enabled ? 'Enabled' : 'Disabled'} ${id}. Run /new to apply.${mcpHint}`);
+    host.showStatus(`${enabled ? 'Enabled' : 'Disabled'} ${id}. Run /new or /reload to apply.${mcpHint}`);
   }
   const inlineMcpHint = mcpHint.length > 0 ? ' · MCP servers disabled' : '';
   return `${pluginInlineChangeHint()}${inlineMcpHint}`;
@@ -425,12 +425,12 @@ function showPluginInstallResult(
       : '';
   const action = describeInstallAction(previous, summary);
   host.showStatus(
-    `${action} (${summary.id}).${mcpHint} Run /new to apply plugin changes.`,
+    `${action} (${summary.id}).${mcpHint} Run /new or /reload to apply plugin changes.`,
   );
   if (options?.successNotice === 'marketplace') {
     host.showNotice(
       `Installed or updated ${summary.displayName}`,
-      `Marketplace install or update succeeded for ${summary.id}. Run /new to apply plugin changes.`,
+      `Marketplace install or update succeeded for ${summary.id}. Run /new or /reload to apply plugin changes.`,
     );
   }
 }
@@ -482,5 +482,5 @@ function resolvePluginInstallSource(source: string, workDir: string): string {
 }
 
 function pluginInlineChangeHint(): string {
-  return 'require run /new to apply';
+  return 'require run /new or /reload to apply';
 }
