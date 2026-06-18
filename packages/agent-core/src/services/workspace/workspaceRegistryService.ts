@@ -171,7 +171,7 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
   ): Promise<Workspace> {
     const [{ is_git_repo, branch }, session_count] = await Promise.all([
       detectGit(entry.root),
-      countSessionDirs(join(this.sessionsDir, workspaceId)),
+      countActiveSessions(join(this.sessionsDir, workspaceId)),
     ]);
     return {
       id: workspaceId,
@@ -343,7 +343,7 @@ export async function detectGit(root: string): Promise<GitInfo> {
   return { is_git_repo: true, branch: ref ? (ref[1] ?? null) : null };
 }
 
-async function countSessionDirs(dir: string): Promise<number> {
+async function countActiveSessions(dir: string): Promise<number> {
   let dirents;
   try {
     dirents = await fsp.readdir(dir, { withFileTypes: true });
@@ -354,9 +354,23 @@ async function countSessionDirs(dir: string): Promise<number> {
   }
   let count = 0;
   for (const d of dirents) {
-    if (d.isDirectory()) count += 1;
+    if (!d.isDirectory()) continue;
+    if (await isSessionArchived(join(dir, d.name))) continue;
+    count += 1;
   }
   return count;
+}
+
+async function isSessionArchived(sessionDir: string): Promise<boolean> {
+  try {
+    const raw = await fsp.readFile(join(sessionDir, 'state.json'), 'utf8');
+    const parsed = JSON.parse(raw) as unknown;
+    return typeof parsed === 'object' && parsed !== null && (parsed as { archived?: boolean }).archived === true;
+  } catch {
+    // Treat unreadable/missing state.json as non-archived so the directory still
+    // counts as a session (matches the session store's own loading behavior).
+    return false;
+  }
 }
 
 export function userHomeDir(): string {

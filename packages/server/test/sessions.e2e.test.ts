@@ -25,7 +25,7 @@
  * bearing piece of Chain 2).
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -710,6 +710,45 @@ describe('POST /api/v1/sessions/{session_id}:archive — archive', () => {
     const listEnv = envelopeOf<{ items: Array<{ id: string }>; has_more: boolean }>(listRes.json());
     expect(listEnv.code).toBe(0);
     expect(listEnv.data!.items.find((s) => s.id === created.id)).toBeUndefined();
+  });
+
+  it('updates the workspace session_count to 0 when the last session is archived', async () => {
+    const r = await bootDaemon();
+    const cwd = join(tmpDir, 'workspace-archive-count');
+    mkdirSync(cwd, { recursive: true });
+    const ws = envelopeOf<{ id: string; session_count: number; root: string }>(
+      (await appOf(r).inject({ method: 'POST', url: '/api/v1/workspaces', payload: { root: cwd } })).json(),
+    ).data!;
+    expect(ws.session_count).toBe(0);
+
+    const created = envelopeOf<{ id: string }>(
+      (await appOf(r).inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { workspace_id: ws.id, metadata: { cwd: ws.root } },
+      })).json(),
+    ).data!;
+
+    const listBefore = envelopeOf<{ items: Array<{ id: string; session_count: number }> }>(
+      (await appOf(r).inject({ method: 'GET', url: '/api/v1/workspaces' })).json(),
+    ).data!;
+    const before = listBefore.items.find((w) => w.id === ws.id);
+    expect(before).toBeDefined();
+    expect(before!.session_count).toBe(1);
+
+    const archiveRes = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${created.id}:archive`,
+      payload: {},
+    });
+    expect(envelopeOf<{ archived: boolean }>(archiveRes.json()).data).toEqual({ archived: true });
+
+    const listAfter = envelopeOf<{ items: Array<{ id: string; session_count: number }> }>(
+      (await appOf(r).inject({ method: 'GET', url: '/api/v1/workspaces' })).json(),
+    ).data!;
+    const after = listAfter.items.find((w) => w.id === ws.id);
+    expect(after).toBeDefined();
+    expect(after!.session_count).toBe(0);
   });
 
   it('includes archived sessions when include_archive=true and marks archived flag', async () => {

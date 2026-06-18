@@ -2353,8 +2353,12 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
   const result: AppWorkspace[] = [];
   for (const root of [...realRoots, ...derivedRoots]) {
     const w = byRoot.get(root)!;
-    // Match count by either id or root (derived id === root).
-    const count = counts.get(w.id) ?? counts.get(w.root) ?? w.sessionCount;
+    // Match count by either id or root (derived id === root). Once sessions
+    // have loaded, trust the live local count (0 when no sessions remain) rather
+    // than the daemon's sessionCount, which historically counted archived
+    // sessions and would keep a workspace looking non-empty after its last
+    // session was archived.
+    const count = counts.get(w.id) ?? counts.get(w.root) ?? (rawState.loading ? w.sessionCount : 0);
     let branch = w.branch;
     if (!branch && activeGit && activeRoot === w.root) branch = activeGit.branch;
     result.push({ ...w, sessionCount: count, branch });

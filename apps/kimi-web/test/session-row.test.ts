@@ -56,4 +56,15 @@ describe('SessionRow status / busy', () => {
     expect(w.find('.tag-ask').exists()).toBe(false);
     expect(w.find('.tag-aborted').exists()).toBe(false);
   });
+
+  it('emits archive after confirming via the kebab menu', async () => {
+    const w = row({ id: 'only', title: 'Only' });
+
+    await w.find('.kebab').trigger('click');
+    await w.find('.menu-item.archive').trigger('click');
+    expect(w.find('.archive-confirm').exists()).toBe(true);
+
+    await w.find('.btn-confirm').trigger('click');
+    expect(w.emitted('archive')).toEqual([['only']]);
+  });
 });
