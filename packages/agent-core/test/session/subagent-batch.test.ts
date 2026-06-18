@@ -10,6 +10,7 @@ import {
 } from '../../src/session/subagent-host';
 import {
   SubagentBatch,
+  resolveSwarmMaxConcurrency,
   type SubagentBatchLauncher,
   type SubagentResult,
   type SubagentSuspendedEvent,
@@ -642,6 +643,107 @@ describe('SubagentBatch scheduling contract', () => {
   });
 });
 
+describe('resolveSwarmMaxConcurrency', () => {
+  it('returns undefined when the variable is unset', () => {
+    expect(resolveSwarmMaxConcurrency({})).toBeUndefined();
+  });
+
+  it('returns undefined for empty or whitespace-only values', () => {
+    expect(
+      resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '' }),
+    ).toBeUndefined();
+    expect(
+      resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '   ' }),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined for non-positive, non-integer, or non-numeric values', () => {
+    expect(
+      resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '0' }),
+    ).toBeUndefined();
+    expect(
+      resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '-1' }),
+    ).toBeUndefined();
+    expect(
+      resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '2.5' }),
+    ).toBeUndefined();
+    expect(
+      resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: 'abc' }),
+    ).toBeUndefined();
+  });
+
+  it('returns the integer for a positive integer value', () => {
+    expect(resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '3' })).toBe(3);
+    expect(resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: ' 8 ' })).toBe(8);
+  });
+});
+
+describe('SubagentBatch max concurrency cap', () => {
+  it('caps in-flight tasks at maxConcurrency during the normal phase', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts } = createMockBatchRunner({ maxConcurrency: 3 });
+      const running = runBatch(Array.from({ length: 9 }, (_, index) => queuedTask(index + 1)), {
+        signal,
+      });
+      const resolved = new Set<number>();
+      const resolveOne = (index: number) => {
+        const attempt = attempts[index]!;
+        resolved.add(index);
+        attempt.outcome.resolve({
+          task: attempt.task,
+          agentId: `agent-${String(index + 1)}`,
+          status: 'completed',
+          result: `result ${String(index + 1)}`,
+        });
+      };
+      const inFlight = () => attempts.length - resolved.size;
+
+      // Initial burst is capped at 3 instead of the default 5.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(3);
+      expect(inFlight()).toBe(3);
+
+      // The 700ms ramp tick does not exceed the cap while all slots are occupied.
+      await vi.advanceTimersByTimeAsync(700);
+      expect(attempts).toHaveLength(3);
+
+      // Freeing one slot refills it without exceeding the cap.
+      resolveOne(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(4);
+      expect(inFlight()).toBeLessThanOrEqual(3);
+
+      resolveOne(1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+      expect(inFlight()).toBeLessThanOrEqual(3);
+
+      // Once the initial burst budget (5) is exhausted, further launches wait for
+      // the 700ms ramp tick, but the in-flight count still never exceeds the cap.
+      resolveOne(2);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+      await vi.advanceTimersByTimeAsync(700);
+      expect(attempts).toHaveLength(6);
+      expect(inFlight()).toBeLessThanOrEqual(3);
+
+      // Drain the remaining attempts.
+      for (let index = 3; index < 9; index += 1) {
+        resolveOne(index);
+        await vi.advanceTimersByTimeAsync(700);
+        expect(inFlight()).toBeLessThanOrEqual(3);
+      }
+
+      const results = await running;
+      expect(results).toHaveLength(9);
+      expect(results.every((result) => result.status === 'completed')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 type MockAttemptOutcome<T> =
   | SubagentResult<T>
   | {
@@ -659,6 +761,7 @@ type MockAttemptRecord = {
 type MockBatchRunnerOptions = {
   readonly onSuspended?: (event: SubagentSuspendedEvent) => void;
   readonly readyDelay?: (attemptIndex: number) => number | undefined;
+  readonly maxConcurrency?: number;
 };
 
 function createMockBatchRunner(
@@ -732,7 +835,9 @@ function createMockBatchRunner(
         ...task,
         signal: task.signal ?? runOptions?.signal,
       }));
-      return new SubagentBatch(host, activeTasks as readonly QueuedSubagentTask<T>[]).run();
+      return new SubagentBatch(host, activeTasks as readonly QueuedSubagentTask<T>[], {
+        maxConcurrency: options.maxConcurrency,
+      }).run();
     },
     attempts,
   };
