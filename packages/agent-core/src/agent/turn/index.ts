@@ -504,7 +504,18 @@ export class TurnFlow {
       });
     }
     this.agent.emitEvent(ended);
-    if (standalone && this.currentId === turnId) {
+    // Release the active turn in the same frame as turn.ended for a standalone
+    // turn, so the session is observably idle the instant turn.ended fires.
+    // Exception: if the model turned the goal active during this turn (e.g.
+    // CreateGoal), the session is NOT idle — turnWorker is about to drive the
+    // goal. Keep the active turn alive (as the already-active goal path does) so
+    // those autonomous continuations stay cancelable and exclude concurrent
+    // turns; turnWorker releases it after the drive.
+    if (
+      standalone &&
+      this.currentId === turnId &&
+      this.agent.goal.getGoal().goal?.status !== 'active'
+    ) {
       this.activeTurn = null;
     }
     if (this.agent.swarmMode.shouldAutoExit) {
