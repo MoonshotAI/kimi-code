@@ -9,13 +9,20 @@ Help the user turn a rough intention into a `/goal` objective that goal mode can
 
 This skill is about authoring the objective text together with the user. Drafting and starting are separate steps: you settle the wording first, and only once the user has approved it do you start the goal by calling `CreateGoal`. The user still gets a final confirmation before it runs.
 
+## Ask, don't narrate
+
+**This is the most important rule in this skill. Every decision you put to the user goes through `AskUserQuestion`. No exceptions except one (below).**
+
+Goal authoring is a chain of choices — what to scope, which phrasing, whether to add a budget and how large, which permission mode to start under. For every one of them: **stop and call `AskUserQuestion`.** Do not write a paragraph that lists options and asks the user to reply in prose. Do not say "let me know if you'd prefer A or B." Do not bundle three questions into a wall of text. If you catch yourself typing out choices for the user to answer in free text, delete it and call `AskUserQuestion` instead.
+
+A prose menu is a defect, not a style choice: it is slower for the user, easy to skim past, and usually gets a vague answer that forces another round. The only time you may ask in plain text is when `AskUserQuestion` is genuinely unavailable — auto mode, or a host that does not support it — and only then do you fall back to a short message with clearly labelled options and wait. Plain prose for *open-ended* input ("what would prove this is done?") is fine; the rule is about **choices between options**, which always use the tool.
+
 ## Rules of engagement
 
 - **Only help when the user has asked for it.** Never volunteer to wrap an ordinary request in a goal, and never start one on your own. A normal "fix this test" is a normal request; treat it as a goal only when the user says they want a goal. If a task looks like it would suit goal mode, you may mention that once — but wait for the user to choose.
 - **Write in the user's language.** Draft the objective in whatever language the user is writing to you in. If the project configuration or a saved memory names a preferred language, honor that instead. Keep the surrounding discussion in the same language.
 - **Show before you start.** Always present the full drafted goal back to the user and get their agreement before anything runs. The user should read the exact text that will become the objective, not a paraphrase of it.
 - **Draft with the user, not for them.** Goal-writing is a conversation. Offer a draft, explain the choices you made, invite changes, and fold the feedback in. Expect more than one round.
-- **Reach for AskUserQuestion by default — never bury a choice in prose.** Authoring a goal is a chain of small decisions: which area to scope, which of two phrasings to use, whether to add a budget and how large, which permission mode to start under. The moment a decision narrows to a handful of options, you MUST surface it with **AskUserQuestion** so the user taps one — do not write a paragraph laying out the options and wait for them to answer in free text. A prose menu is a failure mode here: it is slower, easy to skim past, and often gets a vague reply. Plain text is only for genuinely open-ended input (e.g. "what would prove this is done?"). The one exception is when AskUserQuestion is unavailable — auto mode, or a host that does not support it — and only then do you fall back to a short message with clearly labelled options and wait for the reply.
 - **Respect the user's final call.** If, after you have pointed out what is vague or risky, the user still wants a looser or thinner goal, write the goal they asked for. Note the trade-off once; do not keep relitigating it or quietly "improve" the wording against their wishes.
 
 ## What makes a goal good
