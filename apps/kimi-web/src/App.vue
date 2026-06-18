@@ -1299,6 +1299,7 @@ function openPr(url: string): void {
       :ui-font-size="client.uiFontSize.value"
       :auth-ready="client.authReady.value"
       :beta-toc="client.betaToc.value"
+      :server-version="client.serverVersion.value"
       @pick-model="openModelPicker()"
       @set-thinking="client.setThinking($event)"
       @toggle-plan="client.togglePlanMode()"

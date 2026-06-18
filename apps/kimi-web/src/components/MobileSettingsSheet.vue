@@ -28,8 +28,10 @@ const props = withDefaults(
     uiFontSize?: number;
     authReady?: boolean;
     betaToc?: boolean;
+    /** Server version from GET /api/v1/meta, shown as a read-only row. */
+    serverVersion?: string;
   }>(),
-  { theme: 'terminal', colorScheme: 'system', uiFontSize: 14, authReady: false },
+  { theme: 'terminal', colorScheme: 'system', uiFontSize: 14, authReady: false, serverVersion: '' },
 );
 
 const emit = defineEmits<{
@@ -263,6 +265,14 @@ function onLogout(): void {
         <span class="srow-label">{{ t('sidebar.signIn') }}</span>
       </span>
     </button>
+
+    <!-- Server version -->
+    <div v-if="serverVersion" class="srow read-only">
+      <span class="srow-main">
+        <span class="srow-label">{{ t('settings.serverVersion') }}</span>
+      </span>
+      <span class="srow-val dim">{{ serverVersion }}</span>
+    </div>
   </BottomSheet>
 </template>
 
@@ -307,6 +317,10 @@ function onLogout(): void {
   font-size: var(--ui-font-size);
   font-weight: 600;
   color: var(--blue2);
+}
+.srow-val.dim {
+  font-weight: 400;
+  color: var(--muted);
 }
 
 /* Chevron (prototype ›) — fixed icon glyph size, not part of UI font scale. */
