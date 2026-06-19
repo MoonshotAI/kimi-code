@@ -211,6 +211,97 @@ describe('approval adapter', () => {
     ]);
   });
 
+  it('renders the /goal start menu for a CreateGoal approval in manual mode', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-goal',
+      toolName: 'CreateGoal',
+      action: 'Creating a goal',
+      display: {
+        kind: 'goal_start',
+        objective: 'Fix the failing auth tests',
+        completionCriterion: 'npm test -- auth exits 0',
+        mode: 'manual',
+      },
+    });
+
+    // Objective + criterion are previewed as a brief block.
+    expect(adapted.display).toEqual([
+      {
+        type: 'brief',
+        text: 'Start goal: Fix the failing auth tests\nDone when: npm test -- auth exits 0',
+      },
+    ]);
+    // Choices mirror the manual-mode /goal start menu; mode options approve and
+    // carry the mode in selected_label, "Do not start" cancels. Each keeps the
+    // /goal menu's description.
+    expect(adapted.choices).toEqual([
+      {
+        label: 'Switch to Auto and start',
+        response: 'approved',
+        selected_label: 'auto',
+        description:
+          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+      },
+      {
+        label: 'Switch to YOLO and start',
+        response: 'approved',
+        selected_label: 'yolo',
+        description:
+          'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
+      },
+      {
+        label: 'Start in Manual',
+        response: 'approved',
+        selected_label: 'manual',
+        description:
+          'Keep approvals on. Kimi Code will ask before risky actions, so the goal may stop and wait for you.',
+      },
+      {
+        label: 'Do not start',
+        response: 'cancelled',
+        selected_label: 'cancel',
+        description: 'Return to the input box with your goal command.',
+      },
+    ]);
+  });
+
+  it('renders the yolo-mode /goal start menu for a CreateGoal approval', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-goal-yolo',
+      toolName: 'CreateGoal',
+      action: 'Creating a goal',
+      display: {
+        kind: 'goal_start',
+        objective: 'Ship the feature',
+        mode: 'yolo',
+      },
+    });
+
+    expect(adapted.display).toEqual([{ type: 'brief', text: 'Start goal: Ship the feature' }]);
+    expect(adapted.choices).toEqual([
+      {
+        label: 'Switch to Auto and start',
+        response: 'approved',
+        selected_label: 'auto',
+        description:
+          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+      },
+      {
+        label: 'Keep YOLO and start',
+        response: 'approved',
+        selected_label: 'yolo',
+        description:
+          'Tools and plan changes stay approved automatically. Kimi Code may still ask you questions.',
+      },
+      {
+        label: 'Do not start',
+        response: 'cancelled',
+        selected_label: 'cancel',
+        description: 'Return to the input box with your goal command.',
+      },
+    ]);
+  });
+
   it('maps approved-for-session responses into core approval payloads', () => {
     expect(
       adaptPanelResponse({

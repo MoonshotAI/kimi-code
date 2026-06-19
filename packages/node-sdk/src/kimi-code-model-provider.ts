@@ -22,6 +22,8 @@ import type {
 } from '@moonshot-ai/kosong';
 import { APIStatusError, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
 
+import { mapOAuthTokenError } from '#/oauth-error';
+
 export interface KimiForCodingProviderOptions extends KimiHostIdentity {
   readonly homeDir?: string;
   readonly model?: string;
@@ -119,10 +121,18 @@ export class KimiForCodingProvider implements ModelProvider {
   }
 
   private async buildAuth(force: boolean): Promise<ProviderRequestAuth> {
-    const apiKey = await this.toolkit.ensureFresh(KIMI_CODE_PROVIDER_NAME, {
-      force,
-      oauthRef: this.oauthRef,
-    });
-    return { apiKey };
+    try {
+      const apiKey = await this.toolkit.ensureFresh(KIMI_CODE_PROVIDER_NAME, {
+        force,
+        oauthRef: this.oauthRef,
+      });
+      return { apiKey };
+    } catch (error) {
+      // Classify OAuth token failures into the public KimiError protocol so the
+      // turn surfaces `auth.login_required` / `provider.connection_error`
+      // instead of collapsing everything to `internal`. Unrecognized errors are
+      // rethrown raw (see mapOAuthTokenError).
+      throw mapOAuthTokenError(error, KIMI_CODE_PROVIDER_NAME) ?? error;
+    }
   }
 }

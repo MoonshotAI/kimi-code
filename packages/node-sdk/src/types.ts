@@ -88,6 +88,7 @@ export interface KimiHarnessOptions {
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
+  readonly sessionStartedProperties?: TelemetryProperties;
 }
 
 export interface CreateSessionOptions {
@@ -100,6 +101,7 @@ export interface CreateSessionOptions {
   readonly metadata?: JsonObject | undefined;
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
+  readonly sessionStartedProperties?: TelemetryProperties;
 }
 
 export interface RenameSessionInput {
@@ -111,6 +113,7 @@ export interface ResumeSessionInput {
   readonly id: string;
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
+  readonly sessionStartedProperties?: TelemetryProperties;
 }
 
 export interface ForkSessionInput {

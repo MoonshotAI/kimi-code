@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-web/
 dist-single/
 dist-native/
 .tmp-api-extractor/
@@ -14,3 +15,11 @@ coverage/
 plugins/cdn/
 superpowers
 .worktrees/
+
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+docs/superpowers/
+reports/
+.superpowers/

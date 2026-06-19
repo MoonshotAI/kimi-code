@@ -294,7 +294,11 @@ export class FullCompaction {
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
-          if (error instanceof APIContextOverflowError || error instanceof CompactionTruncatedError) {
+          if (
+            error instanceof APIContextOverflowError ||
+            error instanceof CompactionTruncatedError ||
+            error instanceof APIEmptyResponseError // e.g. think-only
+          ) {
             compactedCount = this.strategy.reduceCompactOnOverflow(messagesToCompact);
           }
           else if (!isRetryableGenerateError(error)) {

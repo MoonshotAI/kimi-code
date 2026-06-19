@@ -709,6 +709,7 @@ describe('Permission policy chain', () => {
       'user-configured-ask',
       'user-configured-allow',
       'exit-plan-mode-review-ask',
+      'goal-start-review-ask',
       'plan-mode-tool-approve',
       'sensitive-file-access-ask',
       'git-control-path-access-ask',

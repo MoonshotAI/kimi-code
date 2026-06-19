@@ -29,6 +29,7 @@ function fakeAgent(opts: { type?: 'main' | 'sub'; goal?: GoalMode } = {}): Agent
     emitEvent: () => {},
     telemetry: { track: () => {} },
     context: { appendSystemReminder: () => {} },
+    permission: { mode: 'manual' },
   } as unknown as Agent;
   (agent as { goal: GoalMode }).goal = opts.goal ?? new GoalMode(agent);
   return agent;
@@ -45,6 +46,15 @@ describe('CreateGoalTool', () => {
     const result = await executeTool(tool, ctx({ objective: 'Ship feature X' }));
     expect(result.isError).toBeFalsy();
     expect(store.getGoal().goal?.objective).toBe('Ship feature X');
+  });
+
+  it('omits the internal goalId from the model-facing output', async () => {
+    const store = makeStore();
+    const tool = new CreateGoalTool(fakeAgent({ goal: store }));
+    const result = await executeTool(tool, ctx({ objective: 'Ship feature X' }));
+    expect(store.getGoal().goal?.goalId).toBeTruthy();
+    expect(result.output).not.toContain('goalId');
+    expect(result.output).not.toContain(store.getGoal().goal?.goalId ?? 'no-id');
   });
 
   it('passes completionCriterion and replace', async () => {

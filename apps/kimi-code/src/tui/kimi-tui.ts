@@ -59,10 +59,7 @@ import {
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
-import {
-  SessionPickerComponent,
-  type SessionRow,
-} from './components/dialogs/session-picker';
+import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
 import {
   FileMentionProvider,
   type SlashAutocompleteCommand,
@@ -251,6 +248,9 @@ export class KimiTUI {
     | undefined;
 
   public onExit?: (exitCode?: number) => Promise<void>;
+
+  /** URL opened in the browser just before exit (e.g. by `/web`); printed by onExit. */
+  public exitOpenUrl: string | undefined;
 
   track(event: string, properties?: Parameters<KimiHarness['track']>[1]): void {
     this.harness.track(event, properties);
@@ -501,9 +501,7 @@ export class KimiTUI {
       const result = await this.authFlow.refreshProviderModels();
       for (const c of result.changed) {
         if (c.added <= 0) continue;
-        this.showStatus(
-          `${c.providerName} · +${String(c.added)} model${c.added > 1 ? 's' : ''}.`,
-        );
+        this.showStatus(`${c.providerName} · +${String(c.added)} model${c.added > 1 ? 's' : ''}.`);
       }
       for (const f of result.failed) {
         this.showStatus(`Skipped refreshing ${f.provider}: ${f.reason}`, 'warning');
@@ -1026,6 +1024,10 @@ export class KimiTUI {
     return this.state.transcriptEntries.length > 0;
   }
 
+  setExitOpenUrl(url: string): void {
+    this.exitOpenUrl = url;
+  }
+
   async getStartupMcpMs(): Promise<number> {
     const session = this.session;
     if (session === undefined) return 0;
@@ -1477,7 +1479,12 @@ export class KimiTUI {
     request: ApprovalRequest,
     response: ApprovalResponse,
   ): void {
-    if (request.toolName === 'ExitPlanMode' || request.display.kind === 'plan_review') return;
+    if (
+      request.toolName === 'ExitPlanMode' ||
+      request.display.kind === 'plan_review' ||
+      request.display.kind === 'goal_start'
+    )
+      return;
     const parts: string[] = [];
     switch (response.decision) {
       case 'approved':

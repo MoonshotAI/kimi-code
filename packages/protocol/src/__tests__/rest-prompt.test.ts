@@ -39,6 +39,17 @@ describe('promptSubmissionSchema', () => {
     expect(parsed.content).toHaveLength(2);
   });
 
+  it('accepts video + text mixed content', () => {
+    const parsed = promptSubmissionSchema.parse({
+      content: [
+        { type: 'text', text: 'describe this video' },
+        { type: 'video', source: { kind: 'url', url: 'https://example.com/a.mp4' } },
+      ],
+    });
+    expect(parsed.content).toHaveLength(2);
+    expect(parsed.content[1]?.type).toBe('video');
+  });
+
   it('accepts a partial per-turn override (model only)', () => {
     const parsed = promptSubmissionSchema.parse({
       content: [{ type: 'text', text: 'hi' }],
