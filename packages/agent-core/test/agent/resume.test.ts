@@ -21,6 +21,28 @@ const MOCK_PROVIDER = {
 } as const;
 
 describe('Agent resume', () => {
+  it('does not append metadata when resuming records that include legacy app version', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+        app_version: '0.0.1-old',
+      } as unknown as AgentRecord,
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'old prompt' }],
+        origin: { kind: 'user' },
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(persistence.appended).toEqual([]);
+    expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
+  });
+
   it('replays persisted records without restarting turns, compactions, plan turns, or tools', async () => {
     const persistence = new RecordingAgentPersistence(resumeHistory());
     const execWithEnv = vi.fn().mockRejectedValue(new Error('Bash should not execute on resume'));
@@ -61,6 +83,82 @@ describe('Agent resume', () => {
           user: text "Fresh prompt after resume"
           user: text <plan-mode-reminder>
     `);
+  });
+
+  it('allocates monotonically increasing turnIds across multiple historical turns on resume', async () => {
+    const persistence = new RecordingAgentPersistence(multiTurnResumeHistory());
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    // History ran turnId 0 and 1, so the counter must be restored to 1.
+    expect(ctx.agent.turn.currentId).toBe(1);
+
+    // After 2 historical turns (turnId 0 and 1), the next fresh turn must be 2.
+    ctx.mockNextResponse({ type: 'text', text: 'Fresh response.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt' }] });
+    await ctx.untilTurnEnd();
+
+    expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 2 });
+    expect(findRpcEvent(ctx.allEvents, 'turn.ended')?.args).toMatchObject({
+      turnId: 2,
+      reason: 'completed',
+    });
+  });
+
+  it('restores the turn counter past goal-continuation turns that have no turn.prompt record', async () => {
+    // A goal drive allocates a fresh turnId per continuation turn but only the
+    // first turn has a `turn.prompt` record — the continuations are driven
+    // internally. The persisted loop events still carry the real turnId, so the
+    // counter must be restored from them, not from the prompt records alone.
+    const persistence = new RecordingAgentPersistence(goalContinuationResumeHistory());
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    // History ran turnId 0 (prompted) plus continuation turns 1 and 2.
+    expect(ctx.agent.turn.currentId).toBe(2);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Fresh response after goal resume.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after goal' }] });
+    await ctx.untilTurnEnd();
+
+    expect(findRpcEvent(ctx.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 3 });
+    expect(findRpcEvent(ctx.allEvents, 'turn.ended')?.args).toMatchObject({
+      turnId: 3,
+      reason: 'completed',
+    });
+  });
+
+  it('keeps turnIds monotonic across repeated resume cycles', async () => {
+    // Mirrors a real session that was cold-started several times: each resume
+    // must continue the counter, never restart it and collide with history.
+    const persistence = new RecordingAgentPersistence(multiTurnResumeHistory());
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+    ctx.mockNextResponse({ type: 'text', text: 'Response in cycle 1.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Prompt in cycle 1' }] });
+    await ctx.untilTurnEnd();
+    expect(ctx.agent.turn.currentId).toBe(2);
+
+    // Cold-start again from everything persisted so far (history + the turn just
+    // run). The fresh agent must restore the counter to 2 and allocate 3 next.
+    const persistence2 = new RecordingAgentPersistence(persistence.records);
+    const ctx2 = testAgent({ persistence: persistence2 });
+
+    await ctx2.agent.resume();
+    expect(ctx2.agent.turn.currentId).toBe(2);
+
+    ctx2.mockNextResponse({ type: 'text', text: 'Response in cycle 2.' });
+    await ctx2.rpc.prompt({ input: [{ type: 'text', text: 'Prompt in cycle 2' }] });
+    await ctx2.untilTurnEnd();
+
+    expect(findRpcEvent(ctx2.allEvents, 'turn.started')?.args).toMatchObject({ turnId: 3 });
+    expect(findRpcEvent(ctx2.allEvents, 'turn.ended')?.args).toMatchObject({
+      turnId: 3,
+      reason: 'completed',
+    });
   });
 
   it('replays inline skill reminders after pending tool results before the next prompt', async () => {
@@ -1003,6 +1101,96 @@ function resumeDeferredSystemReminderHistory(): AgentRecord[] {
     },
   ];
 }
+
+function resumeConfigRecord(): AgentRecord {
+  return {
+    type: 'config.update',
+    cwd: process.cwd(),
+    modelAlias: MOCK_PROVIDER.model,
+    systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
+    thinkingLevel: 'off',
+  };
+}
+
+// Loop events for one fully-run turn: a single step that emits text and ends.
+// Used to represent both prompted turns and internal (goal-continuation) turns.
+function loopEventsForTurn(turnId: string, responseText: string): AgentRecord[] {
+  return [
+    {
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: `step-${turnId}`, turnId, step: 1 },
+    },
+    {
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: `content-${turnId}`,
+        turnId,
+        step: 1,
+        stepUuid: `step-${turnId}`,
+        part: { type: 'text', text: responseText },
+      },
+    },
+    {
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: `step-${turnId}`,
+        turnId,
+        step: 1,
+        usage: { inputOther: 5, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'end_turn',
+      },
+    },
+    {
+      type: 'usage.record',
+      model: MOCK_PROVIDER.model,
+      usage: { inputOther: 5, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
+    },
+  ];
+}
+
+// A prompted turn: the `turn.prompt` record + the appended user message + the
+// loop events the turn produced.
+function minimalPromptedTurn(turnId: string, promptText: string, responseText: string): AgentRecord[] {
+  return [
+    {
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: promptText }],
+      origin: { kind: 'user' },
+    },
+    {
+      type: 'context.append_message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: promptText }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    },
+    ...loopEventsForTurn(turnId, responseText),
+  ];
+}
+
+function multiTurnResumeHistory(): AgentRecord[] {
+  return [
+    resumeConfigRecord(),
+    ...minimalPromptedTurn('0', 'First historical prompt', 'First historical response.'),
+    ...minimalPromptedTurn('1', 'Second historical prompt', 'Second historical response.'),
+  ];
+}
+
+// One prompted turn (turnId 0) followed by two goal-continuation turns (1, 2)
+// that have NO turn.prompt record — only loop events carry their turnId.
+function goalContinuationResumeHistory(): AgentRecord[] {
+  return [
+    resumeConfigRecord(),
+    ...minimalPromptedTurn('0', 'Goal prompt', 'Starting the goal.'),
+    ...loopEventsForTurn('1', 'Continuation turn one.'),
+    ...loopEventsForTurn('2', 'Continuation turn two.'),
+  ];
+}
+
 
 function findRpcEvent(
   ctxEvents: readonly { type: string; event: string; args: unknown }[],

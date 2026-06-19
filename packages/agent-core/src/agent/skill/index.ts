@@ -37,6 +37,7 @@ export class SkillManager {
           skillArgs,
           skillContent,
           skillSource: skill.source,
+          skillDir: skill.dir,
         }),
       },
     ];

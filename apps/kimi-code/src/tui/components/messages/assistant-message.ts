@@ -5,8 +5,7 @@
  * to align after the bullet.
  */
 
-import type { Component } from '@earendil-works/pi-tui';
-import { Container, Markdown, visibleWidth } from '@earendil-works/pi-tui';
+import { Container, Markdown, truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui';
 
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
@@ -52,8 +51,11 @@ export class AssistantMessageComponent implements Component {
   render(width: number): string[] {
     if (this.lastText.trim().length === 0) return [];
 
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [''];
+
     const prefix = this.showBullet ? STATUS_BULLET : MESSAGE_INDENT;
-    const contentWidth = Math.max(1, width - visibleWidth(prefix));
+    const contentWidth = Math.max(1, safeWidth - visibleWidth(prefix));
     const contentLines = this.contentContainer.render(contentWidth);
 
     const lines: string[] = [''];
@@ -62,6 +64,6 @@ export class AssistantMessageComponent implements Component {
         i === 0 && this.showBullet ? currentTheme.fg('text', STATUS_BULLET) : MESSAGE_INDENT;
       lines.push(p + contentLines[i]);
     }
-    return lines;
+    return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
   }
 }

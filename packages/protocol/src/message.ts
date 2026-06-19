@@ -44,6 +44,13 @@ export const imageContentSchema = z.object({
 });
 export type ImageContent = z.infer<typeof imageContentSchema>;
 
+// Video uses the same source shape as image (url / base64 / uploaded file id).
+export const videoContentSchema = z.object({
+  type: z.literal('video'),
+  source: imageSourceSchema,
+});
+export type VideoContent = z.infer<typeof videoContentSchema>;
+
 export const fileContentSchema = z.object({
   type: z.literal('file'),
   file_id: z.string().min(1),
@@ -65,6 +72,7 @@ export const messageContentSchema = z.discriminatedUnion('type', [
   toolUseContentSchema,
   toolResultContentSchema,
   imageContentSchema,
+  videoContentSchema,
   fileContentSchema,
   thinkingContentSchema,
 ]);

@@ -1,3 +1,6 @@
+import type { Readable } from 'node:stream';
+import { finished } from 'node:stream/promises';
+
 import type { KaosProcess } from '@moonshot-ai/kaos';
 
 import { errorMessage } from '../../loop/errors';
@@ -14,6 +17,8 @@ export interface ProcessBackgroundTaskInfo extends BackgroundTaskInfoBase {
   readonly exitCode: number | null;
 }
 
+const STREAM_DRAIN_GRACE_MS = 250;
+
 export class ProcessBackgroundTask implements BackgroundTask {
   readonly kind = 'process' as const;
   readonly idPrefix = 'bash';
@@ -26,11 +31,13 @@ export class ProcessBackgroundTask implements BackgroundTask {
   ) {}
 
   async start(sink: BackgroundTaskSink): Promise<void> {
-    for (const stream of [this.proc.stdout, this.proc.stderr]) {
+    const streams = [this.proc.stdout, this.proc.stderr] as const;
+    const appendOutput = (chunk: string): void => {
+      sink.appendOutput(chunk);
+    };
+    for (const stream of streams) {
       stream.setEncoding('utf8');
-      stream.on('data', (chunk: string) => {
-        sink.appendOutput(chunk);
-      });
+      stream.on('data', appendOutput);
     }
 
     const requestStop = (): void => {
@@ -56,12 +63,22 @@ export class ProcessBackgroundTask implements BackgroundTask {
       });
     } finally {
       sink.signal.removeEventListener('abort', requestStop);
+      await waitForStreamDrain(streams);
+      for (const stream of streams) {
+        stream.off('data', appendOutput);
+      }
+      await this.disposeProcess();
     }
   }
 
   async forceStop(): Promise<void> {
-    if (this.proc.exitCode !== null) return;
-    await this.proc.kill('SIGKILL');
+    try {
+      if (this.proc.exitCode === null) {
+        await this.proc.kill('SIGKILL');
+      }
+    } finally {
+      await this.disposeProcess();
+    }
   }
 
   toInfo(base: BackgroundTaskInfoBase): ProcessBackgroundTaskInfo {
@@ -72,5 +89,28 @@ export class ProcessBackgroundTask implements BackgroundTask {
       pid: this.proc.pid,
       exitCode: this.exitCode,
     };
+  }
+
+  private async disposeProcess(): Promise<void> {
+    try {
+      await this.proc.dispose();
+    } catch {
+      /* best-effort cleanup */
+    }
+  }
+}
+
+async function waitForStreamDrain(streams: readonly Readable[]): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.all(streams.map((stream) => finished(stream).catch(() => {}))),
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, STREAM_DRAIN_GRACE_MS);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }

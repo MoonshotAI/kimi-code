@@ -2,8 +2,7 @@
  * Renders a user message in the transcript.
  */
 
-import type { Component } from '@earendil-works/pi-tui';
-import { Spacer, Text, visibleWidth } from '@earendil-works/pi-tui';
+import { Spacer, Text, truncateToWidth, visibleWidth, type Component } from '@earendil-works/pi-tui';
 
 import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';
 import { USER_MESSAGE_BULLET } from '#/tui/constant/symbols';
@@ -28,14 +27,17 @@ export class UserMessageComponent implements Component {
   }
 
   render(width: number): string[] {
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [''];
+
     const bullet = currentTheme.boldFg('roleUser', USER_MESSAGE_BULLET);
     const bulletWidth = visibleWidth(bullet);
-    const contentWidth = Math.max(1, width - bulletWidth);
+    const contentWidth = Math.max(1, safeWidth - bulletWidth);
 
     const lines: string[] = [];
 
     // Spacer
-    for (const line of this.spacerComponent.render(width)) {
+    for (const line of this.spacerComponent.render(safeWidth)) {
       lines.push(line);
     }
 
@@ -55,6 +57,6 @@ export class UserMessageComponent implements Component {
       }
     }
 
-    return lines;
+    return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
   }
 }

@@ -379,6 +379,18 @@ export class ApprovalPanelComponent extends Container implements Focusable {
       } else {
         lines.push(indent(strong(`  ${labelWithNum}`)));
       }
+
+      // Optional helper text under the label, aligned past the pointer/number.
+      // Choices without a description render exactly as before.
+      if (
+        option.description !== undefined &&
+        option.description.length > 0 &&
+        !(this.feedbackMode && option.requires_feedback === true && isSelected)
+      ) {
+        for (const descLine of wrapTextWithAnsi(option.description, Math.max(20, width - 7))) {
+          lines.push(indent(`     ${dim(descLine)}`));
+        }
+      }
     }
 
     lines.push('');

@@ -13,6 +13,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { quoteShellArg } from '#/utils/shell-quote';
+
 export function resolveEditorCommand(configured?: string | null): string | undefined {
   const candidates = [configured, process.env['VISUAL'], process.env['EDITOR']];
   for (const c of candidates) {
@@ -57,19 +59,3 @@ export async function editInExternalEditor(
   }
 }
 
-/**
- * Quote the appended temp-file path so spaces survive shell parsing.
- */
-function quotePosixArg(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function quoteCmdArg(value: string): string {
-  return `"${value.replaceAll('"', '\\"')}"`;
-}
-
-function quoteShellArg(value: string): string {
-  return process.platform === 'win32'
-    ? quoteCmdArg(value)
-    : quotePosixArg(value);
-}

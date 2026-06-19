@@ -1762,10 +1762,10 @@ command = "vim"
     expect(finalLines.at(-1)).toMatch(/^│\s+│$/);
   });
 
-  it('caps /btw height to half the terminal and supports scrolling', async () => {
+  it('caps /btw height to one-third of the terminal and supports scrolling', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
-    setTerminalRows(driver, 12);
+    setTerminalRows(driver, 15);
     await openBtwPanel(driver, session, 'question 1');
 
     const panel = getMountedBtwPanel(driver);
@@ -1778,7 +1778,7 @@ command = "vim"
     }
 
     const collapsed = panel.render(80).map(stripSgr);
-    expect(collapsed).toHaveLength(6);
+    expect(collapsed).toHaveLength(5);
     expect(collapsed.join('\n')).toContain('BTW ─ Esc close · ↑↓ scroll');
     expect(collapsed.join('\n')).not.toContain('ctrl+o expand');
     expect(collapsed.join('\n')).toContain('question 8');
@@ -3204,11 +3204,11 @@ command = "vim"
     // refreshed render rather than for an instance swap.
     await vi.waitFor(() => {
       const refreshed = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-      expect(refreshed).toContain('❯ Demo  disabled  require run /new to apply');
+      expect(refreshed).toContain('❯ Demo  disabled  require run /new or /reload to apply');
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
     expect(out).not.toContain('Space enable');
-    expect(stripSgr(renderTranscript(driver))).not.toContain('Disabled demo. Run /new to apply.');
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Disabled demo. Run /new or /reload to apply.');
   });
 
   it('toggles plugin MCP servers from the overview MCP picker', async () => {
@@ -3299,9 +3299,9 @@ command = "vim"
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginMcpSelectorComponent);
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).toContain('❯ data  disabled  require run /new to apply');
+    expect(out).toContain('❯ data  disabled  require run /new or /reload to apply');
     expect(stripSgr(renderTranscript(driver))).not.toContain(
-      'Disabled MCP server data for kimi-datasource. Run /new to apply.',
+      'Disabled MCP server data for kimi-datasource. Run /new or /reload to apply.',
     );
   });
 

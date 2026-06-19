@@ -84,14 +84,20 @@ function mockSwarmMode(): SwarmMode {
 }
 
 function processWithOutput(stdout: string, exitCode = 0): KaosProcess {
+  const stdoutStream = Readable.from([stdout]);
+  const stderrStream = Readable.from([]);
   return {
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
-    stdout: Readable.from([stdout]),
-    stderr: Readable.from([]),
+    stdout: stdoutStream,
+    stderr: stderrStream,
     pid: 123,
     exitCode,
     wait: vi.fn().mockResolvedValue(exitCode),
     kill: vi.fn().mockResolvedValue(undefined),
+    dispose: vi.fn(async () => {
+      stdoutStream.destroy();
+      stderrStream.destroy();
+    }),
   };
 }
 

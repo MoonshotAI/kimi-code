@@ -5,13 +5,17 @@ import { join } from 'node:path';
 import {
   FileTokenStorage,
   KIMI_CODE_PROVIDER_NAME,
+  KimiOAuthToolkit,
+  OAuthConnectionError,
+  OAuthError,
+  RetryableRefreshError,
   resolveKimiCodeOAuthKey,
   resolveKimiTokenStorageName,
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createKimiHarness } from '#/index';
+import { createKimiHarness, ErrorCodes, KimiError } from '#/index';
 
 import { ProviderManager } from '../../agent-core/src/session/provider-manager';
 import { TEST_IDENTITY } from './test-identity';
@@ -60,6 +64,70 @@ describe('KimiHarness.auth', () => {
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     await expect(harness.auth.getCachedAccessToken()).resolves.toBe('oauth-access-token');
+  });
+
+  it('maps missing runtime OAuth tokens to login-required errors', async () => {
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await expect(
+      harness.auth.resolveOAuthTokenProvider(KIMI_CODE_PROVIDER_NAME).getAccessToken(),
+    ).rejects.toMatchObject({
+      code: ErrorCodes.AUTH_LOGIN_REQUIRED,
+    });
+  });
+
+  it('maps transient OAuth token failures to provider connection errors', async () => {
+    const tokenErrors = [
+      new OAuthConnectionError('OAuth request failed: fetch failed'),
+      new RetryableRefreshError('Token refresh failed (HTTP 503).'),
+    ];
+
+    for (const tokenError of tokenErrors) {
+      const tokenProviderSpy = vi
+        .spyOn(KimiOAuthToolkit.prototype, 'tokenProvider')
+        .mockReturnValue({
+          async getAccessToken() {
+            throw tokenError;
+          },
+        });
+      try {
+        const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+        const error = await harness.auth
+          .resolveOAuthTokenProvider(KIMI_CODE_PROVIDER_NAME)
+          .getAccessToken()
+          .catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(KimiError);
+        expect(error).toMatchObject({
+          code: ErrorCodes.PROVIDER_CONNECTION_ERROR,
+          message: expect.stringContaining(tokenError.message),
+          cause: tokenError,
+        });
+      } finally {
+        tokenProviderSpy.mockRestore();
+      }
+    }
+  });
+
+  it('preserves non-retryable OAuth refresh failures', async () => {
+    const oauthError = new OAuthError('bad client id');
+    const tokenProviderSpy = vi
+      .spyOn(KimiOAuthToolkit.prototype, 'tokenProvider')
+      .mockReturnValue({
+        async getAccessToken() {
+          throw oauthError;
+        },
+      });
+    try {
+      const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+      await expect(
+        harness.auth.resolveOAuthTokenProvider(KIMI_CODE_PROVIDER_NAME).getAccessToken(),
+      ).rejects.toBe(oauthError);
+    } finally {
+      tokenProviderSpy.mockRestore();
+    }
   });
 
   it('resolves managed auth from a partially invalid config without throwing', async () => {

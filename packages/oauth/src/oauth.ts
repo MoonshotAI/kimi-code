@@ -11,7 +11,12 @@
  */
 
 import { extractApiErrorMessage } from './api-error';
-import { OAuthError, OAuthUnauthorizedError, RetryableRefreshError } from './errors';
+import {
+  OAuthConnectionError,
+  OAuthError,
+  OAuthUnauthorizedError,
+  RetryableRefreshError,
+} from './errors';
 import type { DeviceAuthorization, DeviceHeaders, OAuthFlowConfig, TokenInfo } from './types';
 import { isRecord } from './utils';
 
@@ -76,7 +81,7 @@ async function postForm(
       signal,
     });
   } catch (error) {
-    throw new OAuthError(
+    throw new OAuthConnectionError(
       `OAuth request to ${url} failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }

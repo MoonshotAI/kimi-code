@@ -23,6 +23,8 @@ import {
   type OAuthRefreshOutcome,
 } from '@moonshot-ai/kimi-code-oauth';
 
+import { mapOAuthTokenError } from '#/oauth-error';
+
 export interface KimiAuthSubmitFeedbackInput {
   readonly content: string;
   readonly sessionId: string;
@@ -170,7 +172,21 @@ export class KimiAuthFacade {
     providerName: string,
     oauthRef?: OAuthRef | undefined,
   ): BearerTokenProvider => {
-    return this.toolkit.tokenProvider(providerName, this.runtimeOAuthRef(providerName, oauthRef));
+    const provider = this.toolkit.tokenProvider(
+      providerName,
+      this.runtimeOAuthRef(providerName, oauthRef),
+    );
+    return {
+      getAccessToken: async (options) => {
+        try {
+          return await provider.getAccessToken(options);
+        } catch (error) {
+          // Classify OAuth token failures into the public KimiError protocol;
+          // unrecognized errors are rethrown raw (see mapOAuthTokenError).
+          throw mapOAuthTokenError(error, providerName) ?? error;
+        }
+      },
+    };
   };
 
   private resolveManagedAuth(providerName?: string | undefined): {

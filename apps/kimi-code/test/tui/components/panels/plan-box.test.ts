@@ -1,3 +1,4 @@
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { PlanBoxComponent } from '#/tui/components/messages/plan-box';
@@ -87,6 +88,21 @@ describe('PlanBoxComponent', () => {
     const top = out.split('\n')[0]!;
     expect(top).toContain(' plan ');
     expect(top).not.toContain('plan:');
+  });
+
+  it('keeps every line within narrow widths', () => {
+    const box = new PlanBoxComponent(
+      '# Hello\n\n' + 'step with a fairly long description '.repeat(4),
+      theme,
+      darkColors.success,
+      '/tmp/projects/foo/.kimi-code/plans/very-long-slug-name.md',
+    );
+
+    for (const width of [39, 14, 10, 8, 4, 1]) {
+      for (const line of box.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 
   it('renders all plan lines without a truncation footer', () => {

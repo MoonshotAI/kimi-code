@@ -1,5 +1,19 @@
 # @moonshot-ai/kosong
 
+## 0.4.6
+
+### Patch Changes
+
+- [#790](https://github.com/MoonshotAI/kimi-code/pull/790) [`d0d5821`](https://github.com/MoonshotAI/kimi-code/commit/d0d58219007cd9d7355f1ea8900e9777b66abda2) - Stop Anthropic-compatible providers from reading ambient Anthropic shell credentials and custom headers.
+
+## 0.4.5
+
+### Patch Changes
+
+- [#343](https://github.com/MoonshotAI/kimi-code/pull/343) [`73be7ba`](https://github.com/MoonshotAI/kimi-code/commit/73be7ba17d41df7999d4c1fba410994e7024eb7b) - Repair mismatched JSON Schema types emitted by Xcode 26.5 MCP server for Moonshot compatibility.
+
+- [#776](https://github.com/MoonshotAI/kimi-code/pull/776) [`ecd7a0a`](https://github.com/MoonshotAI/kimi-code/commit/ecd7a0afb646d14a14c780a4088fd8a59da134ad) - Resolve model capabilities through a static lookup instead of instantiating a temporary provider.
+
 ## 0.4.4
 
 ### Patch Changes

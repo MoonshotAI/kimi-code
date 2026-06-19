@@ -23,6 +23,7 @@ import { collectGitContext } from './git-context';
 import type { Session } from './index';
 import {
   SubagentBatch,
+  resolveSwarmMaxConcurrency,
   type SubagentResult,
   type SubagentSuspendedEvent,
   type QueuedSubagentTask,
@@ -196,7 +197,8 @@ export class SessionSubagentHost {
   }
 
   async runQueued<T>(tasks: readonly QueuedSubagentTask<T>[]): Promise<Array<SubagentResult<T>>> {
-    return new SubagentBatch(this, tasks).run();
+    const maxConcurrency = resolveSwarmMaxConcurrency();
+    return new SubagentBatch(this, tasks, { maxConcurrency }).run();
   }
 
   suspended(event: SubagentSuspendedEvent): void {

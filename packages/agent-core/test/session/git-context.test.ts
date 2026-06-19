@@ -15,6 +15,7 @@ function fakeProcess(stdout: string, exitCode = 0): KaosProcess {
     exitCode,
     wait: async () => exitCode,
     kill: async () => {},
+    dispose: async () => {},
   };
 }
 
@@ -114,6 +115,7 @@ describe('collectGitContext', () => {
             kill: async () => {
               release(137);
             },
+            dispose: async () => {},
           };
         },
       });

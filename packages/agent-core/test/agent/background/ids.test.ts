@@ -20,6 +20,7 @@ function pendingProcess(): KaosProcess {
     exitCode: null,
     wait: () => new Promise<number>(() => {}),
     kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
   };
 }
 

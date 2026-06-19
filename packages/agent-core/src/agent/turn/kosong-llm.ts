@@ -18,7 +18,6 @@
 import {
   emptyUsage,
   generate as kosongGenerate,
-  type GenerateOptions,
   isRetryableGenerateError,
   type ChatProvider,
   type GenerateCallbacks,
@@ -31,25 +30,18 @@ import type {
   LLM,
   LLMChatParams,
   LLMChatResponse,
-  LLMRequestLogContext,
   LLMStreamTiming,
 } from '../../loop';
 import {
   applyCompletionBudget,
   type CompletionBudgetConfig,
 } from '../../utils/completion-budget';
-
-export const GENERATE_REQUEST_LOG_CONTEXT = '__kimiRequestLogContext';
-
-export type GenerateOptionsWithRequestLog = GenerateOptions & {
-  readonly [GENERATE_REQUEST_LOG_CONTEXT]?: LLMRequestLogContext;
-};
+import type { GenerateOptionsWithRequestLogFields } from '../llm-request-logger';
 
 export type GenerateFn = typeof kosongGenerate;
 
 export interface KosongLLMConfig {
   readonly provider: ChatProvider;
-  readonly modelName: string;
   readonly systemPrompt: string;
   readonly capability?: ModelCapability | undefined;
   /**
@@ -76,7 +68,7 @@ export class KosongLLM implements LLM {
 
   constructor(config: KosongLLMConfig) {
     this.provider = config.provider;
-    this.modelName = config.modelName;
+    this.modelName = config.provider.modelName;
     this.systemPrompt = config.systemPrompt;
     this.capability = config.capability;
     this.generate = config.generate ?? kosongGenerate;
@@ -94,9 +86,7 @@ export class KosongLLM implements LLM {
       streamEndedAt = Date.now();
     };
     const markStreamOutput = (): void => {
-      if (firstChunkAt === undefined) {
-        firstChunkAt = Date.now();
-      }
+      firstChunkAt ??= Date.now();
     };
     const callbacks = buildKosongCallbacks(params, markStreamOutput);
 
@@ -109,6 +99,12 @@ export class KosongLLM implements LLM {
       budget: this.completionBudgetConfig,
       capability: this.capability,
     });
+    const options: GenerateOptionsWithRequestLogFields = {
+      signal: params.signal,
+      onRequestStart: markRequestStart,
+      onStreamEnd: markStreamEnd,
+      requestLogFields: params.requestLogFields,
+    };
 
     const result = await this.generate(
       effectiveProvider,
@@ -116,10 +112,7 @@ export class KosongLLM implements LLM {
       [...params.tools],
       params.messages,
       callbacks,
-      generateOptions(params, {
-        onRequestStart: markRequestStart,
-        onStreamEnd: markStreamEnd,
-      }),
+      options,
     );
 
     // Replay merged content parts onto loop per-block callbacks after the
@@ -163,18 +156,6 @@ function buildStreamTiming(
   return {
     firstTokenLatencyMs: Math.max(0, firstChunkAt - requestStartedAt),
     streamDurationMs: Math.max(0, outputEndedAt - firstChunkAt),
-  };
-}
-
-function generateOptions(
-  params: LLMChatParams,
-  hooks: Pick<GenerateOptions, 'onRequestStart' | 'onStreamEnd'>,
-): GenerateOptionsWithRequestLog {
-  return {
-    signal: params.signal,
-    onRequestStart: hooks.onRequestStart,
-    onStreamEnd: hooks.onStreamEnd,
-    [GENERATE_REQUEST_LOG_CONTEXT]: params.requestLogContext,
   };
 }
 
