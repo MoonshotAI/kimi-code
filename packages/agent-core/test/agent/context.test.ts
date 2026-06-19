@@ -80,6 +80,67 @@ describe('Agent context', () => {
     ]);
   });
 
+  it('drops empty text parts only in LLM projection', () => {
+    const history: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '' },
+          { type: 'text', text: 'Run the tool' },
+        ],
+        toolCalls: [],
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: '' }],
+        toolCalls: [],
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: '' }],
+        toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'think', think: '', encrypted: 'enc_empty_thinking' }],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '   ' }],
+        toolCalls: [],
+      },
+    ];
+
+    expect(project(history)).toEqual([
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Run the tool' }],
+        toolCalls: [],
+      },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'think', think: '', encrypted: 'enc_empty_thinking' }],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '   ' }],
+        toolCalls: [],
+      },
+    ]);
+    expect(history[0]?.content).toEqual([
+      { type: 'text', text: '' },
+      { type: 'text', text: 'Run the tool' },
+    ]);
+    expect(history[1]?.content).toEqual([{ type: 'text', text: '' }]);
+  });
+
   it('projects hook result messages into LLM projection', async () => {
     const ctx = testAgent();
     ctx.configure();
