@@ -56,14 +56,14 @@ describe('kimi server', () => {
     expect(subs).toEqual(['kill', 'ps', 'run']);
   });
 
-  it('`server run` exposes local-only foreground options', () => {
+  it('`server run` exposes network-bind foreground options', () => {
     const program = makeProgram();
     const run = program.commands
       .find((c) => c.name() === 'server')
       ?.commands.find((c) => c.name() === 'run');
     expect(run).toBeDefined();
     const longs = run!.options.map((o) => o.long).filter(Boolean);
-    expect(longs).not.toContain('--host');
+    expect(longs).toContain('--host');
     expect(longs).toContain('--port');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
@@ -95,7 +95,7 @@ describe('kimi server', () => {
     const longs = web!.options.map((o) => o.long).filter(Boolean);
     // web defaults to opening → the option is the negative form --no-open
     expect(longs).toContain('--no-open');
-    expect(longs).not.toContain('--host');
+    expect(longs).toContain('--host');
     expect(longs).toContain('--port');
   });
 });
@@ -341,6 +341,34 @@ describe('`kimi server run` background start', () => {
     expect(parsed).toMatchObject({ logLevel: 'debug' });
   });
 
+  it('passes --host through to the background daemon', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let parsed: unknown;
+
+    await handleRunCommand(
+      { host: '0.0.0.0', port: '58627' },
+      {
+        startServerBackground: async (options) => {
+          parsed = options;
+          return { origin: 'http://127.0.0.1:58627' };
+        },
+        openUrl: vi.fn(),
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      },
+    );
+
+    expect(parsed).toMatchObject({ host: '0.0.0.0', port: 58627 });
+  });
+
   it('prints a TUI-style ready panel once the daemon is up', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let stdout = '';
@@ -418,6 +446,39 @@ describe('`kimi server run` background start', () => {
     expect(stdout).toContain(color.bold.hex(darkColors.textDim)('URL:      '));
     expect(stdout).toContain(color.hex(darkColors.textMuted)('local only'));
   });
+
+  it('shows the bound host in the ready panel for non-loopback binds', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+
+    await handleRunCommand(
+      { host: '0.0.0.0', port: '58627' },
+      {
+        startServerBackground: async () => ({
+          origin: 'http://127.0.0.1:58627',
+          host: '0.0.0.0',
+        }),
+        openUrl: vi.fn(),
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      },
+    );
+
+    const plain = stripAnsi(stdout);
+    expect(plain).toContain('Network:');
+    expect(plain).toContain('listening on 0.0.0.0');
+    expect(plain).toContain('Access:');
+    expect(plain).toContain('trusted network only');
+  });
 });
 
 describe('`kimi server run --foreground`', () => {
@@ -452,7 +513,40 @@ describe('`kimi server run --foreground`', () => {
     );
 
     expect(backgroundCalled).toBe(false);
-    expect(foregroundOptions).toMatchObject({ port: 58627, logLevel: 'silent' });
+    expect(foregroundOptions).toMatchObject({
+      host: '127.0.0.1',
+      port: 58627,
+      logLevel: 'silent',
+    });
+  });
+
+  it('passes --host through to the foreground server', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let foregroundOptions: unknown;
+
+    await handleRunCommand(
+      { host: '0.0.0.0', port: '58627', foreground: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+        startServerForeground: async (options) => {
+          foregroundOptions = options;
+          return undefined as unknown as never;
+        },
+        openUrl: vi.fn(),
+        stdout: {
+          write() {
+            return true;
+          },
+        },
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      },
+    );
+
+    expect(foregroundOptions).toMatchObject({ host: '0.0.0.0', port: 58627 });
   });
 
   it('prints the ready banner and opens the browser once listening', async () => {
@@ -672,12 +766,13 @@ describe('spawnDaemonChild', () => {
     spawnMock.mockReturnValue({ unref: vi.fn(), once: vi.fn() } as unknown as ChildProcess);
 
     const { spawnDaemonChild, daemonLogPath } = await import('#/cli/sub/server/daemon');
-    spawnDaemonChild({ port: 58627, logLevel: 'info' });
+    spawnDaemonChild({ host: '0.0.0.0', port: 58627, logLevel: 'info' });
 
     expect(spawnMock).toHaveBeenCalledOnce();
     const [program, args, options] = spawnMock.mock.calls[0]!;
     expect(program).toBeTruthy();
     expect(args).toEqual(expect.arrayContaining(['server', 'run', '--daemon']));
+    expect(args).toEqual(expect.arrayContaining(['--host', '0.0.0.0']));
     expect(options).toMatchObject({ detached: true, cwd: dirname(daemonLogPath()) });
     expect(options?.cwd).not.toBe(process.cwd());
   });
