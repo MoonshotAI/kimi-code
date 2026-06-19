@@ -132,9 +132,12 @@ Skills are modular extensions that provide:
 
 ## How to use skills
 
-Identify the skills that are likely to be useful for the tasks you are currently working on, read the skill file for detailed instructions, guidelines, scripts and more.
+When you need a skill, follow this two-step process:
 
-Only read skill details when needed to conserve the context window.
+1. **Search**: Call the `Skill` tool with `action: "search"` and relevant keywords to find matching skills. The search returns ranked results instantly.
+2. **Load**: Once you identify the right skill from search results, call the `Skill` tool with `action: "load"` and the skill name to load its full instructions into context.
+
+Only read skill details when needed to conserve the context window. Do NOT guess skill names — always search first when the skill listing above does not contain enough detail.
 
 ## Available skills
 

@@ -20,7 +20,7 @@ import type { SkillActivationOrigin } from '../../../agent/context';
 import { renderModelToolSkillPrompt } from '../../../agent/skill/prompt';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
-import { isInlineSkillType, type SkillDefinition } from '../../../skill';
+import { isInlineSkillType, normalizeSkillName, type SkillDefinition } from '../../../skill';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { matchesGlobRuleSubject } from '../../support/rule-match';
@@ -44,13 +44,22 @@ export class NestedSkillTooDeepError extends Error {
 }
 
 export interface SkillToolInput {
-  skill: string;
+  skill?: string;
   args?: string;
+  /** "load" (default) loads a skill's full instructions; "search" searches the catalog. */
+  action?: 'load' | 'search';
+  /** Search query — required when action is "search". */
+  query?: string;
+  /** Max search results (default 10, max 20). */
+  limit?: number;
 }
 
 export const SkillToolInputSchema: z.ZodType<SkillToolInput> = z.object({
-  skill: z.string(),
+  skill: z.string().optional(),
   args: z.string().optional(),
+  action: z.enum(['load', 'search']).optional(),
+  query: z.string().optional(),
+  limit: z.number().int().min(1).max(20).optional(),
 });
 
 export interface SkillToolOptions {
@@ -72,17 +81,29 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
   });
   readonly parameters: Record<string, unknown> = toInputJsonSchema(SkillToolInputSchema);
 
+  /** Tracks skills already loaded in the current context to avoid redundant injection. */
+  private readonly loadedSkills = new Set<string>();
+
   constructor(
     private readonly agent: Agent,
     private readonly options: SkillToolOptions = {},
   ) {}
 
+  /**
+   * Clear the dedup set. Called after compaction or context reset because
+   * the skill content may have been summarized/truncated out of the context
+   * window, and the model may need to re-load previously loaded skills.
+   */
+  clearLoadedSkills(): void {
+    this.loadedSkills.clear();
+  }
+
   resolveExecution(args: SkillToolInput): ToolExecution {
     return {
-      description: `Invoke skill ${args.skill}`,
-      display: { kind: 'skill_call', skill_name: args.skill, args: args.args },
+      description: `Invoke skill ${args.skill ?? '(search)'}`,
+      display: { kind: 'skill_call', skill_name: args.skill ?? '', args: args.args },
       approvalRule: this.name,
-      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.skill),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.skill ?? ''),
       execute: () => this.execution(args),
     };
   }
@@ -95,6 +116,37 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
   }
 
   private async execution(args: SkillToolInput): Promise<ExecutableToolResult> {
+    const action = args.action ?? 'load';
+
+    // ── Search action ──────────────────────────────────────────────
+    if (action === 'search') {
+      const query = args.query ?? args.skill;
+      if (!query || query.trim().length === 0) {
+        return errorResult('A search query is required. Provide "query" or "skill".');
+      }
+      const skills = this.agent.skills;
+      if (skills === null) {
+        return errorResult('No skills are registered.');
+      }
+      const results = skills.registry.searchSkills(query, args.limit ?? 10);
+      if (results.length === 0) {
+        return { output: `No skills found matching "${query}". Try broader keywords.` };
+      }
+      const lines = [`${String(results.length)} skill(s) for "${query}":`];
+      for (const r of results) {
+        // Compact format: tier + compact + match reason
+        // Skip whenToUse in output to save tokens — the compact desc is enough
+        lines.push(`${r.tier} ${r.compact} [score: ${String(r.score)}]`);
+      }
+      lines.push('', 'Load with action:"load" + skill name. 🔴 = best match.');
+      return { output: lines.join('\n') };
+    }
+
+    // ── Load action (original behaviour) ───────────────────────────
+    const skillName = args.skill;
+    if (!skillName) {
+      return errorResult('A skill name is required for action "load". Provide the "skill" parameter.');
+    }
     // Recursion hard cap. Once `currentDepth` has reached
     // MAX_SKILL_QUERY_DEPTH, firing another Skill call would push the
     // child to depth+1 which violates the invariant. Throw a structured
@@ -102,22 +154,22 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
     // "LLM mis-dispatched" from "safety net fired".
     const currentDepth = this.options.initialQueryDepth ?? this.options.queryDepth ?? 0;
     if (currentDepth >= MAX_SKILL_QUERY_DEPTH) {
-      throw new NestedSkillTooDeepError(MAX_SKILL_QUERY_DEPTH, args.skill);
+      throw new NestedSkillTooDeepError(MAX_SKILL_QUERY_DEPTH, skillName);
     }
 
     const skills = this.agent.skills;
     if (skills === null) {
-      return errorResult(`Skill "${args.skill}" not found in the current skill listing.`);
+      return errorResult(`Skill "${skillName}" not found in the current skill listing.`);
     }
-    const skill = skills.registry.getSkill(args.skill);
+    const skill = skills.registry.getSkill(skillName);
     if (skill === undefined) {
-      return errorResult(`Skill "${args.skill}" not found in the current skill listing.`);
+      return errorResult(`Skill "${skillName}" not found in the current skill listing.`);
     }
     if (skill.metadata.disableModelInvocation === true) {
       // Keep the exact wording "can only be triggered by the user" so
       // contract audits and integration tests stay deterministic.
       return errorResult(
-        `Skill "${args.skill}" can only be triggered by the user (model invocation is disabled).`,
+        `Skill "${skillName}" can only be triggered by the user (model invocation is disabled).`,
       );
     }
 
@@ -126,6 +178,15 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
       return errorResult(
         `Skill "${skill.name}" is not an inline skill and cannot be invoked by the model in v1.`,
       );
+    }
+
+    // Dedup: if this exact skill (same name + same args) was already loaded
+    // in the current context, skip re-injection to save tokens.
+    const dedupKey = `${normalizeSkillName(skill.name)}\0${skillArgs}`;
+    if (this.loadedSkills.has(dedupKey)) {
+      return {
+        output: `Skill "${skill.name}" is already loaded in context. Follow its instructions. Do not load it again.`,
+      };
     }
 
     const origin = skillOrigin(skill, skillArgs, currentDepth);
@@ -148,6 +209,10 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
       ],
       origin,
     );
+
+    // Mark as loaded for dedup.
+    this.loadedSkills.add(dedupKey);
+
     return {
       output: `Skill "${skill.name}" loaded inline. Follow its instructions.`,
     };

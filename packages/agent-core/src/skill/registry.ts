@@ -1,11 +1,28 @@
-import { expandSkillParameters, skillArgumentNames } from './parser';
+import { readFileSync } from 'node:fs';
+
+import { LAZY_CONTENT_SENTINEL, expandSkillParameters, skillArgumentNames, parseSkillMetaFromFile, parseSkillText } from './parser';
 import { discoverSkills, type DiscoverSkillsOptions } from './scanner';
+import { SkillSearchIndex, type SkillSearchResult } from './search';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
 import { isInlineSkillType, normalizeSkillName } from './types';
 import type { SkillRegistry as AgentSkillRegistry } from '../agent/skill/types';
 import { escapeXmlAttr } from '../utils/xml-escape';
 
 const LISTING_DESC_MAX = 250;
+
+/**
+ * Above this threshold, getModelSkillListing() switches to a compact
+ * name-only listing and tells the model to use the `skill_search` tool.
+ * Below it, the legacy full listing is injected into the system prompt
+ * (cheaper for prompt caching with small catalogues).
+ */
+const COMPACT_LISTING_THRESHOLD = 80;
+
+/**
+ * Above this threshold, the compact listing drops descriptions entirely
+ * and lists only skill names.
+ */
+const NAMES_ONLY_LISTING_THRESHOLD = 300;
 
 export class SkillNotFoundError extends Error {
   readonly skillName: string;
@@ -21,6 +38,13 @@ export interface SkillRegistryOptions {
   readonly discover?: typeof discoverSkills;
   readonly onWarning?: (message: string, cause?: unknown) => void;
   readonly sessionId?: string;
+  readonly compactListingThreshold?: number;
+  readonly namesOnlyListingThreshold?: number;
+  /**
+   * If true, do not inject any skill catalogue into the system prompt.
+   * The model must use the Skill tool's search action to discover skills.
+   */
+  readonly disableModelSkillListing?: boolean;
 }
 
 export class SessionSkillRegistry implements AgentSkillRegistry {
@@ -31,20 +55,36 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
   private readonly discoverImpl: typeof discoverSkills;
   private readonly onWarning: (message: string, cause?: unknown) => void;
   readonly sessionId?: string;
+  private readonly searchIndex = new SkillSearchIndex();
+  private readonly compactListingThreshold: number;
+  private readonly namesOnlyListingThreshold: number;
+  private readonly disableModelSkillListing: boolean;
+
+  private indexDirty = false;
+  private modelSkillListingCache: string | undefined;
 
   constructor(options: SkillRegistryOptions = {}) {
     this.discoverImpl = options.discover ?? discoverSkills;
     this.onWarning = options.onWarning ?? (() => {});
     this.sessionId = options.sessionId;
+    this.compactListingThreshold = options.compactListingThreshold ?? COMPACT_LISTING_THRESHOLD;
+    this.namesOnlyListingThreshold = options.namesOnlyListingThreshold ?? NAMES_ONLY_LISTING_THRESHOLD;
+    this.disableModelSkillListing = options.disableModelSkillListing ?? false;
   }
 
   async loadRoots(roots: readonly SkillRoot[]): Promise<void> {
+    this.modelSkillListingCache = undefined;
     for (const root of roots) {
       if (!this.roots.includes(root.path)) this.roots.push(root.path);
     }
 
+    // Only parse frontmatter at startup (name, description, whenToUse).
+    // The full body is loaded on demand when renderSkillPrompt() is called.
+    // This saves ~95% memory for large skill catalogues.
+
     const skills = await this.discoverImpl({
       roots,
+      parse: parseSkillMetaFromFile,
       onWarning: this.onWarning,
       onSkippedByPolicy: (skill) => this.skipped.push(skill),
       onDiscoveredSkill: (skill) => {
@@ -55,6 +95,12 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     for (const skill of skills) {
       this.byName.set(normalizeSkillName(skill.name), skill);
     }
+
+    // Build the BM25 search index so the model can discover skills
+    // via the `skill_search` tool instead of scanning a full listing.
+    // Sub-skills are excluded: they are intentionally hidden from the model
+    // and reachable only through their parent skill.
+    this.searchIndex.build(this.listSearchableSkills());
   }
 
   registerBuiltinSkill(skill: SkillDefinition): void {
@@ -65,6 +111,8 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     const key = normalizeSkillName(skill.name);
     if (options.replace === true || !this.byName.has(key)) {
       this.byName.set(key, skill);
+      this.indexDirty = true;
+      this.modelSkillListingCache = undefined;
     }
     this.indexPluginSkill(skill, options);
   }
@@ -89,8 +137,22 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
   }
 
   renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {
+    // Lazy content loading: when compact mode parsed only frontmatter,
+    // the body is empty. Read the full file now (sync, only for activated skills).
+    let content = skill.content;
+    if (content === LAZY_CONTENT_SENTINEL && skill.path.length > 0) {
+      const text = readFileSync(skill.path, 'utf8');
+      const full = parseSkillText({
+        skillMdPath: skill.path,
+        skillDirName: skill.dir.split('/').pop() ?? skill.dir,
+        source: skill.source,
+        text,
+      });
+      content = full.content;
+    }
+
     const argumentNames = skillArgumentNames(skill.metadata);
-    const content = expandSkillParameters(skill.content, rawArgs, {
+    content = expandSkillParameters(content, rawArgs, {
       skillDir: skill.dir,
       sessionId: this.sessionId,
       argumentNames,
@@ -117,6 +179,15 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     );
   }
 
+  /**
+   * Skills that should be discoverable by the model via search or the skill
+   * listing. Same as {@link listInvocableSkills} but excludes sub-skills, which
+   * are hidden from the model and should only be reached through their parent.
+   */
+  private listSearchableSkills(): readonly SkillDefinition[] {
+    return this.listInvocableSkills().filter((skill) => skill.metadata.isSubSkill !== true);
+  }
+
   getSkillRoots(): readonly string[] {
     return [...this.roots];
   }
@@ -130,16 +201,43 @@ export class SessionSkillRegistry implements AgentSkillRegistry {
     return rendered.length === 0 ? 'No skills' : rendered;
   }
 
-  getModelSkillListing(): string {
-    const lines = ['DISREGARD any earlier skill listings. Current available skills:'];
-    const listing = renderGroupedSkills(
-      this.listInvocableSkills().filter((skill) => skill.metadata.isSubSkill !== true),
-      formatModelSkill,
-    );
-    if (listing.length > 0) {
-      lines.push(listing);
+  /**
+   * Search skills by free-text query. Delegates to the BM25 index.
+   * Lazily rebuilds the index if skills were registered since the last build.
+   */
+  searchSkills(query: string, limit?: number, minScore?: number): readonly SkillSearchResult[] {
+    if (this.indexDirty) {
+      this.searchIndex.build(this.listSearchableSkills());
+      this.indexDirty = false;
     }
-    return lines.length === 1 ? '' : lines.join('\n');
+    return this.searchIndex.search(query, limit, minScore);
+  }
+
+  getModelSkillListing(): string {
+    if (this.modelSkillListingCache !== undefined) {
+      return this.modelSkillListingCache;
+    }
+
+    const invocable = this.listInvocableSkills().filter(
+      (skill) => skill.metadata.isSubSkill !== true,
+    );
+
+    let listing: string;
+    // Always use search-only mode: do not dump skill names/descriptions into
+    // the system prompt. The model must use the Skill tool's search action
+    // to discover skills. This saves significant context tokens and prevents
+    // attention dilution from large catalogues.
+    //
+    // Inspired by Karpathy's context engineering principle: "fill the context
+    // window with just the right information for the next step."
+    listing = [
+      `You have access to ${String(invocable.length)} registered skills.`,
+      'To find relevant skills, call the `Skill` tool with `action: "search"` and keywords from the user\'s request.',
+      'Do NOT guess skill names — always search first, then load with `action: "load"`.',
+    ].join('\n');
+
+    this.modelSkillListingCache = listing;
+    return listing;
   }
 }
 
@@ -181,6 +279,16 @@ function formatModelSkill(skill: SkillDefinition): readonly string[] {
   }
   lines.push(`  Path: ${skill.path}`);
   return lines;
+}
+
+/** Compact format: name + 80-char description, no path. */
+function formatCompactSkill(skill: SkillDefinition): readonly string[] {
+  return [`- ${skill.name}: ${truncate(skill.description, 80)}`];
+}
+
+/** Minimal format: name only. Used for catalogues > 300 skills. */
+function formatNameOnlySkill(skill: SkillDefinition): readonly string[] {
+  return [`- ${skill.name}`];
 }
 
 function truncate(value: string, max: number): string {

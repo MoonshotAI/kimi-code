@@ -54,14 +54,27 @@ describe('skill parser', () => {
     });
   });
 
-  it('falls back to the first non-empty body line as description when frontmatter is absent', async () => {
+  it('falls back to the first body sentence as description when frontmatter is absent', async () => {
     const root = await makeSkillsRoot();
-    await writeFlat(root, 'plain.md', ['', '', 'This is the headline description.', '', 'More body text here.']);
+    await writeFlat(root, 'plain.md', ['', '', '# This is a heading.', '', 'More body text here.']);
 
     const skills = await discoverSkills({ roots: [userRoot(root)] });
     expect(skills).toHaveLength(1);
     expect(skills[0]?.name).toBe('plain');
-    expect(skills[0]?.description.toLowerCase()).toContain('headline description');
+    expect(skills[0]?.description).toBe('# This is a heading.');
+  });
+
+  it('prefers the first sentence over a heading if a sentence exists before any heading', async () => {
+    const root = await makeSkillsRoot();
+    await writeFlat(root, 'lead-sentence.md', [
+      '',
+      'This is the lead sentence. Then more text.',
+      '',
+      '# Heading',
+    ]);
+
+    const skills = await discoverSkills({ roots: [userRoot(root)] });
+    expect(skills[0]?.description).toBe('This is the lead sentence.');
   });
 
   it('prefers frontmatter description over body first-line fallback', async () => {
@@ -134,6 +147,61 @@ describe('skill parser', () => {
     });
     expect(skills).toEqual([]);
     expect(warnings.some((message) => message.includes('Invalid frontmatter'))).toBe(true);
+  });
+
+  it('lazy frontmatter parsing preserves CRLF frontmatter fences', async () => {
+    const root = await makeSkillsRoot();
+    const content = ['---', 'name: crlf-skill', 'description: A CRLF skill', '---', '', '# Body'].join(
+      '\r\n',
+    );
+    const dir = path.join(root, 'crlf-skill');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'SKILL.md'), content);
+
+    const registry = new SessionSkillRegistry();
+    await registry.loadRoots([userRoot(root)]);
+
+    const skill = registry.getSkill('crlf-skill');
+    expect(skill).toBeDefined();
+    expect(skill?.description).toBe('A CRLF skill');
+    expect(skill?.content).toBe('\u0000LAZY');
+
+    // Full body should still render correctly after lazy load.
+    const rendered = registry.renderSkillPrompt(skill!, '');
+    expect(rendered).toContain('# Body');
+  });
+
+  it('lazy frontmatter parsing derives flat-skill description from the body', async () => {
+    const root = await makeSkillsRoot();
+    await writeFile(
+      path.join(root, 'flat-derived.md'),
+      ['---', 'name: flat-derived', '---', '', 'Body headline for the skill.'].join('\n'),
+    );
+
+    const registry = new SessionSkillRegistry();
+    await registry.loadRoots([userRoot(root)]);
+
+    const skill = registry.getSkill('flat-derived');
+    expect(skill).toBeDefined();
+    expect(skill?.description).toBe('Body headline for the skill.');
+    expect(skill?.content).toBe('\u0000LAZY');
+  });
+
+  it('captures a body snippet during lazy frontmatter parsing', async () => {
+    const root = await makeSkillsRoot();
+    const dir = path.join(root, 'snippet-skill');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, 'SKILL.md'),
+      ['---', 'name: snippet-skill', 'description: A skill', '---', '', '# Overview', '', 'Use this for graphql and rest endpoints.'].join('\n'),
+    );
+
+    const registry = new SessionSkillRegistry();
+    await registry.loadRoots([userRoot(root)]);
+
+    const skill = registry.getSkill('snippet-skill');
+    expect(skill).toBeDefined();
+    expect(skill?.bodySnippet).toContain('graphql');
   });
 });
 

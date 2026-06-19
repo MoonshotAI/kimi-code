@@ -1,4 +1,5 @@
 import type { SkillDefinition } from '../../skill';
+import type { SkillSearchResult } from '../../skill/search';
 
 export interface SkillRegistry {
   getSkill(name: string): SkillDefinition | undefined;
@@ -7,4 +8,5 @@ export interface SkillRegistry {
   listInvocableSkills(): readonly SkillDefinition[];
   getSkillRoots(): readonly string[];
   getModelSkillListing(): string;
+  searchSkills(query: string, limit?: number): readonly SkillSearchResult[];
 }
