@@ -25,6 +25,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { DEFAULT_LOCK_DIR, getLiveLock, type LockContents } from '@moonshot-ai/server';
 
 import {
+  connectableServerHost,
   DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
   isServerHealthy,
@@ -68,7 +69,7 @@ export function daemonLogPath(): string {
 
 export function lockConnectHost(lock: LockContents): string {
   const host = lock.host ?? DEFAULT_SERVER_HOST;
-  return host === '0.0.0.0' ? DEFAULT_SERVER_HOST : host;
+  return connectableServerHost(host);
 }
 
 /** True when `host:port` is currently free to bind (nothing listening). */

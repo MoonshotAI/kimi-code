@@ -608,6 +608,36 @@ describe('shared parsers stay strict', () => {
     expect(parseLogLevel(undefined)).toBe('info');
     expect(parseLogLevel('debug')).toBe('debug');
   });
+
+  it('formats connectable server origins for bind-any and IPv6 hosts', async () => {
+    const { connectableServerHost, serverOrigin, serverOriginFromAddress } = await import(
+      '#/cli/sub/server/shared'
+    );
+
+    expect(connectableServerHost('0.0.0.0')).toBe('127.0.0.1');
+    expect(connectableServerHost('::')).toBe('::1');
+    expect(serverOrigin('127.0.0.1', 58627)).toBe('http://127.0.0.1:58627');
+    expect(serverOrigin('0.0.0.0', 58627)).toBe('http://127.0.0.1:58627');
+    expect(serverOrigin('localhost', 58627)).toBe('http://localhost:58627');
+    expect(serverOrigin('::1', 58627)).toBe('http://[::1]:58627');
+    expect(serverOrigin('::', 58627)).toBe('http://[::1]:58627');
+    expect(serverOrigin('[::1]', 58627)).toBe('http://[::1]:58627');
+    expect(serverOriginFromAddress('::', 'http://[::]:58628', 58627)).toBe(
+      'http://[::1]:58628',
+    );
+  });
+
+  it('normalizes daemon lock hosts for client probes', async () => {
+    const { lockConnectHost } = await import('#/cli/sub/server/daemon');
+
+    expect(lockConnectHost({ pid: 1, started_at: 'now', port: 58627, host: '0.0.0.0' })).toBe(
+      '127.0.0.1',
+    );
+    expect(lockConnectHost({ pid: 1, started_at: 'now', port: 58627, host: '::' })).toBe('::1');
+    expect(lockConnectHost({ pid: 1, started_at: 'now', port: 58627, host: '::1' })).toBe(
+      '::1',
+    );
+  });
 });
 
 describe('server web asset directory resolution', () => {

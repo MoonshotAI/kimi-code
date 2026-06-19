@@ -249,5 +249,5 @@ function withStatusDetails(
 }
 
 function formatServiceUrl(host: string, port: number): string {
-  return serverOrigin(host === '0.0.0.0' ? DEFAULT_SERVER_HOST : host, port);
+  return serverOrigin(host, port);
 }

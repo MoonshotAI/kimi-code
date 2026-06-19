@@ -32,6 +32,7 @@ import {
   DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
   parseServerOptions,
+  serverOriginFromAddress,
   VALID_LOG_LEVELS,
   type ParsedServerOptions,
   type ServerCliOptions,
@@ -275,7 +276,7 @@ async function runServerInProcess(
     : { address: running.address };
   running.logger.info(readyFields, mode.daemon ? 'daemon ready' : 'server ready');
 
-  onReady?.(running.address);
+  onReady?.(serverOriginFromAddress(options.host, running.address, options.port));
 
   return new Promise<never>(() => {
     // Keeps the event loop alive; the process ends via shutdown()/process.exit.
@@ -393,7 +394,8 @@ function networkLabel(host: string): string {
 }
 
 function isLocalHost(host: string): boolean {
-  return host === DEFAULT_SERVER_HOST || host === 'localhost';
+  const bareHost = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+  return bareHost === DEFAULT_SERVER_HOST || bareHost === 'localhost' || bareHost === '::1';
 }
 
 const DEFAULT_RUN_COMMAND_DEPS: RunCommandDeps = {
