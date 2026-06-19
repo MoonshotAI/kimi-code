@@ -1,5 +1,6 @@
 import type { ContentPart, Message, TextPart } from '@moonshot-ai/kosong';
 
+import { ErrorCodes, KimiError } from '../../errors';
 import type { ContextMessage } from './types';
 
 export function project(history: readonly ContextMessage[]): Message[] {
@@ -39,6 +40,17 @@ function prepareMessageForProjection(message: ContextMessage): ContextMessage | 
   }
 
   const next = content === undefined ? message : { ...message, content };
+  if (next.role === 'tool' && next.content.length === 0) {
+    throw new KimiError(
+      ErrorCodes.REQUEST_INVALID,
+      'Tool result message content cannot be empty after removing empty text blocks.',
+      {
+        details: {
+          toolCallId: next.toolCallId,
+        },
+      },
+    );
+  }
   return next.content.length === 0 && next.toolCalls.length === 0 ? null : next;
 }
 

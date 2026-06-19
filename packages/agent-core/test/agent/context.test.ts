@@ -141,6 +141,26 @@ describe('Agent context', () => {
     expect(history[1]?.content).toEqual([{ type: 'text', text: '' }]);
   });
 
+  it('rejects tool result messages left empty by LLM projection cleanup', () => {
+    const history: ContextMessage[] = [
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '' }],
+        toolCallId: 'call_empty',
+        toolCalls: [],
+      },
+    ];
+
+    expect(() => project(history)).toThrow(
+      'Tool result message content cannot be empty after removing empty text blocks.',
+    );
+  });
+
   it('projects hook result messages into LLM projection', async () => {
     const ctx = testAgent();
     ctx.configure();
