@@ -60,4 +60,37 @@ describe('AssistantMessageComponent', () => {
     expect(text).toContain('</hook_result>');
     expect(text).not.toContain('UserPromptSubmit hook');
   });
+
+  it('rebuilds content on invalidate after theme change', () => {
+    const component = new AssistantMessageComponent();
+    component.updateContent('hello world');
+
+    const before = component.render(40).map(strip).join('\n');
+    expect(before).toContain('hello world');
+
+    component.invalidate();
+
+    const after = component.render(40).map(strip).join('\n');
+    expect(after).toContain('hello world');
+  });
+
+  it('does not render content after invalidate when lastText is empty', () => {
+    const component = new AssistantMessageComponent();
+
+    component.invalidate();
+
+    expect(component.render(40)).toEqual([]);
+  });
+
+  it('does not render content after invalidate when lastText is whitespace only', () => {
+    const component = new AssistantMessageComponent();
+    component.updateContent('   ');
+
+    const before = component.render(40);
+    expect(before).toEqual([]);
+
+    component.invalidate();
+
+    expect(component.render(40)).toEqual([]);
+  });
 });
