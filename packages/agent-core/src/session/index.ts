@@ -1,19 +1,17 @@
 import { homedir } from 'node:os';
-import { join } from 'pathe';
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
 import type { Logger, SessionLogHandle } from '#/logging/types';
 import type { KimiConfig, SDKSessionRPC } from '#/rpc';
-import { proxyWithExtraPayload } from '#/rpc/types';
 
-import { Agent, type AgentOptions, type AgentType } from '../agent';
-import { ILifecycleService, LifecycleService, type SessionHookCtx } from '../agent/lifecycle';
+import type { Agent, AgentOptions, AgentType } from '../agent';
+import { ILifecycleService, LifecycleService } from '../agent/lifecycle';
 import { HookService, IHookService, type HookDef } from './hooks';
 import { SessionRepository } from './sessionRepository';
-import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
-import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
+import type { PermissionRule } from '../agent/permission';
+import { type BackgroundConfig } from '../config';
 import { makeErrorPayload } from '../errors';
 import {
   McpConnectionService,
@@ -24,10 +22,8 @@ import {
 } from '../mcp';
 import type { EnabledPluginSessionStart } from '../plugin';
 import {
-  DEFAULT_AGENT_PROFILES,
   DEFAULT_INIT_PROMPT,
   loadAgentsMd,
-  prepareSystemPromptContext,
   type ResolvedAgentProfile,
 } from '../profile';
 import type { IProviderService } from './provider-manager';
@@ -41,10 +37,9 @@ import {
   type SkillSummary,
 } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
-import { SubagentHostService } from './subagent-host';
+import { SessionHost, type AgentEntry } from './session-host';
 import type { ToolServices } from '../tools/support/services';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
-import { abortError } from '../utils/abort';
 import {
   InstantiationService,
   ServiceCollection,
@@ -93,13 +88,6 @@ export interface AgentMeta {
   readonly swarmItem?: string;
 }
 
-interface ResumedAgent {
-  readonly agent: Agent;
-  readonly warning?: string;
-}
-
-type AgentEntry = Agent | Promise<ResumedAgent>;
-
 export interface CreateAgentOptions {
   readonly profile?: ResolvedAgentProfile;
   readonly parentAgentId?: string;
@@ -118,51 +106,26 @@ export interface SessionMeta {
   custom: Record<string, any>;
 }
 
-const BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';
-const ACTIVE_TURN_CLOSE_TIMEOUT_MS = 8_000;
-
-async function waitForSettlementOrTimeout(
-  promise: Promise<unknown>,
-  timeoutMs: number,
-): Promise<boolean> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise.then(
-        () => true,
-        () => true,
-      ),
-      new Promise<false>((resolve) => {
-        timeout = setTimeout(() => {
-          resolve(false);
-        }, timeoutMs);
-        timeout.unref?.();
-      }),
-    ]);
-  } finally {
-    if (timeout !== undefined) {
-      clearTimeout(timeout);
-    }
-  }
-}
-
 export class Session {
   readonly rpc: SDKSessionRPC;
   readonly telemetry: TelemetryClient;
   readonly skills: ISkillRegistryService;
   private readonly scope: IInstantiationService;
-  readonly agents: Map<string, AgentEntry> = new Map();
   readonly mcp: IMcpConnectionService;
   readonly lifecycle: ILifecycleService;
   readonly log: Logger;
   private readonly logHandle: SessionLogHandle | undefined;
   readonly hookEngine: IHookService;
   readonly experimentalFlags: ExperimentalFlagResolver;
-  private toolKaos: Kaos;
   private persistenceKaos: Kaos;
   private readonly sessionRepository: SessionRepository;
-  private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
+  /**
+   * Owns the agent registry + agent lifecycle for this session. Exposed so a
+   * future `KimiCore.sessions` switch (M1.7b) can hold the host directly; for
+   * now `KimiCore.sessions` still holds `Session` and delegates here.
+   */
+  readonly host: SessionHost;
   metadata: SessionMeta = {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -215,7 +178,6 @@ export class Session {
     );
     this.hookEngine = this.scope.invokeFunction((accessor) => accessor.get(IHookService));
     this.telemetry = options.telemetry ?? noopTelemetryClient;
-    this.toolKaos = options.kaos;
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
     this.sessionRepository = new SessionRepository(options.homedir, this.persistenceKaos);
     this.skills = this.scope.invokeFunction((accessor) => accessor.get(ISkillRegistryService));
@@ -229,20 +191,26 @@ export class Session {
         this.log.error('skills load failed', error);
       })
       .then(() => {
-        this.refreshAgentBuiltinTools();
+        this.host.refreshAgentBuiltinTools();
       });
     void this.loadMcpServers().catch((error: unknown) => {
       this.emitInitialMcpLoadError(error);
     });
+    this.host = new SessionHost({
+      session: this,
+      scope: this.scope,
+      logHandle: this.logHandle,
+      skillsReady: this.skillsReady,
+    });
   }
 
 
-  setToolKaos(kaos: Kaos) {
-    this.toolKaos = kaos;
-    for (const agent of this.readyAgents()) {
-      agent.setKaos(kaos.withCwd(agent.config.cwd));
-    }
-    this.refreshAgentBuiltinTools();
+  get agents(): Map<string, AgentEntry> {
+    return this.host.agents;
+  }
+
+  setToolKaos(kaos: Kaos): void {
+    this.host.setToolKaos(kaos);
   }
 
   /**
@@ -257,222 +225,49 @@ export class Session {
   }
 
   /**
-   * Fires a session-scoped lifecycle hook, but only when this session has a
-   * stable id. Ephemeral sessions (`options.id === undefined`) have no id to
-   * identify them in the hook ctx, so their session hooks are skipped.
+   * Agent registry + lifecycle are owned by the internal {@link SessionHost}.
+   * The methods below preserve `Session`'s public surface and forward to the
+   * host so all call sites (`KimiCore`, `SessionAPIImpl`, subagent host, tests)
+   * keep behaving identically.
    */
-  private async fireSessionHook(
-    fire: (ctx: SessionHookCtx) => Promise<void>,
-  ): Promise<void> {
-    const sessionId = this.options.id;
-    if (sessionId === undefined) return;
-    await fire({ sessionId });
+  createMain(): Promise<Agent> {
+    return this.host.createMain();
   }
 
-  async createMain() {
-    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionWillStart(ctx));
-    const { agent } = await this.createAgent({ type: 'main' }, {
-      profile: DEFAULT_AGENT_PROFILES['agent'],
-    });
-    await this.triggerSessionStart('startup');
-    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionDidStart(ctx));
-    return agent;
+  resume(): Promise<{ warning?: string }> {
+    return this.host.resume();
   }
 
-  async resume(): Promise<{ warning?: string }> {
-    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionWillStart(ctx));
-    await this.skillsReady;
-    this.log.info('session resume', { app_version: this.options.appVersion });
-    const { agents } = await this.readMetadata();
-    this.agents.clear();
-    // Only the main agent is needed to reopen the session; subagents replay
-    // lazily when an RPC or Agent(resume=...) call asks for their state.
-    const { warning } =
-      agents['main'] === undefined ? { warning: undefined } : await this.resumeAgent('main');
-    // A session migrated from an external tool ships a wire without the
-    // `config.update` bootstrap events a natively-created agent writes, so the
-    // main agent comes back with an empty system prompt and no tools. Apply the
-    // default profile so the resumed session is usable. Native sessions always
-    // replay a non-empty system prompt and never enter this branch.
-    const main = this.getReadyAgent('main');
-    const profile = DEFAULT_AGENT_PROFILES['agent'];
-    if (main !== undefined && profile !== undefined && main.config.systemPrompt === '') {
-      await this.bootstrapAgentProfile(main, profile);
-    }
-    await this.triggerSessionStart('resume');
-    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionDidStart(ctx));
-    return { warning };
+  close(): Promise<void> {
+    return this.host.close();
   }
 
-  async close(): Promise<void> {
-    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionWillClose(ctx));
-    try {
-      await Promise.allSettled(
-        Array.from(this.readyAgents(), async (agent) => {
-          await agent.dispose();
-          await agent.cron?.stop();
-        }),
-      );
-      await this.cancelActiveTurnsOnClose();
-      await this.stopBackgroundTasksOnExit();
-      await this.flushMetadata();
-      await this.triggerSessionEnd('exit');
-    } finally {
-      try {
-        await this.mcp.shutdown();
-      } finally {
-        await this.logHandle?.close();
-      }
-    }
-    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionDidClose(ctx));
+  closeForReload(): Promise<void> {
+    return this.host.closeForReload();
   }
 
-  async closeForReload(): Promise<void> {
-    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionWillClose(ctx));
-    try {
-      await Promise.allSettled(
-        Array.from(this.readyAgents(), async (agent) => {
-          await agent.dispose();
-          await agent.cron?.stop();
-        }),
-      );
-      await this.flushMetadata();
-    } finally {
-      try {
-        await this.mcp.shutdown();
-      } finally {
-        await this.logHandle?.close();
-      }
-    }
-    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionDidClose(ctx));
-  }
-
-  private async cancelActiveTurnsOnClose(): Promise<void> {
-    const backgroundAgentIds = this.activeBackgroundAgentIds();
-    const cancellations: Array<Promise<void>> = [];
-    for (const [agentId, entry] of this.agents) {
-      if (!(entry instanceof Agent) || backgroundAgentIds.has(agentId)) continue;
-      cancellations.push(this.cancelAgentTurnOnClose(entry));
-    }
-    await Promise.allSettled(cancellations);
-  }
-
-  private activeBackgroundAgentIds(): Set<string> {
-    const agentIds = new Set<string>();
-    for (const agent of this.readyAgents()) {
-      for (const task of agent.background.list(true)) {
-        if (task.kind === 'agent' && task.agentId !== undefined) {
-          agentIds.add(task.agentId);
-        }
-      }
-    }
-    return agentIds;
-  }
-
-  private async cancelAgentTurnOnClose(agent: Agent): Promise<void> {
-    if (!agent.turn.hasActiveTurn) return;
-
-    let waitForTurn: Promise<unknown>;
-    try {
-      waitForTurn = agent.turn.waitForCurrentTurn();
-    } catch (error: unknown) {
-      this.log.debug('active turn wait unavailable during session close', {
-        agentType: agent.type,
-        agentHomedir: agent.homedir,
-        error,
-      });
-      return;
-    }
-
-    agent.turn.cancel(undefined, abortError('Session closed'));
-    const settled = await waitForSettlementOrTimeout(waitForTurn, ACTIVE_TURN_CLOSE_TIMEOUT_MS);
-    if (!settled) {
-      this.log.warn('timed out waiting for active turn to cancel during session close', {
-        agentType: agent.type,
-        agentHomedir: agent.homedir,
-        timeoutMs: ACTIVE_TURN_CLOSE_TIMEOUT_MS,
-      });
-    }
-  }
-
-  private async stopBackgroundTasksOnExit(): Promise<void> {
-    const keepAliveOnExit = resolveConfigValue({
-      env: process.env,
-      envKey: BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV,
-      configValue: this.options.background?.keepAliveOnExit,
-      defaultValue: false,
-      parseEnv: parseBooleanEnv,
-    });
-    if (keepAliveOnExit) return;
-    await Promise.all(
-      Array.from(this.readyAgents(), async (agent) => {
-        const activeTasks = agent.background.list(true);
-        await Promise.all(
-          activeTasks.map((task) =>
-            agent.background.suppressTerminalNotification(task.taskId),
-          ),
-        );
-        await agent.background.stopAll('Session closed');
-      }),
-    );
-  }
-
-  async createAgent(
+  createAgent(
     config: Partial<AgentOptions>,
     options: CreateAgentOptions = {},
   ): Promise<{ readonly id: string; readonly agent: Agent }> {
-    await this.skillsReady;
-    const type = config.type ?? 'main';
-    const id = type === 'main' ? 'main' : this.nextGeneratedAgentId();
-    const homedir = config.homedir ?? join(this.options.homedir, 'agents', id);
-    const parentAgentId = options.parentAgentId ?? null;
-    const agent = this.instantiateAgent(id, homedir, type, config, parentAgentId);
-    if (options.profile) {
-      await this.bootstrapAgentProfile(agent, options.profile);
-    }
-
-    this.agents.set(id, agent);
-    if (options.persistMetadata !== false) {
-      this.metadata.agents[id] = {
-        homedir,
-        type,
-        parentAgentId,
-        swarmItem: options.swarmItem,
-      };
-      void this.writeMetadata();
-    }
-
-    return { id, agent };
+    return this.host.createAgent(config, options);
   }
 
-  async ensureAgentResumed(id: string): Promise<Agent> {
-    const entry = this.agents.get(id);
-    if (entry !== undefined) return (await this.resolveAgentEntry(entry)).agent;
-    if (this.metadata.agents[id] === undefined) {
-      throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, `Agent "${id}" was not found`);
-    }
-    return (await this.resumeAgent(id)).agent;
+  ensureAgentResumed(id: string): Promise<Agent> {
+    return this.host.ensureAgentResumed(id);
   }
 
-  /**
-   * Applies a profile's derived config — cwd, system prompt, active tools — to
-   * an agent. Fresh creation and resume-of-an-incomplete-wire both route
-   * through here so the two paths cannot drift apart.
-   */
-  private async bootstrapAgentProfile(
-    agent: Agent,
-    profile: ResolvedAgentProfile,
-  ): Promise<void> {
-    const context = await prepareSystemPromptContext(
-      this.systemContextKaos(agent.kaos.getcwd()),
-      this.options.kimiHomeDir,
-    );
-    agent.useProfile(profile, context);
+  getReadyAgent(id: string): Agent | undefined {
+    return this.host.getReadyAgent(id);
+  }
+
+  readyAgents(): Iterable<Agent> {
+    return this.host.readyAgents();
   }
 
   async generateAgentsMd(): Promise<void> {
     await this.skillsReady;
-    const mainAgent = this.requireMainAgent();
+    const mainAgent = this.host.requireMainAgent();
 
     try {
       const handle = await mainAgent.subagentHost!.spawn({
@@ -592,157 +387,6 @@ export class Session {
         toolCount: entry.toolCount,
         error: entry.error,
       },
-    });
-  }
-
-  private refreshAgentBuiltinTools(): void {
-    for (const agent of this.readyAgents()) {
-      if (!agent.config.hasProvider) continue;
-      agent.tools.initializeBuiltinTools();
-    }
-  }
-
-  private instantiateAgent(
-    id: string,
-    homedir: string,
-    type: AgentType,
-    config: Partial<AgentOptions> = {},
-    parentAgentId: string | null = null,
-  ): Agent {
-    const parentAgent = parentAgentId !== null ? this.getReadyAgent(parentAgentId) : undefined;
-    const cwd = parentAgent?.config.cwd ?? this.toolKaos.getcwd();
-    return new Agent({
-      ...config,
-      id,
-      type,
-      kaos: this.toolKaos.withCwd(cwd),
-      toolServices: this.options.toolServices,
-      config: this.options.config,
-      homedir,
-      skills: this.skills,
-      rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
-      modelProvider: this.options.providerManager,
-      hookEngine: config.hookEngine ?? this.hookEngine,
-      subagentHost: config.subagentHost ?? this.scope.createInstance(SubagentHostService, this, id),
-      mcp: this.mcp,
-      permission: this.permissionOptions(parentAgentId, config.permission),
-      telemetry: this.telemetry,
-      log: this.log.createChild({ agentId: id }),
-      pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
-      experimentalFlags: this.experimentalFlags,
-      instantiationService: this.scope,
-    });
-  }
-
-  private permissionOptions(
-    parentAgentId: string | null,
-    input?: PermissionManagerOptions | undefined,
-  ): PermissionManagerOptions {
-    if (parentAgentId === null) {
-      return {
-        ...input,
-        initialRules: input?.initialRules ?? this.options.permissionRules,
-      };
-    }
-    return {
-      ...input,
-      parent: input?.parent ?? this.getReadyAgent(parentAgentId)?.permission?.unwrap(),
-    };
-  }
-
-  getReadyAgent(id: string): Agent | undefined {
-    const entry = this.agents.get(id);
-    return entry instanceof Agent ? entry : undefined;
-  }
-
-  *readyAgents(): Iterable<Agent> {
-    for (const entry of this.agents.values()) {
-      if (entry instanceof Agent) yield entry;
-    }
-  }
-
-  private async resolveAgentEntry(entry: AgentEntry): Promise<ResumedAgent> {
-    if (entry instanceof Agent) return { agent: entry };
-    return entry;
-  }
-
-  private resumeAgent(
-    id: string,
-    stack: readonly string[] = [],
-  ): Promise<ResumedAgent> {
-    if (stack.includes(id)) {
-      throw new KimiError(
-        ErrorCodes.SESSION_STATE_INVALID,
-        `Session agent parent chain contains a cycle: ${[...stack, id].join(' -> ')}`,
-      );
-    }
-
-    const entry = this.agents.get(id);
-    if (entry !== undefined) return this.resolveAgentEntry(entry);
-
-    const promise = this.resumePersistedAgent(id, stack);
-    this.agents.set(id, promise);
-    return promise;
-  }
-
-  private async resumePersistedAgent(
-    id: string,
-    stack: readonly string[] = [],
-  ): Promise<ResumedAgent> {
-    await this.skillsReady;
-    const meta = this.metadata.agents[id];
-    if (meta === undefined) {
-      throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, `Session agent "${id}" is missing`);
-    }
-
-    const parentAgentId = meta.parentAgentId ?? null;
-    const parent =
-      parentAgentId === null
-        ? undefined
-        : await this.resumeAgent(parentAgentId, [...stack, id]);
-
-    try {
-      const agent = this.instantiateAgent(id, meta.homedir, meta.type, {}, parentAgentId);
-      const result = await agent.resume();
-      this.agents.set(id, agent);
-      return { agent, warning: parent?.warning ?? result.warning };
-    } catch (error) {
-      const entry = this.agents.get(id);
-      if (entry instanceof Promise) {
-        this.agents.delete(id);
-      }
-      throw error;
-    }
-  }
-
-  private nextGeneratedAgentId(): string {
-    while (true) {
-      const id = `agent-${this.agentIdCounter++}`;
-      if (this.agents.has(id)) continue;
-      if (this.metadata.agents[id] !== undefined) continue;
-      return id;
-    }
-  }
-
-  private requireMainAgent(): Agent {
-    const agent = this.getReadyAgent('main');
-    if (agent === undefined) {
-      throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
-    }
-    return agent;
-  }
-
-  private async triggerSessionStart(source: 'startup' | 'resume'): Promise<void> {
-    await this.hookEngine.trigger('SessionStart', {
-      matcherValue: source,
-      inputData: { source },
-    });
-  }
-
-  private async triggerSessionEnd(reason: 'exit'): Promise<void> {
-    await this.hookEngine.trigger('SessionEnd', {
-      matcherValue: reason,
-      inputData: { reason },
     });
   }
 }
