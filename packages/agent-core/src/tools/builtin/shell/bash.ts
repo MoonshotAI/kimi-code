@@ -372,20 +372,42 @@ export class BashTool implements BuiltinTool<BashInput> {
     builder = new ToolResultBuilder(),
   ): ExecutableToolResult {
     const status = this.backgroundManager.getTask(taskId)?.status ?? 'running';
-    if (builder.nChars > 0) builder.write('\n');
-    builder.write(
+    const metadata =
       `task_id: ${taskId}\n` +
-        `pid: ${String(proc.pid)}\n` +
-        `description: ${description}\n` +
-        `status: ${status}\n` +
-        `automatic_notification: true\n` +
-        'next_step: You will be automatically notified when it completes.\n' +
-        'next_step: Use TaskOutput with this task_id for a non-blocking status/output snapshot.\n' +
-        'next_step: Use TaskStop only if the task must be cancelled.\n' +
-        'human_shell_hint: Tell the human to run /tasks to open the interactive background-task panel.',
-    );
-    return builder.ok(labels.title, { brief: labels.brief });
+      `pid: ${String(proc.pid)}\n` +
+      `description: ${description}\n` +
+      `status: ${status}\n` +
+      `automatic_notification: true\n` +
+      'next_step: You will be automatically notified when it completes.\n' +
+      'next_step: Use TaskOutput with this task_id for a non-blocking status/output snapshot.\n' +
+      'next_step: Use TaskStop only if the task must be cancelled.\n' +
+      'human_shell_hint: Tell the human to run /tasks to open the interactive background-task panel.';
+
+    const foregroundResult = builder.ok('');
+    const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
+    const message = backgroundResultMessage(labels.title, foregroundResult.message);
+    const result: ExecutableToolResult & {
+      readonly message: string;
+      readonly brief: string;
+      readonly truncated: boolean;
+    } = {
+      isError: false,
+      output:
+        foregroundOutput.length === 0
+          ? metadata
+          : `${metadata}\n\nforeground_output:\n${foregroundOutput}`,
+      message,
+      brief: labels.brief,
+      truncated: foregroundResult.truncated,
+    };
+    return result;
   }
+}
+
+function backgroundResultMessage(title: string, suffix: string): string {
+  const normalized = title.endsWith('.') ? title : `${title}.`;
+  if (suffix.length === 0) return normalized;
+  return suffix.endsWith('.') ? `${normalized} ${suffix}` : `${normalized} ${suffix}.`;
 }
 
 function formatTimeoutLabel(timeoutMs: number): string {

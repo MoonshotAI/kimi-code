@@ -614,6 +614,53 @@ describe('BashTool', () => {
     });
   });
 
+  it('keeps task metadata independent when noisy foreground output is capped before detach', async () => {
+    const { proc, finish } = pendingProcess();
+    const manager = createBackgroundManager().manager;
+    const tool = bashTool(
+      createFakeKaos({
+        execWithEnv: vi.fn().mockResolvedValue(proc),
+        osEnv: posixEnv,
+      }),
+      '/workspace',
+      manager,
+    );
+
+    const running = executeTool(tool, context({ command: 'yes noisy', timeout: 60 }));
+    await vi.waitFor(() => {
+      expect(manager.list(false)).toHaveLength(1);
+    });
+    const task = manager.list(false)[0]!;
+    await vi.waitFor(() => {
+      expect((proc.stdout as PassThrough).listenerCount('data')).toBeGreaterThanOrEqual(1);
+    });
+
+    (proc.stdout as PassThrough).write(
+      Array.from({ length: 6000 }, (_, index) => `noisy output line ${String(index)}\n`).join(''),
+    );
+    manager.detach(task.taskId);
+    const result = await running;
+
+    expect(result).toMatchObject({ isError: false });
+    expect(typeof result.output).toBe('string');
+    const output = result.output as string;
+    expect(output).toContain(`task_id: ${task.taskId}`);
+    expect(output).toContain('automatic_notification: true');
+    expect(output).toContain('foreground_output:');
+    expect(output).toContain('noisy output line 0');
+    expect(output).toContain('[...truncated]');
+    expect(output).toContain('Output is truncated to fit in the message.');
+    expect(output.indexOf(`task_id: ${task.taskId}`)).toBeLessThan(
+      output.indexOf('foreground_output:'),
+    );
+
+    finish();
+    await expect(manager.wait(task.taskId)).resolves.toMatchObject({
+      status: 'completed',
+      detached: true,
+    });
+  });
+
   it('does not spawn when the signal is already aborted', async () => {
     const controller = new AbortController();
     controller.abort();

@@ -866,6 +866,7 @@ export const backgroundTaskInfoBaseSchema = z.object({
   taskId: z.string(),
   description: z.string(),
   status: agentCoreBackgroundTaskStatusSchema,
+  detached: z.boolean().optional(),
   startedAt: z.number(),
   endedAt: z.number().nullable(),
   stopReason: z.string().optional(),
