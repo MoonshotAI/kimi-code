@@ -76,6 +76,7 @@ export interface AgentOptions {
   readonly rpc?: Partial<SDKAgentRPC>;
   readonly persistence?: AgentRecordPersistence;
   readonly type?: AgentType;
+  readonly id?: string;
   readonly generate?: typeof generate;
   readonly toolServices?: ToolServices;
   readonly compactionStrategy?: CompactionStrategy;
@@ -96,6 +97,7 @@ export interface AgentOptions {
 
 export class Agent {
   readonly type: AgentType;
+  readonly id: string | undefined;
   private _kaos: Kaos;
 
   get kaos(): Kaos {
@@ -141,6 +143,7 @@ export class Agent {
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
+    this.id = options.id;
     this._kaos = options.kaos;
     this.kimiConfig = options.config;
     this.homedir = options.homedir;
@@ -237,6 +240,12 @@ export class Agent {
 
     this.eventBus = this.scope.invokeFunction((accessor) => accessor.get(IDomainEventBus));
     this.lifecycle = this.scope.invokeFunction((accessor) => accessor.get(ILifecycleService));
+    // Constructor is synchronous, so lifecycle hooks here are fire-and-forget;
+    // WillCreate fires as soon as the lifecycle service is resolved (the
+    // earliest point an `agentId` + lifecycle are both available).
+    if (this.id !== undefined) {
+      void this.lifecycle.fireAgentWillCreate({ agentId: this.id });
+    }
     this.records = this.scope.invokeFunction((accessor) => accessor.get(IRecordsService));
     this.fullCompaction = this.scope.invokeFunction((accessor) => accessor.get(ICompactionService));
     this.microCompaction = this.scope.invokeFunction((accessor) =>
@@ -261,6 +270,9 @@ export class Agent {
         : this.scope.invokeFunction((accessor) => accessor.get(ICronService));
     this.goal = this.scope.invokeFunction((accessor) => accessor.get(IGoalService));
     this.replayBuilder = this.scope.invokeFunction((accessor) => accessor.get(IReplayService));
+    if (this.id !== undefined) {
+      void this.lifecycle.fireAgentDidCreate({ agentId: this.id });
+    }
   }
 
   setKaos(kaos: Kaos) {
@@ -329,6 +341,9 @@ export class Agent {
   }
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
+    if (this.id !== undefined) {
+      await this.lifecycle.fireAgentWillResume({ agentId: this.id });
+    }
     const result = await this.records.replay(options);
     try {
       this.replayBuilder.postRestoring = true;
@@ -341,7 +356,22 @@ export class Agent {
     } finally {
       this.replayBuilder.postRestoring = false;
     }
+    if (this.id !== undefined) {
+      await this.lifecycle.fireAgentDidResume({ agentId: this.id });
+    }
     return result;
+  }
+
+  /**
+   * Marks the agent teardown boundary by firing `fireAgentWillDispose`. The
+   * actual teardown (cron stop, background tasks, turn cancellation) is
+   * orchestrated by the owning `Session`; this method exists so the lifecycle
+   * hook fires from the agent boundary before that teardown runs.
+   */
+  async dispose(): Promise<void> {
+    if (this.id !== undefined) {
+      await this.lifecycle.fireAgentWillDispose({ agentId: this.id });
+    }
   }
 
   get rpcMethods(): PromisableMethods<AgentAPI> {

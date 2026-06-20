@@ -441,6 +441,7 @@ export class TurnFlow {
     signal: AbortSignal,
     standalone: boolean,
   ): Promise<TurnEndResult> {
+    await this.agent.lifecycle.fireTurnWillStart({ turnId });
     this.currentStep = 0;
     this.stepToolCallKeys.clear();
     this.toolCallDupType.clear();
@@ -452,6 +453,7 @@ export class TurnFlow {
     this.agent.usage.beginTurn();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
     this.agent.context.appendUserMessage(input, origin);
+    await this.agent.lifecycle.fireTurnDidStart({ turnId });
 
     const startedAt = Date.now();
     let ended: TurnEndedEvent;
@@ -504,6 +506,10 @@ export class TurnFlow {
           this.agent.telemetry.track('api_error', properties);
         }
       }
+    } finally {
+      // Fires whether the turn completed, was cancelled, or failed; a rejecting
+      // handler rejects the fire call (matching fireBeforePrompt semantics).
+      await this.agent.lifecycle.fireTurnDidEnd({ turnId });
     }
     // Emit the terminal turn.ended and (for a standalone turn) release the active
     // turn in the SAME synchronous frame, so the session is observably idle the

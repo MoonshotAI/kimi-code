@@ -9,6 +9,7 @@ import type { KimiConfig, SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentOptions, type AgentType } from '../agent';
+import { ILifecycleService, LifecycleService, type SessionHookCtx } from '../agent/lifecycle';
 import { HookService, IHookService, type HookDef } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
@@ -151,6 +152,7 @@ export class Session {
   private readonly scope: IInstantiationService;
   readonly agents: Map<string, AgentEntry> = new Map();
   readonly mcp: IMcpConnectionService;
+  readonly lifecycle: ILifecycleService;
   readonly log: Logger;
   private readonly logHandle: SessionLogHandle | undefined;
   readonly hookEngine: IHookService;
@@ -206,6 +208,7 @@ export class Session {
         },
       ]),
     );
+    sessionServices.set(ILifecycleService, new SyncDescriptor(LifecycleService, []));
     this.scope = (options.instantiationService ?? new InstantiationService(undefined, true)).createChild(
       sessionServices,
     );
@@ -215,6 +218,7 @@ export class Session {
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
     this.skills = this.scope.invokeFunction((accessor) => accessor.get(ISkillRegistryService));
     this.mcp = this.scope.invokeFunction((accessor) => accessor.get(IMcpConnectionService));
+    this.lifecycle = this.scope.invokeFunction((accessor) => accessor.get(ILifecycleService));
     this.mcp.onStatusChange((entry) => {
       this.onMcpServerStatusChange(entry);
     });
@@ -250,15 +254,31 @@ export class Session {
     return this.persistenceKaos.withCwd(cwd);
   }
 
+  /**
+   * Fires a session-scoped lifecycle hook, but only when this session has a
+   * stable id. Ephemeral sessions (`options.id === undefined`) have no id to
+   * identify them in the hook ctx, so their session hooks are skipped.
+   */
+  private async fireSessionHook(
+    fire: (ctx: SessionHookCtx) => Promise<void>,
+  ): Promise<void> {
+    const sessionId = this.options.id;
+    if (sessionId === undefined) return;
+    await fire({ sessionId });
+  }
+
   async createMain() {
+    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionWillStart(ctx));
     const { agent } = await this.createAgent({ type: 'main' }, {
       profile: DEFAULT_AGENT_PROFILES['agent'],
     });
     await this.triggerSessionStart('startup');
+    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionDidStart(ctx));
     return agent;
   }
 
   async resume(): Promise<{ warning?: string }> {
+    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionWillStart(ctx));
     await this.skillsReady;
     this.log.info('session resume', { app_version: this.options.appVersion });
     const { agents } = await this.readMetadata();
@@ -278,13 +298,18 @@ export class Session {
       await this.bootstrapAgentProfile(main, profile);
     }
     await this.triggerSessionStart('resume');
+    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionDidStart(ctx));
     return { warning };
   }
 
   async close(): Promise<void> {
+    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionWillClose(ctx));
     try {
       await Promise.allSettled(
-        Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
+        Array.from(this.readyAgents(), async (agent) => {
+          await agent.dispose();
+          await agent.cron?.stop();
+        }),
       );
       await this.cancelActiveTurnsOnClose();
       await this.stopBackgroundTasksOnExit();
@@ -297,12 +322,17 @@ export class Session {
         await this.logHandle?.close();
       }
     }
+    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionDidClose(ctx));
   }
 
   async closeForReload(): Promise<void> {
+    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionWillClose(ctx));
     try {
       await Promise.allSettled(
-        Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
+        Array.from(this.readyAgents(), async (agent) => {
+          await agent.dispose();
+          await agent.cron?.stop();
+        }),
       );
       await this.flushMetadata();
     } finally {
@@ -312,6 +342,7 @@ export class Session {
         await this.logHandle?.close();
       }
     }
+    await this.fireSessionHook((ctx) => this.lifecycle.fireSessionDidClose(ctx));
   }
 
   private async cancelActiveTurnsOnClose(): Promise<void> {
@@ -591,6 +622,7 @@ export class Session {
     const cwd = parentAgent?.config.cwd ?? this.toolKaos.getcwd();
     return new Agent({
       ...config,
+      id,
       type,
       kaos: this.toolKaos.withCwd(cwd),
       toolServices: this.options.toolServices,
