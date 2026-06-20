@@ -193,6 +193,7 @@ export const INITIAL_LIVE_PANE: LivePaneState = {
 
 export interface TUIStartupOptions {
   readonly sessionFlag?: string;
+  readonly sessionIdFlag?: string;
   readonly continueLast: boolean;
   readonly yolo: boolean;
   readonly auto: boolean;

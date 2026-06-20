@@ -127,6 +127,7 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
 function opts(overrides: Partial<Parameters<typeof runPrompt>[0]> = {}) {
   return {
     session: undefined,
+    sessionId: undefined,
     continue: false,
     yolo: false,
     auto: false,
@@ -440,6 +441,60 @@ describe('runPrompt', () => {
     expect(mocks.session.getStatus).toHaveBeenCalled();
     expect(mocks.session.setPermission).toHaveBeenNthCalledWith(1, 'auto');
     expect(mocks.session.setPermission).toHaveBeenNthCalledWith(2, 'manual');
+  });
+
+  it('creates a prompt session with --session-id when that id does not exist', async () => {
+    mocks.harnessListSessions.mockResolvedValueOnce([]);
+
+    await runPrompt(opts({ sessionId: 'ses_custom' }), '1.2.3-test', {
+      stdout: { write: vi.fn(() => true) },
+      stderr: { write: vi.fn(() => true) },
+    });
+
+    expect(mocks.harnessListSessions).toHaveBeenCalledWith({
+      sessionId: 'ses_custom',
+      workDir: process.cwd(),
+    });
+    expect(mocks.harnessCreateSession).toHaveBeenCalledWith({
+      id: 'ses_custom',
+      workDir: process.cwd(),
+      model: 'k2',
+      permission: 'auto',
+    });
+    expect(mocks.harnessResumeSession).not.toHaveBeenCalled();
+    expect(mocks.session.setPermission).not.toHaveBeenCalled();
+  });
+
+  it('resumes a prompt session with --session-id when that id already exists', async () => {
+    mocks.harnessListSessions.mockResolvedValueOnce([
+      { id: 'ses_custom', workDir: process.cwd() },
+    ]);
+
+    await runPrompt(opts({ sessionId: 'ses_custom' }), '1.2.3-test', {
+      stdout: { write: vi.fn(() => true) },
+      stderr: { write: vi.fn(() => true) },
+    });
+
+    expect(mocks.harnessCreateSession).not.toHaveBeenCalled();
+    expect(mocks.harnessResumeSession).toHaveBeenCalledWith({ id: 'ses_custom' });
+    expect(mocks.session.setPermission).toHaveBeenNthCalledWith(1, 'auto');
+    expect(mocks.session.setPermission).toHaveBeenNthCalledWith(2, 'manual');
+  });
+
+  it('rejects --session-id when the existing session belongs to another workdir', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    mocks.harnessListSessions.mockResolvedValueOnce([
+      { id: 'ses_custom', workDir: '/tmp/other-project' },
+    ]);
+
+    await expect(
+      runPrompt(opts({ sessionId: 'ses_custom' }), '1.2.3-test', { stdout, stderr }),
+    ).rejects.toThrow('Session "ses_custom" was created under a different directory.');
+
+    expect(mocks.harnessCreateSession).not.toHaveBeenCalled();
+    expect(mocks.harnessResumeSession).not.toHaveBeenCalled();
+    expect(stderr.text()).toContain('cd "/tmp/other-project" && kimi --session-id ses_custom');
   });
 
   it('allows resuming a concrete session when Windows workdir uses backslashes', async () => {

@@ -49,6 +49,16 @@ describe('--session / -r / -S picker routing', () => {
       expect(opts.session).toBe('foo');
     });
 
+    it('--session-id foo → sessionId === "foo"', () => {
+      const opts = parse(['--session-id', 'foo']);
+      expect(opts.sessionId).toBe('foo');
+    });
+
+    it('--session_id foo → sessionId === "foo" (hidden alias)', () => {
+      const opts = parse(['--session_id', 'foo']);
+      expect(opts.sessionId).toBe('foo');
+    });
+
     it('-S foo → session === "foo"', () => {
       const opts = parse(['-S', 'foo']);
       expect(opts.session).toBe('foo');

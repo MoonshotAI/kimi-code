@@ -44,6 +44,13 @@ export function createProgram(
         .hideHelp()
         .argParser((val: string | boolean) => (val === true ? '' : (val as string))),
     )
+    .addOption(
+      new Option(
+        '--session-id <id>',
+        'Resume this session ID, or create a new session with it when it does not exist.',
+      ),
+    )
+    .addOption(new Option('--session_id <id>').hideHelp())
     .option('-C, --continue', 'Continue the previous session for the working directory.', false)
     .option('-y, --yolo', 'Automatically approve all actions.', false)
     .option('--auto', 'Start in auto permission mode.', false)
@@ -110,11 +117,13 @@ export function createProgram(
 
     const rawSession = raw['session'] ?? raw['resume'];
     const sessionValue = rawSession === true ? '' : (rawSession as string | undefined);
+    const rawSessionId = raw['sessionId'] ?? raw['session_id'];
     const yoloValue = raw['yolo'] === true || raw['yes'] === true || raw['autoApprove'] === true;
     const autoValue = raw['auto'] === true;
 
     const opts: CLIOptions = {
       session: sessionValue,
+      sessionId: rawSessionId as string | undefined,
       continue: raw['continue'] as boolean,
       yolo: yoloValue,
       auto: autoValue,

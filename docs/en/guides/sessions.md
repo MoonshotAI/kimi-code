@@ -44,6 +44,12 @@ kimi --continue
 kimi --session abc123
 ```
 
+**Use a custom session ID, creating it if needed:**
+
+```sh
+kimi --session-id my-task-session
+```
+
 **Interactively browse session history and choose one:**
 
 ```sh
@@ -51,7 +57,7 @@ kimi --session
 ```
 
 ::: warning
-`--continue` and `--session` are mutually exclusive.
+`--continue`, `--session`, and `--session-id` are mutually exclusive. Use `--session` when the ID must already exist; use `--session-id` when a missing ID should start a new session.
 :::
 
 ## Switching sessions inside the TUI

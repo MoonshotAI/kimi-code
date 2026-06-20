@@ -16,6 +16,7 @@ kimi <subcommand> [options]
 | `--version` | `-V` | 打印版本号并退出 |
 | `--help` | `-h` | 显示帮助信息并退出 |
 | `--session [id]` | `-S` | 恢复一个会话。带 ID 时直接打开指定会话；不带 ID 时进入交互式选择器 |
+| `--session-id <id>` | | 使用这个会话 ID：已存在则恢复，不存在则用该 ID 创建新会话 |
 | `--continue` | `-C` | 继续当前工作目录下最近一次的会话，无需手动指定 ID |
 | `--model <model>` | `-m` | 为本次启动指定模型别名。省略时新会话使用配置文件中的 `default_model` |
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式不会打开 TUI |
@@ -25,7 +26,7 @@ kimi <subcommand> [options]
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
 
-`-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
+`-r` / `--resume` 是 `--session` 的隐藏别名；`--session_id` 是 `--session-id` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
 
 ::: warning 注意
 `--yolo` 会跳过普通工具调用的人工确认，包括文件写入和 Shell 命令执行，请只在受信任的工作目录下使用。Plan 模式的退出审批不会被 `--yolo` 跳过；Plan 模式下的 `Bash` 按普通放行规则处理。
@@ -36,6 +37,7 @@ kimi <subcommand> [options]
 以下组合会在启动时被拒绝：
 
 - `--continue` 与 `--session` 互斥——两者都表示"恢复历史会话"
+- `--session-id` 不能与 `--continue` 或 `--session` 同时使用
 - `--yolo` 和 `--auto` 互斥——两种权限模式互斥
 - `--prompt` 不能与 `--yolo`、`--auto` 或 `--plan` 同时使用——非交互模式固定使用 `auto` 权限
 - `--output-format` 只能与 `--prompt` 一起使用
@@ -61,6 +63,12 @@ kimi --continue
 ```sh
 kimi --session
 kimi --session 01HZ...XYZ
+```
+
+使用稳定的自定义会话 ID。若当前工作目录下已经存在该会话，则恢复；否则用该 ID 创建新会话：
+
+```sh
+kimi --session-id my-task-session
 ```
 
 跳过审批确认，适合已知安全的批处理任务：

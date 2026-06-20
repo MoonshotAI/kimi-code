@@ -16,6 +16,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--version` | `-V` | Print the version number and exit |
 | `--help` | `-h` | Show help information and exit |
 | `--session [id]` | `-S` | Resume a session. With an ID, opens that session directly; without an ID, enters an interactive selector |
+| `--session-id <id>` | | Resume this session ID if it exists, or create a new session with this ID if it does not |
 | `--continue` | `-C` | Continue the most recent session in the current working directory, without specifying an ID manually |
 | `--model <model>` | `-m` | Specify a model alias for this launch. When omitted, new sessions use `default_model` from the config file |
 | `--prompt <prompt>` | `-p` | Run a single prompt non-interactively and stream the Assistant output to stdout. This mode does not open the TUI |
@@ -25,7 +26,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
 
-`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
+`-r` / `--resume` is a hidden alias for `--session`; `--session_id` is a hidden alias for `--session-id`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
 
 ::: warning
 `--yolo` skips human approval for regular tool calls, including file writes and shell command execution. Use it only in trusted working directories. Plan mode exit approval is not bypassed by `--yolo`; `Bash` inside Plan mode is handled under the regular allow rules.
@@ -36,6 +37,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 The following combinations are rejected at startup:
 
 - `--continue` and `--session` are mutually exclusive — both mean "resume a previous session"
+- `--session-id` cannot be combined with `--continue` or `--session`
 - `--yolo` and `--auto` are mutually exclusive — the two permission modes cannot be combined
 - `--prompt` cannot be used with `--yolo`, `--auto`, or `--plan` — non-interactive mode uses `auto` permission by default
 - `--output-format` can only be used together with `--prompt`
@@ -61,6 +63,12 @@ Choose from the session history list, or specify a known ID directly:
 ```sh
 kimi --session
 kimi --session 01HZ...XYZ
+```
+
+Start with a stable custom session ID. If the session already exists in the current working directory, it is resumed; otherwise Kimi Code creates it:
+
+```sh
+kimi --session-id my-task-session
 ```
 
 Skip approval prompts — suitable for batch tasks that are known to be safe:
