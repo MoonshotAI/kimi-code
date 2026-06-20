@@ -6,7 +6,6 @@ import type { JsonObject, SessionSummary } from '../../rpc';
 import {
   type CompactSessionRequest,
   type CompactSessionResponse,
-  type Event,
   type Message,
   type PageResponse,
   type Session,
@@ -28,6 +27,7 @@ import { IPromptService, type AgentStatePatch } from '../prompt/prompt';
 import { IQuestionService } from '../question/question';
 import {
   ISessionQueryService,
+  ISessionRuntimeService,
   ISessionService,
   SessionNotFoundError,
   SessionUndoUnavailableError,
@@ -36,6 +36,7 @@ import {
   type SessionListQuery,
 } from './session';
 import { SessionQueryService } from './sessionQueryService';
+import { SessionRuntimeService } from './sessionRuntimeService';
 import { applySessionTurnEvent, computeSessionStatus, tryGetSessionMeta } from './sessionStatus';
 
 const DEFAULT_UNDO_MESSAGE_PAGE_SIZE = 50;
@@ -101,11 +102,11 @@ export class SessionService extends Disposable implements ISessionService {
   private readonly _onDidClose = this._register(new Emitter<{ sessionId: string }>());
   readonly onDidClose = this._onDidClose.event;
 
-  private readonly _statusBySession = new Map<string, SessionStatus>();
   private readonly _activeTurns = new Set<string>();
   private readonly _abortedTurns = new Set<string>();
   private _promptService: IPromptService | undefined;
   private readonly _sessionQueryService: ISessionQueryService;
+  private readonly _sessionRuntimeService: ISessionRuntimeService;
 
   constructor(
     @ICoreProcessService private readonly core: ICoreProcessService,
@@ -115,9 +116,17 @@ export class SessionService extends Disposable implements ISessionService {
     @IQuestionService private readonly questionService: IQuestionService,
   ) {
     super();
+    // Keep our own turn-tracking sets so `_patchSessionStatus` can stamp the
+    // live status onto sessions returned by create/get/update/fork/createChild.
+    // The `event.session.status_changed` emission now lives on the composed
+    // SessionRuntimeService (below); this subscription only feeds the local
+    // sets, mirroring how SessionQueryService keeps its own sets in M1.3.
     this._register(
       this.eventService.onDidPublish((event) => {
-        this._handleBusEvent(event);
+        applySessionTurnEvent(
+          { activeTurns: this._activeTurns, abortedTurns: this._abortedTurns },
+          event,
+        );
       }),
     );
     // Compose the query facade from our own deps so list / listChildren can
@@ -128,6 +137,19 @@ export class SessionService extends Disposable implements ISessionService {
     // without an ISessionQueryService stub in the DI container.
     this._sessionQueryService = this._register(
       new SessionQueryService(
+        this.core,
+        this.eventService,
+        this.instantiation,
+        this.approvalService,
+        this.questionService,
+      ),
+    );
+    // Compose the runtime facade for the same reasons: eager construction
+    // makes it subscribe to the bus from the start (so its status_changed
+    // emission and `getStatus` delegation stay in lock-step), and keeps
+    // positional `new SessionService(...)` construction working.
+    this._sessionRuntimeService = this._register(
+      new SessionRuntimeService(
         this.core,
         this.eventService,
         this.instantiation,
@@ -162,65 +184,13 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   /**
-   * Overwrite the placeholder status on a protocol Session with the live value,
-   * and remember the last status we returned so status-change events can be
-   * emitted only when the live state actually moves.
+   * Overwrite the placeholder status on a protocol Session with the live value
+   * computed from our own turn-tracking sets and the pending approval /
+   * question / prompt services.
    */
   private _patchSessionStatus(session: Session): Session {
-    const status = this._computeStatus(session.id);
-    session.status = status;
-    this._statusBySession.set(session.id, status);
+    session.status = this._computeStatus(session.id);
     return session;
-  }
-
-  /**
-   * Publish `event.session.status_changed` when the computed status for a
-   * session differs from the last one we announced. Called after every relevant
-   * lifecycle event so the session list stays in sync.
-   */
-  private _emitStatusChanged(sessionId: string): void {
-    const previous = this._statusBySession.get(sessionId) ?? 'idle';
-    const next = this._computeStatus(sessionId);
-    if (previous === next) return;
-
-    this._statusBySession.set(sessionId, next);
-    this.eventService.publish({
-      type: 'event.session.status_changed',
-      agentId: 'main',
-      sessionId,
-      status: next,
-      previous_status: previous,
-      current_prompt_id: this.promptService.getCurrentPromptId(sessionId),
-    } as unknown as Event);
-  }
-
-  private _handleBusEvent(event: Event): void {
-    const type = (event as { type?: string }).type;
-    const sessionId = (event as { sessionId?: string }).sessionId;
-    if (sessionId === undefined || sessionId === '' || type === undefined) return;
-
-    applySessionTurnEvent(
-      { activeTurns: this._activeTurns, abortedTurns: this._abortedTurns },
-      event,
-    );
-
-    switch (type) {
-      case 'turn.started':
-      case 'turn.ended':
-      case 'prompt.submitted':
-      case 'prompt.completed':
-      case 'prompt.aborted':
-      case 'event.approval.requested':
-      case 'event.approval.resolved':
-      case 'event.approval.expired':
-      case 'event.question.requested':
-      case 'event.question.answered':
-      case 'event.question.dismissed':
-      case 'event.question.expired': {
-        this._emitStatusChanged(sessionId);
-        break;
-      }
-    }
   }
 
   async create(input: SessionCreate, options?: SessionCreateOptions): Promise<Session> {
@@ -357,36 +327,7 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   async getStatus(id: string): Promise<SessionStatusResponse> {
-    const all = await this.core.rpc.listSessions({});
-    const summary = all.find((s) => s.id === id);
-    if (summary === undefined) {
-      throw new SessionNotFoundError(id);
-    }
-
-    const [config, context, permission, plan] = await Promise.all([
-      this.core.rpc.getConfig({ sessionId: id, agentId: 'main' }),
-      this.core.rpc.getContext({ sessionId: id, agentId: 'main' }),
-      this.core.rpc.getPermission({ sessionId: id, agentId: 'main' }),
-      this.core.rpc.getPlan({ sessionId: id, agentId: 'main' }),
-    ]);
-
-    const maxContextTokens = config.modelCapabilities?.max_context_tokens ?? 0;
-    const contextTokens = context.tokenCount;
-    const contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
-
-    const agentState = this.promptService.getAgentStateSnapshot(id);
-
-    return {
-      status: this._computeStatus(id),
-      model: config.modelAlias ?? config.provider?.model,
-      thinking_level: config.thinkingLevel,
-      permission: permission.mode,
-      plan_mode: plan !== null,
-      swarm_mode: agentState?.swarmMode ?? false,
-      context_tokens: contextTokens,
-      max_context_tokens: maxContextTokens,
-      context_usage: contextUsage,
-    };
+    return this._sessionRuntimeService.getStatus(id);
   }
 
   async compact(id: string, input: CompactSessionRequest): Promise<CompactSessionResponse> {
@@ -446,7 +387,6 @@ export class SessionService extends Disposable implements ISessionService {
     }
     await this.core.rpc.archiveSession({ sessionId: id });
     this._onDidClose.fire({ sessionId: id });
-    this._statusBySession.delete(id);
     this._activeTurns.delete(id);
     this._abortedTurns.delete(id);
     return { archived: true };

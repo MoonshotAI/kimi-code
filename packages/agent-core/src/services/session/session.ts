@@ -143,6 +143,10 @@ export interface ISessionService {
 
   createChild(id: string, input: SessionChildCreate): Promise<Session>;
 
+  /**
+   * @deprecated Use {@link ISessionRuntimeService.getStatus} instead. This thin
+   * wrapper delegates to `ISessionRuntimeService` and will be removed in M7.1.
+   */
   getStatus(id: string): Promise<SessionStatusResponse>;
 
   compact(id: string, input: CompactSessionRequest): Promise<CompactSessionResponse>;
