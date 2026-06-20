@@ -34,6 +34,7 @@ describe('TUI config', () => {
     const text = readFileSync(filePath, 'utf-8');
     expect(text).toContain('Client preferences for kimi-code.');
     expect(text).toContain('theme = "auto"');
+    expect(text).toContain('show_tips_banner = true');
     expect(text).toContain('command = ""');
     expect(text).toContain('[upgrade]');
     expect(text).toContain('auto_install = true');
@@ -45,6 +46,7 @@ describe('TUI config', () => {
   it('parses valid TOML', () => {
     const config = parseTuiConfig(`
 theme = "light"
+show_tips_banner = false
 
 [editor]
 command = "code --wait"
@@ -59,6 +61,7 @@ auto_install = false
 
     expect(config).toEqual({
       theme: 'light',
+      showTipsBanner: false,
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
@@ -73,6 +76,7 @@ command = "   "
 
     expect(config).toEqual({
       theme: 'auto',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
@@ -104,6 +108,7 @@ command = "   "
     await saveTuiConfig(
       {
         theme: 'light',
+        showTipsBanner: false,
         editorCommand: 'vim',
         notifications: { enabled: false, condition: 'always' },
         upgrade: { autoInstall: false },
@@ -113,6 +118,7 @@ command = "   "
 
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
+      showTipsBanner: false,
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
@@ -124,6 +130,7 @@ command = "   "
     await saveTuiConfig(
       {
         theme,
+        showTipsBanner: true,
         editorCommand: null,
         notifications: DEFAULT_TUI_CONFIG.notifications,
         upgrade: DEFAULT_TUI_CONFIG.upgrade,

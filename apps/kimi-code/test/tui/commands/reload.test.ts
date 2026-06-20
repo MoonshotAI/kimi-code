@@ -34,6 +34,7 @@ describe('reload slash commands', () => {
   it('reloads tui.toml without touching Core session state', async () => {
     await writeTuiConfig(`
 theme = "light"
+show_tips_banner = false
 
 [editor]
 command = "vim"
@@ -55,6 +56,7 @@ auto_install = false
     expect(session.reloadSession).not.toHaveBeenCalled();
     expect(host.state.appState).toMatchObject({
       theme: 'light',
+      showTipsBanner: false,
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
@@ -82,6 +84,7 @@ auto_install = false
     expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalledOnce();
     expect(isExperimentalFlagEnabled('micro_compaction')).toBe(true);
     expect(host.state.appState.theme).toBe('light');
+    expect(host.state.appState.showTipsBanner).toBe(true);
     expect(host.state.appState.availableModels).toEqual({
       fresh: { provider: 'test', model: 'fresh-model', maxContextSize: 1000 },
     });
@@ -129,6 +132,7 @@ function makeHost({
   const state = {
     appState: {
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },

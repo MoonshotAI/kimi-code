@@ -102,6 +102,7 @@ function makeStartupInput(): KimiTUIStartupInput {
     },
     tuiConfig: {
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },

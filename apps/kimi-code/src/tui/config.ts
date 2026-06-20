@@ -32,6 +32,7 @@ export const UpgradePreferencesSchema = z.object({
 
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
+  show_tips_banner: z.boolean().optional(),
   editor: z
     .object({
       command: z.string().optional(),
@@ -52,6 +53,7 @@ export const TuiConfigFileSchema = z.object({
 
 export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
+  showTipsBanner: z.boolean(),
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
@@ -73,6 +75,7 @@ export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
 
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   theme: 'auto',
+  showTipsBanner: true,
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
@@ -132,6 +135,7 @@ export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
   const command = config.editor?.command?.trim();
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
+    showTipsBanner: config.show_tips_banner ?? DEFAULT_TUI_CONFIG.showTipsBanner,
     editorCommand: command === undefined || command.length === 0 ? null : command,
     notifications: {
       enabled: config.notifications?.enabled ?? DEFAULT_NOTIFICATIONS_CONFIG.enabled,
@@ -150,6 +154,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
 
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
+show_tips_banner = ${String(config.showTipsBanner)} # true | false
 
 [editor]
 command = "${escapeTomlBasicString(config.editorCommand ?? '')}" # Empty uses $VISUAL / $EDITOR

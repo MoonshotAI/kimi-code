@@ -179,6 +179,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     streamingPhase: 'idle',
     streamingStartTime: 0,
     theme: input.tuiConfig.theme,
+    showTipsBanner: input.tuiConfig.showTipsBanner,
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     notifications: input.tuiConfig.notifications,
@@ -466,7 +467,11 @@ export class KimiTUI {
     // Mount only after init() succeeds; see mountFooter().
     this.mountFooter();
     this.renderWelcome();
-    void this.loadBanner();
+    if (this.state.appState.showTipsBanner) {
+      void this.loadBanner();
+    } else {
+      this.state.appState.banner = null;
+    }
     this.setupAutocomplete();
     void this.loadPersistedInputHistory();
     this.state.editorContainer.clear();

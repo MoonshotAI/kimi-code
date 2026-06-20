@@ -39,6 +39,7 @@ export interface AppState {
   streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing';
   streamingStartTime: number;
   theme: ThemeName;
+  showTipsBanner: boolean;
   version: string;
   editorCommand: string | null;
   notifications: NotificationsConfig;

@@ -244,6 +244,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | 配色主题：`auto`（跟随终端）、`dark`、`light`，或[自定义主题](../customization/themes)的名字 |
+| `show_tips_banner` | `boolean` | `true` | 启动时是否拉取并展示远程 tips banner；设为 `false` 会跳过这次请求 |
 | `[editor].command` | `string` | `""` | 编写长输入用的外部编辑器命令；留空则回退到 `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
@@ -252,6 +253,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 ```toml
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | 自定义主题名
+show_tips_banner = true # true | false
 
 [editor]
 command = "" # 留空则使用 $VISUAL / $EDITOR
@@ -264,7 +266,7 @@ notification_condition = "unfocused" # "unfocused" | "always"
 auto_install = true
 ```
 
-修改在下次启动时生效，或用 `/reload-tui` 立即生效（只重载 `tui.toml`）；`/reload` 会同时重载 `config.toml` 和 `tui.toml`。
+大多数修改会在下次启动时生效，也可用 `/reload-tui` 立即重载（只重载 `tui.toml`）；`/reload` 会同时重载 `config.toml` 和 `tui.toml`。`show_tips_banner` 控制启动时的远程请求，因此关闭后从下一次启动开始生效。
 
 ## 下一步
 
