@@ -84,6 +84,33 @@ describe('extractMediaAttachments', () => {
     });
   });
 
+  it('expands image placeholders to file-path tags for text-only models', () => {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const { store, placeholder } = storeWith(bytes);
+    const r = extractMediaAttachments(`inspect ${placeholder}`, store, {
+      imageMode: 'file-tag',
+      writeImageAttachment: (att) => `/tmp/kimi/pasted-${String(att.id)}.png`,
+    });
+
+    expect(r.hasMedia).toBe(true);
+    expect(r.imageAttachmentIds).toEqual([1]);
+    expect(r.parts).toEqual([
+      { type: 'text', text: 'inspect <image path="/tmp/kimi/pasted-1.png"></image>' },
+    ]);
+  });
+
+  it('escapes generated image path tags', () => {
+    const { store, placeholder } = storeWith(new Uint8Array([1]));
+    const r = extractMediaAttachments(placeholder, store, {
+      imageMode: 'file-tag',
+      writeImageAttachment: () => '/tmp/a&"<>.png',
+    });
+
+    expect(r.parts).toEqual([
+      { type: 'text', text: '<image path="/tmp/a&amp;&quot;&lt;&gt;.png"></image>' },
+    ]);
+  });
+
   it('escapes media paths in generated tags', () => {
     const store = new ImageAttachmentStore();
     const att = store.addVideo('video/mp4', '/tmp/a&"<>.mp4', 'sample.mp4');

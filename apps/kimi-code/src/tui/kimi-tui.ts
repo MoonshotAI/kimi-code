@@ -769,12 +769,23 @@ export class KimiTUI {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
-    const extraction = extractMediaAttachments(text, this.imageStore);
+    let extraction = extractMediaAttachments(text, this.imageStore);
     if (!this.validateMediaCapabilities(extraction)) return;
     const session = this.session;
     if (session === undefined) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
+    }
+    if (
+      extraction.imageAttachmentIds.length > 0 &&
+      !this.supportsCurrentModelCapability('image_in')
+    ) {
+      try {
+        extraction = extractMediaAttachments(text, this.imageStore, { imageMode: 'file-tag' });
+      } catch (error) {
+        this.showError(`Failed to save pasted image: ${formatErrorMessage(error)}`);
+        return;
+      }
     }
     if (extraction.hasMedia) {
       this.sendMessage(session, text, {
@@ -793,13 +804,6 @@ export class KimiTUI {
     extraction: ReturnType<typeof extractMediaAttachments>,
   ): boolean {
     if (!extraction.hasMedia) return true;
-    if (
-      extraction.imageAttachmentIds.length > 0 &&
-      !this.supportsCurrentModelCapability('image_in')
-    ) {
-      this.showError('Current model does not support image input.');
-      return false;
-    }
     if (
       extraction.videoAttachmentIds.length > 0 &&
       !this.supportsCurrentModelCapability('video_in')
