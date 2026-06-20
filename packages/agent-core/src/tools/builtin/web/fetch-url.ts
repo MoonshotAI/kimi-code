@@ -26,12 +26,12 @@ import DESCRIPTION from './fetch-url.md?raw';
  * - `extracted` — the body was an HTML page; only the main article text
  *   was extracted and returned.
  */
-export type UrlFetchKind = 'passthrough' | 'extracted';
+export type UrlFetchKind = 'passthrough' | 'extracted' | 'image';
 
 export interface UrlFetchResult {
-  /** The text handed to the LLM. */
+  /** The text handed to the LLM, or base64 image markdown when kind is 'image'. */
   content: string;
-  /** Whether `content` is a verbatim passthrough or extracted main text. */
+  /** Whether content is a verbatim passthrough, extracted main text, or a base64 image. */
   kind: UrlFetchKind;
 }
 
@@ -104,9 +104,11 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
       // extracted article text, so it can judge how complete the
       // content is.
       const message =
-        kind === 'passthrough'
-          ? 'The returned content is the full response body, returned verbatim.'
-          : 'The returned content is the main text extracted from the page.';
+        kind === 'image'
+          ? 'The returned content is an image encoded as base64 markdown.'
+          : kind === 'passthrough'
+            ? 'The returned content is the full response body, returned verbatim.'
+            : 'The returned content is the main text extracted from the page.';
       return builder.ok(message);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
