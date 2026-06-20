@@ -115,6 +115,29 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `PostCompact` | `manual` or `auto` | — | Triggered after context compaction completes (observation only) |
 | `Notification` | Notification type (e.g. `task.completed`) | — | Triggered when a background task status changes (observation only) |
 
+### Per-event payload fields
+
+Every hook receives `hook_event_name`, `session_id`, and `cwd`. These event-specific fields are added when available; fields without a value are omitted from stdin.
+
+| Event | Extra stdin fields |
+| --- | --- |
+| `UserPromptSubmit` | `prompt` (`ContentPart[]`) |
+| `PreToolUse` | `tool_name`, `tool_input`, `tool_call_id` |
+| `PermissionRequest` | `turn_id`, `tool_call_id`, `tool_name`, `action`, `tool_input`, `display` |
+| `PermissionResult` | `turn_id`, `tool_call_id`, `tool_name`, `action`, `decision`; may also include `scope`, `feedback`, `selected_label`, or `error` |
+| `PostToolUse` | `tool_name`, `tool_input`, `tool_call_id`, `tool_output` (truncated to 2000 characters) |
+| `PostToolUseFailure` | `tool_name`, `tool_input`, `tool_call_id`, `error` |
+| `Stop` | `stop_hook_active` |
+| `StopFailure` | `error_type`, `error_message` |
+| `Interrupt` | `turn_id`, `reason` |
+| `SessionStart` | `source` (`startup` or `resume`) |
+| `SessionEnd` | `reason` (`exit`) |
+| `SubagentStart` | `agent_name`, `prompt` (preview-truncated) |
+| `SubagentStop` | `agent_name`, `response` (preview-truncated) |
+| `PreCompact` | `trigger`, `token_count` |
+| `PostCompact` | `trigger`, `estimated_token_count` |
+| `Notification` | `notification_type`, `title`, `body`, `severity`, `source_kind`, `source_id`, `sink` |
+
 For `UserPromptSubmit`, the hook receives the submitted message as `prompt: ContentPart[]` on stdin. Text-only prompts are represented as `[{"type":"text","text":"..."}]`; prompts with images or other media include additional content-part objects. The matcher still runs against the text extracted from those content parts.
 
 ## Example: Blocking Dangerous Shell Commands
