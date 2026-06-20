@@ -36,43 +36,6 @@ export interface SessionCreateOptions {
   client?: SessionClientTelemetry;
 }
 
-/**
- * Single-entity persistence contract for one session's `state.json`.
- *
- * Per `services/AGENTS.md` (M0.5) a repository is the aggregate's source of
- * truth: it owns create / get / update and the archive / restore / delete
- * atomic operations, sits *below* the application service layer, and is NOT
- * registered as a top-level `*Service` singleton.
- *
- * `ISessionRepository` is therefore a **per-session** object: one instance is
- * bound to exactly one session `homedir` (its `state.json`), not to the
- * aggregate as a whole. The owner (the runtime `Session`, once wired up) holds
- * the instance and drives it; cross-session orchestration stays in
- * `ISessionService`.
- *
- * Scope of M1.1: only the read / write / flush operations that already exist
- * on the runtime `Session` are modeled here, because they are the only ones
- * with a byte-for-byte mirrorable persistence implementation today. The
- * archive / restore / purge atomic operations are intentionally deferred to
- * M1.5: `archive`'s file IO currently lives in
- * `src/session/store/session-store.ts` (outside this step's allowlist), and
- * `restore` / `purge` have no existing implementation to mirror without
- * inventing new semantics.
- */
-export interface ISessionRepository {
-  /** Read and parse the session's `state.json`. Throws if it does not exist. */
-  read(): Promise<SessionMeta>;
-
-  /**
-   * Serialize `meta` to `state.json`. Concurrent calls are ordered: each write
-   * is chained onto the previous one so no write is lost or reordered.
-   */
-  write(meta: SessionMeta): Promise<void>;
-
-  /** Resolve once every previously-submitted `write` has completed. */
-  flush(): Promise<void>;
-}
-
 export interface ISessionService {
   readonly _serviceBrand: undefined;
 

@@ -5,8 +5,8 @@ import { join } from 'pathe';
 import { LocalKaos, type Kaos } from '@moonshot-ai/kaos';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { SessionMeta } from '../../../src/session';
-import { SessionRepository } from '../../../src/services/session/sessionRepository';
+import type { SessionMeta } from '../../src/session';
+import { SessionRepository } from '../../src/session/sessionRepository';
 
 let rootDir: string;
 let homedir: string;
