@@ -69,26 +69,33 @@ export function deriveAlwaysThinking(alias: ModelAlias): boolean {
 
 /**
  * Project `harness.getConfig().models` into a flat catalog. Returns an
- * empty array when the harness has no models configured, when
- * `getConfig` is missing on the harness (partial test stubs), or when
- * `getConfig` throws — letting the caller decide how to surface a
- * degenerate config without forcing every test stub to provide every
- * field.
+ * empty array when the harness has no models configured, when the
+ * `models` field is malformed, when `getConfig` is missing on the
+ * harness (partial test stubs), or when `getConfig` throws — letting
+ * the caller decide how to surface a degenerate config without forcing
+ * every test stub to provide every field.
  */
 export async function listModelsFromHarness(
   harness: KimiHarness,
 ): Promise<readonly AcpModelEntry[]> {
   if (typeof harness.getConfig !== 'function') return [];
-  let models: Record<string, ModelAlias> | undefined;
+  let models: unknown;
   try {
     const config = await harness.getConfig();
     models = config.models;
   } catch {
     return [];
   }
-  if (models === undefined) return [];
+  if (
+    models === undefined ||
+    models === null ||
+    typeof models !== 'object' ||
+    Array.isArray(models)
+  ) {
+    return [];
+  }
   const out: AcpModelEntry[] = [];
-  for (const [id, alias] of Object.entries(models)) {
+  for (const [id, alias] of Object.entries(models as Record<string, ModelAlias>)) {
     out.push({
       id,
       name: alias.displayName ?? alias.model ?? id,
