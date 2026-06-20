@@ -37,7 +37,6 @@ import {
 } from './request-auth';
 import { clampCompletionTokensForSharedContextWindow } from './shared-context-window';
 import {
-  isKimiReasoningModel,
   usesMaxCompletionTokensOnWire,
 } from './kimi-reasoning';
 import {
@@ -584,37 +583,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     if (reasoningEffort !== undefined) {
       createParams['reasoning_effort'] = reasoningEffort;
-    }
-
-    if (isKimiReasoningModel(this._model)) {
-      const extraBody = kwargs['extra_body'];
-      const extraRecord =
-        typeof extraBody === 'object' && extraBody !== null
-          ? (extraBody as Record<string, unknown>)
-          : undefined;
-      const extraThinking =
-        typeof extraRecord?.thinking === 'object' && extraRecord.thinking !== null
-          ? (extraRecord.thinking as Record<string, unknown>)
-          : undefined;
-      let thinkingType: 'enabled' | 'disabled' | undefined;
-      if (this._thinkingExplicitlyOff) {
-        thinkingType = 'disabled';
-      } else if (reasoningEffort !== undefined) {
-        thinkingType = 'enabled';
-      }
-      if (thinkingType !== undefined || extraThinking !== undefined) {
-        createParams['thinking'] = {
-          ...extraThinking,
-          ...(thinkingType !== undefined ? { type: thinkingType } : {}),
-        };
-      }
-      if (extraRecord !== undefined) {
-        const { thinking: _, extra_body: __, ...restExtra } = extraRecord;
-        Object.assign(createParams, restExtra);
-      }
-      // Kimi gateways expect extra_body fields hoisted to the top level.
-      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-      delete createParams['extra_body'];
     }
 
     try {

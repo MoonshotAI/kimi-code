@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  isKimiReasoningModel,
-  kimiThinkingWireParams,
-  usesMaxCompletionTokensOnWire,
-} from '#/providers/kimi-reasoning';
+import { isKimiReasoningModel, usesMaxCompletionTokensOnWire } from '#/providers/kimi-reasoning';
 
 describe('isKimiReasoningModel', () => {
   it('detects Kimi deployment ids on Foundry', () => {
@@ -28,25 +24,5 @@ describe('usesMaxCompletionTokensOnWire', () => {
 
   it('uses max_tokens for generic chat models', () => {
     expect(usesMaxCompletionTokensOnWire('gpt-4o')).toBe(false);
-  });
-});
-
-describe('kimiThinkingWireParams', () => {
-  it('enables thinking when reasoning is configured', () => {
-    expect(
-      kimiThinkingWireParams({
-        reasoningEffort: 'medium',
-        thinkingExplicitlyOff: false,
-      }),
-    ).toEqual({ type: 'enabled' });
-  });
-
-  it('disables thinking when explicitly off', () => {
-    expect(
-      kimiThinkingWireParams({
-        reasoningEffort: 'medium',
-        thinkingExplicitlyOff: true,
-      }),
-    ).toEqual({ type: 'disabled' });
   });
 });

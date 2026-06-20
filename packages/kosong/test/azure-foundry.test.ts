@@ -156,7 +156,7 @@ describe('AzureFoundryChatProvider', () => {
     });
   });
 
-  it('sends Kimi thinking enablement alongside reasoning_effort', async () => {
+  it('sends reasoning_effort and max_completion_tokens without Moonshot thinking param', async () => {
     await withHarness(async (harness) => {
       let capturedBody: Record<string, unknown> | undefined;
       harness.route('POST', '/openai/v1/chat/completions', async (request, reply) => {
@@ -192,7 +192,7 @@ describe('AzureFoundryChatProvider', () => {
       }
 
       expect(capturedBody!['reasoning_effort']).toBe('medium');
-      expect(capturedBody!['thinking']).toEqual({ type: 'enabled' });
+      expect(capturedBody!['thinking']).toBeUndefined();
       expect(capturedBody!['max_completion_tokens']).toBeTypeOf('number');
       expect(capturedBody!['max_tokens']).toBeUndefined();
     });

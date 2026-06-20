@@ -72,9 +72,10 @@ describe('applyKimiEnvThinkingKeep', () => {
     expect(genState(out).extra_body?.thinking?.keep).toBe('all');
   });
 
-  it('injects thinking.keep for Foundry-hosted Kimi models', () => {
-    const out = applyKimiEnvThinkingKeep(foundryKimi(), 'high', { KIMI_MODEL_THINKING_KEEP: 'all' });
-    expect(genState(out).extra_body?.thinking?.keep).toBe('all');
+  it('does not inject thinking.keep for Foundry-hosted Kimi models', () => {
+    const provider = foundryKimi();
+    const out = applyKimiEnvThinkingKeep(provider, 'high', { KIMI_MODEL_THINKING_KEEP: 'all' });
+    expect(out).toBe(provider);
   });
 
   it('does NOT inject thinking.keep when thinking is off', () => {
