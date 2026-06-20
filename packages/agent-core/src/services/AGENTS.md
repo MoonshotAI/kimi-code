@@ -78,6 +78,26 @@ Persistence in the service-skill concept docs), not application services —
 they sit below command / query / runtime and are not registered as
 top-level `*Service` singletons.
 
+#### Where repositories and indexes live (normative)
+
+The roles table above describes the *shape* of a repository/index contract;
+its *home* depends on which layer consumes it directly:
+
+- **Repositories and indexes consumed directly by a runtime aggregate live in
+  the runtime layer** (for example `src/session/sessionRepository.ts`,
+  `src/session/<...>Index.ts`). They are colocated with the runtime aggregate
+  that owns them because the runtime must not import from `services/` (the
+  dependency-direction fence below). They are NOT `*Service` DI singletons
+  and are NOT under `services/`.
+- **Command / query / runtime facades and read-model services consumed at the
+  RPC / SDK boundary live under `services/<domain>/`**. Those facades depend
+  on the runtime repositories / indexes (services → runtime is allowed) and
+  expose them upward.
+
+This does not change the dependency direction: the runtime never imports from
+`services/`; repositories/indexes live in whichever layer consumes them, and
+the `services/` facades depend on them — never the reverse.
+
 ### Dependency direction within a domain (normative)
 
 These rules are enforced by the ROADMAP and checked by the M7.2 import fence:
