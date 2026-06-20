@@ -73,12 +73,20 @@ function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
       .fn()
       .mockImplementation(
         async (
-          input?: { workDir?: string },
+          input?: { workDir?: string; includeArchive?: boolean },
         ): Promise<readonly SessionSummary[]> => {
+          let rows = state.sessions;
           if (input?.workDir !== undefined) {
-            return state.sessions.filter((s) => s.workDir === input.workDir);
+            rows = rows.filter((s) => s.workDir === input.workDir);
           }
-          return state.sessions;
+          // Mirror core: default list excludes archived rows; includeArchive
+          // returns them with `archived: true` so the command-side index sync
+          // captures the archived flag (M1.5).
+          const includeArchive = input?.includeArchive === true;
+          rows = rows.filter((s) => includeArchive || !state.archivedIds.includes(s.id));
+          return rows.map((s) =>
+            state.archivedIds.includes(s.id) ? { ...s, archived: true } : s,
+          );
         },
       ),
     forkSession: vi
@@ -1049,5 +1057,64 @@ describe('SessionService status lifecycle', () => {
     const before = eventBus.events.filter(statusChangedCount).length;
     eventBus.eventService.publish({ type: 'prompt.completed', sessionId: session.id } as unknown as Event);
     expect(eventBus.events.filter(statusChangedCount).length).toBe(before);
+  });
+});
+
+describe('SessionService index sync (M1.5)', () => {
+  it('upserts a created session into the writer-synced index', async () => {
+    const created = await svc.create({ metadata: { cwd: '/tmp/idx-create' } });
+    expect(svc.sessionIndex.get(created.id)).toMatchObject({
+      id: created.id,
+      workDir: '/tmp/idx-create',
+    });
+  });
+
+  it('re-upserts the session into the index after an update command', async () => {
+    const created = await svc.create({ metadata: { cwd: '/tmp/idx-update' } });
+    const upsert = vi.spyOn(svc.sessionIndex, 'upsert');
+    await svc.update(created.id, { title: 'Renamed' });
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ id: created.id }));
+    upsert.mockRestore();
+  });
+
+  it('keeps the index in sync across fork and createChild commands', async () => {
+    const parent = await svc.create({ metadata: { cwd: '/tmp/idx-fork' }, title: 'Parent' });
+    const fork = await svc.fork(parent.id, { title: 'Fork' });
+    const child = await svc.createChild(parent.id, { title: 'Child' });
+    expect(svc.sessionIndex.get(fork.id)?.id).toBe(fork.id);
+    expect(svc.sessionIndex.get(child.id)?.id).toBe(child.id);
+  });
+
+  it('marks the session archived in the index after archive', async () => {
+    const created = await svc.create({ metadata: { cwd: '/tmp/idx-archive' } });
+    expect(svc.sessionIndex.get(created.id)?.archived).not.toBe(true);
+    await svc.archive(created.id);
+    expect(svc.sessionIndex.get(created.id)?.archived).toBe(true);
+  });
+
+  it('keeps the index in sync after compact and undo commands', async () => {
+    const created = await svc.create({ metadata: { cwd: '/tmp/idx-compact' } });
+    const compactUpsert = vi.spyOn(svc.sessionIndex, 'upsert');
+    await svc.compact(created.id, { instruction: 'focus' });
+    expect(compactUpsert).toHaveBeenCalledWith(expect.objectContaining({ id: created.id }));
+    compactUpsert.mockRestore();
+
+    state.contexts.set(created.id, {
+      history: [
+        textMessage('user', 'first prompt'),
+        textMessage('assistant', 'first answer'),
+        textMessage('user', 'second prompt'),
+        textMessage('assistant', 'second answer'),
+      ],
+      tokenCount: 40,
+    });
+    state.postUndoContexts.set(created.id, {
+      history: [textMessage('user', 'first prompt'), textMessage('assistant', 'first answer')],
+      tokenCount: 20,
+    });
+    const undoUpsert = vi.spyOn(svc.sessionIndex, 'upsert');
+    await svc.undo(created.id, { count: 1 });
+    expect(undoUpsert).toHaveBeenCalledWith(expect.objectContaining({ id: created.id }));
+    undoUpsert.mockRestore();
   });
 });

@@ -32,9 +32,11 @@ import {
   SessionNotFoundError,
   SessionUndoUnavailableError,
   toProtocolSession,
+  type ISessionIndex,
   type SessionCreateOptions,
   type SessionListQuery,
 } from './session';
+import { SessionIndex } from './sessionIndex';
 import { SessionQueryService } from './sessionQueryService';
 import { SessionRuntimeService } from './sessionRuntimeService';
 import { applySessionTurnEvent, computeSessionStatus, tryGetSessionMeta } from './sessionStatus';
@@ -107,6 +109,13 @@ export class SessionService extends Disposable implements ISessionService {
   private _promptService: IPromptService | undefined;
   private readonly _sessionQueryService: ISessionQueryService;
   private readonly _sessionRuntimeService: ISessionRuntimeService;
+  /**
+   * Writer-synced read-model index of session summaries. Every mutating
+   * command re-reads the affected session's summary and upserts it here (see
+   * `_syncSessionIndex`) so the read model stays in sync with writes — the
+   * command-side half of the writer-synced index deferred from M1.3.
+   */
+  private readonly _sessionIndex = new SessionIndex();
 
   constructor(
     @ICoreProcessService private readonly core: ICoreProcessService,
@@ -193,6 +202,39 @@ export class SessionService extends Disposable implements ISessionService {
     return session;
   }
 
+  /**
+   * The writer-synced read-model index kept current by the command path. It is
+   * exposed on the class (not on the `ISessionService` command interface) so
+   * read-model consumers — and tests — can observe what the commands have
+   * written without widening the command surface.
+   */
+  get sessionIndex(): ISessionIndex {
+    return this._sessionIndex;
+  }
+
+  /**
+   * Re-read the affected session's summary from the store and upsert it into
+   * the writer-synced index. `includeArchive: true` ensures an archived
+   * session is captured with `archived: true` (rather than dropped by the
+   * default archive-excluding list). If the id is no longer present (e.g. a
+   * future purge), the row is removed instead.
+   *
+   * Domain events: `create` / `fork` / `createChild` already publish
+   * `event.session.created` via `emitCreated`. No protocol event type exists
+   * for update / archive / compact / undo, so those commands only sync the
+   * index here — inventing a new protocol event type is out of scope (see
+   * phase M1.5 STATUS).
+   */
+  private async _syncSessionIndex(id: string): Promise<void> {
+    const all = await this.core.rpc.listSessions({ includeArchive: true });
+    const summary = all.find((s) => s.id === id);
+    if (summary === undefined) {
+      this._sessionIndex.remove(id);
+      return;
+    }
+    this._sessionIndex.upsert(summary);
+  }
+
   async create(input: SessionCreate, options?: SessionCreateOptions): Promise<Session> {
     if (input.metadata === undefined || typeof input.metadata.cwd !== 'string') {
       throw new Error('SessionService.create: metadata.cwd is required');
@@ -213,6 +255,7 @@ export class SessionService extends Disposable implements ISessionService {
     const meta = await tryGetSessionMeta(this.core, summary.id);
     const session = this._patchSessionStatus(toProtocolSession(summary, meta));
     this.emitCreated(session);
+    await this._syncSessionIndex(session.id);
     return session;
   }
 
@@ -275,7 +318,9 @@ export class SessionService extends Disposable implements ISessionService {
     const allAfter = await this.core.rpc.listSessions({});
     const summaryAfter = allAfter.find((s) => s.id === id) ?? summary;
     const meta = await tryGetSessionMeta(this.core, id);
-    return this._patchSessionStatus(toProtocolSession(summaryAfter, meta));
+    const session = this._patchSessionStatus(toProtocolSession(summaryAfter, meta));
+    await this._syncSessionIndex(id);
+    return session;
   }
 
   async fork(id: string, input: SessionFork): Promise<Session> {
@@ -290,6 +335,7 @@ export class SessionService extends Disposable implements ISessionService {
     const meta = await tryGetSessionMeta(this.core, summary.id);
     const session = this._patchSessionStatus(toProtocolSession(summary, meta));
     this.emitCreated(session);
+    await this._syncSessionIndex(session.id);
     return session;
   }
 
@@ -313,6 +359,7 @@ export class SessionService extends Disposable implements ISessionService {
     const meta = await tryGetSessionMeta(this.core, summary.id);
     const session = this._patchSessionStatus(toProtocolSession(summary, meta));
     this.emitCreated(session);
+    await this._syncSessionIndex(session.id);
     return session;
   }
 
@@ -348,6 +395,7 @@ export class SessionService extends Disposable implements ISessionService {
       agentId: 'main',
       instruction,
     });
+    await this._syncSessionIndex(id);
     return {};
   }
 
@@ -373,9 +421,11 @@ export class SessionService extends Disposable implements ISessionService {
     }
 
     const after = await this.core.rpc.getContext({ sessionId: id, agentId: 'main' });
+    const status = await this.getStatus(id);
+    await this._syncSessionIndex(id);
     return {
       messages: pageContextMessages(id, summary.createdAt, after, input.page_size),
-      status: await this.getStatus(id),
+      status,
     };
   }
 
@@ -389,6 +439,7 @@ export class SessionService extends Disposable implements ISessionService {
     this._onDidClose.fire({ sessionId: id });
     this._activeTurns.delete(id);
     this._abortedTurns.delete(id);
+    await this._syncSessionIndex(id);
     return { archived: true };
   }
 
