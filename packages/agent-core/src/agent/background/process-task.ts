@@ -38,10 +38,13 @@ export class ProcessBackgroundTask implements BackgroundTask {
   ) {}
 
   async start(sink: BackgroundTaskSink): Promise<void> {
-    const streamSettled = [
+    const streamDrained = Promise.all([
       observeProcessStream(this.proc.stdout, 'stdout', sink, this.onOutput),
       observeProcessStream(this.proc.stderr, 'stderr', sink, this.onOutput),
-    ];
+    ]).then(() => undefined);
+    // Attach a rejection handler immediately; start() still awaits the same
+    // promise after proc.wait() so stream errors keep failing the task.
+    void streamDrained.catch(() => {});
 
     const requestStop = (): void => {
       void this.proc.kill('SIGTERM').catch(() => {});
@@ -55,13 +58,13 @@ export class ProcessBackgroundTask implements BackgroundTask {
     let settlement: BackgroundTaskSettlement;
     try {
       const exitCode = await this.proc.wait();
-      await waitForStreamDrain(streamSettled);
+      await waitForStreamDrain(streamDrained);
       this.exitCode = exitCode;
       settlement = {
         status: sink.signal.aborted ? 'killed' : exitCode === 0 ? 'completed' : 'failed',
       };
     } catch (error: unknown) {
-      await waitForStreamDrainSettled(streamSettled);
+      await waitForStreamDrainSettled(streamDrained);
       this.exitCode = this.proc.exitCode;
       settlement = {
         status: sink.signal.aborted ? 'killed' : 'failed',
@@ -103,11 +106,11 @@ export class ProcessBackgroundTask implements BackgroundTask {
   }
 }
 
-async function waitForStreamDrain(streamSettled: readonly Promise<void>[]): Promise<void> {
+async function waitForStreamDrain(streamDrained: Promise<void>): Promise<void> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      Promise.all(streamSettled),
+      streamDrained,
       new Promise<void>((resolve) => {
         timeout = setTimeout(resolve, STREAM_DRAIN_GRACE_MS);
         timeout.unref?.();
@@ -118,9 +121,9 @@ async function waitForStreamDrain(streamSettled: readonly Promise<void>[]): Prom
   }
 }
 
-async function waitForStreamDrainSettled(streamSettled: readonly Promise<void>[]): Promise<void> {
+async function waitForStreamDrainSettled(streamDrained: Promise<void>): Promise<void> {
   try {
-    await waitForStreamDrain(streamSettled);
+    await waitForStreamDrain(streamDrained);
   } catch {
     /* original process/stream error wins */
   }

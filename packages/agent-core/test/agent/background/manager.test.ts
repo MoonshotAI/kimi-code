@@ -68,6 +68,40 @@ function processWithStdoutError(message = 'stdout read failed'): KaosProcess {
   };
 }
 
+function processWithStdoutErrorBeforeWait(message = 'stdout read failed'): {
+  proc: KaosProcess;
+  failStdout: () => void;
+  resolveWait: (exitCode: number) => void;
+} {
+  const stdout = new PassThrough();
+  let currentExitCode: number | null = null;
+  let resolveWait: (n: number) => void = () => {};
+  const waitPromise = new Promise<number>((resolve) => {
+    resolveWait = resolve;
+  });
+  return {
+    proc: {
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout,
+      stderr: Readable.from([]),
+      pid: 99997,
+      get exitCode(): number | null {
+        return currentExitCode;
+      },
+      wait: vi.fn(() => waitPromise) as KaosProcess['wait'],
+      kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
+      dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
+    },
+    failStdout: () => {
+      stdout.destroy(new Error(message));
+    },
+    resolveWait: (exitCode) => {
+      currentExitCode = exitCode;
+      resolveWait(exitCode);
+    },
+  };
+}
+
 function pendingProcess(exitOnKill = 143): {
   proc: KaosProcess;
   killSpy: ReturnType<typeof vi.fn>;
@@ -361,6 +395,36 @@ describe('BackgroundManager', () => {
       'ssh example.test',
       'stream error test',
     );
+
+    await expect(manager.wait(taskId)).resolves.toMatchObject({
+      kind: 'process',
+      status: 'failed',
+      exitCode: 0,
+      stopReason: 'stdout read failed',
+    });
+  });
+
+  it('handles process stream errors before process wait settles', async () => {
+    const { manager } = createBackgroundManager();
+    const { proc, failStdout, resolveWait } = processWithStdoutErrorBeforeWait();
+    const taskId = registerProcess(
+      manager,
+      proc,
+      'ssh example.test',
+      'stream error before wait test',
+    );
+
+    await Promise.resolve();
+    failStdout();
+    await Promise.resolve();
+
+    expect(await manager.wait(taskId, 0)).toMatchObject({
+      kind: 'process',
+      status: 'running',
+      exitCode: null,
+    });
+
+    resolveWait(0);
 
     await expect(manager.wait(taskId)).resolves.toMatchObject({
       kind: 'process',
