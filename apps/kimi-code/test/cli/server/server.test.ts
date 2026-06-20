@@ -56,14 +56,14 @@ describe('kimi server', () => {
     expect(subs).toEqual(['kill', 'ps', 'run']);
   });
 
-  it('`server run` exposes local-only foreground options', () => {
+  it('`server run` exposes the expected foreground options including --host', () => {
     const program = makeProgram();
     const run = program.commands
       .find((c) => c.name() === 'server')
       ?.commands.find((c) => c.name() === 'run');
     expect(run).toBeDefined();
     const longs = run!.options.map((o) => o.long).filter(Boolean);
-    expect(longs).not.toContain('--host');
+    expect(longs).toContain('--host');
     expect(longs).toContain('--port');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
@@ -95,7 +95,7 @@ describe('kimi server', () => {
     const longs = web!.options.map((o) => o.long).filter(Boolean);
     // web defaults to opening → the option is the negative form --no-open
     expect(longs).toContain('--no-open');
-    expect(longs).not.toContain('--host');
+    expect(longs).toContain('--host');
     expect(longs).toContain('--port');
   });
 });
@@ -418,6 +418,35 @@ describe('`kimi server run` background start', () => {
     expect(stdout).toContain(color.bold.hex(darkColors.textDim)('URL:      '));
     expect(stdout).toContain(color.hex(darkColors.textMuted)('local only'));
   });
+
+  it('advertises LAN reachability in the ready banner when bound to 0.0.0.0', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+
+    await handleRunCommand(
+      { host: '0.0.0.0', port: '58627' },
+      {
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+        openUrl: vi.fn(),
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      },
+    );
+
+    const plain = stripAnsi(stdout);
+    expect(plain).toContain('Network:');
+    expect(plain).toContain('LAN (0.0.0.0)');
+    expect(plain).not.toContain('local only');
+  });
 });
 
 describe('`kimi server run --foreground`', () => {
@@ -680,6 +709,34 @@ describe('spawnDaemonChild', () => {
     expect(args).toEqual(expect.arrayContaining(['server', 'run', '--daemon']));
     expect(options).toMatchObject({ detached: true, cwd: dirname(daemonLogPath()) });
     expect(options?.cwd).not.toBe(process.cwd());
+  });
+
+  it('forwards --host to the spawned daemon when a host is provided', async () => {
+    const { spawn } = await import('node:child_process');
+    const spawnMock = vi.mocked(spawn);
+    spawnMock.mockClear();
+    spawnMock.mockReturnValue({ unref: vi.fn(), once: vi.fn() } as unknown as ChildProcess);
+
+    const { spawnDaemonChild } = await import('#/cli/sub/server/daemon');
+    spawnDaemonChild({ host: '0.0.0.0', port: 58627, logLevel: 'info' });
+
+    expect(spawnMock).toHaveBeenCalledOnce();
+    const args = spawnMock.mock.calls[0]![1] as readonly string[];
+    expect(args).toEqual(expect.arrayContaining(['--host', '0.0.0.0']));
+  });
+
+  it('omits --host from the spawned daemon when no host is provided', async () => {
+    const { spawn } = await import('node:child_process');
+    const spawnMock = vi.mocked(spawn);
+    spawnMock.mockClear();
+    spawnMock.mockReturnValue({ unref: vi.fn(), once: vi.fn() } as unknown as ChildProcess);
+
+    const { spawnDaemonChild } = await import('#/cli/sub/server/daemon');
+    spawnDaemonChild({ port: 58627, logLevel: 'info' });
+
+    expect(spawnMock).toHaveBeenCalledOnce();
+    const args = spawnMock.mock.calls[0]![1] as readonly string[];
+    expect(args).not.toContain('--host');
   });
 });
 
