@@ -66,6 +66,15 @@ it('forwards provider finish diagnostics on filtered steps', async () => {
   const rpcStepEnd = ctx.allEvents.find(
     (event) => event.type === '[rpc]' && event.event === 'turn.step.completed',
   );
+  const assistantDeltaIndex = ctx.allEvents.findIndex(
+    (event) =>
+      event.type === '[rpc]' &&
+      event.event === 'assistant.delta' &&
+      String((event.args as { delta?: unknown }).delta).includes('filtered by its safety policy'),
+  );
+  const turnEndedIndex = ctx.allEvents.findIndex(
+    (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+  );
 
   expect(wireStepEnd?.args).toMatchObject({
     event: {
@@ -78,6 +87,21 @@ it('forwards provider finish diagnostics on filtered steps', async () => {
     finishReason: 'filtered',
     providerFinishReason: 'filtered',
     rawFinishReason: 'content_filter',
+  });
+  expect(ctx.allEvents).toContainEqual(
+    expect.objectContaining({
+      type: '[rpc]',
+      event: 'assistant.delta',
+      args: expect.objectContaining({
+        delta: expect.stringContaining('filtered by its safety policy'),
+      }),
+    }),
+  );
+  expect(assistantDeltaIndex).toBeGreaterThanOrEqual(0);
+  expect(assistantDeltaIndex).toBeLessThan(turnEndedIndex);
+  expect(ctx.agent.context.history.at(-1)).toMatchObject({
+    role: 'assistant',
+    content: [{ type: 'text', text: expect.stringContaining('filtered by its safety policy') }],
   });
   await ctx.expectResumeMatches();
 });
