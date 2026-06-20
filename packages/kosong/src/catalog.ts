@@ -48,6 +48,7 @@ export interface CatalogModel {
 
 const KNOWN_WIRE_TYPES = [
   'anthropic',
+  'azure-foundry',
   'openai',
   'kimi',
   'google-genai',
@@ -87,6 +88,7 @@ export function inferWireType(entry: CatalogProviderEntry): ProviderType | undef
   if (npm.includes('anthropic') || id.includes('anthropic') || id.includes('claude')) {
     return 'anthropic';
   }
+  if (id.includes('azure') || id.includes('foundry')) return 'azure-foundry';
   if (id.includes('vertex')) return 'vertexai';
   if (npm.includes('google') || id.includes('google') || id.includes('gemini')) {
     return 'google-genai';

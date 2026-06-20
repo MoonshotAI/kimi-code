@@ -532,6 +532,37 @@ describe('resolveRuntimeProvider customHeaders propagation', () => {
     });
   });
 
+  it('resolves an azure-foundry provider with env credential keys', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'foundry-alias',
+        providers: {
+          foundry: {
+            type: 'azure-foundry',
+            env: {
+              AZURE_FOUNDRY_API_KEY: 'foundry-key',
+              AZURE_FOUNDRY_BASE_URL: 'https://example.openai.azure.com/openai/v1',
+            },
+          },
+        },
+        models: {
+          'foundry-alias': {
+            provider: 'foundry',
+            model: 'gpt-4o',
+            maxContextSize: 128000,
+          },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'azure-foundry',
+      apiKey: 'foundry-key',
+      baseUrl: 'https://example.openai.azure.com/openai/v1',
+      model: 'gpt-4o',
+    });
+  });
+
   it('forwards customHeaders to an openai_responses provider', () => {
     const resolved = resolveRuntimeProvider({
       config: {

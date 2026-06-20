@@ -24,6 +24,7 @@ export interface CustomRegistrySource {
  */
 export type CustomRegistryProviderType =
   | 'anthropic'
+  | 'azure-foundry'
   | 'openai'
   | 'openai_responses'
   | 'kimi';
@@ -59,6 +60,7 @@ export const CUSTOM_REGISTRY_DEFAULT_CAPABILITIES = ['tool_use'] as const;
 
 const ALLOWED_PROVIDER_TYPES: ReadonlySet<CustomRegistryProviderType> = new Set([
   'anthropic',
+  'azure-foundry',
   'openai',
   'openai_responses',
   'kimi',
