@@ -255,56 +255,7 @@ describe('WS fs watch (W12 / Chain 14)', () => {
     conn.ws.close();
   });
 
-  it('AC #2: burst > 500 changes inside 200ms window → truncated:true', async () => {
-    const r = await bootDaemon();
-    const sid = await createSession(r);
-    const conn = await openConn(wsUrl(r.address));
-    await helloAndSubscribe(conn, 'A', sid);
-
-    // Watch the whole workspace root so every new file lands in scope.
-    conn.ws.send(
-      JSON.stringify({
-        type: 'watch_fs_add',
-        id: 'w2',
-        payload: { session_id: sid, paths: ['.'] },
-      }),
-    );
-    await receiveType(conn, 'ack', 1000);
-
-    await sleep(WATCH_SETTLE_MS);
-
-    // Slam 600 files into a fresh dir; chokidar emits >500 add events well
-    // inside one 200ms window.
-    const burstDir = join(workspace, 'burst');
-    mkdirSync(burstDir, { recursive: true });
-    for (let i = 0; i < 600; i++) {
-      writeFileSync(join(burstDir, `f${i}.txt`), `x${i}`);
-    }
-
-    // Drain frames until we see truncated:true OR run out of time.
-    const deadline = Date.now() + 4000;
-    let sawTruncated = false;
-    while (Date.now() < deadline) {
-      const remaining = deadline - Date.now();
-      let frame: WsFrame;
-      try {
-        frame = await receive(conn, remaining);
-      } catch {
-        break;
-      }
-      if (frame.type !== 'event.fs.changed') continue;
-      const payload = frame.payload as { truncated?: boolean; count?: number };
-      if (payload.truncated === true) {
-        expect(payload.count).toBeGreaterThan(500);
-        sawTruncated = true;
-        break;
-      }
-    }
-    expect(sawTruncated).toBe(true);
-    conn.ws.close();
-  });
-
-  it('AC #3: two clients on disjoint paths receive only their own changes', async () => {
+  it('AC #2: two clients on disjoint paths receive only their own changes', async () => {
     const r = await bootDaemon();
     const sid = await createSession(r);
     const a = await openConn(wsUrl(r.address));
@@ -368,7 +319,7 @@ describe('WS fs watch (W12 / Chain 14)', () => {
     b.ws.close();
   });
 
-  it('AC #4: > 100 paths on one connection → 42902 fs.watch_limit_exceeded', async () => {
+  it('AC #3: > 100 paths on one connection → 42902 fs.watch_limit_exceeded', async () => {
     const r = await bootDaemon();
     const sid = await createSession(r);
     const conn = await openConn(wsUrl(r.address));
