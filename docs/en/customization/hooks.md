@@ -47,8 +47,9 @@ All hook rules are written in the `[[hooks]]` array in `~/.kimi-code/config.toml
 | `matcher` | `string` | No | A regular expression to filter event targets; if omitted, matches all |
 | `command` | `string` | Yes | The shell command to run when triggered |
 | `timeout` | `integer` | No | Timeout in seconds, range 1–600; defaults to 30 seconds |
+| `suppress_tui_display` | `boolean` | No | For `UserPromptSubmit` allow-output, inject the hook result into model context without showing it in the terminal transcript |
 
-`[[hooks]]` only allows these four fields; extra fields will cause the config file to fail to load.
+`[[hooks]]` only allows these five fields; extra fields will cause the config file to fail to load.
 
 **When multiple rules match the same event**, all matching hooks run in parallel; multiple rules with identical `command` values run only once.
 
@@ -98,7 +99,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 
 | Event | Matcher matches | Supports blocking? | Description |
 | --- | --- | --- | --- |
-| `UserPromptSubmit` | The text submitted by the user | ✓ | Triggered when the user sends a message; returned text is appended to context; if blocked, the model is not called for this turn |
+| `UserPromptSubmit` | The text submitted by the user | ✓ | Triggered when the user sends a message; returned text is appended to context; if blocked, the model is not called for this turn. Set `suppress_tui_display = true` on a hook to hide allow-output from the terminal while still injecting it into context |
 | `PreToolUse` | Tool name | ✓ | Triggered before a tool call (before permission checks); the tool will not execute if blocked |
 | `Stop` | Empty string | ✓ | Triggered when the model is about to end the current turn; if blocked, a message can be appended to let the model continue |
 | `PostToolUse` | Tool name | — | Triggered after a tool executes successfully (observation only) |

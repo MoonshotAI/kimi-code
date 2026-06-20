@@ -94,6 +94,7 @@ export interface HookResultOrigin {
   readonly kind: 'hook_result';
   readonly event: string;
   readonly blocked?: boolean;
+  readonly suppressTuiDisplay?: boolean;
 }
 
 export interface RetryOrigin {
@@ -718,6 +719,7 @@ export const hookResultOriginSchema = z.object({
   kind: z.literal('hook_result'),
   event: z.string(),
   blocked: z.boolean().optional(),
+  suppressTuiDisplay: z.boolean().optional(),
 }) satisfies z.ZodType<HookResultOrigin>;
 
 export const retryOriginSchema = z.object({

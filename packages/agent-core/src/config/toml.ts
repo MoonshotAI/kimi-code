@@ -312,6 +312,10 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
       result[targetKey] = transformLoopControlData(value);
     } else if (targetKey === 'background' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'hooks' && Array.isArray(value)) {
+      result[targetKey] = value.map((entry) =>
+        isPlainObject(entry) ? transformPlainObject(entry) : entry,
+      );
     } else if (targetKey === 'experimental' && isPlainObject(value)) {
       result[targetKey] = cloneRecord(value);
     } else if (!isPlainObject(value)) {

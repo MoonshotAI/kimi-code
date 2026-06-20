@@ -440,6 +440,7 @@ export class SessionReplayRenderer {
 
   private renderHookResult(context: ReplayRenderContext, message: ContextMessage): void {
     if (message.origin?.kind !== 'hook_result') return;
+    if (message.origin.suppressTuiDisplay === true) return;
     this.flushAssistant(context);
     this.host.appendTranscriptEntry(
       replayEntry(

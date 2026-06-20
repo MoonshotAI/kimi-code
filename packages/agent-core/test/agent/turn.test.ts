@@ -509,6 +509,120 @@ describe('Agent turn flow', () => {
     ]);
   });
 
+  it('injects suppressed UserPromptSubmit hook output without emitting a visible hook result', async () => {
+    const hookEngine = new HookEngine([
+      {
+        event: 'UserPromptSubmit',
+        matcher: 'hooked input',
+        command: "echo 'hidden hook response'",
+        suppressTuiDisplay: true,
+      },
+    ]);
+    const ctx = testAgent({ hookEngine });
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'model saw hidden hook context' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hooked input' }] });
+    const events = await ctx.untilTurnEnd();
+
+    const hookResult =
+      '<hook_result hook_event="UserPromptSubmit">\nhidden hook response\n</hook_result>';
+    expect(ctx.llmCalls).toHaveLength(1);
+    expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
+      system: <system-prompt>
+      tools: []
+      messages:
+        user: text "hooked input"
+        user: text "<hook_result hook_event=\\"UserPromptSubmit\\">\\nhidden hook response\\n</hook_result>"
+    `);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        event: 'hook.result',
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'assistant.delta',
+        args: expect.objectContaining({ delta: 'model saw hidden hook context' }),
+      }),
+    );
+    expect(ctx.agent.context.data().history).toEqual([
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'hooked input' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: hookResult }],
+        toolCalls: [],
+        origin: {
+          kind: 'hook_result',
+          event: 'UserPromptSubmit',
+          suppressTuiDisplay: true,
+        },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'model saw hidden hook context' }],
+        toolCalls: [],
+      },
+    ]);
+  });
+
+  it('preserves UserPromptSubmit hook output order when only some results are hidden', async () => {
+    const hookEngine = new HookEngine([
+      {
+        event: 'UserPromptSubmit',
+        matcher: 'hooked input',
+        command: "echo 'visible hook before'",
+      },
+      {
+        event: 'UserPromptSubmit',
+        matcher: 'hooked input',
+        command: "echo 'hidden hook middle'",
+        suppressTuiDisplay: true,
+      },
+      {
+        event: 'UserPromptSubmit',
+        matcher: 'hooked input',
+        command: "echo 'visible hook after'",
+      },
+    ]);
+    const ctx = testAgent({ hookEngine });
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'model saw ordered hook context' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hooked input' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(1);
+    expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
+      system: <system-prompt>
+      tools: []
+      messages:
+        user: text "hooked input"
+        user: text "<hook_result hook_event=\\"UserPromptSubmit\\">\\nvisible hook before\\n</hook_result>"
+        user: text "<hook_result hook_event=\\"UserPromptSubmit\\">\\nhidden hook middle\\n</hook_result>"
+        user: text "<hook_result hook_event=\\"UserPromptSubmit\\">\\nvisible hook after\\n</hook_result>"
+    `);
+
+    const hookResultContents = (events as Array<{ event?: string; args?: { content?: unknown } }>)
+      .filter((event) => event.event === 'hook.result')
+      .map((event) => event.args?.content);
+    expect(hookResultContents).toEqual(['visible hook before', 'visible hook after']);
+
+    const hookOrigins = ctx.agent.context.data().history
+      .filter((message) => message.origin?.kind === 'hook_result')
+      .map((message) => message.origin);
+    expect(hookOrigins).toEqual([
+      { kind: 'hook_result', event: 'UserPromptSubmit' },
+      { kind: 'hook_result', event: 'UserPromptSubmit', suppressTuiDisplay: true },
+      { kind: 'hook_result', event: 'UserPromptSubmit' },
+    ]);
+  });
+
   it('projects structured UserPromptSubmit stdout', async () => {
     const hookEngine = new HookEngine([
       {
@@ -578,6 +692,7 @@ describe('Agent turn flow', () => {
         event: 'UserPromptSubmit',
         matcher: 'bad words',
         command: "echo 'no profanity' >&2; exit 2",
+        suppressTuiDisplay: true,
       },
     ]);
     const ctx = testAgent({ hookEngine });

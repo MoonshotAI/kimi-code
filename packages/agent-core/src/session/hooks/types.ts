@@ -26,6 +26,7 @@ export interface HookDef {
   readonly matcher?: string;
   readonly command: string;
   readonly timeout?: number;
+  readonly suppressTuiDisplay?: boolean;
 }
 
 export interface HookResult {
@@ -37,6 +38,7 @@ export interface HookResult {
   readonly exitCode?: number;
   readonly timedOut?: boolean;
   readonly structuredOutput?: boolean;
+  readonly suppressTuiDisplay?: boolean;
 }
 
 export interface HookBlockDecision {

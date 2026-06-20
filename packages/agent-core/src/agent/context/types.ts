@@ -62,6 +62,7 @@ export interface HookResultOrigin {
   readonly kind: 'hook_result';
   readonly event: string;
   readonly blocked?: boolean;
+  readonly suppressTuiDisplay?: boolean;
 }
 
 export interface RetryOrigin {

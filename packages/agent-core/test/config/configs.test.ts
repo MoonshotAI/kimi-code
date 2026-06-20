@@ -423,20 +423,22 @@ pattern = "Bash(rm *"
     const config = parseConfigString(
       `
 [[hooks]]
-event = "PreToolUse"
-matcher = "Shell"
+event = "UserPromptSubmit"
+matcher = "prompt"
 command = "echo hi"
 timeout = 5
+suppress_tui_display = true
 `,
       'hooks.toml',
     );
 
     expect(config.hooks).toEqual([
       {
-        event: 'PreToolUse',
-        matcher: 'Shell',
+        event: 'UserPromptSubmit',
+        matcher: 'prompt',
         command: 'echo hi',
         timeout: 5,
+        suppressTuiDisplay: true,
       },
     ]);
   });
