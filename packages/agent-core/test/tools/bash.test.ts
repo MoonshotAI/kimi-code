@@ -614,6 +614,39 @@ describe('BashTool', () => {
     });
   });
 
+  it('does not recommend disabled task tools when a foreground command is detached', async () => {
+    const { proc, finish } = pendingProcess();
+    const manager = createBackgroundManager().manager;
+    const tool = bashTool(
+      createFakeKaos({
+        execWithEnv: vi.fn().mockResolvedValue(proc),
+        osEnv: posixEnv,
+      }),
+      '/workspace',
+      manager,
+      { allowBackground: false },
+    );
+
+    const running = executeTool(tool, context({ command: 'sleep 10', timeout: 60 }));
+    await vi.waitFor(() => {
+      expect(manager.list(false)).toHaveLength(1);
+    });
+    const task = manager.list(false)[0]!;
+
+    manager.detach(task.taskId);
+    const result = await running;
+
+    expect(result.output).toContain(`task_id: ${task.taskId}`);
+    expect(result.output).toContain('next_step: You will be automatically notified');
+    expect(result.output).not.toContain('TaskOutput');
+    expect(result.output).not.toContain('TaskStop');
+
+    finish();
+    await expect(manager.wait(task.taskId)).resolves.toMatchObject({
+      status: 'completed',
+    });
+  });
+
   it('keeps task metadata independent when noisy foreground output is capped before detach', async () => {
     const { proc, finish } = pendingProcess();
     const manager = createBackgroundManager().manager;

@@ -379,8 +379,10 @@ export class BashTool implements BuiltinTool<BashInput> {
       `status: ${status}\n` +
       `automatic_notification: true\n` +
       'next_step: You will be automatically notified when it completes.\n' +
-      'next_step: Use TaskOutput with this task_id for a non-blocking status/output snapshot.\n' +
-      'next_step: Use TaskStop only if the task must be cancelled.\n' +
+      (this.allowBackground
+        ? 'next_step: Use TaskOutput with this task_id for a non-blocking status/output snapshot.\n' +
+          'next_step: Use TaskStop only if the task must be cancelled.\n'
+        : '') +
       'human_shell_hint: Tell the human to run /tasks to open the interactive background-task panel.';
 
     const foregroundResult = builder.ok('');

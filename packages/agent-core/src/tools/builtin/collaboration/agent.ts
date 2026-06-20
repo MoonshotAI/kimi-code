@@ -248,12 +248,26 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       }
 
       if (runInBackground) {
-        return { output: formatBackgroundAgentResult(taskId, handle, args.description) };
+        return {
+          output: formatBackgroundAgentResult(
+            taskId,
+            handle,
+            args.description,
+            this.allowBackground,
+          ),
+        };
       }
 
       const release = await this.backgroundManager.waitForForegroundRelease(taskId);
       if (release === 'detached') {
-        return { output: formatBackgroundAgentResult(taskId, handle, args.description) };
+        return {
+          output: formatBackgroundAgentResult(
+            taskId,
+            handle,
+            args.description,
+            this.allowBackground,
+          ),
+        };
       }
       return await this.formatForegroundResult(taskId, handle);
     } catch (error) {
@@ -297,6 +311,7 @@ function formatBackgroundAgentResult(
   taskId: string,
   handle: SubagentHandle,
   description: string,
+  allowBackground: boolean,
 ): string {
   return [
     `task_id: ${taskId}`,
@@ -307,7 +322,9 @@ function formatBackgroundAgentResult(
     '',
     `description: ${description}`,
     '',
-    `next_step: The completion arrives automatically in a later turn — no polling needed. To peek at progress without blocking, call TaskOutput(task_id="${taskId}", block=false).`,
+    allowBackground
+      ? `next_step: The completion arrives automatically in a later turn — no polling needed. To peek at progress without blocking, call TaskOutput(task_id="${taskId}", block=false).`
+      : 'next_step: The completion arrives automatically in a later turn.',
     `resume_hint: To continue or recover this same subagent later, call Agent(resume="${handle.agentId}", prompt="..."). The parameter is agent_id ("${handle.agentId}"), NOT task_id ("${taskId}") or source_id from a later <notification>. Recovery cases: a later <notification type="task.lost" | "task.failed" | "task.killed"> for this subagent — its conversation history is preserved across session restarts and resume will pick it up.`,
   ].join('\n');
 }

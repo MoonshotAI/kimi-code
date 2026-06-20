@@ -504,6 +504,49 @@ describe('AgentTool', () => {
     });
   });
 
+  it('does not recommend disabled task tools when a foreground subagent is detached', async () => {
+    let resolveCompletion: (value: { result: string }) => void = () => {};
+    const completion = new Promise<{ result: string }>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        completion,
+      }),
+    });
+    const background = createBackgroundManager().manager;
+    const tool = agentTool(host, background, undefined, { allowBackground: false });
+
+    const running = executeTool(
+      tool,
+      context({
+        prompt: 'Investigate',
+        description: 'Find cause',
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(background.list(false)).toHaveLength(1);
+    });
+    const task = background.list(false)[0]!;
+
+    background.detach(task.taskId);
+    const result = await running;
+
+    expect(result.output).toContain(`task_id: ${task.taskId}`);
+    expect(result.output).toContain('next_step: The completion arrives automatically');
+    expect(result.output).not.toContain('TaskOutput');
+    expect(result.output).not.toContain('TaskStop');
+
+    resolveCompletion({ result: 'finished later' });
+    await expect(background.wait(task.taskId)).resolves.toMatchObject({
+      status: 'completed',
+      detached: true,
+    });
+  });
+
   it('guides the AI with a non-blocking query hint and a resume hint on background launch', async () => {
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({
