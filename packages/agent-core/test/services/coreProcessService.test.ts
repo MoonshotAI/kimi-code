@@ -187,6 +187,7 @@ describe('CoreProcessService direct construction', () => {
       approvalService,
       questionService,
       logService,
+      new TestInstantiationService(),
     );
     try {
       await expect(core.ready()).resolves.toBeUndefined();
@@ -205,6 +206,7 @@ describe('CoreProcessService direct construction', () => {
       approvalService,
       questionService,
       logService,
+      new TestInstantiationService(),
     );
     try {
       await core.ready();
@@ -225,6 +227,7 @@ describe('CoreProcessService direct construction', () => {
       approvalService,
       questionService,
       logService,
+      new TestInstantiationService(),
     );
     await core.ready();
     core.dispose();

@@ -3,7 +3,7 @@
  */
 
 import { createRPC, KimiCore } from '../../rpc';
-import { Disposable, registerSingleton, SyncDescriptor } from '../../di';
+import { Disposable, IInstantiationService, registerSingleton, SyncDescriptor } from '../../di';
 import type { CoreAPI, CoreRPC, SDKAPI } from '../../rpc';
 import type { OAuthTokenProviderResolver } from '../../session/provider-manager';
 import {
@@ -58,6 +58,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     @IApprovalService approvalService: IApprovalService,
     @IQuestionService questionService: IQuestionService,
     @ILogService logService: ILogService,
+    @IInstantiationService private readonly ix: IInstantiationService,
   ) {
     super();
 
@@ -110,6 +111,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
       kimiRequestHeaders,
       appVersion,
       resolveOAuthTokenProvider,
+      instantiationService: this.ix,
     });
 
     // 3. Satisfy the SDK side with a BridgeClientAPI that routes to peer services.

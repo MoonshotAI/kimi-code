@@ -176,7 +176,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.skillDirs = options.skillDirs ?? [];
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.appVersion = options.appVersion;
-    this.scope = options.instantiationService ?? new InstantiationService(undefined, true);
+    this.scope = new InstantiationService(
+      undefined,
+      true,
+      options.instantiationService as InstantiationService | undefined,
+    );
     ensureKimiHome(this.homeDir);
     // Schema errors degrade (invalid sections are dropped with warnings) so a
     // typo cannot prevent startup, but a file that cannot be used at all —
