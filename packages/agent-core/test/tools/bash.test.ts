@@ -51,6 +51,24 @@ function processWithOutput(
   };
 }
 
+function createKaosWithRecordedCwd(overrides: Parameters<typeof createFakeKaos>[0]): {
+  readonly kaos: ReturnType<typeof createFakeKaos>;
+  readonly cwdCalls: readonly string[];
+} {
+  const cwdCalls: string[] = [];
+  const base = createFakeKaos(overrides);
+  return {
+    kaos: {
+      ...base,
+      withCwd: (next: string) => {
+        cwdCalls.push(next);
+        return createFakeKaos({ ...overrides, getcwd: () => next });
+      },
+    },
+    cwdCalls,
+  };
+}
+
 function processWithInterleavedOutput(
   events: ReadonlyArray<{
     readonly stream: 'stdout' | 'stderr';
@@ -298,13 +316,15 @@ describe('BashTool', () => {
   it('runs through execWithEnv, injects cwd, noninteractive env, and closes stdin', async () => {
     const proc = processWithOutput({ stdout: 'ok\n' });
     const execWithEnv = vi.fn().mockResolvedValue(proc);
-    const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace');
+    const { kaos, cwdCalls } = createKaosWithRecordedCwd({ execWithEnv, osEnv: posixEnv });
+    const tool = new BashTool(kaos, '/workspace');
 
     const result = await executeTool(tool, context({ command: 'printf ok', timeout: 60 }));
 
     expect(execWithEnv).toHaveBeenCalledTimes(1);
     const [argv, env] = execWithEnv.mock.calls[0]!;
-    expect(argv).toEqual(['/bin/bash', '-c', "cd '/workspace' && printf ok"]);
+    expect(argv).toEqual(['/bin/bash', '-c', 'printf ok']);
+    expect(cwdCalls).toEqual(['/workspace']);
     expect(env).toMatchObject({
       NO_COLOR: '1',
       TERM: 'dumb',
@@ -319,18 +339,24 @@ describe('BashTool', () => {
 
   it('uses args.cwd when provided', async () => {
     const execWithEnv = vi.fn().mockResolvedValue(processWithOutput({ stdout: 'sub\n' }));
-    const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace');
+    const { kaos, cwdCalls } = createKaosWithRecordedCwd({ execWithEnv, osEnv: posixEnv });
+    const tool = new BashTool(kaos, '/workspace');
 
     await executeTool(tool, context({ command: 'pwd', cwd: '/tmp/project', timeout: 60 }));
 
-    expect(execWithEnv.mock.calls[0]?.[0]).toEqual(['/bin/bash', '-c', "cd '/tmp/project' && pwd"]);
+    expect(execWithEnv.mock.calls[0]?.[0]).toEqual(['/bin/bash', '-c', 'pwd']);
+    expect(cwdCalls).toEqual(['/tmp/project']);
   });
 
   it('uses Git Bash semantics on Windows', async () => {
     const proc = processWithOutput({ stdout: 'ok\n' });
     const execWithEnv = vi.fn().mockResolvedValue(proc);
+    const { kaos, cwdCalls } = createKaosWithRecordedCwd({
+      execWithEnv,
+      osEnv: windowsBashEnv,
+    });
     const tool = new BashTool(
-      createFakeKaos({ execWithEnv, osEnv: windowsBashEnv }),
+      kaos,
       'C:\\Users\\me\\project',
     );
 
@@ -341,14 +367,33 @@ describe('BashTool', () => {
     expect(argv).toEqual([
       'C:\\Program Files\\Git\\bin\\bash.exe',
       '-c',
-      "cd '/c/Users/me/project' && echo ok 2>/dev/null",
+      'echo ok 2>/dev/null',
     ]);
+    expect(cwdCalls).toEqual(['C:\\Users\\me\\project']);
     expect(env).toMatchObject({ SHELL: 'C:\\Program Files\\Git\\bin\\bash.exe' });
     expect(result).toMatchObject({
       output: 'ok\n',
       isError: false,
       message: 'Command executed successfully.',
     });
+  });
+
+  it('normalizes Git Bash drive cwd before spawning on Windows', async () => {
+    const execWithEnv = vi.fn().mockResolvedValue(processWithOutput({ stdout: 'sub\n' }));
+    const { kaos, cwdCalls } = createKaosWithRecordedCwd({
+      execWithEnv,
+      osEnv: windowsBashEnv,
+    });
+    const tool = new BashTool(kaos, 'C:\\Users\\me\\project');
+
+    await executeTool(tool, context({ command: 'pwd', cwd: '/c/Users/me/project', timeout: 60 }));
+
+    expect(execWithEnv.mock.calls[0]?.[0]).toEqual([
+      'C:\\Program Files\\Git\\bin\\bash.exe',
+      '-c',
+      'pwd',
+    ]);
+    expect(cwdCalls).toEqual(['C:/Users/me/project']);
   });
 
   it('returns stderr and marks non-zero exit codes as tool errors', async () => {
@@ -591,8 +636,12 @@ describe('BashTool', () => {
       .fn()
       .mockResolvedValueOnce(firstProc)
       .mockResolvedValueOnce(secondProc);
+    const { kaos, cwdCalls } = createKaosWithRecordedCwd({
+      execWithEnv,
+      osEnv: windowsBashEnv,
+    });
     const tool = new BashTool(
-      createFakeKaos({ execWithEnv, osEnv: windowsBashEnv }),
+      kaos,
       'C:\\Users\\me\\project',
       manager,
     );
@@ -619,8 +668,9 @@ describe('BashTool', () => {
     expect(argv).toEqual([
       'C:\\Program Files\\Git\\bin\\bash.exe',
       '-c',
-      "cd '/c/Users/me/project' && echo ok 2>/dev/null",
+      'echo ok 2>/dev/null',
     ]);
+    expect(cwdCalls).toEqual(['C:\\Users\\me\\project', 'C:\\Users\\me\\project']);
     expect(env).toMatchObject({ SHELL: 'C:\\Program Files\\Git\\bin\\bash.exe' });
     expect(secondProc.kill).toHaveBeenCalledWith('SIGTERM');
     expect(results).toContainEqual(expect.objectContaining({ isError: false }));
@@ -896,7 +946,7 @@ describe('BashTool', () => {
     await executeTool(tool, context({ command: 'ls 2>nul', timeout: 60 }));
 
     const argv = execWithEnv.mock.calls[0]?.[0] as readonly string[];
-    expect(argv[2]).toBe("cd '/c/Users/me/project' && ls 2>/dev/null");
+    expect(argv[2]).toBe('ls 2>/dev/null');
   });
 
   it('passes nul-redirect through unchanged on Linux so the argv keeps the literal file target', async () => {
@@ -906,7 +956,7 @@ describe('BashTool', () => {
     await executeTool(tool, context({ command: 'ls 2>nul', timeout: 60 }));
 
     const argv = execWithEnv.mock.calls[0]?.[0] as readonly string[];
-    expect(argv[2]).toBe("cd '/workspace' && ls 2>nul");
+    expect(argv[2]).toBe('ls 2>nul');
   });
 
   it('exposes a shell description that documents /bin/bash, TaskOutput/TaskStop, safety and efficiency sections, and background semantics', () => {
