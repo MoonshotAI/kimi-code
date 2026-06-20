@@ -1,0 +1,1813 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`server API surface snapshot > matches the registered route surface snapshot 1`] = `
+[
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/auth",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/auth",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/config",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/config",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "background",
+          "default_model",
+          "default_permission_mode",
+          "default_plan_mode",
+          "default_provider",
+          "default_thinking",
+          "experimental",
+          "extra_skill_dirs",
+          "hooks",
+          "loop_control",
+          "merge_all_available_skills",
+          "models",
+          "permission",
+          "plan_mode",
+          "providers",
+          "services",
+          "telemetry",
+          "thinking",
+          "yolo",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(2)",
+      },
+    },
+    "url": "/api/v1/config",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/connections",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/connections",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/files",
+  },
+  {
+    "method": "DELETE",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "file_id",
+        ],
+        "required": [
+          "file_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/files/:file_id",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "file_id",
+        ],
+        "required": [
+          "file_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "type:string",
+      },
+    },
+    "url": "/api/v1/files/:file_id",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "file_id",
+        ],
+        "required": [
+          "file_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "type:string",
+      },
+    },
+    "url": "/api/v1/files/:file_id",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": {
+        "properties": [
+          "path",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/fs::browse",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": {
+        "properties": [
+          "path",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/fs::browse",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/fs::home",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/fs::home",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/healthz",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/healthz",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/mcp/servers",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/mcp/servers",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(2)",
+      },
+    },
+    "url": "/api/v1/mcp/servers/:tail",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/meta",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/meta",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/models",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/models",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "tail",
+        ],
+        "required": [
+          "tail",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/models/:tail",
+  },
+  {
+    "method": "DELETE",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": {
+        "properties": [
+          "provider",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/oauth/login",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": {
+        "properties": [
+          "provider",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/oauth/login",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": {
+        "properties": [
+          "provider",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/oauth/login",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "provider",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/oauth/login",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "provider",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/oauth/logout",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/providers",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/providers",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/providers:refresh_oauth",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "provider_id",
+        ],
+        "required": [
+          "provider_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/providers/:provider_id",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "provider_id",
+        ],
+        "required": [
+          "provider_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/providers/:provider_id",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": {
+        "properties": [
+          "after_id",
+          "before_id",
+          "include_archive",
+          "page_size",
+          "status",
+          "workspace_id",
+        ],
+        "required": [
+          "include_archive",
+        ],
+        "type": "object",
+      },
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": {
+        "properties": [
+          "after_id",
+          "before_id",
+          "include_archive",
+          "page_size",
+          "status",
+          "workspace_id",
+        ],
+        "required": [
+          "include_archive",
+        ],
+        "type": "object",
+      },
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "agent_config",
+          "metadata",
+          "title",
+          "workspace_id",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+          "tail",
+        ],
+        "required": [
+          "session_id",
+          "tail",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(12)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/:tail",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": {
+        "properties": [
+          "status",
+        ],
+        "required": [
+          "status",
+        ],
+        "type": "object",
+      },
+      "responses": {
+        "200": "oneOf(2)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/approvals",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": {
+        "properties": [
+          "status",
+        ],
+        "required": [
+          "status",
+        ],
+        "type": "object",
+      },
+      "responses": {
+        "200": "oneOf(2)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/approvals",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "decision",
+          "feedback",
+          "scope",
+          "selected_label",
+        ],
+        "required": [
+          "decision",
+        ],
+        "type": "object",
+      },
+      "params": {
+        "properties": [
+          "approval_id",
+          "session_id",
+        ],
+        "required": [
+          "approval_id",
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/approvals/:approval_id",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": {
+        "properties": [
+          "after_id",
+          "before_id",
+          "page_size",
+          "status",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/children",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": {
+        "properties": [
+          "after_id",
+          "before_id",
+          "page_size",
+          "status",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/children",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "metadata",
+          "title",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(4)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/children",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:string",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/fs/*",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:string",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/fs/*",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": {
+        "properties": [
+          "after_id",
+          "before_id",
+          "page_size",
+          "role",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/messages",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": {
+        "properties": [
+          "after_id",
+          "before_id",
+          "page_size",
+          "role",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/messages",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "message_id",
+          "session_id",
+        ],
+        "required": [
+          "message_id",
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/messages/:message_id",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "message_id",
+          "session_id",
+        ],
+        "required": [
+          "message_id",
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/messages/:message_id",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/profile",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/profile",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "agent_config",
+          "metadata",
+          "permission_rules",
+          "title",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/profile",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(2)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/prompts",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(2)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/prompts",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "agent_id",
+          "content",
+          "goal_control",
+          "goal_objective",
+          "metadata",
+          "model",
+          "permission_mode",
+          "plan_mode",
+          "swarm_mode",
+          "thinking",
+        ],
+        "required": [
+          "content",
+        ],
+        "type": "object",
+      },
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(10)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/prompts",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "prompt_ids",
+        ],
+        "required": [
+          "prompt_ids",
+        ],
+        "type": "object",
+      },
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(4)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/prompts::steer",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(5)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/prompts/:tail",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": {
+        "properties": [
+          "status",
+        ],
+        "required": [
+          "status",
+        ],
+        "type": "object",
+      },
+      "responses": {
+        "200": "oneOf(2)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/questions",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": {
+        "properties": [
+          "status",
+        ],
+        "required": [
+          "status",
+        ],
+        "type": "object",
+      },
+      "responses": {
+        "200": "oneOf(2)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/questions",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+          "tail",
+        ],
+        "required": [
+          "session_id",
+          "tail",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(5)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/questions/:tail",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(2)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/skills",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(2)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/skills",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "args",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "params": {
+        "properties": [
+          "session_id",
+          "tail",
+        ],
+        "required": [
+          "session_id",
+          "tail",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(5)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/skills/:tail",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/snapshot",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/snapshot",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/status",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/status",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": {
+        "properties": [
+          "status",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/tasks",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": {
+        "properties": [
+          "status",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/tasks",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(5)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/tasks/:tail",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+          "task_id",
+        ],
+        "required": [
+          "session_id",
+          "task_id",
+        ],
+        "type": "object",
+      },
+      "querystring": {
+        "properties": [
+          "output_bytes",
+          "with_output",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "oneOf(4)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/tasks/:task_id",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+          "task_id",
+        ],
+        "required": [
+          "session_id",
+          "task_id",
+        ],
+        "type": "object",
+      },
+      "querystring": {
+        "properties": [
+          "output_bytes",
+          "with_output",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "oneOf(4)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/tasks/:task_id",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/terminals",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(3)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/terminals",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "cols",
+          "cwd",
+          "rows",
+          "shell",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "params": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [
+          "session_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(4)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/terminals",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+          "tail",
+        ],
+        "required": [
+          "session_id",
+          "tail",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(4)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/terminals/:tail",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+          "terminal_id",
+        ],
+        "required": [
+          "session_id",
+          "terminal_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(4)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/terminals/:terminal_id",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "session_id",
+          "terminal_id",
+        ],
+        "required": [
+          "session_id",
+          "terminal_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(4)",
+      },
+    },
+    "url": "/api/v1/sessions/:session_id/terminals/:terminal_id",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "count",
+          "instruction",
+          "metadata",
+          "page_size",
+          "title",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "params": {
+        "properties": [
+          "tail",
+        ],
+        "required": [
+          "tail",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "oneOf(6)",
+      },
+    },
+    "url": "/api/v1/sessions/:tail",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/shutdown",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/tools",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": {
+        "properties": [
+          "session_id",
+        ],
+        "required": [],
+        "type": "object",
+      },
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/tools",
+  },
+  {
+    "method": "GET",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/workspaces",
+  },
+  {
+    "method": "HEAD",
+    "schemaSummary": {
+      "body": null,
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/workspaces",
+  },
+  {
+    "method": "POST",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "name",
+          "root",
+        ],
+        "required": [
+          "root",
+        ],
+        "type": "object",
+      },
+      "params": null,
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/workspaces",
+  },
+  {
+    "method": "DELETE",
+    "schemaSummary": {
+      "body": null,
+      "params": {
+        "properties": [
+          "workspace_id",
+        ],
+        "required": [
+          "workspace_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/workspaces/:workspace_id",
+  },
+  {
+    "method": "PATCH",
+    "schemaSummary": {
+      "body": {
+        "properties": [
+          "name",
+        ],
+        "required": [
+          "name",
+        ],
+        "type": "object",
+      },
+      "params": {
+        "properties": [
+          "workspace_id",
+        ],
+        "required": [
+          "workspace_id",
+        ],
+        "type": "object",
+      },
+      "querystring": null,
+      "responses": {
+        "200": "type:object",
+      },
+    },
+    "url": "/api/v1/workspaces/:workspace_id",
+  },
+]
+`;
