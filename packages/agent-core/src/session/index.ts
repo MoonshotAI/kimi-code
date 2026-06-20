@@ -11,6 +11,7 @@ import { proxyWithExtraPayload } from '#/rpc/types';
 import { Agent, type AgentOptions, type AgentType } from '../agent';
 import { ILifecycleService, LifecycleService, type SessionHookCtx } from '../agent/lifecycle';
 import { HookService, IHookService, type HookDef } from './hooks';
+import { SessionRepository } from './sessionRepository';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
 import { makeErrorPayload } from '../errors';
@@ -159,6 +160,7 @@ export class Session {
   readonly experimentalFlags: ExperimentalFlagResolver;
   private toolKaos: Kaos;
   private persistenceKaos: Kaos;
+  private readonly sessionRepository: SessionRepository;
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
   metadata: SessionMeta = {
@@ -169,7 +171,6 @@ export class Session {
     agents: {},
     custom: {},
   };
-  private writeMetadataPromise = Promise.resolve();
 
   constructor(public readonly options: SessionOptions) {
     // Attach the per-session log sink up front so the constructor's
@@ -216,6 +217,7 @@ export class Session {
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.toolKaos = options.kaos;
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
+    this.sessionRepository = new SessionRepository(options.homedir, this.persistenceKaos);
     this.skills = this.scope.invokeFunction((accessor) => accessor.get(ISkillRegistryService));
     this.mcp = this.scope.invokeFunction((accessor) => accessor.get(IMcpConnectionService));
     this.lifecycle = this.scope.invokeFunction((accessor) => accessor.get(ILifecycleService));
@@ -505,29 +507,18 @@ export class Session {
     return false;
   }
 
-  protected get metadataPath() {
-    return join(this.options.homedir, 'state.json');
-  }
-
   writeMetadata() {
-    const text = JSON.stringify(this.metadata, null, 2);
-    const write = async () => {
-      await this.persistenceKaos.mkdir(this.options.homedir, { parents: true, existOk: true });
-      await this.persistenceKaos.writeText(this.metadataPath, text);
-    };
-    this.writeMetadataPromise = this.writeMetadataPromise.then(write, write);
-    return this.writeMetadataPromise;
+    return this.sessionRepository.write(this.metadata);
   }
 
   async readMetadata() {
-    const text = await this.persistenceKaos.readText(this.metadataPath);
-    this.metadata = JSON.parse(text);
+    this.metadata = await this.sessionRepository.read();
     return this.metadata;
   }
 
   async flushMetadata() {
     await this.skillsReady;
-    await this.writeMetadataPromise;
+    await this.sessionRepository.flush();
     await Promise.all(Array.from(this.readyAgents()).map((agent) => agent.records.flush()));
   }
 
