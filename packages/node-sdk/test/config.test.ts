@@ -61,6 +61,7 @@ max_retries_per_step = 3
 max_ralph_iterations = 0
 reserved_context_size = 50000
 compaction_trigger_ratio = 0.85
+compaction_model = "compact-model"
 
 [background]
 max_running_tasks = 4
@@ -148,6 +149,7 @@ max_context_size = "large"
       maxRalphIterations: 0,
       reservedContextSize: 50000,
       compactionTriggerRatio: 0.85,
+      compactionModel: 'compact-model',
     });
     expect(config.background).toEqual({
       maxRunningTasks: 4,
@@ -185,6 +187,7 @@ max_context_size = "large"
     expect(text).toContain('extra_skill_dirs = [ "~/team-skills", ".agents/team-skills" ]');
     expect(text).not.toContain('default_yolo');
     expect(text).toContain('max_steps_per_turn = 42');
+    expect(text).toContain('compaction_model = "compact-model"');
     expect(text).toContain('display_name = "Kimi for Coding"');
     expect(text).toContain('GOOGLE_CLOUD_PROJECT = "project-1"');
     expect(text).toContain('claim_stale_after_ms = 15000');
@@ -192,6 +195,7 @@ max_context_size = "large"
 
     const reloaded = readConfigFile(configPath);
     expect(reloaded.loopControl?.maxStepsPerTurn).toBe(42);
+    expect(reloaded.loopControl?.compactionModel).toBe('compact-model');
     expect(reloaded.raw?.['theme']).toBe('dark');
   });
 

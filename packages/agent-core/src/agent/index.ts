@@ -184,8 +184,8 @@ export class Agent {
 
   get generate(): typeof generate {
     return async (provider, systemPrompt, tools, history, callbacks, options) => {
-      const { requestLogFields, generateOptions } = splitGenerateOptions(options);
-      const modelAlias = this.config.modelAlias;
+      const { requestLogFields, requestModelAlias, generateOptions } = splitGenerateOptions(options);
+      const modelAlias = requestModelAlias ?? this.config.modelAlias;
       const run = (requestOptions: Parameters<typeof generate>[5]) => {
         this.llmRequestLogger.logRequest({
           provider,

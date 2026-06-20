@@ -161,6 +161,7 @@ You can also switch models temporarily without touching the config file — by s
 | `max_steps_per_turn` | `integer` | — | Maximum steps per turn; unset or `0` means unlimited |
 | `max_retries_per_step` | `integer` | `3` | Maximum retries after a step failure |
 | `reserved_context_size` | `integer` | — | Number of tokens reserved for model output; automatic compaction is triggered when the remaining context window falls below this value |
+| `compaction_model` | `string` | — | Optional model alias from `[models]` to use only for full-history compaction; unset falls back to the active conversation model |
 
 ## `background`
 
