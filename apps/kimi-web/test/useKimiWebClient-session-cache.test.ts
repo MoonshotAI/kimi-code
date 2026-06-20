@@ -85,6 +85,7 @@ async function setup(messages: AppMessage[] = []) {
       pendingQuestions: [],
     })),
     submitPrompt: vi.fn(async () => ({ promptId: 'pr_1', userMessageId: 'msg_real' })),
+    respondApproval: vi.fn(async () => ({ resolved: true, resolvedAt: now })),
     listTasks: vi.fn(async () => []),
     getGitStatus: vi.fn(async () => ({ branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0 })),
     getSessionStatus: vi.fn(async () => ({
@@ -97,6 +98,7 @@ async function setup(messages: AppMessage[] = []) {
       maxContextTokens: 128_000,
       contextUsage: 0,
     })),
+    updateSession: vi.fn(async () => created),
     getConfig: vi.fn(async () => initialConfig),
     setConfig: vi.fn(async (patch: Partial<AppConfig>) => ({
       ...initialConfig,
@@ -320,6 +322,92 @@ describe('useKimiWebClient session memory cache', () => {
     const userTurn = client.turns.value.find((turn) => turn.role === 'user');
     expect(userTurn?.id).toMatch(/^msg_opt_/);
     expect(eventConn.bindNextPromptId).toHaveBeenCalledWith('sess_1', 'pr_1');
+  });
+
+  it('does not auto-approve plan review approvals in yolo mode', async () => {
+    const { api, client, getHandlers } = await setup([]);
+    await client.createSession('/repo');
+    client.setPermission('yolo');
+
+    getHandlers().onEvent(
+      {
+        type: 'approvalRequested',
+        sessionId: 'sess_1',
+        approval: {
+          approvalId: 'ap_bash',
+          sessionId: 'sess_1',
+          toolCallId: 'call_bash',
+          toolName: 'Bash',
+          action: 'Run command',
+          display: { kind: 'shell', command: 'echo ok' },
+          expiresAt: now,
+          createdAt: now,
+        },
+      },
+      { sessionId: 'sess_1', seq: 8 },
+    );
+
+    expect(api.respondApproval).toHaveBeenCalledWith('sess_1', 'ap_bash', {
+      decision: 'approved',
+      scope: 'session',
+      feedback: undefined,
+    });
+    await Promise.resolve();
+
+    getHandlers().onEvent(
+      {
+        type: 'approvalRequested',
+        sessionId: 'sess_1',
+        approval: {
+          approvalId: 'ap_plan',
+          sessionId: 'sess_1',
+          toolCallId: 'call_plan',
+          toolName: 'ExitPlanMode',
+          action: 'Review plan',
+          display: { kind: 'plan_review', plan: 'Ship it' },
+          expiresAt: now,
+          createdAt: now,
+        },
+      },
+      { sessionId: 'sess_1', seq: 9 },
+    );
+
+    expect(api.respondApproval).toHaveBeenCalledTimes(1);
+    expect(client.pendingApprovals.value).toEqual([
+      {
+        approvalId: 'ap_plan',
+        block: { kind: 'generic', summary: 'Review plan' },
+        agentName: undefined,
+      },
+    ]);
+  });
+
+  it('does not auto-approve existing plan review approvals when switching to yolo', async () => {
+    const { api, client, getHandlers } = await setup([]);
+    await client.createSession('/repo');
+
+    getHandlers().onEvent(
+      {
+        type: 'approvalRequested',
+        sessionId: 'sess_1',
+        approval: {
+          approvalId: 'ap_plan',
+          sessionId: 'sess_1',
+          toolCallId: 'call_plan',
+          toolName: 'ExitPlanMode',
+          action: 'Review plan',
+          display: { kind: 'plan_review', plan: 'Ship it' },
+          expiresAt: now,
+          createdAt: now,
+        },
+      },
+      { sessionId: 'sess_1', seq: 8 },
+    );
+
+    client.setPermission('yolo');
+
+    expect(api.respondApproval).not.toHaveBeenCalled();
+    expect(client.pendingApprovals.value).toHaveLength(1);
   });
 
   it('merges a user message echo into the optimistic turn instead of appending', async () => {

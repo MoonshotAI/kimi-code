@@ -1001,11 +1001,12 @@ function connectEventsIfNeeded(): void {
       }
 
       // Permission auto-approve: CLIENT-SIDE POLICY until the daemon exposes a
-      // permission endpoint. When permission is 'auto' or 'yolo' and an approval
-      // request arrives, immediately respond with 'approved'.
+      // permission endpoint. Auto mode approves all approval requests. YOLO
+      // approves regular requests, but plan review still needs explicit user
+      // approval, matching the TUI.
       if (appEvent.type === 'approvalRequested') {
         const perm = rawState.permission;
-        if (perm === 'auto' || perm === 'yolo') {
+        if (shouldAutoApproveApproval(appEvent.approval, perm)) {
           void respondApproval(appEvent.approval.approvalId, {
             decision: 'approved',
             scope: perm === 'yolo' ? 'session' : undefined,
@@ -1624,6 +1625,23 @@ function buildDiffLines(oldText: string, newText: string): DiffLine[] {
     lines.push({ kind: 'add', gutter: String(i + 1), text: `+ ${text}` });
   });
   return lines;
+}
+
+function approvalDisplayKind(approval: AppApprovalRequest): string | undefined {
+  const display = approval.display;
+  if (display === null || typeof display !== 'object') return undefined;
+  const kind = (display as { kind?: unknown }).kind;
+  return typeof kind === 'string' ? kind : undefined;
+}
+
+function isPlanReviewApproval(approval: AppApprovalRequest): boolean {
+  return approval.toolName === 'ExitPlanMode' || approvalDisplayKind(approval) === 'plan_review';
+}
+
+function shouldAutoApproveApproval(approval: AppApprovalRequest, mode: PermissionMode): boolean {
+  if (mode === 'auto') return true;
+  if (mode === 'yolo') return !isPlanReviewApproval(approval);
+  return false;
 }
 
 /** Build ApprovalBlock from AppApprovalRequest (discriminated union) */
@@ -3733,12 +3751,14 @@ function setPermission(mode: PermissionMode): void {
   savePermissionToStorage(mode);
   persistSessionProfile({ permissionMode: mode });
 
-  // If switching to auto/yolo, auto-approve any currently-pending approvals for the active session
+  // If switching to auto/yolo, auto-approve pending approvals for the active
+  // session. In YOLO mode, keep plan review approvals pending for the user.
   if (mode === 'auto' || mode === 'yolo') {
     const sid = rawState.activeSessionId;
     if (sid) {
       const approvals = [...(rawState.approvalsBySession[sid] ?? [])];
       for (const a of approvals) {
+        if (!shouldAutoApproveApproval(a, mode)) continue;
         void respondApproval(a.approvalId, {
           decision: 'approved',
           scope: mode === 'yolo' ? 'session' : undefined,
