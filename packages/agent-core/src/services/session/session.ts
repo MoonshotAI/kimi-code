@@ -120,6 +120,10 @@ export interface ISessionService {
 
   create(input: SessionCreate, options?: SessionCreateOptions): Promise<Session>;
 
+  /**
+   * @deprecated Use {@link ISessionQueryService.list} instead. This thin
+   * wrapper delegates to `ISessionQueryService` and will be removed in M7.1.
+   */
   list(query: SessionListQuery): Promise<PageResponse<Session>>;
 
   get(id: string): Promise<Session>;
@@ -128,6 +132,11 @@ export interface ISessionService {
 
   fork(id: string, input: SessionFork): Promise<Session>;
 
+  /**
+   * @deprecated Use {@link ISessionQueryService.listChildren} instead. This
+   * thin wrapper delegates to `ISessionQueryService` and will be removed in
+   * M7.1.
+   */
   listChildren(id: string, query: SessionListQuery): Promise<PageResponse<Session>>;
 
   createChild(id: string, input: SessionChildCreate): Promise<Session>;

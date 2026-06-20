@@ -2,7 +2,7 @@ import { Disposable, IInstantiationService, InstantiationType, registerSingleton
 import { Emitter } from '../../base/common/event';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { AgentContextData, ContextMessage } from '../../agent/context';
-import type { JsonObject, ListSessionsPayload, SessionSummary } from '../../rpc';
+import type { JsonObject, SessionSummary } from '../../rpc';
 import {
   type CompactSessionRequest,
   type CompactSessionResponse,
@@ -27,6 +27,7 @@ import { toProtocolMessage } from '../message/message';
 import { IPromptService, type AgentStatePatch } from '../prompt/prompt';
 import { IQuestionService } from '../question/question';
 import {
+  ISessionQueryService,
   ISessionService,
   SessionNotFoundError,
   SessionUndoUnavailableError,
@@ -34,10 +35,9 @@ import {
   type SessionCreateOptions,
   type SessionListQuery,
 } from './session';
+import { SessionQueryService } from './sessionQueryService';
 import { applySessionTurnEvent, computeSessionStatus, tryGetSessionMeta } from './sessionStatus';
 
-const DEFAULT_PAGE_SIZE = 20;
-const MAX_PAGE_SIZE = 100;
 const DEFAULT_UNDO_MESSAGE_PAGE_SIZE = 50;
 const MAX_UNDO_MESSAGE_PAGE_SIZE = 100;
 const CHILD_SESSION_KIND = 'child';
@@ -105,6 +105,7 @@ export class SessionService extends Disposable implements ISessionService {
   private readonly _activeTurns = new Set<string>();
   private readonly _abortedTurns = new Set<string>();
   private _promptService: IPromptService | undefined;
+  private readonly _sessionQueryService: ISessionQueryService;
 
   constructor(
     @ICoreProcessService private readonly core: ICoreProcessService,
@@ -118,6 +119,21 @@ export class SessionService extends Disposable implements ISessionService {
       this.eventService.onDidPublish((event) => {
         this._handleBusEvent(event);
       }),
+    );
+    // Compose the query facade from our own deps so list / listChildren can
+    // delegate to it. Constructed eagerly (rather than resolved lazily through
+    // IInstantiationService) so it subscribes to the event bus from the start
+    // and its live status stays in lock-step with SessionService; this also
+    // keeps direct `new SessionService(...)` callers (e.g. unit tests) working
+    // without an ISessionQueryService stub in the DI container.
+    this._sessionQueryService = this._register(
+      new SessionQueryService(
+        this.core,
+        this.eventService,
+        this.instantiation,
+        this.approvalService,
+        this.questionService,
+      ),
     );
   }
 
@@ -231,44 +247,7 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   async list(query: SessionListQuery): Promise<PageResponse<Session>> {
-    const corePayload: ListSessionsPayload = {
-      workDir: query.workDir,
-      includeArchive: query.includeArchive,
-    };
-    const all = await this.core.rpc.listSessions(corePayload);
-    const sorted = all.toSorted((a, b) => b.updatedAt - a.updatedAt);
-
-    let pivotIndex = -1;
-    if (query.before_id !== undefined) {
-      pivotIndex = sorted.findIndex((s) => s.id === query.before_id);
-    } else if (query.after_id !== undefined) {
-      pivotIndex = sorted.findIndex((s) => s.id === query.after_id);
-    }
-
-    let slice: typeof sorted;
-    if (query.before_id !== undefined && pivotIndex >= 0) {
-      slice = sorted.slice(pivotIndex + 1);
-    } else if (query.after_id !== undefined && pivotIndex >= 0) {
-      slice = sorted.slice(0, pivotIndex);
-    } else {
-      slice = sorted;
-    }
-
-    const requestedSize = query.page_size ?? DEFAULT_PAGE_SIZE;
-    const pageSize = Math.min(Math.max(requestedSize, 1), MAX_PAGE_SIZE);
-    const pageSummaries = slice.slice(0, pageSize);
-    const hasMore = slice.length > pageSize;
-
-    const items = await Promise.all(
-      pageSummaries.map(async (s) =>
-        this._patchSessionStatus(toProtocolSession(s, await tryGetSessionMeta(this.core, s.id)))
-      ),
-    );
-
-    const filtered =
-      query.status !== undefined ? items.filter((s) => s.status === query.status) : items;
-
-    return { items: filtered, has_more: hasMore };
+    return this._sessionQueryService.list(query);
   }
 
   async get(id: string): Promise<Session> {
@@ -345,48 +324,7 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   async listChildren(id: string, query: SessionListQuery): Promise<PageResponse<Session>> {
-    await this.get(id);
-    const all = await this.core.rpc.listSessions({});
-    const sorted = all.toSorted((a, b) => b.updatedAt - a.updatedAt);
-    const children = sorted.filter(
-      (summary) =>
-        summary.metadata?.['parent_session_id'] === id &&
-        summary.metadata?.['child_session_kind'] === CHILD_SESSION_KIND,
-    );
-
-    let pivotIndex = -1;
-    if (query.before_id !== undefined) {
-      pivotIndex = children.findIndex((s) => s.id === query.before_id);
-    } else if (query.after_id !== undefined) {
-      pivotIndex = children.findIndex((s) => s.id === query.after_id);
-    }
-
-    let slice: typeof children;
-    if (query.before_id !== undefined && pivotIndex >= 0) {
-      slice = children.slice(pivotIndex + 1);
-    } else if (query.after_id !== undefined && pivotIndex >= 0) {
-      slice = children.slice(0, pivotIndex);
-    } else {
-      slice = children;
-    }
-
-    const requestedSize = query.page_size ?? DEFAULT_PAGE_SIZE;
-    const pageSize = Math.min(Math.max(requestedSize, 1), MAX_PAGE_SIZE);
-    const pageSummaries = slice.slice(0, pageSize);
-    const items = await Promise.all(
-      pageSummaries.map(async (s) =>
-        this._patchSessionStatus(toProtocolSession(s, await tryGetSessionMeta(this.core, s.id)))
-      ),
-    );
-    const filtered =
-      query.status !== undefined
-        ? items.filter((session) => session.status === query.status)
-        : items;
-
-    return {
-      items: filtered,
-      has_more: slice.length > pageSize,
-    };
+    return this._sessionQueryService.listChildren(id, query);
   }
 
   async createChild(id: string, input: SessionChildCreate): Promise<Session> {
