@@ -57,6 +57,59 @@ Example domain layout:
 This mirrors `vscode/src/vs/platform/<domain>/common/<domain>.ts` +
 `<domain>Service.ts`.
 
+## Domain decomposition (normative)
+
+A domain folder MAY decompose into up to five roles when the aggregate's
+concerns warrant the split. Not every domain needs all five — introduce a
+role only when it has a clear owner and a non-empty contract. The
+`<domain>.ts` + `<domain>Service.ts` layout above is the **command** role
+for a single-write-owner domain; the roles below extend it.
+
+| Role | File | Interface | Purpose | Introduce when |
+|---|---|---|---|---|
+| command | `<domain>Service.ts` | `I<Domain>Service` | Aggregate mutations/writes: create / update / archive / restore / purge / fork. The only write entry point for the aggregate. | The aggregate has a lifecycle that needs a stable owner. |
+| query | `<domain>QueryService.ts` | `I<Domain>QueryService` | Read models: list / search / count across scopes. No side effects. | The aggregate is listed / searched / counted under more than one scope. |
+| runtime | `<domain>RuntimeService.ts` | `I<Domain>RuntimeService` | Event-driven live state: per-id status / live state and status-change subscriptions. A projection, not truth. | The aggregate has live state derived from in-process objects / event streams that must not be written back to truth. |
+| repository | `<domain>Repository.ts` | `I<Domain>Repository` | Single-entity persistence: create / get / update and archive / restore / delete as atomic ops. Holds the aggregate's truth. | The aggregate persists and needs a single source of truth behind the service layer. |
+| index | `<domain>Index.ts` | `I<Domain>Index` | Read-model summary index: upsert / remove / list / count over Summary rows. | list / search would otherwise scan truth; the index keeps one read model. |
+
+`repository` and `index` are persistence-layer contracts (Domain /
+Persistence in the service-skill concept docs), not application services —
+they sit below command / query / runtime and are not registered as
+top-level `*Service` singletons.
+
+### Dependency direction within a domain (normative)
+
+These rules are enforced by the ROADMAP and checked by the M7.2 import fence:
+
+- `repository/` and `index/` do NOT depend on the application service layer
+  (command / query / runtime). They are the layer the services sit on.
+- Within a domain, the command / query / runtime roles do NOT call each
+  other's business methods. Cross-role effects compose through domain events
+  / lifecycle hooks, not direct business calls. A query needing per-id
+  enrichment, or a command needing a sibling read, goes through the lower
+  layer (`index` / `repository`) or an event.
+- The runtime↔services rule at the top of this file still holds: `services/`
+  may import the agent-core runtime; the runtime must not import back into
+  `services/`.
+
+### Migration gate (normative)
+
+Before any domain's migration milestone starts, that domain MUST have a
+finalized concept doc at
+`.agents/skills/service-skill/explanation/domains/<domain>.md`, plus any
+supporting notes under
+`.agents/skills/service-skill/reference/domains/<domain>/`. No concept doc
+→ the milestone does not start. This restates the gate in the ROADMAP global
+constraints.
+
+### Reference index
+
+- command — [`command-service.md`](../../../../.agents/skills/service-skill/reference/patterns/command-service.md)
+- query — [`query-service.md`](../../../../.agents/skills/service-skill/reference/patterns/query-service.md)
+- runtime — [`runtime-service.md`](../../../../.agents/skills/service-skill/reference/patterns/runtime-service.md)
+- repository + index — [`repository-and-index.md`](../../../../.agents/skills/service-skill/reference/patterns/repository-and-index.md)
+
 ## Out of scope (intentionally deferred)
 
 The following are recognised as VSCode-aligned improvements but **NOT**
