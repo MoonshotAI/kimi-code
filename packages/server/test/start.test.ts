@@ -81,12 +81,18 @@ function listenOnPort(host: string, port: number): Promise<Server> {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.once('error', reject);
-    server.listen({ host, port }, () => resolve(server));
+    server.listen({ host, port }, () => {
+      resolve(server);
+    });
   });
 }
 
 function closeNetServer(server: Server): Promise<void> {
-  return new Promise((resolve) => server.close(() => resolve()));
+  return new Promise((resolve) => {
+    server.close(() => {
+      resolve();
+    });
+  });
 }
 
 /** Find `port` such that both `port` and `port + 1` are free to bind. */
@@ -161,7 +167,7 @@ describe('startServer — lock + healthz smoke', () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  it('retries on port+1 and updates the lock when the requested port is held by a third party', async () => {
+  it('retries past the requested port and updates the lock when the requested port is held by a third party', async () => {
     // Occupy the requested port with a raw TCP server (a "third-party" process
     // from the server's point of view — it does NOT hold the lock).
     const { port, next } = await allocateAdjacentFreePair();
@@ -179,10 +185,15 @@ describe('startServer — lock + healthz smoke', () => {
       });
       running.push(r);
 
-      // Bound to the next port, and the lock advertises it so status/kill/ps work.
-      expect(r.address).toBe(`http://127.0.0.1:${String(next)}`);
+      // The exact port+1 retry sequence is covered by listenWithPortRetry's
+      // fake-gateway unit test below. In this integration path another worker
+      // can still grab `next`, so assert the actual retry result instead.
+      const boundUrl = new URL(r.address);
+      const boundPort = Number(boundUrl.port);
+      expect(boundUrl.hostname).toBe('127.0.0.1');
+      expect(boundPort).toBeGreaterThanOrEqual(next);
       const stored = JSON.parse(readFileSync(thirdPartyLockPath, 'utf8')) as LockContents;
-      expect(stored.port).toBe(next);
+      expect(stored.port).toBe(boundPort);
     } finally {
       await closeNetServer(occupant);
     }
