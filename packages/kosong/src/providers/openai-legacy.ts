@@ -37,6 +37,10 @@ import {
 } from './request-auth';
 import { clampCompletionTokensForSharedContextWindow } from './shared-context-window';
 import {
+  isKimiReasoningModel,
+  usesMaxCompletionTokensOnWire,
+} from './kimi-reasoning';
+import {
   normalizeToolCallIdsForProvider,
   sanitizeToolCallId,
   type ToolCallIdPolicy,
@@ -108,8 +112,7 @@ interface OpenAIToolCallOut {
 }
 
 function usesMaxCompletionTokens(model: string): boolean {
-  const normalized = model.toLowerCase();
-  return /^o\d(?:$|[-.])/.test(normalized) || /^gpt-5(?:$|[-.])/.test(normalized);
+  return usesMaxCompletionTokensOnWire(model);
 }
 
 function completionTokenKwargs(
@@ -447,6 +450,8 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private _defaultHeaders: Record<string, string> | undefined;
   private _reasoningKey: string | undefined;
   private _reasoningEffort: string | undefined;
+  /** When true, reasoning is explicitly disabled and must not be auto-enabled from history. */
+  private _thinkingExplicitlyOff: boolean;
   private _generationKwargs: OpenAILegacyGenerationKwargs;
   private _toolMessageConversion: ToolMessageConversion;
   private _client: OpenAI | undefined;
@@ -471,6 +476,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
         ? normalizedReasoningKey
         : undefined;
     this._reasoningEffort = undefined;
+    this._thinkingExplicitlyOff = false;
     this._generationKwargs =
       options.maxTokens !== undefined ? completionTokenKwargs(this._model, options.maxTokens) : {};
     this._toolMessageConversion = options.toolMessageConversion ?? null;
@@ -486,6 +492,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   }
 
   get thinkingEffort(): ThinkingEffort | null {
+    if (this._thinkingExplicitlyOff) return 'off';
     return reasoningEffortToThinkingEffort(this._reasoningEffort);
   }
 
@@ -538,7 +545,11 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     // Skip when the caller already pinned reasoning_effort via withGenerationKwargs —
     // their value would otherwise be silently overwritten below.
     // See: https://github.com/MoonshotAI/kimi-code/issues/1616
-    if (reasoningEffort === undefined && kwargs['reasoning_effort'] === undefined) {
+    if (
+      !this._thinkingExplicitlyOff &&
+      reasoningEffort === undefined &&
+      kwargs['reasoning_effort'] === undefined
+    ) {
       const hasThinkPart = history.some((message) =>
         message.content.some((part) => part.type === 'think'),
       );
@@ -575,6 +586,37 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       createParams['reasoning_effort'] = reasoningEffort;
     }
 
+    if (isKimiReasoningModel(this._model)) {
+      const extraBody = kwargs['extra_body'];
+      const extraRecord =
+        typeof extraBody === 'object' && extraBody !== null
+          ? (extraBody as Record<string, unknown>)
+          : undefined;
+      const extraThinking =
+        typeof extraRecord?.thinking === 'object' && extraRecord.thinking !== null
+          ? (extraRecord.thinking as Record<string, unknown>)
+          : undefined;
+      let thinkingType: 'enabled' | 'disabled' | undefined;
+      if (this._thinkingExplicitlyOff) {
+        thinkingType = 'disabled';
+      } else if (reasoningEffort !== undefined) {
+        thinkingType = 'enabled';
+      }
+      if (thinkingType !== undefined || extraThinking !== undefined) {
+        createParams['thinking'] = {
+          ...extraThinking,
+          ...(thinkingType !== undefined ? { type: thinkingType } : {}),
+        };
+      }
+      if (extraRecord !== undefined) {
+        const { thinking: _, extra_body: __, ...restExtra } = extraRecord;
+        Object.assign(createParams, restExtra);
+      }
+      // Kimi gateways expect extra_body fields hoisted to the top level.
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      delete createParams['extra_body'];
+    }
+
     try {
       const client = this._createClient(options?.auth);
       const response = (await client.chat.completions.create(
@@ -588,9 +630,14 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): OpenAILegacyChatProvider {
-    const reasoningEffort = thinkingEffortToReasoningEffort(effort);
     const clone = this._clone();
-    clone._reasoningEffort = reasoningEffort;
+    if (effort === 'off') {
+      clone._thinkingExplicitlyOff = true;
+      clone._reasoningEffort = undefined;
+    } else {
+      clone._thinkingExplicitlyOff = false;
+      clone._reasoningEffort = thinkingEffortToReasoningEffort(effort);
+    }
     return clone;
   }
 

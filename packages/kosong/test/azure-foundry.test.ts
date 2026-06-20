@@ -119,7 +119,7 @@ describe('AzureFoundryChatProvider', () => {
     });
   });
 
-  it('clamps max_tokens against the shared Foundry context window before sending', async () => {
+  it('clamps max_completion_tokens against the shared Foundry context window for Kimi models', async () => {
     await withHarness(async (harness) => {
       let capturedBody: Record<string, unknown> | undefined;
       harness.route('POST', '/openai/v1/chat/completions', async (request, reply) => {
@@ -149,9 +149,52 @@ describe('AzureFoundryChatProvider', () => {
       }
 
       expect(capturedBody).toBeDefined();
-      expect(capturedBody!['max_tokens']).toBeTypeOf('number');
-      expect(capturedBody!['max_tokens'] as number).toBeLessThan(262144);
-      expect(capturedBody!['max_tokens'] as number).toBeGreaterThan(0);
+      expect(capturedBody!['max_completion_tokens']).toBeTypeOf('number');
+      expect(capturedBody!['max_completion_tokens'] as number).toBeLessThan(262144);
+      expect(capturedBody!['max_completion_tokens'] as number).toBeGreaterThan(0);
+      expect(capturedBody!['max_tokens']).toBeUndefined();
+    });
+  });
+
+  it('sends Kimi thinking enablement alongside reasoning_effort', async () => {
+    await withHarness(async (harness) => {
+      let capturedBody: Record<string, unknown> | undefined;
+      harness.route('POST', '/openai/v1/chat/completions', async (request, reply) => {
+        capturedBody = request.bodyJson as Record<string, unknown>;
+        await reply.sseJson(200, [
+          {
+            id: 'chatcmpl-azure-kimi',
+            object: 'chat.completion.chunk',
+            created: 1234567890,
+            model: 'Kimi-K2.6',
+            choices: [
+              {
+                index: 0,
+                delta: { reasoning_content: 'thinking', content: 'done' },
+                finish_reason: 'stop',
+              },
+            ],
+          },
+        ]);
+      });
+
+      const provider = new AzureFoundryChatProvider({
+        model: 'Kimi-K2.6',
+        apiKey: 'foundry-key',
+        baseUrl: `${harness.baseUrl}/openai/v1`,
+        sharedContextWindowTokens: 262144,
+      }).withThinking('medium');
+      const stream = await provider.generate('', [], [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      ]);
+      for await (const _part of stream) {
+        // drain
+      }
+
+      expect(capturedBody!['reasoning_effort']).toBe('medium');
+      expect(capturedBody!['thinking']).toEqual({ type: 'enabled' });
+      expect(capturedBody!['max_completion_tokens']).toBeTypeOf('number');
+      expect(capturedBody!['max_tokens']).toBeUndefined();
     });
   });
 });
