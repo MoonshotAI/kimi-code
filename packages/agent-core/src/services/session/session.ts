@@ -145,7 +145,46 @@ export interface ISessionService {
   readonly onDidClose: Event<{ sessionId: string }>;
 }
 
+export interface SessionSearchQuery extends SessionListQuery {
+  /** Case-insensitive substring matched against the session title. */
+  readonly q: string;
+}
+
+/**
+ * Read-model facade for sessions.
+ *
+ * Serves list / count / search across the `SessionQueryScope`s from the
+ * `SessionIndex` (M1.2) read model. It is a pure query surface: it never
+ * mutates session state and never resumes an agent — hydration is limited to
+ * cold reads (`listSessions` + per-row `getSessionMetadata`). The command
+ * path (`ISessionService`) delegates its list surfaces here (M1.3) and will
+ * drop them entirely in M7.1.
+ */
+export interface ISessionQueryService {
+  readonly _serviceBrand: undefined;
+
+  /** List sessions, honoring `workDir` / `includeArchive` / cursor / status. */
+  list(query: SessionListQuery): Promise<PageResponse<Session>>;
+
+  /** List direct children of a parent session. */
+  listChildren(id: string, query: SessionListQuery): Promise<PageResponse<Session>>;
+
+  /** List every session regardless of workDir (global scope). */
+  listGlobal(query: SessionListQuery): Promise<PageResponse<Session>>;
+
+  /** List sessions whose workDir maps to `workspaceId`. */
+  listByWorkspace(workspaceId: string, query: SessionListQuery): Promise<PageResponse<Session>>;
+
+  /** Count sessions in `scope` (defaults to global). */
+  count(scope?: SessionQueryScope): Promise<number>;
+
+  /** Search sessions by title within the scope implied by the query. */
+  search(query: SessionSearchQuery): Promise<PageResponse<Session>>;
+}
+
 export const ISessionService = createDecorator<ISessionService>('sessionService');
+
+export const ISessionQueryService = createDecorator<ISessionQueryService>('sessionQueryService');
 
 export class SessionUndoUnavailableError extends Error {
   readonly sessionId: string;

@@ -3,7 +3,6 @@ import { Emitter } from '../../base/common/event';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { AgentContextData, ContextMessage } from '../../agent/context';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '../../rpc';
-import type { SessionMeta } from '../../session';
 import {
   type CompactSessionRequest,
   type CompactSessionResponse,
@@ -35,6 +34,7 @@ import {
   type SessionCreateOptions,
   type SessionListQuery,
 } from './session';
+import { applySessionTurnEvent, computeSessionStatus, tryGetSessionMeta } from './sessionStatus';
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
@@ -136,22 +136,13 @@ export class SessionService extends Disposable implements ISessionService {
    *   5. idle              — everything else
    */
   private _computeStatus(sessionId: string): SessionStatus {
-    if (this.approvalService.listPending(sessionId).length > 0) {
-      return 'awaiting_approval';
-    }
-    if (this.questionService.listPending(sessionId).length > 0) {
-      return 'awaiting_question';
-    }
-    if (
-      this.promptService.getCurrentPromptId(sessionId) !== undefined ||
-      this._activeTurns.has(sessionId)
-    ) {
-      return 'running';
-    }
-    if (this._abortedTurns.has(sessionId)) {
-      return 'aborted';
-    }
-    return 'idle';
+    return computeSessionStatus({
+      awaitingApproval: this.approvalService.listPending(sessionId).length > 0,
+      awaitingQuestion: this.questionService.listPending(sessionId).length > 0,
+      hasActivePrompt: this.promptService.getCurrentPromptId(sessionId) !== undefined,
+      hasActiveTurn: this._activeTurns.has(sessionId),
+      wasAborted: this._abortedTurns.has(sessionId),
+    });
   }
 
   /**
@@ -192,29 +183,15 @@ export class SessionService extends Disposable implements ISessionService {
     const sessionId = (event as { sessionId?: string }).sessionId;
     if (sessionId === undefined || sessionId === '' || type === undefined) return;
 
+    applySessionTurnEvent(
+      { activeTurns: this._activeTurns, abortedTurns: this._abortedTurns },
+      event,
+    );
+
     switch (type) {
-      case 'turn.started': {
-        this._activeTurns.add(sessionId);
-        this._abortedTurns.delete(sessionId);
-        this._emitStatusChanged(sessionId);
-        break;
-      }
-      case 'turn.ended': {
-        this._activeTurns.delete(sessionId);
-        const reason = (event as { reason?: string }).reason;
-        if (reason === 'cancelled' || reason === 'failed') {
-          this._abortedTurns.add(sessionId);
-        } else {
-          this._abortedTurns.delete(sessionId);
-        }
-        this._emitStatusChanged(sessionId);
-        break;
-      }
-      case 'prompt.submitted': {
-        this._abortedTurns.delete(sessionId);
-        this._emitStatusChanged(sessionId);
-        break;
-      }
+      case 'turn.started':
+      case 'turn.ended':
+      case 'prompt.submitted':
       case 'prompt.completed':
       case 'prompt.aborted':
       case 'event.approval.requested':
@@ -247,7 +224,7 @@ export class SessionService extends Disposable implements ISessionService {
       } catch {
       }
     }
-    const meta = await this.tryGetMeta(summary.id);
+    const meta = await tryGetSessionMeta(this.core, summary.id);
     const session = this._patchSessionStatus(toProtocolSession(summary, meta));
     this.emitCreated(session);
     return session;
@@ -284,7 +261,7 @@ export class SessionService extends Disposable implements ISessionService {
 
     const items = await Promise.all(
       pageSummaries.map(async (s) =>
-        this._patchSessionStatus(toProtocolSession(s, await this.tryGetMeta(s.id)))
+        this._patchSessionStatus(toProtocolSession(s, await tryGetSessionMeta(this.core, s.id)))
       ),
     );
 
@@ -300,7 +277,7 @@ export class SessionService extends Disposable implements ISessionService {
     if (summary === undefined) {
       throw new SessionNotFoundError(id);
     }
-    const meta = await this.tryGetMeta(id);
+    const meta = await tryGetSessionMeta(this.core, id);
     return this._patchSessionStatus(toProtocolSession(summary, meta));
   }
 
@@ -348,7 +325,7 @@ export class SessionService extends Disposable implements ISessionService {
 
     const allAfter = await this.core.rpc.listSessions({});
     const summaryAfter = allAfter.find((s) => s.id === id) ?? summary;
-    const meta = await this.tryGetMeta(id);
+    const meta = await tryGetSessionMeta(this.core, id);
     return this._patchSessionStatus(toProtocolSession(summaryAfter, meta));
   }
 
@@ -361,7 +338,7 @@ export class SessionService extends Disposable implements ISessionService {
       title,
       metadata,
     });
-    const meta = await this.tryGetMeta(summary.id);
+    const meta = await tryGetSessionMeta(this.core, summary.id);
     const session = this._patchSessionStatus(toProtocolSession(summary, meta));
     this.emitCreated(session);
     return session;
@@ -398,7 +375,7 @@ export class SessionService extends Disposable implements ISessionService {
     const pageSummaries = slice.slice(0, pageSize);
     const items = await Promise.all(
       pageSummaries.map(async (s) =>
-        this._patchSessionStatus(toProtocolSession(s, await this.tryGetMeta(s.id)))
+        this._patchSessionStatus(toProtocolSession(s, await tryGetSessionMeta(this.core, s.id)))
       ),
     );
     const filtered =
@@ -425,7 +402,7 @@ export class SessionService extends Disposable implements ISessionService {
       title,
       metadata,
     });
-    const meta = await this.tryGetMeta(summary.id);
+    const meta = await tryGetSessionMeta(this.core, summary.id);
     const session = this._patchSessionStatus(toProtocolSession(summary, meta));
     this.emitCreated(session);
     return session;
@@ -544,15 +521,6 @@ export class SessionService extends Disposable implements ISessionService {
       throw new SessionNotFoundError(id);
     }
     return summary;
-  }
-
-  private async tryGetMeta(id: string): Promise<SessionMeta | undefined> {
-    try {
-      const meta = await this.core.rpc.getSessionMetadata({ sessionId: id });
-      return meta;
-    } catch {
-      return undefined;
-    }
   }
 
   override dispose(): void {
