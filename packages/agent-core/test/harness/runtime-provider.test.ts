@@ -560,7 +560,31 @@ describe('resolveRuntimeProvider customHeaders propagation', () => {
       apiKey: 'foundry-key',
       baseUrl: 'https://example.openai.azure.com/openai/v1',
       model: 'gpt-4o',
+      sharedContextWindowTokens: 128000,
     });
+  });
+
+  it('rejects azure-foundry providers without a base_url at resolve time', () => {
+    expect(() =>
+      resolveRuntimeProvider({
+        config: {
+          defaultModel: 'foundry-alias',
+          providers: {
+            foundry: {
+              type: 'azure-foundry',
+              apiKey: 'foundry-key',
+            },
+          },
+          models: {
+            'foundry-alias': {
+              provider: 'foundry',
+              model: 'gpt-4o',
+              maxContextSize: 128000,
+            },
+          },
+        },
+      }),
+    ).toThrow(/requires base_url/);
   });
 
   it('forwards customHeaders to an openai_responses provider', () => {

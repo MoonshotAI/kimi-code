@@ -35,6 +35,7 @@ import {
   requireProviderApiKey,
   resolveAuthBackedClient,
 } from './request-auth';
+import { clampCompletionTokensForSharedContextWindow } from './shared-context-window';
 import {
   normalizeToolCallIdsForProvider,
   sanitizeToolCallId,
@@ -71,6 +72,8 @@ export interface OpenAILegacyOptions {
   model: string;
   stream?: boolean | undefined;
   maxTokens?: number | undefined;
+  /** Total input+output budget when the backend enforces a shared context window. */
+  sharedContextWindowTokens?: number | undefined;
   reasoningKey?: string | undefined;
   httpClient?: unknown;
   defaultHeaders?: Record<string, string>;
@@ -449,6 +452,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private _client: OpenAI | undefined;
   private _httpClient: unknown;
   private _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
+  private _sharedContextWindowTokens: number | undefined;
 
   constructor(options: OpenAILegacyOptions) {
     const apiKey = options.apiKey ?? process.env['OPENAI_API_KEY'];
@@ -472,6 +476,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     this._toolMessageConversion = options.toolMessageConversion ?? null;
     this._httpClient = options.httpClient;
     this._clientFactory = options.clientFactory;
+    this._sharedContextWindowTokens = options.sharedContextWindowTokens;
 
     this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
   }
@@ -512,7 +517,16 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     const kwargs: Record<string, unknown> = normalizeGenerationKwargs(
       this._model,
-      this._generationKwargs,
+      this._sharedContextWindowTokens === undefined
+        ? this._generationKwargs
+        : clampCompletionTokensForSharedContextWindow({
+            model: this._model,
+            sharedContextWindowTokens: this._sharedContextWindowTokens,
+            generationKwargs: this._generationKwargs,
+            systemPrompt,
+            history,
+            tools,
+          }),
     );
 
     // Determine reasoning_effort

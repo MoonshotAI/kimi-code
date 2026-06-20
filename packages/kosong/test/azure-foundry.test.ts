@@ -22,6 +22,27 @@ describe('AzureFoundryChatProvider', () => {
     expect(provider.name).toBe('azure-foundry');
   });
 
+  it('rejects a missing base_url before constructing the client', () => {
+    expect(
+      () =>
+        new AzureFoundryChatProvider({
+          model: 'gpt-4o',
+          apiKey: 'test-key',
+        }),
+    ).toThrow(/baseUrl is required/);
+  });
+
+  it('rejects a blank base_url before constructing the client', () => {
+    expect(
+      () =>
+        new AzureFoundryChatProvider({
+          model: 'gpt-4o',
+          apiKey: 'test-key',
+          baseUrl: '   ',
+        }),
+    ).toThrow(/baseUrl is required/);
+  });
+
   it('sends Foundry api-key auth instead of Bearer for chat completions', async () => {
     await withHarness(async (harness) => {
       harness.route('POST', '/openai/v1/chat/completions', async (request, reply) => {
@@ -95,6 +116,42 @@ describe('AzureFoundryChatProvider', () => {
         // drain
       }
       expect(capturedPath).toBe('/openai/v1/chat/completions');
+    });
+  });
+
+  it('clamps max_tokens against the shared Foundry context window before sending', async () => {
+    await withHarness(async (harness) => {
+      let capturedBody: Record<string, unknown> | undefined;
+      harness.route('POST', '/openai/v1/chat/completions', async (request, reply) => {
+        capturedBody = request.bodyJson as Record<string, unknown>;
+        await reply.sseJson(200, [
+          {
+            id: 'chatcmpl-azure-cap',
+            object: 'chat.completion.chunk',
+            created: 1234567890,
+            model: 'Kimi-K2.6',
+            choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }],
+          },
+        ]);
+      });
+
+      const provider = new AzureFoundryChatProvider({
+        model: 'Kimi-K2.6',
+        apiKey: 'foundry-key',
+        baseUrl: `${harness.baseUrl}/openai/v1`,
+        sharedContextWindowTokens: 262144,
+      }).withMaxCompletionTokens(262144);
+      const stream = await provider.generate('system prompt', [], [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      ]);
+      for await (const _part of stream) {
+        // drain
+      }
+
+      expect(capturedBody).toBeDefined();
+      expect(capturedBody!['max_tokens']).toBeTypeOf('number');
+      expect(capturedBody!['max_tokens'] as number).toBeLessThan(262144);
+      expect(capturedBody!['max_tokens'] as number).toBeGreaterThan(0);
     });
   });
 });

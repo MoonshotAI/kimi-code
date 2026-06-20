@@ -1,3 +1,4 @@
+import { ChatProviderError } from '#/errors';
 import type { ProviderRequestAuth } from '#/provider';
 import OpenAI from 'openai';
 
@@ -15,9 +16,19 @@ function normalizeAzureFoundryBaseUrl(baseUrl: string | undefined): string | und
   return trimmed.replace(/\/+$/, '');
 }
 
+function requireAzureFoundryBaseUrl(baseUrl: string | undefined): string {
+  const normalized = normalizeAzureFoundryBaseUrl(baseUrl);
+  if (normalized === undefined) {
+    throw new ChatProviderError(
+      'AzureFoundryChatProvider: baseUrl is required. Set base_url in config.toml or AZURE_FOUNDRY_BASE_URL in [providers.<name>.env]. Example: https://YOUR-RESOURCE.openai.azure.com/openai/v1',
+    );
+  }
+  return normalized;
+}
+
 function buildAzureFoundryClient(
   apiKey: string,
-  baseUrl: string | undefined,
+  baseUrl: string,
   defaultHeaders: Record<string, string> | undefined,
   httpClient: unknown,
   auth?: ProviderRequestAuth,
@@ -49,12 +60,17 @@ function buildAzureFoundryClient(
  * Targets Foundry's OpenAI v1-compatible inference route
  * (`https://{resource}.openai.azure.com/openai/v1`) and authenticates with
  * the Foundry `api-key` header rather than Bearer auth.
+ *
+ * Foundry-hosted Kimi models use a shared input+output context window. Pass
+ * `sharedContextWindowTokens` (wired from `max_context_size` in config) so
+ * completion budgets are clamped against the serialized prompt before each
+ * request.
  */
 export class AzureFoundryChatProvider extends OpenAILegacyChatProvider {
   override readonly name = 'azure-foundry';
 
   constructor(options: AzureFoundryOptions) {
-    const baseUrl = normalizeAzureFoundryBaseUrl(options.baseUrl);
+    const baseUrl = requireAzureFoundryBaseUrl(options.baseUrl);
     const apiKey = options.apiKey;
     super({
       ...options,
@@ -62,7 +78,7 @@ export class AzureFoundryChatProvider extends OpenAILegacyChatProvider {
       clientFactory: (auth) =>
         buildAzureFoundryClient(
           apiKey ?? '',
-          baseUrl,
+          requireAzureFoundryBaseUrl(baseUrl),
           options.defaultHeaders,
           options.httpClient,
           auth,

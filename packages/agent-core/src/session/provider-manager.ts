@@ -109,6 +109,7 @@ export class ProviderManager implements ModelProvider {
       alias.model,
       this.options.kimiRequestHeaders,
       alias.maxOutputSize,
+      alias.maxContextSize,
       alias.reasoningKey,
       this.options.promptCacheKey,
       alias.adaptiveThinking,
@@ -221,6 +222,7 @@ function toKosongProviderConfig(
   model: string,
   kimiRequestHeaders: Record<string, string> | undefined,
   maxOutputSize: number | undefined,
+  maxContextSize: number | undefined,
   reasoningKey: string | undefined,
   promptCacheKey: string | undefined,
   adaptiveThinking: boolean | undefined,
@@ -245,15 +247,24 @@ function toKosongProviderConfig(
         reasoningKey,
         ...defaultHeadersField(provider.customHeaders),
       };
-    case 'azure-foundry':
+    case 'azure-foundry': {
+      const baseUrl = providerValue(provider.baseUrl, provider.env, 'AZURE_FOUNDRY_BASE_URL');
+      if (baseUrl === undefined) {
+        throw new KimiError(
+          ErrorCodes.MODEL_CONFIG_INVALID,
+          'Provider type "azure-foundry" requires base_url (or AZURE_FOUNDRY_BASE_URL in [providers.<name>.env]). Example: https://YOUR-RESOURCE.openai.azure.com/openai/v1',
+        );
+      }
       return {
         type: 'azure-foundry',
         model,
-        baseUrl: providerValue(provider.baseUrl, provider.env, 'AZURE_FOUNDRY_BASE_URL'),
+        baseUrl,
         apiKey: providerApiKey(provider),
         reasoningKey,
+        sharedContextWindowTokens: maxContextSize,
         ...defaultHeadersField(provider.customHeaders),
       };
+    }
     case 'kimi':
       return {
         type: 'kimi',

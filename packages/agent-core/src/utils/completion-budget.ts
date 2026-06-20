@@ -50,18 +50,21 @@ function parseEnvBudget(raw: string | undefined): EnvBudget {
 
 /**
  * Compute the effective `max_completion_tokens` cap.
+ *
+ * Uses the explicit hard cap or reserved-context fallback when set, clamped
+ * to the model context window. Shared-window providers reject requests where
+ * input tokens plus max_completion_tokens exceed the total window.
  */
 export function computeCompletionBudgetCap(args: {
   readonly budget: CompletionBudgetConfig;
   readonly capability: ModelCapability | undefined;
 }): number {
   const maxCtx = args.capability?.max_context_tokens ?? 0;
-  // The provider backend computes the safe request-specific value from the
-  // serialized prompt. Locally using the largest cap avoids cutting off
-  // thinking before the model produces a summary.
-  const cap =
+  const requested =
     args.budget.hardCap ??
-    (maxCtx > 0 ? maxCtx : args.budget.fallback ?? DEFAULT_UNKNOWN_CONTEXT_FALLBACK);
+    args.budget.fallback ??
+    (maxCtx > 0 ? maxCtx : DEFAULT_UNKNOWN_CONTEXT_FALLBACK);
+  const cap = maxCtx > 0 ? Math.min(requested, maxCtx) : requested;
   return Math.max(MIN_FLOOR, cap);
 }
 

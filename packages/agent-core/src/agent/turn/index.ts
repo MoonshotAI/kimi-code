@@ -40,6 +40,11 @@ import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
+import {
+  hasToolResultsSinceLastUserMessage,
+  TOOL_STALL_RECOVERY_NAME,
+  TOOL_STALL_RECOVERY_TEXT,
+} from './tool-stall-recovery';
 
 interface ActiveTurn {
   readonly turnId: number;
@@ -613,6 +618,7 @@ export class TurnFlow {
   private async runStepLoop(turnId: number, signal: AbortSignal): Promise<LoopTurnStopReason> {
     let stopHookContinuationUsed = false;
     let goalOutcomeMessageContinuationUsed = false;
+    let toolStallContinuationUsed = false;
     const deduper = new ToolCallDeduplicator({ telemetry: this.agent.telemetry });
     await this.agent.mcp?.waitForInitialLoad(signal);
     // Surface the active goal at the start of the turn (append-only; no-op when
@@ -676,6 +682,29 @@ export class TurnFlow {
                   this.agent.context.popMatchedMessage(isGoalOutcomeReminderOrigin);
                   return { continue: false };
                 }
+                return { continue: true };
+              }
+
+              // 3b. Recover once when the model ends a step without tools after
+              //     tool results already landed in the same turn (common with
+              //     shared-window thinking models that stop after long reasoning).
+              if (
+                !toolStallContinuationUsed &&
+                ctx.stopReason === 'end_turn' &&
+                ctx.stepNumber > 1 &&
+                hasToolResultsSinceLastUserMessage(this.agent.context.messages)
+              ) {
+                if (!hasStepBudgetRemaining(loopControl?.maxStepsPerTurn, ctx.stepNumber)) {
+                  return { continue: false };
+                }
+                toolStallContinuationUsed = true;
+                this.agent.context.appendUserMessage(
+                  [{ type: 'text', text: TOOL_STALL_RECOVERY_TEXT }],
+                  {
+                    kind: 'system_trigger',
+                    name: TOOL_STALL_RECOVERY_NAME,
+                  },
+                );
                 return { continue: true };
               }
 
