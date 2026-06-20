@@ -3,6 +3,7 @@ import { encodeWorkDirKey } from '../../session/store';
 import type { Event } from '../../base/common/event';
 import type { SessionSummary } from '../../rpc';
 import type { SessionMeta } from '../../session';
+import type { AgentStateSnapshot } from '../prompt/prompt';
 import {
   emptySessionUsage,
   type CompactSessionRequest,
@@ -13,6 +14,7 @@ import {
   type SessionChildCreate,
   type SessionCreate,
   type SessionFork,
+  type SessionStatus,
   type SessionStatusResponse,
   type SessionUpdate,
   type UndoSessionRequest,
@@ -194,6 +196,53 @@ export interface ISessionQueryService {
 export const ISessionService = createDecorator<ISessionService>('sessionService');
 
 export const ISessionQueryService = createDecorator<ISessionQueryService>('sessionQueryService');
+
+export const ISessionRuntimeService =
+  createDecorator<ISessionRuntimeService>('sessionRuntimeService');
+
+/**
+ * In-process payload fired by `ISessionRuntimeService.onDidChangeStatus` when a
+ * session's computed lifecycle status changes. The wire-level
+ * `event.session.status_changed` event is still published unchanged; this is
+ * the camelCase in-process projection carrying the session id explicitly.
+ */
+export interface SessionStatusChanged {
+  readonly sessionId: string;
+  readonly status: SessionStatus;
+  readonly previousStatus: SessionStatus;
+  readonly currentPromptId?: string;
+}
+
+/**
+ * Cold/live runtime projection for a session. `{ live: false }` is returned
+ * when no agent is currently loaded (no `AgentStateSnapshot` is available from
+ * `IPromptService`); otherwise `agentState` carries the live snapshot. The
+ * runtime service never resumes an agent to answer this.
+ */
+export type SessionLiveState =
+  | { readonly live: false }
+  | { readonly live: true; readonly agentState: AgentStateSnapshot };
+
+/**
+ * Runtime facade for sessions (runtime role).
+ *
+ * Event-driven live-state projection: per-id status (`getStatus`), a cold/live
+ * indicator (`getLiveState`), and a status-change subscription
+ * (`onDidChangeStatus`). Driven by the global `IEventService` stream — a
+ * projection, not truth; it never writes status back to the store.
+ */
+export interface ISessionRuntimeService {
+  readonly _serviceBrand: undefined;
+
+  /** Full status snapshot for a session (protocol `SessionStatusResponse`). */
+  getStatus(id: string): Promise<SessionStatusResponse>;
+
+  /** Cold/live indicator; never resumes an agent. */
+  getLiveState(id: string): Promise<SessionLiveState>;
+
+  /** Fires when a session's computed status changes. */
+  readonly onDidChangeStatus: Event<SessionStatusChanged>;
+}
 
 export class SessionUndoUnavailableError extends Error {
   readonly sessionId: string;
