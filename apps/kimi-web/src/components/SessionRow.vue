@@ -213,7 +213,7 @@ defineExpose({ closeMenu, cancelArchive });
     <!-- Kebab dropdown -->
     <div ref="menuRef" v-if="menuOpen" class="menu" @click.stop>
       <button class="menu-item copy-id" @click.stop="copySessionId">
-        {{ copiedId ? '已复制 ✓' : '复制 Session ID ⧉' }}
+        {{ copiedId ? `${t('header.copied')} ✓` : `${t('header.copySessionId')} ⧉` }}
       </button>
       <div class="menu-divider" />
       <button class="menu-item" @click.stop="startRename">{{ t('sidebar.rename') }}</button>
