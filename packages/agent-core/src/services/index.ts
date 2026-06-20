@@ -95,6 +95,8 @@ export {
   RECENT_ROOTS_LIMIT,
 } from './workspace/workspaceFs';
 export { WorkspaceFsService } from './workspace/workspaceFsService';
+export { IWorkspaceService } from './workspace/workspace';
+export { WorkspaceService } from './workspace/workspaceService';
 
 export {
   IAuthSummaryService,

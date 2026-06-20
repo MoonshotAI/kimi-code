@@ -13,3 +13,5 @@ export {
   RECENT_ROOTS_LIMIT,
 } from './workspaceFs';
 export { WorkspaceFsService } from './workspaceFsService';
+export { IWorkspaceService } from './workspace';
+export { WorkspaceService } from './workspaceService';
