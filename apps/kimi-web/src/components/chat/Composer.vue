@@ -134,6 +134,38 @@ const {
 });
 
 // ---------------------------------------------------------------------------
+// Close slash/mention menus on click outside
+// ---------------------------------------------------------------------------
+
+const cinWrapRef = ref<HTMLDivElement | null>(null);
+
+function closeMenus(): void {
+  slashOpen.value = false;
+  mentionOpen.value = false;
+  // Cancel any pending mention lookup so the menu does not re-open after an
+  // outside click while the debounced search is still in flight.
+  if (mentionTimer !== null) {
+    clearTimeout(mentionTimer);
+    mentionTimer = null;
+  }
+  mentionLoading.value = false;
+}
+
+function onComposerDocClick(e: MouseEvent): void {
+  const t = e.target as Node;
+  if (cinWrapRef.value?.contains(t)) return;
+  closeMenus();
+}
+
+watch(() => slashOpen.value || mentionOpen.value, (open) => {
+  if (open) {
+    document.addEventListener('click', onComposerDocClick, true);
+  } else {
+    document.removeEventListener('click', onComposerDocClick, true);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Input event handler — updates both menus
 // ---------------------------------------------------------------------------
 
@@ -452,6 +484,7 @@ function onDocClick(e: MouseEvent): void {
 
 onUnmounted(() => {
   document.removeEventListener('click', onDocClick, true);
+  document.removeEventListener('click', onComposerDocClick, true);
 });
 
 // Context formatting
@@ -637,7 +670,7 @@ function selectModel(modelId: string): void {
     <!-- Main composer card -->
     <div class="composer-card">
       <!-- Input row with popup menus -->
-      <div class="cin-wrap">
+      <div ref="cinWrapRef" class="cin-wrap">
         <!-- Slash menu (above textarea) -->
         <SlashMenu
           v-if="slashOpen"
