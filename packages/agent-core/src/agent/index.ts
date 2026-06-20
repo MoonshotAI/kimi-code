@@ -22,7 +22,7 @@ import {
   type IInstantiationService,
 } from '../di';
 import { BackgroundService, BackgroundTaskPersistence, IBackgroundService } from './background';
-import { AgentEventBus, IAgentEventBus } from './event-bus';
+import { DomainEventBus, IDomainEventBus } from '../event/event-bus';
 import { ILifecycleService, LifecycleService } from './lifecycle';
 import {
   CompactionService,
@@ -129,7 +129,7 @@ export class Agent {
   readonly planMode: IPlanService;
   readonly swarmMode: ISwarmService;
   readonly usage: IUsageService;
-  readonly eventBus: IAgentEventBus;
+  readonly eventBus: IDomainEventBus;
   readonly lifecycle: ILifecycleService;
   private readonly scope: IInstantiationService;
   readonly skills: IAgentSkillService | null;
@@ -210,8 +210,8 @@ export class Agent {
     );
     perAgentServices.set(IReplayService, new SyncDescriptor(ReplayService, [options.replay]));
     perAgentServices.set(
-      IAgentEventBus,
-      new SyncDescriptor(AgentEventBus, [
+      IDomainEventBus,
+      new SyncDescriptor(DomainEventBus, [
         (event: AgentEvent) => {
           if (!this.records.restoring) void this.rpc?.emitEvent?.(event);
         },
@@ -235,7 +235,7 @@ export class Agent {
       perAgentServices,
     );
 
-    this.eventBus = this.scope.invokeFunction((accessor) => accessor.get(IAgentEventBus));
+    this.eventBus = this.scope.invokeFunction((accessor) => accessor.get(IDomainEventBus));
     this.lifecycle = this.scope.invokeFunction((accessor) => accessor.get(ILifecycleService));
     this.records = this.scope.invokeFunction((accessor) => accessor.get(IRecordsService));
     this.fullCompaction = this.scope.invokeFunction((accessor) => accessor.get(ICompactionService));
