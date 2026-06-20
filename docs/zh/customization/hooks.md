@@ -98,7 +98,7 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 
 | 事件 | Matcher 匹配的是 | 会触发阻断？ | 说明 |
 | --- | --- | --- | --- |
-| `UserPromptSubmit` | 用户提交的文本内容 | ✓ | 用户发送消息时触发；返回文本会附加到上下文；若阻断，本轮不调用模型 |
+| `UserPromptSubmit` | 从提交的 content part 中提取的文本 | ✓ | 用户发送消息时触发；返回文本会附加到上下文；若阻断，本轮不调用模型 |
 | `PreToolUse` | 工具名 | ✓ | 工具调用前触发（权限检查前）；阻断后工具不会执行 |
 | `Stop` | 空字符串 | ✓ | 模型准备结束本轮时触发；阻断后可追加一条消息让模型继续 |
 | `PostToolUse` | 工具名 | — | 工具成功执行后触发（观察用） |
@@ -114,6 +114,8 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 | `PreCompact` | `manual` 或 `auto` | — | 上下文压缩开始前触发；返回值被完全忽略 |
 | `PostCompact` | `manual` 或 `auto` | — | 上下文压缩完成后触发（观察用） |
 | `Notification` | 通知类型（如 `task.completed`） | — | 后台任务状态变化时触发（观察用） |
+
+对于 `UserPromptSubmit`，hook 在 stdin 中收到的 `prompt` 是 `ContentPart[]` 数组。纯文本 prompt 会表示为 `[{"type":"text","text":"..."}]`；带图片或其他媒体的 prompt 会包含额外的 content part 对象。matcher 仍然匹配从这些 content part 中提取出的文本。
 
 ## 示例：阻断危险 Shell 命令
 

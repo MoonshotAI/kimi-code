@@ -98,7 +98,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 
 | Event | Matcher matches | Supports blocking? | Description |
 | --- | --- | --- | --- |
-| `UserPromptSubmit` | The text submitted by the user | ✓ | Triggered when the user sends a message; returned text is appended to context; if blocked, the model is not called for this turn |
+| `UserPromptSubmit` | Text extracted from the submitted content parts | ✓ | Triggered when the user sends a message; returned text is appended to context; if blocked, the model is not called for this turn |
 | `PreToolUse` | Tool name | ✓ | Triggered before a tool call (before permission checks); the tool will not execute if blocked |
 | `Stop` | Empty string | ✓ | Triggered when the model is about to end the current turn; if blocked, a message can be appended to let the model continue |
 | `PostToolUse` | Tool name | — | Triggered after a tool executes successfully (observation only) |
@@ -114,6 +114,8 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `PreCompact` | `manual` or `auto` | — | Triggered before context compaction begins; return values are completely ignored |
 | `PostCompact` | `manual` or `auto` | — | Triggered after context compaction completes (observation only) |
 | `Notification` | Notification type (e.g. `task.completed`) | — | Triggered when a background task status changes (observation only) |
+
+For `UserPromptSubmit`, the hook receives the submitted message as `prompt: ContentPart[]` on stdin. Text-only prompts are represented as `[{"type":"text","text":"..."}]`; prompts with images or other media include additional content-part objects. The matcher still runs against the text extracted from those content parts.
 
 ## Example: Blocking Dangerous Shell Commands
 
