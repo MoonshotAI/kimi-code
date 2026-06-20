@@ -475,6 +475,17 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async detachBackgroundTask(
+    input: SessionIdRpcInput & { taskId: string },
+  ): Promise<BackgroundTaskInfo | undefined> {
+    const rpc = await this.getRpc();
+    return rpc.detachBackground({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      taskId: input.taskId,
+    });
+  }
+
   async createGoal(input: SessionIdRpcInput & CreateGoalInput): Promise<GoalSnapshot> {
     const rpc = await this.getRpc();
     return rpc.createGoal({

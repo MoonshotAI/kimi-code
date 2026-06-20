@@ -205,6 +205,9 @@ export interface StopBackgroundPayload {
   /** Free-form human-readable reason persisted with the task record. */
   readonly reason?: string;
 }
+export interface DetachBackgroundPayload {
+  readonly taskId: string;
+}
 export interface GetBackgroundOutputPayload {
   readonly taskId: string;
   readonly tail?: number;
@@ -339,6 +342,7 @@ export interface AgentAPI {
   unregisterTool: (payload: UnregisterToolPayload) => void;
   setActiveTools: (payload: SetActiveToolsPayload) => void;
   stopBackground: (payload: StopBackgroundPayload) => void;
+  detachBackground: (payload: DetachBackgroundPayload) => BackgroundTaskInfo | undefined;
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
   startBtw: (payload: EmptyPayload) => string;

@@ -58,6 +58,7 @@ import type {
   CoreInfo,
   CreateGoalPayload,
   CreateSessionPayload,
+  DetachBackgroundPayload,
   ClientTelemetryInfo,
   EmptyPayload,
   EnterSwarmPayload,
@@ -611,6 +612,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   stopBackground({ sessionId, ...payload }: SessionAgentPayload<StopBackgroundPayload>) {
     return this.sessionApi(sessionId).stopBackground(payload);
+  }
+
+  detachBackground({ sessionId, ...payload }: SessionAgentPayload<DetachBackgroundPayload>) {
+    return this.sessionApi(sessionId).detachBackground(payload);
   }
 
   clearContext({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
