@@ -98,7 +98,7 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 
 | 事件 | Matcher 匹配的是 | 会触发阻断？ | 说明 |
 | --- | --- | --- | --- |
-| `UserPromptSubmit` | 用户提交的文本内容 | ✓ | 用户发送消息时触发；返回文本会附加到上下文；若阻断，本轮不调用模型 |
+| `UserPromptSubmit` | 用户提交的文本内容 | ✓ | 用户发送消息时触发；payload 包含 `prompt` 字段，类型为 `ContentPart[]`（见下方说明）；返回文本会附加到上下文；若阻断，本轮不调用模型 |
 | `PreToolUse` | 工具名 | ✓ | 工具调用前触发（权限检查前）；阻断后工具不会执行 |
 | `Stop` | 空字符串 | ✓ | 模型准备结束本轮时触发；阻断后可追加一条消息让模型继续 |
 | `PostToolUse` | 工具名 | — | 工具成功执行后触发（观察用） |
@@ -114,6 +114,30 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 | `PreCompact` | `manual` 或 `auto` | — | 上下文压缩开始前触发；返回值被完全忽略 |
 | `PostCompact` | `manual` 或 `auto` | — | 上下文压缩完成后触发（观察用） |
 | `Notification` | 通知类型（如 `task.completed`） | — | 后台任务状态变化时触发（观察用） |
+
+::: tip `UserPromptSubmit` 的 payload：`prompt` 是 `ContentPart[]`，不是字符串
+`UserPromptSubmit` 的 payload 中 `prompt` 字段是原始的 `ContentPart[]` 数组，**不是**普通字符串：
+
+```json
+{
+  "hook_event_name": "UserPromptSubmit",
+  "session_id": "session_abc",
+  "cwd": "/path/to/project",
+  "prompt": [{ "type": "text", "text": "用户的消息" }]
+}
+```
+
+`matcher` 正则匹配的是这些内容部分的**拼接文本**（所有 `text` 部分用空格连接），所以事件一览表中写的是"用户提交的文本内容"——这描述的是 matcher 匹配的对象，而非 payload 字段。
+
+在 hook 中提取纯文本字符串：
+
+```js
+const text = payload.prompt
+  .filter((p) => p.type === 'text')
+  .map((p) => p.text)
+  .join(' ');
+```
+:::
 
 ## 示例：阻断危险 Shell 命令
 
