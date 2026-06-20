@@ -257,6 +257,14 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
   // 1. Reuse an already-live daemon if one holds the lock.
   const existing = getLiveLock();
   if (existing) {
+    // Refuse to silently reuse a daemon bound to a different host.
+    const existingHost = existing.host ?? DEFAULT_SERVER_HOST;
+    if (host !== existingHost) {
+      throw new Error(
+        `Existing daemon is bound to ${existingHost}:${existing.port}. ` +
+        `Run 'kimi server kill' first to bind to ${host}:${preferred}.`,
+      );
+    }
     const origin = serverOrigin(lockConnectHost(existing), existing.port);
     if (await waitForServerHealthy(origin, REUSE_HEALTH_TIMEOUT_MS)) {
       return { origin };
