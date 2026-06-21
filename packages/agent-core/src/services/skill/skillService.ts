@@ -6,6 +6,7 @@ import { Disposable, InstantiationType, registerSingleton } from '../../di';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { SkillDescriptor } from '@moonshot-ai/protocol';
 
+import type { CoreRPC } from '../../rpc';
 import { ICoreProcessService } from '../coreProcess/coreProcess';
 import { SessionNotFoundError } from '../session/session';
 import {
@@ -18,6 +19,16 @@ import {
 /** Matches the convention used elsewhere in services (prompt-service uses 'main'). */
 const MAIN_AGENT_ID = 'main';
 
+/**
+ * Narrow in-process CoreAPI accessor supplied by the concrete
+ * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
+ * through a structural cast so the public `ICoreProcessService` facade — and
+ * the many test doubles that implement it across the suite — stay unchanged.
+ * The daemon-side adapter always provides `getCoreApi()`; see
+ * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
+ */
+type InProcessCoreApi = { getCoreApi(): CoreRPC };
+
 export class SkillService extends Disposable implements ISkillService {
   readonly _serviceBrand: undefined;
 
@@ -27,14 +38,14 @@ export class SkillService extends Disposable implements ISkillService {
 
   async list(sessionId: string): Promise<readonly SkillDescriptor[]> {
     await this._requireLoadedSession(sessionId);
-    const raw = await this.core.rpc.listSkills({ sessionId });
+    const raw = await this.coreApi().listSkills({ sessionId });
     return raw.map(toProtocolSkill);
   }
 
   async activate(sessionId: string, skillName: string, args?: string): Promise<void> {
     await this._requireLoadedSession(sessionId);
     try {
-      await this.core.rpc.activateSkill({
+      await this.coreApi().activateSkill({
         sessionId,
         agentId: MAIN_AGENT_ID,
         name: skillName,
@@ -60,11 +71,23 @@ export class SkillService extends Disposable implements ISkillService {
    * `PromptService.submit` / `SessionService.undo`.
    */
   private async _requireLoadedSession(sessionId: string): Promise<void> {
-    const all = await this.core.rpc.listSessions({});
+    const all = await this.coreApi().listSessions({});
     if (!all.some((s) => s.id === sessionId)) {
       throw new SessionNotFoundError(sessionId);
     }
-    await this.core.rpc.resumeSession({ sessionId });
+    await this.coreApi().resumeSession({ sessionId });
+  }
+
+  /**
+   * In-process CoreAPI handle — the same methods as `this.core.rpc` but
+   * dispatched directly on the in-process `KimiCore`, skipping the
+   * `createRPC` JSON serialize/deserialize hop. Method signatures and return
+   * shapes are identical to the `rpc` proxy; only the serialization is
+   * removed. The cast is localized here so every call site above reads
+   * `this.coreApi().<method>(...)`.
+   */
+  private coreApi(): CoreRPC {
+    return (this.core as unknown as InProcessCoreApi).getCoreApi();
   }
 }
 

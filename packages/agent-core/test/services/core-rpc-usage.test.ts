@@ -19,7 +19,8 @@ import { describe, expect, it } from 'vitest';
  * `sessionQueryService.ts` + `sessionRuntimeService.ts` (now 0 after M3.3
  * routed every call through the in-process `getCoreApi()` accessor). M3.4
  * applied the same `getCoreApi()` routing to the `mcp` and `modelCatalog`
- * domains, driving both baselines to 0.
+ * domains, driving both baselines to 0. M3.5 routed the `skill` and `task`
+ * domains the same way, driving both baselines to 0.
  */
 
 const SERVICES_SRC = join(import.meta.dirname, '..', '..', 'src', 'services');
@@ -42,8 +43,8 @@ const BASELINE: Readonly<Record<string, number>> = {
   modelCatalog: 0,
   prompt: 0,
   session: 0,
-  skill: 4,
-  task: 4,
+  skill: 0,
+  task: 0,
   tool: 2,
 };
 

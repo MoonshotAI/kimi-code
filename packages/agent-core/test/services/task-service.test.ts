@@ -37,7 +37,7 @@ interface FakeState {
   stopCalls: Array<StopBackgroundPayload & { sessionId: string; agentId: string }>;
 }
 
-function makeBridge(state: FakeState): ICoreProcessService {
+function makeBridge(state: FakeState): ICoreProcessService & { getCoreApi(): CoreRPC } {
   const rpc: Partial<CoreRPC> = {
     listSessions: async () => state.sessions,
     getBackground: async (p: { sessionId: string; agentId: string; activeOnly?: boolean }) =>
@@ -57,10 +57,14 @@ function makeBridge(state: FakeState): ICoreProcessService {
     },
   };
   return {
+    _serviceBrand: undefined,
     rpc: rpc as CoreRPC,
+    // `getCoreApi()` mirrors `rpc`: both expose the identical CoreAPI method
+    // set; `getCoreApi()` is the in-process zero-serialization path the
+    // service now routes through, `rpc` is the serializing proxy.
+    getCoreApi: () => rpc as CoreRPC,
     ready: async () => undefined,
     dispose: () => undefined,
-    _serviceBrand: undefined,
   };
 }
 
