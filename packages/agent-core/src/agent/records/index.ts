@@ -1,3 +1,4 @@
+import { ErrorCodes, makeErrorPayload } from '#/errors';
 import type { Agent } from '..';
 import { createDecorator } from '../../di';
 import {
@@ -146,7 +147,7 @@ export class AgentRecords {
   private metadataInitialized = false;
 
   constructor(
-    private readonly agent: Agent,
+    protected readonly agent: Agent,
     private readonly persistence?: AgentRecordPersistence,
   ) {}
 
@@ -248,6 +249,7 @@ export interface IRecordsService extends Pick<AgentRecords, keyof AgentRecords> 
   readonly _serviceBrand: undefined;
   /** @internal migration bridge — reach the raw manager; do not use in new code. */
   unwrap(): AgentRecords;
+  emitWriteError(error: unknown, record?: AgentRecord): void;
 }
 
 export const IRecordsService = createDecorator<IRecordsService>('recordsService');
@@ -256,5 +258,24 @@ export class RecordsService extends AgentRecords implements IRecordsService {
   readonly _serviceBrand: undefined;
   unwrap(): AgentRecords {
     return this;
+  }
+
+  emitWriteError(error: unknown, record?: AgentRecord): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.agent.log.error('wire record persist failed', {
+      agentHomedir: this.agent.homedir,
+      recordType: record?.type,
+      error,
+    });
+    this.agent.emitEvent({
+      type: 'error',
+      ...makeErrorPayload(
+        ErrorCodes.RECORDS_WRITE_FAILED,
+        `Failed to write agent records: ${message}`,
+        {
+          details: { recordType: record?.type },
+        },
+      ),
+    });
   }
 }

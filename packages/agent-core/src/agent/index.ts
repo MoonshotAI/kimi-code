@@ -1,6 +1,5 @@
 import { join } from 'pathe';
 
-import { ErrorCodes, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
 import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC } from '#/rpc';
@@ -177,7 +176,10 @@ export class Agent {
       (options.homedir
         ? new FileSystemAgentRecordPersistence(join(options.homedir, 'wire.jsonl'), {
             onError: (error) => {
-              this.emitRecordsWriteError(error);
+              // Lazy deref: `this.records` is assigned after `createChild`
+              // below, but this callback only runs on a later write failure,
+              // so the records service is always resolved by then.
+              this.records.emitWriteError(error);
             },
             blobStore: this.blobStore,
           })
@@ -291,24 +293,5 @@ export class Agent {
    */
   emitStatusUpdated(): void {
     this.statusService.notifyStatusChanged();
-  }
-
-  private emitRecordsWriteError(error: unknown, record?: AgentRecord | undefined): void {
-    const message = error instanceof Error ? error.message : String(error);
-    this.log.error('wire record persist failed', {
-      agentHomedir: this.homedir,
-      recordType: record?.type,
-      error,
-    });
-    this.emitEvent({
-      type: 'error',
-      ...makeErrorPayload(
-        ErrorCodes.RECORDS_WRITE_FAILED,
-        `Failed to write agent records: ${message}`,
-        {
-          details: { recordType: record?.type },
-        },
-      ),
-    });
   }
 }
