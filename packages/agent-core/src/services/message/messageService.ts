@@ -23,7 +23,7 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
-import type { SessionSummary } from '../../rpc';
+import type { CoreRPC, SessionSummary } from '../../rpc';
 import type {
   Message,
   PageResponse,
@@ -56,6 +56,16 @@ interface TranscriptCacheEntry {
   readonly mtimeMs: number;
   readonly transcript: WireTranscript;
 }
+
+/**
+ * Narrow in-process CoreAPI accessor supplied by the concrete
+ * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
+ * through a structural cast so the public `ICoreProcessService` facade — and
+ * the many test doubles that implement it across the suite — stay unchanged.
+ * The daemon-side adapter always provides `getCoreApi()`; see
+ * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
+ */
+type InProcessCoreApi = { getCoreApi(): CoreRPC };
 
 export class MessageService extends Disposable implements IMessageService {
   readonly _serviceBrand: undefined;
@@ -121,7 +131,7 @@ export class MessageService extends Disposable implements IMessageService {
    * base). Throws `SessionNotFoundError` (→ 40401) on miss.
    */
   private async _requireSession(sid: string): Promise<SessionSummary> {
-    const all = await this.core.rpc.listSessions({});
+    const all = await this.coreApi().listSessions({});
     const summary = all.find((s) => s.id === sid);
     if (summary === undefined) {
       throw new SessionNotFoundError(sid);
@@ -158,7 +168,7 @@ export class MessageService extends Disposable implements IMessageService {
   ): Promise<readonly TranscriptEntry[]> {
     await this._resumeSession(sid);
     const transcript = await this._readTranscriptCached(sid, summary.sessionDir);
-    const context = await this.core.rpc.getContext({
+    const context = await this.coreApi().getContext({
       sessionId: sid,
       agentId: MAIN_AGENT_ID,
     });
@@ -176,7 +186,7 @@ export class MessageService extends Disposable implements IMessageService {
 
   private async _resumeSession(sid: string): Promise<void> {
     try {
-      await this.core.rpc.resumeSession({ sessionId: sid });
+      await this.coreApi().resumeSession({ sessionId: sid });
     } catch {
       throw new SessionNotFoundError(sid);
     }
@@ -213,6 +223,18 @@ export class MessageService extends Disposable implements IMessageService {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * In-process CoreAPI handle — the same methods as `this.core.rpc` but
+   * dispatched directly on the in-process `KimiCore`, skipping the
+   * `createRPC` JSON serialize/deserialize hop. Method signatures and return
+   * shapes are identical to the `rpc` proxy; only the serialization is
+   * removed. The cast is localized here so every call site above reads
+   * `this.coreApi().<method>(...)`.
+   */
+  private coreApi(): CoreRPC {
+    return (this.core as unknown as InProcessCoreApi).getCoreApi();
   }
 }
 

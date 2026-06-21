@@ -3,12 +3,23 @@
  */
 
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import type { CoreRPC } from '../../rpc';
 
 import { ICoreProcessService } from '../coreProcess/coreProcess';
 import { IToolService, toProtocolTool, type AgentCoreToolInfoLike } from './tool';
 
 /** Matches the convention used elsewhere in services (message-service uses 'main'). */
 const MAIN_AGENT_ID = 'main';
+
+/**
+ * Narrow in-process CoreAPI accessor supplied by the concrete
+ * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
+ * through a structural cast so the public `ICoreProcessService` facade — and
+ * the many test doubles that implement it across the suite — stay unchanged.
+ * The daemon-side adapter always provides `getCoreApi()`; see
+ * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
+ */
+type InProcessCoreApi = { getCoreApi(): CoreRPC };
 
 export class ToolService extends Disposable implements IToolService {
   readonly _serviceBrand: undefined;
@@ -22,7 +33,7 @@ export class ToolService extends Disposable implements IToolService {
     if (resolvedSid === undefined) return [];
     let raw: readonly unknown[];
     try {
-      raw = await this.core.rpc.getTools({
+      raw = await this.coreApi().getTools({
         sessionId: resolvedSid,
         agentId: MAIN_AGENT_ID,
       });
@@ -39,10 +50,22 @@ export class ToolService extends Disposable implements IToolService {
    * most recently created session id, or `undefined` when no sessions exist.
    */
   private async _anyKnownSessionId(): Promise<string | undefined> {
-    const all = await this.core.rpc.listSessions({});
+    const all = await this.coreApi().listSessions({});
     if (all.length === 0) return undefined;
     const sorted = [...all].sort((a, b) => b.createdAt - a.createdAt);
     return sorted[0]?.id;
+  }
+
+  /**
+   * In-process CoreAPI handle — the same methods as `this.core.rpc` but
+   * dispatched directly on the in-process `KimiCore`, skipping the
+   * `createRPC` JSON serialize/deserialize hop. Method signatures and return
+   * shapes are identical to the `rpc` proxy; only the serialization is
+   * removed. The cast is localized here so every call site above reads
+   * `this.coreApi().<method>(...)`.
+   */
+  private coreApi(): CoreRPC {
+    return (this.core as unknown as InProcessCoreApi).getCoreApi();
   }
 }
 

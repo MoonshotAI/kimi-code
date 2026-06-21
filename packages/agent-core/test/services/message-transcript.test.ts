@@ -272,7 +272,7 @@ describe('readWireRecords / readWireTranscript', () => {
 describe('MessageService over a compacted wire log', () => {
   let dir: string;
   let liveHistory: ContextMessage[];
-  let bridge: ICoreProcessService;
+  let bridge: ICoreProcessService & { getCoreApi(): CoreRPC };
   let impl: MessageService;
 
   function summary(): SessionSummary {
@@ -324,6 +324,7 @@ describe('MessageService over a compacted wire log', () => {
     };
     bridge = {
       rpc: rpc as CoreRPC,
+      getCoreApi: () => rpc as CoreRPC,
       ready: vi.fn().mockResolvedValue(undefined),
       dispose: vi.fn(),
       _serviceBrand: undefined,

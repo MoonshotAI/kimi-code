@@ -42,7 +42,7 @@ const SESSION_CREATED_AT = 1_700_000_000_000;
 function makeFakeBridge(
   sessions: SessionSummary[],
   history: ContextMessage[],
-): ICoreProcessService {
+): ICoreProcessService & { getCoreApi(): CoreRPC } {
   const rpc: Partial<CoreRPC> = {
     listSessions: vi.fn().mockImplementation(async () => sessions),
     resumeSession: vi.fn().mockResolvedValue(undefined as unknown as never),
@@ -50,8 +50,14 @@ function makeFakeBridge(
       return { history, tokenCount: 0 };
     }),
   };
+  // `getCoreApi()` mirrors `rpc` on purpose: in production both expose the
+  // identical CoreAPI method set — `getCoreApi()` is the in-process
+  // (zero-serialization) path, `rpc` is the serializing proxy. Sharing one
+  // stub keeps the `bridge.rpc.*` assertions below valid without duplicating
+  // the mock.
   return {
     rpc: rpc as CoreRPC,
+    getCoreApi: () => rpc as CoreRPC,
     ready: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
     _serviceBrand: undefined,
@@ -346,8 +352,9 @@ describe('MessageService', () => {
       resumeSession: vi.fn().mockRejectedValue(new Error('state.json corrupted')),
       getContext: vi.fn(),
     };
-    const failingBridge: ICoreProcessService = {
+    const failingBridge: ICoreProcessService & { getCoreApi(): CoreRPC } = {
       rpc: rpc as CoreRPC,
+      getCoreApi: () => rpc as CoreRPC,
       ready: vi.fn().mockResolvedValue(undefined),
       dispose: vi.fn(),
       _serviceBrand: undefined,

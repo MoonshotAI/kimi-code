@@ -20,7 +20,9 @@ import { describe, expect, it } from 'vitest';
  * routed every call through the in-process `getCoreApi()` accessor). M3.4
  * applied the same `getCoreApi()` routing to the `mcp` and `modelCatalog`
  * domains, driving both baselines to 0. M3.5 routed the `skill` and `task`
- * domains the same way, driving both baselines to 0.
+ * domains the same way, driving both baselines to 0. M3.6 routed the
+ * `message`, `tool`, `config`, and `authSummary` domains the same way,
+ * driving all four baselines to 0.
  */
 
 const SERVICES_SRC = join(import.meta.dirname, '..', '..', 'src', 'services');
@@ -36,16 +38,16 @@ const RPC_CALL_RE = /\.rpc\.[a-zA-Z_]+\(/g;
  * are the aggregated `*Service.ts` counts. M3 phases lower these to 0.
  */
 const BASELINE: Readonly<Record<string, number>> = {
-  authSummary: 1,
-  config: 2,
+  authSummary: 0,
+  config: 0,
   mcp: 0,
-  message: 3,
+  message: 0,
   modelCatalog: 0,
   prompt: 0,
   session: 0,
   skill: 0,
   task: 0,
-  tool: 2,
+  tool: 0,
 };
 
 function countRpcCalls(domain: string): number {

@@ -4,6 +4,7 @@
 
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
 import type { KimiConfig } from '../../config';
+import type { CoreRPC } from '../../rpc';
 import type { AuthSummary } from '@moonshot-ai/protocol';
 import { createManagedAuthFacade, type ServicesAuthFacade } from '../auth/managedAuth';
 import { IEnvironmentService } from '../environment/environment';
@@ -17,6 +18,16 @@ import {
 
 /** Wire name of the OAuth-managed provider (`@moonshot-ai/kimi-code-oauth`'s `KIMI_CODE_PROVIDER_NAME`). */
 const MANAGED_PROVIDER_NAME = 'managed:kimi-code';
+
+/**
+ * Narrow in-process CoreAPI accessor supplied by the concrete
+ * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
+ * through a structural cast so the public `ICoreProcessService` facade — and
+ * the many test doubles that implement it across the suite — stay unchanged.
+ * The daemon-side adapter always provides `getCoreApi()`; see
+ * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
+ */
+type InProcessCoreApi = { getCoreApi(): CoreRPC };
 
 export class AuthSummaryService
   extends Disposable
@@ -117,7 +128,19 @@ export class AuthSummaryService
     // KimiCore's `this.config` only refreshes when something explicitly
     // asks for `reload`. Without this flag, `GET /v1/auth` would stay
     // `ready:false` for the entire daemon lifetime after first login.
-    return this.core.rpc.getKimiConfig({ reload: true });
+    return this.coreApi().getKimiConfig({ reload: true });
+  }
+
+  /**
+   * In-process CoreAPI handle — the same methods as `this.core.rpc` but
+   * dispatched directly on the in-process `KimiCore`, skipping the
+   * `createRPC` JSON serialize/deserialize hop. Method signatures and return
+   * shapes are identical to the `rpc` proxy; only the serialization is
+   * removed. The cast is localized here so every call site above reads
+   * `this.coreApi().<method>(...)`.
+   */
+  private coreApi(): CoreRPC {
+    return (this.core as unknown as InProcessCoreApi).getCoreApi();
   }
 
   private async _hasCachedToken(providerName: string): Promise<boolean> {

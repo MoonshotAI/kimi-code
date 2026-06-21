@@ -1,10 +1,21 @@
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
 import type { KimiConfig, ProviderConfig } from '../../config';
+import type { CoreRPC } from '../../rpc';
 import type { ConfigResponse, PatchConfigRequest } from '@moonshot-ai/protocol';
 
 import { ICoreProcessService } from '../coreProcess/coreProcess';
 import { IEventService } from '../event/event';
 import { IConfigService } from './config';
+
+/**
+ * Narrow in-process CoreAPI accessor supplied by the concrete
+ * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
+ * through a structural cast so the public `ICoreProcessService` facade — and
+ * the many test doubles that implement it across the suite — stay unchanged.
+ * The daemon-side adapter always provides `getCoreApi()`; see
+ * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
+ */
+type InProcessCoreApi = { getCoreApi(): CoreRPC };
 
 export class ConfigService extends Disposable implements IConfigService {
   readonly _serviceBrand: undefined;
@@ -17,13 +28,13 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   async get(): Promise<ConfigResponse> {
-    const config = await this.core.rpc.getKimiConfig({ reload: true });
+    const config = await this.coreApi().getKimiConfig({ reload: true });
     return toConfigResponse(config);
   }
 
   async set(patch: PatchConfigRequest): Promise<ConfigResponse> {
     const camelPatch = convertKeysSnakeToCamel(patch) as Record<string, unknown>;
-    const updated = await this.core.rpc.setKimiConfig(camelPatch);
+    const updated = await this.coreApi().setKimiConfig(camelPatch);
     const response = toConfigResponse(updated);
 
     this.eventService.publish({
@@ -35,6 +46,18 @@ export class ConfigService extends Disposable implements IConfigService {
     });
 
     return response;
+  }
+
+  /**
+   * In-process CoreAPI handle — the same methods as `this.core.rpc` but
+   * dispatched directly on the in-process `KimiCore`, skipping the
+   * `createRPC` JSON serialize/deserialize hop. Method signatures and return
+   * shapes are identical to the `rpc` proxy; only the serialization is
+   * removed. The cast is localized here so every call site above reads
+   * `this.coreApi().<method>(...)`.
+   */
+  private coreApi(): CoreRPC {
+    return (this.core as unknown as InProcessCoreApi).getCoreApi();
   }
 }
 
