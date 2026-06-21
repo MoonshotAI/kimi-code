@@ -66,51 +66,23 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     //    function KimiCore receives, `sdkRpc` is the one we satisfy.
     const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
 
-    // Default-wire the OAuth token resolver. Without this, KimiCore's
-    // `ProviderManager.resolveAuth` sees `resolveOAuthTokenProvider ===
-    // undefined` and synthesizes a closure that ALWAYS throws
-    // `AUTH_LOGIN_REQUIRED` — even after a successful device-code login that
-    // persisted a fresh token to disk. The daemon's `/auth` readiness probe
-    // is a different code path (file existence on the credentials store) so
-    // it stays green; the failure only surfaces inside the prompt turn, as
-    // an `auth.login_required` error after `turn.step.started`. We bridge
-    // the gap by default-constructing a managed auth facade against the same
-    // home + config paths KimiCore will use, and handing its
-    // `resolveOAuthTokenProvider` into the core. Callers (e.g. node-sdk
-    // tests) can still override via `options.resolveOAuthTokenProvider`.
-    const resolveOAuthTokenProvider: OAuthTokenProviderResolver =
-      options.resolveOAuthTokenProvider ??
-      CoreProcessService._defaultOAuthTokenResolver(env.homeDir, env.configPath);
-
-    // Default-wire the Kimi request headers (User-Agent + X-Msh-* device
-    // identity). Without this, KimiCore's outbound fetch carries the
-    // default Node fetch User-Agent and the managed Kimi-for-Coding
-    // endpoint rejects with 40340 ("only available for Coding Agents
-    // such as Kimi CLI, Claude Code, …"). Mirrors what `SDKRpcClient`
-    // does for the in-process TUI path (node-sdk's sdk-rpc-client.ts).
-    // Caller-supplied `kimiRequestHeaders` always wins; absent that, we
-    // synthesize from `options.identity`. Hosts that pass neither
-    // (no identity, no headers) still construct — but their requests will
-    // trip the 40340 guard.
-    const kimiRequestHeaders: Record<string, string> | undefined =
-      options.kimiRequestHeaders ??
-      CoreProcessService._defaultKimiRequestHeaders(env.homeDir, options.identity);
-
-    // `appVersion` flows into Session records (`app_version`) and tool
-    // call ctx. Prefer explicit > identity.version so callers can pin
-    // a different value if they need to.
-    const appVersion: string | undefined =
-      options.appVersion ?? options.identity?.version;
-
     // 2. Construct the core. KimiCore's ctor wires itself into `coreRpc` and
     //    exposes `this.sdk: Promise<SDKRPC>` for the reverse direction.
+    //
+    //    The cross-cutting defaults (OAuth token resolver, Kimi request
+    //    headers, identity-derived `appVersion`) are computed by the host
+    //    bootstrap (`packages/server/src/start.ts`) and handed in via
+    //    `options`. This adapter is intentionally thin: it forwards
+    //    `options` through to KimiCore and only overrides `homeDir` /
+    //    `configPath` from the resolved environment so the daemon's
+    //    canonical paths win over any caller-supplied values, and injects
+    //    the DI `instantiationService`. See `_defaultOAuthTokenResolver` /
+    //    `_defaultKimiRequestHeaders` for the default-wiring logic the
+    //    bootstrap now owns.
     this._core = new KimiCore(coreRpc, {
       ...options,
       homeDir: env.homeDir,
       configPath: env.configPath,
-      kimiRequestHeaders,
-      appVersion,
-      resolveOAuthTokenProvider,
       instantiationService: this.ix,
     });
 

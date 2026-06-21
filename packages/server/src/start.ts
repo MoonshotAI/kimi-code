@@ -1,4 +1,4 @@
-import { InstantiationService, resolveConfigPath, resolveKimiHome, setUnexpectedErrorHandler, IApprovalService, IAuthSummaryService, IEnvironmentService, IEventService, ICoreProcessService, IModelCatalogService, IMcpService, IMessageService, IOAuthService, IFileStore, IFsGitService, IFsSearchService, IFsService, IFsWatcher, ILogService, IPromptService, IQuestionService, ISessionService, ISkillService, ITaskService, ITerminalService, IToolService, IWorkspaceFsService, IWorkspaceRegistry, FsPathEscapesError, FsWatchLimitError, FsWatcherService, SessionNotFoundError, createConnectionLookup, resolveSafePath, type ServiceIdentifier, type CoreProcessServiceOptions } from '@moonshot-ai/agent-core';
+import { InstantiationService, resolveConfigPath, resolveKimiHome, setUnexpectedErrorHandler, CoreProcessService, IApprovalService, IAuthSummaryService, IEnvironmentService, IEventService, ICoreProcessService, IModelCatalogService, IMcpService, IMessageService, IOAuthService, IFileStore, IFsGitService, IFsSearchService, IFsService, IFsWatcher, ILogService, IPromptService, IQuestionService, ISessionService, ISkillService, ITaskService, ITerminalService, IToolService, IWorkspaceFsService, IWorkspaceRegistry, FsPathEscapesError, FsWatchLimitError, FsWatcherService, SessionNotFoundError, createConnectionLookup, resolveSafePath, type ServiceIdentifier, type CoreProcessServiceOptions } from '@moonshot-ai/agent-core';
 import { ErrorCode, createAsyncApiDocument } from '@moonshot-ai/protocol';
 import Fastify from 'fastify';
 import { promises as fspPromises } from 'node:fs';
@@ -137,8 +137,34 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }),
   };
 
+  // Compute the cross-cutting core defaults here in the bootstrap — they were
+  // previously default-wired inside `CoreProcessService`'s constructor — and
+  // hand them to the core adapter explicitly via `coreProcessOptions`.
+  // Caller-supplied values always win (`??`); otherwise we synthesize from the
+  // resolved environment + host identity. Behavior is byte-identical to the
+  // prior in-constructor wiring: same OAuth resolver, same Kimi request
+  // headers, same identity-derived `appVersion`. `homeDir` / `configPath` and
+  // the DI `instantiationService` are still injected by the adapter.
+  const callerCoreOptions = opts.coreProcessOptions;
+  const coreProcessOptions: CoreProcessServiceOptions = {
+    ...callerCoreOptions,
+    resolveOAuthTokenProvider:
+      callerCoreOptions?.resolveOAuthTokenProvider ??
+      CoreProcessService._defaultOAuthTokenResolver(
+        envService.homeDir,
+        envService.configPath,
+      ),
+    kimiRequestHeaders:
+      callerCoreOptions?.kimiRequestHeaders ??
+      CoreProcessService._defaultKimiRequestHeaders(
+        envService.homeDir,
+        callerCoreOptions?.identity,
+      ),
+    appVersion: callerCoreOptions?.appVersion ?? callerCoreOptions?.identity?.version,
+  };
+
   const services = createServerServiceCollection({
-    server: opts,
+    server: { ...opts, coreProcessOptions },
     app,
     pinoLogger,
     envService,
