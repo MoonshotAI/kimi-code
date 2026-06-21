@@ -1,5 +1,6 @@
 /**
- * `CoreProcessService` — implementation of `ICoreProcessService`.
+ * `CoreProcessService` — implementation of `ICoreRuntime` (and its deprecated
+ * `ICoreProcessService` alias).
  */
 
 import { createRPC, KimiCore } from '../../rpc';
@@ -18,9 +19,9 @@ import { IEnvironmentService } from '../environment/environment';
 import { IEventService } from '../event/event';
 import { ILogService } from '../logger/logger';
 import { IQuestionService } from '../question/question';
-import { ICoreProcessService, type CoreProcessServiceOptions } from './coreProcess';
+import { ICoreRuntime, type CoreProcessServiceOptions } from './coreProcess';
 
-export class CoreProcessService extends Disposable implements ICoreProcessService {
+export class CoreProcessService extends Disposable implements ICoreRuntime {
   readonly _serviceBrand: undefined;
 
   /**
@@ -123,11 +124,9 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
    * controlled-promise dispatch. Throws after dispose, mirroring the `rpc`
    * proxy's post-dispose contract.
    *
-   * Intentionally NOT advertised on the public `ICoreProcessService` facade:
-   * this is a narrow, in-package seam supplied by the sole production
-   * implementation, and exposing it on the interface would force every test
-   * double of `ICoreProcessService` across the suite to implement it.
-   * Consumers reach it through a localized cast to this accessor shape.
+   * Advertised on the `ICoreRuntime` facade (promoted from a concrete-only
+   * seam in M6.3) so the in-process, serialization-free path is part of the
+   * runtime contract rather than a localized cast.
    */
   getCoreApi(): CoreRPC {
     if (this._store.isDisposed) {
@@ -143,10 +142,15 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
 
   override dispose(): void {
     if (this._store.isDisposed) return;
-    // KimiCore does not currently expose a dispose() — when it does, we'll
-    // await/call it here BEFORE super.dispose(). For now, disposing the
-    // service flips _disposed, which makes future rpc.* invocations reject
-    // before they reach KimiCore.
+    // KimiCore does not currently expose a dispose(), and its session
+    // tear-down (`SessionHost.close()`) is async — it disposes agents, stops
+    // crons, cancels active turns (with a timeout), shuts down MCP, and
+    // closes log sinks — which cannot be awaited from this synchronous
+    // `IDisposable`-style contract. Bridging it with fire-and-forget would
+    // risk unhandled rejections and partial teardown, so core tear-down is
+    // deferred (M6.3). Disposing the service flips `_disposed`, which makes
+    // future `rpc.*` invocations and `getCoreApi()` reject/throw before they
+    // reach KimiCore, then walks the Disposable child stack.
     super.dispose();
   }
 
@@ -237,11 +241,13 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
 // register with `[{}]` as a sane default. Daemon-side `start.ts` overrides
 // this descriptor via `services.set(ICoreProcessService, new
 // SyncDescriptor(CoreProcessService, [opts.coreProcessOptions ?? {}], false))`
-// when it has access to the real options bag. Later registrations win — both
-// at registry level and at `ServiceCollection` level.
+// when it has access to the real options bag. `ICoreProcessService` is the
+// deprecated alias of `ICoreRuntime` (same decorator token), so registering
+// under `ICoreRuntime` here resolves identically. Later registrations win —
+// both at registry level and at `ServiceCollection` level.
 // `supportsDelayedInstantiation = false` preserves current reverse-dispose
 // semantics.
 registerSingleton(
-  ICoreProcessService,
+  ICoreRuntime,
   new SyncDescriptor(CoreProcessService, [{} as CoreProcessServiceOptions], false),
 );

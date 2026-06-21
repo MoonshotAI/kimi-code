@@ -17,6 +17,16 @@
  * consumers; the public package barrel does NOT re-export `SDKRpcClientBase`,
  * so daemon-side code stays one abstraction layer away.
  *
+ * Facade:
+ *   - `ICoreRuntime` is the public runtime facade: `rpc`, `ready()`,
+ *     `dispose()`, and `getCoreApi()` (in-process wire-controller access).
+ *     New consumers inject `@ICoreRuntime`.
+ *   - `ICoreProcessService` is a **deprecated** alias of `ICoreRuntime`. Both
+ *     names share the same DI decorator token (`'coreProcessService'`), so
+ *     existing `@ICoreProcessService` injections and `ServiceCollection`
+ *     registrations keep resolving unchanged. The decorator string is renamed
+ *     in M7.1; until then the two identifiers are the identical object.
+ *
  * Lifecycle:
  *   - `ready()` resolves when both the `KimiCore` plugin/config load AND the
  *     SDK-side RPC binding have settled. Construction is eager (Singleton
@@ -24,12 +34,15 @@
  *   - `dispose()` is idempotent. It flips an internal flag so future `rpc`
  *     method dispatch throws before reaching `KimiCore`, then walks the
  *     `Disposable` child stack. `KimiCore` itself has no `dispose()` today —
- *     when it gets one, we wire it here.
+ *     tearing down its `SessionHost` instances is async (`SessionHost.close()`)
+ *     and cannot be awaited from this synchronous `dispose()` contract, so
+ *     core tear-down is deferred (see M6.3 notes); the adapter-level dispose
+ *     still short-circuits `rpc.*` / `getCoreApi()` post-dispose.
  *
  * Role: cross-process adapter — see `packages/services/AGENTS.md`.
  */
 
-import { createDecorator } from '../../di';
+import { createDecorator, type ServiceIdentifier } from '../../di';
 import type { CoreRPC, KimiCoreOptions } from '../../rpc';
 import { type KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 
@@ -52,7 +65,7 @@ export interface CoreProcessServiceOptions extends KimiCoreOptions {
   readonly identity?: KimiHostIdentity;
 }
 
-export interface ICoreProcessService {
+export interface ICoreRuntime {
   readonly _serviceBrand: undefined;
 
   /** The core RPC methods. Service impls call e.g. `core.rpc.createSession(...)`. */
@@ -66,10 +79,42 @@ export interface ICoreProcessService {
 
   /**
    * Tear down the adapter. After dispose, `rpc.<method>(...)` rejects with a
-   * "core process disposed" error before reaching `KimiCore`. Idempotent.
+   * "core process disposed" error before reaching `KimiCore`, and
+   * `getCoreApi()` throws. Idempotent.
    */
   dispose(): void;
+
+  /**
+   * In-process (zero-serialization) CoreAPI handle. Returns the underlying
+   * `KimiCore` directly so in-package services (e.g. `PromptService`) can
+   * route per-agent calls without crossing the `createRPC` JSON
+   * serialize/deserialize boundary that backs the `rpc` proxy.
+   *
+   * Method signatures and return shapes are identical to `rpc`; the only
+   * difference is the absence of the serialize hop. Throws after dispose,
+   * mirroring the `rpc` proxy's post-dispose contract.
+   */
+  getCoreApi(): CoreRPC;
 }
 
+// The decorator string stays `'coreProcessService'` until M7.1 renames it.
+// `createDecorator` keys identifiers by name, so this name is the canonical
+// token every consumer resolves against today.
 // eslint-disable-next-line @typescript-eslint/no-redeclare
-export const ICoreProcessService = createDecorator<ICoreProcessService>('coreProcessService');
+export const ICoreRuntime = createDecorator<ICoreRuntime>('coreProcessService');
+
+/**
+ * Deprecated alias of {@link ICoreRuntime}.
+ *
+ * Kept so existing `@ICoreProcessService` injections, `core: ICoreProcessService`
+ * field types, and `ServiceCollection` registrations continue to compile and
+ * resolve. The value below is the same `ServiceIdentifier` object as
+ * `ICoreRuntime` (decorator token `'coreProcessService'`), so the two names
+ * are interchangeable at the DI container. Prefer `ICoreRuntime` for new code;
+ * the decorator string is renamed in M7.1.
+ *
+ * @deprecated Use {@link ICoreRuntime} instead.
+ */
+export type ICoreProcessService = ICoreRuntime;
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ICoreProcessService: ServiceIdentifier<ICoreRuntime> = ICoreRuntime;
