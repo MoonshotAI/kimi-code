@@ -1,7 +1,18 @@
 import type { Event, SessionStatus } from '@moonshot-ai/protocol';
 
 import type { ICoreProcessService } from '../coreProcess/coreProcess';
+import type { CoreRPC } from '../../rpc';
 import type { SessionMeta } from '../../session';
+
+/**
+ * Narrow in-process CoreAPI accessor supplied by the concrete
+ * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
+ * through a structural cast so the public `ICoreProcessService` facade — and
+ * the many test doubles that implement it across the suite — stay unchanged.
+ * The daemon-side adapter always provides `getCoreApi()`; see
+ * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
+ */
+type InProcessCoreApi = { getCoreApi(): CoreRPC };
 
 /**
  * Inputs required to derive a session's lifecycle status. Gathered by the
@@ -104,7 +115,9 @@ export async function tryGetSessionMeta(
   id: string,
 ): Promise<SessionMeta | undefined> {
   try {
-    return await core.rpc.getSessionMetadata({ sessionId: id });
+    return await (core as unknown as InProcessCoreApi)
+      .getCoreApi()
+      .getSessionMetadata({ sessionId: id });
   } catch {
     return undefined;
   }
