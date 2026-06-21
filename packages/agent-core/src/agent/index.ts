@@ -17,54 +17,49 @@ import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import type { PromisableMethods } from '../utils/types';
 import {
   InstantiationService,
-  ServiceCollection,
-  SyncDescriptor,
   type IInstantiationService,
 } from '../di';
-import { BackgroundService, BackgroundTaskPersistence, IBackgroundService } from './background';
-import { DomainEventBus, IDomainEventBus } from '../event/event-bus';
-import { ILifecycleService, LifecycleService } from './lifecycle';
+import { BackgroundTaskPersistence, IBackgroundService } from './background';
+import { IDomainEventBus } from '../event/event-bus';
+import { ILifecycleService } from './lifecycle';
 import {
-  CompactionService,
-  MicroCompactionService,
   type CompactionStrategy,
   ICompactionService,
   IMicroCompactionService,
   type MicroCompactionConfig,
 } from './compaction';
-import { CronService, ICronService } from './cron';
-import { AgentConfigService, IAgentConfigService } from './config';
-import { ContextService, IContextService } from './context';
-import { GoalService, IGoalService } from './goal';
+import { ICronService } from './cron';
+import { IAgentConfigService } from './config';
+import { IContextService } from './context';
+import { IGoalService } from './goal';
 import { type IHookService } from '../session/hooks';
-import { InjectionService, IInjectionService } from './injection/manager';
-import { PermissionService, IPermissionService, type PermissionManagerOptions } from './permission';
-import { PlanService, IPlanService } from './plan';
+import { IInjectionService } from './injection/manager';
+import { IPermissionService, type PermissionManagerOptions } from './permission';
+import { IPlanService } from './plan';
 import {
   BlobStore,
   FileSystemAgentRecordPersistence,
-  RecordsService,
   type AgentRecord,
   type AgentRecordPersistence,
   type AgentRecordsReplayOptions,
   IRecordsService,
 } from './records';
-import { ReplayService, IReplayService, type ReplayBuilderOptions } from './replay';
-import { AgentSkillService, IAgentSkillService } from './skill';
+import { IReplayService, type ReplayBuilderOptions } from './replay';
+import { IAgentSkillService } from './skill';
 import type { SkillRegistry } from './skill/types';
-import { SwarmService, ISwarmService } from './swarm';
-import { AgentToolService, IAgentToolService } from './tool/index';
-import { TurnService, ITurnService } from './turn';
+import { ISwarmService } from './swarm';
+import { IAgentToolService } from './tool/index';
+import { ITurnService } from './turn';
 import { KosongLLM } from './turn/kosong-llm';
-import { UsageService, IUsageService } from './usage';
+import { IUsageService } from './usage';
 import { AgentStatusService, IAgentStatusService } from './status';
-import type { AgentStatusHost } from './status';
 import { AgentRpcController } from './rpc-controller';
 import type { AgentRpcHost, IAgentRpcController } from './rpc-controller';
 import { AgentResumeService } from './resume';
 import type { AgentResumeHost, IAgentResumeService } from './resume';
 import { AgentProfileService } from './profile';
 import type { AgentProfileHost, IAgentProfileService } from './profile';
+import { AgentFactory } from './factory';
 import { LlmService } from './llm';
 import type { ILlmService } from './llm';
 import { LlmRequestLogger } from './llm-request-logger';
@@ -190,62 +185,12 @@ export class Agent {
     const backgroundPersistence =
       this.homedir === undefined ? undefined : new BackgroundTaskPersistence(this.homedir);
 
-    const perAgentServices = new ServiceCollection();
-    perAgentServices.set(IRecordsService, new SyncDescriptor(RecordsService, [this, recordsPersistence]));
-    perAgentServices.set(
-      ICompactionService,
-      new SyncDescriptor(CompactionService, [this, options.compactionStrategy]),
+    const perAgentServices = AgentFactory.buildServiceCollection(
+      this,
+      options,
+      recordsPersistence,
+      backgroundPersistence,
     );
-    perAgentServices.set(
-      IMicroCompactionService,
-      new SyncDescriptor(MicroCompactionService, [this, options.microCompaction]),
-    );
-    perAgentServices.set(IContextService, new SyncDescriptor(ContextService, [this]));
-    perAgentServices.set(IAgentConfigService, new SyncDescriptor(AgentConfigService, [this]));
-    perAgentServices.set(ITurnService, new SyncDescriptor(TurnService, [this]));
-    perAgentServices.set(IInjectionService, new SyncDescriptor(InjectionService, [this]));
-    perAgentServices.set(
-      IPermissionService,
-      new SyncDescriptor(PermissionService, [this, options.permission]),
-    );
-    perAgentServices.set(
-      IAgentStatusService,
-      new SyncDescriptor(AgentStatusService, [this satisfies AgentStatusHost]),
-    );
-    perAgentServices.set(
-      IPlanService,
-      new SyncDescriptor(PlanService, [this.kaos, this.homedir]),
-    );
-    perAgentServices.set(ISwarmService, new SyncDescriptor(SwarmService));
-    perAgentServices.set(IUsageService, new SyncDescriptor(UsageService));
-    perAgentServices.set(IAgentToolService, new SyncDescriptor(AgentToolService, [this]));
-    perAgentServices.set(
-      IBackgroundService,
-      new SyncDescriptor(BackgroundService, [this, backgroundPersistence]),
-    );
-    perAgentServices.set(IReplayService, new SyncDescriptor(ReplayService, [options.replay]));
-    perAgentServices.set(
-      IDomainEventBus,
-      new SyncDescriptor(DomainEventBus, [
-        (event: AgentEvent) => {
-          if (!this.records.restoring) void this.rpc?.emitEvent?.(event);
-        },
-      ]),
-    );
-    perAgentServices.set(ILifecycleService, new SyncDescriptor(LifecycleService, []));
-    perAgentServices.set(
-      IGoalService,
-      new SyncDescriptor(GoalService, [this.telemetry, (event: AgentEvent) => { this.eventBus.publish(event); }]),
-    );
-    if (options.skills !== undefined) {
-      perAgentServices.set(
-        IAgentSkillService,
-        new SyncDescriptor(AgentSkillService, [this, options.skills]),
-      );
-    }
-    if (this.type !== 'sub') {
-      perAgentServices.set(ICronService, new SyncDescriptor(CronService, [this]));
-    }
     this.scope = (options.instantiationService ?? new InstantiationService(undefined, true)).createChild(
       perAgentServices,
     );
