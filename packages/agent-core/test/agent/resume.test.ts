@@ -9,10 +9,18 @@ import {
   AGENT_WIRE_PROTOCOL_VERSION,
   InMemoryAgentRecordPersistence,
 } from '../../src/agent/records';
-import { BackgroundTaskPersistence } from '../../src/agent/background';
+import { BackgroundTaskPersistence, type IBackgroundService } from '../../src/agent/background';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { testAgent } from './harness/agent';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from './harness/snapshots';
+import { AgentResumeService, type AgentResumeHost } from '../../src/agent/resume';
+import type { IContextService } from '../../src/agent/context';
+import type { ICronService } from '../../src/agent/cron';
+import type { IGoalService } from '../../src/agent/goal';
+import type { ILifecycleService } from '../../src/agent/lifecycle';
+import type { AgentRecordsReplayOptions, IRecordsService } from '../../src/agent/records';
+import type { IReplayService } from '../../src/agent/replay';
+import type { ITurnService } from '../../src/agent/turn';
 
 const MOCK_PROVIDER = {
   type: 'kimi',
@@ -1198,3 +1206,203 @@ function findRpcEvent(
 ) {
   return ctxEvents.find((entry) => entry.type === '[rpc]' && entry.event === event);
 }
+
+interface ResumeServiceHarness {
+  readonly host: AgentResumeHost;
+  readonly service: AgentResumeService;
+  readonly order: string[];
+  readonly replayBuilder: { postRestoring: boolean };
+  readonly records: { readonly replay: ReturnType<typeof vi.fn> };
+  readonly lifecycle: {
+    readonly fireAgentWillResume: ReturnType<typeof vi.fn>;
+    readonly fireAgentDidResume: ReturnType<typeof vi.fn>;
+  };
+  readonly postRestoringDuringStages: boolean | undefined;
+}
+
+function makeResumeServiceHost(
+  options: { readonly id?: string; readonly failAt?: string; readonly replayResult?: { warning?: string } } = {},
+): ResumeServiceHarness {
+  const order: string[] = [];
+  const replayBuilder = { postRestoring: false };
+  let postRestoringDuringStages: boolean | undefined;
+  const maybeFail = (label: string): void => {
+    if (options.failAt === label) {
+      throw new Error(`boom:${label}`);
+    }
+  };
+
+  const records = {
+    replay: vi.fn(async (_options?: AgentRecordsReplayOptions) => {
+      order.push('records.replay');
+      maybeFail('records.replay');
+      return options.replayResult ?? {};
+    }),
+  };
+  const lifecycle = {
+    fireAgentWillResume: vi.fn(async () => {
+      order.push('lifecycle.fireAgentWillResume');
+    }),
+    fireAgentDidResume: vi.fn(async () => {
+      order.push('lifecycle.fireAgentDidResume');
+    }),
+  };
+  const goal = {
+    normalizeAfterReplay: vi.fn(() => {
+      // Capture the replay-builder flag as the first restoration stage runs, so
+      // the test can prove `postRestoring` is true for the whole stage window.
+      postRestoringDuringStages = replayBuilder.postRestoring;
+      order.push('goal.normalizeAfterReplay');
+      maybeFail('goal.normalizeAfterReplay');
+    }),
+  };
+  const background = {
+    loadFromDisk: vi.fn(async () => {
+      order.push('background.loadFromDisk');
+      maybeFail('background.loadFromDisk');
+    }),
+    reconcile: vi.fn(async () => {
+      order.push('background.reconcile');
+      maybeFail('background.reconcile');
+    }),
+  };
+  const cron = {
+    loadFromDisk: vi.fn(async () => {
+      order.push('cron.loadFromDisk');
+      maybeFail('cron.loadFromDisk');
+    }),
+  };
+  const context = {
+    finishResume: vi.fn(() => {
+      order.push('context.finishResume');
+      maybeFail('context.finishResume');
+    }),
+  };
+  const turn = {
+    finishResume: vi.fn(() => {
+      order.push('turn.finishResume');
+      maybeFail('turn.finishResume');
+    }),
+  };
+
+  const host: AgentResumeHost = {
+    id: options.id,
+    lifecycle: lifecycle as unknown as ILifecycleService,
+    records: records as unknown as IRecordsService,
+    replayBuilder: replayBuilder as unknown as IReplayService,
+    goal: goal as unknown as IGoalService,
+    background: background as unknown as IBackgroundService,
+    cron: cron as unknown as ICronService,
+    context: context as unknown as IContextService,
+    turn: turn as unknown as ITurnService,
+  };
+
+  return {
+    host,
+    service: new AgentResumeService(host),
+    order,
+    replayBuilder,
+    records,
+    lifecycle,
+    get postRestoringDuringStages() {
+      return postRestoringDuringStages;
+    },
+  };
+}
+
+describe('AgentResumeService', () => {
+  it('runs the resume stages in order: records → goal → background → cron → context → turn, bracketed by lifecycle hooks', async () => {
+    const harness = makeResumeServiceHost({ id: 'agent-1' });
+    const options: AgentRecordsReplayOptions = { rewriteMigratedRecords: true };
+
+    const result = await harness.service.resume(options);
+
+    expect(result).toEqual({});
+    expect(harness.records.replay).toHaveBeenCalledWith(options);
+    expect(harness.order).toEqual([
+      'lifecycle.fireAgentWillResume',
+      'records.replay',
+      'goal.normalizeAfterReplay',
+      'background.loadFromDisk',
+      'background.reconcile',
+      'cron.loadFromDisk',
+      'context.finishResume',
+      'turn.finishResume',
+      'lifecycle.fireAgentDidResume',
+    ]);
+    expect(harness.lifecycle.fireAgentWillResume).toHaveBeenCalledWith({ agentId: 'agent-1' });
+    expect(harness.lifecycle.fireAgentDidResume).toHaveBeenCalledWith({ agentId: 'agent-1' });
+  });
+
+  it('holds replayBuilder.postRestoring true across the restoration stages and resets it after', async () => {
+    const harness = makeResumeServiceHost({ id: 'agent-1b' });
+
+    await harness.service.resume();
+
+    expect(harness.postRestoringDuringStages).toBe(true);
+    expect(harness.replayBuilder.postRestoring).toBe(false);
+  });
+
+  it('fires fireAgentWillResume before replay and fireAgentDidResume after all stages', async () => {
+    const harness = makeResumeServiceHost({ id: 'agent-2' });
+
+    await harness.service.resume();
+
+    const willIndex = harness.order.indexOf('lifecycle.fireAgentWillResume');
+    const replayIndex = harness.order.indexOf('records.replay');
+    const turnIndex = harness.order.indexOf('turn.finishResume');
+    const didIndex = harness.order.indexOf('lifecycle.fireAgentDidResume');
+
+    expect(willIndex).toBe(0);
+    expect(willIndex).toBeLessThan(replayIndex);
+    expect(replayIndex).toBeLessThan(turnIndex);
+    expect(turnIndex).toBeLessThan(didIndex);
+    expect(harness.lifecycle.fireAgentWillResume).toHaveBeenCalledTimes(1);
+    expect(harness.lifecycle.fireAgentDidResume).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the lifecycle hooks when the agent has no id', async () => {
+    const harness = makeResumeServiceHost();
+
+    await harness.service.resume();
+
+    expect(harness.lifecycle.fireAgentWillResume).not.toHaveBeenCalled();
+    expect(harness.lifecycle.fireAgentDidResume).not.toHaveBeenCalled();
+    expect(harness.order).toEqual([
+      'records.replay',
+      'goal.normalizeAfterReplay',
+      'background.loadFromDisk',
+      'background.reconcile',
+      'cron.loadFromDisk',
+      'context.finishResume',
+      'turn.finishResume',
+    ]);
+  });
+
+  it('forwards the replay result (including warning) to the caller', async () => {
+    const warning = 'Session wire protocol version 99 is newer than the current version 1.';
+    const harness = makeResumeServiceHost({ id: 'agent-3', replayResult: { warning } });
+
+    const result = await harness.service.resume();
+
+    expect(result).toEqual({ warning });
+  });
+
+  it('resets replayBuilder.postRestoring in finally even when a stage throws', async () => {
+    const harness = makeResumeServiceHost({ id: 'agent-4', failAt: 'background.reconcile' });
+
+    await expect(harness.service.resume()).rejects.toThrow('boom:background.reconcile');
+
+    expect(harness.postRestoringDuringStages).toBe(true);
+    expect(harness.replayBuilder.postRestoring).toBe(false);
+    // The failing stage ran, but stages after it and the DidResume hook did not.
+    expect(harness.order).toEqual([
+      'lifecycle.fireAgentWillResume',
+      'records.replay',
+      'goal.normalizeAfterReplay',
+      'background.loadFromDisk',
+      'background.reconcile',
+    ]);
+    expect(harness.lifecycle.fireAgentDidResume).not.toHaveBeenCalled();
+  });
+});

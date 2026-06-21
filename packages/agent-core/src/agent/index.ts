@@ -61,6 +61,8 @@ import { AgentStatusService, IAgentStatusService } from './status';
 import type { AgentStatusHost } from './status';
 import { AgentRpcController } from './rpc-controller';
 import type { AgentRpcHost, IAgentRpcController } from './rpc-controller';
+import { AgentResumeService } from './resume';
+import type { AgentResumeHost, IAgentResumeService } from './resume';
 import { LlmService } from './llm';
 import type { ILlmService } from './llm';
 import { LlmRequestLogger } from './llm-request-logger';
@@ -139,6 +141,7 @@ export class Agent {
   readonly usage: IUsageService;
   readonly statusService: IAgentStatusService;
   readonly rpcController: IAgentRpcController;
+  readonly resumeService: IAgentResumeService;
   readonly eventBus: IDomainEventBus;
   readonly lifecycle: ILifecycleService;
   private readonly scope: IInstantiationService;
@@ -286,6 +289,7 @@ export class Agent {
     this.goal = this.scope.invokeFunction((accessor) => accessor.get(IGoalService));
     this.replayBuilder = this.scope.invokeFunction((accessor) => accessor.get(IReplayService));
     this.rpcController = new AgentRpcController(this satisfies AgentRpcHost);
+    this.resumeService = new AgentResumeService(this satisfies AgentResumeHost);
     if (this.id !== undefined) {
       void this.lifecycle.fireAgentDidCreate({ agentId: this.id });
     }
@@ -316,25 +320,7 @@ export class Agent {
   }
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
-    if (this.id !== undefined) {
-      await this.lifecycle.fireAgentWillResume({ agentId: this.id });
-    }
-    const result = await this.records.replay(options);
-    try {
-      this.replayBuilder.postRestoring = true;
-      this.goal.normalizeAfterReplay();
-      await this.background.loadFromDisk();
-      await this.background.reconcile();
-      await this.cron?.loadFromDisk();
-      this.context.finishResume();
-      this.turn.finishResume();
-    } finally {
-      this.replayBuilder.postRestoring = false;
-    }
-    if (this.id !== undefined) {
-      await this.lifecycle.fireAgentDidResume({ agentId: this.id });
-    }
-    return result;
+    return this.resumeService.resume(options);
   }
 
   /**
