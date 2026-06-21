@@ -128,7 +128,7 @@ interface BridgeStubOptions {
 
 function makeBridge(
   opts: BridgeStubOptions = {},
-): { bridge: ICoreProcessService; record: RpcRecord } {
+): { bridge: ICoreProcessService & { getCoreApi(): CoreRPC }; record: RpcRecord } {
   const record: RpcRecord = {
     promptCalls: [],
     steerCalls: [],
@@ -237,8 +237,16 @@ function makeBridge(
       return { goalId: 'goal_1', status: 'cancelled' };
     }),
   };
-  const bridge: ICoreProcessService = {
+  // `getCoreApi()` mirrors `rpc` on purpose: in production both expose the
+  // identical CoreAPI method set — `getCoreApi()` is the in-process
+  // (zero-serialization) path, `rpc` is the serializing proxy. Sharing one
+  // stub keeps the call-recording assertions and the rejection-mocking cases
+  // (which mock `bridge.rpc.*`) valid without duplicating the mock. The
+  // intersection type keeps the facade fields type-checked while surfacing
+  // the narrow in-process accessor promptService now routes through.
+  const bridge: ICoreProcessService & { getCoreApi(): CoreRPC } = {
     rpc: rpc as CoreRPC,
+    getCoreApi: () => rpc as CoreRPC,
     ready: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
     _serviceBrand: undefined,

@@ -17,6 +17,7 @@ import type { PermissionMode } from '../../agent/permission';
 import { ulid } from 'ulid';
 
 import { ICoreProcessService } from '../coreProcess/coreProcess';
+import type { CoreRPC } from '../../rpc';
 import { IAuthSummaryService } from '../authSummary/authSummary';
 import { IEventService } from '../event/event';
 import { ILogService } from '../logger/logger';
@@ -37,6 +38,16 @@ import {
 } from './prompt';
 
 const MAIN_AGENT_ID = 'main';
+
+/**
+ * Narrow in-process CoreAPI accessor supplied by the concrete
+ * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
+ * through a structural cast so the public `ICoreProcessService` facade — and
+ * the many test doubles that implement it across the suite — stay unchanged.
+ * The daemon-side adapter always provides `getCoreApi()`; see
+ * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
+ */
+type InProcessCoreApi = { getCoreApi(): CoreRPC };
 
 function promptKey(sessionId: string, agentId: string): string {
   return `${sessionId}\u0000${agentId}`;
@@ -255,7 +266,7 @@ export class PromptService
   /**
    * Per-session ring buffer of stateless-control setter dispatches.
    * Each entry records `{ts, kind, payload, promptId}` immediately after
-   * the underlying `core.rpc.*` setter resolves inside `_applyAgentState`.
+   * the underlying `coreApi().*` setter resolves inside `_applyAgentState`.
    * The buffer is capped at `DISPATCH_LOG_CAP`; on overflow the oldest
    * entry is dropped. Cleared on `ISessionService.onDidClose` together
    * with the shadow. Exposed via `_dispatchLogForTest` for the daemon's
@@ -333,7 +344,7 @@ export class PromptService
 
   async submit(sid: string, body: PromptSubmission): Promise<PromptSubmitResult> {
     await this._requireSession(sid);
-    await this.core.rpc.resumeSession({ sessionId: sid });
+    await this.coreApi().resumeSession({ sessionId: sid });
 
     // Readiness gate. Throws AuthProvisioningRequired /
     // AuthTokenMissing / AuthModelNotResolved before we mint a prompt_id and
@@ -361,9 +372,9 @@ export class PromptService
 
   async startBtw(sid: string): Promise<string> {
     await this._requireSession(sid);
-    await this.core.rpc.resumeSession({ sessionId: sid });
+    await this.coreApi().resumeSession({ sessionId: sid });
     await this.auth.ensureReady();
-    return this.core.rpc.startBtw({ sessionId: sid, agentId: MAIN_AGENT_ID });
+    return this.coreApi().startBtw({ sessionId: sid, agentId: MAIN_AGENT_ID });
   }
 
   async steer(sid: string, promptIds: readonly string[]): Promise<PromptSteerResult> {
@@ -392,7 +403,7 @@ export class PromptService
     this._replaceQueue(sid, MAIN_AGENT_ID, remaining);
 
     try {
-      await this.core.rpc.steer({
+      await this.coreApi().steer({
         sessionId: sid,
         agentId: MAIN_AGENT_ID,
         input: steerContentToCoreParts(selected),
@@ -438,16 +449,16 @@ export class PromptService
     try {
       this._logger.debug(
         { sid, promptId: state.promptId, agentId: state.agentId, partCount: input.length },
-        '[DBG prompt-service.submit] -> core.rpc.prompt(...)',
+        '[DBG prompt-service.submit] -> coreApi.prompt(...)',
       );
-      await this.core.rpc.prompt({
+      await this.coreApi().prompt({
         sessionId: sid,
         agentId: state.agentId,
         input,
       });
       this._logger.debug(
         { sid, promptId: state.promptId },
-        '[DBG prompt-service.submit] core.rpc.prompt(...) resolved',
+        '[DBG prompt-service.submit] coreApi.prompt(...) resolved',
       );
     } catch (error) {
       // Clear our active-prompt state so the next submit succeeds; surface
@@ -457,7 +468,7 @@ export class PromptService
       }
       this._logger.debug(
         { sid, promptId: state.promptId, err: (error as Error)?.message ?? error },
-        '[DBG prompt-service.submit] core.rpc.prompt(...) threw',
+        '[DBG prompt-service.submit] coreApi.prompt(...) threw',
       );
       throw error;
     }
@@ -508,7 +519,7 @@ export class PromptService
           agentId: state.agentId,
         };
         if (state.turnId !== null) cancelArgs.turnId = state.turnId;
-        await this.core.rpc.cancel(cancelArgs);
+        await this.coreApi().cancel(cancelArgs);
       } catch (error) {
         // Roll back the optimistic flag so the route surfaces a real error;
         // the caller will see a 50001 (internal) via the global error handler.
@@ -544,7 +555,7 @@ export class PromptService
     // No daemon-managed active prompt. Cancel whatever agent-core turn is
     // running (e.g. a skill activation) without requiring a turnId.
     // TurnFlow.cancel(undefined) is a safe no-op when idle.
-    await this.core.rpc.cancel({ sessionId: sid, agentId: MAIN_AGENT_ID });
+    await this.coreApi().cancel({ sessionId: sid, agentId: MAIN_AGENT_ID });
     return { aborted: true };
   }
 
@@ -561,7 +572,7 @@ export class PromptService
    * `submit` (per-turn override) and `SessionService.update`
    * (`POST /sessions/{sid}/profile`). Validates the session exists,
    * bootstraps the shadow lazily, then diff-dispatches each non-shadow
-   * field through the matching `core.rpc.*` setter. Dispatch-log
+   * field through the matching `coreApi().*` setter. Dispatch-log
    * entries are tagged with the `source` so downstream observers can
    * tell prompt-driven and profile-driven setters apart.
    *
@@ -602,10 +613,10 @@ export class PromptService
   private async _ensureAgentStateBootstrapped(sid: string): Promise<void> {
     if (this._agentState.has(sid)) return;
     const [config, permission, plan, swarmMode] = await Promise.all([
-      this.core.rpc.getConfig({ sessionId: sid, agentId: MAIN_AGENT_ID }),
-      this.core.rpc.getPermission({ sessionId: sid, agentId: MAIN_AGENT_ID }),
-      this.core.rpc.getPlan({ sessionId: sid, agentId: MAIN_AGENT_ID }),
-      this.core.rpc.getSwarmMode({ sessionId: sid, agentId: MAIN_AGENT_ID }),
+      this.coreApi().getConfig({ sessionId: sid, agentId: MAIN_AGENT_ID }),
+      this.coreApi().getPermission({ sessionId: sid, agentId: MAIN_AGENT_ID }),
+      this.coreApi().getPlan({ sessionId: sid, agentId: MAIN_AGENT_ID }),
+      this.coreApi().getSwarmMode({ sessionId: sid, agentId: MAIN_AGENT_ID }),
     ]);
     const snapshot: AgentStateSnapshot = {};
     if (config.modelAlias !== undefined) snapshot.model = config.modelAlias;
@@ -622,7 +633,7 @@ export class PromptService
 
   /**
    * Diff-dispatch: for each of the four controls present on `patch`,
-   * call the matching `core.rpc.*` setter ONLY when the value differs
+   * call the matching `coreApi().*` setter ONLY when the value differs
    * from the shadow. Each setter runs serially so any failure surfaces
    * to the caller. Each successful setter also appends to the per-session
    * dispatch-log ring buffer; absence of an entry between two prompts is
@@ -649,13 +660,13 @@ export class PromptService
 
     if (patch.model !== undefined && patch.model !== shadow.model) {
       const payload = { sessionId: sid, agentId, model: patch.model };
-      await this.core.rpc.setModel(payload);
+      await this.coreApi().setModel(payload);
       shadow.model = patch.model;
       this._recordDispatch(sid, 'setModel', payload, promptId, source);
     }
     if (patch.thinking !== undefined && patch.thinking !== shadow.thinking) {
       const payload = { sessionId: sid, agentId, level: patch.thinking as PromptThinking };
-      await this.core.rpc.setThinking(payload);
+      await this.coreApi().setThinking(payload);
       shadow.thinking = patch.thinking;
       this._recordDispatch(sid, 'setThinking', payload, promptId, source);
     }
@@ -668,20 +679,20 @@ export class PromptService
         agentId,
         mode: patch.permission_mode as PermissionMode,
       };
-      await this.core.rpc.setPermission(payload);
+      await this.coreApi().setPermission(payload);
       shadow.permissionMode = patch.permission_mode as PermissionMode;
       this._recordDispatch(sid, 'setPermission', payload, promptId, source);
     }
     if (patch.plan_mode !== undefined && patch.plan_mode !== shadow.planMode) {
       const payload = { sessionId: sid, agentId };
       if (patch.plan_mode) {
-        await this.core.rpc.enterPlan(payload);
+        await this.coreApi().enterPlan(payload);
         this._recordDispatch(sid, 'enterPlan', payload, promptId, source);
       } else {
         // `cancelPlan({id?})` accepts an omitted id — `PlanMode.cancel`
         // clears whatever id is currently active. Shadow doesn't track
         // ids, so we always omit.
-        await this.core.rpc.cancelPlan(payload);
+        await this.coreApi().cancelPlan(payload);
         this._recordDispatch(sid, 'cancelPlan', payload, promptId, source);
       }
       shadow.planMode = patch.plan_mode;
@@ -694,10 +705,10 @@ export class PromptService
       const payload = { sessionId: sid, agentId };
       if (patch.swarm_mode) {
         const enterPayload = { ...payload, trigger: 'manual' as const };
-        await this.core.rpc.enterSwarm(enterPayload);
+        await this.coreApi().enterSwarm(enterPayload);
         this._recordDispatch(sid, 'enterSwarm', enterPayload, promptId, source);
       } else {
-        await this.core.rpc.exitSwarm(payload);
+        await this.coreApi().exitSwarm(payload);
         this._recordDispatch(sid, 'exitSwarm', payload, promptId, source);
       }
       shadow.swarmMode = patch.swarm_mode;
@@ -714,7 +725,7 @@ export class PromptService
         objective: patch.goal_objective,
         replace: false,
       };
-      await this.core.rpc.createGoal(payload);
+      await this.coreApi().createGoal(payload);
       this._recordDispatch(sid, 'createGoal', payload, promptId, source);
       // `goal_objective` is a one-shot creation trigger; do not keep it on
       // the shadow.
@@ -726,15 +737,15 @@ export class PromptService
       const payload = { sessionId: sid, agentId };
       switch (patch.goal_control) {
         case 'pause':
-          await this.core.rpc.pauseGoal(payload);
+          await this.coreApi().pauseGoal(payload);
           this._recordDispatch(sid, 'pauseGoal', payload, promptId, source);
           break;
         case 'resume':
-          await this.core.rpc.resumeGoal(payload);
+          await this.coreApi().resumeGoal(payload);
           this._recordDispatch(sid, 'resumeGoal', payload, promptId, source);
           break;
         case 'cancel':
-          await this.core.rpc.cancelGoal(payload);
+          await this.coreApi().cancelGoal(payload);
           this._recordDispatch(sid, 'cancelGoal', payload, promptId, source);
           break;
       }
@@ -906,7 +917,7 @@ export class PromptService
   /**
    * Test helper — inject an active prompt record. Used by daemon e2e tests
    * that need to exercise the lifecycle-synthesis path WITHOUT driving a
-   * real `core.rpc.prompt(...)` call (which would require an in-memory
+   * real core prompt dispatch (which would require an in-memory
    * KimiCore loaded with provider credentials). Not part of the public
    * contract; the underscore prefix is a "do not use in prod" signal.
    */
@@ -983,8 +994,20 @@ export class PromptService
     });
   }
 
+  /**
+   * In-process CoreAPI handle — the same methods as `this.core.rpc` but
+   * dispatched directly on the in-process `KimiCore`, skipping the
+   * `createRPC` JSON serialize/deserialize hop. Method signatures and return
+   * shapes are identical to the `rpc` proxy; only the serialization is
+   * removed. The cast is localized here so every call site below reads
+   * `this.coreApi().<method>(...)`.
+   */
+  private coreApi(): CoreRPC {
+    return (this.core as unknown as InProcessCoreApi).getCoreApi();
+  }
+
   private async _requireSession(sid: string): Promise<void> {
-    const all = await this.core.rpc.listSessions({});
+    const all = await this.coreApi().listSessions({});
     if (!all.some((s) => s.id === sid)) {
       throw new SessionNotFoundError(sid);
     }

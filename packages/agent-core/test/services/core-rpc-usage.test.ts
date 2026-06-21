@@ -37,7 +37,7 @@ const BASELINE: Readonly<Record<string, number>> = {
   mcp: 4,
   message: 3,
   modelCatalog: 4,
-  prompt: 27,
+  prompt: 0,
   session: 27,
   skill: 4,
   task: 4,

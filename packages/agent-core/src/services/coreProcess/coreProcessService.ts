@@ -139,6 +139,36 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     return this._ready;
   }
 
+  /**
+   * In-process (zero-serialization) CoreAPI handle. Returns the underlying
+   * `KimiCore` directly so in-package services (e.g. `PromptService`) can
+   * route per-agent calls without crossing the `createRPC` JSON
+   * serialize/deserialize boundary that backs the `rpc` proxy (see
+   * `simulateNetwork` in `src/rpc/client.ts`).
+   *
+   * Method signatures and return shapes are identical to `rpc`; the only
+   * difference is the absence of the serialize hop and the
+   * controlled-promise dispatch. Throws after dispose, mirroring the `rpc`
+   * proxy's post-dispose contract.
+   *
+   * Intentionally NOT advertised on the public `ICoreProcessService` facade:
+   * this is a narrow, in-package seam supplied by the sole production
+   * implementation, and exposing it on the interface would force every test
+   * double of `ICoreProcessService` across the suite to implement it.
+   * Consumers reach it through a localized cast to this accessor shape.
+   */
+  getCoreApi(): CoreRPC {
+    if (this._store.isDisposed) {
+      throw new Error('CoreProcessService has been disposed');
+    }
+    // `KimiCore` implements `PromisableMethods<CoreAPI>`; `CoreRPC` is the
+    // promisified `RPCMethods<CoreAPI>` (adds an optional `options` param).
+    // At runtime the KimiCore methods satisfy the `CoreRPC` contract — they
+    // accept the payload, ignore the extra options arg, and return promises
+    // — so the cast is a type-level accommodation only.
+    return this._core as unknown as CoreRPC;
+  }
+
   override dispose(): void {
     if (this._store.isDisposed) return;
     // KimiCore does not currently expose a dispose() — when it does, we'll
