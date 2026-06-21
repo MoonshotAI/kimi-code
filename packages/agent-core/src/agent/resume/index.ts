@@ -34,26 +34,71 @@ export interface AgentResumeHost {
 /**
  * Owns the agent's serialized `resume()` orchestration: replay the records,
  * then restore each runtime stage (goal / background / cron / context / turn)
- * under a `try/finally` that guards the replay builder's `postRestoring` flag,
- * bracketed by the `fireAgentWillResume` / `fireAgentDidResume` lifecycle
- * hooks.
+ * under a `try/finally` that guards the replay builder's `postRestoring` flag.
+ *
+ * Event-ized (M5.3): the resume body runs as an `onAgentWillResume` handler
+ * rather than being invoked inline. The {@link resume} trigger fires
+ * `fireAgentWillResume`; the subscribed handler performs the work, bracketed
+ * by the `fireAgentWillResume` / `fireAgentDidResume` lifecycle hooks.
  */
 export interface IAgentResumeService {
   /**
-   * Replays the agent's records and restores runtime state. Mirrors the former
+   * Triggers a resume and returns the replay result. Mirrors the former
    * `Agent.resume` signature and return shape exactly.
    */
   resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }>;
 }
 
 export class AgentResumeService implements IAgentResumeService {
-  constructor(private readonly host: AgentResumeHost) {}
+  /**
+   * Per-call handoff between the {@link resume} trigger and the
+   * `onAgentWillResume` handler that performs the work. `resume()` is
+   * serialized per agent (the `SessionHost` dedupes concurrent resumes by
+   * agent id), so a single pending slot per service is sufficient.
+   */
+  private pendingOptions: AgentRecordsReplayOptions | undefined;
+  private pendingResult: { warning?: string } | undefined;
 
+  constructor(private readonly host: AgentResumeHost) {
+    // The resume body runs as an `onAgentWillResume` handler. The trigger
+    // (`resume()`) fires the hook; this handler replays the records and
+    // restores the runtime stages, then captures the replay result so the
+    // trigger can return it. The handler deliberately does NOT fire
+    // `fireAgentWillResume` — the trigger owns that — so there is exactly one
+    // WillResume fire and no recursion.
+    this.host.lifecycle.onAgentWillResume(() => this.runResume());
+  }
+
+  /**
+   * Triggers a resume by firing `fireAgentWillResume`; the subscribed handler
+   * performs the actual replay + stage restoration. Returns the replay result
+   * (including any `warning`) once the handler completes. For id-less agents
+   * the lifecycle hooks are skipped (matching the former behavior) and the
+   * body runs directly.
+   */
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
-    if (this.host.id !== undefined) {
-      await this.host.lifecycle.fireAgentWillResume({ agentId: this.host.id });
+    this.pendingOptions = options;
+    this.pendingResult = undefined;
+    try {
+      if (this.host.id !== undefined) {
+        await this.host.lifecycle.fireAgentWillResume({ agentId: this.host.id });
+      } else {
+        await this.runResume();
+      }
+      return this.pendingResult ?? {};
+    } finally {
+      this.pendingOptions = undefined;
+      this.pendingResult = undefined;
     }
-    const result = await this.host.records.replay(options);
+  }
+
+  /**
+   * The serialized resume body: replay the records, restore each runtime stage
+   * under the `postRestoring` guard, then fire `fireAgentDidResume` and capture
+   * the replay result for the trigger to return.
+   */
+  private async runResume(): Promise<void> {
+    const result = await this.host.records.replay(this.pendingOptions);
     try {
       this.host.replayBuilder.postRestoring = true;
       this.host.goal.normalizeAfterReplay();
@@ -68,6 +113,6 @@ export class AgentResumeService implements IAgentResumeService {
     if (this.host.id !== undefined) {
       await this.host.lifecycle.fireAgentDidResume({ agentId: this.host.id });
     }
-    return result;
+    this.pendingResult = result;
   }
 }

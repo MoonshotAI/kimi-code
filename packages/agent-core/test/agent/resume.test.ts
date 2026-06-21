@@ -17,10 +17,12 @@ import { AgentResumeService, type AgentResumeHost } from '../../src/agent/resume
 import type { IContextService } from '../../src/agent/context';
 import type { ICronService } from '../../src/agent/cron';
 import type { IGoalService } from '../../src/agent/goal';
-import type { ILifecycleService } from '../../src/agent/lifecycle';
+import type { AgentHookCtx, ILifecycleService } from '../../src/agent/lifecycle';
 import type { AgentRecordsReplayOptions, IRecordsService } from '../../src/agent/records';
 import type { IReplayService } from '../../src/agent/replay';
 import type { ITurnService } from '../../src/agent/turn';
+
+type AgentHookHandler = (ctx: AgentHookCtx) => void | Promise<void>;
 
 const MOCK_PROVIDER = {
   type: 'kimi',
@@ -1239,9 +1241,18 @@ function makeResumeServiceHost(
       return options.replayResult ?? {};
     }),
   };
+  let willResumeHandler: AgentHookHandler | undefined;
   const lifecycle = {
-    fireAgentWillResume: vi.fn(async () => {
+    onAgentWillResume: vi.fn((handler: AgentHookHandler) => {
+      willResumeHandler = handler;
+      return { dispose: () => { willResumeHandler = undefined; } };
+    }),
+    onAgentDidResume: vi.fn((_handler: AgentHookHandler) => {
+      return { dispose: () => {} };
+    }),
+    fireAgentWillResume: vi.fn(async (ctx: AgentHookCtx) => {
       order.push('lifecycle.fireAgentWillResume');
+      await willResumeHandler?.(ctx);
     }),
     fireAgentDidResume: vi.fn(async () => {
       order.push('lifecycle.fireAgentDidResume');
