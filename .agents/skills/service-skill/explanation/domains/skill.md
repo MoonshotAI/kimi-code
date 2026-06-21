@@ -267,7 +267,7 @@ Domain / Policy
 Infrastructure
   Skill discovery                (scanner.discoverSkills / parser.expandSkillParameters：磁盘扫描 + 模板参数展开)
   SDK adapters                   (toProtocolSkill：内部 SkillSummary → 协议 SkillDescriptor)
-  CoreAPI handle                 (skill facade 经 ICoreProcessService 取 in-process listSkills / activateSkill)
+  CoreAPI handle                 (skill facade 经 ICoreRuntime 取 in-process listSkills / activateSkill)
   Lifecycle hooks                (onSessionDidStart：M5.1 SkillRuntime 的订阅入口)
 ```
 

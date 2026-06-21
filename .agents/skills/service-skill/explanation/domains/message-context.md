@@ -214,7 +214,7 @@ Domain / Policy
 Infrastructure
   Wire transcript reader       (readWireTranscript / WireTranscript：wire.jsonl 再归约)
   SDK adapters                 (toProtocolMessage / deriveMessageId / parseMessageId：内部 → 协议形状)
-  CoreAPI handle               (message 经 ICoreProcessService 取 in-process getContext / listSessions)
+  CoreAPI handle               (message 经 ICoreRuntime 取 in-process getContext / listSessions)
 ```
 
 依赖关系：

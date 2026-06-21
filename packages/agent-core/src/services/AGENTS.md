@@ -35,7 +35,7 @@ and the **interface shape**, not the suffix. Patterns:
 | Business facade | mostly `Promise<T>` returns | `IPromptService.submit(...)` |
 | One-shot broker | `request(req): Promise<resp>` + `resolve(id, resp)` | `IApprovalService` |
 | Pub-sub bus | `publish(e)` + `readonly onDidXxx: Event<T>` | `IEventService` |
-| Cross-process adapter | `readonly rpc: ...` + `ready(): Promise<void>` | `ICoreProcessService` |
+| Cross-process adapter | `readonly rpc: ...` + `ready(): Promise<void>` | `ICoreRuntime` |
 
 ## File / folder convention (normative)
 
@@ -51,8 +51,14 @@ and the **interface shape**, not the suffix. Patterns:
 Example domain layout:
 
     coreProcess/
-      coreProcess.ts          ← ICoreProcessService, CoreProcessServiceOptions
-      coreProcessService.ts   ← CoreProcessService implements ICoreProcessService
+      coreProcess.ts          ← ICoreRuntime, CoreProcessServiceOptions
+      coreProcessService.ts   ← CoreProcessService implements ICoreRuntime
+      coreProcessClient.ts    ← BridgeClientAPI (SDK-side RPC dispatch)
+
+`ICoreRuntime` is the sole identifier for the core-process adapter; the
+deprecated process-service alias was removed. Its decorator string remains
+`'coreProcessService'` (rename deferred), so the DI token is stable across
+the rename.
 
 This mirrors `vscode/src/vs/platform/<domain>/common/<domain>.ts` +
 `<domain>Service.ts`.
@@ -123,6 +129,33 @@ supporting notes under
 → the milestone does not start. This restates the gate in the ROADMAP global
 constraints.
 
+### How to add a domain (normative)
+
+1. **Concept doc first.** Finalize
+   `.agents/skills/service-skill/explanation/domains/<domain>.md` (plus any
+   `reference/domains/<domain>/` notes) before the milestone starts — the
+   migration gate above blocks otherwise.
+2. **Pick the roles.** Start with the command role
+   (`<domain>.ts` + `<domain>Service.ts`). Add `query` / `runtime` only
+   when the aggregate has a second read scope or live state; add
+   `repository` / `index` when it owns truth or needs a read-model index.
+   Empty roles are not created.
+3. **Apply the layering rule.** `repository` / `index` sit below the
+   service layer and live where they are consumed — colocated with the
+   runtime aggregate when the runtime owns them, never imported by
+   `services/`. Command / query / runtime facades consumed at the RPC /
+   SDK boundary live under `services/<domain>/` and depend on those
+   repositories / indexes (services → runtime, never the reverse).
+4. **Register.** Self-register each impl with
+   `registerSingleton(IXxxService, XxxService, InstantiationType.Delayed)`
+   and re-export contracts + impl from `index.ts` so the package barrel
+   runs the side effect. `repository` / `index` are not top-level
+   singletons.
+5. **Fence.** The M7.2 dependency-direction test enforces runtime ↛
+   services, repository/index ↛ services, and no cross-service business
+   imports. New domains must keep it green; the within-domain
+   cross-role rule is code-review convention, not grep-enforced.
+
 ### Reference index
 
 - command — [`command-service.md`](../../../../.agents/skills/service-skill/reference/patterns/command-service.md)
@@ -130,38 +163,45 @@ constraints.
 - runtime — [`runtime-service.md`](../../../../.agents/skills/service-skill/reference/patterns/runtime-service.md)
 - repository + index — [`repository-and-index.md`](../../../../.agents/skills/service-skill/reference/patterns/repository-and-index.md)
 
-## Out of scope (intentionally deferred)
+## Out of scope / completed
 
-The following are recognised as VSCode-aligned improvements but **NOT**
-covered by this convention today; they would be follow-up refactors:
+Done by the DI domain-runtime-services refactor:
 
-1. **Split `ICoreProcessService.rpc` (current `CoreRPC` mega-proxy)
-   into per-domain typed slices**, so a `SessionService` only sees
-   `Pick<CoreRPC, 'createSession' | 'listSessions' | ...>` and not the
-   entire `CoreAPI`. Pure soft slicing (no RPC-layer changes) gives
-   us boundary discipline + test ergonomics without the IPC-channel
-   cost.
-2. **Dissolve `IEventService`** into per-service typed `Event<T>`
-   properties wired off a single core stream. The first step is done:
-   `IEventService` is now a transport-agnostic pure pub-sub bus
-   (`publish` + `onDidPublish`) and the server's WS-specific concerns
-   (per-session seq, ring buffer, WS fan-out, replay) live on a separate
-   server-only `IWSBroadcastService` that subscribes to the bus. The
-   remaining step is folding the central stream into per-domain typed
-   emitters on each `IXxxService` so consumers can subscribe to a
-   narrow `Event<T>` rather than the full firehose.
-3. **Real channel registry** (`getChannel(name) / registerChannel(...)`
-   on `ICoreProcessService`) mirroring VSCode's `IMainProcessService`.
+1. **CoreRPC slicing** — facades no longer depend on the `CoreRPC`
+   mega-proxy. Each routes to the in-process `CoreAPI` through
+   `ICoreRuntime.getCoreApi()` (zero-serialization) or through peer
+   domain services, so a `SessionService` only sees the methods it
+   actually calls.
+2. **Domain decomposition** — domains split into command / query /
+   runtime / repository / index roles when the aggregate warrants it
+   (e.g. `session/` → `ISessionService` + `ISessionQueryService` +
+   `ISessionRuntimeService`; `SessionRepository` + `SessionIndex` live in
+   the runtime layer). See the roles table above.
+3. **Event projection boundary** — domain lifecycle hooks
+   (`onSessionWillStart`, `onSessionWillClose`, `onAgentWillResume`, …)
+   carry the cross-cutting effects that used to be hard-wired, and the
+   `IDomainEventBus` + `event/projection` boundary turns core events into
+   protocol events. `IEventService` stays a transport-agnostic pub-sub
+   bus (`publish` + `onDidPublish`); WS fan-out remains on the
+   server-only `IWSBroadcastService`.
+
+Still deferred (would be follow-up refactors):
+
+1. **Per-domain typed emitters** — fold the central `IEventService`
+   firehose into narrow `Event<T>` properties on each `IXxxService`, so
+   consumers subscribe to a domain stream rather than the full bus.
+2. **Real channel registry** (`getChannel(name) / registerChannel(...)`
+   on `ICoreRuntime`) mirroring VSCode's `IMainProcessService`.
    Requires agent-core RPC layer changes.
 
-When taking on (1) or (2), the new types still follow the rules above —
-no new suffixes get reintroduced.
+When taking on either, the new types still follow the rules above — no
+new suffixes get reintroduced.
 
-## Per-domain layout (current)
+## Per-domain layout (terminal)
 
 | Folder | Contracts | Impl | Decorator |
 |---|---|---|---|
-| `coreProcess/` | `coreProcess.ts` | `coreProcessService.ts` | `ICoreProcessService` |
+| `coreProcess/` | `coreProcess.ts` | `coreProcessService.ts`, `coreProcessClient.ts` | `ICoreRuntime` |
 | `event/` | `event.ts` | `eventService.ts` | `IEventService` |
 | `approval/` | `approval.ts` | (impl lives in server) | `IApprovalService` |
 | `question/` | `question.ts` | (impl lives in server) | `IQuestionService` |
@@ -169,16 +209,26 @@ no new suffixes get reintroduced.
 | `logger/` | `logger.ts` | (adapter lives in server) | `ILogService` |
 | `fileStore/` | `fileStore.ts` | `fileStoreService.ts` | `IFileStore` |
 | `fs/` | `fs.ts`, `fsSearch.ts`, `fsGit.ts`, `fsWatcher.ts`, `fsPathSafety.ts` | `fsService.ts`, `fsSearchService.ts`, `fsGitService.ts`, `fsWatcherService.ts` | `IFsService`, `IFsSearchService`, `IFsGitService`, `IFsWatcher` |
-| `workspace/` | `workspaceRegistry.ts`, `workspaceFs.ts` | `workspaceRegistryService.ts`, `workspaceFsService.ts` | `IWorkspaceRegistry`, `IWorkspaceFsService` |
+| `workspace/` | `workspaceRegistry.ts`, `workspaceFs.ts`, `workspace.ts` | `workspaceRegistryService.ts`, `workspaceFsService.ts`, `workspaceService.ts` | `IWorkspaceRegistry`, `IWorkspaceFsService`, `IWorkspaceService` |
 | `config/` | `config.ts` | `configService.ts` | `IConfigService` |
-| `session/` | `session.ts` | `sessionService.ts` | `ISessionService` |
+| `session/` | `session.ts` | `sessionService.ts`, `sessionQueryService.ts`, `sessionRuntimeService.ts` | `ISessionService`, `ISessionQueryService`, `ISessionRuntimeService` |
 | `message/` | `message.ts` | `messageService.ts` | `IMessageService` |
 | `prompt/` | `prompt.ts` | `promptService.ts` | `IPromptService` |
 | `tool/` | `tool.ts` | `toolService.ts` | `IToolService` |
 | `mcp/` | `mcp.ts` | `mcpService.ts` | `IMcpService` |
+| `modelCatalog/` | `modelCatalog.ts` | `modelCatalogService.ts` | `IModelCatalogService` |
+| `skill/` | `skill.ts` | `skillService.ts` | `ISkillService` |
 | `task/` | `task.ts` | `taskService.ts` | `ITaskService` |
 | `oauth/` | `oauth.ts` | `oauthService.ts` | `IOAuthService` |
 | `authSummary/` | `authSummary.ts` | `authSummaryService.ts` | `IAuthSummaryService` |
+| `terminal/` | `terminal.ts` | `terminalService.ts` | `ITerminalService` |
+| `plugin/` | (runtime, not under `services/`) | `#/plugin` | (not a DI service facade) |
+
+`plugin/` is a runtime-layer aggregate at `src/plugin/` (imported as
+`#/plugin`), consumed by `services/` facades rather than exposing a
+`*Service` of its own. It is listed here so the boundary is explicit: the
+runtime owns plugin loading / manifests / storage; `services/` only
+projects it upward.
 
 Adding a new service: create the folder + contracts + impl pair, add a
 bottom-of-file `registerSingleton(IXxxService, XxxService,
@@ -219,7 +269,7 @@ This layer uses the registry-based wiring pattern modelled on
 
 3. **Server-side `services.set(...)` may override** the registry-derived
    entry for services that need runtime static args (e.g.
-   `services.set(ICoreProcessService, new SyncDescriptor(CoreProcessService,
+   `services.set(ICoreRuntime, new SyncDescriptor(CoreProcessService,
    [opts.coreProcessOptions ?? {}], false))` in `start.ts`) or for
    prebuilt instances carrying external closures (`PinoLogger`,
    `FastifyRestGateway`). `registerSingleton` does not throw on a

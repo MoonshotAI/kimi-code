@@ -510,7 +510,7 @@ Domain / Policy
 Infrastructure / Truth
   Agent record log (IRecordsService / IReplayService)          (goal 真相：event-sourced)
   SDK adapters (toProtocolTask)                                (BackgroundTaskInfo → 协议 BackgroundTask)
-  CoreAPI handle (coreApi())                                   (task facade 经 ICoreProcessService 取 in-process
+  CoreAPI handle (coreApi())                                   (task facade 经 ICoreRuntime 取 in-process
                                                                  getBackground / stopBackground / getBackgroundOutput)
   Tool / slash layer (CronCreate/CronDelete/CronList, UpdateGoal, /goal, /cron)  (cron / goal 的对外入口)
 ```
