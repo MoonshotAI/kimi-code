@@ -57,8 +57,9 @@ import { AgentToolService, IAgentToolService } from './tool/index';
 import { TurnService, ITurnService } from './turn';
 import { KosongLLM } from './turn/kosong-llm';
 import { UsageService, IUsageService } from './usage';
-import { LlmRequestLogger, splitGenerateOptions } from './llm-request-logger';
-import { resolveCompletionBudget } from '../utils/completion-budget';
+import { LlmService } from './llm';
+import type { ILlmService } from './llm';
+import { LlmRequestLogger } from './llm-request-logger';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { ToolServices } from '../tools/support/services';
 
@@ -119,6 +120,7 @@ export class Agent {
   readonly experimentalFlags: ExperimentalFlagResolver;
 
   readonly llmRequestLogger: LlmRequestLogger;
+  readonly llmService: ILlmService;
   readonly blobStore: BlobStore | undefined;
   readonly records: IRecordsService;
   readonly fullCompaction: ICompactionService;
@@ -253,6 +255,14 @@ export class Agent {
     );
     this.context = this.scope.invokeFunction((accessor) => accessor.get(IContextService));
     this.config = this.scope.invokeFunction((accessor) => accessor.get(IAgentConfigService));
+    this.llmService = new LlmService({
+      config: this.config,
+      llmRequestLogger: this.llmRequestLogger,
+      rawGenerate: this.rawGenerate,
+      modelProvider: this.modelProvider,
+      log: this.log,
+      kimiConfig: this.kimiConfig,
+    });
     this.turn = this.scope.invokeFunction((accessor) => accessor.get(ITurnService));
     this.injection = this.scope.invokeFunction((accessor) => accessor.get(IInjectionService));
     this.permission = this.scope.invokeFunction((accessor) => accessor.get(IPermissionService));
@@ -280,52 +290,11 @@ export class Agent {
   }
 
   get generate(): typeof generate {
-    return async (provider, systemPrompt, tools, history, callbacks, options) => {
-      const { requestLogFields, generateOptions } = splitGenerateOptions(options);
-      const modelAlias = this.config.modelAlias;
-      const run = (requestOptions: Parameters<typeof generate>[5]) => {
-        this.llmRequestLogger.logRequest({
-          provider,
-          modelAlias,
-          systemPrompt,
-          tools,
-          messages: history,
-          fields: requestLogFields,
-        });
-        return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, requestOptions);
-      };
-      if (generateOptions?.auth !== undefined) {
-        return run(generateOptions);
-      }
-      const withAuth =
-        modelAlias === undefined
-          ? undefined
-          : this.modelProvider?.resolveAuth?.(modelAlias, { log: this.log });
-      if (withAuth === undefined) {
-        return run(generateOptions);
-      }
-      return withAuth((auth) => {
-        return run({ ...generateOptions, auth });
-      });
-    };
+    return this.llmService.generate;
   }
 
   get llm(): KosongLLM {
-    // All provider-level request config (thinking, sampling params, thinking.keep)
-    // is applied in ConfigState.provider so compaction shares it. See get provider().
-    const provider = this.config.provider;
-    const loopControl = this.kimiConfig?.loopControl;
-    const completionBudgetConfig = resolveCompletionBudget({
-      maxOutputSize: this.config.maxOutputSize,
-      reservedContextSize: loopControl?.reservedContextSize,
-    });
-    return new KosongLLM({
-      provider,
-      systemPrompt: this.config.systemPrompt,
-      capability: this.config.modelCapabilities,
-      generate: this.generate,
-      completionBudgetConfig,
-    });
+    return this.llmService.llm;
   }
 
   useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
