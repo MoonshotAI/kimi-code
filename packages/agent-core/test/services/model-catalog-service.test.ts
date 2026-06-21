@@ -34,7 +34,7 @@ function makeEnv(): IEnvironmentService {
 }
 
 function makeCore(configRef: { current: KimiConfig }): {
-  core: ICoreProcessService;
+  core: ICoreProcessService & { getCoreApi(): CoreRPC };
   getCalls: GetKimiConfigPayload[];
   setCalls: KimiConfigPatch[];
   removeCalls: string[];
@@ -81,6 +81,10 @@ function makeCore(configRef: { current: KimiConfig }): {
     core: {
       _serviceBrand: undefined,
       rpc: rpc as CoreRPC,
+      // `getCoreApi()` mirrors `rpc`: both expose the identical CoreAPI
+      // method set; `getCoreApi()` is the in-process zero-serialization path
+      // the service now routes through, `rpc` is the serializing proxy.
+      getCoreApi: () => rpc as CoreRPC,
       ready: async () => undefined,
       dispose: () => undefined,
     },

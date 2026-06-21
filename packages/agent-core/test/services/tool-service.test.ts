@@ -37,7 +37,7 @@ interface FakeBridgeState {
   reconnectCalls: ReconnectMcpServerPayload[];
 }
 
-function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
+function makeFakeBridge(state: FakeBridgeState): ICoreProcessService & { getCoreApi(): CoreRPC } {
   const rpc: Partial<CoreRPC> = {
     listSessions: async () => state.sessions,
     getTools: async (_p: unknown) => state.tools as unknown as readonly never[],
@@ -48,8 +48,14 @@ function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
       state.reconnectCalls.push(p);
     },
   };
+  // `getCoreApi()` mirrors `rpc` on purpose: in production both expose the
+  // identical CoreAPI method set — `getCoreApi()` is the in-process
+  // (zero-serialization) path, `rpc` is the serializing proxy. Sharing one
+  // stub keeps the `bridge.rpc.*` assertions (e.g. the ToolService override
+  // below) valid without duplicating the mock.
   return {
     rpc: rpc as CoreRPC,
+    getCoreApi: () => rpc as CoreRPC,
     ready: async () => undefined,
     dispose: () => undefined,
     _serviceBrand: undefined,

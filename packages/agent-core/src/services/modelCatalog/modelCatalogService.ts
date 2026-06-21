@@ -1,5 +1,6 @@
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
 import type { KimiConfig, ModelAlias, ProviderConfig } from '../../config';
+import type { CoreRPC } from '../../rpc';
 import type {
   ModelCatalogItem,
   ProviderCatalogItem,
@@ -25,6 +26,16 @@ import {
   toProtocolModel,
   toProtocolProvider,
 } from './modelCatalog';
+
+/**
+ * Narrow in-process CoreAPI accessor supplied by the concrete
+ * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
+ * through a structural cast so the public `ICoreProcessService` facade — and
+ * the many test doubles that implement it across the suite — stay unchanged.
+ * The daemon-side adapter always provides `getCoreApi()`; see
+ * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
+ */
+type InProcessCoreApi = { getCoreApi(): CoreRPC };
 
 export class ModelCatalogService
   extends Disposable
@@ -83,7 +94,7 @@ export class ModelCatalogService
       throw new ModelNotFoundError(modelId);
     }
 
-    const updated = await this.core.rpc.setKimiConfig({ defaultModel: modelId });
+    const updated = await this.coreApi().setKimiConfig({ defaultModel: modelId });
     const updatedAlias = updated.models?.[modelId] ?? alias;
     return {
       default_model: modelId,
@@ -148,8 +159,8 @@ export class ModelCatalogService
           collectModelIdsForAliases(config, refreshedAliasKeys),
           collectModelIdsForAliases(next, refreshedAliasKeys),
         );
-        await this.core.rpc.removeKimiProvider({ providerId: KIMI_CODE_PROVIDER_NAME });
-        await this.core.rpc.setKimiConfig({
+        await this.coreApi().removeKimiProvider({ providerId: KIMI_CODE_PROVIDER_NAME });
+        await this.coreApi().setKimiConfig({
           providers: next.providers,
           models: next.models,
           defaultModel: next.defaultModel,
@@ -173,7 +184,19 @@ export class ModelCatalogService
   }
 
   private async _readConfig(): Promise<KimiConfig> {
-    return this.core.rpc.getKimiConfig({ reload: true });
+    return this.coreApi().getKimiConfig({ reload: true });
+  }
+
+  /**
+   * In-process CoreAPI handle — the same methods as `this.core.rpc` but
+   * dispatched directly on the in-process `KimiCore`, skipping the
+   * `createRPC` JSON serialize/deserialize hop. Method signatures and return
+   * shapes are identical to the `rpc` proxy; only the serialization is
+   * removed. The cast is localized here so every call site above reads
+   * `this.coreApi().<method>(...)`.
+   */
+  private coreApi(): CoreRPC {
+    return (this.core as unknown as InProcessCoreApi).getCoreApi();
   }
 
   private async _provider(

@@ -17,7 +17,9 @@ import { describe, expect, it } from 'vitest';
  * glob (rather than a single `<domain>Service.ts`) is what originally made
  * the session domain reach 27 across `sessionService.ts` +
  * `sessionQueryService.ts` + `sessionRuntimeService.ts` (now 0 after M3.3
- * routed every call through the in-process `getCoreApi()` accessor).
+ * routed every call through the in-process `getCoreApi()` accessor). M3.4
+ * applied the same `getCoreApi()` routing to the `mcp` and `modelCatalog`
+ * domains, driving both baselines to 0.
  */
 
 const SERVICES_SRC = join(import.meta.dirname, '..', '..', 'src', 'services');
@@ -35,9 +37,9 @@ const RPC_CALL_RE = /\.rpc\.[a-zA-Z_]+\(/g;
 const BASELINE: Readonly<Record<string, number>> = {
   authSummary: 1,
   config: 2,
-  mcp: 4,
+  mcp: 0,
   message: 3,
-  modelCatalog: 4,
+  modelCatalog: 0,
   prompt: 0,
   session: 0,
   skill: 4,
