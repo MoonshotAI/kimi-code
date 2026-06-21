@@ -1,7 +1,7 @@
 /**
  * `TaskService` (Chain 8 / P1.8, W9.2) unit tests.
  *
- * Hermetic: mocks `ICoreProcessService` with an in-memory `rpc` proxy. Coverage:
+ * Hermetic: mocks `ICoreRuntime` with an in-memory `rpc` proxy. Coverage:
  *   - kind mapping (process/agent/question → bash/subagent/tool)
  *   - status mapping (running/completed/failed/timed_out/killed/lost → wire)
  *   - timestamp synthesis (created_at = started_at from startedAt; completed_at
@@ -22,7 +22,7 @@ import type {
 } from '../../src';
 
 import {
-  type ICoreProcessService,
+  type ICoreRuntime,
   SessionNotFoundError,
   TaskAlreadyFinishedError,
   TaskNotFoundError,
@@ -37,7 +37,7 @@ interface FakeState {
   stopCalls: Array<StopBackgroundPayload & { sessionId: string; agentId: string }>;
 }
 
-function makeBridge(state: FakeState): ICoreProcessService & { getCoreApi(): CoreRPC } {
+function makeBridge(state: FakeState): ICoreRuntime & { getCoreApi(): CoreRPC } {
   const rpc: Partial<CoreRPC> = {
     listSessions: async () => state.sessions,
     getBackground: async (p: { sessionId: string; agentId: string; activeOnly?: boolean }) =>

@@ -31,7 +31,7 @@ export {
   IEventService,
   IApprovalService,
   IQuestionService,
-  ICoreProcessService,
+  ICoreRuntime,
   ILogService,
   IModelCatalogService,
   ISessionService,

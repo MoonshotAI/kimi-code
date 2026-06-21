@@ -12,7 +12,7 @@ import {
 import { TestInstantiationService } from '../../../src/di/test';
 import {
   IApprovalService,
-  type ICoreProcessService,
+  type ICoreRuntime,
   type IEventService,
   IPromptService,
   IQuestionService,
@@ -53,7 +53,7 @@ function makeSummary(overrides: Partial<SessionSummary> & { id: string }): Sessi
   };
 }
 
-function makeFakeBridge(state: FakeState): ICoreProcessService & { getCoreApi(): CoreRPC } {
+function makeFakeBridge(state: FakeState): ICoreRuntime & { getCoreApi(): CoreRPC } {
   const rpc: Partial<CoreRPC> = {
     listSessions: vi
       .fn()
@@ -182,7 +182,7 @@ function makeQuestionServiceStub(): {
 }
 
 let state: FakeState;
-let bridge: ICoreProcessService;
+let bridge: ICoreRuntime;
 let svc: SessionQueryService;
 let promptStub: ReturnType<typeof makePromptServiceStub>;
 let approvalStub: ReturnType<typeof makeApprovalServiceStub>;

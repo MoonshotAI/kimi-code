@@ -10,7 +10,7 @@ import type {
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 
 import {
-  type ICoreProcessService,
+  type ICoreRuntime,
   type IEnvironmentService,
   ModelCatalogService,
   ModelNotFoundError,
@@ -34,7 +34,7 @@ function makeEnv(): IEnvironmentService {
 }
 
 function makeCore(configRef: { current: KimiConfig }): {
-  core: ICoreProcessService & { getCoreApi(): CoreRPC };
+  core: ICoreRuntime & { getCoreApi(): CoreRPC };
   getCalls: GetKimiConfigPayload[];
   setCalls: KimiConfigPatch[];
   removeCalls: string[];

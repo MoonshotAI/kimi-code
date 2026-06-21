@@ -23,7 +23,7 @@ import {
   IEnvironmentService,
   IEventService,
   ILogService,
-  ICoreProcessService,
+  ICoreRuntime,
   IQuestionService,
 } from '../../src/services';
 
@@ -279,7 +279,7 @@ describe('singleton registry composition', () => {
     const { eventService, approvalService, questionService } = makePeers();
     const moduleEntries = getSingletonServiceDescriptors();
     expect(moduleEntries.length).toBeGreaterThanOrEqual(1);
-    expect(moduleEntries[0]![0]).toBe(ICoreProcessService);
+    expect(moduleEntries[0]![0]).toBe(ICoreRuntime);
     expect(moduleEntries[0]![1]).toBeInstanceOf(SyncDescriptor);
 
     const ix = new TestInstantiationService();

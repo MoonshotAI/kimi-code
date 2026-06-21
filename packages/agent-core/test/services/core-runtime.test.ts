@@ -23,7 +23,7 @@ import {
   ILogService,
   IQuestionService,
 } from '../../src/services';
-import { ICoreProcessService, ICoreRuntime } from '../../src/services/coreProcess/coreProcess';
+import { ICoreRuntime } from '../../src/services/coreProcess/coreProcess';
 
 class RecordingEventService implements IEventService {
   readonly _serviceBrand: undefined;
@@ -119,15 +119,13 @@ function buildService(ix: TestInstantiationService): CoreProcessService {
 }
 
 describe('ICoreRuntime facade', () => {
-  it('shares its decorator token with the deprecated ICoreProcessService alias', () => {
-    // Both names point at the identical ServiceIdentifier object, keyed by
-    // the canonical 'coreProcessService' decorator string.
-    expect(ICoreRuntime).toBe(ICoreProcessService);
+  it('is keyed by the coreProcessService decorator string', () => {
+    // The deprecated process-service alias was removed in M7.1; ICoreRuntime
+    // is now the sole identifier. Its DI token string is unchanged.
     expect(ICoreRuntime.toString()).toBe('coreProcessService');
-    expect(ICoreProcessService.toString()).toBe('coreProcessService');
   });
 
-  it('resolves the same singleton whether looked up via ICoreRuntime or ICoreProcessService', async () => {
+  it('resolves the CoreProcessService singleton via ICoreRuntime', async () => {
     const ix = new TestInstantiationService();
     const peers = makePeers();
     ix.stub(IEventService, peers.eventService);
@@ -138,11 +136,9 @@ describe('ICoreRuntime facade', () => {
     ix.set(ICoreRuntime, new SyncDescriptor(CoreProcessService, [{}]));
 
     try {
-      const viaRuntime = ix.get(ICoreRuntime);
-      const viaAlias = ix.get(ICoreProcessService);
-      expect(viaRuntime).toBe(viaAlias);
-      expect(viaRuntime).toBeInstanceOf(CoreProcessService);
-      await expect(viaRuntime.ready()).resolves.toBeUndefined();
+      const core = ix.get(ICoreRuntime);
+      expect(core).toBeInstanceOf(CoreProcessService);
+      await expect(core.ready()).resolves.toBeUndefined();
     } finally {
       ix.dispose();
     }

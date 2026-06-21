@@ -1,4 +1,4 @@
-import { InstantiationService, resolveConfigPath, resolveKimiHome, setUnexpectedErrorHandler, CoreProcessService, IApprovalService, IAuthSummaryService, IEnvironmentService, IEventService, ICoreProcessService, IModelCatalogService, IMcpService, IMessageService, IOAuthService, IFileStore, IFsGitService, IFsSearchService, IFsService, IFsWatcher, ILogService, IPromptService, IQuestionService, ISessionService, ISkillService, ITaskService, ITerminalService, IToolService, IWorkspaceFsService, IWorkspaceRegistry, FsPathEscapesError, FsWatchLimitError, FsWatcherService, SessionNotFoundError, createConnectionLookup, resolveSafePath, type ServiceIdentifier, type CoreProcessServiceOptions } from '@moonshot-ai/agent-core';
+import { InstantiationService, resolveConfigPath, resolveKimiHome, setUnexpectedErrorHandler, CoreProcessService, IApprovalService, IAuthSummaryService, IEnvironmentService, IEventService, ICoreRuntime, IModelCatalogService, IMcpService, IMessageService, IOAuthService, IFileStore, IFsGitService, IFsSearchService, IFsService, IFsWatcher, ILogService, IPromptService, IQuestionService, ISessionService, ISkillService, ITaskService, ITerminalService, IToolService, IWorkspaceFsService, IWorkspaceRegistry, FsPathEscapesError, FsWatchLimitError, FsWatcherService, SessionNotFoundError, createConnectionLookup, resolveSafePath, type ServiceIdentifier, type CoreProcessServiceOptions } from '@moonshot-ai/agent-core';
 import { ErrorCode, createAsyncApiDocument } from '@moonshot-ai/protocol';
 import Fastify from 'fastify';
 import { promises as fspPromises } from 'node:fs';
@@ -201,7 +201,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     throw error;
   }
 
-  let coreProcess: ICoreProcessService;
+  let coreProcess: ICoreRuntime;
   try {
     coreProcess = ix.invokeFunction((a) => {
 
@@ -228,7 +228,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
       const wsGw = a.get(IWSGateway);
 
-      const built = a.get(ICoreProcessService);
+      const built = a.get(ICoreRuntime);
 
       const sessionService = a.get(ISessionService);
       a.get(IMessageService);

@@ -1,7 +1,7 @@
 /**
  * `ISkillService` — daemon-facing skill surface.
  *
- * Wraps `ICoreProcessService.rpc.{listSkills, activateSkill}` and adapts the
+ * Wraps `ICoreRuntime.rpc.{listSkills, activateSkill}` and adapts the
  * agent-core `SkillSummary` shape (camelCase) into the wire `SkillDescriptor`
  * (snake_case). The adapter helper (`toProtocolSkill`) is co-located here.
  *

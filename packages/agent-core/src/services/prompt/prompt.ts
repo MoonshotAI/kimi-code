@@ -62,7 +62,7 @@
  *
  * **Anti-corruption**: imports `@moonshot-ai/agent-core` only for type-only
  * `Event` / `TurnStartedEvent` etc. Runtime calls go through
- * `ICoreProcessService.rpc.<method>`. Lifecycle synthesis emits events through
+ * `ICoreRuntime.rpc.<method>`. Lifecycle synthesis emits events through
  * `IEventService.publish` (also a daemon-side interface; agent-core not touched).
  */
 

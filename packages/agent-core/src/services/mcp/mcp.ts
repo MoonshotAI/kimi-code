@@ -1,7 +1,7 @@
 /**
  * `IMcpService` — daemon-facing MCP server surface.
  *
- * Wraps `ICoreProcessService.rpc.{listMcpServers, reconnectMcpServer}` and adapts
+ * Wraps `ICoreRuntime.rpc.{listMcpServers, reconnectMcpServer}` and adapts
  * the agent-core `McpServerInfo` shape into SCHEMAS §8 `McpServer`. The
  * adapter helper (`toProtocolMcpServer`) is co-located here.
  *

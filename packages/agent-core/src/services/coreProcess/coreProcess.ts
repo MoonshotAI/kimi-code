@@ -20,12 +20,13 @@
  * Facade:
  *   - `ICoreRuntime` is the public runtime facade: `rpc`, `ready()`,
  *     `dispose()`, and `getCoreApi()` (in-process wire-controller access).
- *     New consumers inject `@ICoreRuntime`.
- *   - `ICoreProcessService` is a **deprecated** alias of `ICoreRuntime`. Both
- *     names share the same DI decorator token (`'coreProcessService'`), so
- *     existing `@ICoreProcessService` injections and `ServiceCollection`
- *     registrations keep resolving unchanged. The decorator string is renamed
- *     in M7.1; until then the two identifiers are the identical object.
+ *     Consumers inject `@ICoreRuntime`.
+ *
+ * DI token:
+ *   - The decorator string remains `'coreProcessService'` for now (renaming it
+ *     to `'coreRuntime'` is deferred — see M7.1 STATUS). The deprecated
+ *     process-service alias was removed in M7.1; `ICoreRuntime` is now the
+ *     sole identifier and resolves against that unchanged string token.
  *
  * Lifecycle:
  *   - `ready()` resolves when both the `KimiCore` plugin/config load AND the
@@ -42,7 +43,7 @@
  * Role: cross-process adapter — see `packages/services/AGENTS.md`.
  */
 
-import { createDecorator, type ServiceIdentifier } from '../../di';
+import { createDecorator } from '../../di';
 import type { CoreRPC, KimiCoreOptions } from '../../rpc';
 import { type KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 
@@ -97,24 +98,8 @@ export interface ICoreRuntime {
   getCoreApi(): CoreRPC;
 }
 
-// The decorator string stays `'coreProcessService'` until M7.1 renames it.
-// `createDecorator` keys identifiers by name, so this name is the canonical
-// token every consumer resolves against today.
+// The decorator string stays `'coreProcessService'` (rename deferred; see
+// M7.1 STATUS). `createDecorator` keys identifiers by name, so this string is
+// the canonical DI token every consumer resolves against.
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const ICoreRuntime = createDecorator<ICoreRuntime>('coreProcessService');
-
-/**
- * Deprecated alias of {@link ICoreRuntime}.
- *
- * Kept so existing `@ICoreProcessService` injections, `core: ICoreProcessService`
- * field types, and `ServiceCollection` registrations continue to compile and
- * resolve. The value below is the same `ServiceIdentifier` object as
- * `ICoreRuntime` (decorator token `'coreProcessService'`), so the two names
- * are interchangeable at the DI container. Prefer `ICoreRuntime` for new code;
- * the decorator string is renamed in M7.1.
- *
- * @deprecated Use {@link ICoreRuntime} instead.
- */
-export type ICoreProcessService = ICoreRuntime;
-// eslint-disable-next-line @typescript-eslint/no-redeclare
-export const ICoreProcessService: ServiceIdentifier<ICoreRuntime> = ICoreRuntime;

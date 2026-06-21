@@ -8,7 +8,7 @@ import type { CoreRPC } from '../../rpc';
 import type { AuthSummary } from '@moonshot-ai/protocol';
 import { createManagedAuthFacade, type ServicesAuthFacade } from '../auth/managedAuth';
 import { IEnvironmentService } from '../environment/environment';
-import { ICoreProcessService } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '../coreProcess/coreProcess';
 import {
   IAuthSummaryService,
   AuthProvisioningRequiredError,
@@ -21,8 +21,8 @@ const MANAGED_PROVIDER_NAME = 'managed:kimi-code';
 
 /**
  * Narrow in-process CoreAPI accessor supplied by the concrete
- * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
- * through a structural cast so the public `ICoreProcessService` facade — and
+ * `CoreProcessService` (the sole production `ICoreRuntime`). Routed
+ * through a structural cast so the public `ICoreRuntime` facade — and
  * the many test doubles that implement it across the suite — stay unchanged.
  * The daemon-side adapter always provides `getCoreApi()`; see
  * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
@@ -38,7 +38,7 @@ export class AuthSummaryService
 
   constructor(
     @IEnvironmentService private readonly env: IEnvironmentService,
-    @ICoreProcessService private readonly core: ICoreProcessService,
+    @ICoreRuntime private readonly core: ICoreRuntime,
   ) {
     super();
     this._authFacade = createManagedAuthFacade(env);
@@ -163,7 +163,7 @@ function nonEmpty(value: string | undefined): string | null {
 }
 
 // Self-register under the global singleton registry. All ctor deps are
-// `@I…`-injected (@IEnvironmentService / @ICoreProcessService);
+// `@I…`-injected (@IEnvironmentService / @ICoreRuntime);
 // `staticArguments = []`. `supportsDelayedInstantiation = false` preserves
 // current reverse-dispose semantics.
 registerSingleton(IAuthSummaryService, AuthSummaryService, InstantiationType.Delayed);

@@ -53,7 +53,7 @@ export function createServerServiceCollection(
     new SyncDescriptor(WSGateway, [server.wsGatewayOptions ?? {}], false),
   );
   services.set(
-    Services.ICoreProcessService,
+    Services.ICoreRuntime,
     new SyncDescriptor(Services.CoreProcessService, [server.coreProcessOptions ?? {}], false),
   );
 

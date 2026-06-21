@@ -16,7 +16,7 @@ import type {
 import type { PermissionMode } from '../../agent/permission';
 import { ulid } from 'ulid';
 
-import { ICoreProcessService } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '../coreProcess/coreProcess';
 import type { CoreRPC } from '../../rpc';
 import { IAuthSummaryService } from '../authSummary/authSummary';
 import { IEventService } from '../event/event';
@@ -41,8 +41,8 @@ const MAIN_AGENT_ID = 'main';
 
 /**
  * Narrow in-process CoreAPI accessor supplied by the concrete
- * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
- * through a structural cast so the public `ICoreProcessService` facade — and
+ * `CoreProcessService` (the sole production `ICoreRuntime`). Routed
+ * through a structural cast so the public `ICoreRuntime` facade — and
  * the many test doubles that implement it across the suite — stay unchanged.
  * The daemon-side adapter always provides `getCoreApi()`; see
  * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
@@ -294,7 +294,7 @@ export class PromptService
   readonly onDidAbort = this._onDidAbort.event;
 
   constructor(
-    @ICoreProcessService private readonly core: ICoreProcessService,
+    @ICoreRuntime private readonly core: ICoreRuntime,
     @IEventService private readonly eventService: IEventService,
     @IAuthSummaryService private readonly auth: IAuthSummaryService,
     @ISessionService private readonly sessionService: ISessionService,
@@ -1026,7 +1026,7 @@ export class PromptService
 }
 
 // Self-register under the global singleton registry. All ctor deps are
-// `@I…`-injected (@ICoreProcessService / @IEventService / @IAuthSummaryService);
+// `@I…`-injected (@ICoreRuntime / @IEventService / @IAuthSummaryService);
 // `staticArguments = []`. `supportsDelayedInstantiation = false` preserves
 // current reverse-dispose semantics.
 registerSingleton(IPromptService, PromptService, InstantiationType.Delayed);

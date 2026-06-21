@@ -13,20 +13,18 @@ import {
   type SessionCreate,
   type SessionFork,
   type SessionStatus,
-  type SessionStatusResponse,
   type SessionUpdate,
   type UndoSessionRequest,
   type UndoSessionResponse,
 } from '@moonshot-ai/protocol';
 
 import { IApprovalService } from '../approval/approval';
-import { ICoreProcessService } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '../coreProcess/coreProcess';
 import { IEventService } from '../event/event';
 import { toProtocolMessage } from '../message/message';
 import { IPromptService, type AgentStatePatch } from '../prompt/prompt';
 import { IQuestionService } from '../question/question';
 import {
-  ISessionQueryService,
   ISessionRuntimeService,
   ISessionService,
   SessionNotFoundError,
@@ -34,10 +32,8 @@ import {
   toProtocolSession,
   type ISessionIndex,
   type SessionCreateOptions,
-  type SessionListQuery,
 } from './session';
 import { SessionIndex } from './sessionIndex';
-import { SessionQueryService } from './sessionQueryService';
 import { SessionRuntimeService } from './sessionRuntimeService';
 import { applySessionTurnEvent, computeSessionStatus, tryGetSessionMeta } from './sessionStatus';
 
@@ -47,8 +43,8 @@ const CHILD_SESSION_KIND = 'child';
 
 /**
  * Narrow in-process CoreAPI accessor supplied by the concrete
- * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
- * through a structural cast so the public `ICoreProcessService` facade — and
+ * `CoreProcessService` (the sole production `ICoreRuntime`). Routed
+ * through a structural cast so the public `ICoreRuntime` facade — and
  * the many test doubles that implement it across the suite — stay unchanged.
  * The daemon-side adapter always provides `getCoreApi()`; see
  * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
@@ -117,7 +113,6 @@ export class SessionService extends Disposable implements ISessionService {
   private readonly _activeTurns = new Set<string>();
   private readonly _abortedTurns = new Set<string>();
   private _promptService: IPromptService | undefined;
-  private readonly _sessionQueryService: ISessionQueryService;
   private readonly _sessionRuntimeService: ISessionRuntimeService;
   /**
    * Writer-synced read-model index of session summaries. Every mutating
@@ -128,7 +123,7 @@ export class SessionService extends Disposable implements ISessionService {
   private readonly _sessionIndex = new SessionIndex();
 
   constructor(
-    @ICoreProcessService private readonly core: ICoreProcessService,
+    @ICoreRuntime private readonly core: ICoreRuntime,
     @IEventService private readonly eventService: IEventService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IApprovalService private readonly approvalService: IApprovalService,
@@ -148,24 +143,9 @@ export class SessionService extends Disposable implements ISessionService {
         );
       }),
     );
-    // Compose the query facade from our own deps so list / listChildren can
-    // delegate to it. Constructed eagerly (rather than resolved lazily through
-    // IInstantiationService) so it subscribes to the event bus from the start
-    // and its live status stays in lock-step with SessionService; this also
-    // keeps direct `new SessionService(...)` callers (e.g. unit tests) working
-    // without an ISessionQueryService stub in the DI container.
-    this._sessionQueryService = this._register(
-      new SessionQueryService(
-        this.core,
-        this.eventService,
-        this.instantiation,
-        this.approvalService,
-        this.questionService,
-      ),
-    );
-    // Compose the runtime facade for the same reasons: eager construction
-    // makes it subscribe to the bus from the start (so its status_changed
-    // emission and `getStatus` delegation stay in lock-step), and keeps
+    // Compose the runtime facade eagerly (rather than resolving lazily through
+    // IInstantiationService) so it subscribes to the bus from the start (so its
+    // status_changed emission and `getStatus` stay in lock-step), and keeps
     // positional `new SessionService(...)` construction working.
     this._sessionRuntimeService = this._register(
       new SessionRuntimeService(
@@ -281,10 +261,6 @@ export class SessionService extends Disposable implements ISessionService {
     return session;
   }
 
-  async list(query: SessionListQuery): Promise<PageResponse<Session>> {
-    return this._sessionQueryService.list(query);
-  }
-
   async get(id: string): Promise<Session> {
     const all = await this.coreApi().listSessions({});
     const summary = all.find((s) => s.id === id);
@@ -361,10 +337,6 @@ export class SessionService extends Disposable implements ISessionService {
     return session;
   }
 
-  async listChildren(id: string, query: SessionListQuery): Promise<PageResponse<Session>> {
-    return this._sessionQueryService.listChildren(id, query);
-  }
-
   async createChild(id: string, input: SessionChildCreate): Promise<Session> {
     const parent = await this.get(id);
     const title = input.title ?? `Child: ${parent.title || parent.id}`;
@@ -393,10 +365,6 @@ export class SessionService extends Disposable implements ISessionService {
       sessionId: session.id,
       session,
     });
-  }
-
-  async getStatus(id: string): Promise<SessionStatusResponse> {
-    return this._sessionRuntimeService.getStatus(id);
   }
 
   async compact(id: string, input: CompactSessionRequest): Promise<CompactSessionResponse> {
@@ -443,7 +411,7 @@ export class SessionService extends Disposable implements ISessionService {
     }
 
     const after = await this.coreApi().getContext({ sessionId: id, agentId: 'main' });
-    const status = await this.getStatus(id);
+    const status = await this._sessionRuntimeService.getStatus(id);
     await this._syncSessionIndex(id);
     return {
       messages: pageContextMessages(id, summary.createdAt, after, input.page_size),

@@ -1,13 +1,13 @@
 import type { Event, SessionStatus } from '@moonshot-ai/protocol';
 
-import type { ICoreProcessService } from '../coreProcess/coreProcess';
+import type { ICoreRuntime } from '../coreProcess/coreProcess';
 import type { CoreRPC } from '../../rpc';
 import type { SessionMeta } from '../../session';
 
 /**
  * Narrow in-process CoreAPI accessor supplied by the concrete
- * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
- * through a structural cast so the public `ICoreProcessService` facade — and
+ * `CoreProcessService` (the sole production `ICoreRuntime`). Routed
+ * through a structural cast so the public `ICoreRuntime` facade — and
  * the many test doubles that implement it across the suite — stay unchanged.
  * The daemon-side adapter always provides `getCoreApi()`; see
  * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
@@ -111,7 +111,7 @@ export function applySessionTurnEvent(state: SessionTurnState, event: Event): vo
  * resumes an agent.
  */
 export async function tryGetSessionMeta(
-  core: ICoreProcessService,
+  core: ICoreRuntime,
   id: string,
 ): Promise<SessionMeta | undefined> {
   try {

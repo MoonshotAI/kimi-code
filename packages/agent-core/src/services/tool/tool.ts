@@ -1,7 +1,7 @@
 /**
  * `IToolService` — daemon-facing read-only tool surface.
  *
- * Wraps `ICoreProcessService.rpc.getTools` and translates agent-core's `ToolInfo`
+ * Wraps `ICoreRuntime.rpc.getTools` and translates agent-core's `ToolInfo`
  * (camelCase, includes `'user'` source literal) into SCHEMAS §8 `ToolDescriptor`
  * (snake_case, `'skill'` literal). Adapter helpers (`toProtocolTool`,
  * `AgentCoreToolInfoLike`) are co-located here.

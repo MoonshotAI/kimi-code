@@ -1,7 +1,7 @@
 /**
  * `ToolService` + `McpService` (Chain 7 / P1.7, W9.1) unit tests.
  *
- * Hermetic: mocks `ICoreProcessService` with an in-memory `rpc` proxy. Exercises:
+ * Hermetic: mocks `ICoreRuntime` with an in-memory `rpc` proxy. Exercises:
  *   - tool source mapping: 'builtin' / 'user'→'skill' / 'mcp' + mcp_server_id parse
  *   - mcp server status mapping (all 5 agent-core literals → 4 wire literals)
  *   - transport pass-through
@@ -21,7 +21,7 @@ import type {
 } from '../../src';
 
 import {
-  type ICoreProcessService,
+  type ICoreRuntime,
   McpServerNotFoundError,
   McpService,
   ToolService,
@@ -37,7 +37,7 @@ interface FakeBridgeState {
   reconnectCalls: ReconnectMcpServerPayload[];
 }
 
-function makeFakeBridge(state: FakeBridgeState): ICoreProcessService & { getCoreApi(): CoreRPC } {
+function makeFakeBridge(state: FakeBridgeState): ICoreRuntime & { getCoreApi(): CoreRPC } {
   const rpc: Partial<CoreRPC> = {
     listSessions: async () => state.sessions,
     getTools: async (_p: unknown) => state.tools as unknown as readonly never[],

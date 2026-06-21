@@ -4,7 +4,7 @@ import type { Event, SessionStatus, SessionStatusResponse } from '@moonshot-ai/p
 import type { CoreRPC } from '../../rpc';
 
 import { IApprovalService } from '../approval/approval';
-import { ICoreProcessService } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '../coreProcess/coreProcess';
 import { IEventService } from '../event/event';
 import { IPromptService } from '../prompt/prompt';
 import { IQuestionService } from '../question/question';
@@ -18,8 +18,8 @@ import { applySessionTurnEvent, computeSessionStatus } from './sessionStatus';
 
 /**
  * Narrow in-process CoreAPI accessor supplied by the concrete
- * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
- * through a structural cast so the public `ICoreProcessService` facade — and
+ * `CoreProcessService` (the sole production `ICoreRuntime`). Routed
+ * through a structural cast so the public `ICoreRuntime` facade — and
  * the many test doubles that implement it across the suite — stay unchanged.
  * The daemon-side adapter always provides `getCoreApi()`; see
  * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
@@ -51,7 +51,7 @@ export class SessionRuntimeService extends Disposable implements ISessionRuntime
   private _promptService: IPromptService | undefined;
 
   constructor(
-    @ICoreProcessService private readonly core: ICoreProcessService,
+    @ICoreRuntime private readonly core: ICoreRuntime,
     @IEventService private readonly eventService: IEventService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IApprovalService private readonly approvalService: IApprovalService,

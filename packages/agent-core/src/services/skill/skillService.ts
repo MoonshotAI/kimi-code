@@ -7,7 +7,7 @@ import { ErrorCodes, KimiError } from '../../errors';
 import type { SkillDescriptor } from '@moonshot-ai/protocol';
 
 import type { CoreRPC } from '../../rpc';
-import { ICoreProcessService } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '../coreProcess/coreProcess';
 import { SessionNotFoundError } from '../session/session';
 import {
   ISkillService,
@@ -21,8 +21,8 @@ const MAIN_AGENT_ID = 'main';
 
 /**
  * Narrow in-process CoreAPI accessor supplied by the concrete
- * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
- * through a structural cast so the public `ICoreProcessService` facade — and
+ * `CoreProcessService` (the sole production `ICoreRuntime`). Routed
+ * through a structural cast so the public `ICoreRuntime` facade — and
  * the many test doubles that implement it across the suite — stay unchanged.
  * The daemon-side adapter always provides `getCoreApi()`; see
  * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
@@ -32,7 +32,7 @@ type InProcessCoreApi = { getCoreApi(): CoreRPC };
 export class SkillService extends Disposable implements ISkillService {
   readonly _serviceBrand: undefined;
 
-  constructor(@ICoreProcessService private readonly core: ICoreProcessService) {
+  constructor(@ICoreRuntime private readonly core: ICoreRuntime) {
     super();
   }
 

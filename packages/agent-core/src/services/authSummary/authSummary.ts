@@ -21,7 +21,7 @@
  * differentiate them.
  *
  * **Implementation** (`AuthSummaryService`): Reads the live config via
- * `ICoreProcessService.rpc.getKimiConfig({})` and the managed-OAuth credential
+ * `ICoreRuntime.rpc.getKimiConfig({})` and the managed-OAuth credential
  * state via a cached-token lookup. Both are cheap (in-process RPC +
  * a token-file existence probe), so we run them on every call instead of
  * caching — keeps the staleness window at zero.

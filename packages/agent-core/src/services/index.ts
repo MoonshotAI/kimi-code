@@ -1,7 +1,7 @@
 export { BridgeClientAPI } from './coreProcess/coreProcessClient';
 export type { CoreProcessClientDeps } from './coreProcess/coreProcessClient';
 export {
-  ICoreProcessService,
+  ICoreRuntime,
   type CoreProcessServiceOptions,
 } from './coreProcess/coreProcess';
 export { CoreProcessService } from './coreProcess/coreProcessService';
@@ -126,12 +126,16 @@ export { ConfigService } from './config/configService';
 
 export {
   ISessionService,
+  ISessionQueryService,
+  ISessionRuntimeService,
   SessionNotFoundError,
   SessionUndoUnavailableError,
   toProtocolSession,
 } from './session/session';
 export type { SessionClientTelemetry, SessionCreateOptions, SessionListQuery } from './session/session';
 export { SessionService } from './session/sessionService';
+export { SessionQueryService } from './session/sessionQueryService';
+export { SessionRuntimeService } from './session/sessionRuntimeService';
 
 export {
   IMessageService,

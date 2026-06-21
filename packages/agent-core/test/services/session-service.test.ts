@@ -20,11 +20,10 @@ import { emptySessionUsage, type Event, type Session } from '@moonshot-ai/protoc
 import {
   IApprovalService,
   type IAuthSummaryService,
-  type ICoreProcessService,
+  type ICoreRuntime,
   type IEventService,
   IPromptService,
   IQuestionService,
-  type ISessionService,
   PromptService,
   SessionNotFoundError,
   SessionUndoUnavailableError,
@@ -52,7 +51,7 @@ interface FakeBridgeState {
 
 function makeFakeBridge(
   state: FakeBridgeState,
-): ICoreProcessService & { getCoreApi(): CoreRPC } {
+): ICoreRuntime & { getCoreApi(): CoreRPC } {
   const rpc: Partial<CoreRPC> = {
     createSession: vi
       .fn()
@@ -549,63 +548,6 @@ describe('SessionService.create', () => {
   });
 });
 
-describe('SessionService.list', () => {
-  beforeEach(async () => {
-    await svc.create({ metadata: { cwd: '/tmp/a' } });
-    await svc.create({ metadata: { cwd: '/tmp/b' } });
-    await svc.create({ metadata: { cwd: '/tmp/c' } });
-  });
-
-  it('returns descending-by-updatedAt order with default page size', async () => {
-    const page = await svc.list({});
-    expect(page.items).toHaveLength(3);
-    expect(page.items[0]!.metadata.cwd).toBe('/tmp/c');
-    expect(page.items[2]!.metadata.cwd).toBe('/tmp/a');
-    expect(page.has_more).toBe(false);
-  });
-
-  it('honors page_size and surfaces has_more', async () => {
-    const page = await svc.list({ page_size: 2 });
-    expect(page.items.map((s) => s.metadata.cwd)).toEqual(['/tmp/c', '/tmp/b']);
-    expect(page.has_more).toBe(true);
-  });
-
-  it('before_id returns less-recent sessions only', async () => {
-    const all = await svc.list({});
-    const pivotId = all.items[0]!.id;
-    const olderPage = await svc.list({ before_id: pivotId });
-    expect(olderPage.items.map((s) => s.metadata.cwd)).toEqual(['/tmp/b', '/tmp/a']);
-  });
-
-  it('after_id returns more-recent sessions only', async () => {
-    const all = await svc.list({});
-    const pivotId = all.items[2]!.id;
-    const newerPage = await svc.list({ after_id: pivotId });
-    expect(newerPage.items.map((s) => s.metadata.cwd)).toEqual(['/tmp/c', '/tmp/b']);
-  });
-
-  it('status filter applies post-hydration', async () => {
-    const empty = await svc.list({ status: 'running' });
-    expect(empty.items).toEqual([]);
-    const idle = await svc.list({ status: 'idle' });
-    expect(idle.items.length).toBe(3);
-  });
-
-  it('forwards workDir to the underlying core.rpc.listSessions for the workspace fast path', async () => {
-    const page = await svc.list({ workDir: '/tmp/b' });
-    expect(page.items).toHaveLength(1);
-    expect(page.items[0]!.metadata.cwd).toBe('/tmp/b');
-    const calls = (state as unknown as { sessions: SessionSummary[] }).sessions;
-    void calls;
-  });
-
-  it('returns an empty page when workDir matches no sessions', async () => {
-    const page = await svc.list({ workDir: '/tmp/nonexistent' });
-    expect(page.items).toEqual([]);
-    expect(page.has_more).toBe(false);
-  });
-});
-
 describe('SessionService.get', () => {
   it('returns the matching session', async () => {
     const created = await svc.create({ metadata: { cwd: '/tmp/x' } });
@@ -794,44 +736,6 @@ describe('SessionService children', () => {
       topic: 'btw',
     });
   });
-
-  it('lists only direct children for a parent session', async () => {
-    const parent = await svc.create({
-      metadata: { cwd: '/tmp/children' },
-      title: 'Parent',
-    });
-    const child = await svc.createChild(parent.id, { title: 'Child one' });
-    await svc.fork(parent.id, { metadata: { forked: true } });
-    const grandchild = await svc.createChild(child.id, { title: 'Grandchild' });
-
-    const page = await svc.listChildren(parent.id, {});
-
-    expect(page.has_more).toBe(false);
-    expect(page.items.map((item) => item.id)).toEqual([child.id]);
-    expect(page.items.map((item) => item.id)).not.toContain(grandchild.id);
-  });
-
-  it('lists children from persisted summary metadata when SessionMeta is unavailable', async () => {
-    const parent = await svc.create({
-      metadata: { cwd: '/tmp/persisted-child' },
-      title: 'Parent',
-    });
-    const child = await svc.createChild(parent.id, { title: 'Child one' });
-    state.metas.delete(child.id);
-
-    const page = await svc.listChildren(parent.id, {});
-
-    expect(page.items.map((item) => item.id)).toEqual([child.id]);
-    expect(page.items[0]!.metadata).toMatchObject({
-      cwd: '/tmp/persisted-child',
-      parent_session_id: parent.id,
-      child_session_kind: 'child',
-    });
-  });
-
-  it('throws SessionNotFoundError when listing children for a missing parent', async () => {
-    await expect(svc.listChildren('missing', {})).rejects.toBeInstanceOf(SessionNotFoundError);
-  });
 });
 
 describe('SessionService.archive', () => {
@@ -990,12 +894,6 @@ describe('SessionService per-domain event listeners (Phase C)', () => {
 });
 
 describe('SessionService status lifecycle', () => {
-  it('getStatus returns live status', async () => {
-    const session = await svc.create({ metadata: { cwd: '/tmp/status' } });
-    const status = await svc.getStatus(session.id);
-    expect(status.status).toBe('idle');
-  });
-
   it('patches created session status to idle', async () => {
     const session = await svc.create({ metadata: { cwd: '/tmp/status2' } });
     expect(session.status).toBe('idle');

@@ -3,14 +3,14 @@ import type { KimiConfig, ProviderConfig } from '../../config';
 import type { CoreRPC } from '../../rpc';
 import type { ConfigResponse, PatchConfigRequest } from '@moonshot-ai/protocol';
 
-import { ICoreProcessService } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '../coreProcess/coreProcess';
 import { IEventService } from '../event/event';
 import { IConfigService } from './config';
 
 /**
  * Narrow in-process CoreAPI accessor supplied by the concrete
- * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
- * through a structural cast so the public `ICoreProcessService` facade — and
+ * `CoreProcessService` (the sole production `ICoreRuntime`). Routed
+ * through a structural cast so the public `ICoreRuntime` facade — and
  * the many test doubles that implement it across the suite — stay unchanged.
  * The daemon-side adapter always provides `getCoreApi()`; see
  * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
@@ -21,7 +21,7 @@ export class ConfigService extends Disposable implements IConfigService {
   readonly _serviceBrand: undefined;
 
   constructor(
-    @ICoreProcessService private readonly core: ICoreProcessService,
+    @ICoreRuntime private readonly core: ICoreRuntime,
     @IEventService private readonly eventService: IEventService,
   ) {
     super();

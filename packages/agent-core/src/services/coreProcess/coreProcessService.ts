@@ -1,6 +1,5 @@
 /**
- * `CoreProcessService` — implementation of `ICoreRuntime` (and its deprecated
- * `ICoreProcessService` alias).
+ * `CoreProcessService` — implementation of `ICoreRuntime`.
  */
 
 import { createRPC, KimiCore } from '../../rpc';
@@ -239,12 +238,10 @@ export class CoreProcessService extends Disposable implements ICoreRuntime {
 // `(options, @IEnvironmentService, @IEventService, @IApprovalService,
 //  @IQuestionService, @ILogService)` — the leading `options` slot is a pure data bag so we
 // register with `[{}]` as a sane default. Daemon-side `start.ts` overrides
-// this descriptor via `services.set(ICoreProcessService, new
+// this descriptor via `services.set(ICoreRuntime, new
 // SyncDescriptor(CoreProcessService, [opts.coreProcessOptions ?? {}], false))`
-// when it has access to the real options bag. `ICoreProcessService` is the
-// deprecated alias of `ICoreRuntime` (same decorator token), so registering
-// under `ICoreRuntime` here resolves identically. Later registrations win —
-// both at registry level and at `ServiceCollection` level.
+// when it has access to the real options bag. Later registrations win — both
+// at registry level and at `ServiceCollection` level.
 // `supportsDelayedInstantiation = false` preserves current reverse-dispose
 // semantics.
 registerSingleton(

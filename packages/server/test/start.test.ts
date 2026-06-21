@@ -7,7 +7,7 @@
  *
  * The DI graph end-to-end is exercised implicitly: every startServer call
  * constructs ILogService, IRestGateway, IEventService, IApprovalService,
- * IQuestionService, and ICoreProcessService in order. Failure modes there (missing
+ * IQuestionService, and ICoreRuntime in order. Failure modes there (missing
  * service, wrong ctor args) would surface as a startServer reject.
  */
 
@@ -34,7 +34,7 @@ import {
   IApprovalService,
   IConnectionRegistry,
   IEventService,
-  ICoreProcessService,
+  ICoreRuntime,
   ILogService,
   IQuestionService,
   IRestGateway,
@@ -393,7 +393,7 @@ describe('startServer — DI container wiring', () => {
       expect(a.get(IApprovalService)).toBeDefined();
       expect(a.get(IQuestionService)).toBeDefined();
       expect(a.get(IWSGateway)).toBeDefined();
-      const bridge = a.get(ICoreProcessService);
+      const bridge = a.get(ICoreRuntime);
       expect(bridge).toBeDefined();
       expect(typeof bridge.rpc).toBe('object');
       expect(typeof bridge.dispose).toBe('function');
@@ -403,8 +403,8 @@ describe('startServer — DI container wiring', () => {
   it('CoreProcessService.rpc rejects after the server is closed (dispose cascade)', async () => {
     const r = await spawn();
     // Grab a bridge reference BEFORE close — after close the container is disposed
-    // and a.get(ICoreProcessService) would throw on the dead InstantiationService.
-    const bridge = r.services.invokeFunction((a) => a.get(ICoreProcessService));
+    // and a.get(ICoreRuntime) would throw on the dead InstantiationService.
+    const bridge = r.services.invokeFunction((a) => a.get(ICoreRuntime));
     await r.close();
     await expect(bridge.rpc.getCoreInfo({})).rejects.toThrow(/disposed/);
   });

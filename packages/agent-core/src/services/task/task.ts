@@ -1,7 +1,7 @@
 /**
  * `ITaskService` — daemon-facing background task surface.
  *
- * Wraps `ICoreProcessService.rpc.{getBackground, stopBackground}` and adapts
+ * Wraps `ICoreRuntime.rpc.{getBackground, stopBackground}` and adapts
  * `BackgroundTaskInfo` (camelCase + ms timestamps + agent-core literal sets)
  * into SCHEMAS §7 `BackgroundTask` (snake_case + ISO + spec literal sets).
  *

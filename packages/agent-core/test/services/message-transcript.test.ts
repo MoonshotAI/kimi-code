@@ -28,7 +28,7 @@ import type {
 } from '../../src';
 
 import {
-  type ICoreProcessService,
+  type ICoreRuntime,
   MessageService,
   readWireRecords,
   readWireTranscript,
@@ -272,7 +272,7 @@ describe('readWireRecords / readWireTranscript', () => {
 describe('MessageService over a compacted wire log', () => {
   let dir: string;
   let liveHistory: ContextMessage[];
-  let bridge: ICoreProcessService & { getCoreApi(): CoreRPC };
+  let bridge: ICoreRuntime & { getCoreApi(): CoreRPC };
   let impl: MessageService;
 
   function summary(): SessionSummary {

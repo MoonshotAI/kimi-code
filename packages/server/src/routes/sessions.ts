@@ -21,7 +21,7 @@ import {
   undoSessionResponseSchema,
   workspaceIdSchema,
 } from '@moonshot-ai/protocol';
-import { IPromptService, ISessionService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IWorkspaceRegistry, WorkspaceNotFoundError, type IInstantiationService, type SessionClientTelemetry } from '@moonshot-ai/agent-core';
+import { IPromptService, ISessionService, ISessionQueryService, ISessionRuntimeService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IWorkspaceRegistry, WorkspaceNotFoundError, type IInstantiationService, type SessionClientTelemetry } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -290,7 +290,7 @@ export function registerSessionsRoutes(
         } else {
           query = baseQuery;
         }
-        const page = await ix.invokeFunction((a) => a.get(ISessionService).list(query));
+        const page = await ix.invokeFunction((a) => a.get(ISessionQueryService).list(query));
         reply.send(okEnvelope(page, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
@@ -501,7 +501,7 @@ export function registerSessionsRoutes(
       try {
         const { session_id } = req.params;
         const page = await ix.invokeFunction((a) =>
-          a.get(ISessionService).listChildren(session_id, req.query),
+          a.get(ISessionQueryService).listChildren(session_id, req.query),
         );
         reply.send(okEnvelope(page, req.id));
       } catch (error) {
@@ -565,7 +565,7 @@ export function registerSessionsRoutes(
       try {
         const { session_id } = req.params;
         const status = await ix.invokeFunction((a) =>
-          a.get(ISessionService).getStatus(session_id),
+          a.get(ISessionRuntimeService).getStatus(session_id),
         );
         reply.send(okEnvelope(status, req.id));
       } catch (err) {

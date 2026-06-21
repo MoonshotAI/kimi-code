@@ -29,7 +29,7 @@ import type {
   PageResponse,
 } from '@moonshot-ai/protocol';
 
-import { ICoreProcessService } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '../coreProcess/coreProcess';
 import { SessionNotFoundError } from '../session/session';
 import {
   IMessageService,
@@ -59,8 +59,8 @@ interface TranscriptCacheEntry {
 
 /**
  * Narrow in-process CoreAPI accessor supplied by the concrete
- * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
- * through a structural cast so the public `ICoreProcessService` facade — and
+ * `CoreProcessService` (the sole production `ICoreRuntime`). Routed
+ * through a structural cast so the public `ICoreRuntime` facade — and
  * the many test doubles that implement it across the suite — stay unchanged.
  * The daemon-side adapter always provides `getCoreApi()`; see
  * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
@@ -72,7 +72,7 @@ export class MessageService extends Disposable implements IMessageService {
 
   private readonly transcriptCache = new Map<string, TranscriptCacheEntry>();
 
-  constructor(@ICoreProcessService private readonly core: ICoreProcessService) {
+  constructor(@ICoreRuntime private readonly core: ICoreRuntime) {
     super();
   }
 

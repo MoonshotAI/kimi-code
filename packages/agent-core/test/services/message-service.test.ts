@@ -1,7 +1,7 @@
 /**
  * `MessageService` (Chain 3 / P1.3, W7.1) unit tests.
  *
- * Hermetic: a fake `ICoreProcessService` returns canned `SessionSummary[]` from
+ * Hermetic: a fake `ICoreRuntime` returns canned `SessionSummary[]` from
  * `listSessions` and a canned `AgentContextData.history` from `getContext`.
  *
  * Coverage:
@@ -27,7 +27,7 @@ import type {
 } from '../../src';
 
 import {
-  type ICoreProcessService,
+  type ICoreRuntime,
   MessageNotFoundError,
   MessageService,
   SessionNotFoundError,
@@ -42,7 +42,7 @@ const SESSION_CREATED_AT = 1_700_000_000_000;
 function makeFakeBridge(
   sessions: SessionSummary[],
   history: ContextMessage[],
-): ICoreProcessService & { getCoreApi(): CoreRPC } {
+): ICoreRuntime & { getCoreApi(): CoreRPC } {
   const rpc: Partial<CoreRPC> = {
     listSessions: vi.fn().mockImplementation(async () => sessions),
     resumeSession: vi.fn().mockResolvedValue(undefined as unknown as never),
@@ -219,7 +219,7 @@ describe('toProtocolMessage content adapter', () => {
 
 describe('MessageService', () => {
   let impl: MessageService;
-  let bridge: ICoreProcessService;
+  let bridge: ICoreRuntime;
 
   beforeEach(() => {
     bridge = makeFakeBridge(
@@ -352,7 +352,7 @@ describe('MessageService', () => {
       resumeSession: vi.fn().mockRejectedValue(new Error('state.json corrupted')),
       getContext: vi.fn(),
     };
-    const failingBridge: ICoreProcessService & { getCoreApi(): CoreRPC } = {
+    const failingBridge: ICoreRuntime & { getCoreApi(): CoreRPC } = {
       rpc: rpc as CoreRPC,
       getCoreApi: () => rpc as CoreRPC,
       ready: vi.fn().mockResolvedValue(undefined),

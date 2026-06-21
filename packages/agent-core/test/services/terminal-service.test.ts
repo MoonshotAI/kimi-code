@@ -117,7 +117,6 @@ function makeSessionService(sessions: Map<string, Session>): ISessionService {
     create: async () => {
       throw new Error('not implemented');
     },
-    list: async () => ({ items: [...sessions.values()], has_more: false }),
     get: async (id: string) => {
       const found = sessions.get(id);
       if (found === undefined) throw new SessionNotFoundError(id);
@@ -129,11 +128,7 @@ function makeSessionService(sessions: Map<string, Session>): ISessionService {
     fork: async () => {
       throw new Error('not implemented');
     },
-    listChildren: async () => ({ items: [], has_more: false }),
     createChild: async () => {
-      throw new Error('not implemented');
-    },
-    getStatus: async () => {
       throw new Error('not implemented');
     },
     compact: async () => {

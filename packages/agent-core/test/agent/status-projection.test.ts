@@ -16,7 +16,7 @@ import type { IDomainEventBus } from '../../src/event/event-bus';
 import type { AgentEvent, UsageStatus } from '../../src/rpc';
 import {
   IApprovalService,
-  type ICoreProcessService,
+  type ICoreRuntime,
   type IEventService,
   IPromptService,
   IQuestionService,
@@ -135,7 +135,7 @@ function makeRuntimeService(): {
   instantiation.stub(IInstantiationService, instantiation);
   instantiation.stub(IPromptService, promptService);
 
-  const core = { _serviceBrand: undefined } as unknown as ICoreProcessService;
+  const core = { _serviceBrand: undefined } as unknown as ICoreRuntime;
 
   const svc = new SessionRuntimeService(
     core,

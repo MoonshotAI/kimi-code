@@ -1,7 +1,7 @@
 /**
  * `PromptService` unit tests.
  *
- * Hermetic: a fake `ICoreProcessService` returns canned session list + records
+ * Hermetic: a fake `ICoreRuntime` returns canned session list + records
  * the `prompt` / `cancel` payloads. A stub `IEventService` collects published
  * events into an array we can inspect and drives synthesis via
  * `bus.publish(turn.*)` → PromptService's private subscriber. A stub
@@ -43,7 +43,7 @@ import type { PromptSubmission, Session } from '@moonshot-ai/protocol';
 import {
   type IAuthSummaryService,
   type IEventService,
-  type ICoreProcessService,
+  type ICoreRuntime,
   type ILogService,
   type ISessionService,
   PromptAlreadyCompletedError,
@@ -128,7 +128,7 @@ interface BridgeStubOptions {
 
 function makeBridge(
   opts: BridgeStubOptions = {},
-): { bridge: ICoreProcessService & { getCoreApi(): CoreRPC }; record: RpcRecord } {
+): { bridge: ICoreRuntime & { getCoreApi(): CoreRPC }; record: RpcRecord } {
   const record: RpcRecord = {
     promptCalls: [],
     steerCalls: [],
@@ -244,7 +244,7 @@ function makeBridge(
   // (which mock `bridge.rpc.*`) valid without duplicating the mock. The
   // intersection type keeps the facade fields type-checked while surfacing
   // the narrow in-process accessor promptService now routes through.
-  const bridge: ICoreProcessService & { getCoreApi(): CoreRPC } = {
+  const bridge: ICoreRuntime & { getCoreApi(): CoreRPC } = {
     rpc: rpc as CoreRPC,
     getCoreApi: () => rpc as CoreRPC,
     ready: vi.fn().mockResolvedValue(undefined),
@@ -310,13 +310,10 @@ function makeSessionService(): {
   const sessionService: ISessionService = {
     _serviceBrand: undefined,
     create: vi.fn() as unknown as ISessionService['create'],
-    list: vi.fn() as unknown as ISessionService['list'],
     get: vi.fn() as unknown as ISessionService['get'],
     update: vi.fn() as unknown as ISessionService['update'],
     fork: vi.fn() as unknown as ISessionService['fork'],
-    listChildren: vi.fn() as unknown as ISessionService['listChildren'],
     createChild: vi.fn() as unknown as ISessionService['createChild'],
-    getStatus: vi.fn() as unknown as ISessionService['getStatus'],
     compact: vi.fn() as unknown as ISessionService['compact'],
     undo: vi.fn() as unknown as ISessionService['undo'],
     archive: vi.fn() as unknown as ISessionService['archive'],
@@ -342,7 +339,7 @@ class NoopLogService implements ILogService {
 }
 
 function newSvc(
-  bridge: ICoreProcessService,
+  bridge: ICoreRuntime,
   bus: IEventService,
   auth: IAuthSummaryService = makeAuth(),
   sessionService: ISessionService = makeSessionService().sessionService,
