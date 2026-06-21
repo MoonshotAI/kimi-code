@@ -119,7 +119,7 @@ export class Session {
   readonly experimentalFlags: ExperimentalFlagResolver;
   private persistenceKaos: Kaos;
   private readonly sessionRepository: SessionRepository;
-  private readonly skillsReady: Promise<void>;
+  private skillsReadyPromise: Promise<void> | undefined;
   /**
    * Owns the agent registry + agent lifecycle for this session. Exposed so a
    * future `KimiCore.sessions` switch (M1.7b) can hold the host directly; for
@@ -136,9 +136,10 @@ export class Session {
   };
 
   constructor(public readonly options: SessionOptions) {
-    // Attach the per-session log sink up front so the constructor's
-    // fire-and-forget `loadSkills` / `loadMcpServers` failures (and
-    // anything else that races) land in the session log, not just global.
+    // Attach the per-session log sink up front so the fire-and-forget
+    // `loadSkills` / `loadMcpServers` failures (triggered by
+    // `onSessionWillStart` or a lazy gate, and anything else that races)
+    // land in the session log, not just global.
     this.logHandle =
       options.id === undefined
         ? undefined
@@ -186,7 +187,41 @@ export class Session {
     this.mcp.onStatusChange((entry) => {
       this.onMcpServerStatusChange(entry);
     });
-    this.skillsReady = this.loadSkills()
+    // Lazily trigger the skill + MCP runtime loads on the first MCP
+    // initial-load gate so sessions that never fire `onSessionWillStart`
+    // (ephemeral sessions, bare `mcp.waitForInitialLoad()` callers) still
+    // connect their servers — matching the prior constructor-eager timing.
+    const waitForInitialLoad = this.mcp.waitForInitialLoad.bind(this.mcp);
+    this.mcp.waitForInitialLoad = (signal) => {
+      this.startRuntimeLoads();
+      return waitForInitialLoad(signal);
+    };
+    // Trigger the loads on session start (createMain / resume) so skills are
+    // loaded before `createAgent` renders the main agent's system prompt. The
+    // handler only starts the promises; `createAgent` still awaits
+    // `skillsReady`, so the hook order is unchanged (willStart fires before
+    // createAgent, before didStart).
+    this.lifecycle.onSessionWillStart(() => {
+      this.startRuntimeLoads();
+    });
+    this.host = new SessionHost({
+      session: this,
+      scope: this.scope,
+      logHandle: this.logHandle,
+      skillsReady: () => this.skillsReady,
+    });
+  }
+
+  /**
+   * Starts the session's skill + MCP runtime loads exactly once. Triggered
+   * eagerly by `onSessionWillStart` (so skills load before `createAgent`
+   * renders the main agent's system prompt) and lazily by the `skillsReady` /
+   * `mcp.waitForInitialLoad()` gates for paths that don't fire willStart
+   * (ephemeral sessions, direct `createAgent`, bare MCP gate callers).
+   */
+  private startRuntimeLoads(): void {
+    if (this.skillsReadyPromise !== undefined) return;
+    this.skillsReadyPromise = this.loadSkills()
       .catch((error: unknown) => {
         this.log.error('skills load failed', error);
       })
@@ -196,12 +231,11 @@ export class Session {
     void this.loadMcpServers().catch((error: unknown) => {
       this.emitInitialMcpLoadError(error);
     });
-    this.host = new SessionHost({
-      session: this,
-      scope: this.scope,
-      logHandle: this.logHandle,
-      skillsReady: this.skillsReady,
-    });
+  }
+
+  private get skillsReady(): Promise<void> {
+    this.startRuntimeLoads();
+    return this.skillsReadyPromise!;
   }
 
 

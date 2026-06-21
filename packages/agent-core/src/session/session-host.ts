@@ -70,7 +70,7 @@ export interface SessionHostDeps {
   readonly session: Session;
   readonly scope: IInstantiationService;
   readonly logHandle: SessionLogHandle | undefined;
-  readonly skillsReady: Promise<void>;
+  readonly skillsReady: () => Promise<void>;
 }
 
 /**
@@ -131,7 +131,7 @@ export class SessionHost {
 
   async resume(): Promise<{ warning?: string }> {
     await this.fireSessionHook((ctx) => this.session.lifecycle.fireSessionWillStart(ctx));
-    await this.deps.skillsReady;
+    await this.deps.skillsReady();
     this.session.log.info('session resume', { app_version: this.session.options.appVersion });
     const { agents } = await this.session.readMetadata();
     this.agents.clear();
@@ -271,7 +271,7 @@ export class SessionHost {
     config: Partial<AgentOptions>,
     options: CreateAgentOptions = {},
   ): Promise<{ readonly id: string; readonly agent: Agent }> {
-    await this.deps.skillsReady;
+    await this.deps.skillsReady();
     const type = config.type ?? 'main';
     const id = type === 'main' ? 'main' : this.nextGeneratedAgentId();
     const homedir = config.homedir ?? join(this.session.options.homedir, 'agents', id);
@@ -423,7 +423,7 @@ export class SessionHost {
     id: string,
     stack: readonly string[] = [],
   ): Promise<ResumedAgent> {
-    await this.deps.skillsReady;
+    await this.deps.skillsReady();
     const meta = this.session.metadata.agents[id];
     if (meta === undefined) {
       throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, `Session agent "${id}" is missing`);
