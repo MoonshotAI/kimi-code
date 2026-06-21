@@ -3,6 +3,7 @@ import { addUsage, type TokenUsage } from '@moonshot-ai/kosong';
 
 import { createDecorator } from '../../di';
 import { IRecordsService } from '../records';
+import { IAgentStatusService } from '../status';
 
 export type UsageRecordScope = 'session' | 'turn';
 
@@ -15,7 +16,7 @@ export class UsageRecorder {
   private currentTurn: TokenUsage | undefined;
 
   constructor(
-    private readonly emitStatusUpdated?: () => void,
+    @IAgentStatusService private readonly statusService?: IAgentStatusService,
     @IRecordsService private readonly records?: IRecordsService,
   ) {}
 
@@ -41,7 +42,7 @@ export class UsageRecorder {
       this.currentTurn =
         this.currentTurn === undefined ? copyUsage(usage) : addUsage(this.currentTurn, usage);
     }
-    this.emitStatusUpdated?.();
+    this.statusService?.notifyStatusChanged();
   }
 
   data(): UsageStatus {

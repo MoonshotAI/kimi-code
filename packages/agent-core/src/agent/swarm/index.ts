@@ -1,6 +1,7 @@
 import { createDecorator } from '../../di';
 import { IContextService } from '../context';
 import { IRecordsService } from '../records';
+import { IAgentStatusService } from '../status';
 
 import SWARM_MODE_ENTER_REMINDER from './enter-reminder.md?raw';
 import SWARM_MODE_EXIT_REMINDER from './exit-reminder.md?raw';
@@ -16,7 +17,7 @@ export class SwarmMode {
   protected active: SwarmModeTrigger | null = null;
 
   constructor(
-    private readonly emitStatusUpdated?: () => void,
+    @IAgentStatusService private readonly statusService?: IAgentStatusService,
     @IRecordsService private readonly records?: IRecordsService,
     @IContextService private readonly context?: IContextService,
   ) {}
@@ -31,7 +32,7 @@ export class SwarmMode {
         variant: 'swarm_mode',
       });
     }
-    this.emitStatusUpdated?.();
+    this.statusService?.notifyStatusChanged();
   }
 
   restoreEnter(trigger: SwarmModeTrigger): void {
@@ -43,7 +44,7 @@ export class SwarmMode {
     this.records?.logRecord({ type: 'swarm_mode.exit' });
     const trigger = this.active;
     this.active = null;
-    this.emitStatusUpdated?.();
+    this.statusService?.notifyStatusChanged();
     if (trigger === 'tool') return;
     if (this.context?.popMatchedMessage((origin) => origin?.kind === 'injection' && origin.variant === 'swarm_mode')) {
       return;

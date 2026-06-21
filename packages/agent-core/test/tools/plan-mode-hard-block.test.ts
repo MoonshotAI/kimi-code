@@ -18,13 +18,14 @@ async function activePlanAgent(): Promise<{ agent: Agent; planMode: PlanMode }> 
   const agent = {
     homedir: '/tmp/kimi-plan-test',
     emitStatusUpdated: vi.fn(),
+    statusService: { notifyStatusChanged: vi.fn() },
     records: { logRecord: vi.fn() },
     replayBuilder: { push: vi.fn() },
     kaos: {
       mkdir: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as Agent;
-  const planMode = new PlanMode(agent.kaos, agent.homedir, agent.emitStatusUpdated, agent.records, agent.replayBuilder, agent.config);
+  const planMode = new PlanMode(agent.kaos, agent.homedir, agent.statusService, agent.records, agent.replayBuilder, agent.config);
   Object.assign(agent, { planMode });
   await planMode.enter('current-plan', false);
   return { agent, planMode };

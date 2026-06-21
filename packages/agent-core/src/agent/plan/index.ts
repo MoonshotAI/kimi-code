@@ -8,6 +8,7 @@ import { IContextService } from '../context';
 import { ILifecycleService } from '../lifecycle';
 import { IRecordsService } from '../records';
 import { IReplayService } from '../replay';
+import { IAgentStatusService } from '../status';
 import { exitReminder, fullReminder, reentryReminder, sparseReminder } from '../injection/plan-mode';
 import { generateHeroSlug } from '../../utils/hero-slug';
 
@@ -31,7 +32,7 @@ export class PlanMode {
   constructor(
     private readonly kaos?: Kaos,
     private readonly homedir?: string,
-    private readonly emitStatusUpdated?: () => void,
+    @IAgentStatusService private readonly statusService?: IAgentStatusService,
     @IRecordsService private readonly records?: IRecordsService,
     @IReplayService private readonly replayBuilder?: IReplayService,
     @IAgentConfigService private readonly config?: IAgentConfigService,
@@ -92,7 +93,7 @@ export class PlanMode {
       throw error;
     }
 
-    if (emitStatus) this.emitStatusUpdated?.();
+    if (emitStatus) this.statusService?.notifyStatusChanged();
   }
 
   restoreEnter({ id }: { readonly id: string }): void {
@@ -115,7 +116,7 @@ export class PlanMode {
     this._isActive = false;
     this._planId = null;
     this._planFilePath = null;
-    this.emitStatusUpdated?.();
+    this.statusService?.notifyStatusChanged();
   }
 
   async clear(): Promise<void> {
@@ -132,7 +133,7 @@ export class PlanMode {
     this._isActive = false;
     this._planId = null;
     this._planFilePath = null;
-    this.emitStatusUpdated?.();
+    this.statusService?.notifyStatusChanged();
   }
 
   get isActive() {

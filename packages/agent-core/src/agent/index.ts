@@ -3,7 +3,7 @@ import { join } from 'pathe';
 import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
-import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
+import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC } from '#/rpc';
 import { generate } from '@moonshot-ai/kosong';
 
 import type { EnabledPluginSessionStart } from '#/plugin';
@@ -57,6 +57,8 @@ import { AgentToolService, IAgentToolService } from './tool/index';
 import { TurnService, ITurnService } from './turn';
 import { KosongLLM } from './turn/kosong-llm';
 import { UsageService, IUsageService } from './usage';
+import { AgentStatusService, IAgentStatusService } from './status';
+import type { AgentStatusHost } from './status';
 import { LlmService } from './llm';
 import type { ILlmService } from './llm';
 import { LlmRequestLogger } from './llm-request-logger';
@@ -133,6 +135,7 @@ export class Agent {
   readonly planMode: IPlanService;
   readonly swarmMode: ISwarmService;
   readonly usage: IUsageService;
+  readonly statusService: IAgentStatusService;
   readonly eventBus: IDomainEventBus;
   readonly lifecycle: ILifecycleService;
   private readonly scope: IInstantiationService;
@@ -197,17 +200,15 @@ export class Agent {
       new SyncDescriptor(PermissionService, [this, options.permission]),
     );
     perAgentServices.set(
+      IAgentStatusService,
+      new SyncDescriptor(AgentStatusService, [this satisfies AgentStatusHost]),
+    );
+    perAgentServices.set(
       IPlanService,
-      new SyncDescriptor(PlanService, [this.kaos, this.homedir, () => { this.emitStatusUpdated(); }]),
+      new SyncDescriptor(PlanService, [this.kaos, this.homedir]),
     );
-    perAgentServices.set(
-      ISwarmService,
-      new SyncDescriptor(SwarmService, [() => { this.emitStatusUpdated(); }]),
-    );
-    perAgentServices.set(
-      IUsageService,
-      new SyncDescriptor(UsageService, [() => { this.emitStatusUpdated(); }]),
-    );
+    perAgentServices.set(ISwarmService, new SyncDescriptor(SwarmService));
+    perAgentServices.set(IUsageService, new SyncDescriptor(UsageService));
     perAgentServices.set(IAgentToolService, new SyncDescriptor(AgentToolService, [this]));
     perAgentServices.set(
       IBackgroundService,
@@ -269,6 +270,7 @@ export class Agent {
     this.planMode = this.scope.invokeFunction((accessor) => accessor.get(IPlanService));
     this.swarmMode = this.scope.invokeFunction((accessor) => accessor.get(ISwarmService));
     this.usage = this.scope.invokeFunction((accessor) => accessor.get(IUsageService));
+    this.statusService = this.scope.invokeFunction((accessor) => accessor.get(IAgentStatusService));
     this.skills = options.skills
       ? this.scope.invokeFunction((accessor) => accessor.get(IAgentSkillService))
       : null;
@@ -466,30 +468,13 @@ export class Agent {
     this.eventBus.publish(event);
   }
 
+  /**
+   * Thin delegate preserved for callers (context / config / permission) that
+   * historically triggered a status refresh through the agent. The
+   * `agent.status.updated` emission now lives in {@link AgentStatusService}.
+   */
   emitStatusUpdated(): void {
-    if (this.records.restoring) return;
-    if (!this.config.hasModel) return;
-
-    const contextTokens = this.context.tokenCount;
-    const maxContextTokens = this.config.modelCapabilities.max_context_tokens;
-    const contextUsage =
-      maxContextTokens !== undefined && maxContextTokens > 0
-        ? contextTokens / maxContextTokens
-        : undefined;
-    const usage: UsageStatus | undefined = this.usage.status();
-    const model = this.config.model;
-
-    this.eventBus.publish({
-      type: 'agent.status.updated',
-      model,
-      contextTokens,
-      maxContextTokens,
-      contextUsage,
-      planMode: this.planMode.isActive,
-      swarmMode: this.swarmMode.isActive,
-      permission: this.permission.mode,
-      usage,
-    });
+    this.statusService.notifyStatusChanged();
   }
 
   private emitRecordsWriteError(error: unknown, record?: AgentRecord | undefined): void {
