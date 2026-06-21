@@ -220,6 +220,58 @@ async function resolvePromptSession(
   stderr: PromptOutput,
   setRestorePermission: (restorePermission: () => Promise<void>) => void,
 ): Promise<ResolvedPromptSession> {
+  if (opts.sessionId !== undefined) {
+    const sessions = await harness.listSessions({ sessionId: opts.sessionId, workDir });
+    const target = sessions[0];
+    if (target !== undefined) {
+      if (resolve(target.workDir) !== resolve(workDir)) {
+        stderr.write(
+          `${chalk.hex('#E8A838')(
+            `Session "${opts.sessionId}" was created under a different directory.\n` +
+              `  cd "${target.workDir}" && kimi --session-id ${opts.sessionId}`,
+          )}\n\n`,
+        );
+        throw new Error(
+          `Session "${opts.sessionId}" was created under a different directory.`,
+        );
+      }
+      const session = await harness.resumeSession({ id: opts.sessionId });
+      const status = await session.getStatus();
+      const restorePermission = await forcePromptPermission(
+        session,
+        status.permission,
+        setRestorePermission,
+      );
+      if (opts.model !== undefined) {
+        await session.setModel(opts.model);
+      }
+      installHeadlessHandlers(session);
+      return {
+        session,
+        resumed: true,
+        restorePermission,
+        telemetryModel: configuredModel(opts.model, status.model, defaultModel),
+        goalModel: configuredModel(opts.model, status.model),
+      };
+    }
+
+    const model = requireConfiguredModel(opts.model, defaultModel);
+    const session = await harness.createSession({
+      id: opts.sessionId,
+      workDir,
+      model,
+      permission: 'auto',
+    });
+    installHeadlessHandlers(session);
+    return {
+      session,
+      resumed: false,
+      restorePermission: async () => {},
+      telemetryModel: model,
+      goalModel: model,
+    };
+  }
+
   if (opts.session !== undefined) {
     const sessions = await harness.listSessions({ sessionId: opts.session, workDir });
     const target = sessions[0];
@@ -469,8 +521,15 @@ function runPromptTurn(
         case 'compaction.completed':
         case 'compaction.started':
         case 'cron.fired':
+        case 'event.config.changed':
+        case 'event.session.created':
+        case 'event.session.status_changed':
+        case 'event.workspace.created':
+        case 'event.workspace.deleted':
+        case 'event.workspace.updated':
         case 'goal.updated':
         case 'mcp.server.status':
+        case 'prompt.submitted':
         case 'session.meta.updated':
         case 'skill.activated':
         case 'subagent.completed':

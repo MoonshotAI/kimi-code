@@ -54,6 +54,7 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 | 选项 | 作用 |
 | --- | --- |
 | `-S, --session [id]` | 恢复指定会话；不带 id 时进入交互式选择 |
+| `--session-id <id>` | 使用指定会话 ID；已存在则恢复，不存在则用该 ID 创建新会话 |
 | `-C, --continue` | 续上当前目录的上一次会话 |
 | `-y, --yolo` | 自动批准所有工具调用 |
 | `--plan` | 以 Plan 模式启动 |
@@ -65,9 +66,9 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 互斥规则（违反时启动报错）：
 
 - `--output-format` 只能配合 `-p` 使用
-- `--prompt` 不能同时用 `--yolo` 或 `--plan`
-- `--continue` 和 `--session` 不能同时用
-- 非 prompt 模式下，`--yolo` 和 `--plan` 不能配合 `--continue` 或 `--session`
+- `--prompt` 不能同时用 `--yolo`、`--auto` 或 `--plan`
+- `--continue`、`--session` 与 `--session-id` 不能互相组合
+- `--yolo` 与 `--auto` 不能同时使用
 
 ::: tip
 `--skills-dir` 是一次性替换，只影响本次启动。如需长期追加搜索目录，在 `config.toml` 里写 `extra_skill_dirs`（详见 [Agent Skills](../customization/skills.md)）。

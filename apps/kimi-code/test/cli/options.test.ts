@@ -37,6 +37,7 @@ describe('CLI options parsing', () => {
       expect(opts.plan).toBe(false);
       expect(opts.continue).toBe(false);
       expect(opts.session).toBeUndefined();
+      expect(opts.sessionId).toBeUndefined();
       expect(opts.model).toBeUndefined();
       expect(opts.outputFormat).toBeUndefined();
       expect(opts.prompt).toBeUndefined();
@@ -146,6 +147,14 @@ describe('CLI options parsing', () => {
       expect(parse(['--resume', 'sess-789']).session).toBe('sess-789');
     });
 
+    it('--session-id sets a custom create-or-resume session id', () => {
+      expect(parse(['--session-id', 'ses_custom']).sessionId).toBe('ses_custom');
+    });
+
+    it('--session_id is accepted as a hidden alias for --session-id', () => {
+      expect(parse(['--session_id', 'ses_custom']).sessionId).toBe('ses_custom');
+    });
+
     it('bare -S (no id) yields empty string — triggers the picker', () => {
       expect(parse(['-S']).session).toBe('');
     });
@@ -158,6 +167,18 @@ describe('CLI options parsing', () => {
       const opts = parse(['--continue', '--session', 'abc123']);
       expect(() => validateOptions(opts)).toThrow(OptionConflictError);
       expect(() => validateOptions(opts)).toThrow('Cannot combine --continue, --session.');
+    });
+
+    it('--session-id and --session combined raises a conflict', () => {
+      const opts = parse(['--session-id', 'ses_custom', '--session', 'ses_existing']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Cannot combine --session-id with --session.');
+    });
+
+    it('--session-id and --continue combined raises a conflict', () => {
+      const opts = parse(['--session-id', 'ses_custom', '--continue']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Cannot combine --continue with --session-id.');
     });
   });
 
@@ -179,6 +200,13 @@ describe('CLI options parsing', () => {
       const opts = parse(['--auto', '--session', 'ses_123']);
       expect(opts.auto).toBe(true);
       expect(opts.session).toBe('ses_123');
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('allows --auto with a create-or-resume session id', () => {
+      const opts = parse(['--auto', '--session-id', 'ses_123']);
+      expect(opts.auto).toBe(true);
+      expect(opts.sessionId).toBe('ses_123');
       expect(validateOptions(opts).uiMode).toBe('shell');
     });
 

@@ -44,6 +44,12 @@ kimi --continue
 kimi --session abc123
 ```
 
+**使用自定义会话 ID，不存在时自动创建：**
+
+```sh
+kimi --session-id my-task-session
+```
+
 **交互式浏览历史会话并选择：**
 
 ```sh
@@ -51,7 +57,7 @@ kimi --session
 ```
 
 ::: warning 注意
-`--continue` 与 `--session` 互斥。
+`--continue`、`--session` 与 `--session-id` 互斥。确定会话必须已存在时用 `--session`；希望 ID 不存在时创建新会话时用 `--session-id`。
 :::
 
 ## 在 TUI 中切换会话

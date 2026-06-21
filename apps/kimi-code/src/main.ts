@@ -105,6 +105,7 @@ export async function handleUpgradeCommand(version: string): Promise<void> {
 /** A neutral CLIOptions value — `kimi migrate` never opens a chat session. */
 const MIGRATE_CLI_OPTIONS: CLIOptions = {
   session: undefined,
+  sessionId: undefined,
   continue: false,
   yolo: false,
   auto: false,

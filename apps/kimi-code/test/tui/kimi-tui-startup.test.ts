@@ -75,6 +75,7 @@ function makeStartupInput(
   return {
     cliOptions: {
       session: undefined,
+      sessionId: undefined,
       continue: false,
       yolo: false,
       auto: false,
@@ -288,6 +289,65 @@ describe('KimiTUI startup', () => {
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(driver.state.startupState).toBe('ready');
     expect(driver.state.appState.sessionId).toBe('ses-latest');
+  });
+
+  it('creates a session with --session-id when that id does not exist', async () => {
+    const session = makeSession({ id: 'ses-custom' });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => []),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ sessionId: 'ses-custom' }));
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(harness.listSessions).toHaveBeenCalledWith({
+      sessionId: 'ses-custom',
+      workDir: '/tmp/proj-a',
+    });
+    expect(harness.createSession).toHaveBeenCalledWith({
+      id: 'ses-custom',
+      workDir: '/tmp/proj-a',
+    });
+    expect(harness.resumeSession).not.toHaveBeenCalled();
+    expect(driver.state.startupState).toBe('ready');
+    expect(driver.state.appState.sessionId).toBe('ses-custom');
+  });
+
+  it('resumes a session with --session-id when that id already exists', async () => {
+    const session = makeSession({ id: 'ses-custom' });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-custom', workDir: '/tmp/proj-a' }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ sessionId: 'ses-custom' }));
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(harness.resumeSession).toHaveBeenCalledWith({ id: 'ses-custom' });
+    expect(driver.state.appState.sessionId).toBe('ses-custom');
+  });
+
+  it('rejects --session-id when the existing session belongs to another cwd', async () => {
+    const session = makeSession({ id: 'ses-custom' });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-custom', workDir: '/tmp/proj-b' }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ sessionId: 'ses-custom' }));
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      await expect(driver.init()).rejects.toThrow(
+        'Session "ses-custom" was created under a different directory.',
+      );
+
+      expect(harness.createSession).not.toHaveBeenCalled();
+      expect(harness.resumeSession).not.toHaveBeenCalled();
+      expect(stderrWrite).toHaveBeenCalledWith(
+        expect.stringContaining('cd "/tmp/proj-b" && kimi --session-id ses-custom'),
+      );
+    } finally {
+      stderrWrite.mockRestore();
+    }
   });
 
   it('applies --auto permission when resuming a session via --continue', async () => {

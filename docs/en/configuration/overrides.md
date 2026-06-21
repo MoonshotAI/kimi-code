@@ -54,6 +54,7 @@ Options passed at startup have the highest priority and apply only to the curren
 | Option | Effect |
 | --- | --- |
 | `-S, --session [id]` | Resume a specific session; enters interactive selection when no id is given |
+| `--session-id <id>` | Resume the given session id, or create a new session with that id when it does not exist |
 | `-C, --continue` | Resume the last session for the current working directory |
 | `-y, --yolo` | Auto-approve all tool calls |
 | `--plan` | Start in Plan mode |
@@ -65,9 +66,9 @@ Options passed at startup have the highest priority and apply only to the curren
 Mutual exclusion rules (startup fails if violated):
 
 - `--output-format` can only be used with `-p`
-- `--prompt` cannot be combined with `--yolo` or `--plan`
-- `--continue` and `--session` cannot be used together
-- In non-prompt mode, `--yolo` and `--plan` cannot be combined with `--continue` or `--session`
+- `--prompt` cannot be combined with `--yolo`, `--auto`, or `--plan`
+- `--continue`, `--session`, and `--session-id` cannot be combined with each other
+- `--yolo` and `--auto` cannot be combined
 
 ::: tip
 `--skills-dir` is a one-shot replacement that only affects the current startup. To persistently add search directories, write `extra_skill_dirs` in `config.toml` (see [Agent Skills](../customization/skills.md)).

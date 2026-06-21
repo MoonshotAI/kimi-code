@@ -262,6 +262,7 @@ export class KimiTUI {
       initialAppState: createInitialAppState(startupInput),
       startup: {
         sessionFlag: startupInput.cliOptions.session,
+        sessionIdFlag: startupInput.cliOptions.sessionId,
         continueLast: startupInput.cliOptions.continue,
         yolo: startupInput.cliOptions.yolo,
         auto: startupInput.cliOptions.auto,
@@ -554,7 +555,10 @@ export class KimiTUI {
     const { workDir } = this.state.appState;
     let session: Session | undefined;
     let shouldReplayHistory = false;
-    const isResumeStartup = startup.sessionFlag !== undefined || startup.continueLast;
+    const isResumeStartup =
+      startup.sessionFlag !== undefined ||
+      startup.sessionIdFlag !== undefined ||
+      startup.continueLast;
     const createSessionOptions: CreateSessionOptions = {
       workDir,
       model: startup.model,
@@ -564,12 +568,38 @@ export class KimiTUI {
 
     try {
       if (isResumeStartup) {
-        if (startup.sessionFlag === '') {
+        if (startup.sessionIdFlag !== undefined) {
+          const sessions = await this.harness.listSessions({
+            sessionId: startup.sessionIdFlag,
+            workDir,
+          });
+          const target = sessions[0];
+          if (target === undefined) {
+            session = await this.harness.createSession({
+              ...createSessionOptions,
+              id: startup.sessionIdFlag,
+            });
+          } else {
+            if (resolve(target.workDir) !== resolve(workDir)) {
+              this.state.ui.stop();
+              process.stderr.write(
+                `${currentTheme.fg(
+                  'warning',
+                  `Session "${startup.sessionIdFlag}" was created under a different directory.\n` +
+                    `  cd "${target.workDir}" && kimi --session-id ${startup.sessionIdFlag}`,
+                )}\n\n`,
+              );
+              throw new Error(
+                `Session "${startup.sessionIdFlag}" was created under a different directory.`,
+              );
+            }
+            session = await this.harness.resumeSession({ id: startup.sessionIdFlag });
+            shouldReplayHistory = true;
+          }
+        } else if (startup.sessionFlag === '') {
           this.state.startupState = 'picker';
           return false;
-        }
-
-        if (startup.sessionFlag !== undefined) {
+        } else if (startup.sessionFlag !== undefined) {
           const sessions = await this.harness.listSessions({
             sessionId: startup.sessionFlag,
             workDir,
