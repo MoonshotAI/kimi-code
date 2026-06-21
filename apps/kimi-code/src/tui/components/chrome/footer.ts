@@ -199,6 +199,7 @@ function safeUsage(usage: number): number {
 }
 
 function formatContextStatus(usage: number, tokens?: number, maxTokens?: number): string {
+  if (usage <= 0) return '';
   const pct = `${(safeUsage(usage) * 100).toFixed(1)}%`;
   if (maxTokens && maxTokens > 0 && tokens !== undefined) {
     return `context: ${pct} (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
