@@ -63,6 +63,8 @@ import { AgentRpcController } from './rpc-controller';
 import type { AgentRpcHost, IAgentRpcController } from './rpc-controller';
 import { AgentResumeService } from './resume';
 import type { AgentResumeHost, IAgentResumeService } from './resume';
+import { AgentProfileService } from './profile';
+import type { AgentProfileHost, IAgentProfileService } from './profile';
 import { LlmService } from './llm';
 import type { ILlmService } from './llm';
 import { LlmRequestLogger } from './llm-request-logger';
@@ -142,6 +144,7 @@ export class Agent {
   readonly statusService: IAgentStatusService;
   readonly rpcController: IAgentRpcController;
   readonly resumeService: IAgentResumeService;
+  readonly profileService: IAgentProfileService;
   readonly eventBus: IDomainEventBus;
   readonly lifecycle: ILifecycleService;
   private readonly scope: IInstantiationService;
@@ -290,6 +293,7 @@ export class Agent {
     this.replayBuilder = this.scope.invokeFunction((accessor) => accessor.get(IReplayService));
     this.rpcController = new AgentRpcController(this satisfies AgentRpcHost);
     this.resumeService = new AgentResumeService(this satisfies AgentResumeHost);
+    this.profileService = new AgentProfileService(this satisfies AgentProfileHost);
     if (this.id !== undefined) {
       void this.lifecycle.fireAgentDidCreate({ agentId: this.id });
     }
@@ -308,15 +312,7 @@ export class Agent {
   }
 
   useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
-    const systemPrompt = profile.systemPrompt({
-      osEnv: this.kaos.osEnv,
-      cwd: this.config.cwd,
-      skills: this.skills?.registry,
-      cwdListing: context?.cwdListing,
-      agentsMd: context?.agentsMd,
-    });
-    this.config.update({ profileName: profile.name, systemPrompt });
-    this.tools.setActiveTools(profile.tools);
+    this.profileService.useProfile(profile, context);
   }
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
