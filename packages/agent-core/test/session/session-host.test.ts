@@ -142,6 +142,82 @@ describe('SessionHost', () => {
       },
     ]);
   });
+
+  it('fires session-scoped lifecycle hooks in willStart → didStart → willClose → didClose order', async () => {
+    const { sessionDir, workDir } = await sessionFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'host-hook-order',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+
+    const order: string[] = [];
+    const disposables = [
+      session.lifecycle.onSessionWillStart(() => {
+        order.push('willStart');
+      }),
+      session.lifecycle.onSessionDidStart(() => {
+        order.push('didStart');
+      }),
+      session.lifecycle.onSessionWillClose(() => {
+        order.push('willClose');
+      }),
+      session.lifecycle.onSessionDidClose(() => {
+        order.push('didClose');
+      }),
+    ];
+
+    await session.createMain();
+    await session.close();
+
+    expect(order).toEqual(['willStart', 'didStart', 'willClose', 'didClose']);
+    for (const d of disposables) d.dispose();
+  });
+
+  it('fires session-scoped lifecycle hooks in order during resume', async () => {
+    const { sessionDir, workDir } = await sessionFixture();
+    const first = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'host-hook-order-resume-first',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+    await first.createMain();
+    await first.close();
+
+    const resumed = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'host-hook-order-resume-second',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+
+    const order: string[] = [];
+    const disposables = [
+      resumed.lifecycle.onSessionWillStart(() => {
+        order.push('willStart');
+      }),
+      resumed.lifecycle.onSessionDidStart(() => {
+        order.push('didStart');
+      }),
+      resumed.lifecycle.onSessionWillClose(() => {
+        order.push('willClose');
+      }),
+      resumed.lifecycle.onSessionDidClose(() => {
+        order.push('didClose');
+      }),
+    ];
+
+    await resumed.resume();
+    await resumed.close();
+
+    expect(order).toEqual(['willStart', 'didStart', 'willClose', 'didClose']);
+    for (const d of disposables) d.dispose();
+  });
 });
 
 async function sessionFixture(): Promise<{
