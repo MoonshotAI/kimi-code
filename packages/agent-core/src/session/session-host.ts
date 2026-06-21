@@ -83,9 +83,16 @@ export class SessionHost {
   readonly agents = new Map<string, AgentEntry>();
   private agentIdCounter = 0;
   private toolKaos: Kaos;
+  private cronsStopped = false;
 
   constructor(private readonly deps: SessionHostDeps) {
     this.toolKaos = deps.session.options.kaos;
+    // Stop each agent's cron scheduler when the session closes. Routed through
+    // the session-scoped `onSessionWillClose` hook so both `close()` and
+    // `closeForReload()` share one code path (cron stop is reload-safe, unlike
+    // background-task teardown). An idempotent direct-call fallback below
+    // covers ephemeral sessions, whose hooks `fireSessionHook` skips.
+    this.deps.session.lifecycle.onSessionWillClose(() => this.stopCronsOnce());
   }
 
   /**
@@ -160,9 +167,12 @@ export class SessionHost {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => {
           await agent.dispose();
-          await agent.cron?.stop();
         }),
       );
+      // Idempotent fallback for ephemeral sessions, whose `onSessionWillClose`
+      // hook `fireSessionHook` skipped. For id'd sessions the hook already
+      // stopped crons, so this is a no-op.
+      await this.stopCronsOnce();
       await this.cancelActiveTurnsOnClose();
       await this.stopBackgroundTasksOnExit();
       await this.session.flushMetadata();
@@ -183,9 +193,12 @@ export class SessionHost {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => {
           await agent.dispose();
-          await agent.cron?.stop();
         }),
       );
+      // Idempotent fallback for ephemeral sessions (see `close()`). Cron stop
+      // is reload-safe; background-task teardown intentionally stays out of
+      // this path so reload keeps background tasks alive.
+      await this.stopCronsOnce();
       await this.session.flushMetadata();
     } finally {
       try {
@@ -243,6 +256,16 @@ export class SessionHost {
         timeoutMs: ACTIVE_TURN_CLOSE_TIMEOUT_MS,
       });
     }
+  }
+
+  private async stopCronsOnce(): Promise<void> {
+    if (this.cronsStopped) return;
+    this.cronsStopped = true;
+    await Promise.allSettled(
+      Array.from(this.readyAgents(), async (agent) => {
+        await agent.cron?.stop();
+      }),
+    );
   }
 
   private async stopBackgroundTasksOnExit(): Promise<void> {
