@@ -50,7 +50,9 @@ interface FakeBridgeState {
   postUndoContexts: Map<string, AgentContextData>;
 }
 
-function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
+function makeFakeBridge(
+  state: FakeBridgeState,
+): ICoreProcessService & { getCoreApi(): CoreRPC } {
   const rpc: Partial<CoreRPC> = {
     createSession: vi
       .fn()
@@ -206,8 +208,15 @@ function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
     getPermission: vi.fn().mockResolvedValue({ mode: 'manual' }),
     getPlan: vi.fn().mockResolvedValue(null),
   };
+  // `getCoreApi()` mirrors `rpc` on purpose: in production both expose the
+  // identical CoreAPI method set — `getCoreApi()` is the in-process
+  // (zero-serialization) path, `rpc` is the serializing proxy. Sharing one
+  // stub keeps the call-recording / rejection-mock assertions valid without
+  // duplicating the mock. The intersection type surfaces the narrow in-process
+  // accessor the session services now route through.
   return {
     rpc: rpc as CoreRPC,
+    getCoreApi: () => rpc as CoreRPC,
     ready: async () => undefined,
     dispose: () => undefined,
     _serviceBrand: undefined,

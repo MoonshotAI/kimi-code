@@ -39,7 +39,7 @@ function makeSummary(overrides: Partial<SessionSummary> & { id: string }): Sessi
   };
 }
 
-function makeFakeBridge(state: FakeState): ICoreProcessService {
+function makeFakeBridge(state: FakeState): ICoreProcessService & { getCoreApi(): CoreRPC } {
   const rpc: Partial<CoreRPC> = {
     listSessions: vi
       .fn()
@@ -55,8 +55,14 @@ function makeFakeBridge(state: FakeState): ICoreProcessService {
     getPermission: vi.fn().mockResolvedValue({ mode: 'default', rules: [] }),
     getPlan: vi.fn().mockResolvedValue(null),
   };
+  // `getCoreApi()` mirrors `rpc` on purpose: in production both expose the
+  // identical CoreAPI method set — `getCoreApi()` is the in-process
+  // (zero-serialization) path, `rpc` is the serializing proxy. Sharing one
+  // stub keeps the `bridge.rpc.*` call-recording assertions valid without
+  // duplicating the mock.
   return {
     rpc: rpc as CoreRPC,
+    getCoreApi: () => rpc as CoreRPC,
     ready: async () => undefined,
     dispose: () => undefined,
     _serviceBrand: undefined,

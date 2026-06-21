@@ -14,9 +14,10 @@ import { describe, expect, it } from 'vitest';
  * The scan mirrors the milestone's grep baseline exactly: for each domain it
  * globs `src/services/<domain>/*Service.ts` and counts `.rpc.<method>(`
  * occurrences with `/\.rpc\.[a-zA-Z_]+\(/g`. Aggregating the `*Service.ts`
- * glob (rather than a single `<domain>Service.ts`) is what makes the session
- * domain reach 27 — `sessionService.ts` + `sessionQueryService.ts` +
- * `sessionRuntimeService.ts`.
+ * glob (rather than a single `<domain>Service.ts`) is what originally made
+ * the session domain reach 27 across `sessionService.ts` +
+ * `sessionQueryService.ts` + `sessionRuntimeService.ts` (now 0 after M3.3
+ * routed every call through the in-process `getCoreApi()` accessor).
  */
 
 const SERVICES_SRC = join(import.meta.dirname, '..', '..', 'src', 'services');
@@ -38,7 +39,7 @@ const BASELINE: Readonly<Record<string, number>> = {
   message: 3,
   modelCatalog: 4,
   prompt: 0,
-  session: 27,
+  session: 0,
   skill: 4,
   task: 4,
   tool: 2,

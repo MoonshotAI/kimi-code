@@ -2,7 +2,7 @@ import { Disposable, IInstantiationService, InstantiationType, registerSingleton
 import { Emitter } from '../../base/common/event';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { AgentContextData, ContextMessage } from '../../agent/context';
-import type { JsonObject, SessionSummary } from '../../rpc';
+import type { CoreRPC, JsonObject, SessionSummary } from '../../rpc';
 import {
   type CompactSessionRequest,
   type CompactSessionResponse,
@@ -44,6 +44,16 @@ import { applySessionTurnEvent, computeSessionStatus, tryGetSessionMeta } from '
 const DEFAULT_UNDO_MESSAGE_PAGE_SIZE = 50;
 const MAX_UNDO_MESSAGE_PAGE_SIZE = 100;
 const CHILD_SESSION_KIND = 'child';
+
+/**
+ * Narrow in-process CoreAPI accessor supplied by the concrete
+ * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
+ * through a structural cast so the public `ICoreProcessService` facade — and
+ * the many test doubles that implement it across the suite — stay unchanged.
+ * The daemon-side adapter always provides `getCoreApi()`; see
+ * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
+ */
+type InProcessCoreApi = { getCoreApi(): CoreRPC };
 
 function asJsonObject(value: Record<string, unknown>): JsonObject {
   return value as unknown as JsonObject;
@@ -173,6 +183,18 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   /**
+   * In-process CoreAPI handle — the same methods as `this.core.rpc` but
+   * dispatched directly on the in-process `KimiCore`, skipping the
+   * `createRPC` JSON serialize/deserialize hop. Method signatures and return
+   * shapes are identical to the `rpc` proxy; only the serialization is
+   * removed. The cast is localized here so every call site below reads
+   * `this.coreApi().<method>(...)`.
+   */
+  private coreApi(): CoreRPC {
+    return (this.core as unknown as InProcessCoreApi).getCoreApi();
+  }
+
+  /**
    * Compute the session lifecycle status from live daemon state.
    *
    * Priority:
@@ -226,7 +248,7 @@ export class SessionService extends Disposable implements ISessionService {
    * phase M1.5 STATUS).
    */
   private async _syncSessionIndex(id: string): Promise<void> {
-    const all = await this.core.rpc.listSessions({ includeArchive: true });
+    const all = await this.coreApi().listSessions({ includeArchive: true });
     const summary = all.find((s) => s.id === id);
     if (summary === undefined) {
       this._sessionIndex.remove(id);
@@ -240,7 +262,7 @@ export class SessionService extends Disposable implements ISessionService {
       throw new Error('SessionService.create: metadata.cwd is required');
     }
     const metadataForCore = asJsonObject(input.metadata as Record<string, unknown>);
-    const summary = await this.core.rpc.createSession({
+    const summary = await this.coreApi().createSession({
       workDir: input.metadata.cwd,
       metadata: metadataForCore,
       model: input.agent_config?.model,
@@ -248,7 +270,7 @@ export class SessionService extends Disposable implements ISessionService {
     });
     if (input.title !== undefined) {
       try {
-        await this.core.rpc.renameSession({ sessionId: summary.id, title: input.title });
+        await this.coreApi().renameSession({ sessionId: summary.id, title: input.title });
       } catch {
       }
     }
@@ -264,7 +286,7 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   async get(id: string): Promise<Session> {
-    const all = await this.core.rpc.listSessions({});
+    const all = await this.coreApi().listSessions({});
     const summary = all.find((s) => s.id === id);
     if (summary === undefined) {
       throw new SessionNotFoundError(id);
@@ -274,19 +296,19 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   async update(id: string, input: SessionUpdate): Promise<Session> {
-    const all = await this.core.rpc.listSessions({});
+    const all = await this.coreApi().listSessions({});
     const summary = all.find((s) => s.id === id);
     if (summary === undefined) {
       throw new SessionNotFoundError(id);
     }
 
     if (input.title !== undefined) {
-      await this.core.rpc.renameSession({ sessionId: id, title: input.title });
+      await this.coreApi().renameSession({ sessionId: id, title: input.title });
     }
 
     const metadataPatch = input.metadata;
     if (metadataPatch !== undefined && Object.keys(metadataPatch).length > 0) {
-      await this.core.rpc.updateSessionMetadata({
+      await this.coreApi().updateSessionMetadata({
         sessionId: id,
         metadata: { custom: metadataPatch as Record<string, unknown> },
       });
@@ -315,7 +337,7 @@ export class SessionService extends Disposable implements ISessionService {
       }
     }
 
-    const allAfter = await this.core.rpc.listSessions({});
+    const allAfter = await this.coreApi().listSessions({});
     const summaryAfter = allAfter.find((s) => s.id === id) ?? summary;
     const meta = await tryGetSessionMeta(this.core, id);
     const session = this._patchSessionStatus(toProtocolSession(summaryAfter, meta));
@@ -327,7 +349,7 @@ export class SessionService extends Disposable implements ISessionService {
     const source = await this.get(id);
     const title = input.title ?? `Fork: ${source.title || source.id}`;
     const metadata = input.metadata === undefined ? undefined : asJsonObject(input.metadata);
-    const summary = await this.core.rpc.forkSession({
+    const summary = await this.coreApi().forkSession({
       sessionId: id,
       title,
       metadata,
@@ -351,7 +373,7 @@ export class SessionService extends Disposable implements ISessionService {
       parent_session_id: id,
       child_session_kind: CHILD_SESSION_KIND,
     });
-    const summary = await this.core.rpc.forkSession({
+    const summary = await this.coreApi().forkSession({
       sessionId: id,
       title,
       metadata,
@@ -378,7 +400,7 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   async compact(id: string, input: CompactSessionRequest): Promise<CompactSessionResponse> {
-    const all = await this.core.rpc.listSessions({});
+    const all = await this.coreApi().listSessions({});
     const summary = all.find((s) => s.id === id);
     if (summary === undefined) {
       throw new SessionNotFoundError(id);
@@ -387,10 +409,10 @@ export class SessionService extends Disposable implements ISessionService {
     // beginCompaction only sees sessions loaded in core memory — resume first
     // (mirrors undo) so compacting a freshly-opened session doesn't throw
     // SESSION_NOT_FOUND.
-    await this.core.rpc.resumeSession({ sessionId: id });
+    await this.coreApi().resumeSession({ sessionId: id });
 
     const instruction = normalizeOptionalString(input.instruction);
-    await this.core.rpc.beginCompaction({
+    await this.coreApi().beginCompaction({
       sessionId: id,
       agentId: 'main',
       instruction,
@@ -401,14 +423,14 @@ export class SessionService extends Disposable implements ISessionService {
 
   async undo(id: string, input: UndoSessionRequest): Promise<UndoSessionResponse> {
     const summary = await this.requireSummary(id);
-    await this.core.rpc.resumeSession({ sessionId: id });
-    const before = await this.core.rpc.getContext({ sessionId: id, agentId: 'main' });
+    await this.coreApi().resumeSession({ sessionId: id });
+    const before = await this.coreApi().getContext({ sessionId: id, agentId: 'main' });
     if (!canUndoHistory(before.history, input.count)) {
       throw new SessionUndoUnavailableError(id);
     }
 
     try {
-      await this.core.rpc.undoHistory({
+      await this.coreApi().undoHistory({
         sessionId: id,
         agentId: 'main',
         count: input.count,
@@ -420,7 +442,7 @@ export class SessionService extends Disposable implements ISessionService {
       throw error;
     }
 
-    const after = await this.core.rpc.getContext({ sessionId: id, agentId: 'main' });
+    const after = await this.coreApi().getContext({ sessionId: id, agentId: 'main' });
     const status = await this.getStatus(id);
     await this._syncSessionIndex(id);
     return {
@@ -430,12 +452,12 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   async archive(id: string): Promise<{ archived: true }> {
-    const all = await this.core.rpc.listSessions({});
+    const all = await this.coreApi().listSessions({});
     const summary = all.find((s) => s.id === id);
     if (summary === undefined) {
       throw new SessionNotFoundError(id);
     }
-    await this.core.rpc.archiveSession({ sessionId: id });
+    await this.coreApi().archiveSession({ sessionId: id });
     this._onDidClose.fire({ sessionId: id });
     this._activeTurns.delete(id);
     this._abortedTurns.delete(id);
@@ -444,7 +466,7 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   private async requireSummary(id: string): Promise<SessionSummary> {
-    const all = await this.core.rpc.listSessions({});
+    const all = await this.coreApi().listSessions({});
     const summary = all.find((s) => s.id === id);
     if (summary === undefined) {
       throw new SessionNotFoundError(id);

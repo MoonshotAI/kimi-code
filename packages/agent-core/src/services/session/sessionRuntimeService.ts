@@ -1,6 +1,7 @@
 import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '../../di';
 import { Emitter } from '../../base/common/event';
 import type { Event, SessionStatus, SessionStatusResponse } from '@moonshot-ai/protocol';
+import type { CoreRPC } from '../../rpc';
 
 import { IApprovalService } from '../approval/approval';
 import { ICoreProcessService } from '../coreProcess/coreProcess';
@@ -14,6 +15,16 @@ import {
   type SessionStatusChanged,
 } from './session';
 import { applySessionTurnEvent, computeSessionStatus } from './sessionStatus';
+
+/**
+ * Narrow in-process CoreAPI accessor supplied by the concrete
+ * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
+ * through a structural cast so the public `ICoreProcessService` facade — and
+ * the many test doubles that implement it across the suite — stay unchanged.
+ * The daemon-side adapter always provides `getCoreApi()`; see
+ * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
+ */
+type InProcessCoreApi = { getCoreApi(): CoreRPC };
 
 /**
  * Runtime facade for sessions (runtime role).
@@ -56,6 +67,18 @@ export class SessionRuntimeService extends Disposable implements ISessionRuntime
 
   private get promptService(): IPromptService {
     return (this._promptService ??= this.instantiation.invokeFunction((a) => a.get(IPromptService)));
+  }
+
+  /**
+   * In-process CoreAPI handle — the same methods as `this.core.rpc` but
+   * dispatched directly on the in-process `KimiCore`, skipping the
+   * `createRPC` JSON serialize/deserialize hop. Method signatures and return
+   * shapes are identical to the `rpc` proxy; only the serialization is
+   * removed. The cast is localized here so every call site below reads
+   * `this.coreApi().<method>(...)`.
+   */
+  private coreApi(): CoreRPC {
+    return (this.core as unknown as InProcessCoreApi).getCoreApi();
   }
 
   private computeStatus(sessionId: string): SessionStatus {
@@ -121,17 +144,17 @@ export class SessionRuntimeService extends Disposable implements ISessionRuntime
   }
 
   async getStatus(id: string): Promise<SessionStatusResponse> {
-    const all = await this.core.rpc.listSessions({});
+    const all = await this.coreApi().listSessions({});
     const summary = all.find((s) => s.id === id);
     if (summary === undefined) {
       throw new SessionNotFoundError(id);
     }
 
     const [config, context, permission, plan] = await Promise.all([
-      this.core.rpc.getConfig({ sessionId: id, agentId: 'main' }),
-      this.core.rpc.getContext({ sessionId: id, agentId: 'main' }),
-      this.core.rpc.getPermission({ sessionId: id, agentId: 'main' }),
-      this.core.rpc.getPlan({ sessionId: id, agentId: 'main' }),
+      this.coreApi().getConfig({ sessionId: id, agentId: 'main' }),
+      this.coreApi().getContext({ sessionId: id, agentId: 'main' }),
+      this.coreApi().getPermission({ sessionId: id, agentId: 'main' }),
+      this.coreApi().getPlan({ sessionId: id, agentId: 'main' }),
     ]);
 
     const maxContextTokens = config.modelCapabilities?.max_context_tokens ?? 0;

@@ -1,6 +1,6 @@
 import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '../../di';
 import type { PageResponse, Session } from '@moonshot-ai/protocol';
-import type { SessionSummary } from '../../rpc';
+import type { CoreRPC, SessionSummary } from '../../rpc';
 
 import { IApprovalService } from '../approval/approval';
 import { ICoreProcessService } from '../coreProcess/coreProcess';
@@ -27,6 +27,16 @@ const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 
 /**
+ * Narrow in-process CoreAPI accessor supplied by the concrete
+ * `CoreProcessService` (the sole production `ICoreProcessService`). Routed
+ * through a structural cast so the public `ICoreProcessService` facade — and
+ * the many test doubles that implement it across the suite — stay unchanged.
+ * The daemon-side adapter always provides `getCoreApi()`; see
+ * `CoreProcessService.getCoreApi` for the zero-serialization rationale.
+ */
+type InProcessCoreApi = { getCoreApi(): CoreRPC };
+
+/**
  * Reproduces the `compareSessionSummary` ordering used by
  * `core.rpc.listSessions` (updatedAt desc → createdAt desc → id asc).
  *
@@ -48,10 +58,10 @@ function compareSessionSummaries(a: SessionSummary, b: SessionSummary): number {
  * Read-model facade for sessions (query role).
  *
  * Serves list / count / search from the `SessionIndex` read model. Each call
- * re-seeds a fresh index from `core.rpc.listSessions({ includeArchive: true })`
- * so freshness matches today's `SessionService.list` (which reads the store on
- * every call); M1.5 will replace this with a persistent index kept in sync by
- * the command path.
+ * re-seeds a fresh index from the in-process `listSessions` accessor
+ * (`{ includeArchive: true }`) so freshness matches today's
+ * `SessionService.list` (which reads the store on every call); M1.5 will
+ * replace this with a persistent index kept in sync by the command path.
  *
  * The query path is cold: it only reads `listSessions` + per-row
  * `getSessionMetadata` and never calls `resumeSession` / `getReadyAgent`, so a
@@ -89,6 +99,18 @@ export class SessionQueryService extends Disposable implements ISessionQueryServ
     return (this._promptService ??= this.instantiation.invokeFunction((a) => a.get(IPromptService)));
   }
 
+  /**
+   * In-process CoreAPI handle — the same methods as `this.core.rpc` but
+   * dispatched directly on the in-process `KimiCore`, skipping the
+   * `createRPC` JSON serialize/deserialize hop. Method signatures and return
+   * shapes are identical to the `rpc` proxy; only the serialization is
+   * removed. The cast is localized here so every call site below reads
+   * `this.coreApi().<method>(...)`.
+   */
+  private coreApi(): CoreRPC {
+    return (this.core as unknown as InProcessCoreApi).getCoreApi();
+  }
+
   private computeStatus(sessionId: string) {
     return computeSessionStatus({
       awaitingApproval: this.approvalService.listPending(sessionId).length > 0,
@@ -111,7 +133,7 @@ export class SessionQueryService extends Disposable implements ISessionQueryServ
    */
   private async loadIndex(): Promise<SessionIndex> {
     const index = new SessionIndex();
-    const summaries = await this.core.rpc.listSessions({ includeArchive: true });
+    const summaries = await this.coreApi().listSessions({ includeArchive: true });
     for (const summary of summaries) {
       index.upsert(summary);
     }
