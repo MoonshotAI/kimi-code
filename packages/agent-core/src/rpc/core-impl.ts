@@ -32,6 +32,7 @@ import {
 import type { Logger } from '../logging/types';
 import { resolveSessionMcpConfig, mergeCallerMcpServers, type SessionMcpConfig } from '../mcp';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
+import { type SessionHost } from '../session/session-host';
 import { exportSessionDirectory } from '../session/export';
 import {
   ProviderService, type BearerTokenProvider,
@@ -139,7 +140,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   readonly sdk: Promise<SDKRPC>;
   readonly homeDir: string;
   readonly configPath: string;
-  readonly sessions = new Map<string, Session>();
+  readonly sessions = new Map<string, SessionHost>();
   readonly telemetry: TelemetryClient;
   private readonly scope: IInstantiationService;
 
@@ -310,7 +311,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       await session.close().catch(() => {});
       throw error;
     }
-    this.sessions.set(id, session);
+    this.sessions.set(id, session.host);
     if (Object.keys(clientTelemetry).length > 0) {
       sessionTelemetry.track('session_started', { resumed: false });
     }
@@ -326,9 +327,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   async closeSession({ sessionId }: CloseSessionPayload): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      await session.close();
+    const host = this.sessions.get(sessionId);
+    if (host) {
+      await host.session.close();
       this.sessions.delete(sessionId);
     }
   }
@@ -347,8 +348,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     overrides: { kaos?: Kaos; persistenceKaos?: Kaos },
   ): Promise<ResumeSessionResult> {
     const summary = await this.sessionStore.get(input.sessionId);
-    const active = this.sessions.get(summary.id);
-    if (active !== undefined) {
+    const host = this.sessions.get(summary.id);
+    if (host !== undefined) {
+      const active = host.session;
       if (overrides.kaos !== undefined) {
         active.setToolKaos(overrides.kaos.withCwd(summary.workDir));
       }
@@ -401,13 +403,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       });
       throw error;
     }
-    this.sessions.set(summary.id, session);
+    this.sessions.set(summary.id, session.host);
     return resumeSessionResult(summary, session, warning);
   }
 
   async reloadSession(input: ReloadSessionPayload): Promise<ResumeSessionResult> {
     const summary = await this.sessionStore.get(input.sessionId);
-    const active = this.sessions.get(summary.id);
+    const host = this.sessions.get(summary.id);
+    const active = host?.session;
     if (active?.hasActiveTurn === true) {
       throw new KimiError(
         ErrorCodes.TURN_AGENT_BUSY,
@@ -429,7 +432,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {
     const source = await this.sessionStore.get(input.sessionId);
-    const active = this.sessions.get(source.id);
+    const host = this.sessions.get(source.id);
+    const active = host?.session;
     if (active?.hasActiveTurn === true) {
       throw new KimiError(
         ErrorCodes.SESSION_FORK_ACTIVE_TURN,
@@ -457,9 +461,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   async renameSession({ sessionId, ...payload }: RenameSessionRequest): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (session !== undefined) {
-      await new SessionAPIImpl(session).renameSession(payload);
+    const host = this.sessions.get(sessionId);
+    if (host !== undefined) {
+      await new SessionAPIImpl(host.session).renameSession(payload);
       return;
     }
     await this.sessionStore.rename(sessionId, payload.title);
@@ -467,7 +471,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async exportSession(input: ExportSessionPayload): Promise<ExportSessionResult> {
     const summary = await this.sessionStore.get(input.sessionId);
-    const active = this.sessions.get(input.sessionId);
+    const host = this.sessions.get(input.sessionId);
+    const active = host?.session;
     // Closed sessions have no `Session.log`; create an ad-hoc child bound to
     // their id so the entries still route to the session log file.
     const exportLog =
@@ -905,13 +910,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   private sessionApi(sessionId: string): SessionAPIImpl {
-    const session = this.sessions.get(sessionId);
-    if (session === undefined) {
+    const host = this.sessions.get(sessionId);
+    if (host === undefined) {
       throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session "${sessionId}" was not found`, {
         details: { sessionId },
       });
     }
-    return new SessionAPIImpl(session);
+    return new SessionAPIImpl(host.session);
   }
 
   private reloadProviderManager(): KimiConfig {

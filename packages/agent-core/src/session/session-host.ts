@@ -88,7 +88,13 @@ export class SessionHost {
     this.toolKaos = deps.session.options.kaos;
   }
 
-  private get session(): Session {
+  /**
+   * Back-ref to the owning {@link Session}. Exposed so that `KimiCore.sessions`
+   * (which now holds `SessionHost`) can reach session-owned concerns
+   * (metadata, log, MCP, lifecycle services) without maintaining a parallel
+   * `Map<string, Session>`.
+   */
+  get session(): Session {
     return this.deps.session;
   }
 

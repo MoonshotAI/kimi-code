@@ -168,7 +168,7 @@ micro_compaction = false
       workDir,
       model: 'default-mock',
     });
-    const session = core.sessions.get(created.id);
+    const session = core.sessions.get(created.id)?.session;
     const mainAgent = session?.getReadyAgent('main');
 
     expect(session?.experimentalFlags.enabled('micro_compaction')).toBe(false);
@@ -234,7 +234,7 @@ custom_headers = { "X-Test" = "1" }
     });
 
     const created = await rpc.createSession({ id: 'ses_runtime_service_oauth', workDir });
-    const session = core.sessions.get(created.id);
+    const session = core.sessions.get(created.id)?.session;
 
     expect(resolveOAuthTokenProvider).toHaveBeenCalledWith('managed:kimi-code', {
       storage: 'file',
@@ -383,7 +383,7 @@ max_context_size = 100000
       workDir,
       model: 'default-mock',
     });
-    const before = core.sessions.get(created.id);
+    const before = core.sessions.get(created.id)?.session;
     expect(before?.options.toolServices?.webSearcher).toBeUndefined();
 
     await writeFile(
@@ -395,7 +395,7 @@ base_url = "https://search.example.test/v1"
     );
 
     const reloaded = await rpc.reloadSession({ sessionId: created.id });
-    const after = core.sessions.get(created.id);
+    const after = core.sessions.get(created.id)?.session;
 
     expect(after).toBeDefined();
     expect(after).not.toBe(before);
