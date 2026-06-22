@@ -408,17 +408,35 @@ export class LocalKaos implements Kaos {
     const resolved = this._resolvePath(path);
     const encoding = options?.encoding ?? 'utf-8';
     const errors = options?.errors ?? 'strict';
-    const buf = await readFile(resolved);
-    const content = decodeTextWithErrors(buf, encoding, errors);
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line === undefined) continue;
-      if (i < lines.length - 1) {
-        yield line + '\n';
-      } else if (line !== '') {
-        yield line;
+    const fh = await open(resolved, 'r');
+    try {
+      const chunkSize = 64 * 1024;
+      const buf = Buffer.alloc(chunkSize);
+      let pending = Buffer.alloc(0);
+      while (true) {
+        const { bytesRead } = await fh.read(buf, 0, buf.length, null);
+        if (bytesRead === 0) break;
+        const data =
+          pending.length > 0
+            ? Buffer.concat([pending, buf.subarray(0, bytesRead)])
+            : buf.subarray(0, bytesRead);
+        let lineStart = 0;
+        for (let i = 0; i < data.length; i += 1) {
+          // Split on the LF byte (0x0a). LF/CR are ASCII and never appear
+          // inside a multibyte UTF-8/UTF-16 sequence, so cutting here is
+          // always on a character boundary and safe to decode per line.
+          if (data[i] === 0x0a) {
+            yield decodeTextWithErrors(data.subarray(lineStart, i + 1), encoding, errors);
+            lineStart = i + 1;
+          }
+        }
+        pending = lineStart < data.length ? Buffer.from(data.subarray(lineStart)) : Buffer.alloc(0);
       }
+      if (pending.length > 0) {
+        yield decodeTextWithErrors(pending, encoding, errors);
+      }
+    } finally {
+      await fh.close();
     }
   }
 
