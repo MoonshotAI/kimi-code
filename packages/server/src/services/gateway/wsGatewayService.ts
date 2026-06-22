@@ -6,6 +6,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 
 import { isAllowedHost } from '#/middleware/hostnames';
 import { isOriginAllowed } from '#/middleware/origin';
+import type { IAuthTokenService } from '#/services/auth/authTokenService';
 import {
   WsConnection,
   type AbortHandler,
@@ -34,6 +35,7 @@ export class WSGateway extends Disposable implements IWSGateway {
   private abortHandler: AbortHandler | undefined;
   private fsWatchHandler: FsWatchHandler | undefined;
   private terminalHandler: TerminalHandler | undefined;
+  private authTokenService: IAuthTokenService | undefined;
   private detached = false;
 
   constructor(
@@ -45,6 +47,7 @@ export class WSGateway extends Disposable implements IWSGateway {
     @ILogService private readonly logger: ILogService,
   ) {
     super();
+    this.authTokenService = options.authTokenService;
     this.wss = new WebSocketServer({
       noServer: true,
       // Browsers require the server to select one of the offered subprotocols;
@@ -73,6 +76,10 @@ export class WSGateway extends Disposable implements IWSGateway {
 
   setTerminalHandler(handler: TerminalHandler): void {
     this.terminalHandler = handler;
+  }
+
+  setAuthTokenService(service: IAuthTokenService): void {
+    this.authTokenService = service;
   }
 
   private async onUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<void> {
@@ -110,7 +117,7 @@ export class WSGateway extends Disposable implements IWSGateway {
       return;
     }
 
-    const authTokenService = this.options.authTokenService;
+    const authTokenService = this.authTokenService;
     if (authTokenService !== undefined) {
       const authorization = req.headers.authorization;
       const token = authorization?.startsWith('Bearer ')

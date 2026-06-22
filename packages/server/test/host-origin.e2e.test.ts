@@ -24,6 +24,7 @@ import { WebSocket } from 'ws';
 import { startServer, type RunningServer } from '../src';
 import type { WSGatewayOptions } from '../src/services/gateway/wsGateway';
 import { rawDataToString } from '../src/ws/rawData';
+import { fixedTokenAuth } from './helpers/serverHarness';
 
 interface WsFrame {
   type: string;
@@ -68,6 +69,7 @@ afterEach(async () => {
 
 async function spawn(wsGatewayOptions?: WSGatewayOptions): Promise<RunningServer> {
   const r = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -117,7 +119,10 @@ function rawHttpGet(
 
 function openConn(url: string, opts?: ConnectOptions): Promise<Conn> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, opts?.protocols, { headers: opts?.headers });
+    // Offer the fixed bearer token so the M5.1 WS auth passes; the Host/Origin
+    // cases that expect rejection use `expectRejected` (no token) instead.
+    const protocols = [...(opts?.protocols ?? []), 'kimi-code.bearer.test-token'];
+    const ws = new WebSocket(url, protocols, { headers: opts?.headers });
     const queue: WsFrame[] = [];
     const waiters: Array<(frame: WsFrame) => void> = [];
     let closedResolve: (v: { code: number; reason: string }) => void;

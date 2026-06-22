@@ -1,30 +1,71 @@
 /**
- * Reusable e2e server harness with token support (ROADMAP M0.2).
+ * Reusable e2e server harness with token support (ROADMAP M0.2 / M5.1).
  *
  * Wraps `startServer` with an isolated tmp lock + home dir and exposes helpers
- * (`authedFetch` / `authedWs`) that carry an `Authorization: Bearer <token>`
- * so later phases (M2.2 onward) can exercise authenticated endpoints without
- * re-deriving URLs or threading tokens by hand.
+ * (`authedFetch` / `authedWs`) that carry an `Authorization: Bearer <token>`.
  *
- * In M0 there is no server-side auth yet, so the token is simply attached to
- * requests and ignored by the server; the harness still typechecks and behaves
- * correctly against the current auth-less server. The auth seam is
- * `BootOptions.serviceOverrides`: from M2.1 on, callers inject a fixed-token
- * `IAuthTokenService` there. `IAuthTokenService` does not exist in M0, so this
- * module intentionally stays generic and does not import it.
+ * From M5.1 the server enforces bearer auth, so `boot()` injects a fixed-token
+ * `IAuthTokenService` (default token `test-token`) via `serviceOverrides` by
+ * default — keeping harness-based tests transparent. A caller-supplied
+ * `IAuthTokenService` override still wins (serviceOverrides are last-wins), so
+ * tests that need a custom impl can pass one explicitly. For tests that boot
+ * `startServer` directly, use the exported {@link fixedTokenAuth} /
+ * {@link withAuth} / {@link authHeaders} helpers to inject the same fixed token
+ * and carry it on each request.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { ServiceIdentifier } from '@moonshot-ai/agent-core';
 import { pino } from 'pino';
 import { WebSocket } from 'ws';
 
 import { startServer, type RunningServer, type ServerStartOptions } from '../../src';
+import { IAuthTokenService } from '../../src/services/auth/authTokenService';
+import type { IAuthTokenService as IAuthTokenServiceType } from '../../src/services/auth/authTokenService';
+
+type ServiceOverride = readonly [ServiceIdentifier<unknown>, unknown];
 
 /** Default deterministic token used when a test does not supply one. */
 const DEFAULT_TOKEN = 'test-token';
+
+/**
+ * Build a `[IAuthTokenService, impl]` override pair that accepts a single fixed
+ * `token`. Pass it into `startServer({ serviceOverrides: [fixedTokenAuth()] })`
+ * (or `boot({ serviceOverrides: [fixedTokenAuth()] })`) so a test can
+ * authenticate with `Authorization: Bearer test-token` — or any custom `token`.
+ *
+ * `getToken` returns the fixed token so callers that read it back (e.g. WS
+ * subprotocol helpers) stay consistent; `isValid` accepts only that token.
+ */
+export function fixedTokenAuth(token: string = DEFAULT_TOKEN): ServiceOverride {
+  const impl: IAuthTokenServiceType = {
+    _serviceBrand: undefined,
+    getToken: () => token,
+    isValid: async (candidate) => candidate === token,
+  };
+  return [IAuthTokenService, impl];
+}
+
+/** An `Authorization: Bearer <token>` header bag, for spreading into `headers`. */
+export function authHeaders(token: string = DEFAULT_TOKEN): { Authorization: string } {
+  return { Authorization: `Bearer ${token}` };
+}
+
+/**
+ * Merge `Authorization: Bearer <token>` into a `fetch` `RequestInit`, preserving
+ * caller-supplied headers. A caller-supplied `Authorization` wins, so tests that
+ * need to send a wrong/no token can still do so explicitly.
+ */
+export function withAuth(init: RequestInit = {}, token: string = DEFAULT_TOKEN): RequestInit {
+  const headers = new Headers(init.headers);
+  if (!headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  return { ...init, headers };
+}
 
 /**
  * WS subprotocol prefix that carries the bearer token during the upgrade.
@@ -95,7 +136,14 @@ export async function boot(opts: BootOptions = {}): Promise<ServerHarness> {
   const token = opts.token ?? DEFAULT_TOKEN;
   const host = opts.host ?? '127.0.0.1';
   const port = opts.port ?? 0;
-  const serviceOverrides = opts.serviceOverrides ?? [];
+  // Inject a fixed-token `IAuthTokenService` by default so harness-based tests
+  // stay transparent (`authedFetch` / `authedWs` already carry `test-token`).
+  // The fixed impl is placed FIRST so an explicit caller-supplied
+  // `IAuthTokenService` override still wins (serviceOverrides are last-wins).
+  const serviceOverrides: ServerStartOptions['serviceOverrides'] = [
+    fixedTokenAuth(token),
+    ...(opts.serviceOverrides ?? []),
+  ];
 
   const tmpDir = mkdtempSync(join(tmpdir(), 'kimi-server-harness-'));
   const homeDir = mkdtempSync(join(tmpdir(), 'kimi-server-harness-home-'));

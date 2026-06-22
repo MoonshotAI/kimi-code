@@ -24,6 +24,16 @@ export interface IWSGateway {
   setFsWatchHandler(handler: FsWatchHandler): void;
 
   setTerminalHandler(handler: TerminalHandler): void;
+
+  /**
+   * Install the `IAuthTokenService` used to validate bearer tokens on the WS
+   * upgrade path. Wired by `start.ts` (M5.1) AFTER construction so the
+   * ix-resolved, override-aware impl (not the constructor options) is what
+   * enforces auth — letting test overrides via `serviceOverrides` take effect
+   * for WS too. `WSGatewayOptions.authTokenService?` is retained only for the
+   * M3/M4 unit tests that construct the gateway directly.
+   */
+  setAuthTokenService(service: IAuthTokenService): void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare

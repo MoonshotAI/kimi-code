@@ -10,6 +10,7 @@ import {
 import { installErrorHandler } from './error-handler';
 import { transformOpenApiDocument } from './openapi/transforms';
 import { acquireLock, ServerLockedError } from './lock';
+import { createAuthHook } from '#/middleware/auth';
 import {
   createHostCheck,
   isHostCheckDisabled,
@@ -34,6 +35,12 @@ import {
 } from '#/services/gateway';
 import { createServerServiceCollection } from '#/services/serviceCollection';
 import { ISnapshotService, loadSnapshotConfig } from '#/services/snapshot';
+import {
+  createAuthTokenService,
+  IAuthTokenService,
+} from '#/services/auth/authTokenService';
+import { resolvePasswordHash } from '#/services/auth/password';
+import { createTokenStore } from '#/services/auth/tokenStore';
 import { getServerVersion } from './version';
 import { registerWebAssetRoutes } from './routes/webAssets';
 
@@ -159,13 +166,50 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }),
   };
 
+  // Token auth (ROADMAP M5.1). The real `IAuthTokenService` needs an
+  // async-built `TokenStore` (writes `<homeDir>/server-<pid>.token` at 0600)
+  // and an optional bcrypt password hash — both awaited here, then supplied to
+  // the collection via `serviceOverrides` so tests can inject a fixed-token
+  // impl that wins (last-wins) over this default. The token file is disposed
+  // (best-effort) on shutdown and on every boot-error path below.
+  const tokenStore = await createTokenStore(envService.homeDir, process.pid);
+  const passwordHash = await resolvePasswordHash(process.env);
+  const defaultAuth = createAuthTokenService({ tokenStore, passwordHash });
+
   const services = createServerServiceCollection({
-    server: opts,
+    server: {
+      ...opts,
+      // WS Host/Origin defaults (ROADMAP M4.3 / M5.1): mirror the HTTP checks
+      // on the upgrade path. Caller-supplied values win (used by the
+      // host-origin e2e tests). `authTokenService` is NOT threaded here — it
+      // reaches the WS gateway via `setAuthTokenService` below so the
+      // override-aware impl enforces auth.
+      wsGatewayOptions: {
+        ...opts.wsGatewayOptions,
+        hostCheck: opts.wsGatewayOptions?.hostCheck ?? {
+          boundHost: opts.host,
+          extra: parseAllowedHosts(process.env),
+          disable: isHostCheckDisabled(process.env),
+        },
+        allowedOrigins:
+          opts.wsGatewayOptions?.allowedOrigins ?? parseCorsOrigins(process.env),
+      },
+      serviceOverrides: [
+        [IAuthTokenService, defaultAuth],
+        ...(opts.serviceOverrides ?? []),
+      ],
+    },
     app,
     pinoLogger,
     envService,
   });
   const ix = new InstantiationService(services);
+
+  // Auth hook (ROADMAP M5.1). Registered after Host/Origin (above) and before
+  // routes, so a rejected request never reaches a handler. Resolved from the
+  // container so a test-injected fixed-token impl is what enforces auth.
+  const authTokenService = ix.invokeFunction((a) => a.get(IAuthTokenService));
+  app.addHook('onRequest', createAuthHook(authTokenService));
 
   await registerApiV1Routes(app, ix, {
     serverVersion,
@@ -192,6 +236,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   try {
     await app.ready();
   } catch (error) {
+    try {
+      await tokenStore.dispose();
+    } catch {
+      // best-effort cleanup of the token file on boot failure
+    }
     lockHandle.release();
     throw error;
   }
@@ -230,6 +279,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       }
 
       const wsGw = a.get(IWSGateway);
+
+      // Hand the override-aware auth impl to the WS gateway so the upgrade
+      // path enforces the same token the HTTP hook uses (ROADMAP M5.1).
+      wsGw.setAuthTokenService(authTokenService);
 
       const built = a.get(ICoreProcessService);
 
@@ -352,6 +405,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     } catch {
 
     }
+    try {
+      await tokenStore.dispose();
+    } catch {
+      // best-effort cleanup of the token file on boot failure
+    }
     lockHandle.release();
     throw error;
   }
@@ -363,6 +421,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       ix.dispose();
     } catch {
 
+    }
+    try {
+      await tokenStore.dispose();
+    } catch {
+      // best-effort cleanup of the token file on boot failure
     }
     lockHandle.release();
     throw error;
@@ -384,6 +447,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       ix.dispose();
     } catch {
 
+    }
+    try {
+      await tokenStore.dispose();
+    } catch {
+      // best-effort cleanup of the token file on boot failure
     }
     lockHandle.release();
     throw error;
@@ -421,6 +489,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       ix.dispose();
     } catch {
 
+    }
+
+    // Remove the on-disk token file now that the server is gone (ROADMAP M5.1).
+    // Best-effort: a missing/unwritable file must not keep shutdown from
+    // releasing the lock.
+    try {
+      await tokenStore.dispose();
+    } catch {
+      // ignore — token file may already be gone
     }
 
     lockHandle.release();
