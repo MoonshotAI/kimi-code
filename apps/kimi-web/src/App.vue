@@ -34,6 +34,7 @@ import { useFilePreview, type DetailTarget } from './composables/useFilePreview'
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
 import type { AppConfig, ThinkingLevel } from './api/types';
+import type { ConversationActions, ConversationVm } from './components/conversationVmTypes';
 
 const client = useKimiWebClient();
 provide('resolveImage', client.resolveImageUrl);
@@ -63,6 +64,58 @@ const activeWorkspaceSessionCount = computed<number>(
 
 // running: true when activity is not idle
 const running = computed(() => client.activity.value !== 'idle');
+
+// Aggregated view-model + actions for ConversationPane. Grouping the drilled
+// props into a reactive view-model (rebuilt on change, no long-lived reactive
+// object) and a stable actions object keeps the parent/child contract small
+// without changing any data source or behavior.
+const conversationVm = computed<ConversationVm>(() => ({
+  turns: client.turns.value,
+  sessionId: client.activeSessionId.value ?? undefined,
+  approvals: client.pendingApprovals.value,
+  gitInfo: client.gitInfo.value,
+  tasks: client.tasks.value,
+  todos: client.todos.value,
+  goal: client.goal.value,
+  swarms: client.swarms.value,
+  activationBadges: client.activationBadges.value,
+  status: client.status.value,
+  thinking: client.thinking.value,
+  planMode: client.planMode.value,
+  swarmMode: client.swarmMode.value,
+  goalMode: client.goalMode.value,
+  questions: client.questions.value,
+  running: running.value,
+  queued: client.queued.value,
+  changes: client.changes.value,
+  fileReloadKey: client.activeSessionId.value,
+  sending: client.isSending.value,
+  fastMoon: client.fastMoon.value,
+  mobile: isMobile.value,
+  modern: client.theme.value === 'modern' || client.theme.value === 'kimi',
+  sessionLoading: client.sessionLoading.value,
+  compaction: client.compaction.value,
+  hasMoreMessages: client.hasMoreMessages.value,
+  loadingMore: client.loadingMoreMessages.value,
+  loadingMoreError: client.loadMoreMessagesError.value,
+  models: client.models.value,
+  starredIds: client.starredModelIds.value,
+  skills: client.skills.value,
+  workspaceName: client.visibleWorkspace.value?.name,
+  workspaceRoot: client.visibleWorkspace.value?.root ?? client.status.value.cwd,
+  gitDiffStats: client.gitDiffStats.value,
+  workspaces: client.workspacesView.value,
+  activeWorkspaceId: client.activeWorkspaceId.value,
+  sessionTitle: activeSessionTitle.value,
+  pr: client.activePullRequest.value,
+  betaToc: client.betaToc.value,
+}));
+
+const conversationActions: ConversationActions = {
+  searchFiles: client.searchFiles,
+  uploadImage: client.uploadImage,
+  loadOlderMessages: client.loadOlderMessages,
+};
 
 // Auth readiness gates the main app. Once the first load finishes and auth is
 // still missing, show a full-page login entry instead of an in-app banner.
@@ -597,48 +650,8 @@ function openPr(url: string): void {
     <ConversationPane
       v-if="!hasMultiSelect"
       ref="conversationPaneRef"
-      :mobile="isMobile"
-      :modern="client.theme.value === 'modern' || client.theme.value === 'kimi'"
-      :turns="client.turns.value"
-      :session-id="client.activeSessionId.value"
-      :approvals="client.pendingApprovals.value"
-      :changes="client.changes.value"
-      :git-info="client.gitInfo.value"
-      :tasks="client.tasks.value"
-      :todos="client.todos.value"
-      :goal="client.goal.value"
-      :swarms="client.swarms.value"
-      :activation-badges="client.activationBadges.value"
-      :status="client.status.value"
-      :thinking="client.thinking.value"
-      :plan-mode="client.planMode.value"
-      :swarm-mode="client.swarmMode.value"
-      :goal-mode="client.goalMode.value"
-      :models="client.models.value"
-      :starred-ids="client.starredModelIds.value"
-      :skills="client.skills.value"
-      :questions="client.questions.value"
-      :running="running"
-      :queued="client.queued.value"
-      :search-files="client.searchFiles"
-      :upload-image="client.uploadImage"
-      :sending="client.isSending.value"
-      :fast-moon="client.fastMoon.value"
-      :file-reload-key="client.activeSessionId.value"
-      :session-loading="client.sessionLoading.value"
-      :compaction="client.compaction.value"
-      :has-more-messages="client.hasMoreMessages.value"
-      :loading-more="client.loadingMoreMessages.value"
-      :loading-more-error="client.loadMoreMessagesError.value"
-      :load-older-messages="client.loadOlderMessages"
-      :workspace-name="client.visibleWorkspace.value?.name"
-      :workspace-root="client.visibleWorkspace.value?.root ?? client.status.value.cwd"
-      :git-diff-stats="client.gitDiffStats.value"
-      :workspaces="client.workspacesView.value"
-      :active-workspace-id="client.activeWorkspaceId.value"
-      :session-title="activeSessionTitle"
-      :pr="client.activePullRequest.value"
-      :beta-toc="client.betaToc.value"
+      :vm="conversationVm"
+      :actions="conversationActions"
       @open-changes="openDiffDetail()"
       @select-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="showAddWorkspace = true"

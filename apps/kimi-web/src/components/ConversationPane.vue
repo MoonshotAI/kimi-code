@@ -2,10 +2,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../types';
-import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../api/types';
+import type { ChatTurn, FilePreviewRequest, PermissionMode, ToolMedia, UIQuestion } from '../types';
+import type { QuestionResponse, ThinkingLevel } from '../api/types';
 import type { SwarmGroup } from '../composables/swarmGroups';
-import type { FileItem } from './MentionMenu.vue';
+import type { ConversationActions, ConversationVm } from './conversationVmTypes';
 import ChatPane from './ChatPane.vue';
 import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
@@ -15,70 +15,8 @@ import { getVisibleWorkspaces } from '../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../lib/storage';
 
 const props = defineProps<{
-  turns: ChatTurn[];
-  sessionId?: string;
-  approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string }[];
-  gitInfo?: { branch: string; ahead: number; behind: number } | null;
-  tasks: TaskItem[];
-  /** Model-maintained todo list (TodoList tool) — shown as a floating card. */
-  todos?: TodoView[];
-  goal?: AppGoal | null;
-  swarms?: SwarmGroup[];
-  activationBadges?: ActivationBadges;
-  status: ConversationStatus;
-  thinking?: ThinkingLevel;
-  planMode?: boolean;
-  swarmMode?: boolean;
-  goalMode?: boolean;
-  questions?: UIQuestion[];
-  running?: boolean;
-  queued?: QueuedPromptView[];
-  searchFiles?: (q: string) => Promise<FileItem[]>;
-  uploadImage?: (file: Blob, name?: string) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
-  /** Git changed files (only used for the header diff counter dot). */
-  changes?: { path: string; status: string }[];
-  /** Cache-buster that remounts the chat pane when the active session changes. */
-  fileReloadKey?: string | number;
-  sending?: boolean;
-  fastMoon?: boolean;
-  /** Mobile shell: compact chrome. */
-  mobile?: boolean;
-  /** Bubble themes (Modern/Kimi): render chat bubbles at all widths (desktop included). */
-  modern?: boolean;
-  /** True while switching sessions and the turns array is not yet loaded. */
-  sessionLoading?: boolean;
-  /** Live compaction state of the active session (non-null while running). */
-  compaction?: { status: 'running' } | null;
-  /** Whether there are older messages available to load when scrolling up. */
-  hasMoreMessages?: boolean;
-  /** True while older messages are being fetched (scroll-up lazy load). */
-  loadingMore?: boolean;
-  /** True when the last older-message fetch failed; blocks sentinel auto-retry. */
-  loadingMoreError?: boolean;
-  /** Callback to fetch the next older page of messages. */
-  loadOlderMessages?: (sessionId: string) => Promise<void>;
-  /** Available models for the quick-switch dropdown in the composer toolbar. */
-  models?: AppModel[];
-  /** Starred model ids shown at the top of the composer's quick-switch dropdown. */
-  starredIds?: string[];
-  /** Session skills shown in the composer `/` menu. */
-  skills?: AppSkill[];
-  /** Workspace name shown in the empty-session hint above the centred composer. */
-  workspaceName?: string;
-  /** Absolute workspace root path. */
-  workspaceRoot?: string;
-  /** Git diff line stats for the header diff counter (mirrors kimi-cli/web). */
-  gitDiffStats?: { totalAdditions: number; totalDeletions: number } | null;
-  /** Workspaces for the empty-composer picker (start a conversation elsewhere). */
-  workspaces?: WorkspaceView[];
-  /** Active workspace id, to highlight the current entry in the picker. */
-  activeWorkspaceId?: string | null;
-  /** Active session title, shown in the chat header. */
-  sessionTitle?: string;
-  /** GitHub PR for the current branch, when known (shown in the chat header). */
-  pr?: { number: number; state: string; url: string } | null;
-  /** Beta conversation outline: proportional bubbles, viewport indicator, hover tooltip. */
-  betaToc?: boolean;
+  vm: ConversationVm;
+  actions: ConversationActions;
 }>();
 
 const emit = defineEmits<{
@@ -131,18 +69,18 @@ const wsPickOpen = ref(false);
 const wsPickExpanded = ref(false);
 
 const activeWorkspaceLabel = computed(() => {
-  const w = props.workspaces?.find((ws) => ws.id === props.activeWorkspaceId);
-  return w?.name ?? props.workspaceName ?? '';
+  const w = props.vm.workspaces?.find((ws) => ws.id === props.vm.activeWorkspaceId);
+  return w?.name ?? props.vm.workspaceName ?? '';
 });
 
-const hasWorkspaces = computed(() => (props.workspaces?.length ?? 0) > 0);
+const hasWorkspaces = computed(() => (props.vm.workspaces?.length ?? 0) > 0);
 
 const visibleWorkspaces = computed(() =>
-  getVisibleWorkspaces(props.workspaces ?? [], props.activeWorkspaceId, wsPickExpanded.value),
+  getVisibleWorkspaces(props.vm.workspaces ?? [], props.vm.activeWorkspaceId, wsPickExpanded.value),
 );
 
 const hiddenWorkspaceCount = computed(
-  () => (props.workspaces?.length ?? 0) - visibleWorkspaces.value.length,
+  () => (props.vm.workspaces?.length ?? 0) - visibleWorkspaces.value.length,
 );
 
 // Collapse the expanded list when the dropdown closes so it doesn't stay open
@@ -157,7 +95,7 @@ watch(wsPickOpen, (open) => {
     a persistent footer and is removed from the stack. */
 const activeSwarms = computed<SwarmGroup[]>(() => {
   return (
-    props.swarms?.filter((group) =>
+    props.vm.swarms?.filter((group) =>
       group.members.some((member) => member.phase !== 'completed' && member.phase !== 'failed'),
     ) ?? []
   );
@@ -165,7 +103,7 @@ const activeSwarms = computed<SwarmGroup[]>(() => {
 
 function pickWorkspace(id: string): void {
   wsPickOpen.value = false;
-  if (id !== props.activeWorkspaceId) emit('selectWorkspace', id);
+  if (id !== props.vm.activeWorkspaceId) emit('selectWorkspace', id);
 }
 
 const { t } = useI18n();
@@ -208,20 +146,20 @@ function focusSwarm(): void {
   });
 }
 
-const bubble = computed(() => props.mobile === true || props.modern === true);
+const bubble = computed(() => props.vm.mobile === true || props.vm.modern === true);
 
-const bashTasks = computed(() => props.tasks.filter((t) => t.kind !== 'subagent'));
-const subagentTasks = computed(() => props.tasks.filter((t) => t.kind === 'subagent'));
+const bashTasks = computed(() => props.vm.tasks.filter((t) => t.kind !== 'subagent'));
+const subagentTasks = computed(() => props.vm.tasks.filter((t) => t.kind === 'subagent'));
 const bashRunning = computed(() => bashTasks.value.filter((t) => t.state === 'run').length);
 const subagentRunning = computed(() => subagentTasks.value.filter((t) => t.state === 'run').length);
-const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
+const todoDoneCount = computed(() => (props.vm.todos ?? []).filter((td) => td.status === 'done').length);
 const hasDockWork = computed(() =>
-  props.tasks.length > 0 ||
-  (props.todos?.length ?? 0) > 0 ||
-  (props.queued?.length ?? 0) > 0,
+  props.vm.tasks.length > 0 ||
+  (props.vm.todos?.length ?? 0) > 0 ||
+  (props.vm.queued?.length ?? 0) > 0,
 );
 const dockPanel = ref<'bash' | 'subagent' | 'todos' | 'queue' | null>(null);
-const changesCount = computed(() => (props.gitInfo ? props.changes?.length ?? 0 : 0));
+const changesCount = computed(() => (props.vm.gitInfo ? props.vm.changes?.length ?? 0 : 0));
 
 function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos' | 'queue'): void {
   dockPanel.value = dockPanel.value === panel ? null : panel;
@@ -256,7 +194,7 @@ function tocTitle(turn: ChatTurn): string {
 }
 
 const conversationTocItems = computed<ConversationTocItem[]>(() =>
-  props.turns.map((turn, index) => ({
+  props.vm.turns.map((turn, index) => ({
     id: turn.id,
     role: turn.role,
     no: turn.no || index + 1,
@@ -286,7 +224,7 @@ const TOC_TRACK_HEIGHT = 420;
 const tocMetrics = computed<{ id: string; height: number }[]>(() => {
   const items = conversationTocItems.value;
   const lengths = items.map((item) => {
-    const turn = props.turns.find((t) => t.id === item.id);
+    const turn = props.vm.turns.find((t) => t.id === item.id);
     return turn ? turnContentLength(turn) : TOC_BUBBLE_MIN;
   });
   const total = lengths.reduce((s, n) => s + n, 0) || items.length * TOC_BUBBLE_MIN;
@@ -352,14 +290,14 @@ function hideTooltip(): void {
 }
 
 const showConversationToc = computed(() =>
-  !props.mobile &&
-  !props.sessionLoading &&
+  !props.vm.mobile &&
+  !props.vm.sessionLoading &&
   conversationTocItems.value.length > 1,
 );
 
 // The first pending question (if any)
 const pendingQuestion = computed<UIQuestion | undefined>(() =>
-  props.questions && props.questions.length > 0 ? props.questions[0] : undefined,
+  props.vm.questions && props.vm.questions.length > 0 ? props.vm.questions[0] : undefined,
 );
 
 // The first pending approval (if any). Rendered in the SAME bottom-dock slot as
@@ -367,7 +305,7 @@ const pendingQuestion = computed<UIQuestion | undefined>(() =>
 // prompts live in one consistent place instead of approvals scrolling away at
 // the end of the transcript while questions stay pinned.
 const pendingApproval = computed(() =>
-  props.approvals && props.approvals.length > 0 ? props.approvals[0] : undefined,
+  props.vm.approvals && props.vm.approvals.length > 0 ? props.vm.approvals[0] : undefined,
 );
 
 // ---------------------------------------------------------------------------
@@ -498,14 +436,14 @@ function findTopAnchor(
 
 async function handleLoadOlderMessages(): Promise<void> {
   if (
-    !props.sessionId ||
-    !props.loadOlderMessages ||
-    props.loadingMore ||
-    !props.hasMoreMessages
+    !props.vm.sessionId ||
+    !props.actions.loadOlderMessages ||
+    props.vm.loadingMore ||
+    !props.vm.hasMoreMessages
   ) {
     return;
   }
-  const requestedSessionId = props.sessionId;
+  const requestedSessionId = props.vm.sessionId;
   const el = panesRef.value;
   const oldTop = el?.scrollTop ?? 0;
   const oldHeight = el?.scrollHeight ?? 0;
@@ -513,7 +451,7 @@ async function handleLoadOlderMessages(): Promise<void> {
 
   historyLoadInProgress.value = true;
   try {
-    await props.loadOlderMessages(requestedSessionId);
+    await props.actions.loadOlderMessages(requestedSessionId);
     await nextTick();
   } finally {
     historyLoadInProgress.value = false;
@@ -521,7 +459,7 @@ async function handleLoadOlderMessages(): Promise<void> {
 
   // If the user switched sessions while the request was in flight, do not
   // restore scroll position on the newly selected session's pane.
-  if (props.sessionId !== requestedSessionId) return;
+  if (props.vm.sessionId !== requestedSessionId) return;
 
   const el2 = panesRef.value;
   if (!el2) return;
@@ -633,8 +571,8 @@ function isHistoryPrependOnly(prev: ScrollKey | undefined, next: ScrollKey): boo
 }
 
 const scrollKey = computed<ScrollKey>(() => {
-  const approvalIds = (props.approvals ?? []).map((a) => a.approvalId).join(',');
-  const t = props.turns;
+  const approvalIds = (props.vm.approvals ?? []).map((a) => a.approvalId).join(',');
+  const t = props.vm.turns;
   const last = t.at(-1);
   const thinkingLen = last?.thinking?.length ?? 0;
   const toolsLen =
@@ -671,7 +609,7 @@ watch(dockRef, () => {
 });
 
 watch(
-  () => props.mobile,
+  () => props.vm.mobile,
   async () => {
     await nextTick();
     updatePanesScrollbarWidth();
@@ -679,7 +617,7 @@ watch(
 );
 
 watch(
-  () => props.fileReloadKey,
+  () => props.vm.fileReloadKey,
   async () => {
     following.value = true;
     lastScrollTop = 0;
@@ -690,7 +628,7 @@ watch(
 );
 
 watch(
-  () => props.sessionLoading,
+  () => props.vm.sessionLoading,
   async (loading, was) => {
     if (loading || !was) return;
     following.value = true;
@@ -701,7 +639,7 @@ watch(
 );
 
 watch(
-  () => props.running,
+  () => props.vm.running,
   async (now, was) => {
     if (now || !was) return;
     if (!following.value && !hasUserActionFollowLock()) return;
@@ -831,7 +769,7 @@ function handleInterrupt(): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && (props.running || props.sending)) {
+  if (event.key === 'Escape' && (props.vm.running || props.vm.sending)) {
     event.preventDefault();
     handleInterrupt();
   }
@@ -878,27 +816,27 @@ defineExpose({ loadComposerForEdit });
 </script>
 
 <template>
-  <section class="con" :class="{ mobile }">
+  <section class="con" :class="{ mobile: vm.mobile }">
     <!-- Chat context header: workspace/session, git status, open-in-editor,
          copy-all, PR. Hidden for the empty-composer (no session context yet). -->
     <ChatHeader
-      v-if="!mobile && !(turns.length === 0 && !sessionLoading)"
-      :session-id="sessionId"
-      :workspace-name="workspaceName"
-      :workspace-root="workspaceRoot"
-      :session-title="sessionTitle"
-      :branch="gitInfo?.branch"
-      :ahead="gitInfo?.ahead"
-      :behind="gitInfo?.behind"
+      v-if="!vm.mobile && !(vm.turns.length === 0 && !vm.sessionLoading)"
+      :session-id="vm.sessionId"
+      :workspace-name="vm.workspaceName"
+      :workspace-root="vm.workspaceRoot"
+      :session-title="vm.sessionTitle"
+      :branch="vm.gitInfo?.branch"
+      :ahead="vm.gitInfo?.ahead"
+      :behind="vm.gitInfo?.behind"
       :changes-count="changesCount"
-      :git-diff-stats="gitDiffStats"
-      :is-git-repo="!!gitInfo"
-      :pr="pr"
+      :git-diff-stats="vm.gitDiffStats"
+      :is-git-repo="!!vm.gitInfo"
+      :pr="vm.pr"
       :copied="copyConversationCopied"
       @open-changes="emit('openChanges')"
       @copy-all="chatPaneRef?.copyConversation()"
       @copy-final-summary="chatPaneRef?.copyFinalSummary()"
-      @open-pr="pr && emit('openPr', pr.url)"
+      @open-pr="vm.pr && emit('openPr', vm.pr.url)"
       @rename-session="(id, title) => emit('renameSession', id, title)"
       @fork-session="(id) => emit('forkSession', id)"
       @archive-session="(id) => emit('archiveSession', id)"
@@ -906,7 +844,7 @@ defineExpose({ loadComposerForEdit });
 
     <!-- Beta conversation outline: right edge, proportional bubbles, viewport indicator, hover tooltip. -->
     <nav
-      v-if="showConversationToc && betaToc"
+      v-if="showConversationToc && vm.betaToc"
       class="conversation-toc"
       :aria-label="t('conversation.toc')"
     >
@@ -948,8 +886,8 @@ defineExpose({ loadComposerForEdit });
         class="panes chat-scroll"
         @scroll.passive="onPanesScroll"
       >
-        <div class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
-          <template v-if="turns.length === 0 && !sessionLoading">
+        <div class="content-wrap" :class="[vm.mobile ? 'align-mobile' : 'align-center']">
+          <template v-if="vm.turns.length === 0 && !vm.sessionLoading">
             <!-- Empty session: Composer rendered in the centre of the pane -->
             <div class="empty-spacer" />
             <div class="empty-hint">
@@ -974,7 +912,7 @@ defineExpose({ loadComposerForEdit });
                     :key="w.id"
                     type="button"
                     class="ws-pick-item"
-                    :class="{ on: w.id === activeWorkspaceId }"
+                    :class="{ on: w.id === vm.activeWorkspaceId }"
                     @click.stop="pickWorkspace(w.id)"
                   >
                     <span class="ws-pick-item-name">{{ w.name }}</span>
@@ -1018,20 +956,20 @@ defineExpose({ loadComposerForEdit });
             <Composer
               ref="emptyComposerRef"
               class="empty-composer"
-              :session-id="sessionId"
-              :running="running"
-              :queued="queued"
-              :search-files="searchFiles"
-              :upload-image="uploadImage"
-              :status="status"
-              :thinking="thinking"
-              :plan-mode="planMode"
-              :swarm-mode="swarmMode"
-              :goal-mode="goalMode"
-              :activation-badges="activationBadges"
-              :models="models"
-              :starred-ids="starredIds"
-              :skills="skills"
+              :session-id="vm.sessionId"
+              :running="vm.running"
+              :queued="vm.queued"
+              :search-files="actions.searchFiles"
+              :upload-image="actions.uploadImage"
+              :status="vm.status"
+              :thinking="vm.thinking"
+              :plan-mode="vm.planMode"
+              :swarm-mode="vm.swarmMode"
+              :goal-mode="vm.goalMode"
+              :activation-badges="vm.activationBadges"
+              :models="vm.models"
+              :starred-ids="vm.starredIds"
+              :skills="vm.skills"
               hide-context
               @submit="handleComposerSubmit"
               @steer="emit('steer', $event)"
@@ -1058,19 +996,19 @@ defineExpose({ loadComposerForEdit });
           <template v-else>
             <ChatPane
               ref="chatPaneRef"
-              :key="fileReloadKey ?? 'no-session'"
-              :turns="turns"
-              :approvals="approvals"
+              :key="vm.fileReloadKey ?? 'no-session'"
+              :turns="vm.turns"
+              :approvals="vm.approvals"
               :bubble="bubble"
-              :mobile="mobile"
-              :running="running"
-              :sending="sending"
-              :fast-moon="fastMoon"
-              :session-loading="sessionLoading"
-              :compaction="compaction"
-              :has-more-messages="hasMoreMessages"
-              :loading-more="loadingMore"
-              :loading-more-error="loadingMoreError"
+              :mobile="vm.mobile"
+              :running="vm.running"
+              :sending="vm.sending"
+              :fast-moon="vm.fastMoon"
+              :session-loading="vm.sessionLoading"
+              :compaction="vm.compaction"
+              :has-more-messages="vm.hasMoreMessages"
+              :loading-more="vm.loadingMore"
+              :loading-more-error="vm.loadingMoreError"
               :is-following="following"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
@@ -1088,24 +1026,24 @@ defineExpose({ loadComposerForEdit });
         </div>
       </div>
       <ChatDock
-        v-if="!(turns.length === 0 && !sessionLoading)"
+        v-if="!(vm.turns.length === 0 && !vm.sessionLoading)"
         :ref="bindChatDock"
         :style="chatDockStyle"
-        :session-id="sessionId"
-        :running="running"
-        :queued="queued"
-        :search-files="searchFiles"
-        :upload-image="uploadImage"
-        :status="status"
-        :thinking="thinking"
-        :plan-mode="planMode"
-        :swarm-mode="swarmMode"
-        :goal-mode="goalMode"
-        :activation-badges="activationBadges"
-        :models="models"
-        :starred-ids="starredIds"
-        :skills="skills"
-        :goal="goal"
+        :session-id="vm.sessionId"
+        :running="vm.running"
+        :queued="vm.queued"
+        :search-files="actions.searchFiles"
+        :upload-image="actions.uploadImage"
+        :status="vm.status"
+        :thinking="vm.thinking"
+        :plan-mode="vm.planMode"
+        :swarm-mode="vm.swarmMode"
+        :goal-mode="vm.goalMode"
+        :activation-badges="vm.activationBadges"
+        :models="vm.models"
+        :starred-ids="vm.starredIds"
+        :skills="vm.skills"
+        :goal="vm.goal"
         :goal-expand-signal="goalExpandSignal"
         :dock-panel="dockPanel"
         :bash-tasks="bashTasks"
@@ -1114,10 +1052,10 @@ defineExpose({ loadComposerForEdit });
         :subagent-running="subagentRunning"
         :todo-done-count="todoDoneCount"
         :has-dock-work="hasDockWork"
-        :todos="todos"
+        :todos="vm.todos"
         :pending-question="pendingQuestion"
         :pending-approval="pendingApproval"
-        :mobile="mobile"
+        :mobile="vm.mobile"
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"
         @answer="handleQuestionAnswer"
