@@ -442,6 +442,28 @@ function removeSessionMessages(sessionId: string): void {
   rawState.messagesBySession = rest;
 }
 
+// ---------------------------------------------------------------------------
+// Session teardown — single place that wipes a session and all its per-session
+// sidecar state. Both removal entry points (not-found + archive) go through
+// this, so adding a new per-session map only ever needs one new line here.
+// ---------------------------------------------------------------------------
+function forgetSession(sessionId: string): void {
+  removeSession(sessionId);
+  removeSessionMessages(sessionId);
+  delete rawState.approvalsBySession[sessionId];
+  delete rawState.questionsBySession[sessionId];
+  delete rawState.tasksBySession[sessionId];
+  delete rawState.goalBySession[sessionId];
+  delete rawState.gitStatusBySession[sessionId];
+  delete rawState.lastSeqBySession[sessionId];
+  delete rawState.compactionBySession[sessionId];
+  delete rawState.messagesLoadingMoreBySession[sessionId];
+  delete rawState.messagesHasMoreBySession[sessionId];
+  delete rawState.messagesLoadMoreErrorBySession[sessionId];
+  delete epochBySession[sessionId];
+  sessionsKnownEmpty.delete(sessionId);
+}
+
 // Models + Providers reactive state and helpers live in
 // ./client/useModelProviderState. It is instantiated below (after the
 // `activity` computed it depends on) as `modelProvider`.
@@ -894,20 +916,7 @@ function goalErrorMessage(err: unknown): string | undefined {
 }
 
 async function handleSessionNotFound(sessionId: string): Promise<void> {
-  removeSession(sessionId);
-  removeSessionMessages(sessionId);
-  delete rawState.approvalsBySession[sessionId];
-  delete rawState.questionsBySession[sessionId];
-  delete rawState.tasksBySession[sessionId];
-  delete rawState.goalBySession[sessionId];
-  delete rawState.gitStatusBySession[sessionId];
-  delete rawState.lastSeqBySession[sessionId];
-  delete rawState.compactionBySession[sessionId];
-  delete rawState.messagesLoadingMoreBySession[sessionId];
-  delete rawState.messagesHasMoreBySession[sessionId];
-  delete rawState.messagesLoadMoreErrorBySession[sessionId];
-  delete epochBySession[sessionId];
-  sessionsKnownEmpty.delete(sessionId);
+  forgetSession(sessionId);
 
   if (rawState.activeSessionId !== sessionId) return;
 
@@ -1835,7 +1844,7 @@ const workspaceState = useWorkspaceState(rawState, {
   updateSession,
   upsertSessionFront,
   appendSession,
-  removeSession,
+  forgetSession,
   setActiveSessionId,
   updateSessionMessages,
   nextOptimisticMsgId,

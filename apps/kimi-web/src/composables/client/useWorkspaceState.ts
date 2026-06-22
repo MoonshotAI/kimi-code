@@ -64,7 +64,7 @@ export interface UseWorkspaceStateDeps {
   updateSession: (id: string, update: (session: AppSession) => AppSession) => void;
   upsertSessionFront: (session: AppSession) => void;
   appendSession: (session: AppSession) => void;
-  removeSession: (id: string) => void;
+  forgetSession: (id: string) => void;
   setActiveSessionId: (id: string | undefined) => void;
   /** Update one session's message list via a function of the current list. */
   updateSessionMessages: (
@@ -110,7 +110,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     updateSession,
     upsertSessionFront,
     appendSession,
-    removeSession,
+    forgetSession,
     setActiveSessionId,
     updateSessionMessages,
     nextOptimisticMsgId,
@@ -1322,7 +1322,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const api = getKimiWebApi();
       await api.archiveSession(id);
-      removeSession(id);
+      forgetSession(id);
       sideChat.clearSideChatForSession(id);
       const { [id]: _removedIds, ...restIds } = rawState.sideChatUserMessageIdsBySession;
       void _removedIds;
