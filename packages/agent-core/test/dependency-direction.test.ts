@@ -601,11 +601,15 @@ describe('dependency-direction fence', () => {
       expect(findCrossServiceBusinessImports(SRC)).toEqual([]);
     });
 
-    it('di-v3 base/utils layering is vacuously clean (no _base/_utils dirs yet)', () => {
+    // ACTIVE (post P2.1–P2.5): `_base/` and `_utils/` now exist under `src/`,
+    // and `isDiV3LayoutActive(SRC)` returns true, so both di-v3 detectors scan
+    // the real tree. These are real cleanliness assertions (0 violations), not
+    // the vacuously-clean placeholders they were before the layout landed.
+    it('di-v3 _utils ← _base ← domains layering is clean (real src)', () => {
       expect(findBaseUtilsViolations(SRC)).toEqual([]);
     });
 
-    it('di-v3 cross-domain impl fence is vacuously clean (di-v3 layout not active yet)', () => {
+    it('di-v3 cross-domain impl fence is clean (real src)', () => {
       expect(findCrossDomainImplImports(SRC)).toEqual([]);
     });
   });
