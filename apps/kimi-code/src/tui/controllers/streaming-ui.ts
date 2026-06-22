@@ -269,15 +269,21 @@ export class StreamingUIController {
    * Mark a foreground subagent card as detached-to-background (`◐ backgrounded`).
    * Routed from a `background.task.started` event whose `info.kind === 'agent'`,
    * keyed by `agentId`. Returns true iff a matching component was found.
+   *
+   * Gated to cards that are currently foreground-running: `background.task.started`
+   * also fires for `Agent(run_in_background=true)` launches and for background
+   * resumes, and those must not mutate older completed rows that happen to share
+   * the same `agentId` (a resume's new card has no parsed `agent_id` yet, so the
+   * search can otherwise hit the previous completed card).
    */
   markSubagentBackgrounded(agentId: string | undefined): boolean {
     if (agentId === undefined) return false;
     const visit = (tc: ToolCallComponent): boolean => {
-      if (tc.getSubagentAgentId() === agentId) {
-        tc.markBackgrounded();
-        return true;
-      }
-      return false;
+      if (tc.getSubagentAgentId() !== agentId) return false;
+      const phase = tc.getSubagentSnapshot().phase;
+      if (phase !== 'running' && phase !== 'queued' && phase !== 'spawning') return false;
+      tc.markBackgrounded();
+      return true;
     };
     for (const tc of this._pendingToolComponents.values()) {
       if (visit(tc)) return true;
