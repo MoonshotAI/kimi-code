@@ -274,10 +274,16 @@ export interface QuestionBackgroundTaskInfo extends BackgroundTaskInfoBase {
   readonly toolCallId?: string;
 }
 
+export interface MonitorBackgroundTaskInfo extends BackgroundTaskInfoBase {
+  readonly kind: 'monitor';
+  readonly command: string;
+}
+
 export type BackgroundTaskInfo =
   | ProcessBackgroundTaskInfo
   | AgentBackgroundTaskInfo
-  | QuestionBackgroundTaskInfo;
+  | QuestionBackgroundTaskInfo
+  | MonitorBackgroundTaskInfo;
 
 export interface CompactionResult {
   readonly summary: string;
@@ -933,10 +939,16 @@ export const questionBackgroundTaskInfoSchema = backgroundTaskInfoBaseSchema.ext
   toolCallId: z.string().optional(),
 }) satisfies z.ZodType<QuestionBackgroundTaskInfo>;
 
+export const monitorBackgroundTaskInfoSchema = backgroundTaskInfoBaseSchema.extend({
+  kind: z.literal('monitor'),
+  command: z.string(),
+}) satisfies z.ZodType<MonitorBackgroundTaskInfo>;
+
 export const backgroundTaskInfoSchema = z.discriminatedUnion('kind', [
   processBackgroundTaskInfoSchema,
   agentBackgroundTaskInfoSchema,
   questionBackgroundTaskInfoSchema,
+  monitorBackgroundTaskInfoSchema,
 ]) satisfies z.ZodType<BackgroundTaskInfo>;
 
 export const compactionResultSchema = z.object({
