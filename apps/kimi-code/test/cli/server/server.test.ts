@@ -9,7 +9,7 @@
  */
 
 import type { ChildProcess } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -809,6 +809,7 @@ function makeKillDeps(overrides: Partial<KillCommandDeps> = {}): {
     requestShutdown: async () => {
       state.shutdownCalls += 1;
     },
+    resolveToken: () => undefined,
     signalPid: (pid, signal) => {
       signals.push({ pid, signal });
       return true;
@@ -880,6 +881,78 @@ describe('`kimi server kill`', () => {
     });
 
     await expect(handleKillCommand(deps)).rejects.toThrow(/insufficient permissions/);
+  });
+});
+
+describe('resolveServerToken', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'kimi-server-token-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reads the token from <homeDir>/server-<pid>.token', async () => {
+    const { resolveServerToken } = await import('#/cli/sub/server/shared');
+    writeFileSync(join(dir, 'server-42.token'), 'secret-token\n');
+    expect(resolveServerToken(dir, 42)).toBe('secret-token');
+  });
+
+  it('trims surrounding whitespace', async () => {
+    const { resolveServerToken } = await import('#/cli/sub/server/shared');
+    writeFileSync(join(dir, 'server-7.token'), '  tok  \n');
+    expect(resolveServerToken(dir, 7)).toBe('tok');
+  });
+
+  it('throws a clear error when the token file is missing', async () => {
+    const { resolveServerToken } = await import('#/cli/sub/server/shared');
+    expect(() => resolveServerToken(dir, 99)).toThrow(/unable to read server token/);
+  });
+});
+
+describe('authHeaders', () => {
+  it('builds a Bearer Authorization header', async () => {
+    const { authHeaders } = await import('#/cli/sub/server/shared');
+    expect(authHeaders('abc')).toEqual({ Authorization: 'Bearer abc' });
+  });
+});
+
+describe('`kimi server kill` carries the bearer token', () => {
+  const liveLock = { pid: 1234, started_at: '2026-06-17T00:00:00.000Z', port: 58627 };
+
+  it('passes the resolved token to requestShutdown', async () => {
+    const { handleKillCommand } = await import('#/cli/sub/server/kill');
+    let seenToken: string | undefined = 'unset';
+    const { deps } = makeKillDeps({
+      getLiveLock: () => liveLock,
+      resolveToken: () => 'tok-123',
+      requestShutdown: async (_origin, token) => {
+        seenToken = token;
+      },
+      pidAlive: () => false,
+    });
+
+    await handleKillCommand(deps);
+
+    expect(seenToken).toBe('tok-123');
+  });
+
+  it('passes undefined when the token cannot be read (best-effort)', async () => {
+    const { handleKillCommand } = await import('#/cli/sub/server/kill');
+    let seenToken: string | undefined = 'unset';
+    const { deps } = makeKillDeps({
+      getLiveLock: () => liveLock,
+      resolveToken: () => undefined,
+      requestShutdown: async (_origin, token) => {
+        seenToken = token;
+      },
+      pidAlive: () => false,
+    });
+
+    await handleKillCommand(deps);
+
+    expect(seenToken).toBeUndefined();
   });
 });
 

@@ -11,8 +11,10 @@ import type { Command } from 'commander';
 
 import { getLiveLock } from '@moonshot-ai/server';
 
+import { getDataDir } from '#/utils/paths';
+
 import { lockConnectHost } from './daemon';
-import { isServerHealthy, serverOrigin } from './shared';
+import { authHeaders, isServerHealthy, resolveServerToken, serverOrigin } from './shared';
 
 /** Wire shape of a single connection returned by `GET /api/v1/connections`. */
 interface ConnectionInfo {
@@ -62,7 +64,11 @@ async function handlePsCommand(opts: { json?: boolean }): Promise<void> {
     throw new Error(`Kimi server at ${origin} is not responding.`);
   }
 
-  const connections = await fetchConnections(origin);
+  // The `/api/v1/connections` route is gated by bearer auth (M5.1). Read the
+  // per-start token the server wrote at boot; a clear error here means the
+  // server is an older build or the token file was removed.
+  const token = resolveServerToken(getDataDir(), lock.pid);
+  const connections = await fetchConnections(origin, token);
 
   if (opts.json) {
     process.stdout.write(`${JSON.stringify(connections, null, 2)}\n`);
@@ -71,13 +77,14 @@ async function handlePsCommand(opts: { json?: boolean }): Promise<void> {
   process.stdout.write(formatTable(connections));
 }
 
-async function fetchConnections(origin: string): Promise<ConnectionInfo[]> {
+async function fetchConnections(origin: string, token: string): Promise<ConnectionInfo[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     controller.abort();
   }, FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(`${origin}/api/v1/connections`, {
+      headers: authHeaders(token),
       signal: controller.signal,
     });
     if (!res.ok) {

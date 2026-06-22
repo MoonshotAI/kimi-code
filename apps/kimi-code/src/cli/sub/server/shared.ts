@@ -5,6 +5,9 @@
  * `run`, `web`, and `status` all use.
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import type { ServerLogLevel } from '@moonshot-ai/server';
 
 export const DEFAULT_SERVER_HOST = '127.0.0.1';
@@ -173,4 +176,42 @@ export async function ensureServerWebReady(origin: string): Promise<void> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Read the per-start bearer token for a running server.
+ *
+ * The server writes `<homeDir>/server-<pid>.token` (0600) at boot (ROADMAP
+ * M5.1); CLI commands that hit a gated REST route read it back here and send
+ * it as `Authorization: Bearer <token>`. `homeDir` is the CLI's own
+ * KIMI_CODE_HOME resolution (`getDataDir()`); `pid` comes from the lock file
+ * (`LockContents.pid`).
+ *
+ * Throws a clear error when the file is missing/unreadable — the usual cause
+ * is a server that is not running, or an older build that predates token auth.
+ */
+export function resolveServerToken(homeDir: string, pid: number): string {
+  const tokenPath = join(homeDir, `server-${String(pid)}.token`);
+  try {
+    return readFileSync(tokenPath, 'utf8').trim();
+  } catch (error) {
+    throw new Error(
+      `unable to read server token at ${tokenPath}; is the server running and on a compatible version?`,
+      { cause: error },
+    );
+  }
+}
+
+/** Best-effort token read: returns `undefined` instead of throwing. */
+export function tryResolveServerToken(homeDir: string, pid: number): string | undefined {
+  try {
+    return resolveServerToken(homeDir, pid);
+  } catch {
+    return undefined;
+  }
+}
+
+/** An `Authorization: Bearer <token>` header bag for `fetch`. */
+export function authHeaders(token: string): { Authorization: string } {
+  return { Authorization: `Bearer ${token}` };
 }
