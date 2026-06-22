@@ -66,7 +66,7 @@ function quantile(samples: readonly number[], q: number): number {
 }
 
 describe('SnapshotReader perf (real HTTP, 50 sessions)', () => {
-  it(`mode=${process.env.KIMI_SNAPSHOT_READER ?? 'auto'} p95 stays under 200ms warm`, async () => {
+  it(`mode=${process.env['KIMI_SNAPSHOT_READER'] ?? 'auto'} p95 stays under 200ms warm`, async () => {
     server = await startServer({
       host: '127.0.0.1',
       port: 0,
@@ -92,7 +92,7 @@ describe('SnapshotReader perf (real HTTP, 50 sessions)', () => {
     const p95 = quantile(samples, 0.95);
     const min = Math.min(...samples);
     const max = Math.max(...samples);
-    const mode = process.env.KIMI_SNAPSHOT_READER ?? 'auto';
+    const mode = process.env['KIMI_SNAPSHOT_READER'] ?? 'auto';
 
     // eslint-disable-next-line no-console
     console.log(
