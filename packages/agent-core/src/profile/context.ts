@@ -2,6 +2,7 @@ import { dirname, join } from 'pathe';
 
 import type { Kaos } from '@moonshot-ai/kaos';
 
+import { normalizeAdditionalDirs } from '../config';
 import { listDirectory } from '../tools/support/list-directory';
 import type { SystemPromptContext } from './types';
 
@@ -11,23 +12,38 @@ const AGENTS_MD_TRUNCATION_MARKER =
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
-export type PreparedSystemPromptContext = Pick<SystemPromptContext, 'cwdListing' | 'agentsMd'>;
+export type PreparedSystemPromptContext = Pick<
+  SystemPromptContext,
+  'cwdListing' | 'agentsMd' | 'additionalDirsInfo'
+>;
+
+export interface PrepareSystemPromptContextOptions {
+  readonly additionalDirs?: readonly string[];
+}
 
 export async function prepareSystemPromptContext(
   kaos: Kaos,
   brandHome?: string,
+  options?: PrepareSystemPromptContextOptions,
 ): Promise<PreparedSystemPromptContext> {
-  const [cwdListing, agentsMd] = await Promise.all([
+  const additionalDirs = normalizeAdditionalDirs(options?.additionalDirs ?? []);
+  const [cwdListing, agentsMd, additionalDirsInfo] = await Promise.all([
     listDirectory(kaos, undefined, { collapseHiddenDirs: true }),
     loadAgentsMd(kaos, brandHome),
+    loadAdditionalDirsInfo(kaos, additionalDirs),
   ]);
-  return { cwdListing, agentsMd };
+  return { cwdListing, agentsMd, additionalDirsInfo };
 }
 
 export async function loadAgentsMd(kaos: Kaos, brandHome?: string): Promise<string> {
-  const workDir = kaos.getcwd();
-  const projectRoot = await findProjectRoot(kaos, workDir);
-  const dirs = dirsRootToLeaf(kaos, workDir, projectRoot);
+  return loadAgentsMdForRoots(kaos, brandHome, [kaos.getcwd()]);
+}
+
+async function loadAgentsMdForRoots(
+  kaos: Kaos,
+  brandHome: string | undefined,
+  workDirs: readonly string[],
+): Promise<string> {
   const discovered: AgentFile[] = [];
   const seen = new Set<string>();
 
@@ -57,14 +73,35 @@ export async function loadAgentsMd(kaos: Kaos, brandHome?: string): Promise<stri
     if (await collect(file)) break;
   }
 
-  for (const dir of dirs) {
-    await collect(join(dir, '.kimi-code', 'AGENTS.md'));
-    for (const fileName of ['AGENTS.md', 'agents.md']) {
-      if (await collect(join(dir, fileName))) break;
+  for (const workDir of workDirs) {
+    const rootKaos = kaos.withCwd(workDir);
+    const rootWorkDir = rootKaos.getcwd();
+    const projectRoot = await findProjectRoot(rootKaos, rootWorkDir);
+    const dirs = dirsRootToLeaf(rootKaos, rootWorkDir, projectRoot);
+
+    for (const dir of dirs) {
+      await collect(join(dir, '.kimi-code', 'AGENTS.md'));
+      for (const fileName of ['AGENTS.md', 'agents.md']) {
+        if (await collect(join(dir, fileName))) break;
+      }
     }
   }
 
   return renderAgentFiles(discovered);
+}
+
+async function loadAdditionalDirsInfo(
+  kaos: Kaos,
+  additionalDirs: readonly string[],
+): Promise<string> {
+  const sections = await Promise.all(
+    additionalDirs.map(async (dir) => {
+      const listing = await listDirectory(kaos.withCwd(dir));
+      return `### ${dir}\n${listing}`;
+    }),
+  );
+
+  return sections.join('\n\n');
 }
 
 async function findProjectRoot(kaos: Kaos, workDir: string): Promise<string> {
@@ -163,11 +200,32 @@ function renderAgentFiles(files: readonly AgentFile[]): string {
 }
 
 function truncateUtf8(text: string, maxBytes: number): string {
-  let result = text;
-  while (byteLength(result) > maxBytes) {
+  if (maxBytes <= 0) return '';
+  if (byteLength(text) <= maxBytes) return text;
+
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    const candidate = text.slice(0, mid);
+    if (byteLength(candidate) <= maxBytes) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  let result = text.slice(0, low);
+  while (endsWithUnpairedHighSurrogate(result)) {
     result = result.slice(0, -1);
   }
   return result;
+}
+
+function endsWithUnpairedHighSurrogate(text: string): boolean {
+  if (text.length === 0) return false;
+  const codePoint = text.codePointAt(text.length - 1);
+  return codePoint !== undefined && codePoint >= 0xd800 && codePoint <= 0xdbff;
 }
 
 function byteLength(text: string): number {

@@ -39,7 +39,7 @@ All via `pnpm --filter @moonshot-ai/kimi-web …`:
 - `dev:stub` — offline stub daemon (`dev/stub-daemon.mjs`).
 - `build` — production build into `dist/`.
 - `typecheck` — `vue-tsc --noEmit`.
-- `test` — `vitest run` (jsdom; setup in `test/setup.ts`).
+- `test` — `vitest run` (pure logic tests only; no jsdom / component tests).
 - There is **no `lint` script** in this package; linting runs at the repo root via oxlint.
 
 ## Gotchas / hard rules

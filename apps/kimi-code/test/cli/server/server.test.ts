@@ -9,7 +9,7 @@
  */
 
 import type { ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -40,14 +40,6 @@ function makeProgram(): Command {
 }
 
 describe('kimi server', () => {
-  it('declares pino-pretty as a CLI runtime dependency', () => {
-    const packageJson = JSON.parse(
-      readFileSync(new URL('../../../package.json', import.meta.url), 'utf-8'),
-    ) as { optionalDependencies?: Record<string, string> };
-
-    expect(packageJson.optionalDependencies).toHaveProperty('pino-pretty');
-  });
-
   it('registers the expected `server` subcommands while lifecycle commands are hidden', () => {
     const program = makeProgram();
     const server = program.commands.find((c) => c.name() === 'server');

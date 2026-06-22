@@ -55,6 +55,7 @@ const TOOLBAR_TIPS: readonly ToolbarTip[] = [
   { text: 'shift+tab: plan mode' },
   { text: '/model: switch model' },
   { text: 'ctrl+s: steer mid-turn', priority: 2 },
+  { text: 'ctrl+b: background task', priority: 2 },
   { text: '/compact: compact context', priority: 2 },
   { text: 'ctrl+o: expand tool output' },
   { text: '/tasks: background tasks' },
@@ -262,6 +263,10 @@ export class FooterComponent implements Component {
    */
   setTransientHint(hint: string | null): void {
     this.transientHint = hint;
+  }
+
+  getTransientHint(): string | null {
+    return this.transientHint;
   }
 
   /**

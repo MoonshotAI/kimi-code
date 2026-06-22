@@ -281,7 +281,13 @@ function startArchive(): void {
       :title="t('header.gitTooltip')"
       @click="emit('openChanges')"
     >
-      <span class="ch-branch" :class="{ 'ch-detached': !branch }">{{ branch || t('header.detached') }}</span>
+      <span
+        class="ch-branch"
+        :class="{ 'ch-detached': !branch }"
+        :title="branch || t('header.detached')"
+      >
+        {{ branch || t('header.detached') }}
+      </span>
       <span v-if="ahead > 0 || behind > 0" class="ch-pill ch-sync-pill">
         <span v-if="ahead > 0" class="ch-ahead">↑{{ ahead }}</span>
         <span v-if="behind > 0" class="ch-behind">↓{{ behind }}</span>
@@ -361,11 +367,20 @@ function startArchive(): void {
   color: var(--muted);
   font-family: var(--mono);
   font-size: calc(var(--ui-font-size) - 2px);
+  flex: 0 1 auto;
+  max-width: none;
   min-width: 0;
   cursor: pointer;
 }
 .ch-git:hover .ch-branch { color: var(--ink); }
-.ch-branch { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; margin-right: 4px; }
+.ch-branch {
+  color: var(--dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 4px;
+}
 .ch-detached { color: var(--muted); font-style: italic; }
 .ch-pill {
   display: inline-flex;

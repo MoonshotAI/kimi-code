@@ -367,7 +367,7 @@ export class ToolManager {
     const workspace = extendWorkspaceWithSkillRoots(
       {
         workspaceDir: cwd,
-        additionalDirs: [],
+        additionalDirs: this.agent.getAdditionalDirs(),
       },
       this.agent.skills?.registry.getSkillRoots() ?? [],
     );
@@ -408,9 +408,10 @@ export class ToolManager {
         this.agent.subagentHost &&
           new b.AgentTool(
             this.agent.subagentHost,
-            allowBackground ? background : undefined,
+            background,
             DEFAULT_AGENT_PROFILES['agent']?.subagents,
             {
+              allowBackground,
               log: this.agent.log,
             },
           ),

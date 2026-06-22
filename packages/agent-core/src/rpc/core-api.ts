@@ -55,6 +55,7 @@ export interface CreateSessionPayload {
   readonly permission?: PermissionMode | undefined;
   readonly metadata?: JsonObject | undefined;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly additionalDirs?: readonly string[];
   readonly client?: ClientTelemetryInfo | undefined;
 }
 
@@ -69,6 +70,7 @@ export interface ArchiveSessionPayload {
 export interface ResumeSessionPayload {
   readonly sessionId: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly additionalDirs?: readonly string[];
 }
 
 export interface ReloadSessionPayload {
@@ -153,6 +155,7 @@ export interface SessionSummary {
   readonly updatedAt: number;
   readonly archived?: boolean | undefined;
   readonly metadata?: JsonObject | undefined;
+  readonly additionalDirs?: readonly string[];
 }
 
 export interface PromptPayload {
@@ -204,6 +207,9 @@ export interface StopBackgroundPayload {
   readonly taskId: string;
   /** Free-form human-readable reason persisted with the task record. */
   readonly reason?: string;
+}
+export interface DetachBackgroundPayload {
+  readonly taskId: string;
 }
 export interface GetBackgroundOutputPayload {
   readonly taskId: string;
@@ -276,6 +282,18 @@ export interface GetPluginInfoPayload {
 export type ReloadPluginsResult = ReloadSummary;
 export type { PluginSummary, PluginInfo };
 
+export interface AddAdditionalDirPayload {
+  readonly path: string;
+  readonly persist: boolean;
+}
+
+export interface AddAdditionalDirResult {
+  readonly additionalDirs: readonly string[];
+  readonly projectRoot: string;
+  readonly configPath: string;
+  readonly persisted: boolean;
+}
+
 export interface RenameSessionPayload {
   readonly title: string;
 }
@@ -339,6 +357,7 @@ export interface AgentAPI {
   unregisterTool: (payload: UnregisterToolPayload) => void;
   setActiveTools: (payload: SetActiveToolsPayload) => void;
   stopBackground: (payload: StopBackgroundPayload) => void;
+  detachBackground: (payload: DetachBackgroundPayload) => BackgroundTaskInfo | undefined;
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
   startBtw: (payload: EmptyPayload) => string;
@@ -368,6 +387,7 @@ export interface SessionAPI extends AgentAPIWithId {
   getMcpStartupMetrics: (payload: EmptyPayload) => McpStartupMetrics;
   reconnectMcpServer: (payload: ReconnectMcpServerPayload) => void;
   generateAgentsMd: (payload: EmptyPayload) => void;
+  addAdditionalDir: (payload: AddAdditionalDirPayload) => AddAdditionalDirResult;
 }
 
 type SessionAPIWithId = WithSessionId<SessionAPI>;

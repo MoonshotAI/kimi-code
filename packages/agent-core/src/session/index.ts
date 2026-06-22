@@ -11,7 +11,16 @@ import { proxyWithExtraPayload } from '#/rpc/types';
 import { Agent, type AgentOptions, type AgentType } from '../agent';
 import { HookEngine, type HookDef } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
-import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
+import {
+  appendWorkspaceAdditionalDir,
+  normalizeAdditionalDirs,
+  parseBooleanEnv,
+  readWorkspaceAdditionalDirs,
+  resolveWorkspaceAdditionalDirs,
+  resolveConfigValue,
+  type BackgroundConfig,
+  type WorkspaceAdditionalDirsLoadResult,
+} from '../config';
 import { makeErrorPayload } from '../errors';
 import {
   McpConnectionManager,
@@ -62,6 +71,7 @@ export interface SessionOptions {
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
+  readonly additionalDirs?: readonly string[];
 }
 
 export interface SessionSkillConfig {
@@ -147,6 +157,7 @@ export class Session {
   readonly experimentalFlags: ExperimentalFlagResolver;
   private toolKaos: Kaos;
   private persistenceKaos: Kaos;
+  private additionalDirs: readonly string[];
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
   metadata: SessionMeta = {
@@ -182,6 +193,7 @@ export class Session {
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.toolKaos = options.kaos;
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
+    this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
     this.skills = new SessionSkillRegistry({
       sessionId: options.id,
     });
@@ -211,6 +223,51 @@ export class Session {
       agent.setKaos(kaos.withCwd(agent.config.cwd));
     }
     this.refreshAgentBuiltinTools();
+  }
+
+  getAdditionalDirs(): readonly string[] {
+    return this.additionalDirs;
+  }
+
+  async setAdditionalDirs(additionalDirs: readonly string[]): Promise<void> {
+    this.additionalDirs = normalizeAdditionalDirs(additionalDirs);
+    for (const agent of this.readyAgents()) {
+      agent.setAdditionalDirs(this.additionalDirs);
+    }
+  }
+
+  async addAdditionalDir(
+    path: string,
+    persist = true,
+  ): Promise<WorkspaceAdditionalDirsLoadResult & { readonly persisted: boolean }> {
+    const cwd = this.toolKaos.getcwd();
+    const systemKaos = this.systemContextKaos(cwd);
+    if (persist) {
+      const result = await appendWorkspaceAdditionalDir(systemKaos, cwd, path, this.additionalDirs);
+      const additionalDirs = normalizeAdditionalDirs([...this.additionalDirs, ...result.additionalDirs]);
+      await this.setAdditionalDirs(additionalDirs);
+      this.notifyAdditionalDirAdded(path, true, result.configPath);
+      return { ...result, additionalDirs, persisted: true };
+    }
+
+    const workspace = await readWorkspaceAdditionalDirs(systemKaos, cwd);
+    const additionalDirs = await resolveWorkspaceAdditionalDirs(systemKaos, cwd, [path]);
+    const nextAdditionalDirs = normalizeAdditionalDirs([...this.additionalDirs, ...additionalDirs]);
+    await this.setAdditionalDirs(nextAdditionalDirs);
+    this.notifyAdditionalDirAdded(path, false, workspace.configPath);
+    return {
+      projectRoot: workspace.projectRoot,
+      configPath: workspace.configPath,
+      additionalDirs: nextAdditionalDirs,
+      persisted: false,
+    };
+  }
+
+  private notifyAdditionalDirAdded(path: string, persisted: boolean, configPath: string): void {
+    const message = persisted
+      ? `Added workspace directory:\n  ${path}\n  Saved to:\n  ${configPath}`
+      : `Added workspace directory:\n  ${path}\n  For this session only`;
+    this.requireMainAgent().context.appendLocalCommandStdout(message);
   }
 
   /**
@@ -302,7 +359,7 @@ export class Session {
     const agentIds = new Set<string>();
     for (const agent of this.readyAgents()) {
       for (const task of agent.background.list(true)) {
-        if (task.kind === 'agent' && task.agentId !== undefined) {
+        if (task.kind === 'agent' && task.agentId !== undefined && task.detached !== false) {
           agentIds.add(task.agentId);
         }
       }
@@ -407,6 +464,7 @@ export class Session {
     const context = await prepareSystemPromptContext(
       this.systemContextKaos(agent.kaos.getcwd()),
       this.options.kimiHomeDir,
+      { additionalDirs: this.additionalDirs },
     );
     agent.useProfile(profile, context);
   }
@@ -581,6 +639,7 @@ export class Session {
       log: this.log.createChild({ agentId: id }),
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
       experimentalFlags: this.experimentalFlags,
+      additionalDirs: parentAgent?.getAdditionalDirs() ?? this.additionalDirs,
     });
   }
 
