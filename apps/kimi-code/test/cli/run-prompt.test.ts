@@ -135,6 +135,7 @@ function opts(overrides: Partial<Parameters<typeof runPrompt>[0]> = {}) {
     outputFormat: undefined,
     prompt: 'say hello',
     skillsDirs: [],
+    addDirs: [],
     ...overrides,
   };
 }
@@ -205,6 +206,7 @@ describe('runPrompt', () => {
       workDir: process.cwd(),
       model: 'k2',
       permission: 'auto',
+      additionalDirs: undefined,
     });
     expect(mocks.session.setPermission).not.toHaveBeenCalled();
     expect(mocks.session.setApprovalHandler).toHaveBeenCalledWith(expect.any(Function));
@@ -242,10 +244,25 @@ describe('runPrompt', () => {
       workDir: process.cwd(),
       model: 'kimi-code/k2.5',
       permission: 'auto',
+      additionalDirs: undefined,
     });
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'kimi-code/k2.5' }),
     );
+  });
+
+  it('passes the CLI additional directory when creating a fresh prompt session', async () => {
+    await runPrompt(opts({ addDirs: ['../shared', '/tmp/extra'] }), '1.2.3-test', {
+      stdout: { write: vi.fn(() => true) },
+      stderr: { write: vi.fn(() => true) },
+    });
+
+    expect(mocks.harnessCreateSession).toHaveBeenCalledWith({
+      workDir: process.cwd(),
+      model: 'k2',
+      permission: 'auto',
+      additionalDirs: ['../shared', '/tmp/extra'],
+    });
   });
 
   it('tracks first launch in prompt mode before harness construction can create the device id', async () => {
@@ -442,6 +459,23 @@ describe('runPrompt', () => {
     expect(mocks.session.setPermission).toHaveBeenNthCalledWith(2, 'manual');
   });
 
+  it('passes the CLI additional directories when resuming a concrete session', async () => {
+    await runPrompt(
+      opts({ session: 'ses_existing', addDirs: ['../shared', '/tmp/extra'] }),
+      '1.2.3-test',
+      {
+        stdout: { write: vi.fn(() => true) },
+        stderr: { write: vi.fn(() => true) },
+      },
+    );
+
+    expect(mocks.harnessResumeSession).toHaveBeenCalledWith({
+      id: 'ses_existing',
+      additionalDirs: ['../shared', '/tmp/extra'],
+    });
+    expect(mocks.harnessCreateSession).not.toHaveBeenCalled();
+  });
+
   it('allows resuming a concrete session when Windows workdir uses backslashes', async () => {
     const cwd = vi.spyOn(process, 'cwd').mockReturnValue(String.raw`C:\Users\kimi\project`);
     mocks.harnessListSessions.mockResolvedValueOnce([
@@ -565,6 +599,19 @@ describe('runPrompt', () => {
     expect(mocks.harnessResumeSession).toHaveBeenCalledWith({ id: 'ses_previous' });
     expect(mocks.session.setPermission).toHaveBeenNthCalledWith(1, 'auto');
     expect(mocks.session.setPermission).toHaveBeenNthCalledWith(2, 'manual');
+  });
+
+  it('passes the CLI additional directories when continuing the previous session', async () => {
+    await runPrompt(opts({ continue: true, addDirs: ['../shared', '/tmp/extra'] }), '1.2.3-test', {
+      stdout: { write: vi.fn(() => true) },
+      stderr: { write: vi.fn(() => true) },
+    });
+
+    expect(mocks.harnessResumeSession).toHaveBeenCalledWith({
+      id: 'ses_previous',
+      additionalDirs: ['../shared', '/tmp/extra'],
+    });
+    expect(mocks.harnessCreateSession).not.toHaveBeenCalled();
   });
 
   it('continues a previous session without a configured default model', async () => {

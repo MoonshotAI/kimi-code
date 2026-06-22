@@ -237,7 +237,10 @@ async function resolvePromptSession(
         `Session "${opts.session}" was created under a different directory.`,
       );
     }
-    const session = await harness.resumeSession({ id: opts.session });
+    const session = await harness.resumeSession({
+      id: opts.session,
+      additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
+    });
     const status = await session.getStatus();
     const restorePermission = await forcePromptPermission(
       session,
@@ -261,7 +264,10 @@ async function resolvePromptSession(
     const sessions = await harness.listSessions({ workDir });
     const previous = sessions[0];
     if (previous !== undefined) {
-      const session = await harness.resumeSession({ id: previous.id });
+      const session = await harness.resumeSession({
+        id: previous.id,
+        additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
+      });
       const status = await session.getStatus();
       const restorePermission = await forcePromptPermission(
         session,
@@ -284,7 +290,12 @@ async function resolvePromptSession(
   }
 
   const model = requireConfiguredModel(opts.model, defaultModel);
-  const session = await harness.createSession({ workDir, model, permission: 'auto' });
+  const session = await harness.createSession({
+    workDir,
+    model,
+    permission: 'auto',
+    additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
+  });
   installHeadlessHandlers(session);
   return {
     session,

@@ -2682,6 +2682,39 @@ describe('Default git CWD Write/Edit permission', () => {
     expect(stat).not.toHaveBeenCalled();
   });
 
+  it('still requests approval for Bash when the cwd is an additionalDir', async () => {
+    const { kaos, stat } = gitKaos({
+      markerPath: '/extra/.git',
+      statModes: { '/extra': DIR_MODE },
+    });
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { cwd: '/extra', kaos, additionalDirs: ['/extra'] },
+    );
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_bash_additional_dir_cwd',
+          args: { command: 'printf from-additional-dir', timeout: 60 },
+        }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: 'Bash',
+        action: 'run command',
+      }),
+      expect.any(Object),
+    );
+    expect(telemetryTrack).not.toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
+    );
+    expect(stat).not.toHaveBeenCalled();
+  });
+
   it('bypasses approval for Write to a relative path inside a git cwd', async () => {
     const { kaos } = gitKaos();
     const { manager, requestApproval, telemetryTrack } = makePermissionManager(
@@ -2724,6 +2757,38 @@ describe('Default git CWD Write/Edit permission', () => {
       expect.objectContaining({
         policy_name: 'git-cwd-write-approve',
         tool_name: 'Edit',
+        permission_mode: 'manual',
+        decision: 'approve',
+      }),
+    );
+  });
+
+  it.each([
+    ['Write', { path: '/extra/src/a.ts', content: 'x' }],
+    ['Edit', { path: '/extra/src/a.ts', old_string: 'A', new_string: 'B' }],
+  ] as const)('approves %s on an additionalDir path in manual mode', async (toolName, args) => {
+    const { kaos } = gitKaos();
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { kaos, additionalDirs: ['/extra'] },
+    );
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: `call_${toolName.toLowerCase()}_additional_dir`,
+          toolName,
+          args,
+        }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({
+        policy_name: 'git-cwd-write-approve',
+        tool_name: toolName,
         permission_mode: 'manual',
         decision: 'approve',
       }),
@@ -2804,6 +2869,28 @@ describe('Default git CWD Write/Edit permission', () => {
     expect(requestApproval).toHaveBeenCalledTimes(1);
   });
 
+  it('still requests approval for a shared-prefix path outside additionalDirs', async () => {
+    const { kaos } = gitKaos();
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { kaos, additionalDirs: ['/extra'] },
+    );
+
+    await expect(
+      manager.beforeToolCall(writeHook({ path: '/extra-evil/outside.ts', content: 'x' })),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({ policy_name: 'fallback-ask' }),
+    );
+    expect(telemetryTrack).not.toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
+    );
+  });
+
   it('still requests approval for a path inside the git root but outside the cwd', async () => {
     const { kaos } = gitKaos({ markerPath: '/a/.git' });
     const { manager, requestApproval, telemetryTrack } = makePermissionManager(
@@ -2841,6 +2928,34 @@ describe('Default git CWD Write/Edit permission', () => {
       );
     },
   );
+
+  it('still requests approval for a git control file inside an additionalDir', async () => {
+    const { kaos } = gitKaos();
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { kaos, additionalDirs: ['/extra'] },
+    );
+
+    await expect(
+      manager.beforeToolCall(writeHook({ path: '/extra/.git/config', content: 'x' })),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({
+        policy_name: 'git-control-path-access-ask',
+        tool_name: 'Write',
+        permission_mode: 'manual',
+        decision: 'ask',
+        git_control_path: true,
+      }),
+    );
+    expect(telemetryTrack).not.toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
+    );
+  });
 
   it('still requests approval for case-variant git control files', async () => {
     const { kaos } = gitKaos();
@@ -3102,6 +3217,34 @@ describe('Default git CWD Write/Edit permission', () => {
     ).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('still requests approval for a sensitive file inside an additionalDir', async () => {
+    const { kaos } = gitKaos();
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { kaos, additionalDirs: ['/extra'] },
+    );
+
+    await expect(
+      manager.beforeToolCall(writeHook({ path: '/extra/.env', content: 'SECRET=1' })),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({
+        policy_name: 'sensitive-file-access-ask',
+        tool_name: 'Write',
+        permission_mode: 'manual',
+        decision: 'ask',
+        sensitive_path: true,
+      }),
+    );
+    expect(telemetryTrack).not.toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
+    );
   });
 
   it.each(['.env.local', '.aws/credentials'])(
@@ -3681,6 +3824,7 @@ function makePermissionManager(
     readonly planFilePath?: string | null | undefined;
     readonly kaos?: Kaos;
     readonly cwd?: string;
+    readonly additionalDirs?: readonly string[];
     readonly agentType?: Agent['type'];
     readonly hooks?: Agent['hooks'];
     readonly approvalRpc?: boolean;
@@ -3700,6 +3844,7 @@ function makePermissionManager(
     type: options.agentType ?? 'main',
     config: { cwd: options.cwd ?? '/workspace' },
     kaos: options.kaos ?? createFakeKaos(),
+    getAdditionalDirs: () => options.additionalDirs ?? [],
     emitStatusUpdated: vi.fn(),
     records: { logRecord: record },
     replayBuilder: { push: vi.fn() },

@@ -82,6 +82,31 @@ describe('Agent config', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('useProfile passes additionalDirsInfo to profile system prompts', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const profile: ResolvedAgentProfile = {
+      name: 'context-profile',
+      systemPrompt: (context) =>
+        `Prompt with additional dirs: ${context.additionalDirsInfo ?? 'none'}`,
+      tools: ['Bash'],
+    };
+
+    ctx.agent.useProfile(profile, {
+      cwdListing: 'cwd listing',
+      agentsMd: 'agents md',
+      additionalDirsInfo: '### /extra\nextra-file.txt',
+    });
+
+    expect(ctx.agent.config.systemPrompt).toBe(
+      'Prompt with additional dirs: ### /extra\nextra-file.txt',
+    );
+
+    ctx.agent.useProfile(profile);
+
+    expect(ctx.agent.config.systemPrompt).toBe('Prompt with additional dirs: none');
+  });
+
   it('config.update with cwd initializes builtin tools', async () => {
     const ctx = testAgent();
     ctx.configure();

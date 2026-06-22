@@ -65,6 +65,16 @@ export class ContextMemory {
     });
   }
 
+  appendLocalCommandStdout(content: string): void {
+    const text = `<local-command-stdout>\n${content.trim()}\n</local-command-stdout>`;
+    this.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+      origin: { kind: 'injection', variant: 'local-command-stdout' },
+    });
+  }
+
   popMatchedMessage(matcher: (origin: PromptOrigin | undefined) => boolean): boolean {
     const lastDeferred = this.deferredMessages.at(-1);
     const last = lastDeferred ?? this._history.at(-1);

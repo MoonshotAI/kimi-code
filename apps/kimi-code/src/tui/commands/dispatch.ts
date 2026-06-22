@@ -36,6 +36,7 @@ import {
 } from './config';
 import { handleGoalCommand } from './goal';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
+import { handleAddDirCommand } from './add-dir';
 import { parseSlashInput } from './parse';
 import { handlePluginsCommand } from './plugins';
 import { handleProviderCommand } from './provider';
@@ -59,6 +60,7 @@ import { handleWebCommand } from './web';
 
 export { handleLoginCommand, handleLogoutCommand } from './auth';
 export { handleBtwCommand } from './btw';
+export { handleAddDirCommand } from './add-dir';
 export {
   handleAutoCommand,
   handleCompactCommand,
@@ -246,6 +248,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'plugins':
       void handlePluginsCommand(host, args);
+      return;
+    case 'add-dir':
+      await handleAddDirCommand(host, args);
       return;
     case 'experiments':
       await showExperimentsPanel(host);

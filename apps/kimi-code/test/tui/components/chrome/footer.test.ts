@@ -34,6 +34,7 @@ function setDanceView(colored: boolean, phase: number): void {
 const appState: AppState = {
   version: '1.2.3',
   workDir: '/tmp/project',
+  additionalDirs: [],
   sessionId: 'ses-1',
   sessionTitle: null,
   model: 'kimi-k2',

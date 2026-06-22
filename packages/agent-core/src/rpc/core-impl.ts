@@ -16,6 +16,9 @@ import {
   loadRuntimeConfigSafe,
   mergeConfigPatch,
   readConfigFileForUpdate,
+  normalizeAdditionalDirs,
+  readWorkspaceAdditionalDirs,
+  resolveWorkspaceAdditionalDirs,
   resolveConfigPath,
   resolveKimiHome,
   writeConfigFile,
@@ -48,6 +51,8 @@ import {
 import type { CoreRPCClient } from './client';
 import type {
   ActivateSkillPayload,
+  AddAdditionalDirPayload,
+  AddAdditionalDirResult,
   ArchiveSessionPayload,
   BeginCompactionPayload,
   CancelPayload,
@@ -221,6 +226,18 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       homeDir: this.homeDir,
     });
     const withCallerMcp = mergeCallerMcpServers(baseMcpConfig, options.mcpServers);
+    const parentKaos = overrides.kaos ?? (await this.getKaos());
+    const persistenceKaos = overrides.persistenceKaos ?? parentKaos;
+    const localWorkspaceDirs = await readWorkspaceAdditionalDirs(parentKaos, workDir);
+    const callerAdditionalDirs = await resolveWorkspaceAdditionalDirs(
+      parentKaos,
+      workDir,
+      options.additionalDirs ?? [],
+    );
+    const additionalDirs = normalizeAdditionalDirs([
+      ...localWorkspaceDirs.additionalDirs,
+      ...callerAdditionalDirs,
+    ]);
     const summary = await this.sessionStore.create({
       id,
       workDir,
@@ -243,8 +260,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
     const runtime = await this.resolveRuntime(config);
-    const parentKaos = overrides.kaos ?? (await this.getKaos());
-    const persistenceKaos = overrides.persistenceKaos ?? parentKaos;
     const session = new Session({
       kaos: parentKaos.withCwd(workDir),
       persistenceKaos,
@@ -264,6 +279,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       telemetry: sessionTelemetry,
       pluginSessionStarts,
       appVersion: this.appVersion,
+      additionalDirs,
     });
     try {
       session.metadata = {
@@ -301,7 +317,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     if (Object.keys(clientTelemetry).length > 0) {
       sessionTelemetry.track('session_started', { resumed: false });
     }
-    return result;
+    return withAdditionalDirs(result, session);
   }
 
   getCoreInfo(): CoreInfo {
@@ -334,12 +350,24 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     overrides: { kaos?: Kaos; persistenceKaos?: Kaos },
   ): Promise<ResumeSessionResult> {
     const summary = await this.sessionStore.get(input.sessionId);
+    const parentKaosForRead = overrides.kaos ?? (await this.getKaos());
+    const localWorkspaceDirs = await readWorkspaceAdditionalDirs(parentKaosForRead, summary.workDir);
+    const callerAdditionalDirs = await resolveWorkspaceAdditionalDirs(
+      parentKaosForRead,
+      summary.workDir,
+      input.additionalDirs ?? [],
+    );
+    const additionalDirs = normalizeAdditionalDirs([
+      ...localWorkspaceDirs.additionalDirs,
+      ...callerAdditionalDirs,
+    ]);
     const active = this.sessions.get(summary.id);
     if (active !== undefined) {
       if (overrides.kaos !== undefined) {
         active.setToolKaos(overrides.kaos.withCwd(summary.workDir));
       }
-      return resumeSessionResult(summary, active);
+      await active.setAdditionalDirs(additionalDirs);
+      return withAdditionalDirs(await resumeSessionResult(summary, active), active);
     }
 
     const config = this.reloadProviderManager();
@@ -352,7 +380,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
     const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
     const runtime = await this.resolveRuntime(config);
-    const parentKaos = overrides.kaos ?? (await this.getKaos());
+    const parentKaos = parentKaosForRead;
     const persistenceKaos = overrides.persistenceKaos ?? parentKaos;
     const session = new Session({
       kaos: parentKaos.withCwd(summary.workDir),
@@ -374,6 +402,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       initializeMainAgent: false,
       pluginSessionStarts,
       appVersion: this.appVersion,
+      additionalDirs,
     });
     let warning: string | undefined;
     try {
@@ -701,6 +730,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).generateAgentsMd(payload);
   }
 
+  addAdditionalDir({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<AddAdditionalDirPayload>): Promise<AddAdditionalDirResult> {
+    return this.requireSession(sessionId).addAdditionalDir(payload.path, payload.persist);
+  }
+
   startBtw({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>): Promise<string> {
     return this.sessionApi(sessionId).startBtw(payload);
   }
@@ -894,14 +930,18 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return env;
   }
 
-  private sessionApi(sessionId: string): SessionAPIImpl {
+  private requireSession(sessionId: string): Session {
     const session = this.sessions.get(sessionId);
     if (session === undefined) {
       throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session "${sessionId}" was not found`, {
         details: { sessionId },
       });
     }
-    return new SessionAPIImpl(session);
+    return session;
+  }
+
+  private sessionApi(sessionId: string): SessionAPIImpl {
+    return new SessionAPIImpl(this.requireSession(sessionId));
   }
 
   private reloadProviderManager(): KimiConfig {
@@ -1044,6 +1084,16 @@ function createSessionId(): string {
   return `session_${randomUUID()}`;
 }
 
+function withAdditionalDirs<T>(
+  result: T,
+  session: Session,
+): T & { readonly additionalDirs: readonly string[] } {
+  return {
+    ...result,
+    additionalDirs: session.getAdditionalDirs(),
+  };
+}
+
 function telemetryErrorReason(error: unknown): string {
   if (error instanceof KimiError) return error.code;
   if (error instanceof Error && error.name.length > 0) return error.name;
@@ -1097,12 +1147,15 @@ async function resumeSessionResult(
       background: agent.background.list(false),
     };
   }
-  return {
-    ...summary,
-    sessionMetadata: api.getSessionMetadata({}),
-    agents,
-    warning,
-  };
+  return withAdditionalDirs(
+    {
+      ...summary,
+      sessionMetadata: api.getSessionMetadata({}),
+      agents,
+      warning,
+    },
+    session,
+  );
 }
 
 async function warnIfLogFlushFails(
