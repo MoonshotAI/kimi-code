@@ -15,6 +15,7 @@ tools:
   - TaskList
   - TaskOutput
   - TaskStop
+  - Monitor
   - CronCreate
   - CronList
   - CronDelete
