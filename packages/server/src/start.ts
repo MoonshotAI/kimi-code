@@ -11,6 +11,7 @@ import { installErrorHandler } from './error-handler';
 import { transformOpenApiDocument } from './openapi/transforms';
 import { acquireLock, ServerLockedError } from './lock';
 import { createAuthHook } from '#/middleware/auth';
+import { createAuthFailureLimiter } from '#/middleware/rateLimit';
 import {
   createHostCheck,
   isHostCheckDisabled,
@@ -263,8 +264,14 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   // Auth hook (ROADMAP M5.1). Registered after Host/Origin (above) and before
   // routes, so a rejected request never reaches a handler. Resolved from the
   // container so a test-injected fixed-token impl is what enforces auth.
+  //
+  // Auth-failure rate limit (ROADMAP M6.4): only on a non-loopback bind, where
+  // brute-force attempts are reachable from the network. Loopback keeps the
+  // original "no limiter" behavior so local retries are never throttled.
   const authTokenService = ix.invokeFunction((a) => a.get(IAuthTokenService));
-  app.addHook('onRequest', createAuthHook(authTokenService));
+  const authFailureLimiter =
+    bindClass !== 'loopback' ? createAuthFailureLimiter() : undefined;
+  app.addHook('onRequest', createAuthHook(authTokenService, { limiter: authFailureLimiter }));
 
   // Bind classification (`bindClass`, computed above next to the password/TLS
   // gate) drives every hardening decision from here on: debug routes now;
@@ -569,6 +576,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     } catch {
       // ignore — token file may already be gone
     }
+
+    // Stop the auth-failure limiter's cleanup timer (ROADMAP M6.4). Only set
+    // on non-loopback binds; the `?.` is a no-op on loopback.
+    authFailureLimiter?.dispose();
 
     lockHandle.release();
   };

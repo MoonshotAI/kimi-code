@@ -15,6 +15,11 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { errEnvelope } from '#/envelope';
+import {
+  AUTH_RATE_LIMIT_CODE,
+  AUTH_RATE_LIMIT_MSG,
+  type AuthFailureLimiter,
+} from '#/middleware/rateLimit';
 import type { IAuthTokenService } from '#/services/auth/authTokenService';
 
 /** Daemon-reserved unauthorized code (not in the protocol `ErrorCode` enum). */
@@ -26,6 +31,12 @@ const BEARER_PREFIX = 'Bearer ';
 export interface AuthHookOptions {
   /** Return true to skip auth for this request (bypass whitelist). */
   readonly isBypassed?: (req: FastifyRequest) => boolean;
+  /**
+   * Optional per-source auth-failure limiter (ROADMAP M6.4). When present, a
+   * banned source is rejected with `429` before auth runs, and each failed
+   * attempt is recorded. Wired only on non-loopback binds from `start.ts`.
+   */
+  readonly limiter?: Pick<AuthFailureLimiter, 'recordFailure' | 'isBanned'>;
 }
 
 /**
@@ -83,6 +94,15 @@ export function createAuthHook(
   const isBypassed = opts?.isBypassed ?? defaultIsBypassed;
 
   return async (req, reply) => {
+    // Rate-limit check (ROADMAP M6.4): a banned source is rejected before any
+    // auth work — even a valid token cannot bypass an active ban. Loopback
+    // binds pass no limiter, so this branch is a no-op there.
+    if (opts?.limiter?.isBanned(req.ip) === true) {
+      return reply
+        .code(429)
+        .send(errEnvelope(AUTH_RATE_LIMIT_CODE, AUTH_RATE_LIMIT_MSG, req.id));
+    }
+
     const header = req.headers.authorization;
     const token = extractBearer(header);
 
@@ -98,12 +118,14 @@ export function createAuthHook(
     }
 
     if (token === null) {
+      opts?.limiter?.recordFailure(req.ip);
       return reply
         .code(401)
         .send(errEnvelope(AUTH_ERROR_CODE, AUTH_ERROR_MSG, req.id));
     }
 
     if (!(await authTokenService.isValid(token))) {
+      opts?.limiter?.recordFailure(req.ip);
       return reply
         .code(401)
         .send(errEnvelope(AUTH_ERROR_CODE, AUTH_ERROR_MSG, req.id));
