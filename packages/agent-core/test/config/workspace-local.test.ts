@@ -133,6 +133,20 @@ describe('workspace local config', () => {
     expect(result.additionalDirs).toEqual([sharedDir]);
   });
 
+  it('expands a ~/ path to the home directory when appending', async () => {
+    const root = await makeProject();
+    const homeDir = testKaos.gethome();
+    const homeProjectDir = await mkdtemp(join(homeDir, 'kimi-workspace-local-home-'));
+    tempDirs.push(homeProjectDir);
+    const sharedDir = join(homeProjectDir, 'shared');
+    await mkdir(sharedDir, { recursive: true });
+    const tildePath = `~/${sharedDir.slice(homeDir.length + 1)}`;
+
+    const result = await appendWorkspaceAdditionalDir(testKaos, root, tildePath, []);
+
+    expect(result.additionalDirs).toEqual([sharedDir]);
+  });
+
   it('uses the actual local.toml state even when current dirs are empty', async () => {
     const root = await makeProject();
     const sharedDir = join(root, 'shared');

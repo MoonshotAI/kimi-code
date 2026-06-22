@@ -210,7 +210,7 @@ function resolveExistingAdditionalDirs(
   const resolvedDirs: string[] = [];
 
   for (const additionalDir of normalizeAdditionalDirs(additionalDirs)) {
-    const resolvedDir = resolvePath(projectRoot, additionalDir);
+    const resolvedDir = resolvePath(kaos, projectRoot, additionalDir);
     if (hasSameAdditionalDir(kaos, resolvedDirs, resolvedDir)) continue;
     resolvedDirs.push(resolvedDir);
   }
@@ -224,7 +224,7 @@ async function resolveAdditionalDir(
   additionalDir: string,
 ): Promise<string> {
   const normalizedInput = normalizeAdditionalDirInput(additionalDir);
-  const resolvedDir = resolvePath(projectRoot, normalizedInput);
+  const resolvedDir = resolvePath(kaos, projectRoot, normalizedInput);
   await assertDirectory(kaos, resolvedDir);
   return resolvedDir;
 }
@@ -243,8 +243,15 @@ function normalizeAdditionalDirInput(additionalDir: string): string {
   return normalize(trimmed);
 }
 
-function resolvePath(projectRoot: string, additionalDir: string): string {
-  return isAbsolute(additionalDir) ? normalize(additionalDir) : resolve(projectRoot, additionalDir);
+function resolvePath(kaos: Kaos, projectRoot: string, additionalDir: string): string {
+  const expanded = expandHome(kaos, additionalDir);
+  return isAbsolute(expanded) ? normalize(expanded) : resolve(projectRoot, expanded);
+}
+
+function expandHome(kaos: Kaos, value: string): string {
+  if (value === '~') return kaos.gethome();
+  if (value.startsWith('~/')) return join(kaos.gethome(), value.slice(2));
+  return value;
 }
 
 function hasSameAdditionalDir(kaos: Kaos, dirs: readonly string[], target: string): boolean {
