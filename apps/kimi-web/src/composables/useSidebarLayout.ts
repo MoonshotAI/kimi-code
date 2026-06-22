@@ -2,8 +2,9 @@
 // Layout: resizable session column. ResizeHandle owns the column width (with
 // localStorage persistence); we mirror it here to drive the App grid.
 
-import { computed, ref } from 'vue';
+import { computed, ref, toValue, type MaybeRefOrGetter } from 'vue';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../lib/storage';
+import { PREVIEW_MIN } from './useDetailPanel';
 import { clampPanelWidth, panelMaxWidth, useViewportWidth } from './useViewportWidth';
 
 const SIDEBAR_WIDTH_KEY = STORAGE_KEYS.sidebarWidth;
@@ -17,15 +18,24 @@ const SIDEBAR_COLLAPSED_WIDTH = 36;
 // saved on a wider display is restored on a narrower one.
 const CONVERSATION_MIN = 320;
 
-export function useSidebarLayout() {
+export interface UseSidebarLayoutOptions {
+  /** True while the right-side detail/preview panel is open, so the sidebar
+   *  reserves room for it in addition to the conversation pane. */
+  previewOpen?: MaybeRefOrGetter<boolean>;
+}
+
+export function useSidebarLayout(options: UseSidebarLayoutOptions = {}) {
   const { viewportWidth } = useViewportWidth();
   const sessionColWidth = ref(SIDEBAR_DEFAULT);
   const sidebarCollapsed = ref(false);
 
-  // Largest sidebar width that still leaves the conversation pane usable.
-  const sidebarMax = computed(() =>
-    panelMaxWidth(viewportWidth.value, SIDEBAR_MIN, CONVERSATION_MIN),
-  );
+  // Largest sidebar width that still leaves the conversation pane usable. When
+  // the right-side panel is open, also reserves its minimum width so the
+  // conversation column can never be squeezed to nothing.
+  const sidebarMax = computed(() => {
+    const reserve = CONVERSATION_MIN + (toValue(options.previewOpen) ? PREVIEW_MIN : 0);
+    return panelMaxWidth(viewportWidth.value, SIDEBAR_MIN, reserve);
+  });
 
   const sideWidth = computed(() =>
     sidebarCollapsed.value

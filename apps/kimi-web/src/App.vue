@@ -116,22 +116,6 @@ function onGlobalKeydown(e: KeyboardEvent): void {
 }
 
 // ---------------------------------------------------------------------------
-// Layout: resizable session column. ResizeHandle owns the column width (with
-// localStorage persistence); we mirror it here to drive the App grid.
-// ---------------------------------------------------------------------------
-const {
-  SIDEBAR_WIDTH_KEY,
-  SIDEBAR_DEFAULT,
-  SIDEBAR_MIN,
-  sidebarMax,
-  sessionColWidth,
-  sidebarCollapsed,
-  sideWidth,
-  loadSidebarCollapsed,
-  toggleSidebarCollapse,
-} = useSidebarLayout();
-
-// ---------------------------------------------------------------------------
 // Unified right-side detail layer. Only one detail is open at a time. The
 // shared `detailTarget` ref lives here so the file-preview and detail-panel
 // composables can both claim the single right-side slot.
@@ -151,6 +135,26 @@ const {
   openPreviewInEditor,
   revealPreviewFile,
 } = useFilePreview({ client, detailTarget });
+
+// True while a file preview or any detail panel claims the right-side slot, so
+// the sidebar reserves room for it and the conversation can never be squeezed.
+const previewOpen = computed(() => detailTarget.value !== null || previewTarget.value !== null);
+
+// ---------------------------------------------------------------------------
+// Layout: resizable session column. ResizeHandle owns the column width (with
+// localStorage persistence); we mirror it here to drive the App grid.
+// ---------------------------------------------------------------------------
+const {
+  SIDEBAR_WIDTH_KEY,
+  SIDEBAR_DEFAULT,
+  SIDEBAR_MIN,
+  sidebarMax,
+  sessionColWidth,
+  sidebarCollapsed,
+  sideWidth,
+  loadSidebarCollapsed,
+  toggleSidebarCollapse,
+} = useSidebarLayout({ previewOpen });
 
 // ---------------------------------------------------------------------------
 // Unified right-side detail layer (thinking / compaction / agent / diff / side

@@ -4,7 +4,7 @@
 // up pointer events (pointerdown/move/up with capture, no text-selection while
 // dragging). Used by the sidebar session column drag handle.
 
-import { onBeforeUnmount, ref, type Ref } from 'vue';
+import { onBeforeUnmount, ref, toValue, type MaybeRefOrGetter, type Ref } from 'vue';
 import { safeGetString, safeSetString } from '../lib/storage';
 
 export interface UseResizableOptions {
@@ -14,8 +14,9 @@ export interface UseResizableOptions {
   defaultWidth: number;
   /** Smallest allowed width (px). */
   min: number;
-  /** Largest allowed width (px). */
-  max: number;
+  /** Largest allowed width (px). Accepts a ref/getter so a cap derived from the
+   *  viewport keeps working as the window is resized after the handle mounts. */
+  max: MaybeRefOrGetter<number>;
   /** True when dragging right should shrink the controlled width. */
   reverse?: boolean;
 }
@@ -57,7 +58,7 @@ export function useResizable(options: UseResizableOptions): UseResizable {
 
   function clamp(value: number): number {
     if (!Number.isFinite(value)) return defaultWidth;
-    return Math.min(max, Math.max(min, Math.round(value)));
+    return Math.min(toValue(max), Math.max(min, Math.round(value)));
   }
 
   const width = ref<number>(clamp(readStored(storageKey) ?? defaultWidth));
