@@ -26,6 +26,7 @@ import type {
   AppModel,
   AppProvider,
   AppQuestionRequest,
+  AppSession,
   AppSessionRuntimeStatus,
   AppSkill,
   AppTask,
@@ -375,6 +376,41 @@ const rawState: ExtendedState = reactive({
   messagesLoadMoreErrorBySession: {},
 });
 
+// ---------------------------------------------------------------------------
+// rawState.sessions — single mutation funnel.
+// Every change to the session list goes through one of these helpers, so
+// "where can sessions change?" has exactly one answer per intent. They are
+// injected into the workspace/model modules (via deps) so no module assigns
+// rawState.sessions directly.
+// ---------------------------------------------------------------------------
+function setSessions(next: AppSession[]): void {
+  rawState.sessions = next;
+}
+/** Replace one session in place (matched by id); no-op if it isn't loaded. */
+function updateSession(id: string, update: (session: AppSession) => AppSession): void {
+  rawState.sessions = rawState.sessions.map((s) => (s.id === id ? update(s) : s));
+}
+/** Add or move a session to the front (recency order), de-duped by id. */
+function upsertSessionFront(session: AppSession): void {
+  rawState.sessions = [session, ...rawState.sessions.filter((s) => s.id !== session.id)];
+}
+/** Append a session to the end (e.g. a deep-linked older session). */
+function appendSession(session: AppSession): void {
+  rawState.sessions = [...rawState.sessions, session];
+}
+/** Drop a session from the list by id. */
+function removeSession(id: string): void {
+  rawState.sessions = rawState.sessions.filter((s) => s.id !== id);
+}
+
+// ---------------------------------------------------------------------------
+// rawState.activeSessionId — single mutation funnel.
+// ---------------------------------------------------------------------------
+/** Set the active session (or clear it with undefined). */
+function setActiveSessionId(id: string | undefined): void {
+  rawState.activeSessionId = id;
+}
+
 // Models + Providers reactive state and helpers live in
 // ./client/useModelProviderState. It is instantiated below (after the
 // `activity` computed it depends on) as `modelProvider`.
@@ -402,19 +438,15 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   } catch {
     return; // status endpoint missing/unreachable — keep what we have.
   }
-  rawState.sessions = rawState.sessions.map((s) =>
-    s.id === sessionId
-      ? {
-          ...s,
-          model: st.model || s.model,
-          usage: {
-            ...s.usage,
-            contextTokens: st.contextTokens,
-            contextLimit: st.maxContextTokens,
-          },
-        }
-      : s,
-  );
+  updateSession(sessionId, (s) => ({
+    ...s,
+    model: st.model || s.model,
+    usage: {
+      ...s.usage,
+      contextTokens: st.contextTokens,
+      contextLimit: st.maxContextTokens,
+    },
+  }));
   rawState.swarmMode = st.swarmMode;
   rawState.planMode = st.planMode;
 }
@@ -525,8 +557,8 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   };
   const next = reduceAppEvent(snapshot, event, { sessionId, seq });
   // Assign back to the reactive proxy
-  rawState.sessions = next.sessions;
-  rawState.activeSessionId = next.activeSessionId;
+  setSessions(next.sessions);
+  setActiveSessionId(next.activeSessionId);
   rawState.messagesBySession = next.messagesBySession;
   rawState.approvalsBySession = next.approvalsBySession;
   rawState.questionsBySession = next.questionsBySession;
@@ -831,7 +863,7 @@ function goalErrorMessage(err: unknown): string | undefined {
 }
 
 async function handleSessionNotFound(sessionId: string): Promise<void> {
-  rawState.sessions = rawState.sessions.filter((s) => s.id !== sessionId);
+  removeSession(sessionId);
   delete rawState.messagesBySession[sessionId];
   delete rawState.approvalsBySession[sessionId];
   delete rawState.questionsBySession[sessionId];
@@ -852,7 +884,7 @@ async function handleSessionNotFound(sessionId: string): Promise<void> {
   if (next) {
     await workspaceState.selectSession(next.id, { urlMode: 'replace' });
   } else {
-    rawState.activeSessionId = undefined;
+    setActiveSessionId(undefined);
     rawState.sessionLoading = false;
     workspaceState.writeSessionUrl(undefined, 'replace');
   }
@@ -863,17 +895,13 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     const api = getKimiWebApi();
     const snap = await api.getSessionSnapshot(sessionId);
 
-    rawState.sessions = rawState.sessions.map((s) =>
-      s.id === sessionId
-        ? {
-            ...snap.session,
-            model:
-              snap.session.model && snap.session.model.length > 0
-                ? snap.session.model
-                : s.model,
-          }
-        : s,
-    );
+    updateSession(sessionId, (s) => ({
+      ...snap.session,
+      model:
+        snap.session.model && snap.session.model.length > 0
+          ? snap.session.model
+          : s.model,
+    }));
     rawState.messagesBySession = {
       ...rawState.messagesBySession,
       [sessionId]: snap.messages,
@@ -1424,6 +1452,7 @@ const modelProvider = useModelProviderState(rawState, {
   activity,
   inFlightPromptSessions,
   saveThinkingToStorage,
+  updateSession,
 });
 
 /** Git info for the active session from the daemon's fs:git_status response */
@@ -1773,6 +1802,12 @@ const workspaceState = useWorkspaceState(rawState, {
   activity,
   inFlightPromptSessions,
   sessionsKnownEmpty,
+  setSessions,
+  updateSession,
+  upsertSessionFront,
+  appendSession,
+  removeSession,
+  setActiveSessionId,
   nextOptimisticMsgId,
   getEventConn: () => eventConn,
   syncSessionFromSnapshot,

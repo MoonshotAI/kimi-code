@@ -7,7 +7,7 @@
 
 import { ref, type ComputedRef } from 'vue';
 import { getKimiWebApi } from '../../api';
-import type { AppMessage, AppModel, AppProvider, AppSkill, ThinkingLevel } from '../../api/types';
+import type { AppMessage, AppModel, AppProvider, AppSession, AppSkill, ThinkingLevel } from '../../api/types';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
 import { coerceThinkingForModel } from '../../lib/modelThinking';
 import type { ActivityState } from '../../types';
@@ -58,6 +58,9 @@ export interface UseModelProviderStateDeps {
   activity: ComputedRef<ActivityState>;
   inFlightPromptSessions: Set<string>;
   saveThinkingToStorage: (v: ThinkingLevel) => void;
+  /** Replace one session in place (matched by id). Owned by the facade so the
+   *  model module never assigns rawState.sessions directly. */
+  updateSession: (id: string, update: (session: AppSession) => AppSession) => void;
 }
 
 export function useModelProviderState(
@@ -71,6 +74,7 @@ export function useModelProviderState(
     activity,
     inFlightPromptSessions,
     saveThinkingToStorage,
+    updateSession,
   } = deps;
 
   // Models + Providers reactive state (lazy-loaded, cached)
@@ -172,7 +176,7 @@ export function useModelProviderState(
     // Optimistic: show the chosen model immediately, but remember the previous
     // one so we can roll back if the switch never reaches the daemon.
     const prevModel = rawState.sessions.find((s) => s.id === sid)?.model;
-    rawState.sessions = rawState.sessions.map((s) => (s.id === sid ? { ...s, model: modelId } : s));
+    updateSession(sid, (s) => ({ ...s, model: modelId }));
     if (nextThinking !== prevThinking) {
       rawState.thinking = nextThinking;
       saveThinkingToStorage(nextThinking);
@@ -187,9 +191,7 @@ export function useModelProviderState(
       // not fail it — but when the daemon is unreachable the request throws here.
       // Roll the picker back to the real model so the UI can't keep showing the
       // new one as if the switch succeeded, then surface the failure.
-      rawState.sessions = rawState.sessions.map((s) =>
-        s.id === sid ? { ...s, model: prevModel ?? s.model } : s,
-      );
+      updateSession(sid, (s) => ({ ...s, model: prevModel ?? s.model }));
       if (nextThinking !== prevThinking) {
         rawState.thinking = prevThinking;
         saveThinkingToStorage(prevThinking);

@@ -58,6 +58,14 @@ export interface UseWorkspaceStateDeps {
   activity: ComputedRef<ActivityState>;
   inFlightPromptSessions: Set<string>;
   sessionsKnownEmpty: Set<string>;
+  // rawState.sessions mutation funnel, owned by the facade. This module never
+  // assigns rawState.sessions directly — it goes through these.
+  setSessions: (next: AppSession[]) => void;
+  updateSession: (id: string, update: (session: AppSession) => AppSession) => void;
+  upsertSessionFront: (session: AppSession) => void;
+  appendSession: (session: AppSession) => void;
+  removeSession: (id: string) => void;
+  setActiveSessionId: (id: string | undefined) => void;
   nextOptimisticMsgId: () => string;
   getEventConn: () => KimiEventConnection | null;
   syncSessionFromSnapshot: (sessionId: string) => Promise<SyncSessionResult>;
@@ -93,6 +101,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     activity,
     inFlightPromptSessions,
     sessionsKnownEmpty,
+    setSessions,
+    updateSession,
+    upsertSessionFront,
+    appendSession,
+    removeSession,
+    setActiveSessionId,
     nextOptimisticMsgId,
     getEventConn,
     syncSessionFromSnapshot,
@@ -298,7 +312,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Drain every session via a single global walk so sessions whose cwd is not
       // a registered workspace root are still reachable after a refresh.
       const sessions = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
-      rawState.sessions = sessions;
+      setSessions(sessions);
 
       // Load workspaces (real if available, else derived from session cwds).
       await loadWorkspaces();
@@ -377,7 +391,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         void selectSession(mostRecent.id);
       }
     } else {
-      rawState.activeSessionId = undefined;
+      setActiveSessionId(undefined);
       writeSessionUrl(undefined, 'push');
     }
   }
@@ -440,7 +454,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           // ignore
         }
       }
-      rawState.activeSessionId = undefined;
+      setActiveSessionId(undefined);
       rawState.sessionLoading = false;
       clearFileDiff();
       writeSessionUrl(undefined, 'replace');
@@ -449,7 +463,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   /** Clear the active session without creating a new one. */
   function clearActiveSession(): void {
-    rawState.activeSessionId = undefined;
+    setActiveSessionId(undefined);
     writeSessionUrl(undefined, 'push');
   }
 
@@ -485,7 +499,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         // metadata.cwd only.
       }
       const session = await api.createSession({ workspaceId: workspaceIdForCreate, cwd: cwdForCreate });
-      rawState.sessions = [session, ...rawState.sessions.filter((s) => s.id !== session.id)];
+      upsertSessionFront(session);
       selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
       // Locally created sessions start empty; trust that so the empty-composer
       // renders immediately instead of flashing a loading state.
@@ -535,7 +549,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         draftPick !== undefined && (!session.model || session.model.length === 0)
           ? { ...session, model: draftPick }
           : session;
-      rawState.sessions = [created, ...rawState.sessions.filter((s) => s.id !== session.id)];
+      upsertSessionFront(created);
       selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
       // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
       // session" (createSession), here we immediately send a prompt: keeping
@@ -634,7 +648,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (!rawState.sessions.some((s) => s.id === session.id)) {
         // Append, not prepend: the list is recency-ordered and a deep-linked old
         // session shouldn't displace the most-recent ones at the top.
-        rawState.sessions = [...rawState.sessions, session];
+        appendSession(session);
       }
       return true;
     } catch {
@@ -646,7 +660,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const id = readSessionIdFromLocation(window.location);
     if (id === undefined) {
       // Back/forward landed on '/' — no active session.
-      rawState.activeSessionId = undefined;
+      setActiveSessionId(undefined);
       return;
     }
     if (id === rawState.activeSessionId) return;
@@ -666,7 +680,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (next) {
         await selectSession(next.id, { urlMode: 'replace' });
       } else {
-        rawState.activeSessionId = undefined;
+        setActiveSessionId(undefined);
         writeSessionUrl(undefined, 'replace');
       }
     })();
@@ -698,7 +712,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // history entries in click order.
       writeSessionUrl(sessionId, opts?.urlMode ?? 'push');
       rawState.sessionLoading = !messagesLoaded && !knownEmpty;
-      rawState.activeSessionId = sessionId;
+      setActiveSessionId(sessionId);
       resetFastMoon();
       // Opening a session clears its unread dot.
       if (rawState.unreadBySession[sessionId]) {
@@ -744,7 +758,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const api = getKimiWebApi();
       const session = await api.createSession({ cwd, title: opts?.title, model: opts?.model });
-      rawState.sessions = [session, ...rawState.sessions.filter((s) => s.id !== session.id)];
+      upsertSessionFront(session);
       // Locally created sessions start empty; trust that so the empty-composer
       // renders immediately instead of flashing a loading state.
       sessionsKnownEmpty.add(session.id);
@@ -1258,9 +1272,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const api = getKimiWebApi();
       await api.updateSession(id, { title });
-      rawState.sessions = rawState.sessions.map((s) =>
-        s.id === id ? { ...s, title } : s,
-      );
+      updateSession(id, (s) => ({ ...s, title }));
     } catch (err) {
       pushOperationFailure('renameSession', err, { sessionId: id });
     }
@@ -1315,7 +1327,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       }
     }
     if (removingActiveWorkspace || activeSessionInRemovedWorkspace) {
-      rawState.activeSessionId = undefined;
+      setActiveSessionId(undefined);
       rawState.sessionLoading = false;
       clearFileDiff();
       writeSessionUrl(undefined, 'replace');
@@ -1327,7 +1339,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const api = getKimiWebApi();
       await api.archiveSession(id);
-      rawState.sessions = rawState.sessions.filter((s) => s.id !== id);
+      removeSession(id);
       sideChat.clearSideChatForSession(id);
       const { [id]: _removedIds, ...restIds } = rawState.sideChatUserMessageIdsBySession;
       void _removedIds;
@@ -1340,7 +1352,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         if (next) {
           await selectSession(next.id, { urlMode: 'replace' });
         } else {
-          rawState.activeSessionId = undefined;
+          setActiveSessionId(undefined);
           writeSessionUrl(undefined, 'replace');
         }
       }
@@ -1386,7 +1398,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (!sid) return;
     try {
       const forked = await getKimiWebApi().forkSession(sid);
-      rawState.sessions = [forked, ...rawState.sessions.filter((s) => s.id !== forked.id)];
+      upsertSessionFront(forked);
       await selectSession(forked.id);
     } catch (err) {
       pushOperationFailure('fork', err, { sessionId: sid });
