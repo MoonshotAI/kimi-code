@@ -27,6 +27,7 @@ import {
   type WSGatewayOptions,
 } from '#/services/gateway';
 import { createServerServiceCollection } from '#/services/serviceCollection';
+import { ISnapshotService, loadSnapshotConfig } from '#/services/snapshot';
 import { getServerVersion } from './version';
 import { registerWebAssetRoutes } from './routes/webAssets';
 
@@ -199,6 +200,14 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
       a.get(IApprovalService);
       a.get(IQuestionService);
+
+      // Eagerly instantiate the snapshot reader so its event-bus subscription
+      // is in place before any session can publish `turn.started` events —
+      // lazy-loading would drop turn lifecycle state for sessions created
+      // before the first snapshot request.
+      if (loadSnapshotConfig().mode !== 'legacy') {
+        a.get(ISnapshotService);
+      }
 
       const wsGw = a.get(IWSGateway);
 
