@@ -448,6 +448,10 @@ function removeSessionMessages(sessionId: string): void {
 // this, so adding a new per-session map only ever needs one new line here.
 // ---------------------------------------------------------------------------
 function forgetSession(sessionId: string): void {
+  // Stop receiving events for this session BEFORE clearing its state: a late or
+  // buffered event for this id would otherwise be reduced and recreate the very
+  // per-session maps we are about to delete.
+  eventConn?.unsubscribe(sessionId);
   removeSession(sessionId);
   removeSessionMessages(sessionId);
   delete rawState.approvalsBySession[sessionId];
