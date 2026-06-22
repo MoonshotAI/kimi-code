@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Local REST + WebSocket server exposing kimi-code SDK over a stable wire protocol.",
   "license": "MIT",

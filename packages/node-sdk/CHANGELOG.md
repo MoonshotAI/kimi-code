@@ -1,5 +1,19 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.10.0
+
+### Minor Changes
+
+- [#812](https://github.com/MoonshotAI/kimi-code/pull/812) [`c0eeca2`](https://github.com/MoonshotAI/kimi-code/commit/c0eeca24692edd736eecd3c2541d7566bac9f80f) - Added the ability to add extra workspace directories:
+
+  - Use the `/add-dir <path>` command to add extra working directories to the current session, or remember them for the project.
+  - Use `kimi --add-dir <path>` to add them on startup.
+  - Project-level local config is now managed in `.kimi-code/local.toml`; we recommend adding it to your `.gitignore`.
+
+### Patch Changes
+
+- [#821](https://github.com/MoonshotAI/kimi-code/pull/821) [`ba64072`](https://github.com/MoonshotAI/kimi-code/commit/ba64072559c1e9bb3447ede39991ac2e8bdb7645) - Allow long-running foreground commands and subagents to be moved into background tasks with Ctrl+B, and inspect them via the `/tasks` panel.
+
 ## 0.9.4
 
 ### Patch Changes
