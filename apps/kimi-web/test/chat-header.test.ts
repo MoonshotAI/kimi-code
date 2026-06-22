@@ -22,7 +22,9 @@ describe('ChatHeader', () => {
     const wrapper = mount(ChatHeader, {
       props: {
         isGitRepo: true,
-        gitInfo: { branch: 'main', ahead: 0, behind: 0 },
+        branch: 'main',
+        ahead: 0,
+        behind: 0,
         changesCount: 3,
         gitDiffStats: { totalAdditions: 10, totalDeletions: 2 },
       },
@@ -41,5 +43,34 @@ describe('ChatHeader', () => {
     });
 
     expect(wrapper.find('.ch-git').exists()).toBe(false);
+  });
+
+  it('renders the full branch name and exposes it via title', () => {
+    const branch = 'feat/web-session-lazy-loading/very-long-branch-name-for-header-display';
+
+    const wrapper = mount(ChatHeader, {
+      props: {
+        isGitRepo: true,
+        branch,
+      },
+      global: { plugins: [i18n] },
+    });
+
+    const branchEl = wrapper.find('.ch-branch');
+
+    expect(branchEl.text()).toBe(branch);
+    expect(branchEl.attributes('title')).toBe(branch);
+  });
+
+  it('renders the detached label with title when branch is empty', () => {
+    const wrapper = mount(ChatHeader, {
+      props: { isGitRepo: true },
+      global: { plugins: [i18n] },
+    });
+
+    const branchEl = wrapper.find('.ch-branch');
+
+    expect(branchEl.text()).toBe('detached');
+    expect(branchEl.attributes('title')).toBe('detached');
   });
 });
