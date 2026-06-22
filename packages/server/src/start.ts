@@ -42,6 +42,7 @@ import {
 } from '#/services/auth/authTokenService';
 import { classify } from '#/services/auth/bindClassify';
 import { resolvePasswordHash } from '#/services/auth/password';
+import { createSecurityHeadersHook } from '#/services/auth/securityHeaders';
 import { createTokenStore } from '#/services/auth/tokenStore';
 import { getServerVersion } from './version';
 import { registerWebAssetRoutes } from './routes/webAssets';
@@ -287,6 +288,13 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const authFailureLimiter =
     bindClass !== 'loopback' ? createAuthFailureLimiter() : undefined;
   app.addHook('onRequest', createAuthHook(authTokenService, { limiter: authFailureLimiter }));
+
+  // Security response headers (ROADMAP M6.6): only on a non-loopback bind.
+  // TLS is terminated by a reverse proxy in this phase, so HSTS is omitted
+  // here (`tls: false`) — the proxy is responsible for setting it.
+  if (bindClass !== 'loopback') {
+    app.addHook('onSend', createSecurityHeadersHook({ tls: false }));
+  }
 
   // Bind classification (`bindClass`, computed above next to the password/TLS
   // gate) drives every hardening decision from here on: debug routes now;
