@@ -265,6 +265,35 @@ export class StreamingUIController {
     return true;
   }
 
+  /**
+   * Mark a foreground subagent card as detached-to-background (`◐ backgrounded`).
+   * Routed from a `background.task.started` event whose `info.kind === 'agent'`,
+   * keyed by `agentId`. Returns true iff a matching component was found.
+   */
+  markSubagentBackgrounded(agentId: string | undefined): boolean {
+    if (agentId === undefined) return false;
+    const visit = (tc: ToolCallComponent): boolean => {
+      if (tc.getSubagentAgentId() === agentId) {
+        tc.markBackgrounded();
+        return true;
+      }
+      return false;
+    };
+    for (const tc of this._pendingToolComponents.values()) {
+      if (visit(tc)) return true;
+    }
+    for (const child of this.host.state.transcriptContainer.children) {
+      if (child instanceof ToolCallComponent) {
+        if (visit(child)) return true;
+      } else if (child instanceof AgentGroupComponent) {
+        for (const tc of child.getToolComponents()) {
+          if (visit(tc)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
   /** Registers a tool call that arrived via tool.call.started.
    *  Clears any pending streaming state for this id, updates or creates the
    *  component, and returns whether the call was new (no previous entry). */

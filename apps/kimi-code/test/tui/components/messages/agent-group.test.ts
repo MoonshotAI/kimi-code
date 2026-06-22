@@ -91,6 +91,31 @@ describe('AgentGroupComponent', () => {
     waiting.dispose();
   });
 
+  it('shows the Ctrl+B hint while agents are running and hides it once all are backgrounded', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const ui = stubTui();
+    const group = new AgentGroupComponent(ui);
+    const a = createAgent('call_agent_1', 'inspect project', 'explore', ui);
+    const b = createAgent('call_agent_2', 'write tests', 'coder', ui);
+    startAgent(a, 'call_agent_1', 'explore');
+    startAgent(b, 'call_agent_2', 'coder');
+    group.attach('call_agent_1', a);
+    group.attach('call_agent_2', b);
+
+    expect(renderText(group)).toContain('Press Ctrl+B to run in background');
+
+    a.markBackgrounded();
+    expect(renderText(group)).toContain('Press Ctrl+B to run in background');
+
+    b.markBackgrounded();
+    expect(renderText(group)).not.toContain('Press Ctrl+B to run in background');
+
+    group.dispose();
+    a.dispose();
+    b.dispose();
+  });
+
   it('uses still-working fallback for running agents without recent activity', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

@@ -123,6 +123,7 @@ import {
 import { isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
+import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
@@ -198,6 +199,9 @@ interface SendMessageOptions {
   readonly hasMedia?: boolean;
 }
 
+/** How long the one-shot "moved to background" footer hint stays visible. */
+const DETACH_HINT_DISPLAY_MS = 4_000;
+
 export class KimiTUI {
   readonly harness: KimiHarness;
   readonly options: KimiTUIOptions;
@@ -232,6 +236,9 @@ export class KimiTUI {
   readonly sessionReplay: SessionReplayRenderer;
   readonly tasksBrowserController: TasksBrowserController;
   readonly editorKeyboard: EditorKeyboardController;
+
+  /** Timer that auto-clears the one-shot "moved to background" footer hint. */
+  private detachHintClearTimer: ReturnType<typeof setTimeout> | undefined;
 
   // The currently-mounted approval panel, if any. Kept so the full-screen
   // preview viewer can restore focus to the exact same instance (and its
@@ -1709,6 +1716,69 @@ export class KimiTUI {
         child.setExpanded(this.state.toolOutputExpanded);
       }
     }
+    this.state.ui.requestRender();
+  }
+
+  async detachCurrentForegroundTask(): Promise<void> {
+    const session = this.session;
+    if (session === undefined) {
+      this.showError(NO_ACTIVE_SESSION_MESSAGE);
+      return;
+    }
+
+    let tasks: readonly BackgroundTaskInfo[];
+    try {
+      // activeOnly defaults to true; foreground running tasks are non-terminal
+      // and therefore included. We filter to `detached === false` ourselves.
+      tasks = await session.listBackgroundTasks();
+    } catch (error) {
+      this.showError(`Failed to list tasks: ${formatErrorMessage(error)}`);
+      return;
+    }
+
+    const targets = pickForegroundTasks(tasks);
+    if (targets.length === 0) {
+      this.state.footer.setTransientHint('No foreground task running.');
+      this.state.ui.requestRender();
+      return;
+    }
+
+    let detached = 0;
+    let alreadyFinished = 0;
+    for (const target of targets) {
+      try {
+        const info = await session.detachBackgroundTask(target.taskId);
+        if (info === undefined) alreadyFinished++;
+        else detached++;
+      } catch (error) {
+        this.showError(`Failed to detach ${target.taskId}: ${formatErrorMessage(error)}`);
+      }
+    }
+
+    let hint: string;
+    if (detached === 0 && alreadyFinished > 0) {
+      hint = alreadyFinished === 1 ? 'Task already finished.' : 'Tasks already finished.';
+    } else if (detached === targets.length) {
+      hint = detached === 1 ? 'Moved 1 task to background.' : `Moved ${detached} tasks to background.`;
+    } else {
+      hint = `Moved ${detached} of ${targets.length} tasks to background.`;
+    }
+    if (detached > 0) hint = `${hint} /tasks to view.`;
+    this.showDetachHint(hint);
+  }
+
+  /** Show a one-shot footer hint that auto-clears after DETACH_HINT_DISPLAY_MS. */
+  private showDetachHint(hint: string): void {
+    if (this.detachHintClearTimer !== undefined) {
+      clearTimeout(this.detachHintClearTimer);
+      this.detachHintClearTimer = undefined;
+    }
+    this.state.footer.setTransientHint(hint);
+    this.detachHintClearTimer = setTimeout(() => {
+      this.detachHintClearTimer = undefined;
+      this.state.footer.setTransientHint(null);
+      this.state.ui.requestRender();
+    }, DETACH_HINT_DISPLAY_MS);
     this.state.ui.requestRender();
   }
 

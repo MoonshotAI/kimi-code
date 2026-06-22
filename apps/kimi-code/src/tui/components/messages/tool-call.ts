@@ -46,6 +46,10 @@ const PROGRESS_URL_RE = /https?:\/\/\S+/g;
 const ABORTED_MARK = '⊘';
 const MAX_LIVE_OUTPUT_CHARS = 50_000;
 
+/** Delay before a long-running foreground Bash/Agent card advertises Ctrl+B. */
+const DETACH_HINT_DELAY_MS = 10_000;
+const DETACH_HINT_TEXT = 'Press Ctrl+B to run in background';
+
 type SubagentTextKind = 'thinking' | 'text';
 type SubagentPhase = 'queued' | 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded';
 
@@ -566,6 +570,13 @@ export class ToolCallComponent extends Container {
   private liveOutput = '';
 
   /**
+   * Advertises `Ctrl+B` on a foreground Bash/Agent card that has been running
+   * for {@link DETACH_HINT_DELAY_MS}. Cleared when the result lands.
+   */
+  private detachHintTimer: ReturnType<typeof setTimeout> | undefined;
+  private detachHintVisible = false;
+
+  /**
    * Registered by a group container (`AgentGroupComponent` or
    * `ReadGroupComponent`) when this component is borrowed as a hidden state
    * container. Any state change (subagent meta, phase, sub-tool, result, etc.)
@@ -598,6 +609,7 @@ export class ToolCallComponent extends Container {
     this.buildSubagentBlock();
     this.syncStreamingProgressTimer();
     this.syncSubagentElapsedTimer();
+    this.startDetachHintTimer();
   }
 
   override invalidate(): void {
@@ -624,6 +636,8 @@ export class ToolCallComponent extends Container {
     // show both the streamed status lines and the final output stacked.
     this.progressLines = [];
     this.liveOutput = '';
+    this.detachHintVisible = false;
+    this.stopDetachHintTimer();
     this.finalizeSubagentElapsedIfNeeded();
     this.syncStreamingProgressTimer();
     this.syncSubagentElapsedTimer();
@@ -682,6 +696,7 @@ export class ToolCallComponent extends Container {
   dispose(): void {
     this.stopStreamingProgressTimer();
     this.stopSubagentElapsedTimer();
+    this.stopDetachHintTimer();
   }
 
   /**
@@ -904,6 +919,46 @@ export class ToolCallComponent extends Container {
     this.streamingProgressTimer = undefined;
   }
 
+  /** Only foreground Bash/Agent calls can be detached via Ctrl+B. */
+  private isDetachHintEligible(): boolean {
+    return this.toolCall.name === 'Bash' || this.toolCall.name === 'Agent';
+  }
+
+  private startDetachHintTimer(): void {
+    if (!this.isDetachHintEligible()) return;
+    if (this.result !== undefined) return;
+    if (this.ui === undefined) return;
+    if (this.toolCall.name === 'Agent') {
+      // Subagents are long-running by nature; advertise Ctrl+B immediately
+      // instead of waiting out the delay used for short Bash commands.
+      if (this.detachHintVisible) return;
+      this.detachHintVisible = true;
+      this.rebuildBody();
+      this.ui?.requestRender();
+      return;
+    }
+    if (this.detachHintTimer !== undefined) return;
+    this.detachHintTimer = setTimeout(() => {
+      this.detachHintTimer = undefined;
+      if (this.result !== undefined) return;
+      this.detachHintVisible = true;
+      this.rebuildBody();
+      this.ui?.requestRender();
+    }, DETACH_HINT_DELAY_MS);
+  }
+
+  private stopDetachHintTimer(): void {
+    if (this.detachHintTimer === undefined) return;
+    clearTimeout(this.detachHintTimer);
+    this.detachHintTimer = undefined;
+  }
+
+  private buildDetachHintBlock(): void {
+    if (!this.detachHintVisible) return;
+    if (this.result !== undefined) return;
+    this.addChild(new Text(currentTheme.dim(DETACH_HINT_TEXT), 2, 0));
+  }
+
   private syncSubagentElapsedTimer(): void {
     const phase = this.getDerivedSubagentPhase();
     const shouldTick =
@@ -1089,6 +1144,21 @@ export class ToolCallComponent extends Container {
     this.headerText.setText(this.buildHeader());
     this.rebuildContent();
     this.notifySnapshotChange();
+  }
+
+  /**
+   * Mark a foreground subagent as detached-to-background. Called when a
+   * `background.task.started` event arrives for this agent (i.e. the user
+   * pressed Ctrl+B). Keeps the card showing `◐ backgrounded` instead of
+   * flipping to `✓ Completed` when the spawn-success ToolResult lands.
+   */
+  markBackgrounded(): void {
+    if (this.subagentPhase === 'backgrounded') return;
+    this.subagentPhase = 'backgrounded';
+    this.headerText.setText(this.buildHeader());
+    this.rebuildContent();
+    this.notifySnapshotChange();
+    this.ui?.requestRender();
   }
 
   /**
@@ -1340,6 +1410,7 @@ export class ToolCallComponent extends Container {
       this.children.pop();
     }
     this.buildProgressBlock();
+    this.buildDetachHintBlock();
     this.buildLiveOutputBlock();
     this.buildContent();
     this.buildSubagentBlock();
@@ -1352,6 +1423,7 @@ export class ToolCallComponent extends Container {
     this.buildCallPreview();
     this.callPreviewEndIndex = this.children.length;
     this.buildProgressBlock();
+    this.buildDetachHintBlock();
     this.buildLiveOutputBlock();
     this.buildContent();
     this.buildSubagentBlock();
@@ -1550,6 +1622,10 @@ export class ToolCallComponent extends Container {
     if (this.backgroundTaskTerminalPhase !== undefined) {
       return this.backgroundTaskTerminalPhase;
     }
+    // A foreground subagent detached via Ctrl+B keeps showing `backgrounded`
+    // even after its spawn-success ToolResult lands, so the card doesn't flip
+    // to `✓ Completed` and look like the work actually finished.
+    if (this.subagentPhase === 'backgrounded') return 'backgrounded';
     if (this.result !== undefined) return this.result.is_error ? 'failed' : 'done';
     return this.subagentPhase;
   }

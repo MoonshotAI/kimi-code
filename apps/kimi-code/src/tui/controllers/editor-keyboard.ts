@@ -31,6 +31,7 @@ export interface EditorKeyboardHost {
   updateEditorBorderHighlight(text?: string): void;
   updateQueueDisplay(): void;
   toggleToolOutputExpansion(): void;
+  detachCurrentForegroundTask(): void;
   hideSessionPicker(): void;
   stop(exitCode?: number): Promise<void>;
   handlePlanToggle(next: boolean): void;
@@ -179,6 +180,14 @@ export class EditorKeyboardController {
       }
       host.updateQueueDisplay();
       host.state.ui.requestRender();
+    };
+
+    editor.onCtrlB = () => {
+      if (host.state.appState.streamingPhase === 'idle' || host.state.appState.isCompacting) {
+        return;
+      }
+      host.track('shortcut_background_task');
+      host.detachCurrentForegroundTask();
     };
 
     editor.onUndo = () => {

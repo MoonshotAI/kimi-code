@@ -118,6 +118,7 @@ export class CustomEditor extends Editor {
   public onToggleToolExpand?: () => void;
   public onOpenExternalEditor?: () => void;
   public onCtrlS?: () => void;
+  public onCtrlB?: () => void;
   public onUndo?: () => void;
   public onInsertNewline?: () => void;
   public onTextPaste?: () => void;
@@ -317,6 +318,11 @@ export class CustomEditor extends Editor {
 
     if (matchesKey(normalized, Key.ctrl('s'))) {
       this.onCtrlS?.();
+      return;
+    }
+
+    if (matchesKey(normalized, Key.ctrl('b'))) {
+      this.onCtrlB?.();
       return;
     }
 

@@ -603,6 +603,9 @@ describe('BashTool', () => {
     expect(result.output).not.toContain('after detach\n');
     expect(result.output).toContain(`task_id: ${task.taskId}`);
     expect(result.output).toContain('automatic_notification: true');
+    // Detach must steer the model away from blocking on the task it just
+    // backgrounded — otherwise the whole point of detaching is defeated.
+    expect(result.output).toContain('do NOT wait, poll, or call TaskOutput');
     expect(manager.getTask(task.taskId)).toMatchObject({ detached: true });
     await vi.waitFor(async () => {
       await expect(manager.readOutput(task.taskId)).resolves.toContain('after detach\n');
@@ -637,7 +640,8 @@ describe('BashTool', () => {
     const result = await running;
 
     expect(result.output).toContain(`task_id: ${task.taskId}`);
-    expect(result.output).toContain('next_step: You will be automatically notified');
+    expect(result.output).toContain('You will be automatically notified when it completes');
+    expect(result.output).toContain('do NOT wait or poll');
     expect(result.output).not.toContain('TaskOutput');
     expect(result.output).not.toContain('TaskStop');
 

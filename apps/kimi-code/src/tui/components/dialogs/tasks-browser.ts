@@ -130,8 +130,13 @@ function visibleTasks(
   tasks: readonly BackgroundTaskInfo[],
   filter: TasksFilter,
 ): BackgroundTaskInfo[] {
-  if (filter === 'all') return [...tasks];
-  return tasks.filter((t) => !isTerminal(t.status));
+  // The /tasks panel is for background task management. Foreground tasks
+  // (detached === false) are shown in the main transcript instead, and only
+  // appear here after being detached via Ctrl+B. `detached !== false` keeps
+  // reconcile ghosts whose `detached` field may be undefined.
+  const backgroundOnly = tasks.filter((t) => t.detached !== false);
+  if (filter === 'all') return [...backgroundOnly];
+  return backgroundOnly.filter((t) => !isTerminal(t.status));
 }
 
 function compareTasks(a: BackgroundTaskInfo, b: BackgroundTaskInfo): number {
