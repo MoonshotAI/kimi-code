@@ -588,6 +588,41 @@ describe('Agent context', () => {
     );
   });
 
+  it('does not zero tokenCount when a filtered step reports zero usage', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.appendAssistantTextWithUsage(1, 'previous answer', 1_000);
+    expect(ctx.agent.context.tokenCount).toBe(1_000);
+
+    const stepUuid = 'context-filtered-step';
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'next prompt' }]);
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '0', step: 2 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '0',
+        step: 2,
+        usage: {
+          inputOther: 0,
+          output: 0,
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
+        },
+        finishReason: 'filtered',
+      },
+    });
+
+    expect(ctx.agent.context.tokenCount).toBeGreaterThan(1_000);
+    expect(ctx.agent.context.tokenCountWithPending).toBeGreaterThanOrEqual(
+      ctx.agent.context.tokenCount,
+    );
+  });
+
   it('undo only counts real user prompts, skipping background notifications', () => {
     const ctx = testAgent();
     ctx.configure();

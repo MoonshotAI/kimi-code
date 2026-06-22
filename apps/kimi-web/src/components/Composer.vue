@@ -10,6 +10,7 @@ import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView } from '../types';
 import type { AppModel, AppSkill, ThinkingLevel } from '../api/types';
 import { modelThinkingAvailability } from '../lib/modelThinking';
+import { draftStorageKey, safeGetString, safeRemove, safeSetString } from '../lib/storage';
 
 // ---------------------------------------------------------------------------
 // Attachment state
@@ -104,25 +105,13 @@ const { t } = useI18n();
 // Unsent-draft persistence: the composer text is kept in localStorage PER
 // SESSION, so switching away and back (or a page refresh) restores whatever the
 // user was typing for that session. Cleared when the draft is sent/steered.
-const DRAFT_PREFIX = 'kimi-web.draft.';
-function draftKey(sid: string | undefined): string {
-  return DRAFT_PREFIX + (sid && sid.length > 0 ? sid : '__new__');
-}
 function loadDraft(sid: string | undefined): string {
-  try {
-    return localStorage.getItem(draftKey(sid)) ?? '';
-  } catch {
-    return '';
-  }
+  return safeGetString(draftStorageKey(sid)) ?? '';
 }
 function saveDraft(sid: string | undefined, value: string): void {
-  try {
-    const key = draftKey(sid);
-    if (value) localStorage.setItem(key, value);
-    else localStorage.removeItem(key);
-  } catch {
-    // localStorage unavailable (private mode / quota) — drafts just don't persist.
-  }
+  const key = draftStorageKey(sid);
+  if (value) safeSetString(key, value);
+  else safeRemove(key);
 }
 
 const text = ref(loadDraft(props.sessionId));

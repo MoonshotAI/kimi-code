@@ -292,7 +292,7 @@ export interface McpOAuthAuthorizationUrlUpdateData {
   readonly authorizationUrl: string;
 }
 
-export type TurnEndReason = 'completed' | 'cancelled' | 'failed';
+export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'filtered';
 
 export interface AgentStatusUpdatedEvent {
   readonly type: 'agent.status.updated';
@@ -919,7 +919,7 @@ export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
   authorizationUrl: z.string(),
 }) satisfies z.ZodType<McpOAuthAuthorizationUrlUpdateData>;
 
-export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed']) satisfies z.ZodType<TurnEndReason>;
+export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'filtered']) satisfies z.ZodType<TurnEndReason>;
 
 export const agentStatusUpdatedEventSchema = z.object({
   type: z.literal('agent.status.updated'),

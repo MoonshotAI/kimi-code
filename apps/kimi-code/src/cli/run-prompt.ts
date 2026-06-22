@@ -806,5 +806,8 @@ function hasTurnId(event: Event): event is Event & { readonly turnId: number } {
 
 function formatTurnEndedFailure(event: Extract<Event, { type: 'turn.ended' }>): string {
   if (event.error !== undefined) return `${event.error.code}: ${event.error.message}`;
+  if (event.reason === 'filtered') {
+    return 'Provider safety policy blocked the response.';
+  }
   return `Prompt turn ended with reason: ${event.reason}`;
 }

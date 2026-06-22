@@ -12,6 +12,7 @@ import Composer from './Composer.vue';
 import SwarmCard from './SwarmCard.vue';
 import ChatDock from './ChatDock.vue';
 import { getVisibleWorkspaces } from '../lib/workspacePicker';
+import { safeRemove, STORAGE_KEYS } from '../lib/storage';
 
 const props = defineProps<{
   turns: ChatTurn[];
@@ -172,11 +173,7 @@ const { t } = useI18n();
 // The align toggle was removed with its UI (6e50cb7) — reading layout is
 // always centered now. Drop the old persisted preference so users who once
 // picked 'left' aren't frozen on it with no way back.
-try {
-  localStorage.removeItem('kimi-web.content-align');
-} catch {
-  // localStorage unavailable
-}
+safeRemove(STORAGE_KEYS.contentAlign);
 
 const chatPaneRef = ref<InstanceType<typeof ChatPane> | null>(null);
 const emptyComposerRef = ref<{ loadForEdit: (v: string) => void } | null>(null);
