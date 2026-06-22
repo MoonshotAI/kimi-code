@@ -85,6 +85,16 @@ export type {
 // ─── Dependency injection container ────────────────────────────────────────
 export * from './di';
 
+// ─── Scope mechanism (di-v3) ───────────────────────────────────────────────
+// Exposes `LifecycleScope`, `registerScopedService` /
+// `getScopedServiceDescriptors` / `markBuilt` / `isBuilt`, the `I*Context`
+// identity decorators, `IScopeHandle` / `IServiceAccessor`, the
+// `ScopeBuilder` family, and the manager-pattern base/contracts. The scope
+// barrel is explicit and its names do not collide with the rest of this
+// top-level surface (verified before re-exporting), so a wildcard re-export
+// is safe here.
+export * from './scope';
+
 // ─── Base — Event<T> / Emitter<T> ──────────────────────────────────────────
 // NOTE: only `Emitter` is re-exported from the top-level barrel — the new
 // VSCode-style `Event<T>` symbol collides with `./rpc`'s `Event` (agent-core
