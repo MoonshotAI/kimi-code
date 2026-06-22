@@ -10,6 +10,9 @@ import { safeGetString, safeRemove, safeSetString, STORAGE_KEYS } from '../lib/s
 import { useAppearance } from './client/useAppearance';
 import { useNotification } from './client/useNotification';
 import { useTaskPoller } from './client/useTaskPoller';
+import { useModelProviderState } from './client/useModelProviderState';
+import { useSideChat } from './client/useSideChat';
+import { useWorkspaceState } from './client/useWorkspaceState';
 
 const appearance = useAppearance();
 const notification = useNotification();
@@ -23,25 +26,17 @@ import type {
   AppModel,
   AppProvider,
   AppQuestionRequest,
-  AppSession,
   AppSessionRuntimeStatus,
   AppSkill,
   AppTask,
   AppWarning,
   AppWorkspace,
   ApprovalDecision,
-  ApprovalResponse,
-  FsEntry,
   KimiEventConnection,
-  QuestionResponse,
   ThinkingLevel,
 } from '../api/types';
 import { createInitialState, reduceAppEvent, type CompactionStatus, type KimiClientState } from '../api/daemon/eventReducer';
-import { readSessionIdFromLocation, sessionUrl } from '../lib/sessionRoute';
-import type { SessionUrlMode } from '../lib/sessionRoute';
 import { toAppEvent } from '../api/daemon/mappers';
-import { parseDiff } from '../lib/parseDiff';
-import { coerceThinkingForModel } from '../lib/modelThinking';
 
 import { messagesToTurns } from './messagesToTurns';
 import { latestTodos } from './latestTodos';
@@ -78,10 +73,8 @@ const THINKING_STORAGE_KEY = STORAGE_KEYS.thinking;
 const PLAN_MODE_STORAGE_KEY = STORAGE_KEYS.planMode;
 const SWARM_MODE_STORAGE_KEY = STORAGE_KEYS.swarmMode;
 const GOAL_MODE_STORAGE_KEY = STORAGE_KEYS.goalMode;
-const STARRED_MODELS_STORAGE_KEY = STORAGE_KEYS.starredModels;
 const UNREAD_STORAGE_KEY = STORAGE_KEYS.unread;
 const SESSION_NOT_FOUND_CODE = 40401;
-const PROMPT_NOT_FOUND_CODE = 40402;
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
 
@@ -212,28 +205,6 @@ function saveUnreadToStorage(map: Record<string, boolean>): void {
   }
 }
 
-function loadStarredModelsFromStorage(): string[] {
-  try {
-    const raw = safeGetString(STARRED_MODELS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
-      return parsed as string[];
-    }
-  } catch {
-    // ignore (localStorage not available or malformed)
-  }
-  return [];
-}
-
-function saveStarredModelsToStorage(v: string[]): void {
-  try {
-    safeSetString(STARRED_MODELS_STORAGE_KEY, JSON.stringify(v));
-  } catch {
-    // ignore
-  }
-}
-
 function loadActiveWorkspaceFromStorage(): string | null {
   try {
     return safeGetString(ACTIVE_WORKSPACE_KEY);
@@ -306,7 +277,7 @@ interface GitStatusEntry {
 
 /** An uploaded attachment to send with a prompt. `kind` drives the content-block
     type (image vs video) so a still and a clip resolve to the right wire shape. */
-type PromptAttachment = { fileId: string; kind: 'image' | 'video' };
+export type PromptAttachment = { fileId: string; kind: 'image' | 'video' };
 
 /** A prompt waiting for the session to go idle. Keeps the uploaded
     fileIds so attachments survive queueing (not just the text). */
@@ -404,44 +375,19 @@ const rawState: ExtendedState = reactive({
   messagesLoadMoreErrorBySession: {},
 });
 
-// Models + Providers reactive state (lazy-loaded, cached)
-const models = ref<AppModel[]>([]);
-const starredModelIds = ref<string[]>(loadStarredModelsFromStorage());
-
-// Session-scoped skills (slash-invocable). Loaded lazily per session; the active
-// session's list feeds the composer's `/` menu.
-const skillsBySession = ref<Record<string, AppSkill[]>>({});
-const providers = ref<AppProvider[]>([]);
-
-// Model picked while in the "new session draft" state (onboarding composer —
-// no backend session exists yet, so POST /profile has nothing to target).
-// Applied and cleared when the first prompt creates the session.
-const draftModel = ref<string | null>(null);
-
-function modelById(modelId: string | null | undefined): AppModel | undefined {
-  if (modelId === undefined || modelId === null || modelId.length === 0) return undefined;
-  return models.value.find((m) => m.id === modelId || m.model === modelId);
-}
-
-function activeThinkingModel(): AppModel | undefined {
-  const activeSession = rawState.activeSessionId
-    ? rawState.sessions.find((s) => s.id === rawState.activeSessionId)
-    : undefined;
-  return modelById(activeSession?.model ?? draftModel.value ?? rawState.defaultModel);
-}
-
-function applyThinkingLevel(level: ThinkingLevel): ThinkingLevel {
-  const next = coerceThinkingForModel(activeThinkingModel(), level);
-  rawState.thinking = next;
-  saveThinkingToStorage(next);
-  return next;
-}
+// Models + Providers reactive state and helpers live in
+// ./client/useModelProviderState. It is instantiated below (after the
+// `activity` computed it depends on) as `modelProvider`.
 
 // ~/diff line-by-line view: the file the user tapped + its parsed unified diff.
 // Loaded on demand via loadFileDiff(); cleared when the file list is shown.
 const selectedDiffPath = ref<string | null>(null);
 const fileDiffLines = ref<DiffViewLine[]>([]);
 const fileDiffLoading = ref(false);
+
+// False until the very first load() settles (success OR failure). Gates the
+// global connecting-splash so a page refresh doesn't flash a half-empty app.
+const initialized = ref(false);
 
 /**
  * Fetch GET /sessions/{id}/status and fold the live model + context usage back
@@ -628,7 +574,7 @@ function connectEventsIfNeeded(): void {
         appEvent.type === 'workspaceUpdated' ||
         appEvent.type === 'workspaceDeleted'
       ) {
-        applyWorkspaceEvent(appEvent);
+        workspaceState.applyWorkspaceEvent(appEvent);
         return;
       }
 
@@ -638,20 +584,20 @@ function connectEventsIfNeeded(): void {
       // is kept, only a marker line records the compaction).
       applyEvent(appEvent, meta.sessionId, meta.seq);
 
-      const sideTarget = sideChatTargetBySession.value[meta.sessionId];
+      const sideTarget = sideChat.sideChatTargetBySession.value[meta.sessionId];
       if (sideTarget) {
         const { agentId } = sideTarget;
         const parentId = meta.sessionId;
         if (appEvent.type === 'agentDelta' && appEvent.agentId === agentId) {
           if (appEvent.delta.text) {
-            appendSideChatAssistantText(agentId, parentId, appEvent.delta.text);
+            sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.delta.text);
           }
         } else if (appEvent.type === 'agentTurnEnded' && appEvent.agentId === agentId) {
-          finishSideChatAgent(agentId, parentId);
+          sideChat.finishSideChatAgent(agentId, parentId);
         } else if (appEvent.type === 'taskProgress' && appEvent.taskId === agentId) {
-          appendSideChatAssistantText(agentId, parentId, appEvent.outputChunk);
+          sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.outputChunk);
         } else if (appEvent.type === 'taskCompleted' && appEvent.taskId === agentId) {
-          finishSideChatAgent(agentId, parentId, appEvent.outputPreview);
+          sideChat.finishSideChatAgent(agentId, parentId, appEvent.outputPreview);
         }
       }
 
@@ -694,7 +640,7 @@ function connectEventsIfNeeded(): void {
       if (appEvent.type === 'approvalRequested') {
         const perm = rawState.permission;
         if (perm === 'auto' || perm === 'yolo') {
-          void respondApproval(appEvent.approval.approvalId, {
+          void workspaceState.respondApproval(appEvent.approval.approvalId, {
             decision: 'approved',
             scope: perm === 'yolo' ? 'session' : undefined,
           });
@@ -904,11 +850,11 @@ async function handleSessionNotFound(sessionId: string): Promise<void> {
 
   const next = rawState.sessions[0];
   if (next) {
-    await selectSession(next.id, { urlMode: 'replace' });
+    await workspaceState.selectSession(next.id, { urlMode: 'replace' });
   } else {
     rawState.activeSessionId = undefined;
     rawState.sessionLoading = false;
-    writeSessionUrl(undefined, 'replace');
+    workspaceState.writeSessionUrl(undefined, 'replace');
   }
 }
 
@@ -972,65 +918,6 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
   }
 }
 
-const MESSAGES_PAGE_SIZE = 50;
-
-async function loadOlderMessages(sessionId: string): Promise<void> {
-  if (rawState.messagesLoadingMoreBySession[sessionId]) return;
-  const current = rawState.messagesBySession[sessionId];
-  if (!current || current.length === 0) return;
-
-  const beforeId = current[0]!.id;
-  rawState.messagesLoadingMoreBySession = {
-    ...rawState.messagesLoadingMoreBySession,
-    [sessionId]: true,
-  };
-  rawState.messagesLoadMoreErrorBySession = {
-    ...rawState.messagesLoadMoreErrorBySession,
-    [sessionId]: false,
-  };
-  try {
-    const page = await getKimiWebApi().listMessages(sessionId, {
-      beforeId,
-      pageSize: MESSAGES_PAGE_SIZE,
-    });
-    // Server returns newest-first; the UI keeps messages in chronological order.
-    const older = [...page.items].reverse();
-    // Live events may have appended messages while the request was in flight;
-    // read the latest array so those messages are not overwritten.
-    const latest = rawState.messagesBySession[sessionId] ?? current;
-    rawState.messagesBySession = {
-      ...rawState.messagesBySession,
-      [sessionId]: [...older, ...latest],
-    };
-    rawState.messagesHasMoreBySession = {
-      ...rawState.messagesHasMoreBySession,
-      [sessionId]: page.hasMore,
-    };
-  } catch (err) {
-    rawState.messagesLoadMoreErrorBySession = {
-      ...rawState.messagesLoadMoreErrorBySession,
-      [sessionId]: true,
-    };
-    pushOperationFailure('loadOlderMessages', err, { sessionId });
-  } finally {
-    rawState.messagesLoadingMoreBySession = {
-      ...rawState.messagesLoadingMoreBySession,
-      [sessionId]: false,
-    };
-  }
-}
-
-async function loadSkillsForSession(sessionId: string): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    const list = await api.listSkills(sessionId);
-    skillsBySession.value = { ...skillsBySession.value, [sessionId]: list };
-  } catch {
-    // Skills are side data; an older daemon without /skills just yields no
-    // slash-skills, the built-in commands still work.
-  }
-}
-
 function hasLoadedMessages(sessionId: string): boolean {
   return Object.prototype.hasOwnProperty.call(rawState.messagesBySession, sessionId);
 }
@@ -1041,15 +928,6 @@ function subscribeToSessionEvents(sessionId: string): void {
     const seq = rawState.lastSeqBySession[sessionId] ?? 0;
     const epoch = epochBySession[sessionId];
     eventConn.subscribe(sessionId, { seq, epoch });
-  }
-}
-
-function refreshSessionSidecars(sessionId: string): void {
-  void taskPoller.loadTasksForSession(sessionId);
-  void loadGitStatus(sessionId);
-  void refreshSessionStatus(sessionId);
-  if (!Object.prototype.hasOwnProperty.call(skillsBySession.value, sessionId)) {
-    void loadSkillsForSession(sessionId);
   }
 }
 
@@ -1067,7 +945,7 @@ function isSessionEffectivelyRunning(sessionId: string): boolean {
   const session = rawState.sessions.find((s) => s.id === sessionId);
   if (!session) return false;
   if (session.status !== 'running') return false;
-  const hiddenBtwAgentId = sideChatTargetBySession.value[sessionId]?.agentId;
+  const hiddenBtwAgentId = sideChat.sideChatTargetBySession.value[sessionId]?.agentId;
   const tasks = rawState.tasksBySession[sessionId] ?? [];
   const runningTasks = tasks.filter((t) => t.status === 'running');
   if (runningTasks.length === 0) {
@@ -1372,7 +1250,7 @@ const activeSessionId = computed<string>(() => rawState.activeSessionId ?? '');
 const skills = computed<AppSkill[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
-  return skillsBySession.value[sid] ?? [];
+  return modelProvider.skillsBySession.value[sid] ?? [];
 });
 
 const isSending = computed<boolean>(() => {
@@ -1381,10 +1259,17 @@ const isSending = computed<boolean>(() => {
   return rawState.sendingBySession[sid] ?? false;
 });
 
+const sideChat = useSideChat(rawState, {
+  pushOperationFailure,
+  nextOptimisticMsgId,
+  connectEventsIfNeeded,
+  getEventConn: () => eventConn,
+});
+
 const activeAppTasks = computed<AppTask[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
-  const hiddenBtwAgentId = sideChatTargetBySession.value[sid]?.agentId;
+  const hiddenBtwAgentId = sideChat.sideChatTargetBySession.value[sid]?.agentId;
   return (rawState.tasksBySession[sid] ?? []).filter((task) => task.id !== hiddenBtwAgentId);
 });
 
@@ -1404,206 +1289,6 @@ const turns = computed<ChatTurn[]>(() => {
     activeAppTasks.value,
   );
 });
-
-// ---------------------------------------------------------------------------
-// Side chat ("BTW") — a TUI-style forked agent rendered as a session tab.
-// It is not a child session and never appears in the sidebar. Each session can
-// have its own side chat; state is keyed by session id, while messages are
-// keyed by agent id so they survive session switches.
-// ---------------------------------------------------------------------------
-const sideChatTargetBySession = ref<Record<string, { agentId: string }>>({});
-
-const activeSideChatTarget = computed<{ parentId: string; agentId: string } | null>(() => {
-  const sid = rawState.activeSessionId;
-  if (!sid) return null;
-  const target = sideChatTargetBySession.value[sid];
-  return target ? { parentId: sid, agentId: target.agentId } : null;
-});
-
-const sideChatSessionId = computed<string | null>(
-  () => activeSideChatTarget.value?.parentId ?? null,
-);
-const sideChatVisible = computed<boolean>(() => activeSideChatTarget.value !== null);
-
-const sideChatSending = computed<boolean>(() => {
-  const target = activeSideChatTarget.value;
-  return target ? Boolean(rawState.sideChatSendingByAgent[target.agentId]) : false;
-});
-
-const sideChatRunning = computed<boolean>(() => {
-  const target = activeSideChatTarget.value;
-  if (!target) return false;
-  if (rawState.sideChatSendingByAgent[target.agentId]) return true;
-  return (rawState.tasksBySession[target.parentId] ?? []).some(
-    (task) => task.id === target.agentId && task.status === 'running',
-  );
-});
-
-const sideChatTurns = computed<ChatTurn[]>(() => {
-  const target = activeSideChatTarget.value;
-  if (!target) return [];
-  const messages = rawState.sideChatMessagesByAgent[target.agentId] ?? [];
-  return messagesToTurns(
-    messages,
-    [],
-    (fileId) => getKimiWebApi().getFileUrl(fileId),
-    sideChatRunning.value,
-    [],
-  );
-});
-
-function updateSideChatMessages(agentId: string, update: (messages: AppMessage[]) => AppMessage[]): void {
-  rawState.sideChatMessagesByAgent = {
-    ...rawState.sideChatMessagesByAgent,
-    [agentId]: update(rawState.sideChatMessagesByAgent[agentId] ?? []),
-  };
-}
-
-function appendSideChatMessage(agentId: string, message: AppMessage): void {
-  updateSideChatMessages(agentId, (messages) => [...messages, message]);
-}
-
-function removeLastSideChatUserMessage(agentId: string): void {
-  updateSideChatMessages(agentId, (messages) => {
-    const idx = [...messages].reverse().findIndex((message) => message.role === 'user');
-    if (idx === -1) return messages;
-    const removeIndex = messages.length - 1 - idx;
-    return messages.filter((_, index) => index !== removeIndex);
-  });
-}
-
-function stampLastSideChatUserPrompt(agentId: string, promptId: string): void {
-  updateSideChatMessages(agentId, (messages) => {
-    const next = [...messages];
-    for (let i = next.length - 1; i >= 0; i -= 1) {
-      const message = next[i]!;
-      if (message.role !== 'user') continue;
-      next[i] = { ...message, promptId: message.promptId ?? promptId };
-      return next;
-    }
-    return messages;
-  });
-}
-
-function appendSideChatAssistantText(agentId: string, sessionId: string, chunk: string): void {
-  if (!chunk) return;
-  updateSideChatMessages(agentId, (messages) => {
-    const last = messages.at(-1);
-    if (last?.role === 'assistant') {
-      const first = last.content[0];
-      const text = first?.type === 'text' ? first.text : '';
-      return [
-        ...messages.slice(0, -1),
-        {
-          ...last,
-          content: [{ type: 'text', text: `${text}${chunk}` }],
-        },
-      ];
-    }
-    return [
-      ...messages,
-      {
-        id: nextOptimisticMsgId(),
-        sessionId,
-        role: 'assistant',
-        content: [{ type: 'text', text: chunk }],
-        createdAt: new Date().toISOString(),
-      },
-    ];
-  });
-}
-
-function finishSideChatAgent(agentId: string, sessionId: string, outputPreview?: string): void {
-  rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: false };
-  if (!outputPreview) return;
-  const messages = rawState.sideChatMessagesByAgent[agentId] ?? [];
-  const last = messages.at(-1);
-  const lastText = last?.role === 'assistant' && last.content[0]?.type === 'text'
-    ? last.content[0].text
-    : '';
-  if (lastText.trim().length > 0) return;
-  appendSideChatAssistantText(agentId, sessionId, outputPreview);
-}
-
-/** Open (creating if needed) the side chat for the active session; optionally send a first prompt. */
-async function openSideChat(initialPrompt?: string): Promise<void> {
-  const parent = rawState.activeSessionId;
-  if (!parent) return;
-  // Reuse the existing side chat for this session if it already exists.
-  if (!sideChatTargetBySession.value[parent]) {
-    let agentId: string;
-    try {
-      ({ agentId } = await getKimiWebApi().startBtw(parent));
-    } catch (err) {
-      pushOperationFailure('openSideChat', err, { sessionId: parent });
-      return;
-    }
-    rawState.sideChatMessagesByAgent = {
-      ...rawState.sideChatMessagesByAgent,
-      [agentId]: rawState.sideChatMessagesByAgent[agentId] ?? [],
-    };
-    sideChatTargetBySession.value = {
-      ...sideChatTargetBySession.value,
-      [parent]: { agentId },
-    };
-    connectEventsIfNeeded();
-    eventConn?.markSideChannelAgent(agentId);
-  }
-  if (initialPrompt && initialPrompt.trim()) {
-    await sendSideChatPrompt(initialPrompt.trim());
-  }
-}
-
-function closeSideChat(): void {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  const { [sid]: _removed, ...rest } = sideChatTargetBySession.value;
-  void _removed;
-  sideChatTargetBySession.value = rest;
-}
-
-/** Send a plain prompt to the side-chat child (no plan/swarm/goal modes). */
-async function sendSideChatPrompt(text: string): Promise<void> {
-  const target = activeSideChatTarget.value;
-  const trimmed = text.trim();
-  if (!target || !trimmed) return;
-  const sid = target.parentId;
-  const agentId = target.agentId;
-  rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: true };
-  const userMsg: AppMessage = {
-    id: nextOptimisticMsgId(),
-    sessionId: sid,
-    role: 'user',
-    content: [{ type: 'text', text: trimmed }],
-    createdAt: new Date().toISOString(),
-    metadata: { 'kimiWeb.optimisticUserMessage': true },
-  };
-  appendSideChatMessage(agentId, userMsg);
-  try {
-    const result = await getKimiWebApi().submitPrompt(sid, {
-      content: [{ type: 'text', text: trimmed }],
-      agentId,
-    });
-    stampLastSideChatUserPrompt(agentId, result.promptId);
-    rawState.sideChatUserMessageIdsBySession = {
-      ...rawState.sideChatUserMessageIdsBySession,
-      [sid]: [...(rawState.sideChatUserMessageIdsBySession[sid] ?? []), result.userMessageId],
-    };
-  } catch (err) {
-    pushOperationFailure('sendSideChatPrompt', err, { sessionId: sid });
-    removeLastSideChatUserMessage(agentId);
-    rawState.sideChatSendingByAgent = { ...rawState.sideChatSendingByAgent, [agentId]: false };
-  }
-}
-
-// When a session is deleted, drop its side-chat target so it cannot leak into a
-// later session that happens to reuse the same id.
-function clearSideChatForSession(sessionId: string): void {
-  if (!sideChatTargetBySession.value[sessionId]) return;
-  const { [sessionId]: _removed, ...rest } = sideChatTargetBySession.value;
-  void _removed;
-  sideChatTargetBySession.value = rest;
-}
 
 const tasks = computed<TaskItem[]>(() => {
   // Touch the clock so a running task's elapsed time recomputes each tick.
@@ -1732,6 +1417,15 @@ const activity = computed<ActivityState>(() => {
   return 'idle';
 });
 
+const modelProvider = useModelProviderState(rawState, {
+  pushOperationFailure,
+  refreshSessionStatus,
+  persistSessionProfile,
+  activity,
+  inFlightPromptSessions,
+  saveThinkingToStorage,
+});
+
 /** Git info for the active session from the daemon's fs:git_status response */
 const gitInfo = computed<{ branch: string; ahead: number; behind: number } | null>(() => {
   const sid = rawState.activeSessionId;
@@ -1780,7 +1474,7 @@ const status = computed<ConversationStatus>(() => {
   // agent.status.updated event during a turn; fall back to the daemon default.
   // In the draft state (no active session) the user's draft pick wins, so the
   // composer dropdown reflects the selection before the session exists.
-  const draftPick = activeSession === undefined ? draftModel.value : null;
+  const draftPick = activeSession === undefined ? modelProvider.draftModel.value : null;
   const rawModel =
     (activeSession?.model && activeSession.model.length > 0
       ? activeSession.model
@@ -1788,7 +1482,7 @@ const status = computed<ConversationStatus>(() => {
 
   // Use the friendly displayName from the models list; fall back to stripping
   // the provider prefix (e.g. "moonshot/moonshot-v1-128k" → "moonshot-v1-128k").
-  const matched = models.value.find((m) => m.id === rawModel || m.model === rawModel);
+  const matched = modelProvider.models.value.find((m) => m.id === rawModel || m.model === rawModel);
   const displayModel =
     matched?.displayName ||
     matched?.model ||
@@ -2071,6 +1765,40 @@ const availableOpenInApps = computed<string[]>(() => rawState.availableOpenInApp
 // prompt to it was silently enqueued and never flushed.
 // ---------------------------------------------------------------------------
 
+const workspaceState = useWorkspaceState(rawState, {
+  taskPoller,
+  sideChat,
+  modelProvider,
+  pushOperationFailure,
+  activity,
+  inFlightPromptSessions,
+  sessionsKnownEmpty,
+  nextOptimisticMsgId,
+  getEventConn: () => eventConn,
+  syncSessionFromSnapshot,
+  subscribeToSessionEvents,
+  hasLoadedMessages,
+  refreshSessionStatus,
+  persistSessionProfile,
+  mergedWorkspaces,
+  status,
+  workspaceIdForSession,
+  savePermissionToStorage,
+  savePlanModeToStorage,
+  saveSwarmModeToStorage,
+  saveGoalModeToStorage,
+  saveUnreadToStorage,
+  saveActiveWorkspaceToStorage,
+  saveHiddenWorkspacesToStorage,
+  goalErrorMessage,
+  basename,
+  resetFastMoon: appearance.resetFastMoon,
+  initialized,
+  selectedDiffPath,
+  fileDiffLines,
+  fileDiffLoading,
+});
+
 function onSessionIdle(sid: string): void {
   // The turn finished — this session no longer has a prompt in flight.
   inFlightPromptSessions.delete(sid);
@@ -2087,7 +1815,7 @@ function onSessionIdle(sid: string): void {
   // and runtime status (model/context usage may have changed this turn).
   if (sid === rawState.activeSessionId) {
     appearance.resetFastMoon();
-    void loadGitStatus(sid);
+    void workspaceState.loadGitStatus(sid);
     void refreshSessionStatus(sid);
   } else {
     // A background session just finished a turn the user hasn't seen — light up
@@ -2104,7 +1832,7 @@ function onSessionIdle(sid: string): void {
       document.visibilityState === 'visible',
     sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
     onClick: () => {
-      void selectSession(sid);
+      void workspaceState.selectSession(sid);
     },
   });
 
@@ -2116,7 +1844,7 @@ function onSessionIdle(sid: string): void {
   // Flush the first queued message; on failure put it back at the head so a
   // transient error doesn't silently drop the prompt.
   if (next !== undefined) {
-    void submitPromptInternal(sid, next.text, next.attachments).then((ok) => {
+    void workspaceState.submitPromptInternal(sid, next.text, next.attachments).then((ok) => {
       if (!ok) {
         const current = rawState.queuedBySession[sid] ?? [];
         rawState.queuedBySession = {
@@ -2125,1679 +1853,6 @@ function onSessionIdle(sid: string): void {
         };
       }
     });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Actions
-// ---------------------------------------------------------------------------
-
-/**
- * Load + parse the unified diff for one changed file in the active session,
- * storing the result for the ~/diff line-by-line view. Defensive: on error
- * (or no active session) it leaves the diff empty but still records the path
- * so the panel opens with an empty state instead of silently doing nothing.
- */
-async function loadFileDiff(path: string): Promise<void> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  selectedDiffPath.value = path;
-  fileDiffLines.value = [];
-  fileDiffLoading.value = true;
-  try {
-    const api = getKimiWebApi();
-    const result = await api.getFileDiff(sid, path);
-    // Guard against a stale response when the user tapped another file.
-    if (selectedDiffPath.value !== path) return;
-    fileDiffLines.value = parseDiff(result.diff);
-  } catch (err) {
-    // A single file's diff failing (a new/untracked/binary/deleted file the
-    // daemon can't diff) is LOCAL to this pane, not a session-level fault — the
-    // DiffView already shows a graceful "no diff" state when the lines are
-    // empty. Surfacing it as a global "kimi server api" error toast on a routine
-    // file click is disproportionate, so log it for the trace export instead.
-    if (selectedDiffPath.value === path) fileDiffLines.value = [];
-    console.warn('[loadFileDiff] diff unavailable for', path, err);
-  } finally {
-    if (selectedDiffPath.value === path) fileDiffLoading.value = false;
-  }
-}
-
-/** Close the ~/diff line-by-line view and return to the changed-file list. */
-function clearFileDiff(): void {
-  selectedDiffPath.value = null;
-  fileDiffLines.value = [];
-  fileDiffLoading.value = false;
-}
-
-/** Load git status for a session — defensive, never throws */
-async function loadGitStatus(sessionId: string): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    const result = await api.getGitStatus(sessionId);
-    rawState.gitStatusBySession = {
-      ...rawState.gitStatusBySession,
-      [sessionId]: result,
-    };
-  } catch {
-    // Stale/old sessions may 404 — leave undefined, no crash
-  }
-}
-
-/** Fetch auth readiness from GET /api/v1/auth. Defensive — never throws. */
-async function checkAuth(): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    const result = await api.getAuth();
-    rawState.authReady = result.ready;
-    rawState.defaultModel = result.defaultModel;
-    rawState.managedProviderStatus = result.managedProvider?.status ?? null;
-  } catch {
-    // Daemon may not have this endpoint yet; leave defaults (authReady: false)
-  }
-}
-
-/** Fetch global config from GET /api/v1/config. Defensive — never throws. */
-async function loadConfig(): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    rawState.config = await api.getConfig();
-  } catch {
-    // Daemon may not have this endpoint yet; leave null
-  }
-}
-
-/** Update global config via POST /api/v1/config. */
-async function updateConfig(patch: Partial<AppConfig>): Promise<boolean> {
-  try {
-    const api = getKimiWebApi();
-    const next = await api.setConfig(patch);
-    rawState.config = next;
-    rawState.defaultModel = next.defaultModel ?? null;
-    return true;
-  } catch (err) {
-    pushOperationFailure('setConfig', err);
-    return false;
-  }
-}
-
-// False until the very first load() settles (success OR failure). Gates the
-// global connecting-splash so a page refresh doesn't flash a half-empty app.
-const initialized = ref(false);
-
-// Backend max page size for GET /sessions. Bigger pages mean fewer round-trips
-// when draining the full session list.
-const SESSION_PAGE_SIZE = 100;
-
-/** Drain every page of sessions, newest first. A single global walk (instead of
- *  per-workspace) so sessions whose cwd is not a registered workspace root are
- *  still reachable after a refresh. */
-async function listAllSessionsGlobal(): Promise<AppSession[]> {
-  const api = getKimiWebApi();
-  const items: AppSession[] = [];
-  let beforeId: string | undefined;
-  for (;;) {
-    const page = await api.listSessions({ pageSize: SESSION_PAGE_SIZE, beforeId });
-    items.push(...page.items);
-    if (!page.hasMore || page.items.length === 0) break;
-    beforeId = page.items[page.items.length - 1]!.id;
-  }
-  return items;
-}
-
-async function load(): Promise<void> {
-  rawState.loading = true;
-  try {
-    const api = getKimiWebApi();
-    // Parallel: health + meta + models
-    await Promise.all([
-      api.getHealth().catch(() => null),
-      api.getMeta().then((m) => {
-        rawState.serverVersion = m.serverVersion;
-        rawState.availableOpenInApps = m.openInApps;
-      }).catch(() => null),
-      loadModels(),
-    ]);
-
-    // Check auth readiness and global config (separate calls — defensive)
-    await checkAuth();
-    await loadConfig();
-
-    // Drain every session via a single global walk so sessions whose cwd is not
-    // a registered workspace root are still reachable after a refresh.
-    const sessions = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
-    rawState.sessions = sessions;
-
-    // Load workspaces (real if available, else derived from session cwds).
-    await loadWorkspaces();
-
-    // First load: pick the workspace of the most-recent session, unless the
-    // user already has a persisted active workspace that still exists.
-    const mostRecent = sessions[0];
-    const persisted = rawState.activeWorkspaceId;
-    const persistedStillExists =
-      persisted !== null && mergedWorkspaces.value.some((w) => w.id === persisted);
-    if (!persistedStillExists && mostRecent) {
-      selectWorkspace(workspaceIdForSession(mostRecent));
-    }
-
-    // URL deep link (/sessions/<id>) takes priority over auto-select. The
-    // session may live outside the loaded pages (e.g. archived) — fetch it then.
-    // selectSession syncs the active workspace off the (now present) entry.
-    bindSessionRoute();
-    const urlSessionId =
-      typeof window !== 'undefined' ? readSessionIdFromLocation(window.location) : undefined;
-    if (!rawState.activeSessionId && urlSessionId !== undefined) {
-      const available =
-        rawState.sessions.some((s) => s.id === urlSessionId) ||
-        (await fetchSessionIntoList(urlSessionId));
-      if (available) {
-        await selectSession(urlSessionId, { urlMode: 'replace' });
-      }
-    }
-
-    // Auto-select first session if none selected (also the fallback for a dead
-    // deep link — 'replace' rewrites the URL to the session actually shown).
-    if (!rawState.activeSessionId && sessions.length > 0) {
-      await selectSession(sessions[0]!.id, { urlMode: 'replace' });
-    }
-  } catch (err) {
-    pushOperationFailure('load', err);
-    // Do not re-throw — app stays mounted with empty sessions
-  } finally {
-    rawState.loading = false;
-    initialized.value = true;
-  }
-}
-
-/** Load workspaces from the daemon (falls back to derived in mergedWorkspaces). */
-async function loadWorkspaces(): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    const [list, home] = await Promise.all([
-      api.listWorkspaces().catch(() => [] as AppWorkspace[]),
-      api.getFsHome().catch(() => ({ home: '', recentRoots: [] })),
-    ]);
-    rawState.workspaces = list;
-    rawState.fsHome = home.home || null;
-    rawState.recentRoots = home.recentRoots;
-  } catch {
-    // Defensive — derived workspaces still work off the loaded sessions.
-  }
-}
-
-/** Set the active workspace and persist it. */
-function selectWorkspace(id: string): void {
-  rawState.activeWorkspaceId = id;
-  saveActiveWorkspaceToStorage(id);
-}
-
-/** Open a workspace in the main pane: clear the active session when the
- *  workspace is empty so the centred composer is shown; otherwise activate
- *  the most recent session in that workspace. */
-function openWorkspace(id: string): void {
-  selectWorkspace(id);
-  const sessionsInWs = rawState.sessions.filter((s) => workspaceIdForSession(s) === id);
-  if (sessionsInWs.length > 0) {
-    const mostRecent = sessionsInWs[0];
-    if (mostRecent && mostRecent.id !== rawState.activeSessionId) {
-      // One user action (clicking the workspace) = one history entry.
-      void selectSession(mostRecent.id);
-    }
-  } else {
-    rawState.activeSessionId = undefined;
-    writeSessionUrl(undefined, 'push');
-  }
-}
-
-/** Upsert a workspace: preserve existing order when updating; prepend only
- *  for truly new workspaces. */
-function upsertWorkspacePreserveOrder(workspace: AppWorkspace): void {
-  // Re-adding a path the user previously removed should bring it back.
-  if (rawState.hiddenWorkspaceRoots.includes(workspace.root)) {
-    rawState.hiddenWorkspaceRoots = rawState.hiddenWorkspaceRoots.filter((r) => r !== workspace.root);
-    saveHiddenWorkspacesToStorage(rawState.hiddenWorkspaceRoots);
-  }
-  const index = rawState.workspaces.findIndex(
-    (w) => w.id === workspace.id || w.root === workspace.root,
-  );
-  if (index === -1) {
-    rawState.workspaces = [workspace, ...rawState.workspaces];
-    return;
-  }
-  const next = [...rawState.workspaces];
-  next[index] = workspace;
-  rawState.workspaces = next;
-}
-
-type WorkspaceLifecycleEvent =
-  | { type: 'workspaceCreated'; workspace: AppWorkspace }
-  | { type: 'workspaceUpdated'; workspace: AppWorkspace }
-  | { type: 'workspaceDeleted'; workspaceId: string; root: string };
-
-/** Apply a workspace lifecycle event broadcast by the daemon (multi-client sync).
- *  Workspaces live outside the reducer in rawState, so these events are handled
- *  here instead of in reduceAppEvent. */
-function applyWorkspaceEvent(event: WorkspaceLifecycleEvent): void {
-  if (event.type === 'workspaceCreated' || event.type === 'workspaceUpdated') {
-    upsertWorkspacePreserveOrder(event.workspace);
-    return;
-  }
-  // workspaceDeleted — mirror the local deleteWorkspace so a removal initiated
-  // by another client stays hidden even though its surviving sessions would
-  // otherwise re-derive it in mergedWorkspaces.
-  const root =
-    rawState.workspaces.find((w) => w.id === event.workspaceId)?.root ?? event.root;
-  if (root && !rawState.hiddenWorkspaceRoots.includes(root)) {
-    rawState.hiddenWorkspaceRoots = [...rawState.hiddenWorkspaceRoots, root];
-    saveHiddenWorkspacesToStorage(rawState.hiddenWorkspaceRoots);
-  }
-  rawState.workspaces = rawState.workspaces.filter(
-    (w) => w.id !== event.workspaceId && w.root !== root,
-  );
-  const removingActiveWorkspace =
-    rawState.activeWorkspaceId === event.workspaceId || rawState.activeWorkspaceId === root;
-  if (removingActiveWorkspace) {
-    const nextWorkspace = mergedWorkspaces.value[0]?.id ?? null;
-    rawState.activeWorkspaceId = nextWorkspace;
-    if (nextWorkspace) saveActiveWorkspaceToStorage(nextWorkspace);
-    else {
-      try {
-        safeRemove(ACTIVE_WORKSPACE_KEY);
-      } catch {
-        // ignore
-      }
-    }
-    rawState.activeSessionId = undefined;
-    rawState.sessionLoading = false;
-    clearFileDiff();
-    writeSessionUrl(undefined, 'replace');
-  }
-}
-
-/** Clear the active session without creating a new one. */
-function clearActiveSession(): void {
-  rawState.activeSessionId = undefined;
-  writeSessionUrl(undefined, 'push');
-}
-
-/** Enter the "new session draft" state for a workspace: select it, clear the
- *  active session, and show the onboarding composer. No backend session is
- *  created until the user sends the first message. */
-function openWorkspaceDraft(workspaceId: string): void {
-  selectWorkspace(workspaceId);
-  clearActiveSession();
-  clearFileDiff();
-}
-
-/**
- * Create a session in a workspace — the one-click path (no cwd typing).
- * Register/touch the workspace first when the daemon supports it; if that
- * fails, fall back to the legacy cwd-only create path.
- */
-async function createSessionInWorkspace(workspaceId: string): Promise<AppSession | undefined> {
-  const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
-  if (!ws) return undefined;
-  try {
-    const api = getKimiWebApi();
-    let workspaceIdForCreate: string | undefined;
-    let cwdForCreate = ws.root;
-    try {
-      const registered = await api.addWorkspace({ root: ws.root });
-      workspaceIdForCreate = registered.id;
-      cwdForCreate = registered.root;
-      upsertWorkspacePreserveOrder(registered);
-    } catch {
-      // Older daemons may not have /workspaces. In that mode, sending a local
-      // path-like workspace id as workspace_id would fail validation, so use
-      // metadata.cwd only.
-    }
-    const session = await api.createSession({ workspaceId: workspaceIdForCreate, cwd: cwdForCreate });
-    rawState.sessions = [session, ...rawState.sessions.filter((s) => s.id !== session.id)];
-    selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
-    // Locally created sessions start empty; trust that so the empty-composer
-    // renders immediately instead of flashing a loading state.
-    sessionsKnownEmpty.add(session.id);
-    await selectSession(session.id);
-    return session;
-  } catch (err) {
-    pushOperationFailure('createSessionInWorkspace', err);
-    return undefined;
-  }
-}
-
-/**
- * Create a session and immediately submit the first prompt.
- * This is the unified path when there is no active session (e.g. after
- * clicking "+" or in an empty workspace).
- */
-async function startSessionAndSendPrompt(
-  workspaceId: string,
-  text: string,
-  attachments?: PromptAttachment[],
-): Promise<void> {
-  const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
-  if (!ws) return;
-  try {
-    const api = getKimiWebApi();
-    let workspaceIdForCreate: string | undefined;
-    let cwdForCreate = ws.root;
-    try {
-      const registered = await api.addWorkspace({ root: ws.root });
-      workspaceIdForCreate = registered.id;
-      cwdForCreate = registered.root;
-      upsertWorkspacePreserveOrder(registered);
-    } catch {
-      // Older daemons may not have /workspaces.
-    }
-    const draftPick = draftModel.value ?? undefined;
-    const session = await api.createSession({
-      workspaceId: workspaceIdForCreate,
-      cwd: cwdForCreate,
-      model: draftPick,
-    });
-    draftModel.value = null; // applied — the next draft starts from the default
-    // The create echo may return model as '' (same daemon quirk as /profile);
-    // keep the user's pick so the status line doesn't snap back to the default.
-    const created =
-      draftPick !== undefined && (!session.model || session.model.length === 0)
-        ? { ...session, model: draftPick }
-        : session;
-    rawState.sessions = [created, ...rawState.sessions.filter((s) => s.id !== session.id)];
-    selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
-    // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
-    // session" (createSession), here we immediately send a prompt: keeping
-    // sessionLoading=true through the snapshot avoids flashing the empty-session
-    // composer before the optimistic user message lands. selectSession resolves,
-    // then submitPromptInternal adds the user turn synchronously (no await in
-    // between), so the view goes loading → message with no empty-composer frame.
-    await selectSession(session.id);
-    await submitPromptInternal(session.id, text, attachments);
-  } catch (err) {
-    pushOperationFailure('startSessionAndSendPrompt', err);
-  }
-}
-
-/**
- * Add a workspace by folder path. Tries the daemon registry; on failure (or in
- * fallback mode) creates a locally-derived workspace from the path and
- * remembers it, then selects it.
- */
-async function addWorkspaceByPath(root: string): Promise<void> {
-  const trimmed = root.trim();
-  if (!trimmed) return;
-  const api = getKimiWebApi();
-  try {
-    const ws = await api.addWorkspace({ root: trimmed });
-    upsertWorkspacePreserveOrder(ws);
-    openWorkspaceDraft(ws.id);
-  } catch {
-    // Fallback: remember a derived workspace locally (id = root = path).
-    const existing = rawState.workspaces.find((w) => w.root === trimmed);
-    if (!existing) {
-      rawState.workspaces = [
-        {
-          id: trimmed,
-          root: trimmed,
-          name: basename(trimmed),
-          isGitRepo: false,
-          sessionCount: 0,
-        },
-        ...rawState.workspaces,
-      ];
-    }
-    openWorkspaceDraft(trimmed);
-  }
-}
-
-/**
- * Browse subdirectories under `path` (defaults to the daemon $HOME). Used by the
- * add-workspace folder browser. Defensive: returns an empty path on error so
- * the dialog can fall back to the paste-path field.
- */
-async function browseFs(path?: string): Promise<import('../api/types').FsBrowseResult> {
-  try {
-    const api = getKimiWebApi();
-    return await api.browseFs(path);
-  } catch {
-    return { path: '', parent: null, entries: [] };
-  }
-}
-
-/** Start directory + recently-used roots for the folder browser. */
-async function getFsHome(): Promise<{ home: string; recentRoots: string[] }> {
-  try {
-    const api = getKimiWebApi();
-    return await api.getFsHome();
-  } catch {
-    return { home: '', recentRoots: [] };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// URL ↔ session binding (no router): '/' ↔ /sessions/<id>
-// urlMode semantics: 'push' = user navigation (new history entry); 'replace' =
-// programmatic/auto selection (first load, fallback after delete); 'none' =
-// popstate-driven (the URL is already correct — writing it again would loop).
-// ---------------------------------------------------------------------------
-
-function writeSessionUrl(sessionId: string | undefined, mode: SessionUrlMode): void {
-  if (mode === 'none') return;
-  if (typeof window === 'undefined' || !window.history) return;
-  const target = sessionUrl(sessionId);
-  if (window.location.pathname === target) return;
-  try {
-    if (mode === 'push') window.history.pushState(null, '', target);
-    else window.history.replaceState(null, '', target);
-  } catch {
-    // history API unavailable (e.g. sandboxed iframe) — URL sync is best-effort
-  }
-}
-
-/** Fetch a session that is not in the loaded list (deep link beyond the first
-    page) and append it. Returns false when the daemon doesn't know it. */
-async function fetchSessionIntoList(sessionId: string): Promise<boolean> {
-  try {
-    const session = await getKimiWebApi().getSession(sessionId);
-    if (!rawState.sessions.some((s) => s.id === session.id)) {
-      // Append, not prepend: the list is recency-ordered and a deep-linked old
-      // session shouldn't displace the most-recent ones at the top.
-      rawState.sessions = [...rawState.sessions, session];
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function onSessionRoutePopState(): void {
-  const id = readSessionIdFromLocation(window.location);
-  if (id === undefined) {
-    // Back/forward landed on '/' — no active session.
-    rawState.activeSessionId = undefined;
-    return;
-  }
-  if (id === rawState.activeSessionId) return;
-  if (rawState.sessions.some((s) => s.id === id)) {
-    void selectSession(id, { urlMode: 'none' });
-    return;
-  }
-  // A history entry can point at a session that has since been deleted (or one
-  // outside the loaded page): try to fetch it; on failure fall back to the most
-  // recent session and FIX the URL so the bad entry doesn't stick around.
-  void (async () => {
-    if (await fetchSessionIntoList(id)) {
-      await selectSession(id, { urlMode: 'none' });
-      return;
-    }
-    const next = rawState.sessions[0];
-    if (next) {
-      await selectSession(next.id, { urlMode: 'replace' });
-    } else {
-      rawState.activeSessionId = undefined;
-      writeSessionUrl(undefined, 'replace');
-    }
-  })();
-}
-
-let sessionRouteBound = false;
-function bindSessionRoute(): void {
-  if (sessionRouteBound || typeof window === 'undefined') return;
-  sessionRouteBound = true;
-  window.addEventListener('popstate', onSessionRoutePopState);
-}
-
-async function selectSession(
-  sessionId: string,
-  opts?: { urlMode?: SessionUrlMode },
-): Promise<void> {
-  const messagesLoaded = hasLoadedMessages(sessionId);
-  // Only sessions created locally in this client are trusted to be empty.
-  // The daemon-reported messageCount can be stale for old sessions, so relying
-  // on it causes the empty-composer to flash before the real snapshot arrives.
-  // A locally created session has no history to load: show the empty composer
-  // immediately by skipping the `sessionLoading` flag (no flash), while the
-  // snapshot still loads in the background like any other first open.
-  const knownEmpty = !messagesLoaded && sessionsKnownEmpty.has(sessionId);
-  // Single-use: after this select resolves the session is no longer "known empty".
-  sessionsKnownEmpty.delete(sessionId);
-  try {
-    // Write the URL synchronously (before any await) so rapid clicks lay down
-    // history entries in click order.
-    writeSessionUrl(sessionId, opts?.urlMode ?? 'push');
-    rawState.sessionLoading = !messagesLoaded && !knownEmpty;
-    rawState.activeSessionId = sessionId;
-    appearance.resetFastMoon();
-    // Opening a session clears its unread dot.
-    if (rawState.unreadBySession[sessionId]) {
-      rawState.unreadBySession = { ...rawState.unreadBySession, [sessionId]: false };
-      saveUnreadToStorage(rawState.unreadBySession);
-    }
-    // A diff belongs to the session it was loaded from — drop it on switch.
-    clearFileDiff();
-
-    // NOTE: persisted sessions are directly promptable on the current daemon —
-    // selecting one and sending a message just works, no re-activation needed.
-
-    // Keep the active workspace in sync with the selected session.
-    const selected = rawState.sessions.find((s) => s.id === sessionId);
-    if (selected) {
-      const wid = workspaceIdForSession(selected);
-      if (rawState.activeWorkspaceId !== wid) selectWorkspace(wid);
-    }
-
-    if (!messagesLoaded) {
-      // First open: full snapshot → seed → subscribe(asOfSeq).
-      const result = await syncSessionFromSnapshot(sessionId);
-      if (result === 'not-found') return;
-    } else {
-      // Re-open: resume from the tracked cursor; the daemon replays any
-      // missed durable events (or answers resync_required → snapshot).
-      subscribeToSessionEvents(sessionId);
-    }
-
-    // Refresh sidecars AFTER the snapshot settles so status/usage updates
-    // aren't overwritten by syncSessionFromSnapshot.
-    refreshSessionSidecars(sessionId);
-  } catch (err) {
-    pushOperationFailure('selectSession', err, { sessionId });
-  } finally {
-    if (rawState.activeSessionId === sessionId) {
-      rawState.sessionLoading = false;
-    }
-  }
-}
-
-async function createSession(cwd: string, opts?: { title?: string; model?: string }): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    const session = await api.createSession({ cwd, title: opts?.title, model: opts?.model });
-    rawState.sessions = [session, ...rawState.sessions.filter((s) => s.id !== session.id)];
-    // Locally created sessions start empty; trust that so the empty-composer
-    // renders immediately instead of flashing a loading state.
-    sessionsKnownEmpty.add(session.id);
-    await selectSession(session.id);
-  } catch (err) {
-    pushOperationFailure('createSession', err);
-  }
-}
-
-/** Internal: submit a prompt to a specific session, bypassing the queue check.
-    Returns true when the daemon accepted the prompt. */
-async function submitPromptInternal(sid: string, text: string, attachments?: PromptAttachment[]): Promise<boolean> {
-  // Mark this session as having a prompt in flight BEFORE any await, so a racing
-  // sendPrompt sees it and enqueues. Cleared when activity returns to idle.
-  inFlightPromptSessions.add(sid);
-  rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: true };
-  const tempId = nextOptimisticMsgId();
-  try {
-    const api = getKimiWebApi();
-    const content: import('../api/types').AppMessageContent[] = [];
-    if (text) content.push({ type: 'text', text });
-    for (const att of attachments ?? []) {
-      if (att.kind === 'video') content.push({ type: 'video', source: { kind: 'file', fileId: att.fileId } });
-      else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
-    }
-    if (content.length === 0) {
-      inFlightPromptSessions.delete(sid);
-      rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
-      return false;
-    }
-
-    // OPTIMISTICALLY add the user message to local state BEFORE awaiting the
-    // submit.  The real daemon does NOT emit a user-message event over WS, so
-    // without this the user's own text never appears in the transcript.
-    const optimisticMsg: AppMessage = {
-      id: tempId,
-      sessionId: sid,
-      role: 'user',
-      content,
-      createdAt: new Date().toISOString(),
-      metadata: { 'kimiWeb.optimisticUserMessage': true },
-    };
-    const existingMessages = rawState.messagesBySession[sid] ?? [];
-    rawState.messagesBySession = {
-      ...rawState.messagesBySession,
-      [sid]: [...existingMessages, optimisticMsg],
-    };
-
-    // The daemon now requires `model` + `thinking` on every prompt. Resolve the
-    // model from the session (falls back to the daemon's default_model) and the
-    // thinking level from the user's setting.
-    const promptSession = rawState.sessions.find((s) => s.id === sid);
-    const model =
-      (promptSession?.model && promptSession.model.length > 0
-        ? promptSession.model
-        : rawState.defaultModel) ?? undefined;
-
-    if (rawState.goalMode && text) {
-      try {
-        await api.updateSession(sid, { goalObjective: text.trim() });
-      } catch (err) {
-        pushOperationFailure('createGoal', err, { sessionId: sid });
-        inFlightPromptSessions.delete(sid);
-        rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
-        const msgs = rawState.messagesBySession[sid] ?? [];
-        if (msgs.some((m) => m.id === tempId)) {
-          rawState.messagesBySession = {
-            ...rawState.messagesBySession,
-            [sid]: msgs.filter((m) => m.id !== tempId),
-          };
-        }
-        return false;
-      }
-    }
-
-    const result = await api.submitPrompt(sid, {
-      content,
-      model,
-      thinking: rawState.thinking,
-      permissionMode: rawState.permission,
-      planMode: rawState.planMode,
-      swarmMode: rawState.swarmMode,
-    });
-
-    if (rawState.goalMode) {
-      rawState.goalMode = false;
-      saveGoalModeToStorage(false);
-    }
-
-    // Authoritative prompt_id for :abort — race-free (the projector binding can
-    // lose to a fast turn.started and synthesize a `pr_…` id the daemon rejects).
-    rawState.promptIdBySession = { ...rawState.promptIdBySession, [sid]: result.promptId };
-
-    // Reconcile without changing the id: ChatPane keys user turns by message id,
-    // so replacing msg_opt_* with userMessageId remounts the bubble and flickers.
-    // If a daemon/stub later echoes the user message, the reducer merges it into
-    // this optimistic entry instead of appending a duplicate.
-    const msgs = rawState.messagesBySession[sid] ?? [];
-    const idx = msgs.findIndex((m) => m.id === tempId);
-    if (idx !== -1) {
-      const updated = [...msgs];
-      updated[idx] = { ...updated[idx]!, promptId: updated[idx]!.promptId ?? result.promptId };
-      rawState.messagesBySession = { ...rawState.messagesBySession, [sid]: updated };
-    }
-
-    // Bind the real daemon prompt_id into the event projector so the upcoming
-    // turn.started uses it (instead of synthesizing a random one). This is what
-    // makes Stop work on the real daemon: session.currentPromptId then matches
-    // the prompt_id the REST :abort endpoint expects.
-    eventConn?.bindNextPromptId(sid, result.promptId);
-
-    // NOTE: we no longer set a local auto-title here. The daemon generates a
-    // smarter title from the first prompt and announces it via
-    // session.meta.updated (projected to sessionMetaUpdated). PATCHing a title
-    // locally would mark the session isCustomTitle=true and SUPPRESS the
-    // daemon's auto-title, so we let the daemon own it.
-    return true;
-  } catch (err) {
-    // Submit failed — clear the in-flight flag so the next prompt isn't stuck
-    // queued forever (turn.ended will never arrive), and roll back the
-    // optimistic user message so the transcript doesn't show a delivered-
-    // looking message the daemon never received.
-    inFlightPromptSessions.delete(sid);
-    rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
-    const msgs = rawState.messagesBySession[sid] ?? [];
-    if (msgs.some((m) => m.id === tempId)) {
-      rawState.messagesBySession = {
-        ...rawState.messagesBySession,
-        [sid]: msgs.filter((m) => m.id !== tempId),
-      };
-    }
-    pushOperationFailure('sendPrompt', err, { sessionId: sid });
-    return false;
-  }
-}
-
-async function sendPrompt(text: string, attachments?: PromptAttachment[]): Promise<void> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-
-  // If the session is not idle OR a prompt is already in flight (submitted but
-  // the WS turn.started hasn't flipped activity to 'running' yet), enqueue
-  // instead of submitting directly. Gating on inFlightPromptSessions closes the
-  // window where two rapid prompts would both submit and race.
-  if (activity.value !== 'idle' || inFlightPromptSessions.has(sid)) {
-    enqueue(text, attachments);
-    return;
-  }
-
-  await submitPromptInternal(sid, text, attachments);
-}
-
-/**
- * steerPrompt() — TUI ctrl+s parity: merge any locally queued prompts with the
- * live composer text and inject the result into the RUNNING turn instead of
- * waiting for it to finish. Two-step against the daemon: submit (parks the
- * prompt behind the active one) then POST /prompts:steer. Falls back to a
- * normal send when the session is idle.
- */
-async function steerPrompt(text: string, attachments?: PromptAttachment[]): Promise<void> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-
-  // Merge queued texts (oldest first) + the live text, like the TUI does.
-  const queue = rawState.queuedBySession[sid] ?? [];
-  const parts: string[] = [];
-  const mergedAttachments: PromptAttachment[] = [];
-  for (const q of queue) {
-    const trimmed = q.text.trim();
-    if (trimmed) parts.push(trimmed);
-    if (q.attachments?.length) mergedAttachments.push(...q.attachments);
-  }
-  const live = text.trim();
-  if (live) parts.push(live);
-  if (attachments?.length) mergedAttachments.push(...attachments);
-  if (parts.length === 0 && mergedAttachments.length === 0) return;
-  if (queue.length > 0) {
-    rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: [] };
-  }
-  const merged = parts.join('\n\n');
-
-  // Idle and nothing in flight — there is no turn to steer into; normal send.
-  if (activity.value === 'idle' && !inFlightPromptSessions.has(sid)) {
-    await submitPromptInternal(sid, merged, mergedAttachments);
-    return;
-  }
-
-  // Optimistic transcript echo (the daemon emits no user-message WS event).
-  const content: import('../api/types').AppMessageContent[] = [];
-  if (merged) content.push({ type: 'text', text: merged });
-  for (const att of mergedAttachments) {
-    if (att.kind === 'video') content.push({ type: 'video', source: { kind: 'file', fileId: att.fileId } });
-    else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
-  }
-  const tempId = nextOptimisticMsgId();
-  const optimisticMsg: AppMessage = {
-    id: tempId,
-    sessionId: sid,
-    role: 'user',
-    content,
-    createdAt: new Date().toISOString(),
-    metadata: { 'kimiWeb.optimisticUserMessage': true },
-  };
-  rawState.messagesBySession = {
-    ...rawState.messagesBySession,
-    [sid]: [...(rawState.messagesBySession[sid] ?? []), optimisticMsg],
-  };
-
-  try {
-    const api = getKimiWebApi();
-    const promptSession = rawState.sessions.find((s) => s.id === sid);
-    const model =
-      (promptSession?.model && promptSession.model.length > 0
-        ? promptSession.model
-        : rawState.defaultModel) ?? undefined;
-    const result = await api.submitPrompt(sid, {
-      content,
-      model,
-      thinking: rawState.thinking,
-      permissionMode: rawState.permission,
-      planMode: rawState.planMode,
-      swarmMode: rawState.swarmMode,
-    });
-
-    // Stamp the real prompt_id onto the optimistic echo. Unlike a normal send,
-    // a steered prompt IS echoed back by the daemon as a messageCreated user
-    // event; matching that echo by prompt_id (instead of content) is what keeps
-    // an image steer from rendering two user bubbles.
-    const echoMsgs = rawState.messagesBySession[sid] ?? [];
-    const echoIdx = echoMsgs.findIndex((m) => m.id === tempId);
-    if (echoIdx !== -1) {
-      const updated = [...echoMsgs];
-      updated[echoIdx] = { ...updated[echoIdx]!, promptId: updated[echoIdx]!.promptId ?? result.promptId };
-      rawState.messagesBySession = { ...rawState.messagesBySession, [sid]: updated };
-    }
-
-    if (result.status !== 'queued') {
-      // The turn ended while the user was typing — the prompt started a turn
-      // of its own. Wire it up like a regular send so :abort keeps working.
-      rawState.promptIdBySession = { ...rawState.promptIdBySession, [sid]: result.promptId };
-      eventConn?.bindNextPromptId(sid, result.promptId);
-      return;
-    }
-
-    try {
-      await api.steerPrompts(sid, [result.promptId]);
-    } catch {
-      // The active turn finished between submit and steer — the daemon starts
-      // the parked prompt as its own turn. Nothing to roll back.
-    }
-  } catch (err) {
-    // Submit failed: drop the optimistic echo so the transcript doesn't show
-    // a delivered-looking message the daemon never received.
-    const msgs = rawState.messagesBySession[sid] ?? [];
-    rawState.messagesBySession = {
-      ...rawState.messagesBySession,
-      [sid]: msgs.filter((m) => m.id !== tempId),
-    };
-    pushOperationFailure('steer', err, { sessionId: sid });
-  }
-}
-
-/**
- * Upload an image file to the daemon's /api/v1/files endpoint.
- * Returns { fileId, name, mediaType } on success, or null on error (warning added to state).
- */
-async function uploadImage(file: Blob, name?: string): Promise<{ fileId: string; name: string; mediaType: string } | null> {
-  try {
-    const api = getKimiWebApi();
-    const result = await api.uploadFile({ file, name });
-    return { fileId: result.id, name: result.name, mediaType: result.mediaType };
-  } catch (err) {
-    pushOperationFailure('uploadImage', err);
-    return null;
-  }
-}
-
-/** Enqueue a message for the active session; flushed when activity returns to idle */
-function enqueue(text: string, attachments?: PromptAttachment[]): void {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  const current = rawState.queuedBySession[sid] ?? [];
-  rawState.queuedBySession = {
-    ...rawState.queuedBySession,
-    [sid]: [...current, { text, attachments }],
-  };
-}
-
-async function abortCurrentPrompt(): Promise<void> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  const session = rawState.sessions.find((s) => s.id === sid);
-
-  // 1. Authoritative id captured at submit time.
-  let promptId = rawState.promptIdBySession[sid];
-
-  // 2. Fallback to projector-derived id only when it is a real daemon prompt_id
-  //    (synthetic `pr_...` ids are rejected by the daemon).
-  if (promptId === undefined) {
-    const candidate = session?.currentPromptId;
-    if (candidate?.startsWith('prompt_')) {
-      promptId = candidate;
-    }
-  }
-
-  const api = getKimiWebApi();
-
-  // 3. If we have a real id, try the per-prompt abort first. On 40402 fall back
-  //    to session-level abort (the daemon may have restarted or the id is stale).
-  if (promptId !== undefined) {
-    try {
-      await api.abortPrompt(sid, promptId);
-      return;
-    } catch (err) {
-      if (isDaemonApiError(err) && err.code === PROMPT_NOT_FOUND_CODE) {
-        // Stale id — try the session-level fallback below.
-      } else {
-        pushOperationFailure('abortCurrentPrompt', err, { sessionId: sid });
-        return;
-      }
-    }
-  }
-
-  // 4. No real id, or the prompt id is no longer recognized: cancel whatever
-  //    is running in the session (including skill activations).
-  try {
-    await api.abortSession(sid);
-  } catch (err) {
-    pushOperationFailure('abortCurrentPrompt', err, { sessionId: sid });
-  }
-}
-
-async function respondApproval(
-  approvalId: string,
-  response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string },
-): Promise<void> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  try {
-    const api = getKimiWebApi();
-    const fullResponse: ApprovalResponse = {
-      decision: response.decision,
-      scope: response.scope,
-      feedback: response.feedback,
-    };
-    await api.respondApproval(sid, approvalId, fullResponse);
-    // Remove from local approvals immediately (WS event will confirm)
-    const list = rawState.approvalsBySession[sid] ?? [];
-    rawState.approvalsBySession = {
-      ...rawState.approvalsBySession,
-      [sid]: list.filter((a) => a.approvalId !== approvalId),
-    };
-  } catch (err) {
-    pushOperationFailure('respondApproval', err, { sessionId: sid });
-  }
-}
-
-async function respondQuestion(
-  questionId: string,
-  response: QuestionResponse,
-): Promise<void> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  try {
-    const api = getKimiWebApi();
-    await api.respondQuestion(sid, questionId, response);
-    const list = rawState.questionsBySession[sid] ?? [];
-    rawState.questionsBySession = {
-      ...rawState.questionsBySession,
-      [sid]: list.filter((q) => q.questionId !== questionId),
-    };
-  } catch (err) {
-    pushOperationFailure('respondQuestion', err, { sessionId: sid });
-  }
-}
-
-async function dismissQuestion(questionId: string): Promise<void> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  try {
-    const api = getKimiWebApi();
-    await api.dismissQuestion(sid, questionId);
-    const list = rawState.questionsBySession[sid] ?? [];
-    rawState.questionsBySession = {
-      ...rawState.questionsBySession,
-      [sid]: list.filter((q) => q.questionId !== questionId),
-    };
-  } catch (err) {
-    pushOperationFailure('dismissQuestion', err, { sessionId: sid });
-  }
-}
-
-async function cancelTask(taskId: string): Promise<void> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  try {
-    const api = getKimiWebApi();
-    await api.cancelTask(sid, taskId);
-    // Update task status locally
-    const list = rawState.tasksBySession[sid] ?? [];
-    rawState.tasksBySession = {
-      ...rawState.tasksBySession,
-      [sid]: list.map((t) =>
-        t.id === taskId ? { ...t, status: 'cancelled' as const } : t,
-      ),
-    };
-  } catch (err) {
-    pushOperationFailure('cancelTask', err, { sessionId: sid });
-  }
-}
-
-/** Persist and apply a new extended-thinking level (also pushed to the active
- *  session profile so the daemon's /status reflects it; still sent per-prompt). */
-function setThinking(level: ThinkingLevel): void {
-  const next = applyThinkingLevel(level);
-  persistSessionProfile({ thinking: next });
-}
-
-/** Persist and apply plan mode (pushed to the session profile + sent per-prompt). */
-function setPlanMode(on: boolean): void {
-  rawState.planMode = on;
-  savePlanModeToStorage(on);
-  persistSessionProfile({ planMode: on });
-}
-
-/** Flip plan mode on/off. */
-function togglePlanMode(): void {
-  setPlanMode(!rawState.planMode);
-}
-
-/** Persist and apply swarm mode (pushed to the session profile + sent per-prompt). */
-function setSwarmMode(on: boolean): void {
-  rawState.swarmMode = on;
-  saveSwarmModeToStorage(on);
-  persistSessionProfile({ swarmMode: on });
-}
-
-/** Flip swarm mode on/off. In manual permission mode, ask before enabling. */
-function toggleSwarmMode(): void {
-  const on = !rawState.swarmMode;
-  if (on && rawState.permission === 'manual') {
-    const ok = confirm('Enable swarm mode? The agent will run multiple sub agents in parallel.');
-    if (!ok) return;
-  }
-  setSwarmMode(on);
-}
-
-/** Persist goal mode locally. Unlike plan/swarm, this is a one-shot flag consumed on send. */
-function setGoalMode(on: boolean): void {
-  rawState.goalMode = on;
-  saveGoalModeToStorage(on);
-}
-
-/** Flip goal mode on/off. */
-function toggleGoalMode(): void {
-  setGoalMode(!rawState.goalMode);
-}
-
-/** Create a goal by sending its objective to the session profile, then submit it as a prompt. */
-async function createGoal(objective: string): Promise<void> {
-  const trimmed = objective.trim();
-  if (!trimmed) return;
-  if (rawState.permission === 'manual') {
-    const ok = confirm(`Start goal: "${trimmed}"? The agent will run autonomously toward this objective.`);
-    if (!ok) return;
-  }
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  try {
-    await getKimiWebApi().updateSession(sid, { goalObjective: trimmed });
-  } catch (err) {
-    pushOperationFailure('createGoal', err, { sessionId: sid, message: goalErrorMessage(err) });
-    return;
-  }
-  await sendPrompt(trimmed);
-}
-
-/** Send a one-shot goal control action (pause/resume/cancel). */
-function controlGoal(action: 'pause' | 'resume' | 'cancel'): void {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  void Promise.resolve(getKimiWebApi().updateSession(sid, { goalControl: action }))
-    .catch((err) => {
-      pushOperationFailure('controlGoal', err, { sessionId: sid, message: goalErrorMessage(err) });
-    });
-}
-
-/** Persist and apply a new permission mode; auto-approve pending approvals if switching to auto/yolo */
-function setPermission(mode: PermissionMode): void {
-  rawState.permission = mode;
-  savePermissionToStorage(mode);
-  persistSessionProfile({ permissionMode: mode });
-
-  // If switching to auto/yolo, auto-approve any currently-pending approvals for the active session
-  if (mode === 'auto' || mode === 'yolo') {
-    const sid = rawState.activeSessionId;
-    if (sid) {
-      const approvals = [...(rawState.approvalsBySession[sid] ?? [])];
-      for (const a of approvals) {
-        void respondApproval(a.approvalId, {
-          decision: 'approved',
-          scope: mode === 'yolo' ? 'session' : undefined,
-        });
-      }
-    }
-  }
-}
-
-/** Dismiss a warning by index */
-function dismissWarning(index: number): void {
-  const list = [...rawState.warnings];
-  list.splice(index, 1);
-  rawState.warnings = list;
-}
-
-/** Rename a session — calls API and updates local state */
-async function renameSession(id: string, title: string): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    await api.updateSession(id, { title });
-    rawState.sessions = rawState.sessions.map((s) =>
-      s.id === id ? { ...s, title } : s,
-    );
-  } catch (err) {
-    pushOperationFailure('renameSession', err, { sessionId: id });
-  }
-}
-
-/** Rename a workspace — local-only until the daemon ships a workspace update API. */
-function renameWorkspace(id: string, name: string): void {
-  rawState.workspaces = rawState.workspaces.map((w) =>
-    w.id === id ? { ...w, name } : w,
-  );
-}
-
-/** Delete a workspace — calls API, removes locally */
-async function deleteWorkspace(id: string): Promise<void> {
-  // "Remove workspace" only hides the sidebar entry — it never deletes sessions
-  // or history. The daemon DELETE is registry-only and mergedWorkspaces would
-  // otherwise re-derive the workspace from any session cwd still pointing at it,
-  // so it would pop right back. To make remove actually stick (even when the
-  // workspace has sessions), record its ROOT in the persisted hidden set; the
-  // merge then skips it. Re-adding the same path un-hides it (see addWorkspace).
-  const root =
-    rawState.workspaces.find((w) => w.id === id)?.root ??
-    mergedWorkspaces.value.find((w) => w.id === id)?.root ??
-    id; // derived workspaces use the cwd as their id
-  const activeSession = rawState.activeSessionId
-    ? rawState.sessions.find((s) => s.id === rawState.activeSessionId)
-    : undefined;
-  const removingActiveWorkspace = rawState.activeWorkspaceId === id || rawState.activeWorkspaceId === root;
-  const activeSessionInRemovedWorkspace = Boolean(
-    activeSession &&
-      (activeSession.cwd === root ||
-        activeSession.workspaceId === id ||
-        workspaceIdForSession(activeSession) === id),
-  );
-  if (root && !rawState.hiddenWorkspaceRoots.includes(root)) {
-    rawState.hiddenWorkspaceRoots = [...rawState.hiddenWorkspaceRoots, root];
-    saveHiddenWorkspacesToStorage(rawState.hiddenWorkspaceRoots);
-  }
-  // Best-effort registry cleanup; ignore failures (the hide already took effect).
-  try {
-    await getKimiWebApi().deleteWorkspace(id);
-  } catch {
-    // registry delete is optional — the sidebar hide is what the user sees.
-  }
-  rawState.workspaces = rawState.workspaces.filter((w) => w.id !== id && w.root !== root);
-  if (removingActiveWorkspace || activeSessionInRemovedWorkspace) {
-    const nextWorkspace = mergedWorkspaces.value[0]?.id ?? null;
-    rawState.activeWorkspaceId = nextWorkspace;
-    if (nextWorkspace) saveActiveWorkspaceToStorage(nextWorkspace);
-    else {
-      try { safeRemove(ACTIVE_WORKSPACE_KEY); } catch { /* ignore */ }
-    }
-  }
-  if (removingActiveWorkspace || activeSessionInRemovedWorkspace) {
-    rawState.activeSessionId = undefined;
-    rawState.sessionLoading = false;
-    clearFileDiff();
-    writeSessionUrl(undefined, 'replace');
-  }
-}
-
-/** Archive a session — calls API, persists the archive flag, removes locally, picks another active session or none */
-async function archiveSession(id: string): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    await api.archiveSession(id);
-    rawState.sessions = rawState.sessions.filter((s) => s.id !== id);
-    clearSideChatForSession(id);
-    const { [id]: _removedIds, ...restIds } = rawState.sideChatUserMessageIdsBySession;
-    void _removedIds;
-    rawState.sideChatUserMessageIdsBySession = restIds;
-
-    // If archived session was active, pick another. 'replace' so the address
-    // bar doesn't keep pointing at (and back doesn't return to) a dead session.
-    if (rawState.activeSessionId === id) {
-      const next = rawState.sessions[0];
-      if (next) {
-        await selectSession(next.id, { urlMode: 'replace' });
-      } else {
-        rawState.activeSessionId = undefined;
-        writeSessionUrl(undefined, 'replace');
-      }
-    }
-  } catch (err) {
-    pushOperationFailure('archiveSession', err, { sessionId: id });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Model + Provider actions
-// ---------------------------------------------------------------------------
-
-/** Load models (cached — call again to force refresh) */
-async function loadModels(): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    models.value = await api.listModels();
-    applyThinkingLevel(rawState.thinking);
-  } catch (err) {
-    pushOperationFailure('loadModels', err);
-  }
-}
-
-async function refreshOAuthProviderModels(): Promise<void> {
-  try {
-    const result = await getKimiWebApi().refreshOAuthProviderModels();
-    for (const failure of result.failed) {
-      pushOperationFailure('refreshOAuthProviderModels', new Error(failure.reason), {
-        message: failure.provider,
-      });
-    }
-  } catch {
-    // Older daemons may not expose this endpoint; model listing still works.
-  }
-}
-
-/** Load providers */
-async function loadProviders(): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    providers.value = await api.listProviders();
-  } catch (err) {
-    pushOperationFailure('loadProviders', err);
-  }
-}
-
-/**
- * Switch model for the active session via POST /sessions/{id}/profile (the
- * daemon dispatches agent_config.model to core.rpc.setModel). The profile echo
- * can return model '', so the authoritative current model comes from
- * GET /sessions/{id}/status, which we re-read right after. Optimistically show
- * the chosen id meanwhile. Never crashes.
- */
-async function setModel(modelId: string): Promise<void> {
-  const sid = rawState.activeSessionId;
-  const nextThinking = coerceThinkingForModel(modelById(modelId), rawState.thinking);
-  const prevThinking = rawState.thinking;
-  if (!sid) {
-    // New-session draft (onboarding composer): no backend session to update.
-    // Remember the pick — startSessionAndSendPrompt applies it at create time.
-    draftModel.value = modelId;
-    applyThinkingLevel(nextThinking);
-    return;
-  }
-  // Optimistic: show the chosen model immediately, but remember the previous
-  // one so we can roll back if the switch never reaches the daemon.
-  const prevModel = rawState.sessions.find((s) => s.id === sid)?.model;
-  rawState.sessions = rawState.sessions.map((s) => (s.id === sid ? { ...s, model: modelId } : s));
-  if (nextThinking !== prevThinking) {
-    rawState.thinking = nextThinking;
-    saveThinkingToStorage(nextThinking);
-  }
-  try {
-    await getKimiWebApi().updateSession(sid, {
-      model: modelId,
-      thinking: nextThinking !== prevThinking ? nextThinking : undefined,
-    });
-  } catch (err) {
-    // The model change rides HTTP, not the WS, so a dropped socket alone does
-    // not fail it — but when the daemon is unreachable the request throws here.
-    // Roll the picker back to the real model so the UI can't keep showing the
-    // new one as if the switch succeeded, then surface the failure.
-    rawState.sessions = rawState.sessions.map((s) =>
-      s.id === sid ? { ...s, model: prevModel ?? s.model } : s,
-    );
-    if (nextThinking !== prevThinking) {
-      rawState.thinking = prevThinking;
-      saveThinkingToStorage(prevThinking);
-    }
-    pushOperationFailure('setModel', err, { sessionId: sid });
-    return;
-  }
-  // refreshSessionStatus folds the authoritative current model from /status
-  // back into the session (the profile echo can return ''). Best-effort: a
-  // failure here does not mean the switch failed, so it must not roll back.
-  await refreshSessionStatus(sid);
-}
-
-/** Toggle whether a model is starred (favorited) in the model picker. */
-function toggleStarModel(modelId: string): void {
-  const set = new Set(starredModelIds.value);
-  if (set.has(modelId)) {
-    set.delete(modelId);
-  } else {
-    set.add(modelId);
-  }
-  starredModelIds.value = Array.from(set);
-  saveStarredModelsToStorage(starredModelIds.value);
-}
-
-/**
- * Activate a session skill (the web analogue of typing `/<skill> <args>` in the
- * TUI). The daemon starts a turn with a `skill_activation` origin; progress
- * arrives over the WS stream like any other turn. Never crashes the caller.
- */
-async function activateSkill(skillName: string, args?: string): Promise<void> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  const guarded = activity.value === 'idle' && !inFlightPromptSessions.has(sid);
-  const tempId = `msg_skill_opt_${Date.now().toString(36)}`;
-
-  if (guarded) {
-    inFlightPromptSessions.add(sid);
-    rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: true };
-    const optimisticMsg: AppMessage = {
-      id: tempId,
-      sessionId: sid,
-      role: 'user',
-      content: [{ type: 'text', text: `/${skillName}${args ? ` ${args}` : ''}` }],
-      createdAt: new Date().toISOString(),
-      metadata: {
-        'kimiWeb.optimisticUserMessage': true,
-        origin: {
-          kind: 'skill_activation',
-          trigger: 'user-slash',
-          skillName,
-          skillArgs: args,
-        },
-      },
-    };
-    rawState.messagesBySession = {
-      ...rawState.messagesBySession,
-      [sid]: [...(rawState.messagesBySession[sid] ?? []), optimisticMsg],
-    };
-  }
-
-  try {
-    await getKimiWebApi().activateSkill(sid, skillName, args);
-  } catch (err) {
-    if (guarded) {
-      inFlightPromptSessions.delete(sid);
-      rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
-      const msgs = rawState.messagesBySession[sid] ?? [];
-      rawState.messagesBySession = {
-        ...rawState.messagesBySession,
-        [sid]: msgs.filter((m) => m.id !== tempId),
-      };
-    }
-    pushOperationFailure('activateSkill', err, { sessionId: sid });
-  }
-}
-
-/** Add a provider, then reload providers + models */
-async function addProvider(input: {
-  type: string;
-  apiKey?: string;
-  baseUrl?: string;
-  defaultModel?: string;
-}): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    await api.addProvider(input);
-    await Promise.all([loadProviders(), loadModels()]);
-  } catch (err) {
-    pushOperationFailure('addProvider', err);
-  }
-}
-
-/** Delete a provider, then reload providers + models */
-async function deleteProvider(id: string): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    await api.deleteProvider(id);
-    await Promise.all([loadProviders(), loadModels()]);
-  } catch (err) {
-    pushOperationFailure('deleteProvider', err);
-  }
-}
-
-/** Refresh a provider status */
-async function refreshProvider(id: string): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    const updated = await api.refreshProvider(id);
-    providers.value = providers.value.map((p) => (p.id === id ? updated : p));
-  } catch (err) {
-    pushOperationFailure('refreshProvider', err);
-  }
-}
-
-/** Start managed Kimi OAuth device flow. Returns flow data or null on error. */
-async function startOAuthLogin(): Promise<{
-  flowId: string;
-  provider: string;
-  verificationUri: string;
-  verificationUriComplete: string;
-  userCode: string;
-  expiresIn: number;
-  interval: number;
-  status: 'pending';
-  expiresAt: string;
-} | null> {
-  try {
-    const api = getKimiWebApi();
-    return await api.startOAuthLogin();
-  } catch {
-    return null;
-  }
-}
-
-/** Poll the singleton OAuth flow. Returns null on error or no active flow. */
-async function pollOAuthLogin(): Promise<{
-  flowId: string;
-  status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
-  resolvedAt?: string;
-} | null> {
-  try {
-    const api = getKimiWebApi();
-    return await api.pollOAuthLogin();
-  } catch {
-    return null;
-  }
-}
-
-/** Cancel the current OAuth flow (best-effort). */
-async function cancelOAuthLogin(): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    await api.cancelOAuthLogin();
-  } catch {
-    // Best-effort
-  }
-}
-
-/** Logout from the managed Kimi provider. Re-checks auth and reloads sessions. */
-async function logout(): Promise<void> {
-  try {
-    const api = getKimiWebApi();
-    await api.logout();
-    await checkAuth();
-    await load();
-  } catch (err) {
-    pushOperationFailure('logout', err);
-  }
-}
-
-/**
- * compact() — request history compaction via POST /sessions/{id}:compact.
- * Progress arrives asynchronously through the WS compaction.* events (running
- * notice → divider marker), so we just fire the request. An optional
- * instruction (from `/compact <text>`) steers what the summary focuses on.
- */
-function compact(instruction?: string): void {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  void getKimiWebApi()
-    .compactSession(sid, instruction)
-    .catch((err) => {
-      pushOperationFailure('compact', err, { sessionId: sid });
-    });
-}
-
-/**
- * forkSession() — fork the active session into a new child session via
- * POST /sessions/{id}:fork, then add it to the list and select it.
- */
-async function forkSession(sessionId?: string): Promise<void> {
-  const sid = sessionId ?? rawState.activeSessionId;
-  if (!sid) return;
-  try {
-    const forked = await getKimiWebApi().forkSession(sid);
-    rawState.sessions = [forked, ...rawState.sessions.filter((s) => s.id !== forked.id)];
-    await selectSession(forked.id);
-  } catch (err) {
-    pushOperationFailure('fork', err, { sessionId: sid });
-  }
-}
-
-/**
- * Undo the last `count` turns of the active session (daemon :undo), then re-sync
- * the snapshot so the local transcript matches the daemon's post-undo history.
- * Returns the text of the most-recent user message that was undone, so the UI
- * can offer "edit + resend" (load it back into the composer).
- */
-async function undo(count = 1): Promise<string | null> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return null;
-  // Capture the last user message text BEFORE the undo removes it.
-  const lastUserText = (() => {
-    const msgs = rawState.messagesBySession[sid] ?? [];
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i]!;
-      if (m.role !== 'user') continue;
-      if (m.metadata?.['origin'] && (m.metadata['origin'] as { kind?: string }).kind !== 'user') continue;
-      return m.content
-        .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-        .map((c) => c.text)
-        .join('\n');
-    }
-    return null;
-  })();
-  try {
-    await getKimiWebApi().undoSession(sid, count);
-    await syncSessionFromSnapshot(sid);
-    return lastUserText;
-  } catch (err) {
-    pushOperationFailure('undo', err, { sessionId: sid });
-    return null;
-  }
-}
-
-/**
- * Remove a queued message for the active session by index.
- * Defensive: no-op if index out of range or no active session.
- */
-function unqueue(index: number): void {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  const current = rawState.queuedBySession[sid] ?? [];
-  if (index < 0 || index >= current.length) return;
-  const next = [...current];
-  next.splice(index, 1);
-  rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: next };
-}
-
-/**
- * List directory contents for the active session.
- * Returns FsEntry[] — defensive, returns [] on error or no active session.
- */
-async function listDir(path: string): Promise<FsEntry[]> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return [];
-  try {
-    const api = getKimiWebApi();
-    const result = await api.listDirectory(sid, { path, includeGitStatus: true });
-    return result.items;
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Read file content for the active session.
- * Returns the file metadata + content (including path), or null on error or no active session.
- */
-async function readFileContent(path: string): Promise<{
-  path: string;
-  content: string;
-  encoding: 'utf-8' | 'base64';
-  mime: string;
-  languageId?: string;
-  isBinary: boolean;
-  size: number;
-  lineCount?: number;
-} | null> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return null;
-  try {
-    const api = getKimiWebApi();
-    const result = await api.readFile(sid, { path });
-    return {
-      path: result.path,
-      content: result.content,
-      encoding: result.encoding,
-      mime: result.mime,
-      languageId: result.languageId,
-      isBinary: result.isBinary,
-      size: result.size,
-      lineCount: result.lineCount,
-    };
-  } catch {
-    return null;
-  }
-}
-
-// Matches the daemon's FS_READ_MAX_BYTES. Without an explicit length the
-// protocol defaults to 1MiB and silently truncates — half a PNG decodes as a
-// broken image, which is worse than falling back to the original src.
-const IMAGE_READ_MAX_BYTES = 10_485_760;
-
-function getFileDownloadUrl(path: string): string | null {
-  const sid = rawState.activeSessionId;
-  if (!sid) return null;
-  return getKimiWebApi().getFileDownloadUrl(sid, path);
-}
-
-async function openWorkspaceFile(path: string, line?: number): Promise<boolean> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return false;
-  try {
-    await getKimiWebApi().openFile(sid, { path, line });
-    return true;
-  } catch (err) {
-    pushOperationFailure('openFile', err, { sessionId: sid });
-    return false;
-  }
-}
-
-/** Open the current workspace in an external application (Finder, Cursor, etc.). */
-async function openInApp(appId: string): Promise<void> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
-  const path = status.value.cwd || '.';
-  try {
-    await getKimiWebApi().openInApp(sid, appId, path);
-  } catch (err) {
-    pushOperationFailure('openInApp', err, { sessionId: sid });
-  }
-}
-
-async function revealWorkspaceFile(path: string): Promise<boolean> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return false;
-  try {
-    await getKimiWebApi().revealFile(sid, { path });
-    return true;
-  } catch (err) {
-    pushOperationFailure('revealFile', err, { sessionId: sid });
-    return false;
-  }
-}
-
-/**
- * Resolve a local image path to a displayable data URL.
- * Non-local URLs (http/https/data) pass through unchanged.
- * Local paths are read via the daemon's readFile endpoint and returned as
- * data:{mime};base64,{content} URLs so they render in the browser. Absolute
- * paths are made cwd-relative first (the daemon rejects absolute paths), and
- * truncated/non-binary reads fall back to the original src.
- */
-async function resolveImageUrl(src: string): Promise<string> {
-  // Pass through already-addressable URLs
-  if (/^(https?:|data:|blob:)/i.test(src)) return src;
-  const sid = rawState.activeSessionId;
-  if (!sid) return src;
-
-  // The daemon's path resolution only accepts session-relative paths, but the
-  // model usually references images by absolute path. Strip the session cwd.
-  let path = src;
-  if (path.startsWith('/')) {
-    const cwd = rawState.sessions.find((s) => s.id === sid)?.cwd;
-    if (cwd && (path === cwd || path.startsWith(cwd.endsWith('/') ? cwd : `${cwd}/`))) {
-      path = path.slice(cwd.length).replace(/^\//, '');
-      if (!path) return src;
-    } else {
-      return src; // absolute path outside the workspace — unreadable
-    }
-  }
-
-  try {
-    const api = getKimiWebApi();
-    const result = await api.readFile(sid, { path, length: IMAGE_READ_MAX_BYTES });
-    if (!result.isBinary || result.encoding !== 'base64' || result.truncated) return src;
-    return `data:${result.mime};base64,${result.content}`;
-  } catch {
-    return src;
-  }
-}
-
-/**
- * Search files in the active session using the daemon searchFiles endpoint.
- * Returns {path, name}[] — defensive, returns [] on error or no active session.
- */
-async function searchFiles(query: string): Promise<Array<{ path: string; name: string }>> {
-  const sid = rawState.activeSessionId;
-  if (!sid) return [];
-  try {
-    const api = getKimiWebApi();
-    const result = await api.searchFiles(sid, { query, limit: 20 });
-    return result.items.map((item) => ({ path: item.path, name: item.name }));
-  } catch {
-    return [];
   }
 }
 
@@ -3869,9 +1924,9 @@ export function useKimiWebClient() {
     fastMoon: appearance.fastMoon,
 
     // Model + Provider reactive state
-    models,
-    starredModelIds,
-    providers,
+    models: modelProvider.models,
+    starredModelIds: modelProvider.starredModelIds,
+    providers: modelProvider.providers,
 
     // Theme
     theme: appearance.theme,
@@ -3897,88 +1952,88 @@ export function useKimiWebClient() {
     setOnboarded,
 
     // Actions
-    load,
-    selectSession,
-    createSession,
-    loadOlderMessages,
+    load: workspaceState.load,
+    selectSession: workspaceState.selectSession,
+    createSession: workspaceState.createSession,
+    loadOlderMessages: workspaceState.loadOlderMessages,
 
     // Workspace actions
-    loadWorkspaces,
-    selectWorkspace,
-    openWorkspace,
-    openWorkspaceDraft,
-    createSessionInWorkspace,
-    startSessionAndSendPrompt,
-    addWorkspaceByPath,
-    browseFs,
-    getFsHome,
+    loadWorkspaces: workspaceState.loadWorkspaces,
+    selectWorkspace: workspaceState.selectWorkspace,
+    openWorkspace: workspaceState.openWorkspace,
+    openWorkspaceDraft: workspaceState.openWorkspaceDraft,
+    createSessionInWorkspace: workspaceState.createSessionInWorkspace,
+    startSessionAndSendPrompt: workspaceState.startSessionAndSendPrompt,
+    addWorkspaceByPath: workspaceState.addWorkspaceByPath,
+    browseFs: workspaceState.browseFs,
+    getFsHome: workspaceState.getFsHome,
 
-    sendPrompt,
-    steerPrompt,
+    sendPrompt: workspaceState.sendPrompt,
+    steerPrompt: workspaceState.steerPrompt,
     // Side chat (BTW side-channel agent)
-    sideChatVisible,
-    sideChatSessionId,
-    sideChatTurns,
-    sideChatRunning,
-    sideChatSending,
-    openSideChat,
-    closeSideChat,
-    sendSideChatPrompt,
-    uploadImage,
-    abortCurrentPrompt,
-    respondApproval,
-    respondQuestion,
-    dismissQuestion,
-    cancelTask,
+    sideChatVisible: sideChat.sideChatVisible,
+    sideChatSessionId: sideChat.sideChatSessionId,
+    sideChatTurns: sideChat.sideChatTurns,
+    sideChatRunning: sideChat.sideChatRunning,
+    sideChatSending: sideChat.sideChatSending,
+    openSideChat: sideChat.openSideChat,
+    closeSideChat: sideChat.closeSideChat,
+    sendSideChatPrompt: sideChat.sendSideChatPrompt,
+    uploadImage: workspaceState.uploadImage,
+    abortCurrentPrompt: workspaceState.abortCurrentPrompt,
+    respondApproval: workspaceState.respondApproval,
+    respondQuestion: workspaceState.respondQuestion,
+    dismissQuestion: workspaceState.dismissQuestion,
+    cancelTask: workspaceState.cancelTask,
 
     // New Phase 1 actions
-    setPermission,
-    setThinking,
-    setPlanMode,
-    togglePlanMode,
-    setSwarmMode,
-    toggleSwarmMode,
-    setGoalMode,
-    toggleGoalMode,
-    createGoal,
-    controlGoal,
-    enqueue,
-    dismissWarning,
-    renameSession,
-    renameWorkspace,
-    deleteWorkspace,
-    archiveSession,
-    compact,
-    forkSession,
-    undo,
+    setPermission: workspaceState.setPermission,
+    setThinking: modelProvider.setThinking,
+    setPlanMode: workspaceState.setPlanMode,
+    togglePlanMode: workspaceState.togglePlanMode,
+    setSwarmMode: workspaceState.setSwarmMode,
+    toggleSwarmMode: workspaceState.toggleSwarmMode,
+    setGoalMode: workspaceState.setGoalMode,
+    toggleGoalMode: workspaceState.toggleGoalMode,
+    createGoal: workspaceState.createGoal,
+    controlGoal: workspaceState.controlGoal,
+    enqueue: workspaceState.enqueue,
+    dismissWarning: workspaceState.dismissWarning,
+    renameSession: workspaceState.renameSession,
+    renameWorkspace: workspaceState.renameWorkspace,
+    deleteWorkspace: workspaceState.deleteWorkspace,
+    archiveSession: workspaceState.archiveSession,
+    compact: workspaceState.compact,
+    forkSession: workspaceState.forkSession,
+    undo: workspaceState.undo,
 
     // New Phase 4 actions
-    unqueue,
-    searchFiles,
-    loadGitStatus,
-    loadFileDiff,
-    clearFileDiff,
+    unqueue: workspaceState.unqueue,
+    searchFiles: workspaceState.searchFiles,
+    loadGitStatus: workspaceState.loadGitStatus,
+    loadFileDiff: workspaceState.loadFileDiff,
+    clearFileDiff: workspaceState.clearFileDiff,
 
     // File system actions
-    listDir,
-    readFileContent,
-    getFileDownloadUrl,
-    openWorkspaceFile,
-    openInApp,
-    revealWorkspaceFile,
-    resolveImageUrl,
+    listDir: workspaceState.listDir,
+    readFileContent: workspaceState.readFileContent,
+    getFileDownloadUrl: workspaceState.getFileDownloadUrl,
+    openWorkspaceFile: workspaceState.openWorkspaceFile,
+    openInApp: workspaceState.openInApp,
+    revealWorkspaceFile: workspaceState.revealWorkspaceFile,
+    resolveImageUrl: workspaceState.resolveImageUrl,
 
     // Model + Provider actions
-    refreshOAuthProviderModels,
-    loadModels,
-    loadProviders,
+    refreshOAuthProviderModels: modelProvider.refreshOAuthProviderModels,
+    loadModels: modelProvider.loadModels,
+    loadProviders: modelProvider.loadProviders,
     skills,
-    activateSkill,
-    setModel,
-    toggleStarModel,
-    addProvider,
-    deleteProvider,
-    refreshProvider,
+    activateSkill: modelProvider.activateSkill,
+    setModel: modelProvider.setModel,
+    toggleStarModel: modelProvider.toggleStarModel,
+    addProvider: modelProvider.addProvider,
+    deleteProvider: modelProvider.deleteProvider,
+    refreshProvider: modelProvider.refreshProvider,
 
     // Auth state
     authReady,
@@ -3987,14 +2042,14 @@ export function useKimiWebClient() {
 
     // Config state + actions
     config,
-    updateConfig,
+    updateConfig: workspaceState.updateConfig,
 
     // Auth actions
-    checkAuth,
-    startOAuthLogin,
-    pollOAuthLogin,
-    cancelOAuthLogin,
-    logout,
+    checkAuth: workspaceState.checkAuth,
+    startOAuthLogin: modelProvider.startOAuthLogin,
+    pollOAuthLogin: modelProvider.pollOAuthLogin,
+    cancelOAuthLogin: modelProvider.cancelOAuthLogin,
+    logout: workspaceState.logout,
   };
 }
 
