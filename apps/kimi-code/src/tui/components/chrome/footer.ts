@@ -265,6 +265,10 @@ export class FooterComponent implements Component {
     this.transientHint = hint;
   }
 
+  getTransientHint(): string | null {
+    return this.transientHint;
+  }
+
   /**
    * Sync both background-task badges with live counts. Each non-zero
    * count produces its own bracketed badge on line 1; zeros hide them

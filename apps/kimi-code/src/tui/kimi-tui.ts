@@ -1784,8 +1784,7 @@ export class KimiTUI {
 
     const targets = pickForegroundTasks(tasks);
     if (targets.length === 0) {
-      this.state.footer.setTransientHint('No foreground task running.');
-      this.state.ui.requestRender();
+      this.showDetachHint('No foreground task running.');
       return;
     }
 
@@ -1822,6 +1821,9 @@ export class KimiTUI {
     this.state.footer.setTransientHint(hint);
     this.detachHintClearTimer = setTimeout(() => {
       this.detachHintClearTimer = undefined;
+      // Don't clobber a newer transient hint (e.g. the exit-confirmation
+      // prompt) that took over while this timer was pending.
+      if (this.state.footer.getTransientHint() !== hint) return;
       this.state.footer.setTransientHint(null);
       this.state.ui.requestRender();
     }, DETACH_HINT_DISPLAY_MS);
