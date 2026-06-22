@@ -151,13 +151,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     debugEndpoints: opts.debugEndpoints,
   });
 
-  app.get('/asyncapi.json', async (req, reply) => {
-    const host = typeof req.headers.host === 'string' ? req.headers.host : undefined;
+  app.get('/asyncapi.json', async (_req, reply) => {
+    // Reflect the bound host, never the caller-supplied `Host` header (PLAN
+    // §3.6-3: Host-header reflection is an information-leak / SSRF-adjacent
+    // hole once the server is reachable beyond localhost).
     return reply.type('application/json').send(
-      createAsyncApiDocument({
-        version: serverVersion,
-        serverHost: host,
-      }),
+      createAsyncApiDocument({ version: serverVersion, serverHost: opts.host }),
     );
   });
   app.get('/openapi.json', async (_req, reply) => {

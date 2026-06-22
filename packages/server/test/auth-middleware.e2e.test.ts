@@ -1,8 +1,12 @@
+import { request as httpRequest } from 'node:http';
+
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createAuthHook } from '#/middleware/auth';
 import type { IAuthTokenService } from '#/services/auth/authTokenService';
+
+import { boot, closeAll } from './helpers/serverHarness';
 
 const TOKEN = 'test-token';
 
@@ -111,5 +115,61 @@ describe('createAuthHook (onRequest middleware)', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json() as { authorization: string | null };
     expect(body.authorization).toBe('[redacted]');
+  });
+});
+
+/**
+ * Raw HTTP GET that lets us spoof the `Host` header. Node's `http.request`
+ * honors an explicit `headers.Host`, whereas `fetch` (undici) treats `Host` as
+ * a forbidden header and drops it.
+ */
+function rawGet(
+  port: number,
+  path: string,
+  headers: Record<string, string>,
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      { host: '127.0.0.1', port, path, method: 'GET', headers },
+      (res) => {
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          data += chunk;
+        });
+        res.on('end', () => {
+          try {
+            resolve({
+              status: res.statusCode ?? 0,
+              body: JSON.parse(data) as unknown,
+            });
+          } catch (err) {
+            reject(err);
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+describe('/asyncapi.json serverHost (M2.3 Host-reflection fix)', () => {
+  afterEach(async () => {
+    await closeAll();
+  });
+
+  it('reflects the bound host, not a spoofed Host header', async () => {
+    const harness = await boot({ host: '127.0.0.1', port: 0 });
+    const port = Number(new URL(harness.address).port);
+
+    const { status, body } = await rawGet(port, '/asyncapi.json', {
+      Host: 'evil.com',
+    });
+    expect(status).toBe(200);
+
+    const servers = (body as { servers: { local: { host: string } } }).servers;
+    expect(servers.local.host).toBe('127.0.0.1');
+    expect(servers.local.host).not.toContain('evil.com');
   });
 });
