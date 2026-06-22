@@ -1,17 +1,21 @@
 /**
  * Host-exposure hardening (ROADMAP M6.3–M6.7).
  *
- * Covers the public-bind gate added in M6.3 (force password + TLS opt-out)
- * and, as later steps land, the full §3.5 public hardening stack: rate limit,
- * dangerous-endpoint downgrade, security headers, and Host allowlist.
- *
- * M6.3 scope here: the three gate outcomes on a `0.0.0.0` bind:
- *   1. no password → refuse (password message);
- *   2. password but no `--insecure-no-tls` → refuse (TLS message);
- *   3. password + `insecureNoTls: true` → boot and log the public-bind warning.
+ * End-to-end coverage of the §3.5 public-bind hardening stack on a
+ * `host: '0.0.0.0'` + `KIMI_CODE_PASSWORD` + `insecureNoTls: true` server:
+ *   - M6.3 public-bind gate (no password → refuse; password-but-no-TLS →
+ *     refuse; password + `insecureNoTls` → boot + warn logged).
+ *   - Real password auth path (`Authorization: Bearer <password>` → 200 via
+ *     `verifyPassword`; wrong/missing credentials → 401).
+ *   - M6.4 auth-failure rate limit (N bad tokens → 429 on the (N+1)th).
+ *   - M6.5 dangerous-endpoint downgrade (shutdown/terminals 404 by default;
+ *     200 with the allow flags; loopback mounts shutdown by default).
+ *   - Host allowlist (spoofed Host → 403; bound host → 200).
+ *   - M6.6 security response headers present on a non-loopback response.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
@@ -207,5 +211,126 @@ describe('dangerous-endpoint downgrade on a public bind (M6.5)', () => {
     });
     expect(shutdown.status).toBe(200);
     await vi.waitFor(() => expect(shutdownCalls).toContain('api'));
+  });
+});
+
+/**
+ * Raw HTTP GET that lets us set an arbitrary `Host` header. Node's `fetch`
+ * (undici) treats `Host` as a forbidden header and silently replaces it with
+ * the URL host, so the Host-allowlist test drives `node:http` directly.
+ */
+function rawHttpGet(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = httpRequest(
+      {
+        hostname: u.hostname,
+        port: u.port,
+        path: `${u.pathname}${u.search}`,
+        method: 'GET',
+        headers,
+      },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+describe('public-bind §3.5 end-to-end (M6.7)', () => {
+  /**
+   * Boot a 0.0.0.0 server using the REAL auth impl (no fixed-token override) so
+   * the password `verifyPassword` path is exercised. `KIMI_CODE_PASSWORD` is set
+   * so the M6.3 gate passes and the password is itself a valid bearer.
+   */
+  async function bootPublicReal(): Promise<RunningServer> {
+    process.env['KIMI_CODE_PASSWORD'] = 'test-pw';
+    const { lockPath, homeDir } = tmpPaths();
+    const server = await startServer({
+      host: '0.0.0.0',
+      port: 0,
+      lockPath,
+      insecureNoTls: true,
+      logger: pino({ level: 'silent' }),
+      coreProcessOptions: { homeDir },
+    });
+    running.push(server);
+    return server;
+  }
+
+  /** Boot a 0.0.0.0 server with a deterministic fixed token. */
+  async function bootPublicFixed(token = 'real-token'): Promise<RunningServer> {
+    process.env['KIMI_CODE_PASSWORD'] = 'test-pw';
+    const { lockPath, homeDir } = tmpPaths();
+    const server = await startServer({
+      serviceOverrides: [fixedTokenAuth(token)],
+      host: '0.0.0.0',
+      port: 0,
+      lockPath,
+      insecureNoTls: true,
+      logger: pino({ level: 'silent' }),
+      coreProcessOptions: { homeDir },
+    });
+    running.push(server);
+    return server;
+  }
+
+  it('accepts the user password as a bearer token (verifyPassword path)', async () => {
+    const server = await bootPublicReal();
+    const ok = await fetch(`${server.address}/api/v1/sessions`, {
+      headers: { Authorization: 'Bearer test-pw' },
+    });
+    expect(ok.status).toBe(200);
+    // Security headers ride on every non-loopback response (M6.6).
+    expect(ok.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(ok.headers.get('content-security-policy')).toBe("default-src 'self'");
+  });
+
+  it('rejects wrong and missing credentials with 401', async () => {
+    const server = await bootPublicReal();
+    const wrong = await fetch(`${server.address}/api/v1/sessions`, {
+      headers: { Authorization: 'Bearer wrong-password' },
+    });
+    expect(wrong.status).toBe(401);
+    const missing = await fetch(`${server.address}/api/v1/sessions`);
+    expect(missing.status).toBe(401);
+  });
+
+  it('rate-limits repeated auth failures to 429 on a real bind (M6.4)', async () => {
+    const server = await bootPublicFixed('real-token');
+    const url = `${server.address}/api/v1/sessions`;
+    let lastStatus = 0;
+    // Default threshold is 10 failures; the 11th must be 429.
+    for (let i = 0; i < 11; i += 1) {
+      const res = await fetch(url, { headers: { Authorization: 'Bearer wrong' } });
+      lastStatus = res.status;
+      if (i < 10) {
+        expect(res.status).toBe(401);
+      }
+    }
+    expect(lastStatus).toBe(429);
+  });
+
+  it('rejects a spoofed Host with 403 and accepts the bound host', async () => {
+    const server = await bootPublicFixed();
+    // Bound host (0.0.0.0) is a literal IP → allowed by the Host allowlist.
+    const bound = await rawHttpGet(`${server.address}/api/v1/healthz`, {
+      Host: `0.0.0.0:${new URL(server.address).port}`,
+    });
+    expect(bound.status).toBe(200);
+    // A spoofed Host is rejected before auth (Host check runs first).
+    const spoofed = await rawHttpGet(`${server.address}/api/v1/healthz`, {
+      Host: 'evil.example.com',
+    });
+    expect(spoofed.status).toBe(403);
   });
 });
