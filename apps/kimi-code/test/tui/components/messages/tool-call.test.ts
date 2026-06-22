@@ -49,6 +49,79 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain(`${String.fromCodePoint(0x23fa, 0xfe0e)} Used Read`);
   });
 
+  describe('detach hint for long-running foreground Bash/Agent', () => {
+    it('shows the Ctrl+B hint after 10s for a running Bash call', () => {
+      vi.useFakeTimers();
+      const component = new ToolCallComponent(
+        { id: 'call_bash_long', name: 'Bash', args: { command: 'sleep 30' } },
+        undefined,
+        stubTui(30),
+      );
+
+      expect(strip(component.render(100).join('\n'))).not.toContain(
+        'Press Ctrl+B to run in background',
+      );
+
+      vi.advanceTimersByTime(10_000);
+      expect(strip(component.render(100).join('\n'))).toContain(
+        'Press Ctrl+B to run in background',
+      );
+
+      component.dispose();
+    });
+
+    it('shows the hint immediately for a running Agent call', () => {
+      vi.useFakeTimers();
+      const component = new ToolCallComponent(
+        { id: 'call_agent_long', name: 'Agent', args: { description: 'explore' } },
+        undefined,
+        stubTui(30),
+      );
+
+      // No timer advancement — Agents advertise Ctrl+B immediately.
+      expect(strip(component.render(100).join('\n'))).toContain(
+        'Press Ctrl+B to run in background',
+      );
+
+      component.dispose();
+    });
+
+    it('does not show the hint for non-detachable tools', () => {
+      vi.useFakeTimers();
+      const component = new ToolCallComponent(
+        { id: 'call_read_long', name: 'Read', args: { path: 'foo.ts' } },
+        undefined,
+        stubTui(30),
+      );
+
+      vi.advanceTimersByTime(15_000);
+      expect(strip(component.render(100).join('\n'))).not.toContain(
+        'Press Ctrl+B to run in background',
+      );
+
+      component.dispose();
+    });
+
+    it('does not show the hint when the result lands before 10s', () => {
+      vi.useFakeTimers();
+      const component = new ToolCallComponent(
+        { id: 'call_bash_short', name: 'Bash', args: { command: 'echo hi' } },
+        undefined,
+        stubTui(30),
+      );
+
+      vi.advanceTimersByTime(5_000);
+      component.setResult({ tool_call_id: 'call_bash_short', output: 'hi', is_error: false });
+      vi.advanceTimersByTime(10_000);
+
+      expect(strip(component.render(100).join('\n'))).not.toContain(
+        'Press Ctrl+B to run in background',
+      );
+
+      component.dispose();
+    });
+  });
+
   it('keeps collapsed tool-call lines within very narrow widths', () => {
     const component = new ToolCallComponent(
       {
@@ -835,6 +908,50 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('Used Agent');
     expect(out).not.toContain('parent duplicate result');
     expect(out).not.toContain('summary fallback');
+  });
+
+  it('shows Backgrounded after a foreground subagent is detached, even after setResult', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_detach',
+        name: 'Agent',
+        args: { description: 'long task' },
+      },
+      undefined,
+      stubTui(30),
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_detach_1',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.onSubagentStarted({
+      agentId: 'sub_detach_1',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+
+    // Sanity: running before detach.
+    expect(strip(component.render(120).join('\n'))).toContain('Running');
+
+    component.markBackgrounded();
+    let out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Backgrounded');
+    expect(out).not.toContain('Completed');
+
+    // The spawn-success ToolResult landing must NOT flip the card to Completed.
+    component.setResult({
+      tool_call_id: 'call_agent_detach',
+      output: 'agent_id: sub_detach_1\nactual_subagent_type: explore\n',
+      is_error: false,
+    });
+    out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Backgrounded');
+    expect(out).not.toContain('Completed');
+
+    component.dispose();
   });
 
   it('keeps the single subagent tool area to the latest four activities', () => {

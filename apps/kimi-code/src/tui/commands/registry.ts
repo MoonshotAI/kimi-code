@@ -1,3 +1,7 @@
+import { readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, join, relative, resolve } from 'pathe';
+
 import type { AutocompleteItem } from '@earendil-works/pi-tui';
 
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
@@ -22,6 +26,10 @@ const SWARM_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'off', description: 'Turn swarm mode off' },
 ];
 
+const ADD_DIR_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'list', description: 'Show configured additional workspace directories' },
+];
+
 /** Argument autocompletion for the `/goal` command (subcommands). */
 export function goalArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   const nextMatch = argumentPrefix.match(/^next\s+(\S*)$/i);
@@ -39,6 +47,89 @@ export function goalArgumentCompletions(argumentPrefix: string): AutocompleteIte
 /** Argument autocompletion for the `/swarm` command (subcommands). */
 export function swarmArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   return completeLeadingArg(SWARM_ARG_COMPLETIONS, argumentPrefix);
+}
+
+/** Argument autocompletion for the `/add-dir` command. */
+export function addDirArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  if (isPathLikeAddDirArgument(argumentPrefix)) {
+    return completeAddDirPath(argumentPrefix);
+  }
+  return completeLeadingArg(ADD_DIR_ARG_COMPLETIONS, argumentPrefix);
+}
+
+function isPathLikeAddDirArgument(argumentPrefix: string): boolean {
+  return argumentPrefix === '.' || argumentPrefix === '..' || argumentPrefix.startsWith('./') || argumentPrefix.startsWith('../') || argumentPrefix.startsWith('/') || argumentPrefix.startsWith('~');
+}
+
+function completeAddDirPath(argumentPrefix: string): AutocompleteItem[] | null {
+  const normalizedPrefix = argumentPrefix === '~' ? '~/' : argumentPrefix;
+  const expandedPrefix = expandHomePrefix(normalizedPrefix);
+  const parentInput = getDirectoryCompletionParentInput(normalizedPrefix, expandedPrefix);
+  const partialName = normalizedPrefix.endsWith('/') ? '' : basename(expandedPrefix);
+  const parentDir = resolveDirectoryCompletionParent(parentInput);
+  let entries;
+  try {
+    entries = readdirSync(parentDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  const items: AutocompleteItem[] = [];
+  for (const entry of entries) {
+    if (entry.name === '.' || entry.name === '..' || entry.name.startsWith('.')) continue;
+    if (partialName.length > 0 && !entry.name.toLowerCase().startsWith(partialName.toLowerCase())) continue;
+    const absolutePath = join(parentDir, entry.name);
+    if (!isDirectoryPath(absolutePath, entry.isDirectory(), entry.isSymbolicLink())) continue;
+    const value = formatDirectoryCompletionValue(normalizedPrefix, parentInput, entry.name);
+    items.push({
+      value,
+      label: `${entry.name}/`,
+      description: absolutePath,
+    });
+  }
+
+  return items.length > 0 ? items : null;
+}
+
+function expandHomePrefix(argumentPrefix: string): string {
+  if (argumentPrefix === '~') return homedir();
+  if (argumentPrefix.startsWith('~/')) return join(homedir(), argumentPrefix.slice(2));
+  return argumentPrefix;
+}
+
+function getDirectoryCompletionParentInput(argumentPrefix: string, expandedPrefix: string): string {
+  if (argumentPrefix === '/') return '/';
+  if (argumentPrefix === '~/') return homedir();
+  if (argumentPrefix.endsWith('/')) return expandedPrefix.slice(0, -1);
+  return dirname(expandedPrefix);
+}
+
+function resolveDirectoryCompletionParent(parentInput: string): string {
+  if (parentInput === '~') return homedir();
+  if (parentInput.startsWith('~/')) return join(homedir(), parentInput.slice(2));
+  return resolve(parentInput);
+}
+
+function isDirectoryPath(path: string, isDirectory: boolean, isSymlink: boolean): boolean {
+  if (isDirectory) return true;
+  if (!isSymlink) return false;
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function formatDirectoryCompletionValue(argumentPrefix: string, parentInput: string, entryName: string): string {
+  if (argumentPrefix.startsWith('~/')) {
+    const home = homedir();
+    const homeRelative = relative(home, parentInput);
+    return `~${homeRelative.length > 0 ? `/${homeRelative}` : ''}/${entryName}/`;
+  }
+  if (argumentPrefix.startsWith('/')) {
+    return `${join(parentInput, entryName)}/`;
+  }
+  return `${join(parentInput, entryName)}/`;
 }
 
 export const BUILTIN_SLASH_COMMANDS = [
@@ -82,6 +173,7 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Toggle swarm mode or run one task in swarm mode',
     priority: 100,
+    argumentHint: '[on|off] | <task>',
     completeArgs: swarmArgumentCompletions,
     availability: 'idle-only',
   },
@@ -147,6 +239,15 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'add-dir',
+    aliases: [],
+    description: 'Add or list an additional workspace directory',
+    priority: 60,
+    availability: 'idle-only',
+    argumentHint: '[list] | <path>',
+    completeArgs: addDirArgumentCompletions,
+  },
+  {
     name: 'experiments',
     aliases: ['experimental'],
     description: 'Manage experimental features',
@@ -172,16 +273,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Compact the conversation context',
     priority: 80,
+    argumentHint: '<instruction>',
   },
   {
     name: 'goal',
     aliases: [],
     description: 'Start or manage an autonomous goal',
     priority: 80,
-    // No argumentHint: the menu description stays as short as every other
-    // command's. The subcommands (status/pause/resume/cancel/replace) surface in
-    // the argument autocomplete list once the user types `/goal ` (see
-    // completeArgs), so they don't need to be spelled out inline.
+    argumentHint: '[status|pause|resume|cancel|replace|next] | <objective>',
     completeArgs: goalArgumentCompletions,
     // status / pause / cancel are always available; creation, replacement, and
     // resume start (or restart) a turn and so are idle-only.
@@ -209,6 +308,7 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: ['rename'],
     description: 'Set or show session title',
     priority: 60,
+    argumentHint: '<title>',
     availability: 'always',
   },
   {
@@ -276,6 +376,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Export current session as a debug ZIP archive',
     priority: 40,
+  },
+  {
+    name: 'web',
+    aliases: [],
+    description: 'Open the current session in the Web UI and exit the terminal',
+    priority: 40,
+    availability: 'always',
   },
   {
     name: 'exit',

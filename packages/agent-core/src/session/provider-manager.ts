@@ -163,10 +163,13 @@ export class ProviderManager implements ModelProvider {
       try {
         apiKey = await tokenProvider.getAccessToken(force ? { force: true } : undefined);
       } catch (error) {
+        // login-required is an expected state (the user must /login); don't
+        // warn. Other failures (connection errors, etc.) are logged once for
+        // diagnosis and then propagated — chatWithRetry does not retry them.
         if (!isKimiError(error) || error.code !== ErrorCodes.AUTH_LOGIN_REQUIRED) {
           log?.warn('oauth token fetch failed', { providerName, error });
         }
-        throw loginRequired(error);
+        throw error;
       }
       if (apiKey.trim().length === 0) throw loginRequired();
       return { apiKey };

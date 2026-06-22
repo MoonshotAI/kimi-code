@@ -1102,7 +1102,27 @@ describe('KimiTUI startup', () => {
     expect(write).toHaveBeenCalledWith(DISABLE_TERMINAL_THEME_REPORTING);
   });
 
-  it('starts TUI without a session when fresh startup needs OAuth login', async () => {
+  it("only shows provider refresh status for added models", async () => {
+    const harness = makeHarness();
+    const driver = makeDriver(harness, makeStartupInput());
+    const showStatus = vi.spyOn(driver as any, "showStatus").mockImplementation(() => {});
+    vi.spyOn((driver as any).authFlow, "refreshProviderModels").mockResolvedValue({
+      changed: [
+        { providerId: "new-models", providerName: "New Models", added: 2, removed: 0 },
+        { providerId: "removed-models", providerName: "Removed Models", added: 0, removed: 3 },
+        { providerId: "metadata-only", providerName: "Metadata Only", added: 0, removed: 0 },
+      ],
+      unchanged: [],
+      failed: [],
+    });
+
+    await (driver as any).refreshProviderModelsInBackground();
+
+    expect(showStatus).toHaveBeenCalledTimes(1);
+    expect(showStatus).toHaveBeenCalledWith("New Models · +2 models.");
+  });
+
+  it("starts TUI without a session when fresh startup needs OAuth login", async () => {
     const harness = makeHarness(makeSession(), {
       createSession: vi.fn(async () => {
         throw loginRequiredError();

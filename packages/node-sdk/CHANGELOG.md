@@ -1,5 +1,13 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.9.4
+
+### Patch Changes
+
+- [#838](https://github.com/MoonshotAI/kimi-code/pull/838) [`843a731`](https://github.com/MoonshotAI/kimi-code/commit/843a731097fc18b2e41ab0405b5fbcb6149ba55c) - Show the underlying connection error when OAuth token refresh fails after internal retries, instead of prompting for login. Token refresh failures are no longer re-retried at the agent loop level.
+
+- [#625](https://github.com/MoonshotAI/kimi-code/pull/625) [`9a8fea5`](https://github.com/MoonshotAI/kimi-code/commit/9a8fea5c85177cd887896108c05ba9e174f28250) - Add host-side config helpers `loadRuntimeConfigSafe` and `resolveConfigPath` for inspecting config without spinning up a full KimiCore.
+
 ## 0.9.3
 
 ### Patch Changes

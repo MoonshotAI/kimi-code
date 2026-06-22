@@ -10,7 +10,12 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { RetryableRefreshError, OAuthError, OAuthUnauthorizedError } from '../src/errors';
+import {
+  OAuthConnectionError,
+  OAuthError,
+  OAuthUnauthorizedError,
+  RetryableRefreshError,
+} from '../src/errors';
 import {
   pollDeviceToken,
   refreshAccessToken,
@@ -567,7 +572,7 @@ describe('refreshAccessToken', () => {
     // Single attempt against unreachable host should throw (not RetryableRefreshError)
     await expect(
       refreshToken(badConfig, 'rt', { maxRetries: 1, backoffMs: () => 0 }),
-    ).rejects.toThrow(/OAuth request|fetch failed|Token refresh request|ECONNREFUSED|connect/i);
+    ).rejects.toBeInstanceOf(OAuthConnectionError);
   });
 
   it('sends grant_type=refresh_token + refresh_token', async () => {

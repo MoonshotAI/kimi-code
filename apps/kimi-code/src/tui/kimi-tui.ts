@@ -59,10 +59,7 @@ import {
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
-import {
-  SessionPickerComponent,
-  type SessionRow,
-} from './components/dialogs/session-picker';
+import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
 import {
   FileMentionProvider,
   type SlashAutocompleteCommand,
@@ -126,6 +123,7 @@ import {
 import { isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
+import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
@@ -149,6 +147,7 @@ export type {
 
 export interface KimiTUIStartupInput {
   readonly cliOptions: CLIOptions;
+  readonly additionalDirs?: readonly string[];
   readonly tuiConfig: TuiConfig;
   readonly version: string;
   readonly workDir: string;
@@ -160,6 +159,14 @@ export interface KimiTUIStartupInput {
 
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
 
+function sameStringArrays(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+type MutableCreateSessionOptions = {
+  -readonly [P in keyof CreateSessionOptions]: CreateSessionOptions[P];
+};
+
 function createInitialAppState(input: KimiTUIStartupInput): AppState {
   const startupPermission: PermissionMode = input.cliOptions.auto
     ? 'auto'
@@ -169,6 +176,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
   return {
     model: '',
     workDir: input.workDir,
+    additionalDirs: [...(input.additionalDirs ?? [])],
     sessionId: '',
     permissionMode: startupPermission,
     planMode: input.cliOptions.plan,
@@ -200,6 +208,9 @@ interface SendMessageOptions {
   readonly imageAttachmentIds?: readonly number[];
   readonly hasMedia?: boolean;
 }
+
+/** How long the one-shot "moved to background" footer hint stays visible. */
+const DETACH_HINT_DISPLAY_MS = 4_000;
 
 export class KimiTUI {
   readonly harness: KimiHarness;
@@ -236,6 +247,9 @@ export class KimiTUI {
   readonly tasksBrowserController: TasksBrowserController;
   readonly editorKeyboard: EditorKeyboardController;
 
+  /** Timer that auto-clears the one-shot "moved to background" footer hint. */
+  private detachHintClearTimer: ReturnType<typeof setTimeout> | undefined;
+
   // The currently-mounted approval panel, if any. Kept so the full-screen
   // preview viewer can restore focus to the exact same instance (and its
   // selection / feedback state) when it closes.
@@ -251,6 +265,9 @@ export class KimiTUI {
     | undefined;
 
   public onExit?: (exitCode?: number) => Promise<void>;
+
+  /** URL opened in the browser just before exit (e.g. by `/web`); printed by onExit. */
+  public exitOpenUrl: string | undefined;
 
   track(event: string, properties?: Parameters<KimiHarness['track']>[1]): void {
     this.harness.track(event, properties);
@@ -334,8 +351,19 @@ export class KimiTUI {
       slashCommands,
       this.state.appState.workDir,
       this.fdPath,
+      this.state.appState.additionalDirs,
     );
     this.state.editor.setAutocompleteProvider(provider);
+
+    const argumentHints = new Map<string, string>();
+    for (const cmd of slashCommands) {
+      if (cmd.argumentHint === undefined) continue;
+      argumentHints.set(cmd.name, cmd.argumentHint);
+      for (const alias of cmd.aliases ?? []) {
+        argumentHints.set(alias, cmd.argumentHint);
+      }
+    }
+    this.state.editor.setArgumentHints(argumentHints);
   }
 
   refreshSlashCommandAutocomplete(): void {
@@ -501,9 +529,7 @@ export class KimiTUI {
       const result = await this.authFlow.refreshProviderModels();
       for (const c of result.changed) {
         if (c.added <= 0) continue;
-        this.showStatus(
-          `${c.providerName} · +${String(c.added)} model${c.added > 1 ? 's' : ''}.`,
-        );
+        this.showStatus(`${c.providerName} · +${String(c.added)} model${c.added > 1 ? 's' : ''}.`);
       }
       for (const f of result.failed) {
         this.showStatus(`Skipped refreshing ${f.provider}: ${f.reason}`, 'warning');
@@ -557,12 +583,15 @@ export class KimiTUI {
     let session: Session | undefined;
     let shouldReplayHistory = false;
     const isResumeStartup = startup.sessionFlag !== undefined || startup.continueLast;
-    const createSessionOptions: CreateSessionOptions = {
+    const createSessionOptions: MutableCreateSessionOptions = {
       workDir,
       model: startup.model,
       permission: startup.auto ? 'auto' : startup.yolo ? 'yolo' : undefined,
       planMode: startup.plan ? true : undefined,
     };
+    if (this.state.appState.additionalDirs.length > 0) {
+      createSessionOptions.additionalDirs = [...this.state.appState.additionalDirs];
+    }
 
     try {
       if (isResumeStartup) {
@@ -593,13 +622,19 @@ export class KimiTUI {
               `Session "${startup.sessionFlag}" was created under a different directory.`,
             );
           }
-          session = await this.harness.resumeSession({ id: startup.sessionFlag });
+          session = await this.harness.resumeSession({
+            id: startup.sessionFlag,
+            additionalDirs: createSessionOptions.additionalDirs,
+          });
           shouldReplayHistory = true;
         } else {
           const sessions = await this.harness.listSessions({ workDir });
           const target = sessions[0];
           if (target !== undefined) {
-            session = await this.harness.resumeSession({ id: target.id });
+            session = await this.harness.resumeSession({
+              id: target.id,
+              additionalDirs: createSessionOptions.additionalDirs,
+            });
             shouldReplayHistory = true;
           } else {
             session = await this.harness.createSession(createSessionOptions);
@@ -1026,6 +1061,10 @@ export class KimiTUI {
     return this.state.transcriptEntries.length > 0;
   }
 
+  setExitOpenUrl(url: string): void {
+    this.exitOpenUrl = url;
+  }
+
   async getStartupMcpMs(): Promise<number> {
     const session = this.session;
     if (session === undefined) return 0;
@@ -1039,6 +1078,9 @@ export class KimiTUI {
 
   setAppState(patch: Partial<AppState>): void {
     if (!hasPatchChanges(this.state.appState, patch)) return;
+    const additionalDirsChanged =
+      'additionalDirs' in patch &&
+      !sameStringArrays(this.state.appState.additionalDirs, patch.additionalDirs ?? []);
     const busyChanged = 'streamingPhase' in patch || 'isCompacting' in patch;
     Object.assign(this.state.appState, patch);
     if ('planMode' in patch) this.updateEditorBorderHighlight();
@@ -1048,6 +1090,7 @@ export class KimiTUI {
       this.updateQueueDisplay();
       this.sessionEventHandler.retryQueuedGoalPromotion();
     }
+    if (additionalDirsChanged) this.setupAutocomplete();
     this.state.ui.requestRender();
   }
 
@@ -1062,6 +1105,12 @@ export class KimiTUI {
     this.state.livePane = { ...INITIAL_LIVE_PANE };
     this.updateActivityPane();
     this.state.ui.requestRender();
+  }
+
+  private syncAdditionalDirs(session: Session): void {
+    const additionalDirs = session.summary?.additionalDirs ?? [];
+    if (sameStringArrays(this.state.appState.additionalDirs, additionalDirs)) return;
+    this.setAppState({ additionalDirs: [...additionalDirs] });
   }
 
   // =========================================================================
@@ -1080,14 +1129,18 @@ export class KimiTUI {
     if (model.length === 0) {
       throw new Error(LLM_NOT_SET_MESSAGE);
     }
-    return this.harness.createSession({
+    const options: MutableCreateSessionOptions = {
       workDir: this.state.appState.workDir,
       model,
       thinking:
         this.session === undefined ? undefined : this.state.appState.thinking ? 'on' : 'off',
       permission: this.state.appState.permissionMode,
       planMode: this.state.appState.planMode ? true : undefined,
-    });
+    };
+    if (this.state.appState.additionalDirs.length > 0) {
+      options.additionalDirs = [...this.state.appState.additionalDirs];
+    }
+    return this.harness.createSession(options);
   }
 
   async setSession(session: Session): Promise<void> {
@@ -1096,6 +1149,7 @@ export class KimiTUI {
     this.session = session;
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);
+    this.syncAdditionalDirs(session);
   }
 
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
@@ -1113,6 +1167,7 @@ export class KimiTUI {
       sessionTitle: session.summary?.title ?? null,
       goal: goalResult.goal,
     });
+    this.syncAdditionalDirs(session);
   }
 
   // Apply --auto/--yolo/--plan startup flags to a resumed session. The resumed
@@ -1477,7 +1532,12 @@ export class KimiTUI {
     request: ApprovalRequest,
     response: ApprovalResponse,
   ): void {
-    if (request.toolName === 'ExitPlanMode' || request.display.kind === 'plan_review') return;
+    if (
+      request.toolName === 'ExitPlanMode' ||
+      request.display.kind === 'plan_review' ||
+      request.display.kind === 'goal_start'
+    )
+      return;
     const parts: string[] = [];
     switch (response.decision) {
       case 'approved':
@@ -1702,6 +1762,71 @@ export class KimiTUI {
         child.setExpanded(this.state.toolOutputExpanded);
       }
     }
+    this.state.ui.requestRender();
+  }
+
+  async detachCurrentForegroundTask(): Promise<void> {
+    const session = this.session;
+    if (session === undefined) {
+      this.showError(NO_ACTIVE_SESSION_MESSAGE);
+      return;
+    }
+
+    let tasks: readonly BackgroundTaskInfo[];
+    try {
+      // activeOnly defaults to true; foreground running tasks are non-terminal
+      // and therefore included. We filter to `detached === false` ourselves.
+      tasks = await session.listBackgroundTasks();
+    } catch (error) {
+      this.showError(`Failed to list tasks: ${formatErrorMessage(error)}`);
+      return;
+    }
+
+    const targets = pickForegroundTasks(tasks);
+    if (targets.length === 0) {
+      this.showDetachHint('No foreground task running.');
+      return;
+    }
+
+    let detached = 0;
+    let alreadyFinished = 0;
+    for (const target of targets) {
+      try {
+        const info = await session.detachBackgroundTask(target.taskId);
+        if (info === undefined) alreadyFinished++;
+        else detached++;
+      } catch (error) {
+        this.showError(`Failed to detach ${target.taskId}: ${formatErrorMessage(error)}`);
+      }
+    }
+
+    let hint: string;
+    if (detached === 0 && alreadyFinished > 0) {
+      hint = alreadyFinished === 1 ? 'Task already finished.' : 'Tasks already finished.';
+    } else if (detached === targets.length) {
+      hint = detached === 1 ? 'Moved 1 task to background.' : `Moved ${detached} tasks to background.`;
+    } else {
+      hint = `Moved ${detached} of ${targets.length} tasks to background.`;
+    }
+    if (detached > 0) hint = `${hint} /tasks to view.`;
+    this.showDetachHint(hint);
+  }
+
+  /** Show a one-shot footer hint that auto-clears after DETACH_HINT_DISPLAY_MS. */
+  private showDetachHint(hint: string): void {
+    if (this.detachHintClearTimer !== undefined) {
+      clearTimeout(this.detachHintClearTimer);
+      this.detachHintClearTimer = undefined;
+    }
+    this.state.footer.setTransientHint(hint);
+    this.detachHintClearTimer = setTimeout(() => {
+      this.detachHintClearTimer = undefined;
+      // Don't clobber a newer transient hint (e.g. the exit-confirmation
+      // prompt) that took over while this timer was pending.
+      if (this.state.footer.getTransientHint() !== hint) return;
+      this.state.footer.setTransientHint(null);
+      this.state.ui.requestRender();
+    }, DETACH_HINT_DISPLAY_MS);
     this.state.ui.requestRender();
   }
 

@@ -1,11 +1,14 @@
 import { ErrorCodes, KimiError } from '#/errors';
 import type {
   ActivateSkillPayload,
+  AddAdditionalDirPayload,
+  AddAdditionalDirResult,
   AgentAPI,
   BeginCompactionPayload,
   CancelPayload,
   CancelPlanPayload,
   CreateGoalPayload,
+  DetachBackgroundPayload,
   EmptyPayload,
   EnterSwarmPayload,
   GetBackgroundOutputPayload,
@@ -90,6 +93,9 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return this.session.generateAgentsMd();
   }
 
+  addAdditionalDir(payload: AddAdditionalDirPayload): Promise<AddAdditionalDirResult> {
+    return this.session.addAdditionalDir(payload.path, payload.persist);
+  }
 
   async prompt({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {
     if (agentId === 'main') {
@@ -172,6 +178,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async stopBackground({ agentId, ...payload }: AgentScopedPayload<StopBackgroundPayload>) {
     return (await this.getAgent(agentId)).stopBackground(payload);
+  }
+
+  async detachBackground({ agentId, ...payload }: AgentScopedPayload<DetachBackgroundPayload>) {
+    return (await this.getAgent(agentId)).detachBackground(payload);
   }
 
   async clearContext({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {

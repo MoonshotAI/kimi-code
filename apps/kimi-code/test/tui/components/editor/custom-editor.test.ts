@@ -7,6 +7,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';
+import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
 
 function makeEditor(): CustomEditor {
   const tui = {
@@ -73,8 +74,187 @@ describe('CustomEditor autocomplete Escape handling', () => {
   });
 });
 
+describe('CustomEditor slash argument completion refresh', () => {
+  it('reopens /add-dir directory completions after tab completion and entering slash', async () => {
+    const editor = makeEditor();
+    const provider = new FileMentionProvider(
+      [
+        {
+          name: 'add-dir',
+          description: 'Add directory',
+          getArgumentCompletions: (prefix) =>
+            prefix === '/' ? [{ value: '/tmp/shared/', label: 'shared/' }] : null,
+        },
+      ],
+      process.cwd(),
+      null,
+    );
+    editor.setAutocompleteProvider(provider);
+
+    for (const char of '/add-dir ') {
+      editor.handleInput(char);
+    }
+    await flushAutocomplete();
+
+    editor.handleInput('/');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+
+    expect(editor.getText()).toBe('/add-dir /');
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+
+  it('reopens the next directory level after tab-accepting a directory', async () => {
+    const editor = makeEditor();
+    const provider = new FileMentionProvider(
+      [
+        {
+          name: 'add-dir',
+          description: 'Add directory',
+          getArgumentCompletions: (prefix) => {
+            if (prefix === '/') return [{ value: '/tmp/shared/', label: 'shared/' }];
+            if (prefix === '/tmp/shared/') return [{ value: '/tmp/shared/child/', label: 'child/' }];
+            return null;
+          },
+        },
+      ],
+      process.cwd(),
+      null,
+    );
+    editor.setAutocompleteProvider(provider);
+
+    for (const char of '/add-dir ') {
+      editor.handleInput(char);
+    }
+    await flushAutocomplete();
+
+    editor.handleInput('/');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+
+    editor.handleInput('\t');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+
+    expect(editor.getText()).toBe('/add-dir /tmp/shared/');
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+});
+
+describe('CustomEditor @ mention completion refresh', () => {
+  it('reopens the next directory level after tab-accepting an @ directory', async () => {
+    const editor = makeEditor();
+    const provider: AutocompleteProvider = {
+      getSuggestions: vi.fn(
+        async (
+          lines: string[],
+          cursorLine: number,
+          cursorCol: number,
+        ): Promise<AutocompleteSuggestions> => {
+          const text = (lines[cursorLine] ?? '').slice(0, cursorCol);
+          if (text === '@') {
+            return { items: [{ value: '@shared/', label: 'shared/' }], prefix: '@' };
+          }
+          if (text === '@shared/') {
+            return { items: [{ value: '@shared/child/', label: 'child/' }], prefix: '@shared/' };
+          }
+          return { items: [], prefix: '' };
+        },
+      ),
+      applyCompletion: vi.fn(
+        (
+          lines: string[],
+          cursorLine: number,
+          cursorCol: number,
+          item: AutocompleteItem,
+          prefix: string,
+        ) => {
+          const line = lines[cursorLine] ?? '';
+          const beforePrefix = line.slice(0, cursorCol - prefix.length);
+          const afterCursor = line.slice(cursorCol);
+          const newLine = beforePrefix + item.value + afterCursor;
+          const newLines = [...lines];
+          newLines[cursorLine] = newLine;
+          return {
+            lines: newLines,
+            cursorLine,
+            cursorCol: beforePrefix.length + item.value.length,
+          };
+        },
+      ),
+    };
+    editor.setAutocompleteProvider(provider);
+
+    editor.handleInput('@');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+
+    editor.handleInput('\t');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flushAutocomplete();
+
+    expect(editor.getText()).toBe('@shared/');
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+});
+
+describe('CustomEditor slash argument hint', () => {
+  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
+  const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
+
+  it('renders the argument hint after a command with a trailing space', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+
+    for (const char of '/add-dir ') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).toContain('[list] | <path>');
+  });
+
+  it('renders the argument hint after a command without a trailing space', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+
+    for (const char of '/add-dir') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).toContain('[list] | <path>');
+  });
+
+  it('hides the hint once an argument is typed', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+
+    for (const char of '/add-dir foo') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).not.toContain('[list] | <path>');
+  });
+
+  it('does not render a hint for an unknown command', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+
+    for (const char of '/unknown ') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).not.toContain('[list] | <path>');
+  });
+});
+
 describe('CustomEditor slash menu description wrapping', () => {
-  // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
+  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
   const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
 
   it('wraps long slash command descriptions to at most two lines with an ellipsis', async () => {
@@ -133,8 +313,8 @@ describe('CustomEditor Kitty key release handling', () => {
 });
 
 describe('CustomEditor paste marker expansion', () => {
-  const PASTE_START = '\x1b[200~';
-  const PASTE_END = '\x1b[201~';
+  const PASTE_START = '\u001B[200~';
+  const PASTE_END = '\u001B[201~';
 
   function simulateLargePaste(editor: CustomEditor, content: string): void {
     editor.handleInput(`${PASTE_START}${content}${PASTE_END}`);
@@ -199,7 +379,7 @@ describe('CustomEditor paste marker expansion', () => {
 
     expect(editor.getText()).toMatch(/\[paste #1/);
 
-    editor.handleInput('\x16');
+    editor.handleInput('\u0016');
 
     expect(editor.getText()).not.toContain('[paste #');
     expect(editor.getText()).toContain(longText);
@@ -243,7 +423,7 @@ describe('CustomEditor paste marker expansion', () => {
 
     // Split: PASTE_START in chunk 1, paste-end split across chunk 2 and 3
     editor.handleInput(`${PASTE_START}data`);
-    editor.handleInput('\x1b[20');
+    editor.handleInput('\u001B[20');
     editor.handleInput('1~');
 
     expect(editor.getText()).toContain(longText);

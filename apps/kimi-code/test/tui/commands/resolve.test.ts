@@ -39,6 +39,11 @@ describe('resolveSlashCommandInput', () => {
       name: 'title',
       args: 'New title',
     });
+    expect(resolve('/add-dir list')).toMatchObject({
+      kind: 'builtin',
+      name: 'add-dir',
+      args: 'list',
+    });
     expect(resolve('/init')).toMatchObject({ kind: 'builtin', name: 'init', args: '' });
     expect(resolve('/btw')).toMatchObject({
       kind: 'builtin',
@@ -88,6 +93,11 @@ describe('resolveSlashCommandInput', () => {
       commandName: 'reload',
       reason: 'streaming',
     });
+    expect(resolve('/add-dir ../shared', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'add-dir',
+      reason: 'streaming',
+    });
     expect(resolve('/experiments', { isStreaming: true })).toEqual({
       kind: 'blocked',
       commandName: 'experiments',
@@ -119,6 +129,11 @@ describe('resolveSlashCommandInput', () => {
     expect(resolve('/reload', { isCompacting: true })).toEqual({
       kind: 'blocked',
       commandName: 'reload',
+      reason: 'compacting',
+    });
+    expect(resolve('/add-dir ../shared', { isCompacting: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'add-dir',
       reason: 'compacting',
     });
     expect(resolve('/experiments', { isCompacting: true })).toEqual({

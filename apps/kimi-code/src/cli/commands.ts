@@ -8,6 +8,7 @@ import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
 import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
+import { registerServerCommand } from './sub/server';
 import { registerVisCommand } from './sub/vis';
 
 export type MainCommandHandler = (opts: CLIOptions) => void;
@@ -72,6 +73,14 @@ export function createProgram(
         .argParser((value: string, previous: string[] | undefined) => [...(previous ?? []), value])
         .default([]),
     )
+    .addOption(
+      new Option(
+        '--add-dir <dir>',
+        'Add an additional workspace directory for this session. Can be repeated.',
+      )
+        .argParser((value: string, previous: string[] | undefined) => [...(previous ?? []), value])
+        .default([]),
+    )
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
     .option('--plan', 'Start in plan mode.', false);
@@ -79,6 +88,7 @@ export function createProgram(
   registerExportCommand(program);
   registerProviderCommand(program);
   registerAcpCommand(program);
+  registerServerCommand(program);
   registerLoginCommand(program);
   registerDoctorCommand(program);
   registerVisCommand(program);
@@ -121,6 +131,7 @@ export function createProgram(
       outputFormat: raw['outputFormat'] as CLIOptions['outputFormat'],
       prompt: raw['prompt'] as string | undefined,
       skillsDirs: raw['skillsDir'] as string[],
+      addDirs: raw['addDir'] as string[],
     };
 
     onMain(opts);

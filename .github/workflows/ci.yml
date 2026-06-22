@@ -82,3 +82,9 @@ jobs:
             echo "Typechecking ${config}"
             pnpm dlx --package @typescript/native-preview@beta tsgo -p "${config}" --noEmit
           done
+      - name: Typecheck kimi-web (vue-tsc)
+        run: pnpm --filter @moonshot-ai/kimi-web run typecheck
+      - name: Typecheck vis-server
+        run: pnpm --filter @moonshot-ai/vis-server run typecheck
+      - name: Typecheck vis-web
+        run: pnpm --filter @moonshot-ai/vis-web run typecheck

@@ -41,6 +41,10 @@
       "types": "./package.json",
       "default": "./package.json"
     },
+    "./session/store": {
+      "types": "./src/session/store/index.ts",
+      "default": "./src/session/store/index.ts"
+    },
     "./*": {
       "types": "./src/*.ts",
       "default": "./src/*.ts"
@@ -57,13 +61,17 @@
     "@antfu/utils": "^9.3.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@moonshot-ai/kaos": "workspace:^",
+    "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kosong": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^",
     "@mozilla/readability": "^0.6.0",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
+    "chokidar": "^4.0.3",
+    "ignore": "^5.3.2",
     "js-yaml": "^4.1.1",
     "linkedom": "^0.18.12",
+    "node-pty": "^1.1.0",
     "nunjucks": "^3.2.4",
     "open": "^10.2.0",
     "pathe": "^2.0.3",
@@ -74,6 +82,7 @@
     "smol-toml": "^1.6.1",
     "socks": "^2.8.9",
     "tar": "^7.5.13",
+    "ulid": "^3.0.1",
     "undici": "^7.27.1",
     "yauzl": "^3.3.0",
     "zod": "^4.3.6"
@@ -85,9 +94,11 @@
     "@types/proper-lockfile": "^4.1.4",
     "@types/regexp.escape": "^2.0.0",
     "@types/retry": "0.12.0",
+    "@types/sinon": "^21.0.1",
     "@types/tar": "^7.0.87",
     "@types/yauzl": "^2.10.3",
     "@types/yazl": "^2.4.6",
+    "sinon": "^22.0.0",
     "yazl": "^3.3.1"
   }
 }
