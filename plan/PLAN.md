@@ -29,8 +29,10 @@ agent-core 完整重架构为 **20 个 domain × scope 二维矩阵**：
 - **scope = 子 InstantiationService**：Core / Session / Agent / Turn / ToolCall 五层 scope，每层一个 child container
 - **service 通过 `registerScopedService(scope, I, Impl)` 注册**，ctor 注入 `I*Context` 取身份，方法签名不带 id
 - **目录 `agent-core/<domain>/`**：契约 + 厚实现 + 工具同居
+- **基础设施下沉**：`_base/`（di / event / logging / errors）+ `_utils/`（纯函数）；除 `_base/` / `_utils/` 与横切保留目录（rpc / config / flags / errors / logging 等）外，`agent-core/src/` 顶层其余目录均为 domain
+- **barrel-only 暴露**：每层（`_base/<x>` / `_utils/<x>` / `<domain>`）只通过 `index.ts` 暴露公共面；consumer 从 barrel 导入（`#/<domain>`、`#/_base/di`、`@moonshot-ai/agent-core`），**禁止 deep-import 子模块**
+- **禁止 re-import / re-export shim**：迁移不留旧路径 re-export alias；consumer 直接从新位置的 barrel 导入。旧路径在同一步内删除（不再「deprecated，P9 删除」）
 - **工具按域注册**：每域 `register<Domain>Tools(accessor)`，`bootstrap.ts::registerAllBuiltinTools` 统一调
-- **基础设施下沉** `_base/` + `_utils/`
 - **Agent 收窄**到 3–4 个服务（lifecycle / restorable / subagentHost）
 
 ### 0.3 偏离摘要
@@ -96,6 +98,7 @@ M0–M7 已为 di-v3 铺了地基（Session 拆分、事件系统、ICoreRuntime
 | 先拆 domain 再建 scope | domain 拆分依赖 scope 机制，顺序错了 |
 | 保留 `services/` 不动 | di-v3 明确要求 `services/` 消失，保留会持续偏离 |
 | 工具继续集中 `tools/` | di-v3 明确工具按域注册，集中会持续偏离 |
+| 迁移时保留旧路径 re-export alias（deprecated，后续 P9 删除） | 违反 barrel-only / 不允许 re-import；留下 deep-import 与双入口；改为同一步内全量改写 consumer 到 barrel 并立即删除旧路径 |
 
 ---
 
@@ -172,6 +175,8 @@ class FooService {
 └── index.ts                # export + register<Domain>Services + register<Domain>Tools
 ```
 
+**barrel-only 暴露（强制）**：每层（`<domain>` / `_base/<x>` / `_utils/<x>`）的 `index.ts` 是其唯一公共面。consumer 一律从 barrel 导入（`#/session`、`#/_base/di`、`@moonshot-ai/agent-core`），禁止 deep-import 子模块（如 `#/_base/di/instantiation`、`#/session/store`）。迁移不留旧路径 re-export alias（不允许 re-import）：旧路径在同一步内删除，consumer 全量改写为 barrel 导入。
+
 ### 2.4 工具注册（终态）
 
 ```ts
@@ -228,7 +233,8 @@ export function registerAllBuiltinTools(accessor: IServiceAccessor): IDisposable
 - 20 个 domain 目录全部就位，每个有契约 + 厚实现 + 工具（如有）+ `register<Domain>Tools`
 - scope 机制就位：LifecycleScope + registerScopedService + I*Context + ScopeBuilder + manager
 - 所有 service 标注 scope 并通过 registerScopedService 注册
-- `_base/` + `_utils/` 就位，lint 强制依赖方向
+- `_base/`（di/event/logging/errors）+ `_utils/` 就位；每层只通过 `index.ts` 暴露；lint + fence 强制依赖方向 + barrel-only
+- 无旧路径 re-export alias；consumer 全部从 barrel 导入（`grep` 旧路径 0 命中，无例外；无 deep-import）
 - Agent 收窄到 3–4 服务
 - `bootstrap.ts::registerAllBuiltinTools` 是唯一工具注册入口
 - 全套 test + typecheck + fence green

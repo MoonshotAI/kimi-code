@@ -22,6 +22,8 @@
 - 用户可见行为变化需要 `.changeset/<slug>.md`。
 - decorator 字符串：M0–M7 保留了 `'coreProcessService'` 等，本 ROADMAP 在 P9 才允许改名（需全 consumer audit）。
 - 依赖方向 fence（M7.2 已完整）：每步必须保持 green；新增 domain 时同步更新 fence 规则（如需）。
+- **barrel-only 暴露（强制）**：每层（`_base/<x>` / `_utils/<x>` / `<domain>`）只通过 `index.ts` 暴露公共面；consumer 从 barrel 导入（`#/<domain>` / `#/_base/di` / `@moonshot-ai/agent-core`），禁止 deep-import 子模块（如 `#/_base/di/instantiation`）。
+- **禁止 re-import / re-export shim**：迁移不留旧路径 re-export alias；consumer 直接从新位置的 barrel 导入。因此 P2 / P3 的迁移步骤必须**全量改写 consumer import**，旧路径在**同一步内删除**（不再「deprecated，P9 删除」）。
 - Step ID：`P<phase>.<step>`。Phase 对应 PLAN §3 的 P0–P9。
 
 ---
@@ -183,20 +185,23 @@
 
 ## P2 · 基础设施下沉（3–5d）
 
-> 前置：P1 scope 机制完成。本阶段把 di / event / logging / errors / utils 沉到 `_base/` + `_utils/`。
+> 前置：P1 scope 机制完成。本阶段把 di / event / logging / errors / utils 沉到 `_base/` + `_utils/`。**每层只通过 `index.ts` 暴露；迁移不留 re-export alias；consumer 全量改写为 barrel 导入，旧路径同一步内删除。**
 
 ### P2.1 refactor(agent-core): sink di/ → _base/di/
 
 - 改：
   - `packages/agent-core/src/_base/di/`（new，从 `di/` 迁入）
-  - `packages/agent-core/src/di/`（delete，或保留 re-export alias）
-  - 所有 `import ... from '../di'` / `'#/di'` → `'../_base/di'` / `'#/_base/di'`
+  - `packages/agent-core/src/di/`（delete，**不留 re-export alias**）
+  - 所有 consumer import 全量改写为 `#/_base/di` barrel（bare `../di` / `#/di` 与 deep `../di/<x>` / `#/di/<x>` 全部收敛到 barrel）
 - 实现：
-  - 把 `di/` 的全部内容（instantiation / descriptors / extensions / serviceCollection / instantiationService / lifecycle）迁到 `_base/di/`。
-  - 更新所有 import（codemod / 批量 sed）。
-  - `di/` 可保留 re-export alias（deprecated，P9 删除）以减少 import 改动。
+  - 把 `di/` 的全部内容（instantiation / descriptors / extensions / serviceCollection / instantiationService / lifecycle / errors / graph / test / testInstantiationService / util）迁到 `_base/di/`。
+  - 确保 `_base/di/index.ts` 是唯一公共面，导出全部需要的符号（含 test 工具如 `TestInstantiationService` / `createServices`，以便测试从 barrel 导入）。
+  - 全量改写所有 consumer import 为 `#/_base/di` barrel（或相对 `../_base/di` / `../../_base/di`）；不再 deep-import 子模块。
+  - 删除 `di/`（不留 alias）。同步处理 `package.json` `exports` 中 `@moonshot-ai/agent-core/di/*` 子路径（改为指向 `_base/di` 或移除，外部统一从包根 barrel 导入）。
 - 测：typecheck green；全套 test green；DI 行为不变。
-- 验：`grep "from ['\"][^'\"]*?/di['\"]" packages/agent-core/src` 0 命中（除 re-export alias）。
+- 验：
+  - `grep -rEn "from ['\"][^'\"]*?/di['\"]" packages/agent-core/src packages/agent-core/test` 0 命中（无 alias，无例外）。
+  - `grep -rEn "#/(di|_base/di)/" packages/agent-core/src packages/agent-core/test` 0 命中（禁止 deep-import 子模块）。
 - 依：P1
 - 源：`kimi-code-dev-2/plan/2026.06.22-Infrastructure-To-Base-Utils.md` §1
 - 耗：1d
@@ -204,14 +209,17 @@
 ### P2.2 refactor(agent-core): sink base/common/event → _base/event/
 
 - 改：
-  - `packages/agent-core/src/_base/event/`（new，从 `base/common/event.ts` 迁入）
-  - `packages/agent-core/src/base/common/event.ts`（delete or alias）
-  - import 更新
+  - `packages/agent-core/src/_base/event/`（new，从 `base/common/event.ts` 迁入，含 `index.ts` barrel）
+  - `packages/agent-core/src/base/common/event.ts`（delete，**不留 alias**）
+  - consumer import 全量改写为 `#/_base/event` barrel
 - 实现：
-  - 把 `base/common/event.ts`（Event / Emitter）迁到 `_base/event/`。
-  - 更新 import。
+  - 把 `base/common/event.ts`（Event / Emitter）迁到 `_base/event/`，新增 `_base/event/index.ts` barrel 暴露公共面。
+  - 内部依赖（如对 DI 的引用）改为从 `_base/di` barrel 导入（`../di`），不 deep-import `../di/lifecycle`。
+  - 全量改写所有 consumer import 为 `#/_base/event` barrel；删除 `base/common/event.ts`（不留 alias）。如 `base/common/` 因迁出而变空，一并清理。
 - 测：typecheck green；Event / Emitter 行为不变。
-- 验：`grep "base/common/event" packages/agent-core/src` 0 命中（除 alias）。
+- 验：
+  - `grep -rEn "base/common/event" packages/agent-core/src packages/agent-core/test` 0 命中（无 alias）。
+  - `grep -rEn "#/_base/event/" packages/agent-core/src packages/agent-core/test` 0 命中（禁止 deep-import）。
 - 依：P2.1
 - 源：`kimi-code-dev-2/plan/2026.06.22-Infrastructure-To-Base-Utils.md` §2
 - 耗：0.5d
@@ -233,14 +241,18 @@
 ### P2.4 refactor(agent-core): sink errors/unexpectedError → _base/errors/
 
 - 改：
-  - `packages/agent-core/src/_base/errors/`（new，从 `errors/unexpectedError.ts` 迁入）
-  - `packages/agent-core/src/errors/unexpectedError.ts`（delete or alias）
-  - import 更新
+  - `packages/agent-core/src/_base/errors/`（new，从 `errors/unexpectedError.ts` 迁入，含 `index.ts` barrel）
+  - `packages/agent-core/src/errors/unexpectedError.ts`（delete，**不留 alias**）
+  - consumer import 全量改写为 `#/_base/errors` barrel
 - 实现：
-  - 把 `errors/unexpectedError.ts` 沉到 `_base/errors/`。
+  - 把 `errors/unexpectedError.ts` 沉到 `_base/errors/`，新增 `_base/errors/index.ts` barrel。
+  - 更新 `_base/di/lifecycle.ts` 等内部引用为从 `#/_base/errors` barrel 导入。
   - Kimi 专属 error 类（`errors/` 其余）保留在 `errors/`。
+  - 删除 `errors/unexpectedError.ts`（不留 alias）。
 - 测：typecheck green；unexpectedError 行为不变。
-- 验：`grep "errors/unexpectedError" packages/agent-core/src` 0 命中（除 alias）。
+- 验：
+  - `grep -rEn "errors/unexpectedError" packages/agent-core/src packages/agent-core/test` 0 命中（无 alias）。
+  - `grep -rEn "#/_base/errors/" packages/agent-core/src packages/agent-core/test` 0 命中（禁止 deep-import）。
 - 依：P2.3
 - 源：`kimi-code-dev-2/plan/2026.06.22-Infrastructure-To-Base-Utils.md` §4
 - 耗：0.5d
@@ -248,15 +260,17 @@
 ### P2.5 refactor(agent-core): sink utils/ → _utils/
 
 - 改：
-  - `packages/agent-core/src/_utils/`（new，从 `utils/` 迁入）
-  - `packages/agent-core/src/utils/`（delete or alias）
-  - import 更新
+  - `packages/agent-core/src/_utils/`（new，从 `utils/` 迁入；每个子目录含 `index.ts` barrel）
+  - `packages/agent-core/src/utils/`（delete，**不留 alias**）
+  - consumer import 全量改写为 `#/_utils/<x>` barrel
 - 实现：
-  - 把 `utils/` 的纯函数（abort / fs / hero-slug / workdir-slug / xml-escape / render-prompt / types / per-id-json-store / proxy）沉到 `_utils/{abort,fs,slug,xml,template,types,persistence,net}/`。
+  - 把 `utils/` 的纯函数（abort / fs / hero-slug / workdir-slug / xml-escape / render-prompt / types / per-id-json-store / proxy）沉到 `_utils/{abort,fs,slug,xml,template,types,persistence,net}/`，每个子目录含 `index.ts` barrel。
   - `utils/{tokens,completion-budget}.ts` 不沉（依赖 kosong types，搬到 `kosong/`，P3 处理）。
-  - 更新 import。
+  - 全量改写 consumer import 为 `#/_utils/<x>` barrel；删除 `utils/`（不留 alias）。
 - 测：typecheck green；utils 行为不变。
-- 验：`grep "from ['\"][^'\"]*?/utils/" packages/agent-core/src` 0 命中（除 alias）。
+- 验：
+  - `grep -rEn "from ['\"][^'\"]*?/utils/" packages/agent-core/src packages/agent-core/test` 0 命中（无 alias）。
+  - `grep -rEn "#/_utils/[a-z]+/" packages/agent-core/src packages/agent-core/test` 0 命中（禁止 deep-import 子模块；barrel 为 `#/_utils/<x>`）。
 - 依：P2.4
 - 源：`kimi-code-dev-2/plan/2026.06.22-Infrastructure-To-Base-Utils.md` §5
 - 耗：1.5d
@@ -275,7 +289,7 @@
 - 源：`kimi-code-dev-2/plan/2026.06.22-Infrastructure-To-Base-Utils.md` §6
 - 耗：0.5d
 
-**P2 acceptance：** di / event / logging / errors / utils 沉到 `_base/` + `_utils/`；lint + fence 强制依赖方向；P3 可启动。
+**P2 acceptance：** di / event / logging / errors / utils 沉到 `_base/` + `_utils/`；每层只通过 `index.ts` 暴露；无旧路径 re-export alias；consumer 全部从 barrel 导入；lint + fence 强制依赖方向 + barrel-only；P3 可启动。
 
 ---
 
@@ -912,19 +926,21 @@
 
 > 前置：P1–P8 完成。本阶段删除 deprecated 结构 + 终态文档 + changeset。
 
-### P9.1 refactor(agent-core): 删除 deprecated alias + re-export
+### P9.1 refactor(agent-core): 终态 import 审计 + 残留清理
 
 - 改：
-  - 删除 P2 / P3 迁移时保留的 re-export alias（`di/`、`base/common/event.ts`、`utils/`、`services/` 等）
-  - import 更新
+  - 删除任何迁移残留的 re-export / 旧 barrel（如 P3 迁完后的 `services/` 旧 barrel）
+  - 修正任何残留的 deep import
 - 实现：
-  - P2 / P3 迁移时可能保留了 re-export alias（减少 import 改动），本步删除。
-  - 更新所有 import 到新位置。
-- 测：typecheck green；全套 test green；`grep "from ['\"][^'\"]*?/(di|base/common/event|utils|services)['\"]" packages/agent-core/src` 0 命中。
-- 验：全套 test green。
+  - P2 / P3 迁移按新规则已不留 re-export alias；本步做最终审计，确认无残留。
+  - 全量 grep 确认无旧路径 import：`grep -rEn "from ['\"][^'\"]*?/(di|base/common/event|utils|services)['\"]" packages/agent-core/src packages/agent-core/test` 0 命中。
+  - 全量 grep 确认无 deep import：consumer 一律从 barrel（`#/<domain>` / `#/_base/<x>` / `#/_utils/<x>` / `@moonshot-ai/agent-core`）导入。
+  - 删除 P3 迁完后可能残留的 `services/` 旧 barrel，改为通过各 domain barrel 暴露。
+- 测：typecheck green；全套 test green。
+- 验：上述 grep 0 命中；fence green。
 - 依：P1–P8
 - 源：—
-- 耗：1d
+- 耗：0.5d
 
 ### P9.2 refactor(agent-core): decorator 字符串改名（可选）
 
