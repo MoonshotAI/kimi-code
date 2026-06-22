@@ -2,7 +2,7 @@ import { mkdir, open, rename, stat, unlink } from 'node:fs/promises';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'pathe';
 
-import { syncDir } from '#/utils/fs';
+import { syncDir } from '#/_utils/fs';
 
 export const PENDING_MAX = 1000;
 const STDERR_NOTICE_INTERVAL_MS = 30_000;

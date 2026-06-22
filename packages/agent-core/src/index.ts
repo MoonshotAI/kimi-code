@@ -16,7 +16,7 @@ export {
   resolveGlobalLogPath,
   resolveLoggingConfig,
 } from './_base/logging';
-export { installGlobalProxyDispatcher } from './utils/proxy';
+export { installGlobalProxyDispatcher } from './_utils/net';
 export type {
   LogContext,
   LogEntry,

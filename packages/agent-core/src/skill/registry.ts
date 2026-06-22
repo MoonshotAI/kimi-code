@@ -4,7 +4,7 @@ import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './ty
 import { isInlineSkillType, normalizeSkillName } from './types';
 import type { SkillRegistry as AgentSkillRegistry } from '../agent/skill/types';
 import { createDecorator } from '../_base/di';
-import { escapeXmlAttr } from '../utils/xml-escape';
+import { escapeXmlAttr } from '#/_utils/xml';
 
 const LISTING_DESC_MAX = 250;
 

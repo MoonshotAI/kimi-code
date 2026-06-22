@@ -24,7 +24,7 @@ import {
 } from '../tools/args-validator';
 import { PathSecurityError } from '../tools/policies/path-access';
 
-import { isUserCancellation } from '../utils/abort';
+import { isUserCancellation } from '#/_utils/abort';
 import { errorMessage, isAbortError } from './errors';
 import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
 import type { LLM, LLMChatResponse } from './llm';

@@ -1,4 +1,4 @@
-import type { PromisableMethods, Promisify } from '#/utils/types';
+import type { PromisableMethods, Promisify } from '#/_utils/types';
 import { createControlledPromise, objectMap } from '@antfu/utils';
 
 import {
@@ -6,7 +6,7 @@ import {
   type KimiErrorPayload,
   toKimiErrorPayload,
 } from '../errors';
-import { abortable } from '../utils/abort';
+import { abortable } from '#/_utils/abort';
 import type { CoreAPI } from './core-api';
 import type { SDKAPI } from './sdk-api';
 

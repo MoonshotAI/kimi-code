@@ -1,6 +1,6 @@
 import type { EnabledPluginSessionStart } from '../../plugin/types';
 import type { SkillDefinition } from '../../skill';
-import { escapeXmlAttr } from '../../utils/xml-escape';
+import { escapeXmlAttr } from '#/_utils/xml';
 import { DynamicInjector } from './injector';
 
 export class PluginSessionStartInjector extends DynamicInjector {

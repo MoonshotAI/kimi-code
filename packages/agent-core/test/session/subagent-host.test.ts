@@ -16,7 +16,7 @@ import {
   SessionSubagentHost,
   type QueuedSubagentTask,
 } from '../../src/session/subagent-host';
-import { abortError, userCancellationReason } from '../../src/utils/abort';
+import { abortError, userCancellationReason } from '#/_utils/abort';
 import { testAgent, type AgentTestContext } from '../agent/harness/agent';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { executeTool } from '../tools/fixtures/execute-tool';

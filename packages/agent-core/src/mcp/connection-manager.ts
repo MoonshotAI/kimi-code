@@ -4,7 +4,7 @@ import { log as defaultLog } from '#/_base/logging';
 import type { Logger } from '#/_base/logging';
 import type { Tool } from '@moonshot-ai/kosong';
 
-import { abortable } from '../utils/abort';
+import { abortable } from '#/_utils/abort';
 import { createDecorator } from '../_base/di';
 import { HttpMcpClient } from './client-http';
 import { isRemoteMcpConfig } from './client-remote';

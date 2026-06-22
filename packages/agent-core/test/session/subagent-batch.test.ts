@@ -14,7 +14,7 @@ import {
   type SubagentResult,
   type SubagentSuspendedEvent,
 } from '../../src/session/subagent-batch';
-import { userCancellationReason } from '../../src/utils/abort';
+import { userCancellationReason } from '#/_utils/abort';
 
 const signal = new AbortController().signal;
 

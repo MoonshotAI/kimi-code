@@ -10,7 +10,7 @@ import { IRecordsService } from '../records';
 import { IReplayService } from '../replay';
 import { IAgentStatusService } from '../status';
 import { exitReminder, fullReminder, reentryReminder, sparseReminder } from '../injection/plan-mode';
-import { generateHeroSlug } from '../../utils/hero-slug';
+import { generateHeroSlug } from '#/_utils/slug';
 
 export type PlanData = null | {
   id: string;

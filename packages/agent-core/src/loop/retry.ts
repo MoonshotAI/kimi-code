@@ -3,7 +3,7 @@ import * as retry from 'retry';
 
 import type { Logger } from '#/_base/logging';
 
-import { abortable } from '../utils/abort';
+import { abortable } from '#/_utils/abort';
 import type { LoopEventDispatcher } from './events';
 import { isAbortError } from './errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';

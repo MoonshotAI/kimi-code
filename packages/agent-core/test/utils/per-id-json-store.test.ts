@@ -12,7 +12,7 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createPerIdJsonStore } from '../../src/utils/per-id-json-store';
+import { createPerIdJsonStore } from '#/_utils/persistence';
 
 interface Sample {
   readonly id: string;

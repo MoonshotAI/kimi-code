@@ -18,7 +18,7 @@ import {
 import {
   linkAbortSignal,
   userCancellationReason,
-} from '../utils/abort';
+} from '#/_utils/abort';
 import { collectGitContext } from './git-context';
 import { createDecorator } from '../_base/di';
 import type { Session } from './index';

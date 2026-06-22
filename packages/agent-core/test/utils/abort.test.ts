@@ -6,7 +6,7 @@ import {
   abortable,
   isUserCancellation,
   userCancellationReason,
-} from '../../src/utils/abort';
+} from '#/_utils/abort';
 
 describe('userCancellationReason', () => {
   it('is recognised as a deliberate user cancellation', () => {

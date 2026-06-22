@@ -20,7 +20,7 @@ import {
   retryBackoffDelays,
   sleepForRetry,
 } from '../../loop/retry';
-import { renderPrompt } from '../../utils/render-prompt';
+import { renderPrompt } from '#/_utils/template';
 import {
   estimateTokens,
   estimateTokensForMessages,

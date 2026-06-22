@@ -6,7 +6,7 @@ import regexpEscape from 'regexp.escape';
 
 import type { SkillDefinition, SkillMetadata, SkillSource } from './types';
 import { isSupportedSkillType } from './types';
-import { escapeXmlTags } from '../utils/xml-escape';
+import { escapeXmlTags } from '#/_utils/xml';
 
 export class FrontmatterError extends Error {
   constructor(message: string, cause?: unknown) {

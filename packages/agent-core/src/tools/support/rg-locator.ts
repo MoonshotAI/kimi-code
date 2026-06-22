@@ -23,7 +23,7 @@ import { pipeline } from 'node:stream/promises';
 import { extract as extractTar } from 'tar';
 import { type Entry, fromBuffer as yauzlFromBuffer } from 'yauzl';
 
-import { abortable } from '../../utils/abort';
+import { abortable } from '#/_utils/abort';
 
 const RG_VERSION = '15.0.0';
 const RG_BASE_URL = 'https://code.kimi.com/kimi-code/rg';

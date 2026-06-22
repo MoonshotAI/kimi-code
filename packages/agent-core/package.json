@@ -31,6 +31,14 @@
     "#/_base/event": "./src/_base/event/index.ts",
     "#/_base/logging": "./src/_base/logging/index.ts",
     "#/_base/errors": "./src/_base/errors/index.ts",
+    "#/_utils/abort": "./src/_utils/abort/index.ts",
+    "#/_utils/fs": "./src/_utils/fs/index.ts",
+    "#/_utils/slug": "./src/_utils/slug/index.ts",
+    "#/_utils/xml": "./src/_utils/xml/index.ts",
+    "#/_utils/template": "./src/_utils/template/index.ts",
+    "#/_utils/types": "./src/_utils/types/index.ts",
+    "#/_utils/persistence": "./src/_utils/persistence/index.ts",
+    "#/_utils/net": "./src/_utils/net/index.ts",
     "#/*": [
       "./src/*.ts",
       "./src/*/index.ts"

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename, resolve } from 'pathe';
 
-import { slugifyWorkDirName } from '#/utils/workdir-slug';
+import { slugifyWorkDirName } from '#/_utils/slug';
 
 const WORKDIR_KEY_PREFIX = 'wd_';
 const HASH_LENGTH = 12;

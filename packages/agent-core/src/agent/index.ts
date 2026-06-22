@@ -13,7 +13,7 @@ import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profi
 import type { ModelProvider } from '../session/provider-manager';
 import type { ISubagentHostService } from '../session/subagent-host';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
-import type { PromisableMethods } from '../utils/types';
+import type { PromisableMethods } from '#/_utils/types';
 import {
   InstantiationService,
   type IInstantiationService,

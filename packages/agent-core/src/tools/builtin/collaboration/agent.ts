@@ -34,7 +34,7 @@ import {
   createDeadlineAbortSignal,
   isUserCancellation,
   type DeadlineAbortSignal,
-} from '../../../utils/abort';
+} from '#/_utils/abort';
 import { AgentBackgroundTask, type BackgroundManager } from '../../../agent/background';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { matchesGlobRuleSubject } from '../../support/rule-match';

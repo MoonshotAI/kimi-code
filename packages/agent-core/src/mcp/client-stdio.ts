@@ -1,6 +1,6 @@
 import { ErrorCodes, KimiError } from '#/errors';
 import type { McpServerStdioConfig } from '#/config/schema';
-import { proxyEnvForChild, reconcileChildNoProxy } from '#/utils/proxy';
+import { proxyEnvForChild, reconcileChildNoProxy } from '#/_utils/net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 

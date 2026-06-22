@@ -6,7 +6,7 @@ import type { ResolvedAgentProfile } from '../../src/profile';
 import type { ISubagentHostService } from '../../src/session/subagent-host';
 import { AgentBackgroundTask } from '../../src/agent/background';
 import { AgentTool, AgentToolInputSchema } from '../../src/tools/builtin/collaboration/agent';
-import { userCancellationReason } from '../../src/utils/abort';
+import { userCancellationReason } from '#/_utils/abort';
 import { createBackgroundManager } from '../agent/background/helpers';
 import { executeTool } from './fixtures/execute-tool';
 

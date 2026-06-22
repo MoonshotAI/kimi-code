@@ -27,7 +27,7 @@ import type { QuestionResult, RPCCallOptions, SDKAgentRPC } from '../../../src/r
 import type { AgentAPI } from '../../../src/rpc/core-api';
 import type { ToolServices } from '../../../src/tools/support/services';
 import type { TelemetryClient } from '../../../src/telemetry';
-import type { PromisifyMethods } from '../../../src/utils/types';
+import type { PromisifyMethods } from '#/_utils/types';
 import { createFakeKaos } from '../../tools/fixtures/fake-kaos';
 import { testKaos } from '../../fixtures/test-kaos';
 

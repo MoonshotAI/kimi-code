@@ -9,7 +9,7 @@ import {
   reconcileChildNoProxy,
   resolveNoProxy,
   resolveSocksProxy,
-} from '../../src/utils/proxy';
+} from '#/_utils/net';
 
 describe('isProxyConfigured', () => {
   it('is false when no proxy variable is set', () => {

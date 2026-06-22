@@ -60,7 +60,7 @@ import {
   CRON_SCHEDULED,
 } from '../../tools/cron/telemetry-events';
 import type { CronTask } from '../../tools/cron/types';
-import type { PerIdJsonStore } from '../../utils/per-id-json-store';
+import type { PerIdJsonStore } from '#/_utils/persistence';
 
 import type { SessionCronTaskInit } from '../../tools/cron/session-store';
 

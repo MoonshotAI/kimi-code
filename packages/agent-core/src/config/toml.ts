@@ -22,7 +22,7 @@ import {
   type ThinkingConfig,
   validateConfig,
 } from '#/config/schema';
-import { atomicWrite } from '#/utils/fs';
+import { atomicWrite } from '#/_utils/fs';
 import { parse as parseToml, stringify as stringifyToml, TomlError } from 'smol-toml';
 
 /* ------------------------------------------------------------------ */

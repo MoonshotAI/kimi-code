@@ -15,7 +15,7 @@ import {
   prepareSystemPromptContext,
   type ResolvedAgentProfile,
 } from '../profile';
-import { abortError } from '../utils/abort';
+import { abortError } from '#/_utils/abort';
 
 import type { CreateAgentOptions, Session } from './index';
 import { SubagentHostService } from './subagent-host';

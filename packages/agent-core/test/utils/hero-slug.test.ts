@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { HERO_NAMES, generateHeroSlug } from '../../src/utils/hero-slug';
+import { HERO_NAMES, generateHeroSlug } from '#/_utils/slug';
 
 describe('generateHeroSlug', () => {
   it('returns a slug made of exactly 3 hero names joined by "-"', () => {

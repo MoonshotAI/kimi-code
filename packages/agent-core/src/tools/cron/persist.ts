@@ -17,7 +17,7 @@
  * to boot.
  */
 
-import { createPerIdJsonStore, type PerIdJsonStore } from '../../utils/per-id-json-store';
+import { createPerIdJsonStore, type PerIdJsonStore } from '#/_utils/persistence';
 import type { CronTask } from './types';
 
 /**

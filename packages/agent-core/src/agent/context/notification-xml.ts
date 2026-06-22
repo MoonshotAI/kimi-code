@@ -24,7 +24,7 @@
  * look alike (`agent-...`) but live in different namespaces.
  */
 
-import { escapeXmlAttr } from '#/utils/xml-escape';
+import { escapeXmlAttr } from '#/_utils/xml';
 
 export function renderNotificationXml(data: Record<string, unknown>): string {
   const id = stringAttr(data['id'], 'unknown');

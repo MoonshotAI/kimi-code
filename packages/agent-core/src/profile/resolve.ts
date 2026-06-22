@@ -1,4 +1,4 @@
-import { renderPrompt } from '../utils/render-prompt';
+import { renderPrompt } from '#/_utils/template';
 import type {
   RawAgentProfile,
   RawSubagentProfile,

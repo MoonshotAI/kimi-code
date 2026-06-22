@@ -11,7 +11,7 @@ import { inputTotal } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import type { LLMChatResponse, LoopHooks } from '../../src/loop/index';
-import { userCancellationReason } from '../../src/utils/abort';
+import { userCancellationReason } from '#/_utils/abort';
 import { makeEndTurnResponse, makeToolCall, makeToolUseResponse } from './fixtures/fake-llm';
 import { runTurn } from './fixtures/helpers';
 import { EchoTool, GatedTool, markReadFileAccesses, SlowTool } from './fixtures/tools';

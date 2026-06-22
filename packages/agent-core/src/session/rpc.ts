@@ -28,7 +28,7 @@ import type {
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
 } from '#/rpc';
-import type { PromisableMethods } from '#/utils/types';
+import type { PromisableMethods } from '#/_utils/types';
 
 import type { Session, SessionMeta } from '.';
 import {

@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'pathe';
 
-import { syncDir } from '../../utils/fs';
+import { syncDir } from '#/_utils/fs';
 import type { BlobStore } from './blobref';
 import { type AgentRecord, type AgentRecordPersistence } from './types';
 

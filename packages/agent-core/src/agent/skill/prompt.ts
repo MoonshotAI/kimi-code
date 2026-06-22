@@ -1,4 +1,4 @@
-import { escapeXml } from '#/utils/xml-escape';
+import { escapeXml } from '#/_utils/xml';
 import type { SkillSource } from '../../skill';
 
 export type SkillPromptTrigger = 'user-slash' | 'model-tool' | 'nested-skill';

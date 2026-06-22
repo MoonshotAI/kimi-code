@@ -16,7 +16,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { HookService } from '../../src/session/hooks';
-import { abortError } from '../../src/utils/abort';
+import { abortError } from '#/_utils/abort';
 import type { AgentOptions } from '../../src/agent';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import type { Logger, LogPayload } from '#/_base/logging';

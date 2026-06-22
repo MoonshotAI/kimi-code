@@ -21,7 +21,7 @@ import { renderModelToolSkillPrompt } from '../../../agent/skill/prompt';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { isInlineSkillType, type SkillDefinition } from '../../../skill';
-import { renderPrompt } from '../../../utils/render-prompt';
+import { renderPrompt } from '#/_utils/template';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { matchesGlobRuleSubject } from '../../support/rule-match';
 import skillDescriptionTemplate from './skill-tool.md?raw';

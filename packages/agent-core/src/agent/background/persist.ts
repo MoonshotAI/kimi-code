@@ -15,7 +15,7 @@
 import { appendFile, mkdir, open, stat } from 'node:fs/promises';
 import { dirname, join } from 'pathe';
 
-import { createPerIdJsonStore, type PerIdJsonStore } from '../../utils/per-id-json-store';
+import { createPerIdJsonStore, type PerIdJsonStore } from '#/_utils/persistence';
 import type { BackgroundTaskInfo, BackgroundTaskStatus } from './task';
 
 /**

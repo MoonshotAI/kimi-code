@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
-import { renderPrompt } from '../../../utils/render-prompt';
+import { renderPrompt } from '#/_utils/template';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType } from '../../support/file-type';
 import { toInputJsonSchema } from '../../support/input-schema';

@@ -24,7 +24,7 @@
 import { mkdir, readdir, readFile, unlink } from 'node:fs/promises';
 import { join } from 'pathe';
 
-import { atomicWrite } from './fs';
+import { atomicWrite } from '../fs';
 
 export interface PerIdJsonStore<T> {
   /**

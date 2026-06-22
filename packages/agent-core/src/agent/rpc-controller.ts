@@ -4,7 +4,7 @@ import { ErrorCodes, KimiError } from '#/errors';
 import type { ModelProvider } from '../session/provider-manager';
 import type { ISubagentHostService } from '../session/subagent-host';
 import type { TelemetryClient } from '../telemetry';
-import type { PromisableMethods } from '../utils/types';
+import type { PromisableMethods } from '#/_utils/types';
 import type { IBackgroundService } from './background';
 import type { ICompactionService } from './compaction';
 import type { IAgentConfigService } from './config';

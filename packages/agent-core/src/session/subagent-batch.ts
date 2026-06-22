@@ -6,7 +6,7 @@ import type {
   SpawnSubagentOptions,
   SubagentHandle,
 } from './subagent-host';
-import { isUserCancellation } from '../utils/abort';
+import { isUserCancellation } from '#/_utils/abort';
 
 /*
 Subagent batch scheduling contract:

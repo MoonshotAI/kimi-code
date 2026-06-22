@@ -32,7 +32,7 @@ import { z } from 'zod';
 import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/background';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '../../../loop/types';
-import { renderPrompt } from '../../../utils/render-prompt';
+import { renderPrompt } from '#/_utils/template';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';

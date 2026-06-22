@@ -36,7 +36,7 @@ import {
 } from '../../loop/index';
 import type { AgentEvent, TurnEndedEvent } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
-import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
+import { abortable, isUserCancellation, userCancellationReason } from '#/_utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
