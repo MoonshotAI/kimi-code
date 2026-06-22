@@ -118,13 +118,13 @@ export class MonitorBackgroundTask implements BackgroundTask {
     this.pending = parts.pop() ?? '';
     for (const line of parts) {
       this.batch.push(line);
-      this.checkVolume(line);
+      this.checkVolume();
       if (this.capped) break;
     }
     this.scheduleBatchFlush();
   }
 
-  private checkVolume(line: string): void {
+  private checkVolume(): void {
     const now = Date.now();
     const windowMs = this.options.volumeWindowMs ?? DEFAULT_VOLUME_WINDOW_MS;
     if (now - this.volumeWindowStart > windowMs) {
