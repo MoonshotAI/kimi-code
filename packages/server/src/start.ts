@@ -76,6 +76,21 @@ export interface ServerStartOptions {
    */
   insecureNoTls?: boolean;
 
+  /**
+   * Allow `POST /api/v1/shutdown` on a non-loopback bind. Default false: the
+   * shutdown route is NOT registered (404) on a public/LAN bind unless this is
+   * set. Loopback always mounts it.
+   */
+  allowRemoteShutdown?: boolean;
+
+  /**
+   * Allow the PTY `/api/v1/terminals/*` routes on a non-loopback bind. Default
+   * false: terminals routes are NOT registered (404) on a public/LAN bind
+   * unless this is set (remote shell is the highest-risk surface). Loopback
+   * always mounts them.
+   */
+  allowRemoteTerminals?: boolean;
+
   webAssetsDir?: string;
 
   serviceOverrides?: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>;
@@ -288,9 +303,16 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     );
   }
 
+  // Dangerous-endpoint downgrade (ROADMAP M6.5): on a non-loopback bind the
+  // shutdown + terminals routes are NOT registered (404) unless the operator
+  // explicitly opts in. Loopback always mounts them (backward compatible).
+  const allowRemoteShutdown = opts.allowRemoteShutdown === true;
+  const allowRemoteTerminals = opts.allowRemoteTerminals === true;
   await registerApiV1Routes(app, ix, {
     serverVersion,
     debugEndpoints: opts.debugEndpoints === true && bindClass === 'loopback',
+    enableShutdown: bindClass === 'loopback' || allowRemoteShutdown,
+    enableTerminals: bindClass === 'loopback' || allowRemoteTerminals,
   });
 
   app.get('/asyncapi.json', async (_req, reply) => {

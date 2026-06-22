@@ -54,6 +54,10 @@ export interface EnsureDaemonOptions {
   debugEndpoints?: boolean;
   /** Allow a non-loopback bind without a TLS-terminating reverse proxy. */
   insecureNoTls?: boolean;
+  /** Keep `POST /api/v1/shutdown` enabled on a non-loopback bind. */
+  allowRemoteShutdown?: boolean;
+  /** Keep the PTY `/api/v1/terminals/*` routes enabled on a non-loopback bind. */
+  allowRemoteTerminals?: boolean;
   /** Idle-shutdown grace in ms for the spawned daemon (daemon mode only). */
   idleGraceMs?: number;
 }
@@ -187,6 +191,8 @@ interface SpawnDaemonChildOptions {
   logLevel: string;
   debugEndpoints?: boolean;
   insecureNoTls?: boolean;
+  allowRemoteShutdown?: boolean;
+  allowRemoteTerminals?: boolean;
   idleGraceMs?: number;
 }
 
@@ -212,6 +218,12 @@ export function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
   }
   if (options.insecureNoTls === true) {
     args.push('--insecure-no-tls');
+  }
+  if (options.allowRemoteShutdown === true) {
+    args.push('--allow-remote-shutdown');
+  }
+  if (options.allowRemoteTerminals === true) {
+    args.push('--allow-remote-terminals');
   }
   if (options.idleGraceMs !== undefined) {
     args.push('--idle-grace-ms', String(options.idleGraceMs));
@@ -287,6 +299,8 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
     logLevel,
     debugEndpoints: options.debugEndpoints,
     insecureNoTls: options.insecureNoTls,
+    allowRemoteShutdown: options.allowRemoteShutdown,
+    allowRemoteTerminals: options.allowRemoteTerminals,
     idleGraceMs: options.idleGraceMs,
   });
 

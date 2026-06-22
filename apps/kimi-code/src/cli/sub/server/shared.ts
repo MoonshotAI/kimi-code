@@ -41,6 +41,10 @@ export interface ParsedServerOptions {
   debugEndpoints: boolean;
   /** Allow a non-loopback bind without a TLS-terminating reverse proxy. */
   insecureNoTls: boolean;
+  /** Allow `POST /api/v1/shutdown` on a non-loopback bind. */
+  allowRemoteShutdown: boolean;
+  /** Allow PTY `/api/v1/terminals/*` routes on a non-loopback bind. */
+  allowRemoteTerminals: boolean;
   /** Internal: run as an idle-exiting background daemon instead of foreground. */
   daemon: boolean;
   /** Internal: idle-shutdown grace in ms (daemon mode only). */
@@ -54,6 +58,10 @@ export interface ServerCliOptions {
   debugEndpoints?: boolean;
   /** Allow a non-loopback bind without TLS (`--insecure-no-tls`). */
   insecureNoTls?: boolean;
+  /** Allow remote shutdown on a non-loopback bind (`--allow-remote-shutdown`). */
+  allowRemoteShutdown?: boolean;
+  /** Allow remote terminals on a non-loopback bind (`--allow-remote-terminals`). */
+  allowRemoteTerminals?: boolean;
   /** Internal flag set by the daemon spawner (`kimi web`). */
   daemon?: boolean;
   /** Internal flag set by the daemon spawner / tests. */
@@ -67,6 +75,8 @@ export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions 
     logLevel: parseLogLevel(opts.logLevel ?? DEFAULT_FOREGROUND_LOG_LEVEL),
     debugEndpoints: opts.debugEndpoints === true,
     insecureNoTls: opts.insecureNoTls === true,
+    allowRemoteShutdown: opts.allowRemoteShutdown === true,
+    allowRemoteTerminals: opts.allowRemoteTerminals === true,
     daemon: opts.daemon === true,
     idleGraceMs: parseIdleGraceMs(opts.idleGraceMs),
   };

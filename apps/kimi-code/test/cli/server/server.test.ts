@@ -60,6 +60,8 @@ describe('kimi server', () => {
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
     expect(longs).toContain('--insecure-no-tls');
+    expect(longs).toContain('--allow-remote-shutdown');
+    expect(longs).toContain('--allow-remote-terminals');
     expect(longs).toContain('--foreground');
     // run defaults to NOT opening the browser → option is the positive --open
     expect(longs).toContain('--open');

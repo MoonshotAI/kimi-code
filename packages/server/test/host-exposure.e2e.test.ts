@@ -17,9 +17,9 @@ import { join } from 'node:path';
 import { Writable } from 'node:stream';
 
 import { pino, type Logger } from 'pino';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { startServer, type RunningServer } from '../src';
+import { IServerShutdownService, startServer, type RunningServer, type ServerStartOptions } from '../src';
 import { authHeaders, fixedTokenAuth } from './helpers/serverHarness';
 
 const createdDirs: string[] = [];
@@ -123,5 +123,89 @@ describe('non-loopback bind gate (M6.3)', () => {
     // The public-bind warning was logged so the operator knows TLS is off.
     const combined = lines.join('');
     expect(combined).toContain('binding non-loopback host without TLS');
+  });
+});
+
+describe('dangerous-endpoint downgrade on a public bind (M6.5)', () => {
+  interface BootExposureOpts {
+    host?: string;
+    allowRemoteShutdown?: boolean;
+    allowRemoteTerminals?: boolean;
+  }
+
+  async function bootExposure(opts: BootExposureOpts = {}): Promise<{
+    server: RunningServer;
+    shutdownCalls: string[];
+  }> {
+    process.env['KIMI_CODE_PASSWORD'] = 'test-pw';
+    const { lockPath, homeDir } = tmpPaths();
+    const shutdownCalls: string[] = [];
+    // Capture shutdown requests instead of exiting the process.
+    const noopShutdown = [
+      IServerShutdownService,
+      {
+        _serviceBrand: undefined,
+        requestShutdown: async (reason: string) => {
+          shutdownCalls.push(reason);
+        },
+      },
+    ] as const;
+    const serviceOverrides: ServerStartOptions['serviceOverrides'] = [
+      fixedTokenAuth(),
+      noopShutdown,
+    ];
+    const server = await startServer({
+      serviceOverrides,
+      host: opts.host ?? '0.0.0.0',
+      port: 0,
+      lockPath,
+      insecureNoTls: true,
+      allowRemoteShutdown: opts.allowRemoteShutdown,
+      allowRemoteTerminals: opts.allowRemoteTerminals,
+      logger: pino({ level: 'silent' }),
+      coreProcessOptions: { homeDir },
+    });
+    running.push(server);
+    return { server, shutdownCalls };
+  }
+
+  const terminalsUrl = (server: RunningServer): string =>
+    `${server.address}/api/v1/sessions/some-session/terminals`;
+
+  it('returns 404 for shutdown and terminals on a public bind without the allow flags', async () => {
+    const { server } = await bootExposure();
+
+    const shutdown = await fetch(`${server.address}/api/v1/shutdown`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    expect(shutdown.status).toBe(404);
+
+    const terminals = await fetch(terminalsUrl(server), { headers: authHeaders() });
+    expect(terminals.status).toBe(404);
+  });
+
+  it('returns 200 for shutdown on a public bind when allowRemoteShutdown is set', async () => {
+    const { server, shutdownCalls } = await bootExposure({ allowRemoteShutdown: true });
+
+    const shutdown = await fetch(`${server.address}/api/v1/shutdown`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    expect(shutdown.status).toBe(200);
+    // The handler replies before triggering shutdown (setImmediate); the noop
+    // override captures it so the process does not exit.
+    await vi.waitFor(() => expect(shutdownCalls).toContain('api'));
+  });
+
+  it('mounts shutdown on a loopback bind by default', async () => {
+    const { server, shutdownCalls } = await bootExposure({ host: '127.0.0.1' });
+
+    const shutdown = await fetch(`${server.address}/api/v1/shutdown`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    expect(shutdown.status).toBe(200);
+    await vi.waitFor(() => expect(shutdownCalls).toContain('api'));
   });
 });

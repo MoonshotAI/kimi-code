@@ -103,6 +103,16 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
       false,
     )
     .option(
+      '--allow-remote-shutdown',
+      'On a non-loopback bind, keep POST /api/v1/shutdown enabled (default: route is disabled → 404).',
+      false,
+    )
+    .option(
+      '--allow-remote-terminals',
+      'On a non-loopback bind, keep the PTY /api/v1/terminals/* routes enabled (default: disabled → 404). Remote shell is high risk.',
+      false,
+    )
+    .option(
       '--log-level <level>',
       `Server log level: ${VALID_LOG_LEVELS.join('|')}. Omit to keep logs off.`,
     )
@@ -203,6 +213,8 @@ export async function startServerBackground(
     logLevel: options.logLevel,
     debugEndpoints: options.debugEndpoints,
     insecureNoTls: options.insecureNoTls,
+    allowRemoteShutdown: options.allowRemoteShutdown,
+    allowRemoteTerminals: options.allowRemoteTerminals,
     idleGraceMs: options.idleGraceMs,
   });
   return { origin };
@@ -280,6 +292,8 @@ async function runServerInProcess(
     logLevel: options.logLevel,
     debugEndpoints: options.debugEndpoints,
     insecureNoTls: options.insecureNoTls,
+    allowRemoteShutdown: options.allowRemoteShutdown,
+    allowRemoteTerminals: options.allowRemoteTerminals,
     webAssetsDir: serverWebAssetsDir(),
     coreProcessOptions: {
       identity: createKimiCodeHostIdentity(version),
