@@ -182,12 +182,13 @@ export class EditorKeyboardController {
       host.state.ui.requestRender();
     };
 
-    editor.onCtrlB = () => {
+    editor.onCtrlB = (): boolean => {
       if (host.state.appState.streamingPhase === 'idle' || host.state.appState.isCompacting) {
-        return;
+        return false;
       }
       host.track('shortcut_background_task');
       host.detachCurrentForegroundTask();
+      return true;
     };
 
     editor.onUndo = () => {

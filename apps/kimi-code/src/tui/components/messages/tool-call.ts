@@ -538,6 +538,14 @@ export class ToolCallComponent extends Container {
   // ── Subagent lifecycle state from subagent.spawned/started/completed/failed ──
   private subagentPhase: SubagentPhase | undefined;
   /**
+   * Distinguishes a foreground subagent that the user detached via Ctrl+B from
+   * one that started in the background. Both set `subagentPhase = 'backgrounded'`,
+   * but only the detached one should keep showing `◐ backgrounded` after its
+   * spawn-success ToolResult lands — a started-in-background agent reads as
+   * `done` once its result arrives.
+   */
+  private detachedFromForeground = false;
+  /**
    * Authoritative terminal phase for a backgrounded subagent. Set from
    * `BackgroundTaskInfo.status` via `setBackgroundTaskTerminalStatus` once
    * the backing task reaches a terminal state — either live (a bg agent
@@ -798,14 +806,11 @@ export class ToolCallComponent extends Container {
     //      'spawning' and keep showing `Initializing...`.
     // Intermediate states without a result still use `subagentPhase`.
     // `backgrounded` has no result because background agents do not enter the
-    // transcript.
-    const derivedPhase: ToolCallSubagentSnapshot['phase'] =
-      this.backgroundTaskTerminalPhase ??
-      (this.result !== undefined
-        ? this.result.is_error
-          ? 'failed'
-          : 'done'
-        : this.subagentPhase);
+    // transcript — but a foreground subagent detached via Ctrl+B keeps
+    // `subagentPhase === 'backgrounded'` even after its ToolResult lands, so
+    // the group card shows `◐ backgrounded` rather than `✓ Completed`. Reuse
+    // the standalone derivation so both paths agree.
+    const derivedPhase = this.getDerivedSubagentPhase();
     const errorText =
       this.subagentError ?? (derivedPhase === 'failed' ? this.result?.output : undefined);
     return {
@@ -1153,7 +1158,8 @@ export class ToolCallComponent extends Container {
    * flipping to `✓ Completed` when the spawn-success ToolResult lands.
    */
   markBackgrounded(): void {
-    if (this.subagentPhase === 'backgrounded') return;
+    if (this.detachedFromForeground) return;
+    this.detachedFromForeground = true;
     this.subagentPhase = 'backgrounded';
     this.headerText.setText(this.buildHeader());
     this.rebuildContent();
@@ -1624,8 +1630,12 @@ export class ToolCallComponent extends Container {
     }
     // A foreground subagent detached via Ctrl+B keeps showing `backgrounded`
     // even after its spawn-success ToolResult lands, so the card doesn't flip
-    // to `✓ Completed` and look like the work actually finished.
-    if (this.subagentPhase === 'backgrounded') return 'backgrounded';
+    // to `✓ Completed` and look like the work actually finished. Agents that
+    // started in the background (`detachedFromForeground === false`) read as
+    // `done` once their result lands.
+    if (this.detachedFromForeground && this.subagentPhase === 'backgrounded') {
+      return 'backgrounded';
+    }
     if (this.result !== undefined) return this.result.is_error ? 'failed' : 'done';
     return this.subagentPhase;
   }
