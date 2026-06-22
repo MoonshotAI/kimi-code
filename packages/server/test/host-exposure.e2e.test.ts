@@ -1,0 +1,127 @@
+/**
+ * Host-exposure hardening (ROADMAP M6.3–M6.7).
+ *
+ * Covers the public-bind gate added in M6.3 (force password + TLS opt-out)
+ * and, as later steps land, the full §3.5 public hardening stack: rate limit,
+ * dangerous-endpoint downgrade, security headers, and Host allowlist.
+ *
+ * M6.3 scope here: the three gate outcomes on a `0.0.0.0` bind:
+ *   1. no password → refuse (password message);
+ *   2. password but no `--insecure-no-tls` → refuse (TLS message);
+ *   3. password + `insecureNoTls: true` → boot and log the public-bind warning.
+ */
+
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Writable } from 'node:stream';
+
+import { pino, type Logger } from 'pino';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { startServer, type RunningServer } from '../src';
+import { authHeaders, fixedTokenAuth } from './helpers/serverHarness';
+
+const createdDirs: string[] = [];
+const running: RunningServer[] = [];
+let prevPassword: string | undefined;
+
+function tmpPaths(): { lockPath: string; homeDir: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'kimi-host-exposure-'));
+  const home = mkdtempSync(join(tmpdir(), 'kimi-host-exposure-home-'));
+  createdDirs.push(dir, home);
+  return { lockPath: join(dir, 'lock'), homeDir: home };
+}
+
+function capturingLogger(): { logger: Logger; lines: string[] } {
+  const lines: string[] = [];
+  const dest = new Writable({
+    write(chunk, _enc, cb) {
+      lines.push(String(chunk));
+      cb();
+    },
+  });
+  return { logger: pino({ level: 'info' }, dest), lines };
+}
+
+beforeEach(() => {
+  prevPassword = process.env['KIMI_CODE_PASSWORD'];
+});
+
+afterEach(async () => {
+  for (const r of running.splice(0)) {
+    try {
+      await r.close();
+    } catch {
+      // ignore — best-effort teardown
+    }
+  }
+  for (const dir of createdDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  if (prevPassword === undefined) {
+    delete process.env['KIMI_CODE_PASSWORD'];
+  } else {
+    process.env['KIMI_CODE_PASSWORD'] = prevPassword;
+  }
+});
+
+describe('non-loopback bind gate (M6.3)', () => {
+  it('refuses to bind 0.0.0.0 without a password', async () => {
+    delete process.env['KIMI_CODE_PASSWORD'];
+    const { lockPath, homeDir } = tmpPaths();
+
+    await expect(
+      startServer({
+        serviceOverrides: [fixedTokenAuth()],
+        host: '0.0.0.0',
+        port: 0,
+        lockPath,
+        insecureNoTls: true,
+        logger: pino({ level: 'silent' }),
+        coreProcessOptions: { homeDir },
+      }),
+    ).rejects.toThrow(/without a password/);
+  });
+
+  it('refuses to bind 0.0.0.0 with a password but without --insecure-no-tls', async () => {
+    process.env['KIMI_CODE_PASSWORD'] = 'test-pw';
+    const { lockPath, homeDir } = tmpPaths();
+
+    await expect(
+      startServer({
+        serviceOverrides: [fixedTokenAuth()],
+        host: '0.0.0.0',
+        port: 0,
+        lockPath,
+        logger: pino({ level: 'silent' }),
+        coreProcessOptions: { homeDir },
+      }),
+    ).rejects.toThrow(/without TLS/);
+  });
+
+  it('boots 0.0.0.0 with a password + insecureNoTls and logs the public warning', async () => {
+    process.env['KIMI_CODE_PASSWORD'] = 'test-pw';
+    const { lockPath, homeDir } = tmpPaths();
+    const { logger, lines } = capturingLogger();
+
+    const server = await startServer({
+      serviceOverrides: [fixedTokenAuth()],
+      host: '0.0.0.0',
+      port: 0,
+      lockPath,
+      insecureNoTls: true,
+      logger,
+      coreProcessOptions: { homeDir },
+    });
+    running.push(server);
+
+    // The server is up: a gated route answers 200 with a valid token.
+    const res = await fetch(`${server.address}/api/v1/healthz`, { headers: authHeaders() });
+    expect(res.status).toBe(200);
+
+    // The public-bind warning was logged so the operator knows TLS is off.
+    const combined = lines.join('');
+    expect(combined).toContain('binding non-loopback host without TLS');
+  });
+});

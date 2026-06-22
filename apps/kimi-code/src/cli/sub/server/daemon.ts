@@ -52,6 +52,8 @@ export interface EnsureDaemonOptions {
   logLevel?: string;
   /** Mount `/api/v1/debug/*` routes on the spawned daemon. */
   debugEndpoints?: boolean;
+  /** Allow a non-loopback bind without a TLS-terminating reverse proxy. */
+  insecureNoTls?: boolean;
   /** Idle-shutdown grace in ms for the spawned daemon (daemon mode only). */
   idleGraceMs?: number;
 }
@@ -184,6 +186,7 @@ interface SpawnDaemonChildOptions {
   port: number;
   logLevel: string;
   debugEndpoints?: boolean;
+  insecureNoTls?: boolean;
   idleGraceMs?: number;
 }
 
@@ -206,6 +209,9 @@ export function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
   }
   if (options.debugEndpoints === true) {
     args.push('--debug-endpoints');
+  }
+  if (options.insecureNoTls === true) {
+    args.push('--insecure-no-tls');
   }
   if (options.idleGraceMs !== undefined) {
     args.push('--idle-grace-ms', String(options.idleGraceMs));
@@ -280,6 +286,7 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
     port,
     logLevel,
     debugEndpoints: options.debugEndpoints,
+    insecureNoTls: options.insecureNoTls,
     idleGraceMs: options.idleGraceMs,
   });
 

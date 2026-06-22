@@ -67,6 +67,14 @@ export interface ServerStartOptions {
    */
   bindClass?: 'lan' | 'public';
 
+  /**
+   * Allow a non-loopback bind WITHOUT a TLS-terminating reverse proxy. Default
+   * false: binding beyond loopback refuses to start unless this is set, so a
+   * public/LAN bind is never served over plain HTTP by accident. Pass
+   * `--insecure-no-tls` (or set this) only when you accept the risk.
+   */
+  insecureNoTls?: boolean;
+
   webAssetsDir?: string;
 
   serviceOverrides?: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>;
@@ -184,6 +192,45 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const passwordHash = await resolvePasswordHash(process.env);
   const defaultAuth = createAuthTokenService({ tokenStore, passwordHash });
 
+  // Public-bind hardening gate (ROADMAP M6.3). Classify the bind host and, for
+  // any non-loopback tier (LAN or public), refuse to start unless (a) a user
+  // password is configured and (b) the operator explicitly acknowledged that
+  // TLS is terminated elsewhere (`insecureNoTls`). Failing here — before the
+  // container is built and before we listen — keeps a public/LAN bind from
+  // ever serving plain HTTP by accident. On refusal we tear down the token
+  // file and release the lock so the operator can retry cleanly.
+  const bindClass = classify(opts.host, { bindClass: opts.bindClass });
+  if (bindClass !== 'loopback') {
+    const refusePublicBind = async (message: string): Promise<never> => {
+      try {
+        await tokenStore.dispose();
+      } catch {
+        // best-effort cleanup of the token file on boot refusal
+      }
+      lockHandle.release();
+      throw new Error(message);
+    };
+    if (passwordHash === undefined) {
+      await refusePublicBind(
+        'Refusing to bind a non-loopback host without a password. ' +
+          'Set KIMI_CODE_PASSWORD (or configure a bcrypt password hash) before using --host ' +
+          opts.host +
+          '.',
+      );
+    }
+    if (opts.insecureNoTls !== true) {
+      await refusePublicBind(
+        'Refusing to bind a non-loopback host without TLS. ' +
+          'Put the server behind a TLS-terminating reverse proxy (Caddy/nginx), ' +
+          'or pass --insecure-no-tls to acknowledge the risk.',
+      );
+    }
+    pinoLogger.warn(
+      { host: opts.host, bindClass },
+      'binding non-loopback host without TLS — use a reverse proxy or tunnel in production',
+    );
+  }
+
   const services = createServerServiceCollection({
     server: {
       ...opts,
@@ -219,11 +266,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const authTokenService = ix.invokeFunction((a) => a.get(IAuthTokenService));
   app.addHook('onRequest', createAuthHook(authTokenService));
 
-  // Bind classification (ROADMAP M6.1). Determines which hardening applies.
-  // Computed once here so every later gate (debug routes now; password/TLS,
-  // rate limit, dangerous endpoints, security headers in M6.3–M6.6) agrees on
-  // the exposure tier. Wildcard binds default to `public` (most strict).
-  const bindClass = classify(opts.host, { bindClass: opts.bindClass });
+  // Bind classification (`bindClass`, computed above next to the password/TLS
+  // gate) drives every hardening decision from here on: debug routes now;
+  // rate limit, dangerous endpoints, and security headers in M6.4–M6.6.
 
   // Debug routes (ROADMAP M5.3): only mount `/api/v1/debug/*` when bound to a
   // loopback interface. On a non-loopback bind these introspection/mutation

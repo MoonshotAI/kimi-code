@@ -15,7 +15,7 @@ import { join } from 'node:path';
 
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
-import { getLiveLock, startServer, type RunningServer } from '@moonshot-ai/server';
+import { classify, getLiveLock, startServer, type RunningServer } from '@moonshot-ai/server';
 import chalk from 'chalk';
 import { Option, type Command } from 'commander';
 
@@ -98,6 +98,11 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
       String(DEFAULT_SERVER_HOST),
     )
     .option(
+      '--insecure-no-tls',
+      'Allow a non-loopback bind without a TLS-terminating reverse proxy. Required (with a password) to bind beyond 127.0.0.1; use a tunnel or reverse proxy in production.',
+      false,
+    )
+    .option(
       '--log-level <level>',
       `Server log level: ${VALID_LOG_LEVELS.join('|')}. Omit to keep logs off.`,
     )
@@ -161,7 +166,7 @@ export async function handleRunCommand(
         const readyMs = Date.now() - startedAt;
         deps.stdout.write(
           parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-            ? formatReadyBanner(origin, readyMs)
+            ? formatReadyBanner(origin, readyMs, parsed.host)
             : `Kimi server: ${origin}\n`,
         );
         if (opts.open === true) {
@@ -175,7 +180,7 @@ export async function handleRunCommand(
   const readyMs = Date.now() - startedAt;
   deps.stdout.write(
     parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-      ? formatReadyBanner(origin, readyMs)
+      ? formatReadyBanner(origin, readyMs, parsed.host)
       : `Kimi server: ${origin}\n`,
   );
   if (opts.open === true) {
@@ -197,6 +202,7 @@ export async function startServerBackground(
     port: options.port,
     logLevel: options.logLevel,
     debugEndpoints: options.debugEndpoints,
+    insecureNoTls: options.insecureNoTls,
     idleGraceMs: options.idleGraceMs,
   });
   return { origin };
@@ -273,6 +279,7 @@ async function runServerInProcess(
     port: options.port,
     logLevel: options.logLevel,
     debugEndpoints: options.debugEndpoints,
+    insecureNoTls: options.insecureNoTls,
     webAssetsDir: serverWebAssetsDir(),
     coreProcessOptions: {
       identity: createKimiCodeHostIdentity(version),
@@ -358,7 +365,7 @@ export function resolveServerWebAssetsDir(
   return nativeWebAssetsDir ?? join(getHostPackageRoot(), WEB_ASSETS_DIR);
 }
 
-function formatReadyBanner(origin: string, readyMs: number): string {
+function formatReadyBanner(origin: string, readyMs: number, host: string): string {
   const primary = (text: string): string => chalk.hex(darkColors.primary)(text);
   const title = (text: string): string => chalk.bold.hex(darkColors.primary)(text);
   const dim = (text: string): string => chalk.hex(darkColors.textDim)(text);
@@ -373,6 +380,16 @@ function formatReadyBanner(origin: string, readyMs: number): string {
   const logoWidth = Math.max(...logo.map((row) => visibleWidth(row)));
   const gap = '  ';
   const textWidth = innerWidth - logoWidth - gap.length;
+  // Bind class drives the Network line: loopback stays "local only"; a
+  // non-loopback bind prints the tier plus a reachability / hardening hint so
+  // the operator knows the server is exposed beyond this host.
+  const bindClass = classify(host);
+  const networkText =
+    bindClass === 'loopback'
+      ? 'local only'
+      : bindClass === 'lan'
+        ? 'LAN — reachable from your local network'
+        : 'public — reachable from the internet; use a tunnel or TLS proxy';
   const headerLines = [
     primary(logo[0].padEnd(logoWidth)) +
       gap +
@@ -383,7 +400,7 @@ function formatReadyBanner(origin: string, readyMs: number): string {
   ];
   const infoLines = [
     label('URL:      ') + url,
-    label('Network:  ') + muted('local only'),
+    label('Network:  ') + muted(networkText),
     label('Logs:     ') + muted('off') + dim('  use --log-level info to enable'),
     label('Stop:     ') + muted('kimi server kill'),
     label('Ready:    ') + muted(`${String(Math.max(0, readyMs))} ms`),

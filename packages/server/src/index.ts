@@ -2,6 +2,8 @@ export { startServer, ServerLockedError } from './start';
 export type { ServerStartOptions, RunningServer } from './start';
 export { okEnvelope, errEnvelope } from './envelope';
 export type { Envelope } from './envelope';
+export { classify } from './services/auth/bindClassify';
+export type { BindClass } from './services/auth/bindClassify';
 export { createServerLogger } from './services/pinoLoggerService';
 export type {
   CreateLoggerOptions,

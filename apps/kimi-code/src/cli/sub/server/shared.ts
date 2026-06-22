@@ -39,6 +39,8 @@ export interface ParsedServerOptions {
   port: number;
   logLevel: ServerLogLevel;
   debugEndpoints: boolean;
+  /** Allow a non-loopback bind without a TLS-terminating reverse proxy. */
+  insecureNoTls: boolean;
   /** Internal: run as an idle-exiting background daemon instead of foreground. */
   daemon: boolean;
   /** Internal: idle-shutdown grace in ms (daemon mode only). */
@@ -50,6 +52,8 @@ export interface ServerCliOptions {
   port?: string;
   logLevel?: string;
   debugEndpoints?: boolean;
+  /** Allow a non-loopback bind without TLS (`--insecure-no-tls`). */
+  insecureNoTls?: boolean;
   /** Internal flag set by the daemon spawner (`kimi web`). */
   daemon?: boolean;
   /** Internal flag set by the daemon spawner / tests. */
@@ -62,6 +66,7 @@ export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions 
     port: parsePort(opts.port, '--port', DEFAULT_SERVER_PORT),
     logLevel: parseLogLevel(opts.logLevel ?? DEFAULT_FOREGROUND_LOG_LEVEL),
     debugEndpoints: opts.debugEndpoints === true,
+    insecureNoTls: opts.insecureNoTls === true,
     daemon: opts.daemon === true,
     idleGraceMs: parseIdleGraceMs(opts.idleGraceMs),
   };

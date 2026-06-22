@@ -59,6 +59,7 @@ describe('kimi server', () => {
     expect(longs).toContain('--port');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
+    expect(longs).toContain('--insecure-no-tls');
     expect(longs).toContain('--foreground');
     // run defaults to NOT opening the browser → option is the positive --open
     expect(longs).toContain('--open');
@@ -635,6 +636,98 @@ describe('lockConnectHost (M6.2 connect side)', () => {
   });
 });
 
+describe('--insecure-no-tls threading (M6.3)', () => {
+  it('threads --insecure-no-tls to the foreground runner', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let foregroundOptions: unknown;
+
+    await handleRunCommand(
+      { host: '0.0.0.0', insecureNoTls: true, foreground: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://0.0.0.0:58627' }),
+        startServerForeground: async (options) => {
+          foregroundOptions = options;
+          return undefined as unknown as never;
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(foregroundOptions).toMatchObject({ host: '0.0.0.0', insecureNoTls: true });
+  });
+
+  it('threads --insecure-no-tls to the background daemon', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let parsed: unknown;
+
+    await handleRunCommand(
+      { host: '0.0.0.0', insecureNoTls: true },
+      {
+        startServerBackground: async (options) => {
+          parsed = options;
+          return { origin: 'http://0.0.0.0:58627' };
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(parsed).toMatchObject({ insecureNoTls: true });
+  });
+});
+
+describe('ready banner reflects the bind class (M6.3)', () => {
+  it('labels a 0.0.0.0 bind as public with a reachability hint', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+
+    await handleRunCommand(
+      { host: '0.0.0.0', insecureNoTls: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://0.0.0.0:58627' }),
+        openUrl: vi.fn(),
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: { write: () => true },
+      },
+    );
+
+    const plain = stripAnsi(stdout);
+    expect(plain).toContain('public');
+    expect(plain).toContain('reachable from the internet');
+    expect(plain).not.toContain('local only');
+  });
+
+  it('labels a 127.0.0.1 bind as local only', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+
+    await handleRunCommand(
+      { host: '127.0.0.1' },
+      {
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+        openUrl: vi.fn(),
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(stripAnsi(stdout)).toContain('local only');
+  });
+});
+
 describe('resolveDaemonPort', () => {
   it('returns the preferred port when it is free', async () => {
     const { resolveDaemonPort } = await import('#/cli/sub/server/daemon');
@@ -756,6 +849,19 @@ describe('spawnDaemonChild', () => {
 
     const [, args] = spawnMock.mock.calls[0]!;
     expect(args).toEqual(expect.arrayContaining(['--host', '0.0.0.0']));
+  });
+
+  it('passes --insecure-no-tls through to the daemon child args (M6.3)', async () => {
+    const { spawn } = await import('node:child_process');
+    const spawnMock = vi.mocked(spawn);
+    spawnMock.mockClear();
+    spawnMock.mockReturnValue({ unref: vi.fn(), once: vi.fn() } as unknown as ChildProcess);
+
+    const { spawnDaemonChild } = await import('#/cli/sub/server/daemon');
+    spawnDaemonChild({ host: '0.0.0.0', port: 58627, logLevel: 'info', insecureNoTls: true });
+
+    const [, args] = spawnMock.mock.calls[0]!;
+    expect(args).toEqual(expect.arrayContaining(['--insecure-no-tls']));
   });
 });
 

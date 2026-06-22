@@ -20,12 +20,18 @@ import { authHeaders, fixedTokenAuth } from './helpers/serverHarness';
 let tmpDir: string;
 let lockPath: string;
 let bridgeHome: string;
+let prevPassword: string | undefined;
 const running: RunningServer[] = [];
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'kimi-server-debug-loopback-'));
   lockPath = join(tmpDir, 'lock');
   bridgeHome = mkdtempSync(join(tmpdir(), 'kimi-server-debug-loopback-home-'));
+  // M6.3: a non-loopback bind (0.0.0.0) now refuses to start without a
+  // password + TLS opt-out. Set a password so the 0.0.0.0 case can boot; the
+  // fixed-token override still governs auth (password ≠ token).
+  prevPassword = process.env['KIMI_CODE_PASSWORD'];
+  process.env['KIMI_CODE_PASSWORD'] = 'test-pw';
 });
 
 afterEach(async () => {
@@ -35,6 +41,11 @@ afterEach(async () => {
     } catch {
       // ignore
     }
+  }
+  if (prevPassword === undefined) {
+    delete process.env['KIMI_CODE_PASSWORD'];
+  } else {
+    process.env['KIMI_CODE_PASSWORD'] = prevPassword;
   }
   rmSync(tmpDir, { recursive: true, force: true });
   rmSync(bridgeHome, { recursive: true, force: true });
@@ -49,6 +60,9 @@ async function boot(host: string): Promise<RunningServer> {
     logger: pino({ level: 'silent' }),
     coreProcessOptions: { homeDir: bridgeHome },
     debugEndpoints: true,
+    // M6.3: acknowledge the lack of a TLS proxy so the 0.0.0.0 bind is allowed
+    // (loopback ignores this — the gate only fires for non-loopback).
+    insecureNoTls: true,
   });
   running.push(r);
   return r;
