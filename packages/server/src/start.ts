@@ -39,6 +39,7 @@ import {
   createAuthTokenService,
   IAuthTokenService,
 } from '#/services/auth/authTokenService';
+import { classify } from '#/services/auth/bindClassify';
 import { resolvePasswordHash } from '#/services/auth/password';
 import { createTokenStore } from '#/services/auth/tokenStore';
 import { getServerVersion } from './version';
@@ -58,6 +59,13 @@ export interface ServerStartOptions {
   wsGatewayOptions?: WSGatewayOptions;
 
   debugEndpoints?: boolean;
+
+  /**
+   * Override the classification of a wildcard bind (`0.0.0.0` / `::` / empty).
+   * Default (unset) treats wildcards as `public` (most strict); set to `lan`
+   * to relax to LAN-tier hardening. See `services/auth/bindClassify.ts`.
+   */
+  bindClass?: 'lan' | 'public';
 
   webAssetsDir?: string;
 
@@ -211,23 +219,26 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const authTokenService = ix.invokeFunction((a) => a.get(IAuthTokenService));
   app.addHook('onRequest', createAuthHook(authTokenService));
 
+  // Bind classification (ROADMAP M6.1). Determines which hardening applies.
+  // Computed once here so every later gate (debug routes now; password/TLS,
+  // rate limit, dangerous endpoints, security headers in M6.3–M6.6) agrees on
+  // the exposure tier. Wildcard binds default to `public` (most strict).
+  const bindClass = classify(opts.host, { bindClass: opts.bindClass });
+
   // Debug routes (ROADMAP M5.3): only mount `/api/v1/debug/*` when bound to a
   // loopback interface. On a non-loopback bind these introspection/mutation
   // endpoints would be reachable from the network, so suppress them even if
-  // the caller asked for them, and warn so the operator knows. M6 will replace
-  // this inline check with `bindClassify`.
-  const isLoopback =
-    opts.host === '127.0.0.1' || opts.host === '::1' || opts.host === 'localhost';
-  if (opts.debugEndpoints === true && !isLoopback) {
+  // the caller asked for them, and warn so the operator knows.
+  if (opts.debugEndpoints === true && bindClass !== 'loopback') {
     pinoLogger.warn(
-      { host: opts.host },
+      { host: opts.host, bindClass },
       'debug endpoints suppressed: refusing to mount /api/v1/debug/* on a non-loopback bind',
     );
   }
 
   await registerApiV1Routes(app, ix, {
     serverVersion,
-    debugEndpoints: opts.debugEndpoints === true && isLoopback,
+    debugEndpoints: opts.debugEndpoints === true && bindClass === 'loopback',
   });
 
   app.get('/asyncapi.json', async (_req, reply) => {
