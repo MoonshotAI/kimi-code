@@ -1,6 +1,7 @@
 export * from '../background/task-list';
 export * from '../background/task-output';
 export * from '../background/task-stop';
+export * from '../background/monitor';
 export * from '../cron/cron-create';
 export * from '../cron/cron-delete';
 export * from '../cron/cron-list';
