@@ -24,6 +24,7 @@ import { pino } from 'pino';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { startServer, type RunningServer } from '../src';
+import { authHeaders, fixedTokenAuth } from './helpers/serverHarness';
 
 /** OpenAPI path-item keys that are HTTP methods (skip `parameters`, etc.). */
 const HTTP_METHODS = new Set([
@@ -70,6 +71,7 @@ describe('API surface snapshot', () => {
     const lockPath = join(tmpDir, 'lock');
 
     server = await startServer({
+      serviceOverrides: [fixedTokenAuth()],
       host: '127.0.0.1',
       port: 0,
       lockPath,
@@ -80,7 +82,7 @@ describe('API surface snapshot', () => {
     const address = server.address;
 
     // 1) Documented v1 REST surface, derived from /openapi.json `paths`.
-    const openApiRes = await fetch(`${address}/openapi.json`);
+    const openApiRes = await fetch(`${address}/openapi.json`, { headers: authHeaders() });
     expect(openApiRes.status).toBe(200);
     const openApi = (await openApiRes.json()) as {
       paths?: Record<string, Record<string, unknown>>;
@@ -101,7 +103,7 @@ describe('API surface snapshot', () => {
     // 2) Doc/meta endpoints that are not part of the OpenAPI `paths` map.
     const meta: Array<[string, string, number]> = [];
     for (const endpoint of META_ENDPOINTS) {
-      const res = await fetch(`${address}${endpoint}`);
+      const res = await fetch(`${address}${endpoint}`, { headers: authHeaders() });
       meta.push(['GET', endpoint, res.status]);
     }
     meta.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]) || a[2] - b[2]);

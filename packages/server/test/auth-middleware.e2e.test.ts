@@ -173,8 +173,11 @@ describe('/asyncapi.json serverHost (M2.3 Host-reflection fix)', () => {
 
     // With an allowed Host, the route responds and still reflects the BOUND
     // host, never the caller-supplied Host header (the original M2.3 fix).
+    // /asyncapi.json is gated by the M5.1 auth hook, so carry the fixed token
+    // the harness injected via `boot()`.
     const { status, body } = await rawGet(port, '/asyncapi.json', {
       Host: '127.0.0.1',
+      Authorization: 'Bearer test-token',
     });
     expect(status).toBe(200);
 

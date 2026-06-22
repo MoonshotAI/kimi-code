@@ -31,6 +31,7 @@ import {
   startServer,
   type RunningServer,
 } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 import { rawDataToString } from '../src/ws/rawData';
 
 let tmpDir: string;
@@ -58,6 +59,7 @@ afterEach(async () => {
 
 async function spawn(): Promise<RunningServer> {
   const r = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -91,7 +93,7 @@ interface Conn {
 
 function openConn(url: string): Promise<Conn> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, ['kimi-code.bearer.test-token']);
     const queue: WsFrame[] = [];
     const waiters: Array<(frame: WsFrame) => void> = [];
     ws.on('message', (data) => {

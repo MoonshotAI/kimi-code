@@ -43,6 +43,7 @@ import {
   startServer,
   type RunningServer,
 } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 import { rawDataToString } from '../src/ws/rawData';
 
 let tmpDir: string;
@@ -74,6 +75,7 @@ afterEach(async () => {
 
 async function bootDaemon(): Promise<RunningServer> {
   server = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -90,15 +92,27 @@ function appOf(r: RunningServer): {
     json: () => unknown;
   }>;
 } {
-  return r.services.invokeFunction((a) => {
+  const app = r.services.invokeFunction((a) => {
     const gw = a.get(IRestGateway);
     return gw.app as unknown as {
-      inject: (req: unknown) => Promise<{
-        statusCode: number;
-        json: () => unknown;
-      }>;
-    };
+  inject: (req: unknown) => Promise<{
+    statusCode: number;
+    json: () => unknown;
+  }>;
+};
   });
+  // Auto-attach the fixed bearer token so the M5.1 auth hook passes. A
+  // caller-supplied `authorization` header wins, so explicit token tests keep
+  // working; every other header (Range, content-type, …) is preserved.
+  return {
+    inject(req: unknown) {
+      const q = req as { headers?: Record<string, string | string[] | undefined> };
+      return app.inject({
+        ...q,
+        headers: { authorization: 'Bearer test-token', ...(q.headers ?? {}) },
+      });
+    },
+  };
 }
 
 async function createSession(r: RunningServer): Promise<string> {
@@ -136,7 +150,7 @@ interface Conn {
 
 function openConn(url: string): Promise<Conn> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, ['kimi-code.bearer.test-token']);
     const queue: WsFrame[] = [];
     const waiters: Array<(frame: WsFrame) => void> = [];
     ws.on('message', (data) => {

@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { startServer, type RunningServer } from '../src';
-import type { IAuthTokenService } from '../src/services/auth/authTokenService';
+import { IAuthTokenService } from '../src/services/auth/authTokenService';
 import { extractWsBearerToken } from '../src/services/gateway/wsGateway';
 import { rawDataToString } from '../src/ws/rawData';
 
@@ -104,8 +104,10 @@ async function spawn(): Promise<RunningServer> {
     wsGatewayOptions: {
       pingIntervalMs: 60,
       pongTimeoutMs: 200,
-      authTokenService: fixedTokenAuth,
     },
+    // Inject the fixed token via the DI seam (M5.1 reads it through the WS
+    // gateway's `setAuthTokenService`, no longer via `wsGatewayOptions`).
+    serviceOverrides: [[IAuthTokenService, fixedTokenAuth]],
   });
   running.push(r);
   return r;
