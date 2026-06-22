@@ -1,5 +1,6 @@
 import { createDecorator, type TelemetryClient } from '@moonshot-ai/agent-core';
 
+import type { IAuthTokenService } from '#/services/auth/authTokenService';
 import type { AbortHandler, FsWatchHandler, TerminalHandler } from '#/ws/connection';
 
 export const WS_PATH = '/api/v1/ws';
@@ -72,4 +73,11 @@ export interface WSGatewayOptions {
    * web-path events share one sink + context.
    */
   telemetry?: TelemetryClient;
+
+  /**
+   * When set, the WS upgrade path requires a valid bearer token (via the
+   * `Authorization` header or the `kimi-code.bearer.<token>` subprotocol).
+   * When unset (e.g. tests / pre-M5.1 boots), upgrade auth is skipped.
+   */
+  authTokenService?: IAuthTokenService;
 }
