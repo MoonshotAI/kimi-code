@@ -123,6 +123,7 @@ const {
   SIDEBAR_WIDTH_KEY,
   SIDEBAR_DEFAULT,
   SIDEBAR_MIN,
+  sidebarMax,
   sessionColWidth,
   sidebarCollapsed,
   sideWidth,
@@ -559,6 +560,7 @@ function openPr(url: string): void {
         :storage-key="SIDEBAR_WIDTH_KEY"
         :default-width="SIDEBAR_DEFAULT"
         :min="SIDEBAR_MIN"
+        :max="sidebarMax"
         @update:width="sessionColWidth = $event"
       />
       <div v-if="sidebarCollapsed" class="sidebar-rail">
