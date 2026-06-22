@@ -238,6 +238,7 @@ export interface BackgroundTaskInfoBase {
   readonly taskId: string;
   readonly description: string;
   readonly status: AgentCoreBackgroundTaskStatus;
+  readonly detached?: boolean;
   readonly startedAt: number;
   readonly endedAt: number | null;
   readonly stopReason?: string;
@@ -865,6 +866,7 @@ export const backgroundTaskInfoBaseSchema = z.object({
   taskId: z.string(),
   description: z.string(),
   status: agentCoreBackgroundTaskStatusSchema,
+  detached: z.boolean().optional(),
   startedAt: z.number(),
   endedAt: z.number().nullable(),
   stopReason: z.string().optional(),

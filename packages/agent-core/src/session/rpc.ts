@@ -6,6 +6,7 @@ import type {
   CancelPayload,
   CancelPlanPayload,
   CreateGoalPayload,
+  DetachBackgroundPayload,
   EmptyPayload,
   EnterSwarmPayload,
   GetBackgroundOutputPayload,
@@ -172,6 +173,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async stopBackground({ agentId, ...payload }: AgentScopedPayload<StopBackgroundPayload>) {
     return (await this.getAgent(agentId)).stopBackground(payload);
+  }
+
+  async detachBackground({ agentId, ...payload }: AgentScopedPayload<DetachBackgroundPayload>) {
+    return (await this.getAgent(agentId)).detachBackground(payload);
   }
 
   async clearContext({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {

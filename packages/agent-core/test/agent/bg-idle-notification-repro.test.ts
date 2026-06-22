@@ -23,7 +23,8 @@ import { join } from 'pathe';
 import { describe, expect, it, vi } from 'vitest';
 
 import { testAgent } from './harness/agent';
-import { AgentBackgroundTask, BackgroundTaskPersistence } from '../../src/agent/background';
+import { BackgroundTaskPersistence } from '../../src/agent/background';
+import { agentTask } from './background/helpers';
 
 describe('background notification → main agent (real Agent instance)', () => {
   it('IDLE: completed bg agent auto-starts a new turn with <notification> XML', async () => {
@@ -36,7 +37,7 @@ describe('background notification → main agent (real Agent instance)', () => {
     // The expected auto-launched turn will call generate once, then end.
     ctx.mockNextResponse({ type: 'text', text: 'ack from main agent' });
 
-    const taskId = ctx.agent.background.registerTask(new AgentBackgroundTask(
+    const taskId = ctx.agent.background.registerTask(agentTask(
       Promise.resolve({ result: 'background agent finished its job' }),
       'idle-state repro',
     ));
@@ -93,7 +94,7 @@ describe('background notification → main agent (real Agent instance)', () => {
     // Right after kicking off, register a background task that
     // completes immediately. The notification should be steer()d
     // while activeTurn is still set, landing in the steerBuffer.
-    const taskId = ctx.agent.background.registerTask(new AgentBackgroundTask(
+    const taskId = ctx.agent.background.registerTask(agentTask(
       Promise.resolve({ result: 'busy-state bg result' }),
       'busy-state repro',
     ));
@@ -132,15 +133,15 @@ describe('background notification → main agent (real Agent instance)', () => {
     ctx.mockNextResponse({ type: 'text', text: 'ack group' });
 
     const taskIds = [
-      ctx.agent.background.registerTask(new AgentBackgroundTask(
+      ctx.agent.background.registerTask(agentTask(
         Promise.resolve({ result: 'bg #1 result' }),
         'group-1',
       )),
-      ctx.agent.background.registerTask(new AgentBackgroundTask(
+      ctx.agent.background.registerTask(agentTask(
         Promise.resolve({ result: 'bg #2 result' }),
         'group-2',
       )),
-      ctx.agent.background.registerTask(new AgentBackgroundTask(
+      ctx.agent.background.registerTask(agentTask(
         Promise.resolve({ result: 'bg #3 result' }),
         'group-3',
       )),
@@ -205,7 +206,7 @@ describe('background notification → main agent (real Agent instance)', () => {
     // completion — this is the IDLE path, NOT the racy one. We
     // queue an LLM response so the auto-launched turn can run.
     ctx.mockNextResponse({ type: 'text', text: 'auto ack from bg notification' });
-    const taskId = ctx.agent.background.registerTask(new AgentBackgroundTask(
+    const taskId = ctx.agent.background.registerTask(agentTask(
       Promise.resolve({ result: 'post-turn bg result' }),
       'race-after-turn',
     ));

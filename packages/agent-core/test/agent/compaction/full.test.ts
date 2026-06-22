@@ -240,6 +240,7 @@ describe('FullCompaction', () => {
         duration: expect.any(Number),
         compactedCount: 6,
         retryCount: 0,
+        thinkingLevel: 'off',
         inputOther: 520,
         output: 8,
         inputCacheRead: 0,
@@ -1589,6 +1590,7 @@ describe('FullCompaction', () => {
 
   it('preserves thinking effort when compacting after provider context overflow', async () => {
     let callCount = 0;
+    const records: TelemetryRecord[] = [];
     const providerThinkingEfforts: Array<Parameters<GenerateFn>[0]['thinkingEffort']> = [];
     const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
       callCount += 1;
@@ -1612,7 +1614,7 @@ describe('FullCompaction', () => {
       }
       throw new Error(`Unexpected generate call ${String(callCount)}`);
     };
-    const ctx = testAgent({ generate });
+    const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
@@ -1626,6 +1628,13 @@ describe('FullCompaction', () => {
 
     expect(callCount).toBe(3);
     expect(providerThinkingEfforts).toEqual(['high', 'high', 'high']);
+    expect(records).toContainEqual({
+      event: 'compaction_finished',
+      properties: expect.objectContaining({
+        source: 'auto',
+        thinkingLevel: 'high',
+      }),
+    });
   });
 
   it('compacts provider overflow when model context size is unknown', async () => {

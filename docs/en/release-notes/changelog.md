@@ -6,6 +6,29 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.18.0 (2026-06-18)
+
+### Features
+
+- Add session filtering to the web sidebar, filtering by title and the last user prompt.
+- Add scroll-up lazy loading for older messages in the web chat session view.
+- Add an environment variable to cap AgentSwarm concurrency during the initial ramp, so large swarms do not trip provider rate limits as easily.
+
+### Bug Fixes
+
+- Fix the web app only loading the 20 most recent sessions.
+- Fix web slash skill selection sending immediately and allow slash search to match skill names by substring.
+- Fix the highlighted web slash command not staying visible while navigating a long slash menu.
+- Fix incorrect display after archiving the last session.
+- Fix the web login slash command description to match the browser authorization flow.
+
+### Polish
+
+- Redesign the web OAuth login dialog so the order of steps is unambiguous.
+- Show the current version in web settings.
+- Allow long web slash command names and descriptions to wrap without overflowing the slash menu.
+- Add `/reload` suggestion in plugin-change hints.
+
 ## 0.17.1 (2026-06-17)
 
 ### Bug Fixes

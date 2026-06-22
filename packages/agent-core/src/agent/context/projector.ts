@@ -1,23 +1,18 @@
 import type { ContentPart, Message, TextPart } from '@moonshot-ai/kosong';
 
+import { ErrorCodes, KimiError } from '../../errors';
 import type { ContextMessage } from './types';
 
 export function project(history: readonly ContextMessage[]): Message[] {
-  // Keep partial or empty assistant placeholders away from providers.
-  // They can appear when a turn is aborted or errors before any content
-  // or tool call is appended.
-  const usable = history.filter((message) => {
-    return (
-      message.partial !== true &&
-      !(message.role === 'assistant' && message.content.length === 0 && message.toolCalls.length === 0)
-    );
-  });
-  return mergeAdjacentUserMessages(usable);
+  return mergeAdjacentUserMessages(history);
 }
 
 function mergeAdjacentUserMessages(history: readonly ContextMessage[]): Message[] {
   const out: ContextMessage[] = [];
-  for (const message of history) {
+  for (const source of history) {
+    const message = prepareMessageForProjection(source);
+    if (message === null) continue;
+
     const previous = out.at(-1);
     if (
       canMergeUserMessage(message) &&
@@ -30,6 +25,33 @@ function mergeAdjacentUserMessages(history: readonly ContextMessage[]): Message[
     out.push(message);
   }
   return out.map(stripContextMetadata);
+}
+
+function prepareMessageForProjection(message: ContextMessage): ContextMessage | null {
+  if (message.partial === true) return null;
+
+  let content: ContentPart[] | undefined;
+  for (const [index, part] of message.content.entries()) {
+    if (part.type === 'text' && part.text.length === 0) {
+      content ??= message.content.slice(0, index);
+      continue;
+    }
+    content?.push(part);
+  }
+
+  const next = content === undefined ? message : { ...message, content };
+  if (next.role === 'tool' && next.content.length === 0) {
+    throw new KimiError(
+      ErrorCodes.REQUEST_INVALID,
+      'Tool result message content cannot be empty after removing empty text blocks.',
+      {
+        details: {
+          toolCallId: next.toolCallId,
+        },
+      },
+    );
+  }
+  return next.content.length === 0 && next.toolCalls.length === 0 ? null : next;
 }
 
 function canMergeUserMessage(message: ContextMessage): boolean {
