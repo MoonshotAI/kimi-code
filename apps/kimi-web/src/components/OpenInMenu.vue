@@ -5,6 +5,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { safeGetString, safeSetString, STORAGE_KEYS } from '../lib/storage';
 
 const { t } = useI18n();
 
@@ -64,12 +65,12 @@ const visibleTargets = computed(() => {
   return platformTargets.filter((t) => available.has(t.id));
 });
 
-const LAST_TARGET_KEY = 'kimi-web.open-in.last-target';
+const LAST_TARGET_KEY = STORAGE_KEYS.openInLastTarget;
 const lastTargetId = ref<TargetId | null>(null);
 
 function loadLastTarget(): void {
   try {
-    const raw = localStorage.getItem(LAST_TARGET_KEY);
+    const raw = safeGetString(LAST_TARGET_KEY);
     if (raw && visibleTargets.value.some((t) => t.id === raw)) {
       lastTargetId.value = raw as TargetId;
     } else {
@@ -83,7 +84,7 @@ loadLastTarget();
 
 function saveLastTarget(id: TargetId): void {
   try {
-    localStorage.setItem(LAST_TARGET_KEY, id);
+    safeSetString(LAST_TARGET_KEY, id);
   } catch { /* ignore */ }
   lastTargetId.value = id;
 }
