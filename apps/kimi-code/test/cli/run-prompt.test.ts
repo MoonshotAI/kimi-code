@@ -807,6 +807,31 @@ describe('runPrompt', () => {
     expect(mocks.harnessClose).toHaveBeenCalled();
   });
 
+  it('rejects with a friendly message when the provider filters the response', async () => {
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
+        handler(
+          mocks.mainEvent({
+            type: 'turn.ended',
+            turnId: 2,
+            reason: 'filtered',
+          }),
+        );
+      }
+    });
+
+    await expect(
+      runPrompt(opts(), '1.2.3-test', {
+        stdout: { write: vi.fn(() => true) },
+        stderr: { write: vi.fn(() => true) },
+      }),
+    ).rejects.toThrow('Provider safety policy blocked the response.');
+
+    expect(mocks.shutdownTelemetry).toHaveBeenCalled();
+    expect(mocks.harnessClose).toHaveBeenCalled();
+  });
+
   it('approval fallback approves if an unexpected approval request reaches SDK', async () => {
     await runPrompt(opts(), '1.2.3-test', {
       stdout: { write: vi.fn(() => true) },

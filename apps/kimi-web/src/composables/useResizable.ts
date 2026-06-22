@@ -5,6 +5,7 @@
 // dragging). Used by the sidebar session column drag handle.
 
 import { onBeforeUnmount, ref, type Ref } from 'vue';
+import { safeGetString, safeSetString } from '../lib/storage';
 
 export interface UseResizableOptions {
   /** localStorage key the chosen width is persisted under. */
@@ -34,7 +35,7 @@ export interface UseResizable {
 
 function readStored(key: string): number | null {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = safeGetString(key);
     if (raw === null) return null;
     const n = Number(raw);
     return Number.isFinite(n) ? n : null;
@@ -45,7 +46,7 @@ function readStored(key: string): number | null {
 
 function writeStored(key: string, value: number): void {
   try {
-    localStorage.setItem(key, String(value));
+    safeSetString(key, String(value));
   } catch {
     // localStorage unavailable (e.g. private mode) — width still works in-memory
   }

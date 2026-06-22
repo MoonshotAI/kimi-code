@@ -31,6 +31,7 @@ import { useKimiWebClient } from './composables/useKimiWebClient';
 import { useIsMobile } from './composables/useIsMobile';
 import type { AppConfig, ThinkingLevel } from './api/types';
 import type { FilePreviewRequest, ToolMedia } from './types';
+import { safeGetString, safeSetString, STORAGE_KEYS } from './lib/storage';
 
 const client = useKimiWebClient();
 provide('resolveImage', client.resolveImageUrl);
@@ -204,8 +205,8 @@ function onGlobalKeydown(e: KeyboardEvent): void {
 // Layout: resizable session column. ResizeHandle owns the column width (with
 // localStorage persistence); we mirror it here to drive the App grid.
 // ---------------------------------------------------------------------------
-const SIDEBAR_WIDTH_KEY = 'kimi-web.sidebar-width';
-const SIDEBAR_COLLAPSED_KEY = 'kimi-web.sidebar-collapsed';
+const SIDEBAR_WIDTH_KEY = STORAGE_KEYS.sidebarWidth;
+const SIDEBAR_COLLAPSED_KEY = STORAGE_KEYS.sidebarCollapsed;
 const SIDEBAR_DEFAULT = 270;
 const SIDEBAR_MIN = 170;
 const SIDEBAR_MAX = 420;
@@ -219,7 +220,7 @@ const sideWidth = computed(() =>
 
 function loadSidebarCollapsed(): void {
   try {
-    sidebarCollapsed.value = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+    sidebarCollapsed.value = safeGetString(SIDEBAR_COLLAPSED_KEY) === 'true';
   } catch {
     sidebarCollapsed.value = false;
   }
@@ -227,7 +228,7 @@ function loadSidebarCollapsed(): void {
 
 function saveSidebarCollapsed(): void {
   try {
-    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed.value));
+    safeSetString(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed.value));
   } catch {
     // ignore
   }
