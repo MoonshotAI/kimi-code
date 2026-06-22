@@ -14,8 +14,8 @@ export interface UseResizableOptions {
   defaultWidth: number;
   /** Smallest allowed width (px). */
   min: number;
-  /** Largest allowed width (px). */
-  max: number;
+  /** Largest allowed width (px). Omit to allow unbounded growth. */
+  max?: number;
   /** True when dragging right should shrink the controlled width. */
   reverse?: boolean;
 }
@@ -57,7 +57,7 @@ export function useResizable(options: UseResizableOptions): UseResizable {
 
   function clamp(value: number): number {
     if (!Number.isFinite(value)) return defaultWidth;
-    return Math.min(max, Math.max(min, Math.round(value)));
+    return Math.min(max ?? Infinity, Math.max(min, Math.round(value)));
   }
 
   const width = ref<number>(clamp(readStored(storageKey) ?? defaultWidth));

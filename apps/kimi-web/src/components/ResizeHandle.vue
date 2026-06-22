@@ -13,7 +13,7 @@ const props = withDefaults(
     storageKey: string;
     defaultWidth: number;
     min: number;
-    max: number;
+    max?: number;
     reverse?: boolean;
     ariaLabel?: string;
   }>(),

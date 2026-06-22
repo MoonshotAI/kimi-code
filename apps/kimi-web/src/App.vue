@@ -123,7 +123,6 @@ const {
   SIDEBAR_WIDTH_KEY,
   SIDEBAR_DEFAULT,
   SIDEBAR_MIN,
-  SIDEBAR_MAX,
   sessionColWidth,
   sidebarCollapsed,
   sideWidth,
@@ -160,7 +159,6 @@ const {
   PREVIEW_WIDTH_KEY,
   PREVIEW_MIN,
   previewDefaultWidth,
-  previewMaxWidth,
   previewWidth,
   thinkingPanelText,
   thinkingVisible,
@@ -561,7 +559,6 @@ function openPr(url: string): void {
         :storage-key="SIDEBAR_WIDTH_KEY"
         :default-width="SIDEBAR_DEFAULT"
         :min="SIDEBAR_MIN"
-        :max="SIDEBAR_MAX"
         @update:width="sessionColWidth = $event"
       />
       <div v-if="sidebarCollapsed" class="sidebar-rail">
@@ -686,7 +683,6 @@ function openPr(url: string): void {
       :storage-key="PREVIEW_WIDTH_KEY"
       :default-width="previewDefaultWidth"
       :min="PREVIEW_MIN"
-      :max="previewMaxWidth"
       reverse
       :aria-label="t('layout.resizePreviewAria')"
       @update:width="previewWidth = $event"

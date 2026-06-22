@@ -45,7 +45,6 @@ export function useDetailPanel({
   }
 
   const previewDefaultWidth = computed(() => defaultPreviewWidth());
-  const previewMaxWidth = computed(() => Math.max(PREVIEW_MIN, previewAreaWidth() - PREVIEW_MIN));
   const previewWidth = ref(previewDefaultWidth.value);
 
   // ---------------------------------------------------------------------------
@@ -227,7 +226,6 @@ export function useDetailPanel({
     PREVIEW_WIDTH_KEY,
     PREVIEW_MIN,
     previewDefaultWidth,
-    previewMaxWidth,
     previewWidth,
     thinkingPanelText,
     thinkingVisible,
