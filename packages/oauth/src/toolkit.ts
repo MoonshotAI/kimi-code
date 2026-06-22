@@ -24,8 +24,9 @@ import {
   type FetchManagedUsageError,
   type ParsedManagedUsage,
 } from './managed-usage';
+import { resolveTokenStorage } from './keyring-storage';
 import { OAuthManager, type LoginOptions, type OAuthManagerOptions } from './oauth-manager';
-import { FileTokenStorage, type TokenStorage } from './storage';
+import type { TokenStorage } from './storage';
 import type { OAuthFlowConfig } from './types';
 
 export interface BearerTokenProvider {
@@ -105,7 +106,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
       options.identity === undefined ? undefined : assertKimiHostIdentity(options.identity);
     this.homeDir = options.homeDir ?? defaultKimiHome();
     const credentialsDir = options.credentialsDir ?? join(this.homeDir, 'credentials');
-    this.storage = options.storage ?? new FileTokenStorage(credentialsDir);
+    this.storage = options.storage ?? resolveTokenStorage(credentialsDir);
     this.flowConfig = options.flowConfig ?? KIMI_CODE_FLOW_CONFIG;
     this.configAdapter = options.configAdapter;
     this.fetchImpl = options.fetchImpl;

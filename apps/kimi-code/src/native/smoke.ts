@@ -1,6 +1,6 @@
 import { getEmbeddedNativeAssetManifest, getNativePackageRoot } from './native-assets';
 
-const smokePackages = ['@mariozechner/clipboard', 'koffi'];
+const smokePackages = ['@mariozechner/clipboard', 'koffi', '@napi-rs/keyring'];
 
 export function runNativeAssetSmokeIfRequested(): boolean {
   if (process.env['KIMI_CODE_NATIVE_ASSET_SMOKE'] !== '1') return false;

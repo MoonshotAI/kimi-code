@@ -135,6 +135,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_MODEL_THINKING_KEEP` | Moonshot preserved-thinking passthrough (`thinking.keep`); applies to the `kimi` provider only, and only while Thinking is on | A value the API accepts, e.g. `all` |
 | `KIMI_CODE_NO_AUTO_UPDATE` | Fully disable the update preflight — no check, background install, or prompt. Legacy alias `KIMI_CLI_NO_AUTO_UPDATE` is also honored | Truthy: `1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | Disable the scheduled-task tool (`CronCreate` rejects new schedules; existing tasks do not fire) | `1` to disable |
+| `KIMI_DISABLE_KEYRING` | Force plaintext-file OAuth credential storage instead of the OS keychain (also the automatic fallback when no keychain is available) | `1` to force the file backend |
 
 ## Diagnostic logs
 

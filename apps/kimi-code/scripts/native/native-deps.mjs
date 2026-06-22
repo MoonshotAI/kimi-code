@@ -27,6 +27,15 @@ const clipboardSubpackageByTarget = Object.freeze({
   'win32-x64': '@mariozechner/clipboard-win32-x64-msvc',
 });
 
+const keyringSubpackageByTarget = Object.freeze({
+  'darwin-arm64': '@napi-rs/keyring-darwin-arm64',
+  'darwin-x64': '@napi-rs/keyring-darwin-x64',
+  'linux-arm64': '@napi-rs/keyring-linux-arm64-gnu',
+  'linux-x64': '@napi-rs/keyring-linux-x64-gnu',
+  'win32-arm64': '@napi-rs/keyring-win32-arm64-msvc',
+  'win32-x64': '@napi-rs/keyring-win32-x64-msvc',
+});
+
 const koffiTripletByTarget = Object.freeze({
   'darwin-arm64': 'darwin_arm64',
   'darwin-x64': 'darwin_x64',
@@ -67,6 +76,18 @@ export const nativeDeps = Object.freeze([
     name: (target) => clipboardSubpackageByTarget[target],
     collect: 'native-files',
     parent: 'clipboard-host',
+  },
+  {
+    id: 'keyring-host',
+    name: () => '@napi-rs/keyring',
+    collect: 'js-only',
+    parent: null,
+  },
+  {
+    id: 'keyring-target',
+    name: (target) => keyringSubpackageByTarget[target],
+    collect: 'native-files',
+    parent: 'keyring-host',
   },
   {
     id: 'pi-tui',

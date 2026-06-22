@@ -20,6 +20,9 @@ export { tokenFromWire, tokenToWire } from './types';
 export type { TokenStorage } from './storage';
 export { FileTokenStorage } from './storage';
 
+export { KeyringTokenStorage, resolveTokenStorage } from './keyring-storage';
+export type { KeyringApi, KeyringEntry } from './keyring-storage';
+
 export type { DevicePollResult, RefreshOptions } from './oauth';
 export { pollDeviceToken, refreshAccessToken, requestDeviceAuthorization } from './oauth';
 

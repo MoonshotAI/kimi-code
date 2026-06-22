@@ -9,6 +9,7 @@ interface ModuleWithLoad {
 }
 
 const nodeRequire = createRequire(import.meta.url);
+const NATIVE_ASSET_PACKAGES = new Set(['koffi', '@napi-rs/keyring']);
 let installed = false;
 let loadingNativePackage = false;
 
@@ -26,10 +27,10 @@ export function installNativeModuleHook(): void {
     parent: unknown,
     isMain: boolean,
   ): unknown {
-    if (request === 'koffi' && !loadingNativePackage) {
+    if (NATIVE_ASSET_PACKAGES.has(request) && !loadingNativePackage) {
       loadingNativePackage = true;
       try {
-        const pkg = loadNativePackage<unknown>('koffi');
+        const pkg = loadNativePackage<unknown>(request);
         if (pkg !== null) return pkg;
       } finally {
         loadingNativePackage = false;

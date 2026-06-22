@@ -107,6 +107,8 @@ Each entry in the `providers` table defines an API provider, keyed by a unique n
 | `env` | `table<string, string>` | No | Fallback source for provider credentials; see below |
 | `custom_headers` | `table<string, string>` | No | Custom HTTP headers attached to each request |
 
+> **OAuth credential storage**: OAuth tokens are stored in the operating system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service) by default. Any pre-existing plaintext credential file is migrated into the keychain and then removed. The `oauth.storage` field records where the token lives and is injected automatically — it does not select the backend. Set [`KIMI_DISABLE_KEYRING=1`](./env-vars.md#runtime-switches) to force plaintext-file storage; this is also the automatic fallback when no keychain is available.
+
 **`env` sub-table**: You can write provider-conventional key names (such as `KIMI_API_KEY`) inside `[providers.<name>.env]` as a fallback source for `api_key` / `base_url`. This sub-table is **read only from the config file** and does not modify the shell environment:
 
 ```toml
