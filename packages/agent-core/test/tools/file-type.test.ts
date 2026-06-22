@@ -214,10 +214,12 @@ describe('detectFileType', () => {
 
   it('returns unknown for an image extension whose bytes fail to sniff', () => {
     // A `.png` file with no recognisable image magic and no NUL byte must not
-    // be reported as `image/png` — otherwise a media reader would ship a
-    // mismatched data URL that the model API rejects as
-    // `application/octet-stream`.
+    // be reported as `image/png` in either mode. In media mode it would build
+    // a mismatched data URL the model API rejects as
+    // `application/octet-stream`; in text mode it would redirect the user to
+    // ReadMediaFile for a file that is not an image.
     const garbage = Buffer.from('plain ascii, definitely not a png');
+    expect(detectFileType('fake.png', garbage, 'media').kind).toBe('unknown');
     expect(detectFileType('fake.png', garbage).kind).toBe('unknown');
   });
 
