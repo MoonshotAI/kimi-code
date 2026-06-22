@@ -374,31 +374,27 @@ export function detectFileType(
       }
       return sniffed;
     }
-    // Sniff failed. In media mode, only video falls back to the extension:
-    // some video containers (e.g. MPEG-PS `.mpg`) have no magic we recognise,
-    // so the extension is the only signal. Every image format the model
-    // accepts (PNG/JPEG/GIF/WebP) has a reliable magic signature, so a failed
-    // sniff on an image means it is not a supported image — returning the
-    // extension MIME would only produce a mismatched data URL the model API
-    // rejects. (Runs before the NUL check so a video extension wins even when
-    // the header happens to contain a 0x00 byte.)
-    if (type === 'media') {
-      if (mediaHint?.kind === 'video') {
-        return mediaHint;
-      }
-      if (mediaHint?.kind === 'image') {
-        return { kind: 'unknown', mimeType: '' };
-      }
+    // Sniff failed.
+    // An image extension without confirming magic is not an image in any mode.
+    // Every image format the model accepts (PNG/JPEG/GIF/WebP) has a reliable
+    // signature, so trusting the extension would only mislead: in media mode it
+    // builds a mismatched data URL the model API rejects; in text mode it
+    // redirects the user to ReadMediaFile for a file that is not an image.
+    if (mediaHint?.kind === 'image') {
+      return { kind: 'unknown', mimeType: '' };
+    }
+    // In media mode, fall back to the extension for video: some containers
+    // (e.g. MPEG-PS `.mpg`) have no magic we recognise, so the extension is
+    // the only signal. Runs before the NUL check so a video extension wins
+    // even when the header happens to contain a 0x00 byte.
+    if (type === 'media' && mediaHint?.kind === 'video') {
+      return mediaHint;
     }
     if (buf.includes(0x00)) {
       return { kind: 'unknown', mimeType: '' };
     }
-    // No sniff and no NUL (text mode): still do not trust an image extension
-    // hint, for the same reason as above. Anything else falls through to the
+    // No sniff, not an image hint, no NUL: fall through to the
     // hint / text / unknown logic.
-    if (mediaHint?.kind === 'image') {
-      return { kind: 'unknown', mimeType: '' };
-    }
   }
 
   if (mediaHint) return mediaHint;
