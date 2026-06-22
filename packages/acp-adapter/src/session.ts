@@ -1151,6 +1151,13 @@ export class AcpSession {
               return;
             }
           } else {
+            if (event.reason === 'filtered') {
+              // The provider's safety policy blocked the response. It is
+              // mapped to ACP `refusal` (see turnEndReasonToStopReason); log
+              // it here too so the block stays observable in the agent logs,
+              // mirroring the `failed` branch above.
+              log.warn('acp: turn ended with filtered reason', { sessionId });
+            }
             argsByToolCall.clear();
             startedToolCalls.clear();
             // Drop the turnId so a late-arriving approval (e.g. an SDK

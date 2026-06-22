@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/ChatPane.vue -->
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, TurnBlock } from '../types';
 import ToolCall from './ToolCall.vue';
@@ -72,15 +72,90 @@ const props = withDefaults(
      */
     compaction?: { status: 'running' } | null;
     /**
+     * True when there are older messages available above the current viewport.
+     */
+    hasMoreMessages?: boolean;
+    /**
+     * True while older messages are being fetched (rendered at the top of the pane).
+     */
+    loadingMore?: boolean;
+    /**
+     * True when the last older-message fetch failed; blocks automatic sentinel retries.
+     */
+    loadingMoreError?: boolean;
+    /**
+     * True when the conversation pane is currently following the bottom (auto-scroll).
+     * Used to prevent the top sentinel from eagerly loading older messages on open.
+     */
+    isFollowing?: boolean;
+    /**
      * @deprecated No longer used — Composer is rendered by ConversationPane.
      */
   }>(),
-  { approvals: () => [], bubble: false, mobile: false, running: false, sending: false, fastMoon: false, compaction: null },
+  {
+    approvals: () => [],
+    bubble: false,
+    mobile: false,
+    running: false,
+    sending: false,
+    fastMoon: false,
+    compaction: null,
+    hasMoreMessages: false,
+    loadingMore: false,
+    loadingMoreError: false,
+    isFollowing: false,
+  },
 );
 
 // Bubble layout is active on phones AND on the Modern desktop theme. ThinkingBlock
 // / ToolCall use their soft "bubble" rendering in the same condition.
 const childBubble = computed(() => props.bubble || props.mobile);
+
+// Top sentinel for lazy-loading older messages. Visible when there are older
+// messages or while a page is loading; the IntersectionObserver fires as soon
+// as the user scrolls (or pans) near the top of the transcript.
+const topSentinelRef = ref<HTMLElement | null>(null);
+let topSentinelObserver: IntersectionObserver | null = null;
+
+function observeTopSentinel(): void {
+  if (!topSentinelRef.value || typeof IntersectionObserver === 'undefined') return;
+  topSentinelObserver?.disconnect();
+  topSentinelObserver = new IntersectionObserver(
+    (entries) => {
+      const entry = entries[0];
+      // Only trigger when the user has intentionally scrolled away from the
+      // bottom (isFollowing=false) and the initial snapshot is no longer loading.
+      if (
+        entry?.isIntersecting &&
+        props.hasMoreMessages &&
+        !props.loadingMore &&
+        !props.loadingMoreError &&
+        !props.sessionLoading &&
+        !props.isFollowing
+      ) {
+        emit('loadOlderMessages');
+      }
+    },
+    { root: null, rootMargin: '200px 0px 0px 0px', threshold: 0 },
+  );
+  topSentinelObserver.observe(topSentinelRef.value);
+}
+
+onMounted(observeTopSentinel);
+onUnmounted(() => {
+  topSentinelObserver?.disconnect();
+  topSentinelObserver = null;
+});
+watch(
+  () => [props.hasMoreMessages, props.loadingMore, props.loadingMoreError],
+  () => {
+    // Re-attach the observer after a load so that a still-visible sentinel
+    // (e.g. the page was not tall enough to scroll) triggers another page.
+    // Wait for the next render tick because the sentinel is rendered by v-if
+    // and may not exist when this watcher first fires.
+    void nextTick().then(observeTopSentinel);
+  },
+);
 
 // The id of the turn that is actively streaming: the last assistant turn while
 // the session is running. Its Markdown renders with `streaming` (final=false);
@@ -111,6 +186,8 @@ const emit = defineEmits<{
   openAgent: [target: { turnId: string; blockIndex: number; memberId: string }];
   /** Edit + resend the last user message (parent undoes, then refills composer). */
   editMessage: [text: string];
+  /** Fetch the next older page of messages (triggered by top sentinel visibility or click). */
+  loadOlderMessages: [];
 }>();
 
 // Id of the most recent user turn — the only one offered an "edit & resend"
@@ -441,6 +518,26 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
     </div>
     <div v-else-if="turns.length === 0 && (!approvals || approvals.length === 0)" class="chat-empty" />
 
+    <div
+      v-if="hasMoreMessages || loadingMore"
+      ref="topSentinelRef"
+      class="top-sentinel"
+      :class="{ 'top-sentinel-loading': loadingMore }"
+    >
+      <button
+        v-if="!loadingMore"
+        type="button"
+        class="top-sentinel-btn"
+        @click="emit('loadOlderMessages')"
+      >
+        {{ t('conversation.loadOlder') }}
+      </button>
+      <span v-else class="top-sentinel-text">
+        <span class="dot-pulse" aria-hidden="true" />
+        {{ t('conversation.loadingOlder') }}
+      </span>
+    </div>
+
     <template v-for="(turn, ti) in turns" :key="turn.id">
       <!-- User turn → right-aligned soft-blue bubble (undo affordance lives
            outside the bubble with an inline confirm step). -->
@@ -595,6 +692,26 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
     <!-- Empty state: a fresh/empty session shows a blank pane (Composer lives in
          the dock, moved here by ConversationPane when workspaceEmpty). -->
     <div v-else-if="turns.length === 0 && (!approvals || approvals.length === 0)" class="chat-empty" />
+
+    <div
+      v-if="hasMoreMessages || loadingMore"
+      ref="topSentinelRef"
+      class="top-sentinel"
+      :class="{ 'top-sentinel-loading': loadingMore }"
+    >
+      <button
+        v-if="!loadingMore"
+        type="button"
+        class="top-sentinel-btn"
+        @click="emit('loadOlderMessages')"
+      >
+        {{ t('conversation.loadOlder') }}
+      </button>
+      <span v-else class="top-sentinel-text">
+        <span class="dot-pulse" aria-hidden="true" />
+        {{ t('conversation.loadingOlder') }}
+      </span>
+    </div>
 
     <template v-for="(turn, ti) in turns" :key="turn.id">
       <!-- Compaction divider — full-width separator, no gutter number. -->
@@ -1394,6 +1511,40 @@ function renderBlockKey(block: AssistantRenderBlock, index: number): string {
   .cd-btn {
     font-size: var(--ui-font-size);
   }
+}
+
+/* Top sentinel for lazy-loading older messages */
+.top-sentinel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 0;
+  min-height: 28px;
+}
+.top-sentinel-loading {
+  opacity: 0.8;
+}
+.top-sentinel-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--ui-font-size-sm);
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.top-sentinel-btn:hover {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+.top-sentinel-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: var(--ui-font-size-sm);
 }
 
 </style>

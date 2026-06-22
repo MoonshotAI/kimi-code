@@ -21,4 +21,6 @@ export default {
   confirm: '确定',
   cancel: '取消',
   yesterday: '昨天',
+  loadOlder: '加载更早的消息',
+  loadingOlder: '正在加载更早的消息…',
 } as const;

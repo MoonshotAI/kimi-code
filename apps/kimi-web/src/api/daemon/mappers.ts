@@ -99,6 +99,7 @@ export function toAppSession(wire: WireSession): AppSession {
     status: toAppSessionStatus(wire.status),
     archived: wire.archived ?? false,
     currentPromptId: wire.current_prompt_id,
+    lastPrompt: wire.last_prompt,
     cwd: wire.metadata.cwd,
     model: wire.agent_config.model,
     usage: toAppSessionUsage(wire.usage),

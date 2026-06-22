@@ -202,7 +202,7 @@ export class SessionService extends Disposable implements ISessionService {
       case 'turn.ended': {
         this._activeTurns.delete(sessionId);
         const reason = (event as { reason?: string }).reason;
-        if (reason === 'cancelled' || reason === 'failed') {
+        if (reason === 'cancelled' || reason === 'failed' || reason === 'filtered') {
           this._abortedTurns.add(sessionId);
         } else {
           this._abortedTurns.delete(sessionId);

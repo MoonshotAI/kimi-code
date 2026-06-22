@@ -69,6 +69,8 @@ export interface WireSession {
   status: WireSessionStatus;
   archived: boolean;
   current_prompt_id?: string;
+  /** Text of the most recent user prompt, for search/preview. */
+  last_prompt?: string;
   // PRESUMED — daemon adds this once it ships the workspace registry; until then
   // it is absent and the client maps sessions by metadata.cwd === workspace.root.
   workspace_id?: string;

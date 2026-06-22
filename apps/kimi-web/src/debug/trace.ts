@@ -8,6 +8,7 @@
 // request/WS behavior: callers pass data in, errors here must not propagate.
 
 import { ref, shallowRef } from 'vue';
+import { safeGetString, STORAGE_KEYS } from '../lib/storage';
 
 export type TraceSource = 'rest' | 'ws' | 'client';
 
@@ -72,11 +73,7 @@ export function isTraceEnabled(): boolean {
     // location unavailable
   }
   if (!enabled) {
-    try {
-      enabled = localStorage.getItem('kimi-web.debug') === '1';
-    } catch {
-      // localStorage unavailable
-    }
+    enabled = safeGetString(STORAGE_KEYS.debug) === '1';
   }
   enabledCache = enabled;
   return enabled;

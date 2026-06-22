@@ -25,6 +25,7 @@ kimi <subcommand> [options]
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--worktree [name]` | `-w` | 为本次会话创建一个新的 git worktree。省略名称时从内置名称库自动生成一个三词 slug（如 `amber-drifting-cloud`）；工作区以 detached HEAD 方式基于当前 commit 创建 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
+| `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
 

@@ -119,6 +119,29 @@ describe('events / display re-exports', () => {
     expect((parsed as { promptId: string }).promptId).toBe('prompt_1');
   });
 
+  it('preserves detached on background task events', () => {
+    const parsed = eventSchema.parse({
+      type: 'background.task.started',
+      agentId: 'main',
+      sessionId: 'sess_1',
+      info: {
+        kind: 'process',
+        taskId: 'bash-deadbeef',
+        description: 'Bash: sleep 10',
+        status: 'running',
+        detached: false,
+        startedAt: 1,
+        endedAt: null,
+        command: 'sleep 10',
+        pid: 123,
+        exitCode: null,
+      },
+    });
+
+    expect(parsed.type).toBe('background.task.started');
+    expect((parsed as { info: { detached?: boolean } }).info.detached).toBe(false);
+  });
+
   it('validates event.session.created events', () => {
     const parsed = eventSchema.parse({
       type: 'event.session.created',

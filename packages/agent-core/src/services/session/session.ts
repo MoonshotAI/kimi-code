@@ -117,6 +117,7 @@ export function toProtocolSession(
     updated_at: new Date(summary.updatedAt).toISOString(),
     status: 'idle',
     archived: summary.archived === true,
+    last_prompt: summary.lastPrompt,
     metadata: mergedMetadata,
     agent_config: {
       model: '',

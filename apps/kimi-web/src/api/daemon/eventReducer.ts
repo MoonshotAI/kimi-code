@@ -259,11 +259,16 @@ export function reduceAppEvent(
 
     // -------------------------------------------------------------------------
     case 'sessionMetaUpdated': {
-      // Lightweight title patch — the daemon's auto-generated title (or a title
-      // changed by another client) arrives via session.meta.updated. We patch
-      // only the title field; the full session object stays as-is.
+      // Lightweight meta patch — the daemon's auto-generated title (or a title
+      // changed by another client) and the latest user prompt arrive via
+      // session.meta.updated. We keep prior values for any field the event does
+      // not carry; the full session object otherwise stays as-is. Keeping
+      // lastPrompt fresh lets sidebar search match the most recent prompt
+      // without a full reload.
       next.sessions = next.sessions.map((s) =>
-        s.id === event.sessionId ? { ...s, title: event.title } : s,
+        s.id === event.sessionId
+          ? { ...s, title: event.title ?? s.title, lastPrompt: event.lastPrompt ?? s.lastPrompt }
+          : s,
       );
       break;
     }

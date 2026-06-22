@@ -25,6 +25,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
 | `--worktree [name]` | `-w` | Create a new git worktree for this session. When no name is given, a three-word slug is generated from the bundled name database (e.g. `amber-drifting-cloud`). The worktree is created in detached HEAD at the current commit |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
+| `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
 `-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
 

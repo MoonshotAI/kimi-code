@@ -384,6 +384,27 @@ describe('toProtocolSession adapter', () => {
     expect(proto.created_at.endsWith('Z')).toBe(true);
   });
 
+  it('surfaces last_prompt from the summary when present', () => {
+    const withPrompt: SessionSummary = {
+      id: 'sess_lp_1',
+      workDir: '/tmp/wd',
+      sessionDir: '/tmp/sd',
+      createdAt: 0,
+      updatedAt: 0,
+      lastPrompt: 'what is 2 + 2?',
+    };
+    expect(toProtocolSession(withPrompt).last_prompt).toBe('what is 2 + 2?');
+
+    const withoutPrompt: SessionSummary = {
+      id: 'sess_lp_2',
+      workDir: '/tmp/wd',
+      sessionDir: '/tmp/sd',
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    expect(toProtocolSession(withoutPrompt).last_prompt).toBeUndefined();
+  });
+
   it('fills documented defaults when CoreAPI does not surface a field', () => {
     const summary: SessionSummary = {
       id: 'sess_02',

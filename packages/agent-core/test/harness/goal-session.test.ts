@@ -490,6 +490,31 @@ describe('goal session end-to-end', () => {
     expect(goal?.terminalReason).toBe('Paused after runtime error: unexpected failure');
   });
 
+  it('pauses the goal on provider safety policy blocks', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const generate: NonNullable<AgentOptions['generate']> = async () => ({
+      id: null,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'filtered' }], toolCalls: [] },
+      usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 },
+      finishReason: 'filtered',
+      rawFinishReason: 'content_filter',
+    });
+    const { session, agent } = await setupSession(sessionDir, events, ['GetGoal'], generate);
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ agentId: 'main', objective: 'work' });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = (await api.getGoal({ agentId: 'main' })).goal;
+    expect(goal?.status).toBe('paused');
+    expect(goal?.terminalReason).toBe('Paused after provider safety policy block');
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'turn.ended', reason: 'filtered' }),
+    );
+  });
+
   it('blocks the goal when the initial prompt hook blocks the objective', async () => {
     const sessionDir = await makeTempDir();
     const events: Array<Record<string, unknown>> = [];

@@ -94,6 +94,8 @@ export const sessionSchema = z.object({
   status: sessionStatusSchema,
   archived: z.boolean().optional(),
   current_prompt_id: z.string().min(1).optional(),
+  /** Text of the most recent user prompt, for search/preview. Absent for empty sessions. */
+  last_prompt: z.string().optional(),
   metadata: sessionMetadataSchema,
   agent_config: sessionAgentConfigSchema,
   usage: sessionUsageSchema,

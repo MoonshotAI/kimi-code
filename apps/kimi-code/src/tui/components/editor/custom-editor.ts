@@ -15,6 +15,7 @@ import {
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 
+import { extractAtPrefix } from './file-mention-provider';
 import { WrappingSelectList } from './wrapping-select-list';
 
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
@@ -118,6 +119,8 @@ export class CustomEditor extends Editor {
   public onToggleToolExpand?: () => void;
   public onOpenExternalEditor?: () => void;
   public onCtrlS?: () => void;
+  /** Return `true` to consume Ctrl+B; return `false`/`undefined` to fall through to the editor default (cursor-left). */
+  public onCtrlB?: () => boolean;
   public onUndo?: () => void;
   public onInsertNewline?: () => void;
   public onTextPaste?: () => void;
@@ -143,6 +146,11 @@ export class CustomEditor extends Editor {
 
   private consumingPaste = false;
   private consumeBuffer = '';
+  private argumentHints: ReadonlyMap<string, string> = new Map();
+
+  setArgumentHints(hints: ReadonlyMap<string, string>): void {
+    this.argumentHints = hints;
+  }
 
   constructor(tui: TUI) {
     // paddingX: 4 reserves column 0 for the left vertical border (│),
@@ -228,6 +236,13 @@ export class CustomEditor extends Editor {
         }
       }
     }
+    const hint = this.computeArgumentHint();
+    if (hint !== undefined) {
+      const line = lines[firstContentIdx];
+      if (line !== undefined) {
+        lines[firstContentIdx] = injectArgumentHint(line, hint, this.getText().length, width);
+      }
+    }
     const firstContent = lines[firstContentIdx];
     if (firstContent !== undefined) {
       const withPrompt = injectPromptSymbol(firstContent);
@@ -242,6 +257,22 @@ export class CustomEditor extends Editor {
     return wrapWithSideBorders(lines, (s) => this.borderColor(s), {
       connectedAbove: this.connectedAbove && !this.borderHighlighted,
     });
+  }
+
+  private computeArgumentHint(): string | undefined {
+    const text = this.getText();
+    const match = /^\/(\S+)( ?)$/.exec(text);
+    if (match === null) return undefined;
+    const cmd = match[1];
+    const trailingSpace = match[2] ?? '';
+    if (cmd === undefined) return undefined;
+    const hint = this.argumentHints.get(cmd);
+    if (hint === undefined) return undefined;
+    const { line, col } = this.getCursor();
+    if (line !== 0) return undefined;
+    const currentLine = this.getLines()[0] ?? '';
+    if (col !== currentLine.length) return undefined;
+    return trailingSpace.length > 0 ? hint : ` ${hint}`;
   }
 
   override handleInput(data: string): void {
@@ -320,6 +351,13 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    if (matchesKey(normalized, Key.ctrl('b'))) {
+      // Only consume the key when the handler actually detached something;
+      // otherwise fall through so readline's backward-char still works at the
+      // idle prompt.
+      if (this.onCtrlB?.() === true) return;
+    }
+
     if (matchesKey(normalized, 'shift+tab')) {
       this.onShiftTab?.();
       return;
@@ -359,6 +397,19 @@ export class CustomEditor extends Editor {
     }
 
     super.handleInput(normalized);
+    this.reopenPathCompletionAfterInput();
+  }
+
+  private reopenPathCompletionAfterInput(): void {
+    const { line, col } = this.getCursor();
+    const textBeforeCursor = this.getLines()[line]?.slice(0, col) ?? '';
+    if (!textBeforeCursor.endsWith('/')) return;
+    if (this.isShowingAutocomplete()) return;
+    const isSlashArgument = textBeforeCursor.startsWith('/') && textBeforeCursor.includes(' ');
+    const isAtMention = extractAtPrefix(textBeforeCursor) !== null;
+    if (!isSlashArgument && !isAtMention) return;
+    (this as unknown as { requestAutocomplete?: (options: { force: boolean; explicitTab: boolean }) => void })
+      .requestAutocomplete?.({ force: true, explicitTab: false });
   }
 }
 
@@ -441,6 +492,53 @@ function highlightVisibleRanges(
     rawCursor = rawEnd;
   }
   return out + line.slice(rawCursor);
+}
+
+// Mirrors the editor's paddingX (see constructor). The hint is spliced into
+// the first content line, which starts with this many spaces of left padding.
+const EDITOR_LEFT_PADDING = 4;
+// pi-tui renders the end-of-input cursor as an inverse-video space.
+const CURSOR_BLOCK = '\u001B[7m \u001B[0m';
+
+/**
+ * Splice a dimmed argument-hint ghost string into the first content line.
+ *
+ * The hint is purely visual: it is appended after the typed command (and
+ * after the cursor block when one is rendered) so the cursor stays at the
+ * end of the real input. It consumes trailing padding space, so the line
+ * width is preserved; if it would overflow the box it is truncated with an
+ * ellipsis. Returns the line unchanged when there is no room for a hint.
+ */
+function injectArgumentHint(
+  line: string,
+  hint: string,
+  realTextLength: number,
+  width: number,
+): string {
+  const cursorIdx = line.indexOf(CURSOR_BLOCK);
+  const cursorPresent = cursorIdx !== -1;
+  const contentWidth = Math.max(1, width - EDITOR_LEFT_PADDING * 2);
+  // Room left in the content area after the typed text (and cursor). The hint
+  // must fit within this so the rendered line keeps its width.
+  const available = contentWidth - realTextLength - (cursorPresent ? 1 : 0);
+  const trimmed = truncateHint(hint, available);
+  if (trimmed.length === 0) return line;
+  const colored = currentTheme.fg('textDim', trimmed);
+  const insertAt = cursorPresent
+    ? cursorIdx + CURSOR_BLOCK.length
+    : mapVisibleIdxToRaw(line, EDITOR_LEFT_PADDING + realTextLength);
+  // Everything after the insertion point is trailing padding + right padding
+  // (plain spaces). Replace it with the hint followed by the remaining spaces
+  // so the visible line width is preserved.
+  const trailing = line.length - insertAt;
+  return line.slice(0, insertAt) + colored + ' '.repeat(Math.max(0, trailing - trimmed.length));
+}
+
+function truncateHint(hint: string, maxLen: number): string {
+  if (maxLen <= 0) return '';
+  if (hint.length <= maxLen) return hint;
+  if (maxLen === 1) return '…';
+  return `${hint.slice(0, maxLen - 1)}…`;
 }
 
 /**

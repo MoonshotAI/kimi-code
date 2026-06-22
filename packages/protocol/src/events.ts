@@ -238,6 +238,7 @@ export interface BackgroundTaskInfoBase {
   readonly taskId: string;
   readonly description: string;
   readonly status: AgentCoreBackgroundTaskStatus;
+  readonly detached?: boolean;
   readonly startedAt: number;
   readonly endedAt: number | null;
   readonly stopReason?: string;
@@ -291,7 +292,7 @@ export interface McpOAuthAuthorizationUrlUpdateData {
   readonly authorizationUrl: string;
 }
 
-export type TurnEndReason = 'completed' | 'cancelled' | 'failed';
+export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'filtered';
 
 export interface AgentStatusUpdatedEvent {
   readonly type: 'agent.status.updated';
@@ -865,6 +866,7 @@ export const backgroundTaskInfoBaseSchema = z.object({
   taskId: z.string(),
   description: z.string(),
   status: agentCoreBackgroundTaskStatusSchema,
+  detached: z.boolean().optional(),
   startedAt: z.number(),
   endedAt: z.number().nullable(),
   stopReason: z.string().optional(),
@@ -917,7 +919,7 @@ export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
   authorizationUrl: z.string(),
 }) satisfies z.ZodType<McpOAuthAuthorizationUrlUpdateData>;
 
-export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed']) satisfies z.ZodType<TurnEndReason>;
+export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'filtered']) satisfies z.ZodType<TurnEndReason>;
 
 export const agentStatusUpdatedEventSchema = z.object({
   type: z.literal('agent.status.updated'),

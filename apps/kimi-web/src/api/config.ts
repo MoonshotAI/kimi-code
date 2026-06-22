@@ -1,7 +1,9 @@
 // apps/kimi-web/src/api/config.ts
 // Reads Vite env, builds REST/WS URLs, manages stable clientId.
 
-const CLIENT_ID_KEY = 'kimi-web.client-id';
+import { safeGetString, safeSetString, STORAGE_KEYS } from '../lib/storage';
+
+const CLIENT_ID_KEY = STORAGE_KEYS.clientId;
 const WEB_CLIENT_NAME = 'kimi-code-web';
 const WEB_CLIENT_UI_MODE = 'web';
 
@@ -86,10 +88,10 @@ export function buildWsUrl(origin: string, clientId: string): string {
 }
 
 function getClientId(): string {
-  const stored = globalThis.localStorage?.getItem(CLIENT_ID_KEY);
+  const stored = safeGetString(CLIENT_ID_KEY);
   if (stored) return stored;
   const generated = `web_${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
-  globalThis.localStorage?.setItem(CLIENT_ID_KEY, generated);
+  safeSetString(CLIENT_ID_KEY, generated);
   return generated;
 }
 

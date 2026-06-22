@@ -12,6 +12,7 @@ import Composer from './Composer.vue';
 import SwarmCard from './SwarmCard.vue';
 import ChatDock from './ChatDock.vue';
 import { getVisibleWorkspaces } from '../lib/workspacePicker';
+import { safeRemove, STORAGE_KEYS } from '../lib/storage';
 
 const props = defineProps<{
   turns: ChatTurn[];
@@ -48,6 +49,14 @@ const props = defineProps<{
   sessionLoading?: boolean;
   /** Live compaction state of the active session (non-null while running). */
   compaction?: { status: 'running' } | null;
+  /** Whether there are older messages available to load when scrolling up. */
+  hasMoreMessages?: boolean;
+  /** True while older messages are being fetched (scroll-up lazy load). */
+  loadingMore?: boolean;
+  /** True when the last older-message fetch failed; blocks sentinel auto-retry. */
+  loadingMoreError?: boolean;
+  /** Callback to fetch the next older page of messages. */
+  loadOlderMessages?: (sessionId: string) => Promise<void>;
   /** Available models for the quick-switch dropdown in the composer toolbar. */
   models?: AppModel[];
   /** Starred model ids shown at the top of the composer's quick-switch dropdown. */
@@ -164,11 +173,7 @@ const { t } = useI18n();
 // The align toggle was removed with its UI (6e50cb7) — reading layout is
 // always centered now. Drop the old persisted preference so users who once
 // picked 'left' aren't frozen on it with no way back.
-try {
-  localStorage.removeItem('kimi-web.content-align');
-} catch {
-  // localStorage unavailable
-}
+safeRemove(STORAGE_KEYS.contentAlign);
 
 const chatPaneRef = ref<InstanceType<typeof ChatPane> | null>(null);
 const emptyComposerRef = ref<{ loadForEdit: (v: string) => void } | null>(null);
@@ -241,10 +246,10 @@ function tocTitle(turn: ChatTurn): string {
   if (turn.role === 'compaction') return t('conversation.compactedPlain');
   if (turn.role === 'user') {
     if (turn.skillActivation) return `/${turn.skillActivation.name}`;
-    const text = turn.text.trim().replace(/\s+/g, ' ');
+    const text = turn.text.trim().replaceAll(/\s+/g, ' ');
     return text.length > 0 ? text : 'user';
   }
-  const text = (turn.text || turn.thinking || '').trim().replace(/\s+/g, ' ');
+  const text = (turn.text || turn.thinking || '').trim().replaceAll(/\s+/g, ' ');
   if (text.length > 0) return text;
   if ((turn.tools?.length ?? 0) > 0) return `${turn.tools!.length} tools`;
   return 'kimi';
@@ -309,7 +314,7 @@ function updateTocViewport(): void {
   const pane = panesRef.value;
   if (!pane) return;
   const anchors = pane.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id]');
-  if (!anchors.length) return;
+  if (anchors.length === 0) return;
   const paneRect = pane.getBoundingClientRect();
   const paneMiddle = paneRect.height / 2;
   let bestId: string | null = null;
@@ -372,6 +377,7 @@ const pendingApproval = computed(() =>
 const panesRef = ref<HTMLElement | null>(null);
 const dockRef = ref<HTMLElement | null>(null);
 const panesScrollbarWidth = ref(0);
+const dockHeight = ref(0);
 const chatDockStyle = computed(() => ({
   '--panes-scrollbar-width': `${panesScrollbarWidth.value}px`,
 }));
@@ -387,6 +393,7 @@ function toHtmlEl(el: RefArg): HTMLElement | null {
 function updatePanesScrollbarWidth(): void {
   const el = panesRef.value;
   panesScrollbarWidth.value = el ? Math.max(0, el.offsetWidth - el.clientWidth) : 0;
+  dockHeight.value = dockRef.value?.offsetHeight ?? 0;
 }
 
 function bindChatPane(el: RefArg): void {
@@ -475,9 +482,72 @@ function scrollToBottom(smooth = false): void {
   showPill.value = false;
 }
 
+function findTopAnchor(
+  container: HTMLElement,
+  scrollTop: number,
+): { id: string; top: number } | null {
+  const anchors = container.querySelectorAll<HTMLElement>('.turn-anchor');
+  for (const anchor of anchors) {
+    if (anchor.offsetTop >= scrollTop) {
+      const id = anchor.dataset.turnId;
+      if (id) return { id, top: anchor.offsetTop };
+    }
+  }
+  return null;
+}
+
+async function handleLoadOlderMessages(): Promise<void> {
+  if (
+    !props.sessionId ||
+    !props.loadOlderMessages ||
+    props.loadingMore ||
+    !props.hasMoreMessages
+  ) {
+    return;
+  }
+  const requestedSessionId = props.sessionId;
+  const el = panesRef.value;
+  const oldTop = el?.scrollTop ?? 0;
+  const oldHeight = el?.scrollHeight ?? 0;
+  const oldAnchor = el ? findTopAnchor(el, oldTop) : null;
+
+  historyLoadInProgress.value = true;
+  try {
+    await props.loadOlderMessages(requestedSessionId);
+    await nextTick();
+  } finally {
+    historyLoadInProgress.value = false;
+  }
+
+  // If the user switched sessions while the request was in flight, do not
+  // restore scroll position on the newly selected session's pane.
+  if (props.sessionId !== requestedSessionId) return;
+
+  const el2 = panesRef.value;
+  if (!el2) return;
+
+  // Restore scroll position using a stable anchor near the old viewport top.
+  // This isolates height inserted above the anchor and ignores any new bottom
+  // content (e.g. streaming assistant turns) that arrived during the request.
+  let delta = 0;
+  if (oldAnchor) {
+    const newAnchor = el2.querySelector<HTMLElement>(
+      `.turn-anchor[data-turn-id="${attrEscape(oldAnchor.id)}"]`,
+    );
+    if (newAnchor) {
+      delta = newAnchor.offsetTop - oldAnchor.top;
+    }
+  }
+  // If the page boundary split an assistant/tool turn, messagesToTurns may
+  // rebuild that turn with a new id. Fall back to the overall height delta so
+  // the viewport does not jump into the inserted history.
+  if (delta === 0) delta = el2.scrollHeight - oldHeight;
+  el2.scrollTop = oldTop + delta;
+}
+
 function attrEscape(value: string): string {
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
-  return value.replace(/["\\]/g, '\\$&');
+  return value.replaceAll(/["\\]/g, '\\$&');
 }
 
 function scrollToTurn(turnId: string): void {
@@ -538,21 +608,58 @@ function scheduleStableFollow(maxFrames = 36): void {
   stableFollowRaf = raf(tick);
 }
 
-const scrollKey = computed(() => {
+type ScrollKey = {
+  length: number;
+  firstId: string;
+  lastId: string;
+  lastTextLen: number;
+  lastThinkingLen: number;
+  lastToolsLen: number;
+  approvalIds: string;
+};
+
+function isHistoryPrependOnly(prev: ScrollKey | undefined, next: ScrollKey): boolean {
+  return (
+    prev !== undefined &&
+    prev.length > 0 &&
+    next.length >= prev.length &&
+    prev.firstId !== next.firstId &&
+    prev.lastId === next.lastId &&
+    prev.lastTextLen === next.lastTextLen &&
+    prev.lastThinkingLen === next.lastThinkingLen &&
+    prev.lastToolsLen === next.lastToolsLen &&
+    prev.approvalIds === next.approvalIds
+  );
+}
+
+const scrollKey = computed<ScrollKey>(() => {
   const approvalIds = (props.approvals ?? []).map((a) => a.approvalId).join(',');
   const t = props.turns;
-  if (t.length === 0) return `0|${approvalIds}`;
-  const last = t.at(-1)!;
-  const thinkingLen = last.thinking?.length ?? 0;
+  const last = t.at(-1);
+  const thinkingLen = last?.thinking?.length ?? 0;
   const toolsLen =
-    last.tools?.reduce(
+    last?.tools?.reduce(
       (n, tool) => n + tool.name.length + (tool.arg?.length ?? 0) + (tool.output?.join('').length ?? 0),
       0,
     ) ?? 0;
-  return `${t.length}:${last.text.length}:${thinkingLen}:${toolsLen}|${approvalIds}`;
+  return {
+    length: t.length,
+    firstId: t[0]?.id ?? '',
+    lastId: last?.id ?? '',
+    lastTextLen: last?.text.length ?? 0,
+    lastThinkingLen: thinkingLen,
+    lastToolsLen: toolsLen,
+    approvalIds,
+  };
 });
 
-watch(scrollKey, async () => {
+watch(scrollKey, async (next, prev) => {
+  // Prepending older history changes this key; suppress only that exact case so
+  // concurrent bottom appends still raise the new-message pill.
+  if (historyLoadInProgress.value && isHistoryPrependOnly(prev, next)) {
+    updateTocViewport();
+    return;
+  }
   await nextTick();
   if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
   else showPill.value = true;
@@ -638,8 +745,12 @@ let observedContent: Element | null = null;
 let observedDock: HTMLElement | null = null;
 let scrollRaf = 0;
 let pillEligible = false;
+const historyLoadInProgress = ref(false);
 
 function scheduleFollow(allowPill: boolean): void {
+  // Prepending older history changes turns.length but is not new bottom content;
+  // suppress the "new messages" pill until the scroll position is restored.
+  if (historyLoadInProgress.value) return;
   pillEligible = pillEligible || allowPill;
   if (scrollRaf) return;
   const schedule = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 16) as unknown as number;
@@ -957,6 +1068,10 @@ defineExpose({ loadComposerForEdit });
               :fast-moon="fastMoon"
               :session-loading="sessionLoading"
               :compaction="compaction"
+              :has-more-messages="hasMoreMessages"
+              :loading-more="loadingMore"
+              :loading-more-error="loadingMoreError"
+              :is-following="following"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
               @copy-conversation-copied="handleCopyConversationCopied"
@@ -964,6 +1079,7 @@ defineExpose({ loadComposerForEdit });
               @open-compaction="emit('openCompaction', $event)"
               @open-agent="emit('openAgent', $event)"
               @edit-message="emit('editMessage', $event)"
+              @load-older-messages="handleLoadOlderMessages"
             />
             <div v-if="activeSwarms.length > 0" class="swarm-stack">
               <SwarmCard v-for="group in activeSwarms" :key="group.id" :group="group" />
@@ -1035,6 +1151,7 @@ defineExpose({ loadComposerForEdit });
       <button
         v-if="showPill"
         class="newmsg-pill"
+        :style="{ bottom: `${dockHeight + 12}px` }"
         :aria-label="t('conversation.jumpToLatestAria')"
         @click="scrollToBottom(true)"
       >

@@ -27,6 +27,7 @@ export interface BannerState {
 export interface AppState {
   model: string;
   workDir: string;
+  additionalDirs: readonly string[];
   sessionId: string;
   permissionMode: PermissionMode;
   planMode: boolean;

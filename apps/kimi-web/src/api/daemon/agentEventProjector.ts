@@ -616,12 +616,17 @@ export function createAgentProjector(): AgentProjector {
       // -----------------------------------------------------------------------
       case 'session.meta.updated': {
         // The daemon auto-generates a title from the first prompt (and other
-        // clients can rename a session). It announces both via this event. We
+        // clients can rename a session); it also reports the latest user prompt
+        // via patch.lastPrompt. It announces all of these via this event. We
         // don't have the full AppSession here, so emit a lightweight
-        // sessionMetaUpdated that patches only the title field.
+        // sessionMetaUpdated that patches only the changed meta fields.
         const title: string | undefined = p?.patch?.title ?? p?.title;
-        if (typeof title === 'string' && title.length > 0) {
-          out.push({ type: 'sessionMetaUpdated', sessionId, title });
+        const lastPrompt: string | undefined = p?.patch?.lastPrompt;
+        const patch: { title?: string; lastPrompt?: string } = {};
+        if (typeof title === 'string' && title.length > 0) patch.title = title;
+        if (typeof lastPrompt === 'string') patch.lastPrompt = lastPrompt;
+        if (patch.title !== undefined || patch.lastPrompt !== undefined) {
+          out.push({ type: 'sessionMetaUpdated', sessionId, ...patch });
         }
         break;
       }
@@ -911,7 +916,7 @@ export function createAgentProjector(): AgentProjector {
               sessionId,
               messageId: msgId,
               content: msg.content.map((c) => ({ ...c })),
-              status: reason === 'failed' ? 'error' : 'completed',
+              status: reason === 'failed' || reason === 'filtered' ? 'error' : 'completed',
               durationMs,
             });
           }
@@ -921,7 +926,8 @@ export function createAgentProjector(): AgentProjector {
         const usageSnapshot = buildUsageSnapshot(s);
         out.push({ type: 'sessionUsageUpdated', sessionId, usage: usageSnapshot });
 
-        const newStatus = reason === 'cancelled' ? 'aborted' : reason === 'failed' ? 'aborted' : 'idle';
+        const newStatus =
+          reason === 'cancelled' || reason === 'failed' || reason === 'filtered' ? 'aborted' : 'idle';
         out.push({
           type: 'sessionStatusChanged',
           sessionId,

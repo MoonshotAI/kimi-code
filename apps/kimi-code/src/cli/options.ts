@@ -16,6 +16,7 @@ export interface CLIOptions {
   worktreePath?: string;
   /** Populated during startup when --worktree is used. */
   parentRepoPath?: string;
+  addDirs?: string[];
 }
 
 export interface ValidatedOptions {
