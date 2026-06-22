@@ -6,7 +6,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { i18n } from '../i18n';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
-import { safeGetString, safeRemove, safeSetString, STORAGE_KEYS } from '../lib/storage';
+import { loadUnread, safeGetString, safeRemove, safeSetString, saveUnread, STORAGE_KEYS } from '../lib/storage';
 import { useAppearance } from './client/useAppearance';
 import { useNotification } from './client/useNotification';
 
@@ -78,7 +78,6 @@ const PLAN_MODE_STORAGE_KEY = STORAGE_KEYS.planMode;
 const SWARM_MODE_STORAGE_KEY = STORAGE_KEYS.swarmMode;
 const GOAL_MODE_STORAGE_KEY = STORAGE_KEYS.goalMode;
 const STARRED_MODELS_STORAGE_KEY = STORAGE_KEYS.starredModels;
-const UNREAD_STORAGE_KEY = STORAGE_KEYS.unread;
 const SESSION_NOT_FOUND_CODE = 40401;
 const PROMPT_NOT_FOUND_CODE = 40402;
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
@@ -172,40 +171,6 @@ function loadGoalModeFromStorage(): boolean {
 function saveGoalModeToStorage(v: boolean): void {
   try {
     safeSetString(GOAL_MODE_STORAGE_KEY, v ? 'true' : 'false');
-  } catch {
-    // ignore
-  }
-}
-
-// Per-session unread flags are pure client state (set when a background turn
-// finishes, cleared on open). Persisting the `true` entries lets them survive a
-// page refresh — without this the sidebar's unread dots vanish on reload because
-// the in-memory map starts empty and there is no server-side read cursor.
-function loadUnreadFromStorage(): Record<string, boolean> {
-  try {
-    const raw = safeGetString(UNREAD_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object') return {};
-    const out: Record<string, boolean> = {};
-    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (value === true) out[id] = true;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
-function saveUnreadToStorage(map: Record<string, boolean>): void {
-  try {
-    // Store only the `true` entries so the key stays compact (cleared sessions
-    // write `false` and are dropped here).
-    const out: Record<string, boolean> = {};
-    for (const [id, value] of Object.entries(map)) {
-      if (value) out[id] = true;
-    }
-    safeSetString(UNREAD_STORAGE_KEY, JSON.stringify(out));
   } catch {
     // ignore
   }
@@ -384,7 +349,7 @@ const rawState: ExtendedState = reactive({
   gitStatusBySession: {},
   promptIdBySession: {},
   sendingBySession: {},
-  unreadBySession: loadUnreadFromStorage(),
+  unreadBySession: loadUnread(),
   authReady: false,
   defaultModel: null,
   managedProviderStatus: null,
@@ -402,6 +367,44 @@ const rawState: ExtendedState = reactive({
   messagesHasMoreBySession: {},
   messagesLoadMoreErrorBySession: {},
 });
+
+// Cross-tab sync: when another tab writes the unread key, adopt its value so a
+// clear on one tab doesn't get overwritten by this tab's stale in-memory map.
+//
+// The session this tab is actively viewing is also cleared (only while visible):
+// its unread bit may have been set by a tab where it was in the background, and
+// we don't want the on-screen session to light up a dot. The same clear runs when
+// a hidden tab becomes visible again, so a dot that arrived while hidden is
+// dropped once the user is actually looking.
+function clearActiveUnread(): void {
+  const active = rawState.activeSessionId;
+  if (
+    active &&
+    rawState.unreadBySession[active] &&
+    typeof document !== 'undefined' &&
+    document.visibilityState === 'visible'
+  ) {
+    rawState.unreadBySession = { ...rawState.unreadBySession, [active]: false };
+    saveUnread({ [active]: false });
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key === STORAGE_KEYS.unread) {
+      rawState.unreadBySession = loadUnread();
+      clearActiveUnread();
+    }
+  });
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      clearActiveUnread();
+    }
+  });
+}
 
 // Models + Providers reactive state (lazy-loaded, cached)
 const models = ref<AppModel[]>([]);
@@ -2326,7 +2329,7 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
     // excluded on purpose: there is no fresh result to read, and counting them
     // is what made the sidebar fill with stale unreads after a refresh.
     rawState.unreadBySession = { ...rawState.unreadBySession, [sid]: true };
-    saveUnreadToStorage(rawState.unreadBySession);
+    saveUnread({ [sid]: true });
   }
 
   // Browser notification when the user isn't watching this session.
@@ -2904,7 +2907,7 @@ async function selectSession(
     // Opening a session clears its unread dot.
     if (rawState.unreadBySession[sessionId]) {
       rawState.unreadBySession = { ...rawState.unreadBySession, [sessionId]: false };
-      saveUnreadToStorage(rawState.unreadBySession);
+      saveUnread({ [sessionId]: false });
     }
     // A diff belongs to the session it was loaded from — drop it on switch.
     clearFileDiff();
