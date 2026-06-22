@@ -109,9 +109,10 @@ For each candidate, `gh pr view <PR> --json files --jq '.files[].path'`, then de
 | Only `.github/**`, `scripts/**`, `build/**`, `flake.nix`, `pnpm-lock.yaml`, repo `package.json` | Usually No — unless it changes a shipped build artifact |
 | `apps/kimi-code/src/**` | Yes → `@moonshot-ai/kimi-code` |
 | `apps/kimi-web/**` | Yes → `@moonshot-ai/kimi-code` |
+| `apps/vis/web/**`, `apps/vis/server/**` | Yes → `@moonshot-ai/kimi-code` (ships via `kimi vis`) |
 | `packages/node-sdk/src/**` | Yes → `@moonshot-ai/kimi-code-sdk` |
 | `packages/agent-core/**`, `packages/kosong/**`, `packages/kaos/**`, `packages/protocol/**`, `packages/server/**`, `packages/oauth/**`, `packages/telemetry/**`, `packages/acp-adapter/**`, `packages/migration-legacy/**` | Yes **if** it reaches the CLI/SDK artifact → list the released package, not the internal one. No if purely internal |
-| `apps/vis/**`, `server-e2e/**`, other non-shipping ignored apps | No |
+| other `apps/vis/**` (e.g. `scripts/**`), `packages/server-e2e/**`, other non-shipping ignored apps | No |
 
 A PR that needs a changeset but has none → **Missing changeset**.
 
