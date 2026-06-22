@@ -15,7 +15,7 @@ import { join } from 'node:path';
 
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
-import { startServer, type RunningServer } from '@moonshot-ai/server';
+import { getLiveLock, startServer, type RunningServer } from '@moonshot-ai/server';
 import chalk from 'chalk';
 import { Option, type Command } from 'commander';
 
@@ -23,6 +23,7 @@ import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_UI_MODE } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
+import { getDataDir } from '#/utils/paths';
 
 import { initializeServerTelemetry } from '../../telemetry';
 import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../../version';
@@ -31,6 +32,7 @@ import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
   DEFAULT_SERVER_PORT,
   parseServerOptions,
+  tryResolveServerToken,
   VALID_LOG_LEVELS,
   type ParsedServerOptions,
   type ServerCliOptions,
@@ -58,8 +60,27 @@ export interface RunCommandDeps {
     hooks?: StartForegroundHooks,
   ) => Promise<never>;
   openUrl(url: string): void;
+  /**
+   * Best-effort read of the running server's per-start bearer token. When it
+   * returns a token, the opened Web UI URL carries it in the `#token=` fragment
+   * (M5.5). Optional so callers/tests that don't supply it simply open the
+   * plain origin.
+   */
+  resolveToken?: () => string | undefined;
   stdout: Pick<NodeJS.WriteStream, 'write'>;
   stderr: Pick<NodeJS.WriteStream, 'write'>;
+}
+
+/**
+ * Build the Web UI URL, carrying the bearer token in the URL fragment.
+ *
+ * The token rides in `#token=<token>` — a client-side fragment that is never
+ * sent to the server (so it never appears in server access logs) and is not
+ * logged by proxies. The Web UI reads it from `location.hash` after load.
+ */
+export function buildWebUrl(origin: string, token: string): string {
+  const base = origin.endsWith('/') ? origin : `${origin}/`;
+  return `${base}#token=${token}`;
 }
 
 /** Build the `run` subcommand, mounted under a parent (`server` or top-level). */
@@ -120,6 +141,13 @@ export async function handleRunCommand(
     return;
   }
   const startedAt = Date.now();
+  // Open the Web UI, appending the bearer token in the URL fragment when one
+  // can be resolved (M5.5). Falls back to the plain origin when the token is
+  // unavailable (older build, missing lock, etc.).
+  const openWebUrl = (origin: string): void => {
+    const token = deps.resolveToken?.();
+    deps.openUrl(token !== undefined ? buildWebUrl(origin, token) : origin);
+  };
   if (opts.foreground === true) {
     const run = deps.startServerForeground ?? startServerForeground;
     await run(parsed, {
@@ -131,7 +159,7 @@ export async function handleRunCommand(
             : `Kimi server: ${origin}\n`,
         );
         if (opts.open === true) {
-          deps.openUrl(origin);
+          openWebUrl(origin);
         }
       },
     });
@@ -145,7 +173,7 @@ export async function handleRunCommand(
       : `Kimi server: ${origin}\n`,
   );
   if (opts.open === true) {
-    deps.openUrl(origin);
+    openWebUrl(origin);
   }
 }
 
@@ -382,6 +410,15 @@ const DEFAULT_RUN_COMMAND_DEPS: RunCommandDeps = {
   startServerBackground,
   startServerForeground,
   openUrl: defaultOpenUrl,
+  resolveToken: () => {
+    // The background daemon's pid lives in the lock; the foreground server is
+    // this process. Either way, `<homeDir>/server-<pid>.token` is the file the
+    // server wrote at boot (M5.1). Best-effort: a missing/older server yields
+    // undefined and the caller opens the plain origin.
+    const lock = getLiveLock();
+    const pid = lock?.pid ?? process.pid;
+    return tryResolveServerToken(getDataDir(), pid);
+  },
   stdout: process.stdout,
   stderr: process.stderr,
 };

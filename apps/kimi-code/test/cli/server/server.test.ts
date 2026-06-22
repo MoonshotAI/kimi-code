@@ -956,5 +956,60 @@ describe('`kimi server kill` carries the bearer token', () => {
   });
 });
 
+describe('buildWebUrl', () => {
+  it('carries the token in the URL fragment (not path or query)', async () => {
+    const { buildWebUrl } = await import('#/cli/sub/server/run');
+    const url = buildWebUrl('http://127.0.0.1:58627', 'abc123');
+    expect(url).toBe('http://127.0.0.1:58627/#token=abc123');
+    const parsed = new URL(url);
+    expect(parsed.hash).toBe('#token=abc123');
+    // The token is client-side only: it must NOT appear in the path or query
+    // (which WOULD be sent to the server and logged).
+    expect(parsed.pathname).not.toContain('abc123');
+    expect(parsed.search).not.toContain('abc123');
+  });
+
+  it('normalizes a trailing slash', async () => {
+    const { buildWebUrl } = await import('#/cli/sub/server/run');
+    expect(buildWebUrl('http://127.0.0.1:58627/', 't')).toBe(
+      'http://127.0.0.1:58627/#token=t',
+    );
+  });
+});
+
+describe('`kimi web` / `server run --open` token fragment (M5.5)', () => {
+  it('opens the Web UI URL with the token fragment when a token is resolvable', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    const openUrl = vi.fn();
+    await handleRunCommand(
+      { port: '58627', open: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+        resolveToken: () => 'tok-xyz',
+        openUrl,
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627/#token=tok-xyz');
+  });
+
+  it('opens the plain origin when no token is resolvable', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    const openUrl = vi.fn();
+    await handleRunCommand(
+      { port: '58627', open: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+        resolveToken: () => undefined,
+        openUrl,
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627');
+  });
+});
+
 // Silence vi import for cases where the file is built before tests reference vi.
 void vi;
