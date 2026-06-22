@@ -181,6 +181,7 @@ describe('runShell', () => {
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
+      addDirs: ['../shared', '/tmp/extra'],
     };
 
     await runShell(cliOptions, '1.2.3-test');
@@ -220,6 +221,7 @@ describe('runShell', () => {
     expect(harness).toBeTypeOf('object');
     expect(startupInput).toMatchObject({
       cliOptions,
+      additionalDirs: ['../shared', '/tmp/extra'],
       tuiConfig: {
         theme: 'dark',
         editorCommand: null,

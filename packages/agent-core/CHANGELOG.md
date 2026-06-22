@@ -1,5 +1,19 @@
 # @moonshot-ai/agent-core
 
+## 0.14.0
+
+### Minor Changes
+
+- [#812](https://github.com/MoonshotAI/kimi-code/pull/812) [`c0eeca2`](https://github.com/MoonshotAI/kimi-code/commit/c0eeca24692edd736eecd3c2541d7566bac9f80f) - Added the ability to add extra workspace directories:
+
+  - Use the `/add-dir <path>` command to add extra working directories to the current session, or remember them for the project.
+  - Use `kimi --add-dir <path>` to add them on startup.
+  - Project-level local config is now managed in `.kimi-code/local.toml`; we recommend adding it to your `.gitignore`.
+
+### Patch Changes
+
+- [#970](https://github.com/MoonshotAI/kimi-code/pull/970) [`2730079`](https://github.com/MoonshotAI/kimi-code/commit/27300797f2149900219b05dda49dce65e71fa85a) - Detect the real image format from file contents when reading media, so a mismatched filename extension no longer produces a data URL the model API rejects.
+
 ## 0.13.1
 
 ### Patch Changes

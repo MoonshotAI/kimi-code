@@ -202,5 +202,8 @@ function formatBtwTurnEnd(event: TurnEndedEvent): string {
   if (event.reason === 'cancelled') {
     return 'Interrupted by user';
   }
+  if (event.reason === 'filtered') {
+    return 'Provider safety policy blocked the response.';
+  }
   return `BTW turn ended with reason: ${event.reason}`;
 }

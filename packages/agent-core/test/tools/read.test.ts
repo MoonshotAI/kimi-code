@@ -384,6 +384,33 @@ describe('ReadTool', () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
+  it('rejects an image-extension file whose bytes are not an image as not readable', async () => {
+    // A `.png` file with no recognisable image magic and no NUL byte is not a
+    // real image; it must fall through to the generic "not readable" error
+    // rather than being misidentified as an image and sent to ReadMediaFile.
+    const plainText = Buffer.from('this is plain ascii text, not a png');
+    const readText = vi
+      .fn<Kaos['readText']>()
+      .mockRejectedValue(new Error('readText should not be called for non-image files'));
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(plainText),
+        readText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool, context({ path: '/tmp/fake.png' }));
+    const output = toolContentString(result);
+
+    expect(result.isError).toBe(true);
+    expect(output).toBe(
+      '"/tmp/fake.png" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+    );
+    expect(readText).not.toHaveBeenCalled();
+  });
+
   it('rejects extensionless image files using magic-byte sniffing', async () => {
     const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const readText = vi

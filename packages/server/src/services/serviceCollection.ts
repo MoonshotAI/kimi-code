@@ -22,6 +22,7 @@ import { IWSGateway } from '#/services/gateway/wsGateway';
 import { WSGateway } from '#/services/gateway/wsGatewayService';
 import { IWSBroadcastService } from '#/services/gateway/wsBroadcast';
 import { WSBroadcastService } from '#/services/gateway/wsBroadcastService';
+import { ISnapshotService, SnapshotService, loadSnapshotConfig } from '#/services/snapshot';
 
 export interface ServerServiceCollectionOptions {
   readonly server: ServerStartOptions;
@@ -35,6 +36,8 @@ export function createServerServiceCollection(
 ): ServiceCollection {
   const { server, app, pinoLogger, envService } = input;
 
+  const snapshotConfig = loadSnapshotConfig();
+
   const services = new ServiceCollection(
     ...getSingletonServiceDescriptors(),
     [IConnectionRegistry, new SyncDescriptor(ConnectionRegistry, [], false)],
@@ -43,6 +46,10 @@ export function createServerServiceCollection(
     [Services.IApprovalService, new SyncDescriptor(ApprovalService, [], false)],
     [Services.IQuestionService, new SyncDescriptor(QuestionService, [], false)],
   );
+
+  if (snapshotConfig.mode !== 'legacy') {
+    services.set(ISnapshotService, new SyncDescriptor(SnapshotService, [], false));
+  }
 
   services.set(Services.ILogService, new PinoLoggerAdapter(pinoLogger));
   services.set(IRestGateway, new FastifyRestGateway(app));

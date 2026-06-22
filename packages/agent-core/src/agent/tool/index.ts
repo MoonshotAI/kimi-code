@@ -367,7 +367,7 @@ export class ToolManager {
     const workspace = extendWorkspaceWithSkillRoots(
       {
         workspaceDir: cwd,
-        additionalDirs: [],
+        additionalDirs: this.agent.getAdditionalDirs(),
       },
       this.agent.skills?.registry.getSkillRoots() ?? [],
     );

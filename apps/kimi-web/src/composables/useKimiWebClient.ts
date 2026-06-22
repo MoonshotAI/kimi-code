@@ -691,7 +691,7 @@ function connectEventsIfNeeded(): void {
         appEvent.type === 'sessionStatusChanged' &&
         (appEvent.status === 'idle' || appEvent.status === 'aborted')
       ) {
-        onSessionIdle(appEvent.sessionId);
+        onSessionIdle(appEvent.sessionId, appEvent.status);
       }
 
       // Permission auto-approve: CLIENT-SIDE POLICY until the daemon exposes a
@@ -1861,7 +1861,7 @@ const workspaceState = useWorkspaceState(rawState, {
   fileDiffLoading,
 });
 
-function onSessionIdle(sid: string): void {
+function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
   // The turn finished — this session no longer has a prompt in flight.
   inFlightPromptSessions.delete(sid);
   rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
@@ -1879,9 +1879,11 @@ function onSessionIdle(sid: string): void {
     appearance.resetFastMoon();
     void workspaceState.loadGitStatus(sid);
     void refreshSessionStatus(sid);
-  } else {
-    // A background session just finished a turn the user hasn't seen — light up
-    // its unread dot until they open it.
+  } else if (status === 'idle') {
+    // A background session finished a turn the user hasn't seen — light up its
+    // unread dot until they open it. Aborted (cancelled/failed) turns are
+    // excluded on purpose: there is no fresh result to read, and counting them
+    // is what made the sidebar fill with stale unreads after a refresh.
     rawState.unreadBySession = { ...rawState.unreadBySession, [sid]: true };
     saveUnreadToStorage(rawState.unreadBySession);
   }

@@ -295,6 +295,7 @@ export class BashTool implements BuiltinTool<BashInput> {
             brief: `Backgrounded ${taskId}`,
           },
           builder,
+          'foreground_detached',
         );
       }
 
@@ -370,6 +371,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     description: string,
     labels: { title: string; brief: string },
     builder = new ToolResultBuilder(),
+    scenario: 'background_started' | 'foreground_detached' = 'background_started',
   ): ExecutableToolResult {
     const status = this.backgroundManager.getTask(taskId)?.status ?? 'running';
     const metadata =
@@ -378,11 +380,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       `description: ${description}\n` +
       `status: ${status}\n` +
       `automatic_notification: true\n` +
-      'next_step: You will be automatically notified when it completes.\n' +
-      (this.allowBackground
-        ? 'next_step: Use TaskOutput with this task_id for a non-blocking status/output snapshot.\n' +
-          'next_step: Use TaskStop only if the task must be cancelled.\n'
-        : '') +
+      this.nextStepLines(taskId, scenario) +
       'human_shell_hint: Tell the human to run /tasks to open the interactive background-task panel.';
 
     const foregroundResult = builder.ok('');
@@ -403,6 +401,31 @@ export class BashTool implements BuiltinTool<BashInput> {
       truncated: foregroundResult.truncated,
     };
     return result;
+  }
+
+  private nextStepLines(
+    taskId: string,
+    scenario: 'background_started' | 'foreground_detached',
+  ): string {
+    if (scenario === 'foreground_detached') {
+      // The user explicitly moved a foreground call to the background to avoid
+      // blocking the current turn. Steer the model away from waiting on it.
+      // Only mention TaskOutput when the tool is actually available.
+      const avoid = this.allowBackground ? 'do NOT wait, poll, or call TaskOutput on it' : 'do NOT wait or poll';
+      return (
+        'next_step: The task now runs in the background. You will be automatically notified ' +
+        `when it completes — ${avoid}; continue with your current work.\n`
+      );
+    }
+    // background_started: the model chose to launch in the background.
+    if (!this.allowBackground) {
+      return 'next_step: You will be automatically notified when it completes.\n';
+    }
+    return (
+      'next_step: The completion arrives automatically in a later turn — no polling needed. ' +
+      `To peek at progress without blocking, call TaskOutput(task_id="${taskId}", block=false).\n` +
+      'next_step: Use TaskStop only if the task must be cancelled.\n'
+    );
   }
 }
 

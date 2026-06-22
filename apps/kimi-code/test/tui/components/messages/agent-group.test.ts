@@ -91,6 +91,31 @@ describe('AgentGroupComponent', () => {
     waiting.dispose();
   });
 
+  it('shows the Ctrl+B hint while agents are running and hides it once all are backgrounded', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const ui = stubTui();
+    const group = new AgentGroupComponent(ui);
+    const a = createAgent('call_agent_1', 'inspect project', 'explore', ui);
+    const b = createAgent('call_agent_2', 'write tests', 'coder', ui);
+    startAgent(a, 'call_agent_1', 'explore');
+    startAgent(b, 'call_agent_2', 'coder');
+    group.attach('call_agent_1', a);
+    group.attach('call_agent_2', b);
+
+    expect(renderText(group)).toContain('Press Ctrl+B to run in background');
+
+    a.markBackgrounded();
+    expect(renderText(group)).toContain('Press Ctrl+B to run in background');
+
+    b.markBackgrounded();
+    expect(renderText(group)).not.toContain('Press Ctrl+B to run in background');
+
+    group.dispose();
+    a.dispose();
+    b.dispose();
+  });
+
   it('uses still-working fallback for running agents without recent activity', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -172,5 +197,37 @@ describe('AgentGroupComponent', () => {
     group.dispose();
     done.dispose();
     running.dispose();
+  });
+
+  it('renders a detached foreground subagent as backgrounded in the group, even after its ToolResult lands', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const ui = stubTui();
+    const group = new AgentGroupComponent(ui);
+    const a = createAgent('call_agent_1', 'inspect project', 'explore', ui);
+    const b = createAgent('call_agent_2', 'write tests', 'coder', ui);
+    startAgent(a, 'call_agent_1', 'explore');
+    startAgent(b, 'call_agent_2', 'coder');
+    group.attach('call_agent_1', a);
+    group.attach('call_agent_2', b);
+
+    // Detach `a` (Ctrl+B), then its spawn-success ToolResult lands.
+    a.markBackgrounded();
+    a.setResult({
+      tool_call_id: 'call_agent_1',
+      output: 'agent_id: sub_call_agent_1\nactual_subagent_type: explore\n',
+      is_error: false,
+    });
+
+    const out = renderText(group);
+    // `a` must show as backgrounded, NOT completed.
+    expect(out).toContain('◐ backgrounded');
+    expect(out).not.toContain('✓ Completed');
+    // `b` is still running.
+    expect(out).toContain('Running');
+
+    group.dispose();
+    a.dispose();
+    b.dispose();
   });
 });

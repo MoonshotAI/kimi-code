@@ -425,6 +425,50 @@ describe('Agent turn flow', () => {
     );
   });
 
+  it('ends the turn with reason filtered when the provider filters a non-empty response', async () => {
+    const generate: GenerateFn = async () => ({
+      id: null,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'some filtered text' }],
+        toolCalls: [],
+      },
+      usage: {
+        inputOther: 10,
+        output: 5,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      },
+      finishReason: 'filtered',
+      rawFinishReason: 'content_filter',
+    });
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Trigger filtered response' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'filtered',
+        }),
+      }),
+    );
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'turn.ended',
+        args: expect.objectContaining({ reason: 'completed' }),
+      }),
+    );
+  });
+
   it('emits a friendly model.not_configured error when no model is configured', async () => {
     const ctx = testAgent();
 
