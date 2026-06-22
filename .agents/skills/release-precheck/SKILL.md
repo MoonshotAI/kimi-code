@@ -87,7 +87,7 @@ gh pr list --state merged --search "ci: release packages in:title" --json number
 Candidate PRs merged into `main` after that moment (drop the release PRs themselves):
 
 ```bash
-gh pr list --state merged \
+gh pr list --state merged --base <baseRefName> \
   --search "merged:<PREV_RELEASE_MERGED_AT>..$(date -u +%Y-%m-%dT%H:%M)" \
   --json number,title,url,mergedAt,labels --limit 100
 ```
@@ -110,7 +110,7 @@ For each candidate, `gh pr view <PR> --json files --jq '.files[].path'`, then de
 | `apps/kimi-code/src/**` | Yes → `@moonshot-ai/kimi-code` |
 | `apps/kimi-web/**` | Yes → `@moonshot-ai/kimi-code` |
 | `packages/node-sdk/src/**` | Yes → `@moonshot-ai/kimi-code-sdk` |
-| `agent-core/**`, `kosong/**`, `kaos/**`, `protocol/**`, `server/**`, `oauth/**`, `telemetry/**`, `acp-adapter/**`, `migration-legacy/**` | Yes **if** it reaches the CLI/SDK artifact → list the released package, not the internal one. No if purely internal |
+| `packages/agent-core/**`, `packages/kosong/**`, `packages/kaos/**`, `packages/protocol/**`, `packages/server/**`, `packages/oauth/**`, `packages/telemetry/**`, `packages/acp-adapter/**`, `packages/migration-legacy/**` | Yes **if** it reaches the CLI/SDK artifact → list the released package, not the internal one. No if purely internal |
 | `apps/vis/**`, `server-e2e/**`, other non-shipping ignored apps | No |
 
 A PR that needs a changeset but has none → **Missing changeset**.
