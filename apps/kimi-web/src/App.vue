@@ -1,16 +1,15 @@
 <!-- apps/kimi-web/src/App.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, watchEffect } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, provide, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Sidebar from './components/Sidebar.vue';
 import ResizeHandle from './components/ResizeHandle.vue';
 import ConversationPane from './components/ConversationPane.vue';
-import FilePreview, { type FileData } from './components/FilePreview.vue';
+import FilePreview from './components/FilePreview.vue';
 import ThinkingPanel from './components/ThinkingPanel.vue';
 import AgentDetailPanel from './components/AgentDetailPanel.vue';
 import SideChatPanel from './components/SideChatPanel.vue';
 import DiffView from './components/DiffView.vue';
-import type { AgentMember } from './types';
 import ModelPicker from './components/ModelPicker.vue';
 import ProviderManager from './components/ProviderManager.vue';
 import LoginDialog from './components/LoginDialog.vue';
@@ -28,10 +27,13 @@ import GlobalLoading from './components/GlobalLoading.vue';
 import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
+import { useAuthGate } from './composables/useAuthGate';
+import { usePageTitle } from './composables/usePageTitle';
+import { useSidebarLayout } from './composables/useSidebarLayout';
+import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
+import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
 import type { AppConfig, ThinkingLevel } from './api/types';
-import type { FilePreviewRequest, ToolMedia } from './types';
-import { safeGetString, safeSetString, STORAGE_KEYS } from './lib/storage';
 
 const client = useKimiWebClient();
 provide('resolveImage', client.resolveImageUrl);
@@ -64,89 +66,14 @@ const running = computed(() => client.activity.value !== 'idle');
 
 // Auth readiness gates the main app. Once the first load finishes and auth is
 // still missing, show a full-page login entry instead of an in-app banner.
-const authReady = computed(() => client.authReady.value);
-const showAuthGate = computed(() => client.initialized.value && !authReady.value);
-const LOGIN_PATH = '/login';
-const authReturnPath = ref<string | null>(null);
 const authLogoRef = ref<SVGSVGElement | null>(null);
-let authLogoBlinkTimer: ReturnType<typeof setTimeout> | null = null;
-
-function currentPathWithSuffix(): string {
-  if (typeof window === 'undefined') return '/';
-  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
-}
-
-function replaceBrowserPath(path: string): void {
-  if (typeof window === 'undefined') return;
-  window.history.replaceState(window.history.state, '', path);
-}
-
-watch(showAuthGate, (show) => {
-  if (typeof window === 'undefined') return;
-  if (show) {
-    if (window.location.pathname !== LOGIN_PATH) {
-      authReturnPath.value = currentPathWithSuffix();
-      replaceBrowserPath(LOGIN_PATH);
-    }
-    return;
-  }
-  if (window.location.pathname === LOGIN_PATH) {
-    replaceBrowserPath(authReturnPath.value ?? '/');
-    authReturnPath.value = null;
-  }
-}, { immediate: true });
-
-function blinkAuthLogo(): void {
-  const el = authLogoRef.value;
-  if (!el) return;
-  el.classList.remove('blink-now');
-  void el.getBoundingClientRect();
-  el.classList.add('blink-now');
-  if (authLogoBlinkTimer !== null) clearTimeout(authLogoBlinkTimer);
-  authLogoBlinkTimer = setTimeout(() => {
-    authLogoBlinkTimer = null;
-    el.classList.remove('blink-now');
-  }, 300);
-}
+const { showAuthGate, blinkAuthLogo } = useAuthGate({ client, authLogoRef });
 
 
 // Static page title (app name only). The session title and workspace name are
-// intentionally excluded so the tab title stays stable.
-// Prefix an animated spinner when the agent is running so users can see activity
-// at a glance.
-const SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
-const spinnerFrame = ref(0);
-let spinnerTimer: ReturnType<typeof setInterval> | null = null;
-
-function startSpinner(): void {
-  if (spinnerTimer !== null) return;
-  spinnerFrame.value = 0;
-  spinnerTimer = setInterval(() => {
-    spinnerFrame.value = (spinnerFrame.value + 1) % SPINNER_FRAMES.length;
-  }, 250);
-}
-
-function stopSpinner(): void {
-  if (spinnerTimer !== null) {
-    clearInterval(spinnerTimer);
-    spinnerTimer = null;
-  }
-  spinnerFrame.value = 0;
-}
-
-watch(running, (isRunning) => {
-  if (isRunning) startSpinner();
-  else stopSpinner();
-}, { immediate: true });
-
-const pageTitle = computed<string>(() => {
-  const prefix = running.value ? `${SPINNER_FRAMES[spinnerFrame.value]} ` : '';
-  if (showAuthGate.value) return `${prefix}${t('app.authPageTitle')} - Kimi Code Web`;
-  return `${prefix}Kimi Code Web`;
-});
-watchEffect(() => {
-  if (typeof document !== 'undefined') document.title = pageTitle.value;
-});
+// intentionally excluded so the tab title stays stable. Prefixes an animated
+// spinner while the agent is running so activity is visible at a glance.
+usePageTitle({ running, showAuthGate });
 
 // Thinking is on/off (TUI parity — no effort-level cycling). The /thinking
 // command flips between off and the backend default effort ('high').
@@ -175,20 +102,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
-  stopSpinner();
-  if (authLogoBlinkTimer !== null) clearTimeout(authLogoBlinkTimer);
 });
-
-// Escape closes whichever transient right-side detail panel is open.
-function closeOpenSidePanel(): boolean {
-  if (detailTarget.value === 'thinking' && thinkingVisible.value) { closeThinkingPanel(); return true; }
-  if (detailTarget.value === 'compaction' && compactionPanelVisible.value) { closeCompactionPanel(); return true; }
-  if (detailTarget.value === 'agent' && agentPanelVisible.value) { closeAgentPanel(); return true; }
-  if (detailTarget.value === 'file') { closeFilePreview(); return true; }
-  if (detailTarget.value === 'diff') { closeDiffDetail(); return true; }
-  if (detailTarget.value === 'btw') { closeSideChat(); return true; }
-  return false;
-}
 
 function onGlobalKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
@@ -205,383 +119,72 @@ function onGlobalKeydown(e: KeyboardEvent): void {
 // Layout: resizable session column. ResizeHandle owns the column width (with
 // localStorage persistence); we mirror it here to drive the App grid.
 // ---------------------------------------------------------------------------
-const SIDEBAR_WIDTH_KEY = STORAGE_KEYS.sidebarWidth;
-const SIDEBAR_COLLAPSED_KEY = STORAGE_KEYS.sidebarCollapsed;
-const SIDEBAR_DEFAULT = 270;
-const SIDEBAR_MIN = 170;
-const SIDEBAR_MAX = 420;
-const SIDEBAR_COLLAPSED_WIDTH = 36;
-
-const sessionColWidth = ref(SIDEBAR_DEFAULT);
-const sidebarCollapsed = ref(false);
-const sideWidth = computed(() =>
-  sidebarCollapsed.value ? SIDEBAR_COLLAPSED_WIDTH : sessionColWidth.value,
-);
-
-function loadSidebarCollapsed(): void {
-  try {
-    sidebarCollapsed.value = safeGetString(SIDEBAR_COLLAPSED_KEY) === 'true';
-  } catch {
-    sidebarCollapsed.value = false;
-  }
-}
-
-function saveSidebarCollapsed(): void {
-  try {
-    safeSetString(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed.value));
-  } catch {
-    // ignore
-  }
-}
-
-function toggleSidebarCollapse(): void {
-  sidebarCollapsed.value = !sidebarCollapsed.value;
-  saveSidebarCollapsed();
-}
+const {
+  SIDEBAR_WIDTH_KEY,
+  SIDEBAR_DEFAULT,
+  SIDEBAR_MIN,
+  SIDEBAR_MAX,
+  sessionColWidth,
+  sidebarCollapsed,
+  sideWidth,
+  loadSidebarCollapsed,
+  toggleSidebarCollapse,
+} = useSidebarLayout();
 
 // ---------------------------------------------------------------------------
-// Unified right-side detail layer. Only one detail is open at a time.
+// Unified right-side detail layer. Only one detail is open at a time. The
+// shared `detailTarget` ref lives here so the file-preview and detail-panel
+// composables can both claim the single right-side slot.
 // ---------------------------------------------------------------------------
-type DetailTarget = 'file' | 'diff' | 'thinking' | 'compaction' | 'agent' | 'btw';
 const detailTarget = ref<DetailTarget | null>(null);
 
-const PREVIEW_WIDTH_KEY = 'kimi-web.file-preview-width';
-const PREVIEW_MIN = 320;
-
-function previewAreaWidth(): number {
-  if (typeof window === 'undefined') return PREVIEW_MIN * 2;
-  return Math.max(0, window.innerWidth - sideWidth.value);
-}
-
-function clampPreviewWidth(width: number): number {
-  const max = Math.max(PREVIEW_MIN, previewAreaWidth() - PREVIEW_MIN);
-  return Math.min(max, Math.max(PREVIEW_MIN, Math.round(width)));
-}
-
-function defaultPreviewWidth(): number {
-  return clampPreviewWidth(previewAreaWidth() / 2);
-}
-
-const previewDefaultWidth = computed(() => defaultPreviewWidth());
-const previewMaxWidth = computed(() => Math.max(PREVIEW_MIN, previewAreaWidth() - PREVIEW_MIN));
-const previewWidth = ref(previewDefaultWidth.value);
-const previewTarget = ref<FilePreviewRequest | null>(null);
-const previewFile = ref<FileData | null>(null);
-const previewLoading = ref(false);
-const previewError = ref<string | null>(null);
-// Normalized workspace-relative path of the currently-open preview. Used for
-// the download URL so it matches the server's relative-path contract even when
-// the user opened the preview from an absolute path in the chat.
-const previewNormalizedPath = ref<string | null>(null);
-// Incremented on every openFilePreview call so a slower earlier request can't
-// overwrite the result of a later one (request-sequence guard).
-let previewRequestSeq = 0;
-
-const previewDownloadUrl = computed(() => {
-  const path = previewNormalizedPath.value;
-  return path ? client.getFileDownloadUrl(path) : null;
-});
-const previewExternalActions = computed(() => previewTarget.value !== null);
-
-function trimTrailingSlash(path: string): string {
-  return path.length > 1 ? path.replace(/\/+$/, '') : path;
-}
-
-function normalizeRelativePath(path: string): string {
-  const out: string[] = [];
-  for (const part of path.split(/[\\/]+/)) {
-    if (!part || part === '.') continue;
-    if (part === '..') {
-      out.pop();
-      continue;
-    }
-    out.push(part);
-  }
-  return out.join('/');
-}
-
-function normalizePreviewPath(inputPath: string): { path: string } | { error: string } {
-  const raw = inputPath.trim();
-  if (!raw) return { error: t('filePreview.errors.emptyPath') };
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
-    return { error: t('filePreview.errors.unsupportedPath') };
-  }
-  if (raw.startsWith('~')) {
-    return { error: t('filePreview.errors.outsideWorkspace') };
-  }
-
-  const cwd = trimTrailingSlash(client.status.value.cwd);
-  if (raw.startsWith('/')) {
-    if (!cwd || (raw !== cwd && !raw.startsWith(`${cwd}/`))) {
-      return { error: t('filePreview.errors.outsideWorkspace') };
-    }
-    const relative = raw === cwd ? '' : raw.slice(cwd.length + 1);
-    if (relative.split(/[\\/]+/).includes('..')) {
-      return { error: t('filePreview.errors.outsideWorkspace') };
-    }
-    const path = normalizeRelativePath(relative);
-    return path ? { path } : { error: t('filePreview.errors.isDirectory') };
-  }
-
-  if (raw.split(/[\\/]+/).includes('..')) {
-    return { error: t('filePreview.errors.outsideWorkspace') };
-  }
-
-  const path = normalizeRelativePath(raw);
-  return path ? { path } : { error: t('filePreview.errors.emptyPath') };
-}
-
-async function openFilePreview(target: FilePreviewRequest): Promise<void> {
-  const requestSeq = ++previewRequestSeq;
-  detailTarget.value = 'file';
-  previewFile.value = null;
-  previewError.value = null;
-  previewLoading.value = true;
-  previewTarget.value = target;
-  previewNormalizedPath.value = null;
-
-  const normalized = normalizePreviewPath(target.path);
-  if ('error' in normalized) {
-    previewLoading.value = false;
-    previewError.value = normalized.error;
-    return;
-  }
-  previewNormalizedPath.value = normalized.path;
-
-  try {
-    const result = await client.readFileContent(normalized.path);
-    // A newer openFilePreview started while this one was in flight — discard
-    // the stale result so the right-side panel shows the latest file.
-    if (requestSeq !== previewRequestSeq) return;
-    if (result) {
-      previewFile.value = { ...result, path: result.path || normalized.path };
-    } else {
-      previewFile.value = {
-        path: normalized.path,
-        content: '',
-        encoding: 'utf-8',
-        mime: 'text/plain',
-        isBinary: false,
-        size: 0,
-      };
-    }
-  } catch (err) {
-    if (requestSeq !== previewRequestSeq) return;
-    previewError.value = err instanceof Error ? err.message : t('filePreview.errors.loadFailed');
-  } finally {
-    if (requestSeq === previewRequestSeq) {
-      previewLoading.value = false;
-    }
-  }
-}
-
-function mimeFromDataUrl(url: string): string | undefined {
-  const match = /^data:([^;,]+)/i.exec(url);
-  return match?.[1];
-}
-
-function openMediaPreview(media: ToolMedia): void {
-  if (media.kind !== 'image') return;
-  detailTarget.value = 'file';
-  previewTarget.value = null;
-  previewNormalizedPath.value = null;
-  previewError.value = null;
-  previewLoading.value = false;
-  previewFile.value = {
-    path: media.path ?? 'ReadMediaFile image',
-    content: '',
-    encoding: 'utf-8',
-    mime: media.mimeType ?? mimeFromDataUrl(media.url) ?? 'image/*',
-    sourceUrl: media.url,
-    isBinary: true,
-    size: media.bytes ?? 0,
-  };
-}
-
-function closeFilePreview(): void {
-  previewTarget.value = null;
-  previewNormalizedPath.value = null;
-  previewFile.value = null;
-  previewError.value = null;
-  previewLoading.value = false;
-  if (detailTarget.value === 'file') detailTarget.value = null;
-}
+const {
+  previewTarget,
+  previewFile,
+  previewLoading,
+  previewError,
+  previewDownloadUrl,
+  previewExternalActions,
+  openFilePreview,
+  openMediaPreview,
+  closeFilePreview,
+  openPreviewInEditor,
+  revealPreviewFile,
+} = useFilePreview({ client, detailTarget });
 
 // ---------------------------------------------------------------------------
-// Thinking panel
+// Unified right-side detail layer (thinking / compaction / agent / diff / side
+// chat) plus the preview-panel width. Only one detail is open at a time.
 // ---------------------------------------------------------------------------
-const thinkingTarget = ref<{ turnId: string; blockIndex: number } | null>(null);
-
-const thinkingPanelText = computed<string | null>(() => {
-  const target = thinkingTarget.value;
-  if (!target) return null;
-  const turn = client.turns.value.find((tn) => tn.id === target.turnId);
-  const blk = turn?.blocks?.[target.blockIndex];
-  return blk?.kind === 'thinking' ? blk.thinking : null;
-});
-
-const thinkingVisible = computed(() => thinkingPanelText.value !== null);
-
-function openThinkingPanel(target: { turnId: string; blockIndex: number }): void {
-  const current = thinkingTarget.value;
-  if (current && current.turnId === target.turnId && current.blockIndex === target.blockIndex) {
-    thinkingTarget.value = null;
-    if (detailTarget.value === 'thinking') detailTarget.value = null;
-    return;
-  }
-  detailTarget.value = 'thinking';
-  thinkingTarget.value = target;
-}
-
-function closeThinkingPanel(): void {
-  thinkingTarget.value = null;
-  if (detailTarget.value === 'thinking') detailTarget.value = null;
-}
-
-// ---------------------------------------------------------------------------
-// Compaction summary panel
-// ---------------------------------------------------------------------------
-const compactionTarget = ref<{ turnId: string } | null>(null);
-
-const compactionPanelText = computed<string | null>(() => {
-  const target = compactionTarget.value;
-  if (!target) return null;
-  const turn = client.turns.value.find((tn) => tn.id === target.turnId);
-  return turn?.role === 'compaction' && turn.text ? turn.text : null;
-});
-
-const compactionPanelVisible = computed(() => compactionPanelText.value !== null);
-
-function openCompactionPanel(target: { turnId: string }): void {
-  if (compactionTarget.value?.turnId === target.turnId) {
-    compactionTarget.value = null;
-    if (detailTarget.value === 'compaction') detailTarget.value = null;
-    return;
-  }
-  detailTarget.value = 'compaction';
-  compactionTarget.value = target;
-}
-
-function closeCompactionPanel(): void {
-  compactionTarget.value = null;
-  if (detailTarget.value === 'compaction') detailTarget.value = null;
-}
-
-// ---------------------------------------------------------------------------
-// Subagent detail panel
-// ---------------------------------------------------------------------------
-const agentTarget = ref<{ turnId: string; blockIndex: number; memberId: string } | null>(null);
-
-const agentPanelMember = computed<AgentMember | null>(() => {
-  const target = agentTarget.value;
-  if (!target) return null;
-  const turn = client.turns.value.find((tn) => tn.id === target.turnId);
-  const blk = turn?.blocks?.[target.blockIndex];
-  if (!blk) return null;
-  if (blk.kind === 'agent') return blk.member.id === target.memberId ? blk.member : null;
-  if (blk.kind === 'agentGroup') return blk.members.find((m) => m.id === target.memberId) ?? null;
-  return null;
-});
-
-const agentPanelVisible = computed(() => agentPanelMember.value !== null);
-
-function openAgentPanel(target: { turnId: string; blockIndex: number; memberId: string }): void {
-  const current = agentTarget.value;
-  if (current && current.turnId === target.turnId && current.memberId === target.memberId) {
-    agentTarget.value = null;
-    if (detailTarget.value === 'agent') detailTarget.value = null;
-    return;
-  }
-  detailTarget.value = 'agent';
-  agentTarget.value = target;
-}
-
-function closeAgentPanel(): void {
-  agentTarget.value = null;
-  if (detailTarget.value === 'agent') detailTarget.value = null;
-}
-
-// ---------------------------------------------------------------------------
-// Diff detail layer (opened from the chat header git area)
-// ---------------------------------------------------------------------------
-const detailDiffMode = ref<'list' | 'detail'>('list');
-const detailDiffPath = ref<string | null>(null);
-
-function openDiffDetail(): void {
-  detailTarget.value = 'diff';
-  detailDiffMode.value = 'list';
-  detailDiffPath.value = null;
-  void client.loadGitStatus(client.activeSessionId.value!);
-}
-
-function closeDiffDetail(): void {
-  if (detailTarget.value === 'diff') detailTarget.value = null;
-  detailDiffMode.value = 'list';
-  detailDiffPath.value = null;
-  client.clearFileDiff();
-}
-
-async function selectDiffFile(path: string): Promise<void> {
-  detailDiffMode.value = 'detail';
-  detailDiffPath.value = path;
-  await client.loadFileDiff(path);
-}
-
-// ---------------------------------------------------------------------------
-// Side chat (BTW) — now rendered in the unified right-side detail layer.
-// ---------------------------------------------------------------------------
-async function openSideChatTab(prompt?: string): Promise<void> {
-  await client.openSideChat(prompt);
-  detailTarget.value = 'btw';
-}
-
-function closeSideChat(): void {
-  client.closeSideChat();
-  if (detailTarget.value === 'btw') detailTarget.value = null;
-}
-
-// Only hides the right-side BTW panel; the side-chat target is per-session and
-// preserved so switching back to a session restores its BTW transcript.
-function hideSideChatPanel(): void {
-  if (detailTarget.value === 'btw') detailTarget.value = null;
-}
-
-const btwVisible = computed(() => client.sideChatVisible.value);
-
-/** Any occupant of the shared right-side slot. */
-const sidePanelVisible = computed(
-  () =>
-    detailTarget.value !== null &&
-    (detailTarget.value !== 'thinking' || thinkingVisible.value) &&
-    (detailTarget.value !== 'compaction' || compactionPanelVisible.value) &&
-    (detailTarget.value !== 'agent' || agentPanelVisible.value) &&
-    (detailTarget.value !== 'btw' || btwVisible.value),
-);
-
-/** True while the panel's resize handle is being dragged — the width
-    transition is disabled so the panel follows the pointer 1:1. */
-const panelDragging = ref(false);
-
-function openPreviewInEditor(): void {
-  const path = previewFile.value?.path ?? previewTarget.value?.path;
-  if (!path) return;
-  void client.openWorkspaceFile(path, previewTarget.value?.line);
-}
-
-function revealPreviewFile(): void {
-  const path = previewFile.value?.path ?? previewTarget.value?.path;
-  if (!path) return;
-  void client.revealWorkspaceFile(path);
-}
-
-watch(client.activeSessionId, () => {
-  closeFilePreview();
-  closeThinkingPanel();
-  closeCompactionPanel();
-  closeAgentPanel();
-  closeDiffDetail();
-  hideSideChatPanel();
-});
+const {
+  PREVIEW_WIDTH_KEY,
+  PREVIEW_MIN,
+  previewDefaultWidth,
+  previewMaxWidth,
+  previewWidth,
+  thinkingPanelText,
+  thinkingVisible,
+  openThinkingPanel,
+  closeThinkingPanel,
+  compactionPanelText,
+  compactionPanelVisible,
+  openCompactionPanel,
+  closeCompactionPanel,
+  agentPanelMember,
+  openAgentPanel,
+  closeAgentPanel,
+  detailDiffMode,
+  detailDiffPath,
+  openDiffDetail,
+  closeDiffDetail,
+  selectDiffFile,
+  btwVisible,
+  openSideChatTab,
+  closeSideChat,
+  sidePanelVisible,
+  panelDragging,
+  closeOpenSidePanel,
+} = useDetailPanel({ client, sideWidth, detailTarget, closeFilePreview });
 
 // Reference to ConversationPane so we can imperatively switch tabs
 const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(null);
