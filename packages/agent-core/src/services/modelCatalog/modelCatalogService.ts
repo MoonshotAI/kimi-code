@@ -1,4 +1,4 @@
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 import type { KimiConfig, ModelAlias, ProviderConfig } from '../../config';
 import type { CoreRPC } from '../../rpc';
 import type {

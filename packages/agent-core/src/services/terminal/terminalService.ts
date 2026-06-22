@@ -1,8 +1,8 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 
-import { Disposable, registerSingleton, SyncDescriptor } from '../../di';
-import type { IDisposable } from '../../di';
+import { Disposable, registerSingleton, SyncDescriptor } from '../../_base/di';
+import type { IDisposable } from '../../_base/di';
 import type {
   CreateTerminalRequest,
   Terminal,

@@ -45,7 +45,7 @@ import {
   ServiceCollection,
   SyncDescriptor,
   type IInstantiationService,
-} from '../di';
+} from '../_base/di';
 
 export interface SessionOptions {
   readonly kaos: Kaos;

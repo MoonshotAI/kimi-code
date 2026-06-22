@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/di/descriptors';
-import { InstantiationService } from '#/di/instantiationService';
-import { IInstantiationService, createDecorator, type IInstantiationService as IInstantiationServiceType } from '#/di/instantiation';
-import { ServiceCollection } from '#/di/serviceCollection';
+import { SyncDescriptor } from '#/_base/di';
+import { InstantiationService } from '#/_base/di';
+import { IInstantiationService, createDecorator, type IInstantiationService as IInstantiationServiceType } from '#/_base/di';
+import { ServiceCollection } from '#/_base/di';
 
 /**
  * P1.2 — `supportsDelayedInstantiation: true` returns a Proxy that defers

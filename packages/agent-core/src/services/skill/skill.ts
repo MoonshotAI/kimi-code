@@ -31,7 +31,7 @@
  * `createDecorator` value and the `SkillSummary` type.
  */
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { SkillSummary as AgentCoreSkillSummary } from '../../rpc';
 import type { SkillDescriptor } from '@moonshot-ai/protocol';
 

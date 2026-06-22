@@ -1,6 +1,6 @@
 import { ErrorCodes, makeErrorPayload } from '#/errors';
 import type { Agent } from '..';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
   isNewerWireVersion,

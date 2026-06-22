@@ -1,6 +1,6 @@
 
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 
 export interface ILogService {
   readonly _serviceBrand: undefined;

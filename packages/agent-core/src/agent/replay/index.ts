@@ -1,4 +1,4 @@
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import { IRecordsService } from '../records';
 import type { AgentReplayRecord, AgentReplayRecordPayload } from '../../rpc/resumed';
 import type { ContextMessage } from '../context';

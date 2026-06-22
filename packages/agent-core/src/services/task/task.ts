@@ -38,7 +38,7 @@
  *            lost      → failed       (lossy)
  */
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { BackgroundTaskInfo } from '../../agent/background';
 import type { BackgroundTask, BackgroundTaskKind, BackgroundTaskStatus } from '@moonshot-ai/protocol';
 

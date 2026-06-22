@@ -3,7 +3,7 @@
  */
 
 import { createRPC, KimiCore } from '../../rpc';
-import { Disposable, IInstantiationService, registerSingleton, SyncDescriptor } from '../../di';
+import { Disposable, IInstantiationService, registerSingleton, SyncDescriptor } from '../../_base/di';
 import type { CoreAPI, CoreRPC, SDKAPI } from '../../rpc';
 import type { OAuthTokenProviderResolver } from '../../session/provider-manager';
 import {

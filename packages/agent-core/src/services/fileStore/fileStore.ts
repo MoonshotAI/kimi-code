@@ -1,7 +1,7 @@
 
 import type { Readable } from 'node:stream';
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 
 import type { FileMeta } from '@moonshot-ai/protocol';
 

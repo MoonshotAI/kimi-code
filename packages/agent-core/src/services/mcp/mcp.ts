@@ -32,7 +32,7 @@
  * name-as-id at the wire boundary. Both are 1:1 within a daemon process.
  */
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { McpServerInfo } from '../../rpc';
 import type {
   McpServer,

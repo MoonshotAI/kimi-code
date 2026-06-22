@@ -9,7 +9,7 @@ import { Agent, type AgentOptions, type AgentType } from '../agent';
 import type { SessionHookCtx } from '../agent/lifecycle';
 import type { PermissionManagerOptions } from '../agent/permission';
 import { parseBooleanEnv, resolveConfigValue } from '../config';
-import type { IInstantiationService } from '../di';
+import type { IInstantiationService } from '../_base/di';
 import {
   DEFAULT_AGENT_PROFILES,
   prepareSystemPromptContext,

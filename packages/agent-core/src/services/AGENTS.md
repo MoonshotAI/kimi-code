@@ -248,7 +248,7 @@ This layer uses the registry-based wiring pattern modelled on
 1. **Each `<X>Service.ts` impl file self-registers** at the bottom:
 
    ```ts
-   import { registerSingleton, InstantiationType } from '../../di';
+   import { registerSingleton, InstantiationType } from '../../_base/di';
    // …class body…
    registerSingleton(IXxxService, XxxService, InstantiationType.Delayed);
    ```

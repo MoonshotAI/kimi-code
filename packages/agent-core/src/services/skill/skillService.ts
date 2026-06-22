@@ -2,7 +2,7 @@
  * `SkillService` — implementation of `ISkillService`.
  */
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { SkillDescriptor } from '@moonshot-ai/protocol';
 

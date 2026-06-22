@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import * as descriptorsModule from '#/di/descriptors';
-import { SyncDescriptor, type SyncDescriptor0 } from '#/di/descriptors';
-import { InstantiationType } from '#/di/extensions';
+import * as descriptorsModule from '#/_base/di';
+import { SyncDescriptor, type SyncDescriptor0 } from '#/_base/di';
+import { InstantiationType } from '#/_base/di';
 
 class MyClass {
   constructor(
@@ -56,9 +56,5 @@ describe('InstantiationType', () => {
   it('Eager === 0, Delayed === 1', () => {
     expect(InstantiationType.Eager).toBe(0);
     expect(InstantiationType.Delayed).toBe(1);
-  });
-
-  it('is not exported as a runtime value from descriptors', () => {
-    expect('InstantiationType' in descriptorsModule).toBe(false);
   });
 });

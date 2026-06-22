@@ -16,7 +16,7 @@
  * aggregators, builders) can be generic.
  */
 
-import { createDecorator } from '../../di/instantiation';
+import { createDecorator } from '../../_base/di';
 
 /**
  * Identity of the Agent scope.

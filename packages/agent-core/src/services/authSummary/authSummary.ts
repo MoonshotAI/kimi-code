@@ -27,7 +27,7 @@
  * caching — keeps the staleness window at zero.
  */
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { AuthSummary } from '@moonshot-ai/protocol';
 
 export interface IAuthSummaryService {

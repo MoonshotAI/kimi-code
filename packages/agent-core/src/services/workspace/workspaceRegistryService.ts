@@ -5,7 +5,7 @@ import os from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { Stats } from 'node:fs';
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 import { encodeWorkDirKey } from '../../session/store';
 import { IEnvironmentService } from '../environment/environment';
 import { IEventService } from '../event/event';

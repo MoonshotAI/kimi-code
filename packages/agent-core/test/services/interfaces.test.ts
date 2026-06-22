@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   Emitter,
 } from '../../src';
-import { TestInstantiationService } from '../../src/di/test';
+import { TestInstantiationService } from '#/_base/di/test';
 import type { ApprovalRequest, Event, QuestionRequest } from '../../src';
 
 import {

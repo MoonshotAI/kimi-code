@@ -1,6 +1,6 @@
 import type { FSWatcher } from 'chokidar';
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 
 import type { FsChangeEntry } from '@moonshot-ai/protocol';
 

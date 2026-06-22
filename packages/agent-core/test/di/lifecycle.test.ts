@@ -19,7 +19,7 @@ import {
   toDisposable,
   type IReference,
   type IDisposable,
-} from '#/di/lifecycle';
+} from '#/_base/di';
 import {
   resetUnexpectedErrorHandler,
   setUnexpectedErrorHandler,

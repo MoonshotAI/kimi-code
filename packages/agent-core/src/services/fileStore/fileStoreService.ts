@@ -7,7 +7,7 @@ import type { Readable } from 'node:stream';
 
 import { ulid } from 'ulid';
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 
 import type { FileMeta } from '@moonshot-ai/protocol';
 import { IEnvironmentService } from '../environment/environment';

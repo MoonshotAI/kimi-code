@@ -1,4 +1,4 @@
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import { IContextService } from '../context';
 import { IRecordsService } from '../records';
 import { IAgentStatusService } from '../status';

@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/di/descriptors';
+import { SyncDescriptor } from '#/_base/di';
 import {
   InstantiationType,
   _clearRegistryForTests,
   getSingletonServiceDescriptors,
-} from '#/di/extensions';
-import { InstantiationService } from '#/di/instantiationService';
-import { ServiceCollection } from '#/di/serviceCollection';
+} from '#/_base/di';
+import { InstantiationService } from '#/_base/di';
+import { ServiceCollection } from '#/_base/di';
 import { SessionScopeBuilder } from '#/scope/builder';
 import { ISessionContext } from '#/scope/context/index';
 import { LifecycleScope } from '#/scope/lifecycle';

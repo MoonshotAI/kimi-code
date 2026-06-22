@@ -2,7 +2,7 @@
  * `AuthSummaryService` — implementation of `IAuthSummaryService`.
  */
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 import type { KimiConfig } from '../../config';
 import type { CoreRPC } from '../../rpc';
 import type { AuthSummary } from '@moonshot-ai/protocol';

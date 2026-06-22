@@ -2,7 +2,7 @@
  * `TaskService` — implementation of `ITaskService`.
  */
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 import type { BackgroundTask } from '@moonshot-ai/protocol';
 
 import type { CoreRPC } from '../../rpc';

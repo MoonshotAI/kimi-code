@@ -2,7 +2,7 @@
  * `PromptService` — implementation of `IPromptService`.
  */
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 import { Emitter } from '../../base/common/event';
 import type {
   Event,

@@ -15,9 +15,9 @@
  * lifetime of the process. A test-only reset exists so cases stay isolated.
  */
 
-import { SyncDescriptor } from '../di/descriptors';
-import type { ServiceIdentifier } from '../di/instantiation';
-import { InstantiationType, registerSingleton } from '../di/extensions';
+import { SyncDescriptor } from '../_base/di';
+import type { ServiceIdentifier } from '../_base/di';
+import { InstantiationType, registerSingleton } from '../_base/di';
 import { LifecycleScope } from './lifecycle';
 
 /**

@@ -1,4 +1,4 @@
-import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '../../_base/di';
 import type { PageResponse, Session } from '@moonshot-ai/protocol';
 import type { CoreRPC, SessionSummary } from '../../rpc';
 

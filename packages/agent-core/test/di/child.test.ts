@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/di/descriptors';
-import { InstantiationService } from '#/di/instantiationService';
+import { SyncDescriptor } from '#/_base/di';
+import { InstantiationService } from '#/_base/di';
 import {
   IInstantiationService,
   createDecorator,
   type IInstantiationService as IInstantiationServiceType,
-} from '#/di/instantiation';
-import { Disposable, type IDisposable } from '#/di/lifecycle';
-import { ServiceCollection } from '#/di/serviceCollection';
+} from '#/_base/di';
+import { Disposable, type IDisposable } from '#/_base/di';
+import { ServiceCollection } from '#/_base/di';
 
 interface ILogger {
   log(msg: string): void;

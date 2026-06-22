@@ -2,8 +2,8 @@ import nodePath from 'node:path';
 
 import { FSWatcher } from 'chokidar';
 
-import { Disposable, DisposableMap, ReferenceCollection, dispose } from '../../di';
-import type { IDisposable, IReference } from '../../di';
+import { Disposable, DisposableMap, ReferenceCollection, dispose } from '../../_base/di';
+import type { IDisposable, IReference } from '../../_base/di';
 import { ISessionService } from '../session/session';
 
 import type {

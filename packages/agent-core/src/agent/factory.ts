@@ -1,6 +1,6 @@
 import type { AgentEvent } from '#/rpc';
 
-import { ServiceCollection, SyncDescriptor } from '../di';
+import { ServiceCollection, SyncDescriptor } from '../_base/di';
 import { DomainEventBus, IDomainEventBus } from '../event/event-bus';
 import { BackgroundService, BackgroundTaskPersistence, IBackgroundService } from './background';
 import {

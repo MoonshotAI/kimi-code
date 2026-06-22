@@ -17,7 +17,7 @@ import type { PromisableMethods } from '../utils/types';
 import {
   InstantiationService,
   type IInstantiationService,
-} from '../di';
+} from '../_base/di';
 import { BackgroundTaskPersistence, IBackgroundService } from './background';
 import { IDomainEventBus } from '../event/event-bus';
 import { ILifecycleService } from './lifecycle';

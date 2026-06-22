@@ -7,7 +7,7 @@ import {
   IInstantiationService,
   type SessionSummary,
 } from '../../../src';
-import { TestInstantiationService } from '../../../src/di/test';
+import { TestInstantiationService } from '#/_base/di/test';
 import {
   IApprovalService,
   type ICoreRuntime,

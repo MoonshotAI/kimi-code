@@ -1,8 +1,8 @@
 
 import path from 'node:path';
 
-import { createDecorator } from '../../di';
-import type { IDisposable } from '../../di';
+import { createDecorator } from '../../_base/di';
+import type { IDisposable } from '../../_base/di';
 import type {
   FsDiffRequest,
   FsDiffResponse,

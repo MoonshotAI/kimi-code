@@ -1,4 +1,4 @@
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import { encodeWorkDirKey } from '../../session/store';
 import type { Event } from '../../base/common/event';
 import type { SessionSummary } from '../../rpc';

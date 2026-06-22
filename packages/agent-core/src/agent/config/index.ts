@@ -10,7 +10,7 @@ import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '#/config/k
 
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { AgentConfigData, AgentConfigUpdateData } from './types';
 import { resolveThinkingEffort, type ThinkingEffort } from './thinking';
 import type { ResolvedRuntimeProvider } from '../../session/provider-manager';

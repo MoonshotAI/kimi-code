@@ -2,8 +2,8 @@
  * `OAuthService` — implementation of `IOAuthService`.
  */
 
-import { Disposable, DisposableMap, InstantiationType, registerSingleton } from '../../di';
-import type { IDisposable } from '../../di';
+import { Disposable, DisposableMap, InstantiationType, registerSingleton } from '../../_base/di';
+import type { IDisposable } from '../../_base/di';
 import {
   DeviceCodeTimeoutError,
   KIMI_CODE_PROVIDER_NAME,

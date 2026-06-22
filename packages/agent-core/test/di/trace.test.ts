@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { InstantiationService, Trace } from '#/di/instantiationService';
-import { ServiceCollection } from '#/di/serviceCollection';
+import { InstantiationService, Trace } from '#/_base/di';
+import { ServiceCollection } from '#/_base/di';
 
 /**
  * P0.2: `Trace` class + `_enableTracing` ctor param installed. These

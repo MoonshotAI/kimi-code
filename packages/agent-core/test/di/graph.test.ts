@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { Graph } from '#/di/graph';
+import { Graph } from '#/_base/di';
 
 /**
  * Pure data-structure tests for the vendored `Graph` (no DI container

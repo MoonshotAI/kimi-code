@@ -1,6 +1,6 @@
 
 
-import { Disposable, createDecorator } from '../../di';
+import { Disposable, createDecorator } from '../../_base/di';
 
 import type { Workspace } from '@moonshot-ai/protocol';
 

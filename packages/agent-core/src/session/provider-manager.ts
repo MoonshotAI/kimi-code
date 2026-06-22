@@ -2,7 +2,7 @@ import type { Logger } from '#/logging/types';
 import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
 import { APIStatusError, getModelCapability, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
 import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig } from '../config';
-import { createDecorator } from '../di';
+import { createDecorator } from '../_base/di';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
 
 export interface BearerTokenProvider {

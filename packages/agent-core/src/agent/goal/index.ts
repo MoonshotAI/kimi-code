@@ -10,7 +10,7 @@ import {
   type TelemetryClient,
   type TelemetryProperties,
 } from '../../telemetry';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 
 /**
  * Durable goal-mode state owned by {@link GoalMode}.

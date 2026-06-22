@@ -1,7 +1,7 @@
 import type { UsageStatus } from '#/rpc';
 import { addUsage, type TokenUsage } from '@moonshot-ai/kosong';
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import { IRecordsService } from '../records';
 import { IAgentStatusService } from '../status';
 

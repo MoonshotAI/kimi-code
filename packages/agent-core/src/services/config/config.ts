@@ -1,4 +1,4 @@
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { ConfigResponse, PatchConfigRequest } from '@moonshot-ai/protocol';
 
 export interface IConfigService {

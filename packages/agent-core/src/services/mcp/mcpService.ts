@@ -2,7 +2,7 @@
  * `McpService` — implementation of `IMcpService`.
  */
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 import type { McpServer } from '@moonshot-ai/protocol';
 
 import type { CoreRPC } from '../../rpc';

@@ -39,7 +39,7 @@
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../index';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { CronJobOrigin, CronMissedOrigin } from '../context/types';
 import {
   resolveClockSources,

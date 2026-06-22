@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { _util, createDecorator } from '#/di/instantiation';
+import { createDecorator } from '#/_base/di';
+import { _util } from '#/_base/di/test';
 
 /**
  * P0.3 updates `createDecorator`:

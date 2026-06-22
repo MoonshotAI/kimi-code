@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { LifecycleService, type PromptCtx, type TurnHookCtx } from '#/agent/lifecycle';
-import type { IDisposable } from '#/di';
+import type { IDisposable } from '#/_base/di';
 
 type Handler<Ctx> = (ctx: Ctx) => void | Promise<void>;
 

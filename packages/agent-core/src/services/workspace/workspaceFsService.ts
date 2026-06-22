@@ -4,7 +4,7 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 
 import type { FsBrowseEntry, FsBrowseResponse, FsHomeResponse } from '@moonshot-ai/protocol';
 

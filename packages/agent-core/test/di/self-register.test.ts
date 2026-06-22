@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { IInstantiationService } from '#/di/instantiation';
-import { InstantiationService } from '#/di/instantiationService';
-import { ServiceCollection } from '#/di/serviceCollection';
+import { IInstantiationService } from '#/_base/di';
+import { InstantiationService } from '#/_base/di';
+import { ServiceCollection } from '#/_base/di';
 
 /**
  * P0.5 — the container self-registers under `IInstantiationService`. Any

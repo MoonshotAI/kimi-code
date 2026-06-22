@@ -16,7 +16,7 @@ import {
 import { basename } from 'pathe';
 
 import type { Agent } from '..';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import {
   ErrorCodes,
   type KimiErrorPayload,

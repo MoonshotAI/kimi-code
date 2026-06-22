@@ -1,12 +1,12 @@
 import * as sinon from 'sinon';
 import { describe, expect, it } from 'vitest';
 
-import * as mainBarrel from '#/di/index';
-import { createServices, TestInstantiationService } from '#/di/test';
-import { createDecorator } from '#/di/instantiation';
-import { SyncDescriptor } from '#/di/descriptors';
-import { ServiceCollection } from '#/di/serviceCollection';
-import { DisposableStore } from '#/di/lifecycle';
+import * as mainBarrel from '#/_base/di';
+import { createServices, TestInstantiationService } from '#/_base/di/test';
+import { createDecorator } from '#/_base/di';
+import { SyncDescriptor } from '#/_base/di';
+import { ServiceCollection } from '#/_base/di';
+import { DisposableStore } from '#/_base/di';
 
 interface ILogger {
   log(msg: string): void;
@@ -82,7 +82,7 @@ describe('TestInstantiationService (P1.3)', () => {
     expect(ctorCount).toBe(1);
   });
 
-  it('main barrel `#/di/index` does NOT re-export `TestInstantiationService`', () => {
+  it('main barrel `#/_base/di` does NOT re-export `TestInstantiationService`', () => {
     expect((mainBarrel as Record<string, unknown>)['TestInstantiationService']).toBeUndefined();
   });
 

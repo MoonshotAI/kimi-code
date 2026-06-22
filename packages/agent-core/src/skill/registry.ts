@@ -3,7 +3,7 @@ import { discoverSkills, type DiscoverSkillsOptions } from './scanner';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
 import { isInlineSkillType, normalizeSkillName } from './types';
 import type { SkillRegistry as AgentSkillRegistry } from '../agent/skill/types';
-import { createDecorator } from '../di';
+import { createDecorator } from '../_base/di';
 import { escapeXmlAttr } from '../utils/xml-escape';
 
 const LISTING_DESC_MAX = 250;

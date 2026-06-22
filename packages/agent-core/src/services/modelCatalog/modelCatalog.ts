@@ -1,4 +1,4 @@
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { KimiConfig, ModelAlias, ProviderConfig } from '../../config';
 import type {
   ModelCatalogItem,

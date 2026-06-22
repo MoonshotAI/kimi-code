@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SyncDescriptor } from '#/di/descriptors';
+import { SyncDescriptor } from '#/_base/di';
 import {
   InstantiationType,
   _clearRegistryForTests,
   getSingletonServiceDescriptors,
   registerSingleton,
-} from '#/di/extensions';
-import { createDecorator } from '#/di/instantiation';
-import { InstantiationService } from '#/di/instantiationService';
-import { ServiceCollection } from '#/di/serviceCollection';
+} from '#/_base/di';
+import { createDecorator } from '#/_base/di';
+import { InstantiationService } from '#/_base/di';
+import { ServiceCollection } from '#/_base/di';
 
 describe('registerSingleton / getSingletonServiceDescriptors', () => {
   beforeEach(() => {

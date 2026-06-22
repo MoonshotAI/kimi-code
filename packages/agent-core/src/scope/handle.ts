@@ -22,7 +22,7 @@
  */
 
 import { Emitter, type Event } from '../base/common/event';
-import type { IInstantiationService, ServiceIdentifier } from '../di/instantiation';
+import type { IInstantiationService, ServiceIdentifier } from '../_base/di';
 import type { LifecycleScope } from './lifecycle';
 
 /**

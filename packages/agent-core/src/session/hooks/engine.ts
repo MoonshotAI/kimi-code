@@ -1,4 +1,4 @@
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import { runHook } from './runner';
 import type {
   HookBlockDecision,

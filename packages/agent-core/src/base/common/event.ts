@@ -4,7 +4,7 @@ import {
   DisposableStore,
   combinedDisposable,
   type IDisposable,
-} from '../../di/lifecycle';
+} from '../../_base/di';
 
 export interface Event<T> {
   (

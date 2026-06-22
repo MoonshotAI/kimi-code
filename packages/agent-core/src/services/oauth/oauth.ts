@@ -62,7 +62,7 @@
  * `DeviceCodeTimeoutError`.
  */
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type {
   OAuthFlowSnapshot,
   OAuthFlowStart,

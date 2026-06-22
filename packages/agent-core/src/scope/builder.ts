@@ -27,8 +27,8 @@
  * already-built collection will not re-read it).
  */
 
-import type { IInstantiationService, ServiceIdentifier } from '../di/instantiation';
-import { ServiceCollection } from '../di/serviceCollection';
+import type { IInstantiationService, ServiceIdentifier } from '../_base/di';
+import { ServiceCollection } from '../_base/di';
 import { IAgentContext } from './context/agentContext';
 import { ISessionContext } from './context/sessionContext';
 import { ITurnContext } from './context/turnContext';

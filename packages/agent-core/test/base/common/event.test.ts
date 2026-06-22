@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { Emitter, Event } from '#/base/common/event';
-import { Disposable, DisposableStore, type IDisposable } from '#/di/lifecycle';
+import { Disposable, DisposableStore, type IDisposable } from '#/_base/di';
 import {
   resetUnexpectedErrorHandler,
   setUnexpectedErrorHandler,

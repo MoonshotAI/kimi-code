@@ -15,7 +15,7 @@ import { randomBytes } from 'node:crypto';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../..';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import { errorMessage } from '../../loop/errors';
 import type { BackgroundTaskOrigin } from '../context';
 import { renderNotificationXml } from '../context/notification-xml';

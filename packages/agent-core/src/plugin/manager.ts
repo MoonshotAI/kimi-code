@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { McpServerConfig } from '../config/schema';
-import { createDecorator } from '../di';
+import { createDecorator } from '../_base/di';
 import { discoverSkills, type SkillRoot } from '../skill';
 import { downloadZip, extractZip } from './archive';
 import { resolveGithubSource } from './github-resolver';

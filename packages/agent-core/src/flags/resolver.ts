@@ -1,5 +1,5 @@
 import { parseBooleanEnv } from '#/config/resolve';
-import { createDecorator } from '../di';
+import { createDecorator } from '../_base/di';
 
 import { FLAG_DEFINITIONS, type FlagId } from './registry';
 import type {

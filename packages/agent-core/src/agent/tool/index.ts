@@ -3,7 +3,7 @@ import type { ChatProvider, Tool } from '@moonshot-ai/kosong';
 import picomatch from 'picomatch';
 
 import type { Agent } from '..';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import { makeErrorPayload } from '../../errors';
 import type { ExecutableTool } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';

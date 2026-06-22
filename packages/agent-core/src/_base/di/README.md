@@ -13,7 +13,7 @@ A VSCode-style DI container for the agent-core / server stack. Provides:
 - **Delayed instantiation** — services flagged
   `supportsDelayedInstantiation: true` materialise lazily behind a `Proxy`.
 - **Testing** — `TestInstantiationService` (subpath
-  `@moonshot-ai/agent-core/di/test`) exposes direct `.get` / `.stub` so
+  `@moonshot-ai/agent-core/_base/di/test`) exposes direct `.get` / `.stub` so
   test bodies don't have to thread an `invokeFunction` accessor.
 
 The design intentionally mirrors VSCode's `vs/platform/instantiation` API so
@@ -245,11 +245,11 @@ operate at the root container.
 
 ## Testing
 
-Test files import from the subpath `@moonshot-ai/agent-core/di/test`
+Test files import from the subpath `@moonshot-ai/agent-core/_base/di/test`
 (NOT the main package entry — keeps production bundles clean):
 
 ```ts
-import { TestInstantiationService } from '@moonshot-ai/agent-core/di/test';
+import { TestInstantiationService } from '@moonshot-ai/agent-core/_base/di/test';
 
 const ix = new TestInstantiationService();
 ix.stub(ILogger, { log: vi.fn() } as ILogger);
@@ -270,10 +270,10 @@ expect((ix.get(ILogger) as { log: vi.Mock }).log).toHaveBeenCalled();
 ## File layout
 
 ```
-packages/agent-core/src/di/
+packages/agent-core/src/_base/di/
 ├── README.md                    ← you are here
 ├── index.ts                     ← public barrel (main package entry)
-├── test.ts                      ← subpath barrel (`@moonshot-ai/agent-core/di/test`)
+├── test.ts                      ← subpath barrel (`@moonshot-ai/agent-core/_base/di/test`)
 ├── instantiation.ts             ← createDecorator + IInstantiationService interface + _util
 ├── descriptors.ts               ← SyncDescriptor + SyncDescriptor0 + InstantiationType enum
 ├── serviceCollection.ts         ← ServiceCollection
@@ -315,5 +315,5 @@ following surface changes need attention:
    flips the Proxy path on. Existing call sites with `false` (or
    omitted) are unchanged.
 7. **`TestInstantiationService` moved to a subpath** —
-   `import { TestInstantiationService } from '@moonshot-ai/agent-core/di/test'`
+   `import { TestInstantiationService } from '@moonshot-ai/agent-core/_base/di/test'`
    (NOT from the main entry).

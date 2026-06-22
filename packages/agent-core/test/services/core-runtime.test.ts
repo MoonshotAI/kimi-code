@@ -13,7 +13,7 @@ import {
   type QuestionRequest,
   type QuestionResult,
 } from '../../src';
-import { TestInstantiationService } from '../../src/di/test';
+import { TestInstantiationService } from '#/_base/di/test';
 
 import {
   CoreProcessService,

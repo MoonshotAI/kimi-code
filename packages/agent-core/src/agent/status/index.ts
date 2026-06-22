@@ -1,6 +1,6 @@
 import type { UsageStatus } from '#/rpc';
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { IDomainEventBus } from '../../event/event-bus';
 import type { IAgentConfigService } from '../config';
 import type { IContextService } from '../context';

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/di/descriptors';
-import { CyclicDependencyError } from '#/di/errors';
-import { InstantiationService } from '#/di/instantiationService';
-import { createDecorator, type ServicesAccessor } from '#/di/instantiation';
-import { ServiceCollection } from '#/di/serviceCollection';
+import { SyncDescriptor } from '#/_base/di';
+import { CyclicDependencyError } from '#/_base/di';
+import { InstantiationService } from '#/_base/di';
+import { createDecorator, type ServicesAccessor } from '#/_base/di';
+import { ServiceCollection } from '#/_base/di';
 
 /**
  * Cycle-detection tests trigger cycles by capturing the accessor (or the

@@ -43,7 +43,7 @@
  * Role: cross-process adapter — see `packages/services/AGENTS.md`.
  */
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { CoreRPC, KimiCoreOptions } from '../../rpc';
 import { type KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { _util } from '#/di/instantiation';
+import { _util } from '#/_base/di/test';
 import {
   IAgentContext,
   ISessionContext,

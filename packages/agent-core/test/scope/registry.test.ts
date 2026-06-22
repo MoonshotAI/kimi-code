@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SyncDescriptor } from '#/di/descriptors';
+import { SyncDescriptor } from '#/_base/di';
 import {
   InstantiationType,
   _clearRegistryForTests,
   getSingletonServiceDescriptors,
-} from '#/di/extensions';
-import { createDecorator } from '#/di/instantiation';
+} from '#/_base/di';
+import { createDecorator } from '#/_base/di';
 import { LifecycleScope } from '#/scope/lifecycle';
 import {
   _resetScopeRegistryForTests,

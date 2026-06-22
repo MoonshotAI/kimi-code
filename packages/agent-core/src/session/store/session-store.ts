@@ -9,7 +9,7 @@ import { appendSessionIndexEntry, readSessionIndex } from '#/session/store/sessi
 import { encodeWorkDirKey, normalizeWorkDir } from '#/session/store/workdir-key';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '#/rpc/core-api';
 import { FileSystemAgentRecordPersistence, type AgentRecordOf } from '../../agent/records';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 
 const SessionSummaryStateSchema = z.object({
   archived: z.boolean().optional(),

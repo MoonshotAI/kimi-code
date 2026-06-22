@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter, type Event } from '#/base/common/event';
-import { type ServiceIdentifier, createDecorator } from '#/di/instantiation';
-import { InstantiationService } from '#/di/instantiationService';
-import type { IDisposable } from '#/di/lifecycle';
+import { type ServiceIdentifier, createDecorator } from '#/_base/di';
+import { InstantiationService } from '#/_base/di';
+import type { IDisposable } from '#/_base/di';
 import type { IScopeHandle, IServiceAccessor } from '#/scope/handle';
 import { LifecycleScope } from '#/scope/lifecycle';
 import {

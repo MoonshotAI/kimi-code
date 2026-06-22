@@ -20,7 +20,7 @@ import {
   userCancellationReason,
 } from '../utils/abort';
 import { collectGitContext } from './git-context';
-import { createDecorator } from '../di';
+import { createDecorator } from '../_base/di';
 import type { Session } from './index';
 import {
   SubagentBatch,

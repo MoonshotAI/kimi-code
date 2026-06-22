@@ -1,7 +1,7 @@
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { ContextMessage } from '../context';
 import {
   estimateTokensForContentParts,

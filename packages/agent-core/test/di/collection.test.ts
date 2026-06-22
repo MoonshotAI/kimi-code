@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/di/descriptors';
-import { createDecorator } from '#/di/instantiation';
-import { ServiceCollection } from '#/di/serviceCollection';
+import { SyncDescriptor } from '#/_base/di';
+import { createDecorator } from '#/_base/di';
+import { ServiceCollection } from '#/_base/di';
 
 interface ILogger {
   log(msg: string): void;

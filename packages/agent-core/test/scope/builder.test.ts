@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { InstantiationType, _clearRegistryForTests } from '#/di/extensions';
-import { IInstantiationService, createDecorator } from '#/di/instantiation';
-import { InstantiationService } from '#/di/instantiationService';
-import { ServiceCollection } from '#/di/serviceCollection';
+import { InstantiationType, _clearRegistryForTests } from '#/_base/di';
+import { IInstantiationService, createDecorator } from '#/_base/di';
+import { InstantiationService } from '#/_base/di';
+import { ServiceCollection } from '#/_base/di';
 import { AgentScopeBuilder, SessionScopeBuilder } from '#/scope/builder';
 import { IAgentContext, ISessionContext } from '#/scope/context/index';
 import { LifecycleScope } from '#/scope/lifecycle';

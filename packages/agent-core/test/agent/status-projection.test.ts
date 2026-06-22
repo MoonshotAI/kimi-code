@@ -11,7 +11,7 @@ import type { IRecordsService } from '../../src/agent/records';
 import { AgentStatusService, type AgentStatusHost } from '../../src/agent/status';
 import type { ISwarmService } from '../../src/agent/swarm';
 import type { IUsageService } from '../../src/agent/usage';
-import { TestInstantiationService } from '../../src/di/test';
+import { TestInstantiationService } from '#/_base/di/test';
 import type { IDomainEventBus } from '../../src/event/event-bus';
 import type { AgentEvent, UsageStatus } from '../../src/rpc';
 import {

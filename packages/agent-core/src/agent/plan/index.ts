@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'pathe';
 
 import type { Kaos } from '@moonshot-ai/kaos';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import { IAgentConfigService } from '../config';
 import { IContextService } from '../context';
 import { ILifecycleService } from '../lifecycle';

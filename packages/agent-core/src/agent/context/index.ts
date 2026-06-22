@@ -2,7 +2,7 @@ import { createToolMessage, type ContentPart, type Message } from '@moonshot-ai/
 
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
 import { estimateTokensForMessages } from '../../utils/tokens';
 import type { CompactionResult } from '../compaction';

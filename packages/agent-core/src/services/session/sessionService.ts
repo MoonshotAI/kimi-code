@@ -1,4 +1,4 @@
-import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '../../_base/di';
 import { Emitter } from '../../base/common/event';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { AgentContextData, ContextMessage } from '../../agent/context';

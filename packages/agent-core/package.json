@@ -27,6 +27,7 @@
   ],
   "type": "module",
   "imports": {
+    "#/_base/di": "./src/_base/di/index.ts",
     "#/*": [
       "./src/*.ts",
       "./src/*/index.ts"

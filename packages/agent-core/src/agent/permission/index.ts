@@ -1,5 +1,5 @@
 import type { Agent } from '..';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { PrepareToolExecutionResult } from '../../loop';
 import { createPermissionDecisionPolicies } from './policies';
 import type {

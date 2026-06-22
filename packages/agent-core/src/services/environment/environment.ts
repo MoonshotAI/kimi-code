@@ -8,7 +8,7 @@
  * arg" pattern in services that only need path resolution.
  */
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 
 export interface IEnvironmentService {
   readonly _serviceBrand: undefined;

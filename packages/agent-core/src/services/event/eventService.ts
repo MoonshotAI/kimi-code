@@ -13,7 +13,7 @@
  * Publishing after `dispose()` is a no-op.
  */
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 import { Emitter } from '../../base/common/event';
 import type { Event as ProtocolEvent } from '@moonshot-ai/protocol';
 

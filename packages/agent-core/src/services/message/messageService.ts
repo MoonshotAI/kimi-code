@@ -22,7 +22,7 @@
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 import type { CoreRPC, SessionSummary } from '../../rpc';
 import type {
   Message,

@@ -14,7 +14,8 @@ export {
 export { SyncDescriptor } from './descriptors';
 export type { SyncDescriptor0 } from './descriptors';
 export { ServiceCollection } from './serviceCollection';
-export { InstantiationService } from './instantiationService';
+export { InstantiationService, Trace } from './instantiationService';
+export { Graph } from './graph';
 export {
   Disposable,
   DisposableStore,

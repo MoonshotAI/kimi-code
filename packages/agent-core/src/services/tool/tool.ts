@@ -18,7 +18,7 @@
  * `createDecorator` value.
  */
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { ToolDescriptor, ToolSource } from '@moonshot-ai/protocol';
 
 // ---------------------------------------------------------------------------

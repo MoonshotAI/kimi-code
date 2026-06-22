@@ -51,7 +51,7 @@
  * handler.
  */
 
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import type { ApprovalRequest, ApprovalResponse } from '../../rpc';
 import type {
   ApprovalRequest as ProtocolApprovalRequest,

@@ -51,7 +51,7 @@ import {
 import {
   InstantiationService,
   type IInstantiationService,
-} from '../di';
+} from '../_base/di';
 import type { CoreRPCClient } from './client';
 import type {
   ActivateSkillPayload,

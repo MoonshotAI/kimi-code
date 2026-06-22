@@ -2,7 +2,7 @@
  * `ToolService` — implementation of `IToolService`.
  */
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 import type { CoreRPC } from '../../rpc';
 
 import { ICoreRuntime } from '../coreProcess/coreProcess';

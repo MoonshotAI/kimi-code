@@ -1,6 +1,6 @@
 
 
-import { createDecorator, Disposable } from '../../di';
+import { createDecorator, Disposable } from '../../_base/di';
 
 import type { FsBrowseResponse, FsHomeResponse } from '@moonshot-ai/protocol';
 

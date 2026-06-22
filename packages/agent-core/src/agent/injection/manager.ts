@@ -1,5 +1,5 @@
 import type { Agent } from '..';
-import { createDecorator } from '../../di';
+import { createDecorator } from '../../_base/di';
 import { GoalInjector } from './goal';
 import type { DynamicInjector } from './injector';
 import { PermissionModeInjector } from './permission-mode';

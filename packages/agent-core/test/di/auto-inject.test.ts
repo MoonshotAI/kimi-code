@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/di/descriptors';
-import { CyclicDependencyError } from '#/di/errors';
-import { InstantiationService } from '#/di/instantiationService';
-import { IInstantiationService, createDecorator } from '#/di/instantiation';
-import { ServiceCollection } from '#/di/serviceCollection';
+import { SyncDescriptor } from '#/_base/di';
+import { CyclicDependencyError } from '#/_base/di';
+import { InstantiationService } from '#/_base/di';
+import { IInstantiationService, createDecorator } from '#/_base/di';
+import { ServiceCollection } from '#/_base/di';
 
 /**
  * P1.1 — `@IFoo` constructor-parameter auto-injection.
