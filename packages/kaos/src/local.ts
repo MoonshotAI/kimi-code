@@ -447,17 +447,39 @@ export class LocalKaos implements Kaos {
     const resolved = this._resolvePath(path);
     const encoding = options?.encoding ?? 'utf-8';
     const errors = options?.errors ?? 'strict';
-    const buf = await readFile(resolved);
-    const content = decodeTextWithErrors(buf, encoding, errors);
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line === undefined) continue;
-      if (i < lines.length - 1) {
-        yield line + '\n';
-      } else if (line !== '') {
-        yield line;
+
+    if (encoding !== 'utf-8' && encoding !== 'utf8') {
+      const content = decodeTextWithErrors(await readFile(resolved), encoding, errors);
+      yield* splitLinesKeepingTerminator(content);
+      return;
+    }
+
+    const fh = await open(resolved, 'r');
+    try {
+      const chunkSize = 64 * 1024;
+      const buf = Buffer.alloc(chunkSize);
+      let pending = Buffer.alloc(0);
+      while (true) {
+        const { bytesRead } = await fh.read(buf, 0, buf.length, null);
+        if (bytesRead === 0) break;
+        const data =
+          pending.length > 0
+            ? Buffer.concat([pending, buf.subarray(0, bytesRead)])
+            : buf.subarray(0, bytesRead);
+        let lineStart = 0;
+        for (let i = 0; i < data.length; i += 1) {
+          if (data[i] === 0x0a) {
+            yield decodeTextWithErrors(data.subarray(lineStart, i + 1), encoding, errors);
+            lineStart = i + 1;
+          }
+        }
+        pending = lineStart < data.length ? Buffer.from(data.subarray(lineStart)) : Buffer.alloc(0);
       }
+      if (pending.length > 0) {
+        yield decodeTextWithErrors(pending, encoding, errors);
+      }
+    } finally {
+      await fh.close();
     }
   }
 
@@ -586,6 +608,20 @@ export class LocalKaos implements Kaos {
       Object.assign(merged, layer);
     }
     return merged;
+  }
+}
+
+function* splitLinesKeepingTerminator(text: string): Generator<string> {
+  if (text.length === 0) return;
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text.codePointAt(i) === 0x0a) {
+      yield text.slice(start, i + 1);
+      start = i + 1;
+    }
+  }
+  if (start < text.length) {
+    yield text.slice(start);
   }
 }
 

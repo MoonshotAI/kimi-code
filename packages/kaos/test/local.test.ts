@@ -176,6 +176,127 @@ describe('LocalKaos', () => {
     });
   });
 
+  describe('readLines streaming', () => {
+    it('preserves content exactly across representative line endings', async () => {
+      const fixtures: Array<[string, string]> = [
+        ['multiline', 'line1\nline2\nline3\n'],
+        ['no trailing newline', 'line1\nline2'],
+        ['single line', 'only'],
+        ['single newline', '\n'],
+        ['empty', ''],
+        ['crlf', 'a\r\nb\r\n'],
+        ['lone cr', 'a\rB\n'],
+      ];
+      for (const [name, content] of fixtures) {
+        const filePath = join(tempDir, `${name}.txt`);
+        await kaos.writeText(filePath, content);
+        const lines: string[] = [];
+        for await (const line of kaos.readLines(filePath)) {
+          lines.push(line);
+        }
+        expect(lines.join('')).toBe(content);
+      }
+    });
+
+    it('reads a large multi-chunk file line by line', async () => {
+      const filePath = join(tempDir, 'large.txt');
+      const lineCount = 5000;
+      const content =
+        Array.from({ length: lineCount }, (_, i) => `line ${String(i)} ${'x'.repeat(40)}`).join(
+          '\n',
+        ) + '\n';
+      await kaos.writeText(filePath, content);
+
+      const lines: string[] = [];
+      for await (const line of kaos.readLines(filePath)) {
+        lines.push(line);
+      }
+      expect(lines.length).toBe(lineCount);
+      expect(lines.join('')).toBe(content);
+    });
+
+    it('preserves a multibyte character straddling the 64KiB chunk boundary', async () => {
+      const filePath = join(tempDir, 'boundary.txt');
+      const emoji = '😀';
+      const content = `${'a'.repeat(65535)}${emoji}\n`;
+      await kaos.writeText(filePath, content);
+
+      const lines: string[] = [];
+      for await (const line of kaos.readLines(filePath)) {
+        lines.push(line);
+      }
+      expect(lines).toEqual([content]);
+    });
+
+    it('keeps utf16le line splitting on the decoded text path', async () => {
+      const filePath = join(tempDir, 'utf16le.txt');
+      await kaos.writeBytes(filePath, Buffer.from('a\n\u0A41\n', 'utf16le'));
+
+      const lines: string[] = [];
+      for await (const line of kaos.readLines(filePath, { encoding: 'utf16le' })) {
+        lines.push(line);
+      }
+      expect(lines).toEqual(['a\n', 'ੁ\n']);
+    });
+
+    it('keeps lossless encodings on the decoded text path', async () => {
+      const filePath = join(tempDir, 'hex.txt');
+      await kaos.writeBytes(filePath, Buffer.from('a\nb'));
+
+      const lines: string[] = [];
+      for await (const line of kaos.readLines(filePath, { encoding: 'hex' })) {
+        lines.push(line);
+      }
+      expect(lines).toEqual(['610a62']);
+    });
+
+    describe('errors parameter', () => {
+      const invalidBytes = Buffer.concat([
+        Buffer.from([0xe4, 0xb8, 0xad]),
+        Buffer.from([0xff]),
+        Buffer.from([0xe6, 0x96, 0x87]),
+        Buffer.from([0x0a]),
+      ]);
+
+      it('throws on invalid utf-8 with errors="strict"', async () => {
+        const filePath = join(tempDir, 'invalid-strict.txt');
+        await kaos.writeBytes(filePath, invalidBytes);
+        await expect(
+          (async () => {
+            const lines: string[] = [];
+            for await (const line of kaos.readLines(filePath)) {
+              lines.push(line);
+            }
+            return lines;
+          })(),
+        ).rejects.toThrow();
+      });
+
+      it('replaces invalid bytes with errors="replace"', async () => {
+        const filePath = join(tempDir, 'invalid-replace.txt');
+        await kaos.writeBytes(filePath, invalidBytes);
+        const lines: string[] = [];
+        for await (const line of kaos.readLines(filePath, { errors: 'replace' })) {
+          lines.push(line);
+        }
+        const output = lines.join('');
+        expect(output).toContain('\uFFFD');
+        expect(output).toContain('中');
+        expect(output).toContain('文');
+      });
+
+      it('drops invalid bytes with errors="ignore"', async () => {
+        const filePath = join(tempDir, 'invalid-ignore.txt');
+        await kaos.writeBytes(filePath, invalidBytes);
+        const lines: string[] = [];
+        for await (const line of kaos.readLines(filePath, { errors: 'ignore' })) {
+          lines.push(line);
+        }
+        expect(lines.join('')).toBe('中文\n');
+      });
+    });
+  });
+
   describe('readText errors parameter (Python compat)', () => {
     // A file with a valid UTF-8 prefix "中", an invalid standalone byte 0xff,
     // and a valid UTF-8 suffix "文". Under strict decoding this throws.
