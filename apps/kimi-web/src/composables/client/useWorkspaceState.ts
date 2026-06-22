@@ -85,7 +85,7 @@ export interface UseWorkspaceStateDeps {
   savePlanModeToStorage: (v: boolean) => void;
   saveSwarmModeToStorage: (v: boolean) => void;
   saveGoalModeToStorage: (v: boolean) => void;
-  saveUnreadToStorage: (map: Record<string, boolean>) => void;
+  saveUnread: (changes: Record<string, boolean>) => void;
   saveActiveWorkspaceToStorage: (id: string) => void;
   saveHiddenWorkspacesToStorage: (roots: string[]) => void;
   goalErrorMessage: (err: unknown) => string | undefined;
@@ -127,7 +127,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     savePlanModeToStorage,
     saveSwarmModeToStorage,
     saveGoalModeToStorage,
-    saveUnreadToStorage,
+    saveUnread,
     saveActiveWorkspaceToStorage,
     saveHiddenWorkspacesToStorage,
     goalErrorMessage,
@@ -719,7 +719,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Opening a session clears its unread dot.
       if (rawState.unreadBySession[sessionId]) {
         rawState.unreadBySession = { ...rawState.unreadBySession, [sessionId]: false };
-        saveUnreadToStorage(rawState.unreadBySession);
+        saveUnread({ [sessionId]: false });
       }
       // A diff belongs to the session it was loaded from — drop it on switch.
       clearFileDiff();
