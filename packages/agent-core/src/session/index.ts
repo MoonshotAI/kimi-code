@@ -246,6 +246,7 @@ export class Session {
       const result = await appendWorkspaceAdditionalDir(systemKaos, cwd, path, this.additionalDirs);
       const additionalDirs = normalizeAdditionalDirs([...this.additionalDirs, ...result.additionalDirs]);
       await this.setAdditionalDirs(additionalDirs);
+      this.notifyAdditionalDirAdded(path, true, result.configPath);
       return { ...result, additionalDirs, persisted: true };
     }
 
@@ -253,12 +254,20 @@ export class Session {
     const additionalDirs = await resolveWorkspaceAdditionalDirs(systemKaos, workspace.projectRoot, [path]);
     const nextAdditionalDirs = normalizeAdditionalDirs([...this.additionalDirs, ...additionalDirs]);
     await this.setAdditionalDirs(nextAdditionalDirs);
+    this.notifyAdditionalDirAdded(path, false, workspace.configPath);
     return {
       projectRoot: workspace.projectRoot,
       configPath: workspace.configPath,
       additionalDirs: nextAdditionalDirs,
       persisted: false,
     };
+  }
+
+  private notifyAdditionalDirAdded(path: string, persisted: boolean, configPath: string): void {
+    const message = persisted
+      ? `Added workspace directory:\n  ${path}\n  Saved to:\n  ${configPath}`
+      : `Added workspace directory:\n  ${path}\n  For this session only`;
+    this.requireMainAgent().context.appendLocalCommandStdout(message);
   }
 
   /**

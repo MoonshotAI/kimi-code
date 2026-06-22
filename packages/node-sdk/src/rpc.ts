@@ -240,16 +240,6 @@ export abstract class SDKRpcClientBase {
     });
   }
 
-  async appendUserMessage(input: SessionPromptRpcInput): Promise<void> {
-    const agentId = this.interactiveAgentId;
-    const rpc = await this.getRpc();
-    return rpc.appendUserMessage({
-      sessionId: input.sessionId,
-      agentId,
-      input: input.input,
-    });
-  }
-
   async generateAgentsMd(input: SessionIdRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.generateAgentsMd({ sessionId: input.sessionId });

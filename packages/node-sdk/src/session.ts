@@ -111,14 +111,6 @@ export class Session {
     });
   }
 
-  async appendUserMessage(input: string | PromptInput): Promise<void> {
-    this.ensureOpen();
-    await this.rpc.appendUserMessage({
-      sessionId: this.id,
-      input: normalizePromptInput(input),
-    });
-  }
-
   async swarm(input: string | PromptInput): Promise<void> {
     this.ensureOpen();
     await this.rpc.swarm({

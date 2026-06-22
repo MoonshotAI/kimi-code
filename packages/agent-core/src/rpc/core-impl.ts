@@ -47,7 +47,6 @@ import type {
   ActivateSkillPayload,
   AddAdditionalDirPayload,
   AddAdditionalDirResult,
-  AppendUserMessagePayload,
   BeginCompactionPayload,
   CancelPayload,
   CancelPlanPayload,
@@ -543,10 +542,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   steer({ sessionId, ...payload }: SessionAgentPayload<SteerPayload>) {
     return this.sessionApi(sessionId).steer(payload);
-  }
-
-  appendUserMessage({ sessionId, ...payload }: SessionAgentPayload<AppendUserMessagePayload>) {
-    return this.sessionApi(sessionId).appendUserMessage(payload);
   }
 
   cancel({ sessionId, ...payload }: SessionAgentPayload<CancelPayload>) {

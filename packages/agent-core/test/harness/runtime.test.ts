@@ -553,7 +553,7 @@ max_context_size = 100000
     expect(core.sessions.get(created.id)?.getAdditionalDirs()).toEqual([sharedDir]);
   });
 
-  it('does not record an add-dir system reminder through the session RPC', async () => {
+  it('records a local-command-stdout message when adding a remembered dir', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');
     const workDir = join(tmp, 'work');
@@ -585,58 +585,24 @@ max_context_size = 100000
     });
 
     const records = await readMainWire(created.sessionDir);
-    expect(records).not.toContainEqual(
+    expect(records).toContainEqual(
       expect.objectContaining({
         type: 'context.append_message',
         message: expect.objectContaining({
-          origin: { kind: 'injection', variant: 'add-dir' },
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `<local-command-stdout>\nAdded workspace directory:\n  extra\n  Saved to:\n  ${join(workDir, '.kimi-code', 'local.toml')}\n</local-command-stdout>`,
+            },
+          ],
+          origin: { kind: 'injection', variant: 'local-command-stdout' },
         }),
       }),
     );
     expect(core.sessions.get(created.id)?.getReadyAgent('main')?.getAdditionalDirs()).toEqual([
       extraDir,
     ]);
-  });
-
-  it('appends a user message to the main agent context', async () => {
-    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
-    const homeDir = join(tmp, 'home');
-    const workDir = join(tmp, 'work');
-    await mkdir(homeDir, { recursive: true });
-    await mkdir(workDir, { recursive: true });
-    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
-
-    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
-    void new KimiCore(coreRpc, { homeDir });
-    const rpc = await sdkRpc({
-      emitEvent: vi.fn(),
-      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
-      requestQuestion: vi.fn(async () => null),
-      toolCall: vi.fn(async () => ({ output: '' })),
-    });
-
-    const created = await rpc.createSession({
-      id: 'ses_runtime_append_user_message',
-      workDir,
-      model: 'default-mock',
-    });
-
-    await rpc.appendUserMessage({
-      sessionId: created.id,
-      agentId: 'main',
-      input: [{ type: 'text', text: 'Added workspace directory:\n  extra' }],
-    });
-
-    const records = await readMainWire(created.sessionDir);
-    expect(records).toContainEqual(
-      expect.objectContaining({
-        type: 'context.append_message',
-        message: expect.objectContaining({
-          role: 'user',
-          content: [{ type: 'text', text: 'Added workspace directory:\n  extra' }],
-        }),
-      }),
-    );
   });
 
   it('adds an additional dir through the session RPC', async () => {
@@ -684,7 +650,7 @@ max_context_size = 100000
     expect(mainAgent?.getAdditionalDirs()).toEqual([extraDir]);
   });
 
-  it('adds a session-only additional dir without writing local.toml or reminder', async () => {
+  it('adds a session-only additional dir without writing local.toml', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');
     const workDir = join(tmp, 'work');
@@ -723,11 +689,18 @@ max_context_size = 100000
       persisted: false,
     });
     expect(core.sessions.get(created.id)?.getAdditionalDirs()).toEqual([extraDir]);
-    expect(records).not.toContainEqual(
+    expect(records).toContainEqual(
       expect.objectContaining({
         type: 'context.append_message',
         message: expect.objectContaining({
-          origin: { kind: 'injection', variant: 'add-dir' },
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: '<local-command-stdout>\nAdded workspace directory:\n  extra\n  For this session only\n</local-command-stdout>',
+            },
+          ],
+          origin: { kind: 'injection', variant: 'local-command-stdout' },
         }),
       }),
     );

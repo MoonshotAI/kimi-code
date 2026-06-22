@@ -34,7 +34,6 @@ function makeHost(additionalDirs: readonly string[] = []) {
       configPath: '/repo/.kimi-code/local.toml',
       persisted: options.persist,
     })),
-    appendUserMessage: vi.fn(async () => {}),
   };
   const host = {
     state,
@@ -123,16 +122,6 @@ describe('handleAddDirCommand', () => {
     await vi.waitFor(() => {
       expect(session.addAdditionalDir).toHaveBeenCalledWith('../shared', { persist: false });
     });
-    expect(session.appendUserMessage).toHaveBeenCalledWith(
-      'Added workspace directory:\n  ../shared\n  For this session only',
-    );
-    expect(host.appendTranscriptEntry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'user',
-        renderMode: 'plain',
-        content: 'Added workspace directory:\n  ../shared\n  For this session only',
-      }),
-    );
     expect(host.restoreEditor).toHaveBeenCalledOnce();
     expect(host.setAppState).toHaveBeenCalledWith({
       additionalDirs: ['../shared'],
@@ -144,6 +133,7 @@ describe('handleAddDirCommand', () => {
         'success',
       );
     });
+    expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
   });
 
   it('adds a remembered workspace dir after confirmation', async () => {
@@ -156,22 +146,13 @@ describe('handleAddDirCommand', () => {
     await vi.waitFor(() => {
       expect(session.addAdditionalDir).toHaveBeenCalledWith('../shared', { persist: true });
     });
-    expect(session.appendUserMessage).toHaveBeenCalledWith(
-      'Added workspace directory:\n  ../shared\n  Saved to:\n  /repo/.kimi-code/local.toml',
-    );
-    expect(host.appendTranscriptEntry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'user',
-        renderMode: 'plain',
-        content: 'Added workspace directory:\n  ../shared\n  Saved to:\n  /repo/.kimi-code/local.toml',
-      }),
-    );
     await vi.waitFor(() => {
       expect(host.showStatus).toHaveBeenCalledWith(
         'Added workspace directory:\n  ../shared\n  Saved to:\n  /repo/.kimi-code/local.toml',
         'success',
       );
     });
+    expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
   });
 
   it('does not add a workspace dir when the confirmation is cancelled', async () => {
@@ -183,8 +164,6 @@ describe('handleAddDirCommand', () => {
     getMountedPanel()?.handleInput(' ');
 
     expect(session.addAdditionalDir).not.toHaveBeenCalled();
-    expect(session.appendUserMessage).not.toHaveBeenCalled();
-    expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
     expect(host.showStatus).toHaveBeenCalledWith('Did not add ../shared as a working directory.');
   });
 
@@ -206,8 +185,6 @@ describe('handleAddDirCommand', () => {
 
     expect(host.setAppState).not.toHaveBeenCalled();
     expect(host.refreshSlashCommandAutocomplete).not.toHaveBeenCalled();
-    expect(session.appendUserMessage).not.toHaveBeenCalled();
-    expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 });

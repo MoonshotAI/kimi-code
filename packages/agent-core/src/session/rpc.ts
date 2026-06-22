@@ -4,7 +4,6 @@ import type {
   AddAdditionalDirPayload,
   AddAdditionalDirResult,
   AgentAPI,
-  AppendUserMessagePayload,
   BeginCompactionPayload,
   CancelPayload,
   CancelPlanPayload,
@@ -106,10 +105,6 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async steer({ agentId, ...payload }: AgentScopedPayload<SteerPayload>) {
     return (await this.getAgent(agentId)).steer(payload);
-  }
-
-  async appendUserMessage({ agentId, ...payload }: AgentScopedPayload<AppendUserMessagePayload>) {
-    return (await this.getAgent(agentId)).appendUserMessage(payload);
   }
 
   async cancel({ agentId, ...payload }: AgentScopedPayload<CancelPayload>) {

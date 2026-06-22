@@ -334,9 +334,6 @@ export class Agent {
         this.telemetry.track('input_steer', { parts: payload.input.length });
         this.turn.steer(payload.input);
       },
-      appendUserMessage: (payload) => {
-        this.context.appendUserMessage(payload.input);
-      },
       cancel: (payload) => {
         if (this.turn.hasActiveTurn) {
           this.telemetry.track('cancel', { from: 'streaming' });
