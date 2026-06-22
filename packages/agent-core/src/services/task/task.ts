@@ -58,8 +58,10 @@ function mapKind(k: BackgroundTaskInfo['kind']): BackgroundTaskKind {
       // execution), so 'tool' is the closest spec literal.
       return 'tool';
     case 'monitor':
-      // Monitors are tool-spawned persistent background tasks.
-      return 'tool';
+      // 'monitor' is a first-class wire kind (added to backgroundTaskKindSchema),
+      // so emit it directly — REST clients can then distinguish Monitor tasks
+      // from generic tool/question tasks.
+      return 'monitor';
   }
 }
 
