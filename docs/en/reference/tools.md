@@ -99,19 +99,22 @@ Collaboration tools handle inter-Agent coordination, user interaction, and Skill
 
 ## Background Tasks
 
-Background task tools manage tasks started via `Bash`, `Agent`, or `AskUserQuestion`. When a task reaches a terminal state, its status and saved output path are automatically delivered back to the Agent; use `TaskOutput` to check progress early.
+Background task tools manage tasks started via `Bash`, `Agent`, `AskUserQuestion`, or `Monitor`. When a task reaches a terminal state, its status and saved output path are automatically delivered back to the Agent; use `TaskOutput` to check progress early.
 
 | Tool | Default Approval | Description |
 | --- | --- | --- |
 | `TaskList` | Auto-allow | List background tasks |
 | `TaskOutput` | Auto-allow | View the output of a background task |
 | `TaskStop` | Requires approval | Stop a running background task |
+| `Monitor` | Requires approval | Run a self-filtering shell command and receive each stdout line as a notification |
 
 **`TaskList`** returns the list of background tasks. Optional parameters: `active_only` (defaults to true; lists only running tasks) and `limit` (defaults to 20; range 1–100).
 
 **`TaskOutput`** returns the status and output of a task given its `task_id`. The inline preview includes at most the most recent 32 KB of content; the full log is saved to disk, and the tool also returns an `output_path` with a suggestion to use `Read` for paginated access. Optional `block` (defaults to false) and `timeout` (seconds to wait; defaults to 30; range 0–3600) parameters allow waiting for the task to complete before returning.
 
 **`TaskStop`** accepts a `task_id` and optional `reason` (defaults to `Stopped by TaskStop`). Safe to call on tasks that are already in a terminal state.
+
+**`Monitor`** runs a self-filtering shell command in the background and delivers each matching stdout line as a real-time `<notification type="monitor_line">`. Parameters: `command` (required; prefer line-buffered filters such as `grep --line-buffered` or `awk` with `fflush()`), `description` (shown in every notification), `timeout_ms` (defaults to 5 minutes; ignored when `persistent=true`), and `persistent` (run until the session ends or `TaskStop` is called). Output is batched over a short window and auto-stopped if it exceeds 200 lines per 5-second window; tighten the filter and restart if this happens.
 
 ## Scheduled Tasks
 
