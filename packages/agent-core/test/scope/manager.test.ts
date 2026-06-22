@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { Emitter, type Event } from '#/base/common/event';
+import { Emitter, type Event } from '#/_base/event';
 import { type ServiceIdentifier, createDecorator } from '#/_base/di';
 import { InstantiationService } from '#/_base/di';
 import type { IDisposable } from '#/_base/di';

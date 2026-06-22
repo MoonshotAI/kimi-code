@@ -25,7 +25,7 @@
  * test double (see `test/scope/manager.test.ts`).
  */
 
-import { Emitter, type Event } from '../base/common/event';
+import { Emitter, type Event } from '../_base/event';
 import type { IScopeHandle } from './handle';
 
 /**

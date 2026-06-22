@@ -1,6 +1,6 @@
 import { createDecorator } from '../../_base/di';
 import type { IDisposable } from '../../_base/di';
-import type { Event } from '../../base/common/event';
+import type { Event } from '../../_base/event';
 import type {
   CreateTerminalRequest,
   Terminal,

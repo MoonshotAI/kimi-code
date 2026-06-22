@@ -21,7 +21,7 @@
  *   child services (resolving them throws because the container is disposed).
  */
 
-import { Emitter, type Event } from '../base/common/event';
+import { Emitter, type Event } from '../_base/event';
 import type { IInstantiationService, ServiceIdentifier } from '../_base/di';
 import type { LifecycleScope } from './lifecycle';
 

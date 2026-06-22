@@ -14,7 +14,7 @@
  */
 
 import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
-import { Emitter } from '../../base/common/event';
+import { Emitter } from '../../_base/event';
 import type { Event as ProtocolEvent } from '@moonshot-ai/protocol';
 
 import { IEventService } from './event';
