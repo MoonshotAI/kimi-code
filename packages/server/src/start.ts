@@ -11,6 +11,12 @@ import { installErrorHandler } from './error-handler';
 import { transformOpenApiDocument } from './openapi/transforms';
 import { acquireLock, ServerLockedError } from './lock';
 import {
+  createHostCheck,
+  isHostCheckDisabled,
+  parseAllowedHosts,
+} from '#/middleware/hostnames';
+import { createOriginHook, parseCorsOrigins } from '#/middleware/origin';
+import {
   createServerLogger,
   type ServerLogLevel,
   type ServerLogger,
@@ -87,6 +93,21 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   app.setValidatorCompiler(() => () => true);
   app.setSerializerCompiler(() => (data) => JSON.stringify(data));
   installErrorHandler(app);
+
+  // Host / Origin checks (ROADMAP M4.3). Registered before any route so they
+  // run ahead of every handler and ahead of the (future, M5.1) auth hook.
+  // Host is evaluated before Origin; both are uniform across bindings (PLAN
+  // D3) — even on loopback — so behavior does not depend on how the server is
+  // reached. The default-allow set keeps `app.inject` (`Host: localhost:80`)
+  // and real `fetch` to `127.0.0.1:<port>` working.
+  const hostCheck = createHostCheck({
+    boundHost: opts.host,
+    extra: parseAllowedHosts(process.env),
+    disable: isHostCheckDisabled(process.env),
+  });
+  const originHook = createOriginHook({ allowedOrigins: parseCorsOrigins(process.env) });
+  app.addHook('onRequest', hostCheck.onRequest);
+  app.addHook('onRequest', originHook);
 
   const serverVersion = opts.coreProcessOptions?.identity?.version ?? getServerVersion();
 

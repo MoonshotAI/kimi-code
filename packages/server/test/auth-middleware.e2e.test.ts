@@ -159,12 +159,22 @@ describe('/asyncapi.json serverHost (M2.3 Host-reflection fix)', () => {
     await closeAll();
   });
 
-  it('reflects the bound host, not a spoofed Host header', async () => {
+  it('rejects a spoofed Host header (M4.3) and otherwise reflects the bound host', async () => {
     const harness = await boot({ host: '127.0.0.1', port: 0 });
     const port = Number(new URL(harness.address).port);
 
-    const { status, body } = await rawGet(port, '/asyncapi.json', {
+    // M4.3: a spoofed / disallowed Host is rejected by the global Host check
+    // before it ever reaches the route — a stronger guarantee than the M2.3
+    // "reflect bound host" fix, since the spoofed value can no longer leak.
+    const spoofed = await rawGet(port, '/asyncapi.json', {
       Host: 'evil.com',
+    });
+    expect(spoofed.status).toBe(403);
+
+    // With an allowed Host, the route responds and still reflects the BOUND
+    // host, never the caller-supplied Host header (the original M2.3 fix).
+    const { status, body } = await rawGet(port, '/asyncapi.json', {
+      Host: '127.0.0.1',
     });
     expect(status).toBe(200);
 

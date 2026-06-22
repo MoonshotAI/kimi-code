@@ -1,5 +1,6 @@
 import { createDecorator, type TelemetryClient } from '@moonshot-ai/agent-core';
 
+import type { HostCheckOptions } from '#/middleware/hostnames';
 import type { IAuthTokenService } from '#/services/auth/authTokenService';
 import type { AbortHandler, FsWatchHandler, TerminalHandler } from '#/ws/connection';
 
@@ -80,4 +81,21 @@ export interface WSGatewayOptions {
    * When unset (e.g. tests / pre-M5.1 boots), upgrade auth is skipped.
    */
   authTokenService?: IAuthTokenService;
+
+  /**
+   * Optional Host-header allowlist enforced on the WS upgrade path (ROADMAP
+   * M4.3). When set, upgrades whose `Host` is not allowed are rejected with
+   * `403 Forbidden` before token validation. When unset (tests / pre-M5.1
+   * boots), the WS Host check is skipped — HTTP-level Host enforcement in
+   * `start.ts` still covers non-upgrade requests.
+   */
+  hostCheck?: HostCheckOptions;
+
+  /**
+   * Optional Origin allowlist enforced on the WS upgrade path (ROADMAP M4.3).
+   * When set, a present browser `Origin` must be same-origin or listed here;
+   * an absent `Origin` (Node `ws` clients) is allowed. When unset (tests /
+   * pre-M5.1 boots), the WS Origin check is skipped.
+   */
+  allowedOrigins?: readonly string[];
 }
