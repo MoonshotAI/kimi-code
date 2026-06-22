@@ -583,6 +583,7 @@ max_context_size = 100000
       path: 'extra',
       persist: true,
     });
+    await core.sessions.get(created.id)?.getReadyAgent('main')?.records.flush();
 
     const records = await readMainWire(created.sessionDir);
     expect(records).toContainEqual(
@@ -680,6 +681,7 @@ max_context_size = 100000
       path: 'extra',
       persist: false,
     });
+    await core.sessions.get(created.id)?.getReadyAgent('main')?.records.flush();
     const records = await readMainWire(created.sessionDir);
 
     expect(result).toMatchObject({
