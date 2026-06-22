@@ -5,6 +5,19 @@ import type { AppSessionStatus } from './api/types';
     list can distinguish awaiting / aborted instead of collapsing to running|idle. */
 export type SessionStatus = AppSessionStatus;
 
+/** File content loaded for preview (text or base64-encoded binary). */
+export interface FileData {
+  path: string;
+  content: string;
+  encoding: 'utf-8' | 'base64';
+  mime: string;
+  sourceUrl?: string;
+  languageId?: string;
+  isBinary: boolean;
+  size: number;
+  lineCount?: number;
+}
+
 export interface Session {
   id: string;
   title: string;

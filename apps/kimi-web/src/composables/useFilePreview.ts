@@ -4,8 +4,7 @@
 
 import { computed, ref, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { FileData } from '../components/FilePreview.vue';
-import type { FilePreviewRequest, ToolMedia } from '../types';
+import type { FileData, FilePreviewRequest, ToolMedia } from '../types';
 import type { useKimiWebClient } from './useKimiWebClient';
 
 type KimiWebClient = ReturnType<typeof useKimiWebClient>;
