@@ -4,6 +4,14 @@ import type { AbortHandler, FsWatchHandler, TerminalHandler } from '#/ws/connect
 
 export const WS_PATH = '/api/v1/ws';
 
+/**
+ * `Sec-WebSocket-Protocol` subprotocol prefix used by browser clients to carry
+ * the bearer token during the WS upgrade handshake (browsers cannot set
+ * arbitrary headers on a WebSocket, so the token rides in a subprotocol). The
+ * full offered subprotocol is `${WS_BEARER_PROTOCOL_PREFIX}<token>`.
+ */
+export const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
+
 export interface IWSGateway {
   readonly _serviceBrand: undefined;
 
@@ -18,6 +26,32 @@ export interface IWSGateway {
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const IWSGateway = createDecorator<IWSGateway>('wsGateway');
+
+/**
+ * Extract the bearer token from a `Sec-WebSocket-Protocol` request header.
+ *
+ * The header is a comma-separated list of offered subprotocols (e.g.
+ * `"kimi-code.bearer.abc, other"`). Returns the token portion of the first
+ * entry whose subprotocol starts with {@link WS_BEARER_PROTOCOL_PREFIX}, or
+ * `undefined` when the header is missing/empty, no entry matches, or the
+ * matching entry carries an empty token.
+ */
+export function extractWsBearerToken(protocolHeader: string | undefined): string | undefined {
+  if (protocolHeader === undefined || protocolHeader.length === 0) {
+    return undefined;
+  }
+  for (const rawEntry of protocolHeader.split(',')) {
+    const entry = rawEntry.trim();
+    if (entry.startsWith(WS_BEARER_PROTOCOL_PREFIX)) {
+      const token = entry.slice(WS_BEARER_PROTOCOL_PREFIX.length);
+      if (token.length === 0) {
+        return undefined;
+      }
+      return token;
+    }
+  }
+  return undefined;
+}
 
 export interface WSGatewayOptions {
   pingIntervalMs?: number;
