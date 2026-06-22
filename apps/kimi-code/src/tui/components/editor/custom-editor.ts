@@ -15,6 +15,7 @@ import {
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 
+import { extractAtPrefix } from './file-mention-provider';
 import { WrappingSelectList } from './wrapping-select-list';
 
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
@@ -359,16 +360,17 @@ export class CustomEditor extends Editor {
     }
 
     super.handleInput(normalized);
-    this.reopenSlashArgumentCompletionAfterInput();
+    this.reopenPathCompletionAfterInput();
   }
 
-  private reopenSlashArgumentCompletionAfterInput(): void {
+  private reopenPathCompletionAfterInput(): void {
     const { line, col } = this.getCursor();
     const textBeforeCursor = this.getLines()[line]?.slice(0, col) ?? '';
-    if (!textBeforeCursor.startsWith('/')) return;
-    if (!textBeforeCursor.includes(' ')) return;
     if (!textBeforeCursor.endsWith('/')) return;
     if (this.isShowingAutocomplete()) return;
+    const isSlashArgument = textBeforeCursor.startsWith('/') && textBeforeCursor.includes(' ');
+    const isAtMention = extractAtPrefix(textBeforeCursor) !== null;
+    if (!isSlashArgument && !isAtMention) return;
     (this as unknown as { requestAutocomplete?: (options: { force: boolean; explicitTab: boolean }) => void })
       .requestAutocomplete?.({ force: true, explicitTab: false });
   }

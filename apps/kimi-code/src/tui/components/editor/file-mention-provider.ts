@@ -187,7 +187,7 @@ export class FileMentionProvider implements AutocompleteProvider {
   }
 }
 
-function extractAtPrefix(text: string): string | null {
+export function extractAtPrefix(text: string): string | null {
   let tokenStart = 0;
   for (let i = text.length - 1; i >= 0; i -= 1) {
     if (PATH_DELIMITERS.has(text[i] ?? '')) {

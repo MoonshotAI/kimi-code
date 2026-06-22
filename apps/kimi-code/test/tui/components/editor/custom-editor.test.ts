@@ -142,6 +142,64 @@ describe('CustomEditor slash argument completion refresh', () => {
   });
 });
 
+describe('CustomEditor @ mention completion refresh', () => {
+  it('reopens the next directory level after tab-accepting an @ directory', async () => {
+    const editor = makeEditor();
+    const provider: AutocompleteProvider = {
+      getSuggestions: vi.fn(
+        async (
+          lines: string[],
+          cursorLine: number,
+          cursorCol: number,
+        ): Promise<AutocompleteSuggestions> => {
+          const text = (lines[cursorLine] ?? '').slice(0, cursorCol);
+          if (text === '@') {
+            return { items: [{ value: '@shared/', label: 'shared/' }], prefix: '@' };
+          }
+          if (text === '@shared/') {
+            return { items: [{ value: '@shared/child/', label: 'child/' }], prefix: '@shared/' };
+          }
+          return { items: [], prefix: '' };
+        },
+      ),
+      applyCompletion: vi.fn(
+        (
+          lines: string[],
+          cursorLine: number,
+          cursorCol: number,
+          item: AutocompleteItem,
+          prefix: string,
+        ) => {
+          const line = lines[cursorLine] ?? '';
+          const beforePrefix = line.slice(0, cursorCol - prefix.length);
+          const afterCursor = line.slice(cursorCol);
+          const newLine = beforePrefix + item.value + afterCursor;
+          const newLines = [...lines];
+          newLines[cursorLine] = newLine;
+          return {
+            lines: newLines,
+            cursorLine,
+            cursorCol: beforePrefix.length + item.value.length,
+          };
+        },
+      ),
+    };
+    editor.setAutocompleteProvider(provider);
+
+    editor.handleInput('@');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+
+    editor.handleInput('\t');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flushAutocomplete();
+
+    expect(editor.getText()).toBe('@shared/');
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+});
+
 describe('CustomEditor slash menu description wrapping', () => {
   // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
   const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
