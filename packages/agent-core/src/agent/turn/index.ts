@@ -45,7 +45,7 @@ interface ActiveTurn {
   readonly turnId: number;
   readonly controller: AbortController;
   readonly promise: Promise<TurnEndResult>;
-  readonly firstRequest: ControlledPromise<void>;
+  readonly firstRequest: ControlledPromise;
 }
 
 interface BufferedSteer {
@@ -65,6 +65,8 @@ interface PromptHookEndResult {
 }
 
 const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
+const PROVIDER_FILTERED_MESSAGE =
+  'The provider stopped this response because it was filtered by its safety policy. Try rephrasing or narrowing the request.';
 
 /** Origin tag for the synthetic "continue" prompt that drives each goal turn. */
 const GOAL_CONTINUATION_ORIGIN: PromptOrigin = { kind: 'system_trigger', name: 'goal_continuation' };
@@ -469,6 +471,9 @@ export class TurnFlow {
       } else {
         const stopReason = await this.runStepLoop(turnId, signal);
         completedStopReason = stopReason;
+        if (stopReason === 'filtered') {
+          this.appendProviderFilteredMessage(turnId);
+        }
         ended = {
           type: 'turn.ended',
           turnId,
@@ -554,6 +559,19 @@ export class TurnFlow {
     this.interruptedTelemetryTurnIds.delete(turnId);
     this.stepFailureByTurn.delete(turnId);
     return { event: ended, stopReason: completedStopReason, blockedByUserPromptHook };
+  }
+
+  private appendProviderFilteredMessage(turnId: number): void {
+    this.agent.context.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: PROVIDER_FILTERED_MESSAGE }],
+      toolCalls: [],
+    });
+    this.agent.emitEvent({
+      type: 'assistant.delta',
+      turnId,
+      delta: PROVIDER_FILTERED_MESSAGE,
+    });
   }
 
   private async applyUserPromptHook(
@@ -794,6 +812,12 @@ export class TurnFlow {
         active.firstRequest.resolve();
         return;
       }
+      case 'step.begin':
+      case 'step.retrying':
+      case 'tool.progress':
+      case 'tool.result':
+      case 'turn.interrupted':
+        return;
       default:
         return;
     }
