@@ -2,6 +2,11 @@ import type { AgentBackgroundTaskInfo } from './agent-task';
 import type { ProcessBackgroundTaskInfo } from './process-task';
 import type { QuestionBackgroundTaskInfo } from './question-task';
 
+export interface MonitorBackgroundTaskInfo extends BackgroundTaskInfoBase {
+  readonly kind: 'monitor';
+  readonly command: string;
+}
+
 export type BackgroundTaskStatus =
   | 'running'
   | 'completed'
@@ -47,7 +52,8 @@ export interface BackgroundTaskInfoBase {
 export type BackgroundTaskInfo =
   | ProcessBackgroundTaskInfo
   | AgentBackgroundTaskInfo
-  | QuestionBackgroundTaskInfo;
+  | QuestionBackgroundTaskInfo
+  | MonitorBackgroundTaskInfo;
 
 export interface BackgroundTaskSink {
   readonly signal: AbortSignal;
