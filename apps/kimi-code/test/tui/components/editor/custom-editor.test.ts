@@ -103,6 +103,43 @@ describe('CustomEditor slash argument completion refresh', () => {
     expect(editor.getText()).toBe('/add-dir /');
     expect(editor.isShowingAutocomplete()).toBe(true);
   });
+
+  it('reopens the next directory level after tab-accepting a directory', async () => {
+    const editor = makeEditor();
+    const provider = new FileMentionProvider(
+      [
+        {
+          name: 'add-dir',
+          description: 'Add directory',
+          getArgumentCompletions: (prefix) => {
+            if (prefix === '/') return [{ value: '/tmp/shared/', label: 'shared/' }];
+            if (prefix === '/tmp/shared/') return [{ value: '/tmp/shared/child/', label: 'child/' }];
+            return null;
+          },
+        },
+      ],
+      process.cwd(),
+      null,
+    );
+    editor.setAutocompleteProvider(provider);
+
+    for (const char of '/add-dir ') {
+      editor.handleInput(char);
+    }
+    await flushAutocomplete();
+
+    editor.handleInput('/');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+
+    editor.handleInput('\t');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+
+    expect(editor.getText()).toBe('/add-dir /tmp/shared/');
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
 });
 
 describe('CustomEditor slash menu description wrapping', () => {
