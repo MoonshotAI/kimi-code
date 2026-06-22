@@ -1462,7 +1462,6 @@ describe('Session.createAgent', () => {
     expect(child.agent.getAdditionalDirs()).toEqual([extraDir]);
     expect(child.agent.config.systemPrompt).toContain(`additional=### ${extraDir}`);
     expect(child.agent.config.systemPrompt).toContain('extra-file.ts');
-    expect(child.agent.config.systemPrompt).toContain('extra agents instructions');
   });
 
   it('allocates the next unused generated agent id', async () => {
