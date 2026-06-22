@@ -55,7 +55,7 @@ describe('kimi server', () => {
       ?.commands.find((c) => c.name() === 'run');
     expect(run).toBeDefined();
     const longs = run!.options.map((o) => o.long).filter(Boolean);
-    expect(longs).not.toContain('--host');
+    expect(longs).toContain('--host');
     expect(longs).toContain('--port');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
@@ -87,7 +87,7 @@ describe('kimi server', () => {
     const longs = web!.options.map((o) => o.long).filter(Boolean);
     // web defaults to opening → the option is the negative form --no-open
     expect(longs).toContain('--no-open');
-    expect(longs).not.toContain('--host');
+    expect(longs).toContain('--host');
     expect(longs).toContain('--port');
   });
 });
@@ -564,6 +564,77 @@ async function allocateAdjacentFreeRun(count: number, host = '127.0.0.1'): Promi
   throw new Error('could not allocate a run of adjacent free ports');
 }
 
+describe('--host threading (M6.2)', () => {
+  it('passes --host through to the background daemon', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let parsed: unknown;
+
+    await handleRunCommand(
+      { port: '58627', host: '0.0.0.0' },
+      {
+        startServerBackground: async (options) => {
+          parsed = options;
+          return { origin: 'http://0.0.0.0:58627' };
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(parsed).toMatchObject({ host: '0.0.0.0', port: 58627 });
+  });
+
+  it('passes --host through to the foreground runner', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let foregroundOptions: unknown;
+
+    await handleRunCommand(
+      { port: '58627', host: '0.0.0.0', foreground: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://0.0.0.0:58627' }),
+        startServerForeground: async (options) => {
+          foregroundOptions = options;
+          return undefined as unknown as never;
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(foregroundOptions).toMatchObject({ host: '0.0.0.0' });
+  });
+});
+
+describe('lockConnectHost (M6.2 connect side)', () => {
+  it('maps a 0.0.0.0 bind to 127.0.0.1 so the CLI connects over loopback', async () => {
+    const { lockConnectHost } = await import('#/cli/sub/server/daemon');
+    // The daemon binds 0.0.0.0 (all interfaces), but the local CLI must
+    // connect over loopback — 0.0.0.0 is not a connectable address. The token
+    // then rides on that loopback connection (covered by the M5.4 kill/ps
+    // Authorization tests).
+    expect(lockConnectHost({ pid: 1, started_at: '', port: 58627, host: '0.0.0.0' })).toBe(
+      '127.0.0.1',
+    );
+  });
+
+  it('preserves a loopback / concrete bind host', async () => {
+    const { lockConnectHost } = await import('#/cli/sub/server/daemon');
+    expect(lockConnectHost({ pid: 1, started_at: '', port: 58627, host: '127.0.0.1' })).toBe(
+      '127.0.0.1',
+    );
+    expect(lockConnectHost({ pid: 1, started_at: '', port: 58627, host: '192.168.1.5' })).toBe(
+      '192.168.1.5',
+    );
+  });
+
+  it('falls back to 127.0.0.1 when the lock has no host', async () => {
+    const { lockConnectHost } = await import('#/cli/sub/server/daemon');
+    expect(lockConnectHost({ pid: 1, started_at: '', port: 58627 })).toBe('127.0.0.1');
+  });
+});
+
 describe('resolveDaemonPort', () => {
   it('returns the preferred port when it is free', async () => {
     const { resolveDaemonPort } = await import('#/cli/sub/server/daemon');
@@ -672,6 +743,19 @@ describe('spawnDaemonChild', () => {
     expect(args).toEqual(expect.arrayContaining(['server', 'run', '--daemon']));
     expect(options).toMatchObject({ detached: true, cwd: dirname(daemonLogPath()) });
     expect(options?.cwd).not.toBe(process.cwd());
+  });
+
+  it('passes --host through to the daemon child args (M6.2)', async () => {
+    const { spawn } = await import('node:child_process');
+    const spawnMock = vi.mocked(spawn);
+    spawnMock.mockClear();
+    spawnMock.mockReturnValue({ unref: vi.fn(), once: vi.fn() } as unknown as ChildProcess);
+
+    const { spawnDaemonChild } = await import('#/cli/sub/server/daemon');
+    spawnDaemonChild({ host: '0.0.0.0', port: 58627, logLevel: 'info' });
+
+    const [, args] = spawnMock.mock.calls[0]!;
+    expect(args).toEqual(expect.arrayContaining(['--host', '0.0.0.0']));
   });
 });
 
