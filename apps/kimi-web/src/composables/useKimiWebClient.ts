@@ -462,6 +462,14 @@ function forgetSession(sessionId: string): void {
   delete rawState.messagesLoadMoreErrorBySession[sessionId];
   delete epochBySession[sessionId];
   sessionsKnownEmpty.delete(sessionId);
+  // In-flight / queued prompt state: drop these too so a queued follow-up
+  // can't be submitted to a session that was just archived when its turn later
+  // goes idle (onSessionIdle drains queuedBySession[sid] without re-checking
+  // that the session still exists).
+  inFlightPromptSessions.delete(sessionId);
+  delete rawState.queuedBySession[sessionId];
+  delete rawState.promptIdBySession[sessionId];
+  delete rawState.sendingBySession[sessionId];
 }
 
 // Models + Providers reactive state and helpers live in
