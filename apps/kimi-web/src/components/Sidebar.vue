@@ -5,31 +5,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { Session, WorkspaceGroup, WorkspaceView } from '../types';
+import type { Session, WorkspaceView } from '../types';
+import type { SidebarVm } from './sidebarVmTypes';
 import SessionRow from './SessionRow.vue';
 
 const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{
-    activeWorkspace: WorkspaceView | null;
-    activeWorkspaceId: string | null;
-    sessions: Session[];
-    groups: WorkspaceGroup[];
-    activeId: string;
-    attentionBySession?: Record<string, number>;
-    /** Per-session pending counts split by kind, for the coloured tags. */
-    pendingBySession?: Record<string, { approvals: number; questions: number }>;
-    unreadBySession?: Record<string, boolean>;
+    vm: SidebarVm;
     /** Width (px) of the session column, driven by the App resize handle. */
     colWidth?: number;
   }>(),
   {
-    activeWorkspace: null,
-    activeWorkspaceId: null,
-    attentionBySession: () => ({}),
-    pendingBySession: () => ({}),
-    unreadBySession: () => ({}),
     colWidth: 220,
   },
 );
@@ -61,7 +49,7 @@ const isSearching = computed(() => trimmedQuery.value.length > 0);
 const searchResults = computed<Session[]>(() => {
   const q = trimmedQuery.value.toLowerCase();
   if (!q) return [];
-  return props.sessions.filter((s) => {
+  return props.vm.sessions.filter((s) => {
     const title = (s.title ?? '').toLowerCase();
     const last = (s.lastPrompt ?? '').toLowerCase();
     return title.includes(q) || last.includes(q);
@@ -482,10 +470,10 @@ function blinkOnce(): void {
             v-for="s in searchResults"
             :key="s.id"
             :session="s"
-            :active="s.id === activeId"
-            :approval-count="pendingBySession[s.id]?.approvals ?? 0"
-            :question-count="pendingBySession[s.id]?.questions ?? 0"
-            :unread="unreadBySession[s.id] ?? false"
+            :active="s.id === vm.activeId"
+            :approval-count="vm.pendingBySession[s.id]?.approvals ?? 0"
+            :question-count="vm.pendingBySession[s.id]?.questions ?? 0"
+            :unread="vm.unreadBySession[s.id] ?? false"
             @select="onSelectResult($event)"
             @rename="(id, title) => emit('rename', id, title)"
             @archive="emit('archive', $event)"
@@ -501,15 +489,15 @@ function blinkOnce(): void {
       <div v-else class="sessions">
         <!-- Empty state — only when no workspace is registered at all; empty
              workspaces still render their group header (with the + button). -->
-        <div v-if="groups.length === 0" class="empty">
+        <div v-if="vm.groups.length === 0" class="empty">
           {{ t('workspace.noWorkspace') }}
         </div>
 
         <template v-else>
-          <div v-for="g in groups" :key="g.workspace.id" class="group">
+          <div v-for="g in vm.groups" :key="g.workspace.id" class="group">
             <div
               class="gh"
-              :class="{ on: g.workspace.id === activeWorkspaceId, sel: selectedIds.has(g.workspace.id) }"
+              :class="{ on: g.workspace.id === vm.activeWorkspaceId, sel: selectedIds.has(g.workspace.id) }"
               @click.stop="handleGhClick(g.workspace.id, $event)"
               @contextmenu="openGhMenu(g.workspace, $event)"
             >
@@ -586,24 +574,24 @@ function blinkOnce(): void {
             </div>
             <div v-show="!isCollapsed(g.workspace.id)" class="group-sessions">
               <SessionRow
-                v-for="s in visibleSessions(g.sessions, isExpanded(g.workspace.id), activeId)"
+                v-for="s in visibleSessions(g.sessions, isExpanded(g.workspace.id), vm.activeId)"
                 :key="s.id"
                 :session="s"
-                :active="s.id === activeId"
-                :approval-count="pendingBySession[s.id]?.approvals ?? 0"
-                :question-count="pendingBySession[s.id]?.questions ?? 0"
-                :unread="unreadBySession[s.id] ?? false"
+                :active="s.id === vm.activeId"
+                :approval-count="vm.pendingBySession[s.id]?.approvals ?? 0"
+                :question-count="vm.pendingBySession[s.id]?.questions ?? 0"
+                :unread="vm.unreadBySession[s.id] ?? false"
                 @select="onSelectSession($event)"
                 @rename="(id, title) => emit('rename', id, title)"
                 @archive="emit('archive', $event)"
                 @fork="emit('fork', $event)"
               />
               <button
-                v-if="!isExpanded(g.workspace.id) && visibleSessions(g.sessions, false, activeId).length < g.sessions.length"
+                v-if="!isExpanded(g.workspace.id) && visibleSessions(g.sessions, false, vm.activeId).length < g.sessions.length"
                 class="show-more"
                 @click.stop="toggleExpand(g.workspace.id)"
               >
-                {{ t('sidebar.showMore', { count: g.sessions.length - visibleSessions(g.sessions, false, activeId).length }) }}
+                {{ t('sidebar.showMore', { count: g.sessions.length - visibleSessions(g.sessions, false, vm.activeId).length }) }}
               </button>
               <div v-if="g.sessions.length === 0" class="group-empty">{{ t('sidebar.noSessions') }}</div>
             </div>

@@ -35,6 +35,7 @@ import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
 import type { AppConfig, ThinkingLevel } from './api/types';
 import type { ConversationActions, ConversationVm } from './components/conversationVmTypes';
+import type { SidebarVm } from './components/sidebarVmTypes';
 
 const client = useKimiWebClient();
 provide('resolveImage', client.resolveImageUrl);
@@ -116,6 +117,20 @@ const conversationActions: ConversationActions = {
   uploadImage: client.uploadImage,
   loadOlderMessages: client.loadOlderMessages,
 };
+
+// Aggregated view-model for Sidebar. The nine client-derived props are grouped
+// into a reactive view-model (rebuilt on change, no long-lived reactive object)
+// while `colWidth` stays a separate prop since it comes from local resize state.
+const sidebarVm = computed<SidebarVm>(() => ({
+  activeWorkspace: client.visibleWorkspace.value,
+  activeWorkspaceId: client.activeWorkspaceId.value,
+  sessions: client.sessionsForView.value,
+  groups: client.workspaceGroups.value,
+  activeId: client.activeSessionId.value,
+  attentionBySession: client.attentionBySession.value,
+  pendingBySession: client.pendingBySession.value,
+  unreadBySession: client.unreadBySession.value,
+}));
 
 // Auth readiness gates the main app. Once the first load finishes and auth is
 // still missing, show a full-page login entry instead of an in-app banner.
@@ -586,15 +601,8 @@ function openPr(url: string): void {
     <template v-if="!isMobile">
       <Sidebar
         v-show="!sidebarCollapsed"
+        :vm="sidebarVm"
         :col-width="sessionColWidth"
-        :active-workspace="client.visibleWorkspace.value"
-        :active-workspace-id="client.activeWorkspaceId.value"
-        :sessions="client.sessionsForView.value"
-        :groups="client.workspaceGroups.value"
-        :active-id="client.activeSessionId.value"
-        :attention-by-session="client.attentionBySession.value"
-        :pending-by-session="client.pendingBySession.value"
-        :unread-by-session="client.unreadBySession.value"
         @select="client.selectSession($event)"
         @create="handleCreateSession"
         @create-in-workspace="handleCreateSessionInWorkspace($event)"
