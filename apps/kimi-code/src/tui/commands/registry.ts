@@ -173,6 +173,7 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Toggle swarm mode or run one task in swarm mode',
     priority: 100,
+    argumentHint: '[on|off] | <task>',
     completeArgs: swarmArgumentCompletions,
     availability: 'idle-only',
   },
@@ -272,16 +273,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Compact the conversation context',
     priority: 80,
+    argumentHint: '<instruction>',
   },
   {
     name: 'goal',
     aliases: [],
     description: 'Start or manage an autonomous goal',
     priority: 80,
-    // No argumentHint: the menu description stays as short as every other
-    // command's. The subcommands (status/pause/resume/cancel/replace) surface in
-    // the argument autocomplete list once the user types `/goal ` (see
-    // completeArgs), so they don't need to be spelled out inline.
+    argumentHint: '[status|pause|resume|cancel|replace|next] | <objective>',
     completeArgs: goalArgumentCompletions,
     // status / pause / cancel are always available; creation, replacement, and
     // resume start (or restart) a turn and so are idle-only.
@@ -309,6 +308,7 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: ['rename'],
     description: 'Set or show session title',
     priority: 60,
+    argumentHint: '<title>',
     availability: 'always',
   },
   {

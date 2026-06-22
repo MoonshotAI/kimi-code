@@ -200,6 +200,59 @@ describe('CustomEditor @ mention completion refresh', () => {
   });
 });
 
+describe('CustomEditor slash argument hint', () => {
+  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
+  const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
+
+  it('renders the argument hint after a command with a trailing space', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+
+    for (const char of '/add-dir ') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).toContain('[list] | <path>');
+  });
+
+  it('renders the argument hint after a command without a trailing space', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+
+    for (const char of '/add-dir') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).toContain('[list] | <path>');
+  });
+
+  it('hides the hint once an argument is typed', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+
+    for (const char of '/add-dir foo') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).not.toContain('[list] | <path>');
+  });
+
+  it('does not render a hint for an unknown command', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+
+    for (const char of '/unknown ') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).not.toContain('[list] | <path>');
+  });
+});
+
 describe('CustomEditor slash menu description wrapping', () => {
   // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
   const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');

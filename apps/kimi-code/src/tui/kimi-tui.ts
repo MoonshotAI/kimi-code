@@ -347,6 +347,16 @@ export class KimiTUI {
       this.state.appState.additionalDirs,
     );
     this.state.editor.setAutocompleteProvider(provider);
+
+    const argumentHints = new Map<string, string>();
+    for (const cmd of slashCommands) {
+      if (cmd.argumentHint === undefined) continue;
+      argumentHints.set(cmd.name, cmd.argumentHint);
+      for (const alias of cmd.aliases ?? []) {
+        argumentHints.set(alias, cmd.argumentHint);
+      }
+    }
+    this.state.editor.setArgumentHints(argumentHints);
   }
 
   refreshSlashCommandAutocomplete(): void {
