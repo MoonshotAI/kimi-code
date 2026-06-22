@@ -15,7 +15,13 @@ import { IConnectionRegistry } from './connectionRegistry';
 import { IRestGateway } from './restGateway';
 import { ISessionClientsService } from './sessionClients';
 import { IWSBroadcastService } from './wsBroadcast';
-import { IWSGateway, type WSGatewayOptions, WS_PATH } from './wsGateway';
+import {
+  extractWsBearerToken,
+  IWSGateway,
+  type WSGatewayOptions,
+  WS_BEARER_PROTOCOL_PREFIX,
+  WS_PATH,
+} from './wsGateway';
 
 export class WSGateway extends Disposable implements IWSGateway {
   readonly _serviceBrand: undefined;
@@ -37,7 +43,18 @@ export class WSGateway extends Disposable implements IWSGateway {
     @ILogService private readonly logger: ILogService,
   ) {
     super();
-    this.wss = new WebSocketServer({ noServer: true });
+    this.wss = new WebSocketServer({
+      noServer: true,
+      // Browsers require the server to select one of the offered subprotocols;
+      // echo back the `kimi-code.bearer.<token>` subprotocol when present so
+      // token-carrying browser clients complete the handshake.
+      handleProtocols: (protocols: Set<string>) => {
+        for (const p of protocols) {
+          if (p.startsWith(WS_BEARER_PROTOCOL_PREFIX)) return p;
+        }
+        return false;
+      },
+    });
     this.server = this.restGateway.app.server;
     this.upgradeListener = (req, sock, head) => this.onUpgrade(req, sock, head);
     this.server.on('upgrade', this.upgradeListener);
@@ -56,7 +73,7 @@ export class WSGateway extends Disposable implements IWSGateway {
     this.terminalHandler = handler;
   }
 
-  private onUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): void {
+  private async onUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<void> {
     const url = req.url ?? '';
     const path = url.split('?', 1)[0];
     if (path !== WS_PATH) {
@@ -68,6 +85,27 @@ export class WSGateway extends Disposable implements IWSGateway {
     // ~40 ms clusters, making the stream look stuttery. Trade a little bandwidth
     // for lower latency.
     socket.setNoDelay(true);
+
+    const authTokenService = this.options.authTokenService;
+    if (authTokenService !== undefined) {
+      const authorization = req.headers.authorization;
+      const token = authorization?.startsWith('Bearer ')
+        ? authorization.slice('Bearer '.length)
+        : extractWsBearerToken(req.headers['sec-websocket-protocol']);
+      // `isValid` is the only await on this path; wrap it so a rejection
+      // destroys the socket instead of escaping as an unhandled rejection.
+      let ok = false;
+      try {
+        ok = token !== undefined && (await authTokenService.isValid(token));
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+    }
     this.wss.handleUpgrade(req, socket, head, (ws) => this.onConnect(ws, req));
   }
 
