@@ -159,7 +159,7 @@ type BackgroundTaskNotification = Record<string, unknown> & {
   readonly id: string;
   readonly category: 'task';
   readonly type: string;
-  readonly source_kind: 'background_task';
+  readonly source_kind: 'background_task' | 'monitor';
   readonly source_id: string;
   /** Subagent id accepted by Agent(resume=...). Omitted for process tasks. */
   readonly agent_id?: string | undefined;
@@ -693,11 +693,11 @@ export class BackgroundManager {
     severity: 'info' | 'warning' = 'info',
   ): void {
     const body = lines.join('\n');
-    const notification = {
+    const notification: BackgroundTaskNotification = {
       id: `monitor:${taskId}:${this.nextMonitorSeq(taskId)}`,
-      category: 'task' as const,
+      category: 'task',
       type: 'monitor_line',
-      source_kind: 'monitor' as const,
+      source_kind: 'monitor',
       source_id: taskId,
       title: description,
       severity,
@@ -712,7 +712,7 @@ export class BackgroundManager {
       notificationId: `monitor:${taskId}`,
     };
     this.agent.turn.steer([{ type: 'text', text }], origin);
-    this.fireNotificationHook(notification as unknown as BackgroundTaskNotification);
+    this.fireNotificationHook(notification);
   }
 
   private async restoreBackgroundTaskNotification(info: BackgroundTaskInfo): Promise<void> {
