@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ErrorCodes, KimiError } from '../../src/errors';
-import type { Logger, LogPayload } from '../../src/logging';
+import type { Logger, LogPayload } from '#/_base/logging';
 import type { LoopHooks } from '../../src/loop/index';
 import { makeEndTurnResponse, makeToolCall, makeToolUseResponse } from './fixtures/fake-llm';
 import { runTurn, runTurnExpectingThrow } from './fixtures/helpers';

@@ -1,7 +1,7 @@
 import { join } from 'pathe';
 
-import { log } from '#/logging/logger';
-import type { Logger } from '#/logging/types';
+import { log } from '#/_base/logging';
+import type { Logger } from '#/_base/logging';
 import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC } from '#/rpc';
 import { generate } from '@moonshot-ai/kosong';
 

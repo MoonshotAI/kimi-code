@@ -4,7 +4,7 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { PENDING_MAX, RotatingFileSink } from '#/logging/sinks';
+import { PENDING_MAX, RotatingFileSink } from '#/_base/logging';
 
 let workDir: string;
 

@@ -1,4 +1,4 @@
-import type { Logger } from '#/logging/types';
+import type { Logger } from '#/_base/logging';
 import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
 import { APIStatusError, getModelCapability, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
 import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig } from '../config';

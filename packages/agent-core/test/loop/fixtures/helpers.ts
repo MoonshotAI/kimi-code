@@ -5,7 +5,7 @@ import type {
   LoopLiveEventEmitter,
   TurnResult,
 } from '../../../src/loop/index';
-import type { Logger } from '../../../src/logging';
+import type { Logger } from '#/_base/logging';
 import { createLoopEventDispatcher, runTurn as runTurnImpl } from '../../../src/loop/index';
 import { CollectingSink, type SinkErrorMode } from './collecting-sink';
 import { FakeLLM, type FakeLLMResponse } from './fake-llm';

@@ -2,7 +2,7 @@ import { join } from 'pathe';
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import { ErrorCodes, KimiError } from '#/errors';
-import type { SessionLogHandle } from '#/logging/types';
+import type { SessionLogHandle } from '#/_base/logging';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentOptions, type AgentType } from '../agent';

@@ -14,9 +14,8 @@ export {
   log,
   redact,
   resolveGlobalLogPath,
-} from './logging/logger';
-export { resolveLoggingConfig } from './logging/resolve-config';
-export type { ResolveLoggingInput } from './logging/resolve-config';
+  resolveLoggingConfig,
+} from './_base/logging';
 export { installGlobalProxyDispatcher } from './utils/proxy';
 export type {
   LogContext,
@@ -25,10 +24,11 @@ export type {
   LogPayload,
   Logger,
   LoggingConfig,
+  ResolveLoggingInput,
   RootLogger,
   SessionAttachInput,
   SessionLogHandle,
-} from './logging/types';
+} from './_base/logging';
 export { USER_PROMPT_ORIGIN } from './agent/context';
 export type {
   AgentContextData,

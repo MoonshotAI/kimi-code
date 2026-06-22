@@ -8,8 +8,8 @@ import {
   extractError,
   formatEntry,
   redactCtx,
-} from '#/logging/formatter';
-import type { LogEntry } from '#/logging/types';
+} from '#/_base/logging';
+import type { LogEntry } from '#/_base/logging';
 
 const FIXED_TIME = Date.UTC(2026, 4, 19, 10, 12, 30, 123);
 

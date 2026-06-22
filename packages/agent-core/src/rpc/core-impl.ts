@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 
 import { ErrorCodes, KimiError } from '#/errors';
-import { getRootLogger, log } from '#/logging/logger';
+import { getRootLogger, log } from '#/_base/logging';
 import { PluginService, type IPluginService } from '#/plugin';
 import { LocalFetchURLProvider } from '#/tools/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
@@ -29,7 +29,7 @@ import {
   type ExperimentalFeatureState,
   type IFlagService,
 } from '../flags';
-import type { Logger } from '../logging/types';
+import type { Logger } from '#/_base/logging';
 import { resolveSessionMcpConfig, mergeCallerMcpServers, type SessionMcpConfig } from '../mcp';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { type SessionHost } from '../session/session-host';

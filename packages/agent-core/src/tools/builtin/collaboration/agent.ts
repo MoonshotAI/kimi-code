@@ -19,7 +19,7 @@
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
-import type { Logger } from '../../../logging';
+import type { Logger } from '../../../_base/logging';
 import { ToolAccesses } from '../../../loop/tool-access';
 import { isAbortError } from '../../../loop/errors';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';

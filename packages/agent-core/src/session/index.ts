@@ -2,8 +2,8 @@ import { homedir } from 'node:os';
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import { ErrorCodes, KimiError } from '#/errors';
-import { getRootLogger, log } from '#/logging/logger';
-import type { Logger, SessionLogHandle } from '#/logging/types';
+import { getRootLogger, log } from '#/_base/logging';
+import type { Logger, SessionLogHandle } from '#/_base/logging';
 import type { KimiConfig, SDKSessionRPC } from '#/rpc';
 
 import type { Agent, AgentOptions, AgentType } from '../agent';

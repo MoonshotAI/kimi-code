@@ -10,7 +10,7 @@ import {
   log,
   redact,
   resolveGlobalLogPath,
-} from '#/logging/logger';
+} from '#/_base/logging';
 
 let homeDir: string;
 

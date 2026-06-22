@@ -14,8 +14,8 @@ import {
 import {
   __resetRootLoggerForTest,
   getRootLogger,
-} from '../../src/logging/logger';
-import { resolveLoggingConfig } from '../../src/logging/resolve-config';
+} from '#/_base/logging';
+import { resolveLoggingConfig } from '#/_base/logging';
 import {
   recordingContextTelemetry,
   type TelemetryContextRecord,

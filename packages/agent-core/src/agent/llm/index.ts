@@ -1,7 +1,7 @@
 import { generate } from '@moonshot-ai/kosong';
 import type { ChatProvider, ModelCapability } from '@moonshot-ai/kosong';
 
-import type { Logger } from '#/logging/types';
+import type { Logger } from '#/_base/logging';
 import type { KimiConfig } from '#/rpc';
 
 import type { ModelProvider } from '../../session/provider-manager';

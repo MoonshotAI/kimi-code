@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ToolAccesses } from '../../src/loop';
-import type { Logger, LogPayload } from '../../src/logging';
+import type { Logger, LogPayload } from '#/_base/logging';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { ISubagentHostService } from '../../src/session/subagent-host';
 import { AgentBackgroundTask } from '../../src/agent/background';

@@ -21,7 +21,7 @@ import {
 } from '../../../src/agent/records';
 import type { KimiConfig } from '../../../src/config';
 import type { ExecutableToolResult } from '../../../src/loop';
-import type { Logger } from '../../../src/logging';
+import type { Logger } from '#/_base/logging';
 import { ProviderManager } from '../../../src/session/provider-manager';
 import type { QuestionResult, RPCCallOptions, SDKAgentRPC } from '../../../src/rpc';
 import type { AgentAPI } from '../../../src/rpc/core-api';

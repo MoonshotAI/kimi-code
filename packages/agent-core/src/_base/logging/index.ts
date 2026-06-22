@@ -30,3 +30,8 @@ export {
   formatEntry,
   redactCtx,
 } from './formatter';
+
+export { resolveLoggingConfig } from './resolve-config';
+export type { ResolveLoggingInput } from './resolve-config';
+
+export { PENDING_MAX, RotatingFileSink } from './sinks';

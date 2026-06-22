@@ -1,7 +1,7 @@
 import { ErrorCodes, KimiError } from '#/errors';
 import type { McpServerConfig } from '#/config/schema';
-import { log as defaultLog } from '#/logging/logger';
-import type { Logger } from '#/logging/types';
+import { log as defaultLog } from '#/_base/logging';
+import type { Logger } from '#/_base/logging';
 import type { Tool } from '@moonshot-ai/kosong';
 
 import { abortable } from '../utils/abort';

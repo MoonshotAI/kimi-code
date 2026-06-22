@@ -12,7 +12,7 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import { ToolAccesses } from '../../src/loop';
-import type { Logger } from '../../src/logging';
+import type { Logger } from '#/_base/logging';
 import type { ExecutableTool, ExecutableToolResult, LoopHooks, ToolExecution } from '../../src/loop';
 import { PathSecurityError } from '../../src/tools/policies/path-access';
 import {

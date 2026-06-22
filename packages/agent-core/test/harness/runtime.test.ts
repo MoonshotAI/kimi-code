@@ -20,8 +20,8 @@ import {
   __resetRootLoggerForTest,
   getRootLogger,
   resolveGlobalLogPath,
-} from '../../src/logging/logger';
-import { resolveLoggingConfig } from '../../src/logging/resolve-config';
+} from '#/_base/logging';
+import { resolveLoggingConfig } from '#/_base/logging';
 import type { OAuthTokenProviderResolver } from '../../src/session/provider-manager';
 import { testKaos } from '../fixtures/test-kaos';
 

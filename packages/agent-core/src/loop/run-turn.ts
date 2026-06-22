@@ -8,7 +8,7 @@
 
 import { addUsage, emptyUsage, type TokenUsage } from '@moonshot-ai/kosong';
 
-import type { Logger } from '#/logging/types';
+import type { Logger } from '#/_base/logging';
 
 import {
   createMaxStepsExceededError,

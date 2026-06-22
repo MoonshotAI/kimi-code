@@ -1,7 +1,7 @@
 import { sleep } from '@antfu/utils';
 import * as retry from 'retry';
 
-import type { Logger } from '#/logging/types';
+import type { Logger } from '#/_base/logging';
 
 import { abortable } from '../utils/abort';
 import type { LoopEventDispatcher } from './events';

@@ -13,7 +13,7 @@ import { LlmService, type LlmServiceConfig, type LlmServiceDeps } from '../../sr
 import { LlmRequestLogger } from '../../src/agent/llm-request-logger';
 import { KosongLLM } from '../../src/agent/turn/kosong-llm';
 import type { KimiConfig } from '../../src/config';
-import type { Logger } from '../../src/logging';
+import type { Logger } from '#/_base/logging';
 import type { ModelProvider } from '../../src/session/provider-manager';
 
 interface TestDeps extends LlmServiceDeps {

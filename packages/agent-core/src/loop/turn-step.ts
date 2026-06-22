@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { TokenUsage } from '@moonshot-ai/kosong';
-import type { Logger } from '#/logging/types';
+import type { Logger } from '#/_base/logging';
 
 import type { LoopEventDispatcher } from './events';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';

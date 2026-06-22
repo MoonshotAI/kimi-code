@@ -19,7 +19,7 @@ import { HookService } from '../../src/session/hooks';
 import { abortError } from '../../src/utils/abort';
 import type { AgentOptions } from '../../src/agent';
 import { ErrorCodes, KimiError } from '../../src/errors';
-import type { Logger, LogPayload } from '../../src/logging';
+import type { Logger, LogPayload } from '#/_base/logging';
 import type {
   QueuedSubagentRunResult,
   QueuedSubagentTask,

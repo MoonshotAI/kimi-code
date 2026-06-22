@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'pathe';
 
 import { ErrorCodes, KimiError } from '#/errors';
-import { resolveGlobalLogPath } from '#/logging/logger';
+import { resolveGlobalLogPath } from '#/_base/logging';
 import { buildExportManifest } from '#/session/export/manifest';
 import { scanSessionWire } from '#/session/export/wire-scan';
 import {
