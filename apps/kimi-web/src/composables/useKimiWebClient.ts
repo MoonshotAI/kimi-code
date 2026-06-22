@@ -411,6 +411,34 @@ function setActiveSessionId(id: string | undefined): void {
   rawState.activeSessionId = id;
 }
 
+// ---------------------------------------------------------------------------
+// rawState.messagesBySession — single mutation funnel.
+// ---------------------------------------------------------------------------
+/** Replace the whole messages map (e.g. from the reducer snapshot). */
+function setMessagesBySession(next: Record<string, AppMessage[]>): void {
+  rawState.messagesBySession = next;
+}
+/** Set one session's message list. */
+function setSessionMessages(sessionId: string, messages: AppMessage[]): void {
+  rawState.messagesBySession = { ...rawState.messagesBySession, [sessionId]: messages };
+}
+/** Update one session's message list via a function of the current list. */
+function updateSessionMessages(
+  sessionId: string,
+  update: (messages: AppMessage[]) => AppMessage[],
+): void {
+  rawState.messagesBySession = {
+    ...rawState.messagesBySession,
+    [sessionId]: update(rawState.messagesBySession[sessionId] ?? []),
+  };
+}
+/** Remove one session's message list. */
+function removeSessionMessages(sessionId: string): void {
+  const { [sessionId]: _removed, ...rest } = rawState.messagesBySession;
+  void _removed;
+  rawState.messagesBySession = rest;
+}
+
 // Models + Providers reactive state and helpers live in
 // ./client/useModelProviderState. It is instantiated below (after the
 // `activity` computed it depends on) as `modelProvider`.
@@ -559,7 +587,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   // Assign back to the reactive proxy
   setSessions(next.sessions);
   setActiveSessionId(next.activeSessionId);
-  rawState.messagesBySession = next.messagesBySession;
+  setMessagesBySession(next.messagesBySession);
   rawState.approvalsBySession = next.approvalsBySession;
   rawState.questionsBySession = next.questionsBySession;
   rawState.tasksBySession = next.tasksBySession;
@@ -864,7 +892,7 @@ function goalErrorMessage(err: unknown): string | undefined {
 
 async function handleSessionNotFound(sessionId: string): Promise<void> {
   removeSession(sessionId);
-  delete rawState.messagesBySession[sessionId];
+  removeSessionMessages(sessionId);
   delete rawState.approvalsBySession[sessionId];
   delete rawState.questionsBySession[sessionId];
   delete rawState.tasksBySession[sessionId];
@@ -902,10 +930,7 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
           ? snap.session.model
           : s.model,
     }));
-    rawState.messagesBySession = {
-      ...rawState.messagesBySession,
-      [sessionId]: snap.messages,
-    };
+    setSessionMessages(sessionId, snap.messages);
     rawState.messagesHasMoreBySession = {
       ...rawState.messagesHasMoreBySession,
       [sessionId]: snap.hasMoreMessages,
@@ -1453,6 +1478,7 @@ const modelProvider = useModelProviderState(rawState, {
   inFlightPromptSessions,
   saveThinkingToStorage,
   updateSession,
+  updateSessionMessages,
 });
 
 /** Git info for the active session from the daemon's fs:git_status response */
@@ -1808,6 +1834,7 @@ const workspaceState = useWorkspaceState(rawState, {
   appendSession,
   removeSession,
   setActiveSessionId,
+  updateSessionMessages,
   nextOptimisticMsgId,
   getEventConn: () => eventConn,
   syncSessionFromSnapshot,

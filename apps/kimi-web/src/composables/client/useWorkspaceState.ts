@@ -66,6 +66,11 @@ export interface UseWorkspaceStateDeps {
   appendSession: (session: AppSession) => void;
   removeSession: (id: string) => void;
   setActiveSessionId: (id: string | undefined) => void;
+  /** Update one session's message list via a function of the current list. */
+  updateSessionMessages: (
+    sessionId: string,
+    update: (messages: AppMessage[]) => AppMessage[],
+  ) => void;
   nextOptimisticMsgId: () => string;
   getEventConn: () => KimiEventConnection | null;
   syncSessionFromSnapshot: (sessionId: string) => Promise<SyncSessionResult>;
@@ -107,6 +112,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     appendSession,
     removeSession,
     setActiveSessionId,
+    updateSessionMessages,
     nextOptimisticMsgId,
     getEventConn,
     syncSessionFromSnapshot,
@@ -155,12 +161,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Server returns newest-first; the UI keeps messages in chronological order.
       const older = [...page.items].reverse();
       // Live events may have appended messages while the request was in flight;
-      // read the latest array so those messages are not overwritten.
-      const latest = rawState.messagesBySession[sessionId] ?? current;
-      rawState.messagesBySession = {
-        ...rawState.messagesBySession,
-        [sessionId]: [...older, ...latest],
-      };
+      // the updater receives the latest array so those messages are not overwritten.
+      updateSessionMessages(sessionId, (latest) => [...older, ...latest]);
       rawState.messagesHasMoreBySession = {
         ...rawState.messagesHasMoreBySession,
         [sessionId]: page.hasMore,
@@ -801,11 +803,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         createdAt: new Date().toISOString(),
         metadata: { 'kimiWeb.optimisticUserMessage': true },
       };
-      const existingMessages = rawState.messagesBySession[sid] ?? [];
-      rawState.messagesBySession = {
-        ...rawState.messagesBySession,
-        [sid]: [...existingMessages, optimisticMsg],
-      };
+      updateSessionMessages(sid, (msgs) => [...msgs, optimisticMsg]);
 
       // The daemon now requires `model` + `thinking` on every prompt. Resolve the
       // model from the session (falls back to the daemon's default_model) and the
@@ -823,13 +821,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           pushOperationFailure('createGoal', err, { sessionId: sid });
           inFlightPromptSessions.delete(sid);
           rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
-          const msgs = rawState.messagesBySession[sid] ?? [];
-          if (msgs.some((m) => m.id === tempId)) {
-            rawState.messagesBySession = {
-              ...rawState.messagesBySession,
-              [sid]: msgs.filter((m) => m.id !== tempId),
-            };
-          }
+          updateSessionMessages(sid, (msgs) =>
+            msgs.some((m) => m.id === tempId) ? msgs.filter((m) => m.id !== tempId) : msgs,
+          );
           return false;
         }
       }
@@ -856,13 +850,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // so replacing msg_opt_* with userMessageId remounts the bubble and flickers.
       // If a daemon/stub later echoes the user message, the reducer merges it into
       // this optimistic entry instead of appending a duplicate.
-      const msgs = rawState.messagesBySession[sid] ?? [];
-      const idx = msgs.findIndex((m) => m.id === tempId);
-      if (idx !== -1) {
+      updateSessionMessages(sid, (msgs) => {
+        const idx = msgs.findIndex((m) => m.id === tempId);
+        if (idx === -1) return msgs;
         const updated = [...msgs];
         updated[idx] = { ...updated[idx]!, promptId: updated[idx]!.promptId ?? result.promptId };
-        rawState.messagesBySession = { ...rawState.messagesBySession, [sid]: updated };
-      }
+        return updated;
+      });
 
       // Bind the real daemon prompt_id into the event projector so the upcoming
       // turn.started uses it (instead of synthesizing a random one). This is what
@@ -883,13 +877,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // looking message the daemon never received.
       inFlightPromptSessions.delete(sid);
       rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
-      const msgs = rawState.messagesBySession[sid] ?? [];
-      if (msgs.some((m) => m.id === tempId)) {
-        rawState.messagesBySession = {
-          ...rawState.messagesBySession,
-          [sid]: msgs.filter((m) => m.id !== tempId),
-        };
-      }
+      updateSessionMessages(sid, (msgs) =>
+        msgs.some((m) => m.id === tempId) ? msgs.filter((m) => m.id !== tempId) : msgs,
+      );
       pushOperationFailure('sendPrompt', err, { sessionId: sid });
       return false;
     }
@@ -962,10 +952,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       createdAt: new Date().toISOString(),
       metadata: { 'kimiWeb.optimisticUserMessage': true },
     };
-    rawState.messagesBySession = {
-      ...rawState.messagesBySession,
-      [sid]: [...(rawState.messagesBySession[sid] ?? []), optimisticMsg],
-    };
+    updateSessionMessages(sid, (msgs) => [...msgs, optimisticMsg]);
 
     try {
       const api = getKimiWebApi();
@@ -987,13 +974,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // a steered prompt IS echoed back by the daemon as a messageCreated user
       // event; matching that echo by prompt_id (instead of content) is what keeps
       // an image steer from rendering two user bubbles.
-      const echoMsgs = rawState.messagesBySession[sid] ?? [];
-      const echoIdx = echoMsgs.findIndex((m) => m.id === tempId);
-      if (echoIdx !== -1) {
-        const updated = [...echoMsgs];
-        updated[echoIdx] = { ...updated[echoIdx]!, promptId: updated[echoIdx]!.promptId ?? result.promptId };
-        rawState.messagesBySession = { ...rawState.messagesBySession, [sid]: updated };
-      }
+      updateSessionMessages(sid, (msgs) => {
+        const idx = msgs.findIndex((m) => m.id === tempId);
+        if (idx === -1) return msgs;
+        const updated = [...msgs];
+        updated[idx] = { ...updated[idx]!, promptId: updated[idx]!.promptId ?? result.promptId };
+        return updated;
+      });
 
       if (result.status !== 'queued') {
         // The turn ended while the user was typing — the prompt started a turn
@@ -1012,11 +999,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     } catch (err) {
       // Submit failed: drop the optimistic echo so the transcript doesn't show
       // a delivered-looking message the daemon never received.
-      const msgs = rawState.messagesBySession[sid] ?? [];
-      rawState.messagesBySession = {
-        ...rawState.messagesBySession,
-        [sid]: msgs.filter((m) => m.id !== tempId),
-      };
+      updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
       pushOperationFailure('steer', err, { sessionId: sid });
     }
   }

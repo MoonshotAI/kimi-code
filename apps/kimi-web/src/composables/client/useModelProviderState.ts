@@ -61,6 +61,11 @@ export interface UseModelProviderStateDeps {
   /** Replace one session in place (matched by id). Owned by the facade so the
    *  model module never assigns rawState.sessions directly. */
   updateSession: (id: string, update: (session: AppSession) => AppSession) => void;
+  /** Update one session's message list via a function of the current list. */
+  updateSessionMessages: (
+    sessionId: string,
+    update: (messages: AppMessage[]) => AppMessage[],
+  ) => void;
 }
 
 export function useModelProviderState(
@@ -75,6 +80,7 @@ export function useModelProviderState(
     inFlightPromptSessions,
     saveThinkingToStorage,
     updateSession,
+    updateSessionMessages,
   } = deps;
 
   // Models + Providers reactive state (lazy-loaded, cached)
@@ -247,10 +253,7 @@ export function useModelProviderState(
           },
         },
       };
-      rawState.messagesBySession = {
-        ...rawState.messagesBySession,
-        [sid]: [...(rawState.messagesBySession[sid] ?? []), optimisticMsg],
-      };
+      updateSessionMessages(sid, (msgs) => [...msgs, optimisticMsg]);
     }
 
     try {
@@ -259,11 +262,7 @@ export function useModelProviderState(
       if (guarded) {
         inFlightPromptSessions.delete(sid);
         rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
-        const msgs = rawState.messagesBySession[sid] ?? [];
-        rawState.messagesBySession = {
-          ...rawState.messagesBySession,
-          [sid]: msgs.filter((m) => m.id !== tempId),
-        };
+        updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
       }
       pushOperationFailure('activateSkill', err, { sessionId: sid });
     }
