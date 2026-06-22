@@ -71,10 +71,22 @@ export class MonitorTool implements BuiltinTool<MonitorInput> {
     closeProcessStdin(proc);
 
     const timeoutMs = args.persistent ? undefined : args.timeout_ms;
-    const taskId = this.background.registerMonitorTask(proc, command, args.description, {
-      detached: true,
-      timeoutMs,
-    });
+    let taskId: string;
+    try {
+      taskId = this.background.registerMonitorTask(proc, command, args.description, {
+        detached: true,
+        timeoutMs,
+      });
+    } catch (error) {
+      // Registration can throw (e.g. maxRunningTasks reached). The process is
+      // already spawned and not yet owned by the manager, so clean it up here
+      // to avoid orphaning a long-running command — mirrors the Bash path.
+      await killSpawnedProcess(proc);
+      return {
+        isError: true,
+        output: error instanceof Error ? error.message : String(error),
+      };
+    }
 
     return {
       isError: false,
@@ -114,6 +126,20 @@ function closeProcessStdin(proc: KaosProcess): void {
     proc.stdin.end();
   } catch {
     /* process already gone */
+  }
+}
+
+async function killSpawnedProcess(proc: KaosProcess): Promise<void> {
+  try {
+    await proc.kill('SIGTERM');
+  } catch {
+    /* process already gone */
+  } finally {
+    try {
+      await proc.dispose();
+    } catch {
+      /* best-effort cleanup */
+    }
   }
 }
 
