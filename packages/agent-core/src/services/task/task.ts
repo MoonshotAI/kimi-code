@@ -57,6 +57,9 @@ function mapKind(k: BackgroundTaskInfo['kind']): BackgroundTaskKind {
       // tool-spawned flows (Loop runs them as part of `Question` tool
       // execution), so 'tool' is the closest spec literal.
       return 'tool';
+    case 'monitor':
+      // Monitors are tool-spawned persistent background tasks.
+      return 'tool';
   }
 }
 
