@@ -40,7 +40,7 @@ const { t } = useI18n();
 const debugEnabled = isTraceEnabled();
 
 // Narrow viewports (≤640px) render the single-column mobile shell; desktop is
-// unchanged. jsdom defaults to false (desktop) so component tests are unaffected.
+// unchanged. Falls back to desktop when matchMedia is unavailable.
 const isMobile = useIsMobile();
 
 // Mobile sheet visibility
