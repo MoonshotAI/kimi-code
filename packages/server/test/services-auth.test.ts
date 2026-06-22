@@ -17,6 +17,7 @@ import {
   writePrivateFile,
 } from '#/services/auth/privateFiles';
 import { createTokenStore } from '#/services/auth/tokenStore';
+import { resolvePasswordHash, verifyPassword } from '#/services/auth/password';
 
 let tmpDir: string;
 
@@ -108,5 +109,27 @@ describe('tokenStore', () => {
     expect(existsSync(store.tokenPath)).toBe(true);
     await store.dispose();
     expect(existsSync(store.tokenPath)).toBe(false);
+  });
+});
+
+describe('password', () => {
+  it('resolvePasswordHash returns undefined when env is unset or empty', async () => {
+    expect(await resolvePasswordHash({})).toBeUndefined();
+    expect(await resolvePasswordHash({ KIMI_CODE_PASSWORD: '' })).toBeUndefined();
+  });
+
+  it('hashes a set password with bcrypt and verifies correctly', async () => {
+    const passwordHash = await resolvePasswordHash({
+      KIMI_CODE_PASSWORD: 'correct-horse-battery-staple',
+    });
+    expect(passwordHash?.startsWith('$2')).toBe(true);
+    expect(await verifyPassword('correct-horse-battery-staple', passwordHash)).toBe(
+      true,
+    );
+    expect(await verifyPassword('wrong-password', passwordHash)).toBe(false);
+  });
+
+  it('verifyPassword returns false when the hash is undefined', async () => {
+    expect(await verifyPassword('anything', undefined)).toBe(false);
   });
 });
