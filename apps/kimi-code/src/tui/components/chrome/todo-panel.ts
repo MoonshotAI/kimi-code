@@ -124,7 +124,7 @@ export class TodoPanelComponent implements Component {
     const { rows, hidden } = selectVisibleTodos(this.todos);
     const lines: string[] = [
       chalk.hex(c.border)('─'.repeat(width)),
-      chalk.hex(c.primary).bold(' Todo'),
+      chalk.hex(c.primary).bold('  Todo'),
     ];
     for (const todo of rows) {
       lines.push(renderRow(todo, c));

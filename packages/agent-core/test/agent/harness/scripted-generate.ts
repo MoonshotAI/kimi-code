@@ -46,6 +46,7 @@ export function createScriptedGenerate() {
 
   const generate: GenerateFn = async (_chat, systemPrompt, tools, history, callbacks, options) => {
     options?.signal?.throwIfAborted();
+    options?.onRequestStart?.();
 
     const response = responses.shift();
     if (response === undefined) {
@@ -75,6 +76,7 @@ export function createScriptedGenerate() {
       await callbacks?.onMessagePart?.(structuredClone(part));
       options?.signal?.throwIfAborted();
     }
+    options?.onStreamEnd?.();
 
     const inferredFinishReason: FinishReason = toolCalls.length > 0 ? 'tool_calls' : 'completed';
     const finishReason = response.finishReason ?? inferredFinishReason;

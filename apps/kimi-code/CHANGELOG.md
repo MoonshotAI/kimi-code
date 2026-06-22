@@ -1,5 +1,94 @@
 # @moonshot-ai/kimi-code
 
+## 0.18.0
+
+### Minor Changes
+
+- [#888](https://github.com/MoonshotAI/kimi-code/pull/888) [`58898de`](https://github.com/MoonshotAI/kimi-code/commit/58898de0200d6626ca634e344fe85b860abcfd1b) - Add an environment variable to cap AgentSwarm concurrency during the initial ramp, so large swarms do not trip provider rate limits as easily.
+
+- [#895](https://github.com/MoonshotAI/kimi-code/pull/895) [`495fe8c`](https://github.com/MoonshotAI/kimi-code/commit/495fe8c674d654cdf87217ca4ada775507f861f6) - Add instant session search to the web sidebar, filtering by title and the last user prompt.
+
+### Patch Changes
+
+- [#896](https://github.com/MoonshotAI/kimi-code/pull/896) [`de610de`](https://github.com/MoonshotAI/kimi-code/commit/de610deb5f760606b82cc595e59c5176cc66ce82) - Fix the web workspace session count so it drops to 0 after archiving the last session instead of staying at 1.
+
+- [#876](https://github.com/MoonshotAI/kimi-code/pull/876) [`49183d8`](https://github.com/MoonshotAI/kimi-code/commit/49183d8729e3e7d361a253dc5c68f409e6382ba9) - Suggest `/reload` alongside `/new` in plugin-change hints.
+
+- [#867](https://github.com/MoonshotAI/kimi-code/pull/867) [`d1dc2a3`](https://github.com/MoonshotAI/kimi-code/commit/d1dc2a3e77ec1422d60cb008c5520a44a2ed7c00) - Redesign the web OAuth login dialog: lead with a single "Authorize in browser" button that opens the verification link with the device code already embedded, demote manual code entry to a clearly secondary fallback, and drop the duplicate open-browser and cancel controls so the order of steps is unambiguous.
+
+- [#867](https://github.com/MoonshotAI/kimi-code/pull/867) [`d1dc2a3`](https://github.com/MoonshotAI/kimi-code/commit/d1dc2a3e77ec1422d60cb008c5520a44a2ed7c00) - Fix the web login slash command description to match the browser authorization flow.
+
+- [#893](https://github.com/MoonshotAI/kimi-code/pull/893) [`d7ec056`](https://github.com/MoonshotAI/kimi-code/commit/d7ec05686a09580f9ffd99f6ef26385aed8eb02c) - Add scroll-up lazy loading for older messages in the web chat session view, and fix the "new messages" pill overlapping the composer dock.
+
+- [#882](https://github.com/MoonshotAI/kimi-code/pull/882) [`8ab9e96`](https://github.com/MoonshotAI/kimi-code/commit/8ab9e969637ffee18b09a0b265ffa860c5a2e11c) - Fix the web app only loading the 20 most recent sessions; it now follows pagination so older sessions are reachable.
+
+- [#889](https://github.com/MoonshotAI/kimi-code/pull/889) [`23277a5`](https://github.com/MoonshotAI/kimi-code/commit/23277a574c7e0782c04f62e10370494247be3a66) - Show the connected server version in the web settings General tab.
+
+- [#881](https://github.com/MoonshotAI/kimi-code/pull/881) [`7bc3d99`](https://github.com/MoonshotAI/kimi-code/commit/7bc3d99933b0bbc3f9188a2b02bcc90e81623f72) - Keep the highlighted web slash command visible while navigating a long slash menu.
+
+- [#878](https://github.com/MoonshotAI/kimi-code/pull/878) [`a74a6b7`](https://github.com/MoonshotAI/kimi-code/commit/a74a6b7f6b1d13d24eae356a2208c012128b180d) - Allow long web slash command names and descriptions to wrap without overflowing the slash menu.
+
+- [#878](https://github.com/MoonshotAI/kimi-code/pull/878) [`a74a6b7`](https://github.com/MoonshotAI/kimi-code/commit/a74a6b7f6b1d13d24eae356a2208c012128b180d) - Fix web slash skill selection sending immediately and allow slash search to match skill names by substring.
+
+## 0.17.1
+
+### Patch Changes
+
+- [#861](https://github.com/MoonshotAI/kimi-code/pull/861) [`bd09795`](https://github.com/MoonshotAI/kimi-code/commit/bd0979578bcad5fe3bf989e022b7823824f3f25c) - Prevent the web login dialog from closing when clicking the backdrop.
+
+- [#860](https://github.com/MoonshotAI/kimi-code/pull/860) [`0e2877b`](https://github.com/MoonshotAI/kimi-code/commit/0e2877bee347466ed6cc8afda9f9faf338069012) - Stop the background local server from locking the directory it was started in.
+
+- [#860](https://github.com/MoonshotAI/kimi-code/pull/860) [`0e2877b`](https://github.com/MoonshotAI/kimi-code/commit/0e2877bee347466ed6cc8afda9f9faf338069012) - Fix the local server failing to start in the background on the native binary.
+
+- [#861](https://github.com/MoonshotAI/kimi-code/pull/861) [`bd09795`](https://github.com/MoonshotAI/kimi-code/commit/bd0979578bcad5fe3bf989e022b7823824f3f25c) - Group the default model dropdown in web settings by provider.
+
+## 0.17.0
+
+### Minor Changes
+
+- [#625](https://github.com/MoonshotAI/kimi-code/pull/625) [`9a8fea5`](https://github.com/MoonshotAI/kimi-code/commit/9a8fea5c85177cd887896108c05ba9e174f28250) - Add the server-hosted web UI and the CLI commands that power it:
+
+  - `kimi server` to start, stop, and manage the local server.
+  - `kimi web` to open the server-hosted web UI in a browser.
+  - Server REST and WebSocket APIs for the web client.
+  - Web chat layout, session list, auto-scroll, and related behaviors.
+
+### Patch Changes
+
+- [#838](https://github.com/MoonshotAI/kimi-code/pull/838) [`843a731`](https://github.com/MoonshotAI/kimi-code/commit/843a731097fc18b2e41ab0405b5fbcb6149ba55c) - Show the underlying connection error when OAuth token refresh fails after internal retries, instead of prompting for login. Token refresh failures are no longer re-retried at the agent loop level.
+
+- [#849](https://github.com/MoonshotAI/kimi-code/pull/849) [`254f946`](https://github.com/MoonshotAI/kimi-code/commit/254f946a506b01df7a559ed63bd8d705e9fa7496) - Skip debug TPS when the output stream is too short to measure reliably.
+
+- [#833](https://github.com/MoonshotAI/kimi-code/pull/833) [`a71b2e3`](https://github.com/MoonshotAI/kimi-code/commit/a71b2e3123ff8454f725b3d24e8c985608c5c4f9) - Restore the turn counter from persisted loop events on resume so post-resume turns no longer reuse turn ids that already appear in history.
+
+- [#853](https://github.com/MoonshotAI/kimi-code/pull/853) [`05fe759`](https://github.com/MoonshotAI/kimi-code/commit/05fe7595ab9bac8230fd9f2fe7bdbaaa157ddc9b) - Fix the web login page and no-workspace conversation startup flow.
+
+## 0.16.0
+
+### Minor Changes
+
+- [#788](https://github.com/MoonshotAI/kimi-code/pull/788) [`efdf8a1`](https://github.com/MoonshotAI/kimi-code/commit/efdf8a1b2d4e906fbb35620083c3e7b490e0e88a) - Add a built-in `kimi vis` command that launches the session visualizer in your browser, pointed at your local sessions. Supports `--port`/`--host`, `--no-open`, and `kimi vis <sessionId>` deep-links.
+
+### Patch Changes
+
+- [#790](https://github.com/MoonshotAI/kimi-code/pull/790) [`d0d5821`](https://github.com/MoonshotAI/kimi-code/commit/d0d58219007cd9d7355f1ea8900e9777b66abda2) - Stop Anthropic-compatible providers from reading ambient Anthropic shell credentials and custom headers.
+
+- [#809](https://github.com/MoonshotAI/kimi-code/pull/809) [`6f442bd`](https://github.com/MoonshotAI/kimi-code/commit/6f442bd8cde29e21526fa36c9836e2d4c282b4bf) - Add configurable banner display frequencies with local display state.
+
+- [#807](https://github.com/MoonshotAI/kimi-code/pull/807) [`b45672c`](https://github.com/MoonshotAI/kimi-code/commit/b45672cdaac9959024c3ae36bf35b16a423aa1dc) - Close wrapped output streams when buffered readers are destroyed.
+
+- [#813](https://github.com/MoonshotAI/kimi-code/pull/813) [`7b5b818`](https://github.com/MoonshotAI/kimi-code/commit/7b5b8188157ec902e5cd4e73545bc5ca6c52bb76) - Fix repeated compaction handling when context remains over the blocking threshold.
+
+- [#801](https://github.com/MoonshotAI/kimi-code/pull/801) [`ff332be`](https://github.com/MoonshotAI/kimi-code/commit/ff332be6d364ce3d5974133deb7c76220684181a) - Polish queue pane styling
+
+- [#802](https://github.com/MoonshotAI/kimi-code/pull/802) [`aa1896c`](https://github.com/MoonshotAI/kimi-code/commit/aa1896ca749e41a67d7c4b655dcc8be830cbec82) - Reduce the maximum height of the /btw side panel from half to one-third of the terminal.
+
+- [#805](https://github.com/MoonshotAI/kimi-code/pull/805) [`3e6196e`](https://github.com/MoonshotAI/kimi-code/commit/3e6196e6b227c66860651f4335e06973865b2714) - Project session replay ranges over rendered replay records instead of raw persisted records.
+
+- [#804](https://github.com/MoonshotAI/kimi-code/pull/804) [`299b9fc`](https://github.com/MoonshotAI/kimi-code/commit/299b9fcad4c9c4b755fae4dfae01a1dbf60aec3c) - Prevent session shutdown from resuming the agent when stopping background tasks.
+
+- [#823](https://github.com/MoonshotAI/kimi-code/pull/823) [`90fc04b`](https://github.com/MoonshotAI/kimi-code/commit/90fc04b7072ec20055022c50583d35286ca715a6) - Remove redundant LLM request logging context plumbing.
+
 ## 0.15.0
 
 ### Minor Changes

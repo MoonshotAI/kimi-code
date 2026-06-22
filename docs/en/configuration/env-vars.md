@@ -125,6 +125,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_DISABLE_TELEMETRY` | Disable anonymous telemetry reporting | `1`, `true`, `yes`, `y` (case-insensitive) |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | Whether to keep background tasks when the session closes; takes higher priority than `config.toml`. The default is to stop them on exit | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_PLUGIN_MARKETPLACE_URL` | Override the plugin marketplace JSON loaded by `/plugins` | URL or local path |
+| `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` | Cap how many AgentSwarm subagents run concurrently during the initial ramp; leave unset for no cap | Positive integer; invalid values fail fast |
 | `KIMI_CODE_EXPERIMENTAL_FLAG` | Enable all registered experimental features for this process; `micro_compaction` is already enabled by default | `1`, `true`, `yes`, `on` |
 | `KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION` | Override [`[experimental].micro_compaction`](./config-files.md#experimental) for this process | Truthy or falsy |
 | `KIMI_SHELL_PATH` | Override the Git Bash path on Windows (used when auto-detection fails) | Absolute path |

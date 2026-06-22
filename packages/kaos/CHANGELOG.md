@@ -1,5 +1,11 @@
 # @moonshot-ai/kaos
 
+## 0.1.6
+
+### Patch Changes
+
+- [#807](https://github.com/MoonshotAI/kimi-code/pull/807) [`b45672c`](https://github.com/MoonshotAI/kimi-code/commit/b45672cdaac9959024c3ae36bf35b16a423aa1dc) - Close wrapped output streams when buffered readers are destroyed.
+
 ## 0.1.5
 
 ### Patch Changes

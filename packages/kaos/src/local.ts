@@ -1,4 +1,4 @@
-import type { ChildProcess } from 'node:child_process';
+import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import {
   appendFile,
@@ -37,6 +37,20 @@ function cycleKey(s: { dev: number; ino: number }): string | null {
   return `${String(s.dev)}:${String(s.ino)}`;
 }
 
+export function buildLocalSpawnOptions(
+  isWindows: boolean,
+  cwd: string,
+  env: Record<string, string> | undefined,
+): SpawnOptions {
+  return {
+    cwd,
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    detached: !isWindows,
+    windowsHide: true,
+  };
+}
+
 class LocalProcess implements KaosProcess {
   readonly stdin: Writable;
   readonly stdout: Readable;
@@ -46,6 +60,7 @@ class LocalProcess implements KaosProcess {
   private readonly _child: ChildProcess;
   private _exitCode: number | null = null;
   private readonly _exitPromise: Promise<number>;
+  private _disposed = false;
 
   constructor(child: ChildProcess) {
     if (child.stdin === null || child.stdout === null || child.stderr === null) {
@@ -134,6 +149,14 @@ class LocalProcess implements KaosProcess {
       throw error;
     }
     return Promise.resolve();
+  }
+
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+    this.stdin.destroy();
+    this.stdout.destroy();
+    this.stderr.destroy();
   }
 }
 
@@ -535,16 +558,11 @@ export class LocalKaos implements Kaos {
       throw new Error('LocalKaos.exec(): at least one argument (the command to run) is required.');
     }
     const restArgs = args.slice(1);
-    const child = spawn(command, restArgs, {
-      cwd: this._cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      // POSIX `detached:true` makes the child a process-group leader so
-      // `LocalProcess.kill()` can signal the entire tree. No-op on Windows
-      // (`taskkill /T` handles the tree there). We do not call `child.unref()`
-      // because the parent still waits on the child's exit through `wait()`.
-      detached: !isWindows,
-      env: this._buildExecEnv(),
-    });
+    const child = spawn(
+      command,
+      restArgs,
+      buildLocalSpawnOptions(isWindows, this._cwd, this._buildExecEnv()),
+    );
     await waitForSpawn(child);
     return new LocalProcess(child);
   }
@@ -557,12 +575,11 @@ export class LocalKaos implements Kaos {
       );
     }
     const restArgs = args.slice(1);
-    const child = spawn(command, restArgs, {
-      cwd: this._cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: !isWindows,
-      env: this._buildExecEnv(env),
-    });
+    const child = spawn(
+      command,
+      restArgs,
+      buildLocalSpawnOptions(isWindows, this._cwd, this._buildExecEnv(env)),
+    );
     await waitForSpawn(child);
     return new LocalProcess(child);
   }

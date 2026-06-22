@@ -6,6 +6,80 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.18.0 (2026-06-18)
+
+### Features
+
+- Add session filtering to the web sidebar, filtering by title and the last user prompt.
+- Add scroll-up lazy loading for older messages in the web chat session view.
+- Add an environment variable to cap AgentSwarm concurrency during the initial ramp, so large swarms do not trip provider rate limits as easily.
+
+### Bug Fixes
+
+- Fix the web app only loading the 20 most recent sessions.
+- Fix web slash skill selection sending immediately and allow slash search to match skill names by substring.
+- Fix the highlighted web slash command not staying visible while navigating a long slash menu.
+- Fix incorrect display after archiving the last session.
+- Fix the web login slash command description to match the browser authorization flow.
+
+### Polish
+
+- Redesign the web OAuth login dialog so the order of steps is unambiguous.
+- Show the current version in web settings.
+- Allow long web slash command names and descriptions to wrap without overflowing the slash menu.
+- Add `/reload` suggestion in plugin-change hints.
+
+## 0.17.1 (2026-06-17)
+
+### Bug Fixes
+
+- Fix the `kimi web` command failing to start in the background.
+- Stop the background local server from locking the directory it was started in.
+- Prevent the web login dialog from closing when clicking the backdrop.
+
+### Polish
+
+- Group the default model dropdown in web settings by provider.
+
+## 0.17.0 (2026-06-17)
+
+### Features
+
+- Add Kimi Code Web mode, which you can start with `kimi web` or `/web` in the CLI, and continue sessions in a browser chat interface.
+
+### Bug Fixes
+
+- Show the underlying connection error when OAuth token refresh fails after internal retries, instead of prompting for login. Token refresh failures are no longer re-retried at the agent loop level.
+- Restore the turn counter from persisted loop events on resume so post-resume turns no longer reuse turn ids that already appear in history.
+
+### Polish
+
+- Skip debug TPS when the output stream is too short to measure reliably.
+
+## 0.16.0 (2026-06-16)
+
+### Features
+
+- Add a built-in `kimi vis` command that launches the session visualizer in your browser, pointed at your local sessions. Supports `--port`/`--host`, `--no-open`, and `kimi vis <sessionId>` deep-links.
+
+### Bug Fixes
+
+- Stop Anthropic-compatible providers from reading ambient Anthropic shell credentials and custom headers.
+- Fix repeated compaction handling when context remains over the blocking threshold.
+- Prevent session shutdown from resuming the agent when stopping background tasks.
+- Project session replay ranges over rendered replay records instead of raw persisted records.
+- Close wrapped output streams when buffered readers are destroyed.
+
+### Polish
+
+- Reduce the maximum height of the `/btw` side panel from half to one-third of the terminal.
+- Polish queue pane styling.
+- Add configurable banner display frequencies with local display state.
+
+### Refactors
+
+- Remove redundant LLM request logging context plumbing.
+
 ## 0.15.0 (2026-06-15)
 
 ### Features

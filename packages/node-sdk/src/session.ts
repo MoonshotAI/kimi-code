@@ -323,6 +323,23 @@ export class Session {
     });
   }
 
+  /**
+   * Detach a running foreground task so the current tool call can return while
+   * the task continues under background-task management.
+   */
+  async detachBackgroundTask(taskId: string): Promise<BackgroundTaskInfo | undefined> {
+    this.ensureOpen();
+    const trimmedTaskId = normalizeRequiredString(
+      taskId,
+      'Task id cannot be empty',
+      ErrorCodes.BACKGROUND_TASK_ID_EMPTY,
+    );
+    return this.rpc.detachBackgroundTask({
+      sessionId: this.id,
+      taskId: trimmedTaskId,
+    });
+  }
+
   // --- Goal lifecycle ---------------------------------------------------
   // Deterministic user/host control surface. There is intentionally no
   // `updateGoal`: the goal's terminal status is decided by the model via the

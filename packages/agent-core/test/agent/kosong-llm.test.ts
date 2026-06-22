@@ -111,7 +111,6 @@ describe('KosongLLM stream timing', () => {
     };
     const llm = new KosongLLM({
       provider,
-      modelName: 'test-model',
       systemPrompt: 'system',
       generate,
     });
@@ -154,7 +153,6 @@ describe('KosongLLM completion budget', () => {
     };
     const llm = new KosongLLM({
       provider: providerWithBudget,
-      modelName: 'test-model',
       systemPrompt: 'system',
       capability: makeCapability(10000),
       completionBudgetConfig: { fallback: 32000 },
@@ -196,7 +194,6 @@ async function collectToolCallDeltas(
   };
   const llm = new KosongLLM({
     provider,
-    modelName: 'test-model',
     systemPrompt: 'system',
     generate,
   });

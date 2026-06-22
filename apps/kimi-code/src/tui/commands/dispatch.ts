@@ -3,32 +3,24 @@ import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ColorToken, ThemeName } from '#/tui/theme';
-import type { ResolvedTheme } from '../theme/colors';
-import {
-  LLM_NOT_SET_MESSAGE,
-} from '../constant/kimi-tui';
-import { formatErrorMessage } from '../utils/event-payload';
-import { parseSlashInput } from './parse';
-import {
-  resolveSlashCommandInput,
-  slashBusyMessage,
-} from './resolve';
-import type { BuiltinSlashCommandName } from './registry';
+
+import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import type { AuthFlowController } from '../controllers/auth-flow';
 import type { BtwPanelController } from '../controllers/btw-panel';
 import type { StreamingUIController } from '../controllers/streaming-ui';
 import type { TasksBrowserController } from '../controllers/tasks-browser';
+import { tryHandleDanceCommand } from '../easter-eggs/dance';
+import type { ResolvedTheme } from '../theme/colors';
+import type { TUIState } from '../tui-state';
 import type {
   AppState,
   LoginProgressSpinnerHandle,
   QueuedMessage,
   TranscriptEntry,
 } from '../types';
-import type { TUIState } from '../tui-state';
-
+import { formatErrorMessage } from '../utils/event-payload';
 import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
-import { tryHandleDanceCommand } from '../easter-eggs/dance';
 import {
   handleAutoCommand,
   handleCompactCommand,
@@ -43,12 +35,14 @@ import {
   showSettingsSelector,
 } from './config';
 import { handleGoalCommand } from './goal';
-import { handleProviderCommand } from './provider';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handleAddDirCommand } from './add-dir';
+import { parseSlashInput } from './parse';
 import { handlePluginsCommand } from './plugins';
+import { handleProviderCommand } from './provider';
+import type { BuiltinSlashCommandName } from './registry';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
-import { handleSwarmCommand } from './swarm';
+import { resolveSlashCommandInput, slashBusyMessage } from './resolve';
 import {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -56,16 +50,15 @@ import {
   handleInitCommand,
   handleTitleCommand,
 } from './session';
+import { handleSwarmCommand } from './swarm';
 import { handleUndoCommand } from './undo';
+import { handleWebCommand } from './web';
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep existing consumers working
 // ---------------------------------------------------------------------------
 
-export {
-  handleLoginCommand,
-  handleLogoutCommand,
-} from './auth';
+export { handleLoginCommand, handleLogoutCommand } from './auth';
 export { handleBtwCommand } from './btw';
 export { handleAddDirCommand } from './add-dir';
 export {
@@ -82,12 +75,7 @@ export {
   showSettingsSelector,
 } from './config';
 export { handleSwarmCommand } from './swarm';
-export {
-  handleFeedbackCommand,
-  showMcpServers,
-  showStatusReport,
-  showUsage,
-} from './info';
+export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
 export { handleGoalCommand } from './goal';
@@ -99,6 +87,7 @@ export {
   handleTitleCommand,
 } from './session';
 export { handleUndoCommand } from './undo';
+export { handleWebCommand } from './web';
 
 // ---------------------------------------------------------------------------
 // Host interface
@@ -143,6 +132,7 @@ export interface SlashCommandHost {
 
   // Dispatch
   stop(exitCode?: number): Promise<void>;
+  setExitOpenUrl(url: string): void;
   showHelpPanel(): void;
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;
@@ -342,6 +332,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'undo':
       await handleUndoCommand(host, args);
+      return;
+    case 'web':
+      await handleWebCommand(host);
       return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);

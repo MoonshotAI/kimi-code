@@ -378,6 +378,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 40,
   },
   {
+    name: 'web',
+    aliases: [],
+    description: 'Open the current session in the Web UI and exit the terminal',
+    priority: 40,
+    availability: 'always',
+  },
+  {
     name: 'exit',
     aliases: ['quit', 'q'],
     description: 'Exit the application',

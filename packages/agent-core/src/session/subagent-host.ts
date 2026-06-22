@@ -23,6 +23,7 @@ import { collectGitContext } from './git-context';
 import type { Session } from './index';
 import {
   SubagentBatch,
+  resolveSwarmMaxConcurrency,
   type SubagentResult,
   type SubagentSuspendedEvent,
   type QueuedSubagentTask,
@@ -101,7 +102,7 @@ export class SessionSubagentHost {
     string,
     {
       readonly controller: AbortController;
-      readonly runInBackground: boolean;
+      runInBackground: boolean;
     }
   >();
 
@@ -196,7 +197,8 @@ export class SessionSubagentHost {
   }
 
   async runQueued<T>(tasks: readonly QueuedSubagentTask<T>[]): Promise<Array<SubagentResult<T>>> {
-    return new SubagentBatch(this, tasks).run();
+    const maxConcurrency = resolveSwarmMaxConcurrency();
+    return new SubagentBatch(this, tasks, { maxConcurrency }).run();
   }
 
   suspended(event: SubagentSuspendedEvent): void {
@@ -244,6 +246,11 @@ export class SessionSubagentHost {
       // subagent's in-flight tools report the cause accurately to the model.
       child.controller.abort(reason);
     }
+  }
+
+  markActiveChildDetached(agentId: string): void {
+    const child = this.activeChildren.get(agentId);
+    if (child !== undefined) child.runInBackground = true;
   }
 
   async getProfileName(agentId: string): Promise<string | undefined> {

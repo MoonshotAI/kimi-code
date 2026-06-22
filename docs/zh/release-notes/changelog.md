@@ -6,6 +6,80 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.18.0（2026-06-18）
+
+### 新功能
+
+- 在 web 侧边栏中新增会话筛选，可过滤标题和最近一条用户提示词。
+- 在 web 聊天会话视图中新增向上滚动时懒加载更早消息的功能。
+- 新增环境变量以限制 AgentSwarm 在初始 ramp 阶段的并发数，使大型 swarm 更不容易触发供应商的速率限制。
+
+### 修复
+
+- 修复 web 应用只加载最近 20 个会话的问题。
+- 修复 web 斜杠 Skill 选择会立即发送的问题，并允许斜杠搜索按子串匹配。
+- 修复在浏览较长的斜杠菜单时高亮斜杠命令可见的问题。
+- 修复最后一个会话归档错误的显示失败的问题。
+- 修复 web 登录斜杠命令的描述，使其与浏览器授权流程相匹配。
+
+### 优化
+
+- 重新设计 web OAuth 登录对话框，使步骤顺序不再含糊。
+- 在 web 设置中现在可以显示当前版本。
+- 允许较长的 web 斜杠命令名称和描述自动换行，避免溢出斜杠菜单。
+- 在插件变更提示中，增加 `/reload` 提示。
+
+## 0.17.1（2026-06-17）
+
+### 修复
+
+- 修复 `kimi web` 命令无法在后台启动的问题。
+- 阻止后台本地服务器锁定启动时所在的目录。
+- 防止点击背景时关闭 web 登录对话框。
+
+### 优化
+
+- 在 web 设置中按供应商对默认模型下拉框进行分组。
+
+## 0.17.0（2026-06-17）
+
+### 新功能
+
+- 新增 Kimi Code Web 模式，可通过 `kimi web` 或 CLI 内的 `/web` 启动，在浏览器中的聊天界面继续会话。
+
+### 修复
+
+- 当 OAuth token 刷新在内部重试后失败时，显示底层连接错误，而不是提示登录。token 刷新失败不再在 agent 循环层级被重新重试。
+- 在恢复会话时从持久化的循环事件中还原轮次计数器，避免恢复后的轮次重复使用历史中已存在的 turn id。
+
+### 优化
+
+- 当输出流太短而无法可靠测量时，跳过 debug TPS。
+
+## 0.16.0（2026-06-16）
+
+### 新功能
+
+- 新增内置的 `kimi vis` 命令，可在浏览器中启动会话可视化工具，并指向本地会话。支持 `--port`/`--host`、`--no-open` 以及 `kimi vis <sessionId>` 深度链接。
+
+### 修复
+
+- 阻止 Anthropic 兼容供应商读取环境 Anthropic shell 凭证和自定义 header。
+- 修复上下文仍超过阻塞阈值时的重复压缩处理问题。
+- 防止会话关闭在停止后台任务时恢复 agent。
+- 会话 replay 范围现在基于渲染后的 replay 记录构建，而非原始持久化记录。
+- 在缓冲读取器被销毁时关闭被包装的输出流。
+
+### 优化
+
+- 将 `/btw` 侧面板的最大高度从终端的一半降低到三分之一。
+- 优化队列面板样式。
+- 新增可配置的横幅显示频率，并维护本地显示状态。
+
+### 重构
+
+- 移除冗余的 LLM 请求日志上下文传递。
+
 ## 0.15.0（2026-06-15）
 
 ### 新功能
@@ -170,7 +244,6 @@ outline: 2
 
 - 新增由环境变量 `KIMI_CODE_EXPERIMENTAL_SUB_SKILL` 控制的实验性子 Skill 发现能力。随附 `sub-skill` 内置包（`sub-skill.review`、`sub-skill.consolidate`），用于盘点 Skill 并将其整理为分层分组。
 - 新增以下环境变量：
-
   - `KIMI_MODEL_TEMPERATURE`、`KIMI_MODEL_TOP_P` —— 全局应用于任意 `kimi` 供应商的采样参数（不绑定到 `KIMI_MODEL_NAME`）。
   - `KIMI_MODEL_THINKING_KEEP` —— Moonshot 的 preserved-thinking 透传（`thinking.keep`），仅在开启 Thinking 时注入。
   - `KIMI_CODE_NO_AUTO_UPDATE`（旧别名 `KIMI_CLI_NO_AUTO_UPDATE`）—— 完全禁用更新预检（不检查、不后台安装、不提示）。
@@ -265,13 +338,10 @@ outline: 2
 ### 新功能
 
 - 新增实验性 goal 模式，用于需要多轮处理的较长任务。在启动 Kimi 前设置 `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` 即可开启。
-
   在终端界面中使用 `/goal <objective>` 让 Kimi 跨轮次持续专注于同一任务。例如：
-
   ```text
   /goal Fix the failing checkout test
   ```
-
   Kimi 会在终端界面中显示目标，并在工作过程中保持进度可见。使用 `/goal status`、`/goal pause`、`/goal resume`、`/goal cancel` 和 `/goal replace <objective>` 来管理该目标。该功能仍处于实验阶段，欢迎试用并反馈改进建议。
 - 新增 `kimi provider` CLI 子命令，支持 `add`、`remove`、`list` 以及 `catalog list` / `catalog add` 操作，可在不启动终端界面的情况下导入和管理来自自定义 registry（api.json）或公开 models.dev 目录的供应商。
 - 新增后台结构化提问，让 Agent 在等待用户回答时也能继续工作。
@@ -366,11 +436,8 @@ outline: 2
 ### 新功能
 
 - 新增定时任务：
-
   你现在可以让 Agent 在指定时间提醒你、按重复的 cron 计划运行任务（例如每 5 分钟检查一次部署，或每个工作日上午 9 点生成一份日报），也可以让它在几分钟后自动回来继续之前的工作。
-
   定时任务使用标准的 5 字段 cron 语法。
-
 - 新增 `/auto` 斜杠命令和 `--auto` CLI 参数，用于启用 auto 权限模式。
 - 在 `Write` 和 `Edit` 的审批提示中显示文件内容与 diff，并通过 `Ctrl-E` 在专用的全屏查看器中打开。
 

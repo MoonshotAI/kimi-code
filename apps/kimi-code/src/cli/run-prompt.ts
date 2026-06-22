@@ -83,6 +83,7 @@ export async function runPrompt(
       }
       track('oauth_refresh', { success: false, reason: outcome.reason });
     },
+    sessionStartedProperties: { yolo: false, plan: false, afk: true },
   });
   log.info('kimi-code starting', {
     version,
@@ -115,7 +116,7 @@ export async function runPrompt(
     for (const warning of (await harness.getConfigDiagnostics()).warnings) {
       stderr.write(`Warning: ${warning}\n`);
     }
-    const { session, resumed, restorePermission, telemetryModel, goalModel } =
+    const { session, restorePermission, telemetryModel, goalModel } =
       await resolvePromptSession(
         harness,
         opts,
@@ -137,13 +138,6 @@ export async function runPrompt(
       model: telemetryModel,
     });
     setCrashPhase('runtime');
-
-    withTelemetryContext({ sessionId: session.id }).track('started', {
-      resumed,
-      yolo: false,
-      plan: false,
-      afk: true,
-    });
 
     const outputFormat = opts.outputFormat ?? 'text';
     // Headless goal mode: `kimi -p "/goal <objective>"`. The goal driver keeps

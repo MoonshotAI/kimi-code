@@ -24,7 +24,6 @@ const HEALTH_OPTIONS: { value: HealthFilter; label: string }[] = [
   { value: 'broken_state', label: 'broken state' },
   { value: 'broken_main_wire', label: 'broken wire' },
   { value: 'missing_main_wire', label: 'no wire' },
-  { value: 'unsupported_protocol', label: 'old proto' },
 ];
 
 export function SessionFilter({

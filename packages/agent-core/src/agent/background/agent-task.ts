@@ -1,11 +1,10 @@
-import { sleep } from '@antfu/utils';
-
 import { errorMessage, isAbortError } from '../../loop/errors';
 import {
   type BackgroundTask,
   type BackgroundTaskInfoBase,
   type BackgroundTaskSink,
 } from './task';
+import type { SessionSubagentHost, SubagentHandle } from '../../session/subagent-host';
 
 export interface AgentBackgroundTaskInfo extends BackgroundTaskInfoBase {
   readonly kind: 'agent';
@@ -15,35 +14,25 @@ export interface AgentBackgroundTaskInfo extends BackgroundTaskInfoBase {
   readonly subagentType?: string;
 }
 
-export interface AgentBackgroundTaskOptions {
-  readonly timeoutMs?: number;
-  readonly abort?: () => void;
-  readonly agentId?: string;
-  readonly subagentType?: string;
-}
-
 export class AgentBackgroundTask implements BackgroundTask {
   readonly kind = 'agent' as const;
   readonly idPrefix: string = 'agent';
-  readonly timeoutMs?: number;
-  readonly agentId?: string;
-  readonly subagentType?: string;
-  private readonly abort?: () => void;
+  readonly agentId: string;
+  readonly subagentType: string;
 
   constructor(
-    private readonly completion: Promise<{ result: string }>,
+    private readonly handle: SubagentHandle,
     readonly description: string,
-    options: AgentBackgroundTaskOptions = {},
+    private readonly subagentHost: Pick<SessionSubagentHost, 'markActiveChildDetached'>,
+    private readonly abortController: AbortController,
   ) {
-    this.timeoutMs = options.timeoutMs;
-    this.abort = options.abort;
-    this.agentId = options.agentId;
-    this.subagentType = options.subagentType;
+    this.agentId = handle.agentId;
+    this.subagentType = handle.profileName;
   }
 
   async start(sink: BackgroundTaskSink): Promise<void> {
     const requestAbort = (): void => {
-      this.abort?.();
+      this.abortController.abort(sink.signal.reason);
     };
     if (sink.signal.aborted) {
       requestAbort();
@@ -51,27 +40,12 @@ export class AgentBackgroundTask implements BackgroundTask {
       sink.signal.addEventListener('abort', requestAbort, { once: true });
     }
 
-    const deadlineTimeout: unique symbol = Symbol('background-agent-deadline');
-    const raceInputs: Array<Promise<{ result: string } | typeof deadlineTimeout>> = [
-      this.completion,
-    ];
-    const timeoutMs = this.timeoutMs;
-
-    if (timeoutMs !== undefined && timeoutMs > 0) {
-      raceInputs.push(sleep(timeoutMs).then(() => deadlineTimeout));
-    }
-
     try {
-      const outcome = await Promise.race(raceInputs);
-      if (outcome === deadlineTimeout) {
-        this.abort?.();
-        await sink.settle({ status: 'timed_out' });
-        return;
-      }
+      const outcome = await this.handle.completion;
       sink.appendOutput(outcome.result);
       await sink.settle({ status: 'completed' });
     } catch (error: unknown) {
-      if (sink.signal.aborted && isAbortError(error)) {
+      if (sink.signal.aborted && (isAbortError(error) || error === sink.signal.reason)) {
         await sink.settle({ status: 'killed' });
         return;
       }
@@ -79,6 +53,10 @@ export class AgentBackgroundTask implements BackgroundTask {
     } finally {
       sink.signal.removeEventListener('abort', requestAbort);
     }
+  }
+
+  onDetach(): void {
+    this.subagentHost.markActiveChildDetached(this.agentId);
   }
 
   toInfo(base: BackgroundTaskInfoBase): AgentBackgroundTaskInfo {

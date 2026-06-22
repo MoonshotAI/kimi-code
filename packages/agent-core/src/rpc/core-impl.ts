@@ -41,12 +41,19 @@ import {
 } from '../session/provider-manager';
 import { SessionAPIImpl } from '../session/rpc';
 import { normalizeWorkDir, SessionStore } from '../session/store/index';
-import { noopTelemetryClient, withTelemetryContext, type TelemetryClient } from '../telemetry';
+import {
+  noopTelemetryClient,
+  withTelemetryContext,
+  withTelemetryProperties,
+  type TelemetryClient,
+  type TelemetryProperties,
+} from '../telemetry';
 import type { CoreRPCClient } from './client';
 import type {
   ActivateSkillPayload,
   AddAdditionalDirPayload,
   AddAdditionalDirResult,
+  ArchiveSessionPayload,
   BeginCompactionPayload,
   CancelPayload,
   CancelPlanPayload,
@@ -56,6 +63,8 @@ import type {
   CoreInfo,
   CreateGoalPayload,
   CreateSessionPayload,
+  DetachBackgroundPayload,
+  ClientTelemetryInfo,
   EmptyPayload,
   EnterSwarmPayload,
   GoalSnapshot,
@@ -237,6 +246,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       ...summary,
       metadata: options.metadata,
     };
+    const clientTelemetry = clientTelemetryProperties(options.client);
+    const sessionTelemetryBase = withTelemetryContext(this.telemetry, { sessionId: summary.id });
+    const sessionTelemetry =
+      Object.keys(clientTelemetry).length === 0
+        ? sessionTelemetryBase
+        : withTelemetryProperties(sessionTelemetryBase, clientTelemetry);
 
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
@@ -261,7 +276,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       skills: this.resolveSessionSkillConfig(config),
       mcpConfig,
       experimentalFlags: this.experimentalFlags,
-      telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
+      telemetry: sessionTelemetry,
       pluginSessionStarts,
       appVersion: this.appVersion,
       additionalDirs,
@@ -299,6 +314,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       throw error;
     }
     this.sessions.set(id, session);
+    if (Object.keys(clientTelemetry).length > 0) {
+      sessionTelemetry.track('session_started', { resumed: false });
+    }
     return withAdditionalDirs(result, session);
   }
 
@@ -316,6 +334,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       await session.close();
       this.sessions.delete(sessionId);
     }
+  }
+
+  async archiveSession({ sessionId }: ArchiveSessionPayload): Promise<void> {
+    await this.closeSession({ sessionId });
+    await this.sessionStore.archive(sessionId);
   }
 
   async resumeSession(input: ResumeSessionPayload): Promise<ResumeSessionResult> {
@@ -618,6 +641,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   stopBackground({ sessionId, ...payload }: SessionAgentPayload<StopBackgroundPayload>) {
     return this.sessionApi(sessionId).stopBackground(payload);
+  }
+
+  detachBackground({ sessionId, ...payload }: SessionAgentPayload<DetachBackgroundPayload>) {
+    return this.sessionApi(sessionId).detachBackground(payload);
   }
 
   clearContext({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
@@ -1071,6 +1098,23 @@ function telemetryErrorReason(error: unknown): string {
   if (error instanceof KimiError) return error.code;
   if (error instanceof Error && error.name.length > 0) return error.name;
   return typeof error;
+}
+
+function clientTelemetryProperties(client: ClientTelemetryInfo | undefined): TelemetryProperties {
+  if (client === undefined) return {};
+  const properties: Record<string, string> = {};
+  addNonEmpty(properties, 'client_id', client.id);
+  addNonEmpty(properties, 'client_name', client.name);
+  addNonEmpty(properties, 'client_version', client.version);
+  addNonEmpty(properties, 'ui_mode', client.uiMode);
+  return properties;
+}
+
+function addNonEmpty(target: Record<string, string>, key: string, value: string | undefined): void {
+  const trimmed = value?.trim();
+  if (trimmed !== undefined && trimmed.length > 0) {
+    target[key] = trimmed;
+  }
 }
 
 async function resumeSessionResult(

@@ -56,6 +56,12 @@ describe('Event public types', () => {
       switch (event.type) {
         case 'agent.status.updated':
         case 'session.meta.updated':
+        case 'event.session.created':
+        case 'event.session.status_changed':
+        case 'event.workspace.created':
+        case 'event.workspace.updated':
+        case 'event.workspace.deleted':
+        case 'event.config.changed':
         case 'goal.updated':
         case 'skill.activated':
         case 'error':
@@ -87,6 +93,7 @@ describe('Event public types', () => {
         case 'background.task.started':
         case 'background.task.terminated':
         case 'cron.fired':
+        case 'prompt.submitted':
           return;
         default:
           assertNever(event);

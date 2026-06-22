@@ -7,6 +7,9 @@ export const PROCESS_NAME = 'kimi-code';
 // Used in telemetry app names and HTTP User-Agent headers.
 export const CLI_USER_AGENT_PRODUCT = 'kimi-code-cli';
 export const CLI_UI_MODE = 'shell';
+// Telemetry ui_mode for the `kimi web` / `kimi server run` host. Same product
+// as the CLI (CLI_USER_AGENT_PRODUCT); the surface is distinguished by ui_mode.
+export const WEB_UI_MODE = 'web';
 
 // Give telemetry a short flush window without making CLI exit feel stuck.
 export const CLI_SHUTDOWN_TIMEOUT_MS = 3000;

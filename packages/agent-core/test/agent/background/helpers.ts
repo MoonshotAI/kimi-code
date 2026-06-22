@@ -2,11 +2,13 @@ import type { KaosProcess } from '@moonshot-ai/kaos';
 import { vi } from 'vitest';
 
 import {
+  AgentBackgroundTask,
   BackgroundManager,
   BackgroundTaskPersistence,
   ProcessBackgroundTask,
   type BackgroundTaskInfo,
 } from '../../../src/agent/background';
+import type { SessionSubagentHost, SubagentHandle } from '../../../src/session/subagent-host';
 import type { AgentEvent } from '../../../src/rpc/events';
 
 export interface FakeBackgroundAgent {
@@ -63,6 +65,30 @@ export function registerProcess(
   description: string,
 ): string {
   return manager.registerTask(new ProcessBackgroundTask(proc, command, description));
+}
+
+export function agentTask(
+  completion: Promise<{ result: string }>,
+  description: string,
+  options: {
+    readonly agentId?: string;
+    readonly subagentType?: string;
+    readonly subagentHost?: Pick<SessionSubagentHost, 'markActiveChildDetached'>;
+    readonly abortController?: AbortController;
+  } = {},
+): AgentBackgroundTask {
+  const handle: SubagentHandle = {
+    agentId: options.agentId ?? 'agent-child',
+    profileName: options.subagentType ?? 'coder',
+    resumed: false,
+    completion,
+  };
+  return new AgentBackgroundTask(
+    handle,
+    description,
+    options.subagentHost ?? { markActiveChildDetached: vi.fn() },
+    options.abortController ?? new AbortController(),
+  );
 }
 
 export async function waitForTerminal(

@@ -40,6 +40,13 @@ export type PromptInput = readonly PromptPart[];
 export type EmptyPayload = {};
 export type SessionMetadataPatch = Partial<Omit<SessionMeta, 'agents'>>;
 
+export interface ClientTelemetryInfo {
+  readonly id?: string | undefined;
+  readonly name?: string | undefined;
+  readonly version?: string | undefined;
+  readonly uiMode?: string | undefined;
+}
+
 export interface CreateSessionPayload {
   readonly id?: string | undefined;
   readonly workDir: string;
@@ -49,9 +56,14 @@ export interface CreateSessionPayload {
   readonly metadata?: JsonObject | undefined;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
+  readonly client?: ClientTelemetryInfo | undefined;
 }
 
 export interface CloseSessionPayload {
+  readonly sessionId: string;
+}
+
+export interface ArchiveSessionPayload {
   readonly sessionId: string;
 }
 
@@ -126,6 +138,7 @@ export interface ExportSessionResult {
 export interface ListSessionsPayload {
   readonly workDir?: string;
   readonly sessionId?: string;
+  readonly includeArchive?: boolean;
 }
 
 export interface CoreInfo {
@@ -194,6 +207,9 @@ export interface StopBackgroundPayload {
   readonly taskId: string;
   /** Free-form human-readable reason persisted with the task record. */
   readonly reason?: string;
+}
+export interface DetachBackgroundPayload {
+  readonly taskId: string;
 }
 export interface GetBackgroundOutputPayload {
   readonly taskId: string;
@@ -341,6 +357,7 @@ export interface AgentAPI {
   unregisterTool: (payload: UnregisterToolPayload) => void;
   setActiveTools: (payload: SetActiveToolsPayload) => void;
   stopBackground: (payload: StopBackgroundPayload) => void;
+  detachBackground: (payload: DetachBackgroundPayload) => BackgroundTaskInfo | undefined;
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
   startBtw: (payload: EmptyPayload) => string;
@@ -384,6 +401,7 @@ export interface CoreAPI extends SessionAPIWithId {
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
   createSession: (payload: CreateSessionPayload) => SessionSummary;
   closeSession: (payload: CloseSessionPayload) => void;
+  archiveSession: (payload: ArchiveSessionPayload) => void;
   resumeSession: (payload: ResumeSessionPayload) => ResumeSessionResult;
   reloadSession: (payload: ReloadSessionPayload) => ResumeSessionResult;
   forkSession: (payload: ForkSessionPayload) => ResumeSessionResult;
