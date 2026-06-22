@@ -1,4 +1,4 @@
-import { onUnexpectedError } from '../../errors/unexpectedError';
+import { onUnexpectedError } from '#/_base/errors';
 
 export interface IDisposableTracker {
   trackDisposable(disposable: IDisposable): void;

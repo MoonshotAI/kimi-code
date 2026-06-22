@@ -1,4 +1,4 @@
-import { onUnexpectedError, safelyCallListener } from '../../errors/unexpectedError';
+import { onUnexpectedError, safelyCallListener } from '#/_base/errors';
 import {
   Disposable,
   DisposableStore,

@@ -23,7 +23,7 @@ import {
 import {
   resetUnexpectedErrorHandler,
   setUnexpectedErrorHandler,
-} from '#/errors/unexpectedError';
+} from '#/_base/errors';
 
 function makeRecorder(label: string, store: string[]): IDisposable {
   return {

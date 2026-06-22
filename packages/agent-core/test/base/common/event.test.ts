@@ -5,7 +5,7 @@ import { Disposable, DisposableStore, type IDisposable } from '#/_base/di';
 import {
   resetUnexpectedErrorHandler,
   setUnexpectedErrorHandler,
-} from '#/errors/unexpectedError';
+} from '#/_base/errors';
 
 afterEach(() => {
   resetUnexpectedErrorHandler();

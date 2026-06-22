@@ -15,10 +15,3 @@ export {
   toKimiErrorPayload,
   type KimiErrorPayload,
 } from './serialize';
-export {
-  onUnexpectedError,
-  resetUnexpectedErrorHandler,
-  safelyCallListener,
-  setUnexpectedErrorHandler,
-  type UnexpectedErrorHandler,
-} from './unexpectedError';

@@ -30,6 +30,7 @@
     "#/_base/di": "./src/_base/di/index.ts",
     "#/_base/event": "./src/_base/event/index.ts",
     "#/_base/logging": "./src/_base/logging/index.ts",
+    "#/_base/errors": "./src/_base/errors/index.ts",
     "#/*": [
       "./src/*.ts",
       "./src/*/index.ts"

@@ -5,7 +5,7 @@ import {
   resetUnexpectedErrorHandler,
   safelyCallListener,
   setUnexpectedErrorHandler,
-} from '#/errors/unexpectedError';
+} from '#/_base/errors';
 
 describe('onUnexpectedError + setUnexpectedErrorHandler', () => {
   afterEach(() => {

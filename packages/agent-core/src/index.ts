@@ -85,6 +85,13 @@ export type {
 // ─── Dependency injection container ────────────────────────────────────────
 export * from './_base/di';
 
+// ─── Base — unexpected-error reporting ─────────────────────────────────────
+// `onUnexpectedError` / `safelyCallListener` / `setUnexpectedErrorHandler` /
+// `resetUnexpectedErrorHandler` / `UnexpectedErrorHandler` were historically
+// re-exported via `./errors`; they now live in `_base/errors`. Re-exporting
+// here keeps the package root surface unchanged for consumers like `server`.
+export * from './_base/errors';
+
 // ─── Scope mechanism (di-v3) ───────────────────────────────────────────────
 // Exposes `LifecycleScope`, `registerScopedService` /
 // `getScopedServiceDescriptors` / `markBuilt` / `isBuilt`, the `I*Context`
