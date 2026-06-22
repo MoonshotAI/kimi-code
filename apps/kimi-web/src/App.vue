@@ -160,7 +160,9 @@ const {
   PREVIEW_WIDTH_KEY,
   PREVIEW_MIN,
   previewDefaultWidth,
+  previewMax,
   previewWidth,
+  previewPanelWidth,
   thinkingPanelText,
   thinkingVisible,
   openThinkingPanel,
@@ -526,7 +528,7 @@ function openPr(url: string): void {
       v-else
       class="app"
       :class="{ mobile: isMobile, 'sidebar-collapsed': sidebarCollapsed && !isMobile }"
-      :style="{ '--side-w': sideWidth + 'px', '--preview-w': previewWidth + 'px' }"
+      :style="{ '--side-w': sideWidth + 'px', '--preview-w': previewPanelWidth + 'px' }"
     >
     <!-- Desktop navigation: workspace rail + resizable session column. -->
     <template v-if="!isMobile">
@@ -685,6 +687,7 @@ function openPr(url: string): void {
       :storage-key="PREVIEW_WIDTH_KEY"
       :default-width="previewDefaultWidth"
       :min="PREVIEW_MIN"
+      :max="previewMax"
       reverse
       :aria-label="t('layout.resizePreviewAria')"
       @update:width="previewWidth = $event"

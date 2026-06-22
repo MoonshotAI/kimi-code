@@ -5,6 +5,7 @@ import { computed, ref, watch, type Ref } from 'vue';
 import type { AgentMember } from '../types';
 import type { DetailTarget } from './useFilePreview';
 import type { useKimiWebClient } from './useKimiWebClient';
+import { clampPanelWidth, panelMaxWidth, useViewportWidth } from './useViewportWidth';
 
 type KimiWebClient = ReturnType<typeof useKimiWebClient>;
 
@@ -30,22 +31,33 @@ export function useDetailPanel({
   // ---------------------------------------------------------------------------
   // Panel width helpers
   // ---------------------------------------------------------------------------
-  function previewAreaWidth(): number {
-    if (typeof window === 'undefined') return PREVIEW_MIN * 2;
-    return Math.max(0, window.innerWidth - sideWidth.value);
-  }
+  const { viewportWidth } = useViewportWidth();
+
+  // Area available to the right of the sidebar (conversation + preview).
+  const previewAreaWidth = computed(() =>
+    Math.max(0, viewportWidth.value - sideWidth.value),
+  );
+
+  // Largest preview width that still leaves the conversation pane usable.
+  const previewMax = computed(() =>
+    panelMaxWidth(previewAreaWidth.value, PREVIEW_MIN, PREVIEW_MIN),
+  );
 
   function clampPreviewWidth(width: number): number {
-    const max = Math.max(PREVIEW_MIN, previewAreaWidth() - PREVIEW_MIN);
-    return Math.min(max, Math.max(PREVIEW_MIN, Math.round(width)));
+    return clampPanelWidth(Math.round(width), PREVIEW_MIN, previewMax.value);
   }
 
   function defaultPreviewWidth(): number {
-    return clampPreviewWidth(previewAreaWidth() / 2);
+    return clampPreviewWidth(previewAreaWidth.value / 2);
   }
 
   const previewDefaultWidth = computed(() => defaultPreviewWidth());
   const previewWidth = ref(previewDefaultWidth.value);
+  // Rendered width, clamped to the current cap so a restored width or a window
+  // shrink can never push the resize handle off-screen.
+  const previewPanelWidth = computed(() =>
+    clampPanelWidth(previewWidth.value, PREVIEW_MIN, previewMax.value),
+  );
 
   // ---------------------------------------------------------------------------
   // Thinking panel
@@ -226,7 +238,9 @@ export function useDetailPanel({
     PREVIEW_WIDTH_KEY,
     PREVIEW_MIN,
     previewDefaultWidth,
+    previewMax,
     previewWidth,
+    previewPanelWidth,
     thinkingPanelText,
     thinkingVisible,
     openThinkingPanel,

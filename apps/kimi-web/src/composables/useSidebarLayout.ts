@@ -2,8 +2,9 @@
 // Layout: resizable session column. ResizeHandle owns the column width (with
 // localStorage persistence); we mirror it here to drive the App grid.
 
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, ref } from 'vue';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../lib/storage';
+import { clampPanelWidth, panelMaxWidth, useViewportWidth } from './useViewportWidth';
 
 const SIDEBAR_WIDTH_KEY = STORAGE_KEYS.sidebarWidth;
 const SIDEBAR_COLLAPSED_KEY = STORAGE_KEYS.sidebarCollapsed;
@@ -17,26 +18,19 @@ const SIDEBAR_COLLAPSED_WIDTH = 36;
 const CONVERSATION_MIN = 320;
 
 export function useSidebarLayout() {
+  const { viewportWidth } = useViewportWidth();
   const sessionColWidth = ref(SIDEBAR_DEFAULT);
   const sidebarCollapsed = ref(false);
-  const viewportWidth = ref(
-    typeof window === 'undefined' ? SIDEBAR_DEFAULT + CONVERSATION_MIN : window.innerWidth,
-  );
 
-  function updateViewportWidth(): void {
-    viewportWidth.value = window.innerWidth;
-  }
-
-  // Largest sidebar width that still leaves the conversation pane usable. Never
-  // below SIDEBAR_MIN so the sidebar itself stays intact on very narrow windows.
+  // Largest sidebar width that still leaves the conversation pane usable.
   const sidebarMax = computed(() =>
-    Math.max(SIDEBAR_MIN, viewportWidth.value - CONVERSATION_MIN),
+    panelMaxWidth(viewportWidth.value, SIDEBAR_MIN, CONVERSATION_MIN),
   );
 
   const sideWidth = computed(() =>
     sidebarCollapsed.value
       ? SIDEBAR_COLLAPSED_WIDTH
-      : Math.min(sessionColWidth.value, sidebarMax.value),
+      : clampPanelWidth(sessionColWidth.value, SIDEBAR_MIN, sidebarMax.value),
   );
 
   function loadSidebarCollapsed(): void {
@@ -59,9 +53,6 @@ export function useSidebarLayout() {
     sidebarCollapsed.value = !sidebarCollapsed.value;
     saveSidebarCollapsed();
   }
-
-  onMounted(() => window.addEventListener('resize', updateViewportWidth));
-  onBeforeUnmount(() => window.removeEventListener('resize', updateViewportWidth));
 
   return {
     SIDEBAR_WIDTH_KEY,
