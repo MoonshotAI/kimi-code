@@ -1,12 +1,9 @@
-import { mkdir, readFile } from 'node:fs/promises';
-
 import type { Kaos } from '@moonshot-ai/kaos';
 import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { z } from 'zod';
 
 import { ErrorCodes, KimiError } from '#/errors';
-import { writeFileAtomicDurable } from '#/utils/fs';
 
 const S_IFMT = 0o170000;
 const S_IFDIR = 0o040000;
@@ -41,7 +38,7 @@ export async function loadWorkspaceLocalConfig(
 ): Promise<WorkspaceLocalConfig> {
   const projectRoot = await findProjectRoot(kaos, workDir);
   const configPath = getWorkspaceLocalConfigPath(projectRoot);
-  const file = await readWorkspaceLocalToml(configPath);
+  const file = await readWorkspaceLocalToml(kaos, configPath);
 
   const additionalDirs = file?.parsed.workspace?.additional_dir;
   if (additionalDirs === undefined) {
@@ -78,8 +75,8 @@ export async function appendWorkspaceAdditionalDir(
 ): Promise<WorkspaceAdditionalDirsLoadResult> {
   const projectRoot = await findProjectRoot(kaos, workDir);
   const configPath = getWorkspaceLocalConfigPath(projectRoot);
-  const additionalDir = await resolveAdditionalDir(kaos, projectRoot, inputPath);
-  const file = (await readWorkspaceLocalToml(configPath)) ?? { raw: {}, parsed: {} };
+  const additionalDir = await resolveAdditionalDir(kaos, workDir, inputPath);
+  const file = (await readWorkspaceLocalToml(kaos, configPath)) ?? { raw: {}, parsed: {} };
   const fileAdditionalDirs = file.parsed.workspace?.additional_dir ?? [];
   const fileExistingDirs = resolveExistingAdditionalDirs(kaos, projectRoot, fileAdditionalDirs);
 
@@ -91,8 +88,8 @@ export async function appendWorkspaceAdditionalDir(
   workspace['additional_dir'] = [...fileExistingDirs, additionalDir];
   file.raw['workspace'] = workspace;
 
-  await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
-  await writeFileAtomicDurable(configPath, `${stringifyToml(file.raw)}\n`);
+  await kaos.mkdir(dirname(configPath), { parents: true, existOk: true });
+  await kaos.writeText(configPath, `${stringifyToml(file.raw)}\n`);
 
   return { projectRoot, configPath, additionalDirs: [...fileExistingDirs, additionalDir] };
 }
@@ -131,10 +128,13 @@ function resolveWorkDir(kaos: Kaos, workDir: string): string {
   return isAbsolute(workDir) ? kaos.normpath(workDir) : resolve(kaos.getcwd(), workDir);
 }
 
-async function readWorkspaceLocalToml(configPath: string): Promise<WorkspaceLocalTomlFile | undefined> {
+async function readWorkspaceLocalToml(
+  kaos: Kaos,
+  configPath: string,
+): Promise<WorkspaceLocalTomlFile | undefined> {
   let text: string;
   try {
-    text = await readFile(configPath, 'utf-8');
+    text = await kaos.readText(configPath);
   } catch (error: unknown) {
     if (isPathMissing(error)) return undefined;
     throw new KimiError(

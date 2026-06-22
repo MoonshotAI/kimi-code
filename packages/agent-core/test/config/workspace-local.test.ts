@@ -122,6 +122,17 @@ describe('workspace local config', () => {
     expect(second.additionalDirs).toEqual([sharedDir, otherDir]);
   });
 
+  it('resolves an appended relative path against workDir, not the project root', async () => {
+    const root = await makeProject();
+    const appDir = join(root, 'packages', 'app');
+    const sharedDir = join(root, 'packages', 'shared');
+    await mkdir(sharedDir, { recursive: true });
+
+    const result = await appendWorkspaceAdditionalDir(testKaos, appDir, '../shared', []);
+
+    expect(result.additionalDirs).toEqual([sharedDir]);
+  });
+
   it('uses the actual local.toml state even when current dirs are empty', async () => {
     const root = await makeProject();
     const sharedDir = join(root, 'shared');

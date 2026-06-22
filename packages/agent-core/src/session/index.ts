@@ -251,7 +251,7 @@ export class Session {
     }
 
     const workspace = await readWorkspaceAdditionalDirs(systemKaos, cwd);
-    const additionalDirs = await resolveWorkspaceAdditionalDirs(systemKaos, workspace.projectRoot, [path]);
+    const additionalDirs = await resolveWorkspaceAdditionalDirs(systemKaos, cwd, [path]);
     const nextAdditionalDirs = normalizeAdditionalDirs([...this.additionalDirs, ...additionalDirs]);
     await this.setAdditionalDirs(nextAdditionalDirs);
     this.notifyAdditionalDirAdded(path, false, workspace.configPath);
