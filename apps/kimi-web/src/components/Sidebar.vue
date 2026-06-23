@@ -6,6 +6,7 @@
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { serverEndpointLabel } from '../api/config';
+import { copyTextToClipboard } from '../lib/clipboard';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
@@ -249,7 +250,7 @@ function closeGhMenu(): void {
 
 function copyPathFromMenu(): void {
   if (ghMenuTarget.value) {
-    void navigator.clipboard.writeText(ghMenuTarget.value.root);
+    void copyTextToClipboard(ghMenuTarget.value.root);
   }
   closeGhMenu();
 }
@@ -352,7 +353,7 @@ function closeWsMenu(): void {
 }
 
 function copyWsPath(ws: WorkspaceView): void {
-  void navigator.clipboard.writeText(ws.root);
+  void copyTextToClipboard(ws.root);
   closeWsMenu();
 }
 

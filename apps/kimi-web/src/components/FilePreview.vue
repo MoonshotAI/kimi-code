@@ -5,6 +5,7 @@ import { computed, inject, nextTick, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Markdown from './chat/Markdown.vue';
 import type { FileData, FilePreviewRequest } from '../types';
+import { copyTextToClipboard } from '../lib/clipboard';
 
 const { t } = useI18n();
 
@@ -251,18 +252,20 @@ const copiedPath = ref(false);
 
 function copyContent(): void {
   if (!props.file) return;
-  navigator.clipboard.writeText(sourceText.value).then(() => {
+  void copyTextToClipboard(sourceText.value).then((ok) => {
+    if (!ok) return;
     copied.value = true;
     setTimeout(() => { copied.value = false; }, 1400);
-  }).catch(() => {/* ignore */});
+  });
 }
 
 function copyPath(): void {
   if (!props.file) return;
-  navigator.clipboard.writeText(props.file.path).then(() => {
+  void copyTextToClipboard(props.file.path).then((ok) => {
+    if (!ok) return;
     copiedPath.value = true;
     setTimeout(() => { copiedPath.value = false; }, 1400);
-  }).catch(() => {/* ignore */});
+  });
 }
 
 // ---------------------------------------------------------------------------

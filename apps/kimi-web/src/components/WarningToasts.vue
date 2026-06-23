@@ -4,6 +4,7 @@
 import { onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppNotice, AppWarning } from '../api/types';
+import { copyTextToClipboard } from '../lib/clipboard';
 
 const props = defineProps<{ warnings: AppWarning[] }>();
 const emit = defineEmits<{ dismiss: [index: number] }>();
@@ -120,8 +121,8 @@ function toggleDetails(toast: ToastItem): void {
 }
 
 async function copyDetails(toast: ToastItem): Promise<void> {
-  if (!navigator.clipboard?.writeText) return;
-  await navigator.clipboard.writeText(formatWarningForCopy(toast.warning));
+  const ok = await copyTextToClipboard(formatWarningForCopy(toast.warning));
+  if (!ok) return;
   toast.copied = true;
   const prev = copiedTimers.get(toast.id);
   if (prev) clearTimeout(prev);

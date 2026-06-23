@@ -6,6 +6,7 @@
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
+import { copyTextToClipboard } from '../../lib/clipboard';
 
 const { t } = useI18n();
 
@@ -164,11 +165,10 @@ function handleQuickOpen(): void {
 const copiedPath = ref(false);
 async function copyPath(): Promise<void> {
   if (!props.workDir) return;
-  try {
-    await navigator.clipboard.writeText(props.workDir);
-    copiedPath.value = true;
-    setTimeout(() => { copiedPath.value = false; }, 1200);
-  } catch { /* ignore */ }
+  const ok = await copyTextToClipboard(props.workDir);
+  if (!ok) return;
+  copiedPath.value = true;
+  setTimeout(() => { copiedPath.value = false; }, 1200);
 }
 </script>
 
