@@ -74,9 +74,14 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
       return;
     }
     if (sub === 'marketplace') {
+      const marketplaceSource = rest.join(' ').trim() || undefined;
       await showPluginsPicker(host, {
-        initialTab: 'official',
-        marketplaceSource: rest.join(' ').trim() || undefined,
+        // Custom marketplaces often omit `tier`, so their entries land on the
+        // Third-party tab (entry.tier !== 'official'). Open there when a custom
+        // source is supplied; otherwise the default catalog's official entries
+        // make Official the right landing tab.
+        initialTab: marketplaceSource === undefined ? 'official' : 'third-party',
+        marketplaceSource,
       });
       return;
     }
