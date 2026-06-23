@@ -58,6 +58,8 @@ const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
 const TOOL_EMPTY_ERROR_STATUS =
   '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
 const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
+const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
+  'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
 
 export interface TranscriptEntry {
   readonly message: ContextMessage;
@@ -116,6 +118,32 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
     push(...deferred);
     deferred = [];
   };
+  // Mirrors ContextMemory.closePendingToolResults: a tool call left open when a
+  // new step begins was interrupted, so synthesize its error result in place.
+  // ContextMemory does this during replay, where the synthetic result is NOT
+  // re-persisted to the wire log, so the reducer must reconstruct it to keep
+  // `foldedLength` aligned with the live folded history.
+  const closePendingToolResults = (time: number | undefined): void => {
+    if (pendingToolResultIds.size === 0) return;
+    const interruptedToolCallIds = [...pendingToolResultIds];
+    for (const toolCallId of interruptedToolCallIds) {
+      push({
+        message: {
+          role: 'tool',
+          content: toolResultContent({
+            output: TOOL_INTERRUPTED_ON_RESUME_OUTPUT,
+            isError: true,
+          }),
+          toolCalls: [],
+          toolCallId,
+          isError: true,
+        },
+        time,
+      });
+      pendingToolResultIds.delete(toolCallId);
+    }
+    flushDeferredIfToolExchangeClosed();
+  };
   const resetOpenState = (): void => {
     openSteps.clear();
     pendingToolResultIds.clear();
@@ -125,6 +153,7 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
   const applyLoopEvent = (event: LoopRecordedEvent, time: number | undefined): void => {
     switch (event.type) {
       case 'step.begin': {
+        closePendingToolResults(time);
         const entry: MutableEntry = {
           message: { role: 'assistant', content: [], toolCalls: [] },
           time,

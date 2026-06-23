@@ -192,6 +192,49 @@ describe('reduceWireRecords', () => {
     expect(textOf(entries[1]!.message)).toBe('ok');
   });
 
+  it('closes a tool call interrupted mid-history at the next step.begin', () => {
+    // Mirrors ContextMemory's replay-time closePendingToolResults: the synthetic
+    // interrupted result is re-derived (not persisted to the wire log), so the
+    // reducer must reconstruct it and flush the deferred message in place — and
+    // foldedLength must match the live folded history length so the downstream
+    // tail merge slices from the right index.
+    const { entries, foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: 't', step: 0 }),
+      loopEvent({
+        type: 'tool.call',
+        uuid: 'c1',
+        turnId: 't',
+        step: 0,
+        stepUuid: 's1',
+        toolCallId: 'call_interrupted',
+        name: 'Lookup',
+        args: { query: 'one' },
+      }),
+      // Recorded while the exchange was open, so it was deferred live.
+      appendMessage(userMessage('keep going')),
+      ...assistantStep('s2', 'a2'),
+    ]);
+    expect(entries.map((e) => e.message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'user',
+      'assistant',
+    ]);
+    // Synthetic result spliced in place (index 2), before the deferred prompt.
+    expect(entries[2]!.message.toolCallId).toBe('call_interrupted');
+    expect(entries[2]!.message.isError).toBe(true);
+    expect(textOf(entries[2]!.message)).toBe(
+      '<system>ERROR: Tool execution failed.</system>\n' +
+        'Tool execution was interrupted before its result was recorded. ' +
+        'Do not assume the tool completed successfully.',
+    );
+    expect(textOf(entries[3]!.message)).toBe('keep going');
+    expect(textOf(entries[4]!.message)).toBe('a2');
+    expect(foldedLength).toBe(5);
+  });
+
   it('wraps tool errors and empty outputs with <system> statuses like agent-core', () => {
     const { entries } = reduceWireRecords([
       loopEvent({ type: 'step.begin', uuid: 's1', turnId: 't', step: 0 }),
