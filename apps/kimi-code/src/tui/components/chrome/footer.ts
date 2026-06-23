@@ -58,6 +58,7 @@ const TOOLBAR_TIPS: readonly ToolbarTip[] = [
   { text: 'ctrl+b: background task', priority: 2 },
   { text: '/compact: compact context', priority: 2 },
   { text: 'ctrl+o: expand tool output' },
+  { text: 'ctrl+t: expand todo list' },
   { text: '/tasks: background tasks' },
   { text: 'shift+enter: newline' },
   { text: '/init: generate AGENTS.md', priority: 2 },

@@ -33,7 +33,9 @@ const { width, dragging, onPointerDown } = useResizable({
   storageKey: props.storageKey,
   defaultWidth: props.defaultWidth,
   min: props.min,
-  max: props.max,
+  // Pass a getter so the cap stays reactive: a viewport-derived max can grow
+  // after the handle mounts and the next drag will use the new limit.
+  max: () => props.max,
   reverse: props.reverse,
 });
 

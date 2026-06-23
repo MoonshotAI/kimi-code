@@ -160,6 +160,10 @@ export class DaemonEventSocket {
   /** Unsubscribe from a session's events. */
   unsubscribe(sessionId: string): void {
     this.subscriptions.delete(sessionId);
+    // Also cancel a subscribe that was queued before server_hello; otherwise
+    // onServerHello would merge it back into the active subscription set.
+    const pendingIdx = this.pendingSubscriptions.findIndex((p) => p.sessionId === sessionId);
+    if (pendingIdx !== -1) this.pendingSubscriptions.splice(pendingIdx, 1);
     if (this.connected && this.ws) {
       this.send({
         type: 'unsubscribe',

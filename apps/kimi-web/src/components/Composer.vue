@@ -1,37 +1,19 @@
 <!-- apps/kimi-web/src/components/Composer.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
-import type { SlashCommand } from '../lib/slashCommands';
-import { buildSlashItems, filterCommands, parseSlash } from '../lib/slashCommands';
+import { buildSlashItems, parseSlash } from '../lib/slashCommands';
 import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView } from '../types';
 import type { AppModel, AppSkill, ThinkingLevel } from '../api/types';
 import { modelThinkingAvailability } from '../lib/modelThinking';
-import { draftStorageKey, safeGetString, safeRemove, safeSetString } from '../lib/storage';
-
-// ---------------------------------------------------------------------------
-// Attachment state
-// ---------------------------------------------------------------------------
-
-interface Attachment {
-  /** Unique local id (used as :key) */
-  localId: string;
-  /** File name */
-  name: string;
-  /** image or video — drives the chip preview and the content-block type. */
-  kind: 'image' | 'video';
-  /** Object URL for the thumbnail preview */
-  previewUrl: string;
-  /** True while uploading */
-  uploading: boolean;
-  /** Resolved daemon file id (set after upload completes) */
-  fileId?: string;
-  /** True if upload failed */
-  error?: boolean;
-}
+import { useInputHistory } from '../composables/useInputHistory';
+import { useSlashMenu } from '../composables/useSlashMenu';
+import { useMentionMenu } from '../composables/useMentionMenu';
+import { useComposerDraft } from '../composables/useComposerDraft';
+import { useAttachmentUpload } from '../composables/useAttachmentUpload';
 
 // ---------------------------------------------------------------------------
 // Props & emits
@@ -99,216 +81,57 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 // ---------------------------------------------------------------------------
-// Textarea
+// Textarea + per-session draft persistence — see useComposerDraft.
 // ---------------------------------------------------------------------------
-
-// Unsent-draft persistence: the composer text is kept in localStorage PER
-// SESSION, so switching away and back (or a page refresh) restores whatever the
-// user was typing for that session. Cleared when the draft is sent/steered.
-function loadDraft(sid: string | undefined): string {
-  return safeGetString(draftStorageKey(sid)) ?? '';
-}
-function saveDraft(sid: string | undefined, value: string): void {
-  const key = draftStorageKey(sid);
-  if (value) safeSetString(key, value);
-  else safeRemove(key);
-}
-
-const text = ref(loadDraft(props.sessionId));
-const textareaRef = ref<HTMLTextAreaElement | null>(null);
-
-function autosize(): void {
-  const el = textareaRef.value;
-  if (!el) return;
-  el.style.removeProperty('height');
-}
-
-watch(text, (value) => {
-  void nextTick(autosize);
-  // Persist the live draft for the current session (empty clears the entry).
-  saveDraft(props.sessionId, value);
+const { text, textareaRef, autosize, loadForEdit } = useComposerDraft({
+  sessionId: () => props.sessionId,
 });
 
-// Switching sessions: stash the draft under the OLD session, then load the new
-// session's draft into the box.
-watch(
-  () => props.sessionId,
-  (newSid, oldSid) => {
-    if (newSid === oldSid) return;
-    saveDraft(oldSid, text.value);
-    text.value = loadDraft(newSid);
-    void nextTick(autosize);
-  },
-);
+// ---------------------------------------------------------------------------
+// Sent-message history recall (shell-style ↑/↓). See useInputHistory for the
+// implementation; the composer keeps the keydown orchestration (which also
+// juggles the slash and mention menus).
+// ---------------------------------------------------------------------------
+const history = useInputHistory({ text, textareaRef, autosize });
 
 // ---------------------------------------------------------------------------
-// Sent-message history recall (shell-style ↑/↓). ArrowUp on the first line
-// recalls older messages; ArrowDown on the last line walks back toward the live
-// draft. Editing the text drops out of history browsing.
+// Slash-command menu — see useSlashMenu for the implementation. The composer
+// keeps the keydown orchestration (arrow keys / Enter / Escape) because it also
+// juggles the mention menu and history recall.
 // ---------------------------------------------------------------------------
-const inputHistory = ref<string[]>([]);
-// -1 = browsing nothing (live draft). Otherwise an index into inputHistory.
-let historyIndex = -1;
-let draftBeforeHistory = '';
-
-function pushInputHistory(entry: string): void {
-  const trimmed = entry.trim();
-  historyIndex = -1;
-  if (!trimmed) return;
-  // Skip consecutive duplicates so repeated sends don't pad the history.
-  if (inputHistory.value[inputHistory.value.length - 1] === trimmed) return;
-  inputHistory.value = [...inputHistory.value, trimmed];
-}
-
-function caretAtFirstLine(): boolean {
-  const el = textareaRef.value;
-  if (!el) return false;
-  const pos = el.selectionStart ?? 0;
-  // No newline before the caret → it sits on the first visual line.
-  return el.value.lastIndexOf('\n', pos - 1) === -1;
-}
-
-function applyHistoryText(value: string): void {
-  text.value = value;
-  void nextTick(() => {
-    const el = textareaRef.value;
-    if (!el) return;
-    autosize();
-    const pos = value.length;
-    el.setSelectionRange(pos, pos);
-  });
-}
-
-function recallOlder(): void {
-  if (inputHistory.value.length === 0) return;
-  if (historyIndex === -1) {
-    draftBeforeHistory = text.value;
-    historyIndex = inputHistory.value.length - 1;
-  } else if (historyIndex > 0) {
-    historyIndex -= 1;
-  } else {
-    return; // already at the oldest entry
-  }
-  applyHistoryText(inputHistory.value[historyIndex]!);
-}
-
-function recallNewer(): void {
-  if (historyIndex === -1) return;
-  if (historyIndex < inputHistory.value.length - 1) {
-    historyIndex += 1;
-    applyHistoryText(inputHistory.value[historyIndex]!);
-  } else {
-    historyIndex = -1;
-    applyHistoryText(draftBeforeHistory);
-  }
-}
+const {
+  open: slashOpen,
+  items: slashItems,
+  active: slashActive,
+  update: updateSlashMenu,
+  select: selectSlashCommand,
+} = useSlashMenu({
+  text,
+  textareaRef,
+  autosize,
+  skills: () => props.skills,
+  emitCommand: (cmd) => emit('command', cmd),
+  historyPush: (entry) => history.push(entry),
+});
 
 // ---------------------------------------------------------------------------
-// Slash-command menu
+// @-mention menu — see useMentionMenu for the implementation. The composer
+// keeps the keydown orchestration because it also juggles the slash menu and
+// history recall.
 // ---------------------------------------------------------------------------
-
-const slashOpen = ref(false);
-const slashItems = ref<SlashCommand[]>([]);
-const slashActive = ref(0);
-
-function updateSlashMenu(): void {
-  const val = text.value;
-  // Only show if the value starts with / and has no space yet (single token)
-  if (val.startsWith('/') && !val.includes(' ')) {
-    // Built-in commands + the active session's skills (shown as /<skill-name>).
-    slashItems.value = filterCommands(val, buildSlashItems(props.skills));
-    slashActive.value = 0;
-    slashOpen.value = slashItems.value.length > 0;
-  } else {
-    slashOpen.value = false;
-  }
-}
-
-function selectSlashCommand(item: SlashCommand): void {
-  slashOpen.value = false;
-  if (item.acceptsInput) {
-    text.value = `${item.name} `;
-    void nextTick(() => {
-      const el = textareaRef.value;
-      if (!el) return;
-      const pos = text.value.length;
-      el.setSelectionRange(pos, pos);
-      el.focus();
-      autosize();
-    });
-    return;
-  }
-  text.value = '';
-  emit('command', item.name);
-}
-
-// ---------------------------------------------------------------------------
-// @-mention menu
-// ---------------------------------------------------------------------------
-
-const mentionOpen = ref(false);
-const mentionItems = ref<FileItem[]>([]);
-const mentionActive = ref(0);
-const mentionLoading = ref(false);
-
-// Debounce timer for mention search
-let mentionTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** Find the @token under the cursor in the current text value. Returns null if none. */
-function getMentionToken(): { token: string; start: number; end: number } | null {
-  const val = text.value;
-  const pos = textareaRef.value?.selectionStart ?? val.length;
-  // Walk backwards from cursor to find the start of a @token
-  let start = pos - 1;
-  while (start >= 0 && !/\s/.test(val[start]!)) {
-    start--;
-  }
-  start++;
-  const tokenPart = val.slice(start, pos);
-  if (!tokenPart.startsWith('@')) return null;
-  // The end of the token is where the cursor is (or after the next space)
-  return { token: tokenPart.slice(1), start, end: pos };
-}
-
-function updateMentionMenu(): void {
-  const mt = getMentionToken();
-  if (!mt || !props.searchFiles) {
-    mentionOpen.value = false;
-    return;
-  }
-  const query = mt.token;
-  if (mentionTimer !== null) clearTimeout(mentionTimer);
-  mentionTimer = setTimeout(async () => {
-    mentionLoading.value = true;
-    mentionOpen.value = true;
-    mentionActive.value = 0;
-    try {
-      const results = await props.searchFiles!(query);
-      mentionItems.value = results;
-    } catch {
-      mentionItems.value = [];
-    } finally {
-      mentionLoading.value = false;
-    }
-  }, 200);
-}
-
-function selectMentionItem(item: FileItem): void {
-  const mt = getMentionToken();
-  if (!mt) return;
-  const val = text.value;
-  // Replace @query token with the file path
-  text.value = val.slice(0, mt.start) + item.path + val.slice(mt.end);
-  mentionOpen.value = false;
-  void nextTick(() => {
-    const el = textareaRef.value;
-    if (!el) return;
-    const newPos = mt.start + item.path.length;
-    el.setSelectionRange(newPos, newPos);
-    el.focus();
-    autosize();
-  });
-}
+const {
+  open: mentionOpen,
+  items: mentionItems,
+  active: mentionActive,
+  loading: mentionLoading,
+  update: updateMentionMenu,
+  select: selectMentionItem,
+} = useMentionMenu({
+  text,
+  textareaRef,
+  autosize,
+  searchFiles: () => props.searchFiles,
+});
 
 // ---------------------------------------------------------------------------
 // Input event handler — updates both menus
@@ -316,166 +139,42 @@ function selectMentionItem(item: FileItem): void {
 
 function handleInput(): void {
   // Manual typing leaves history-browsing mode — the text is now a fresh draft.
-  historyIndex = -1;
+  history.resetBrowsing();
   updateSlashMenu();
   updateMentionMenu();
 }
 
 // ---------------------------------------------------------------------------
-// Attachments
+// Attachments — see useAttachmentUpload. The composer keeps handleSubmit /
+// handleSteer (which read the attachments to build the payload) and the
+// `hasUpload` toolbar flag.
 // ---------------------------------------------------------------------------
+const {
+  attachments,
+  previewAttachment,
+  fileInputRef,
+  isDragOver,
+  removeAttachment,
+  openAttachmentPreview,
+  closeAttachmentPreview,
+  openFilePicker,
+  handleFileInputChange,
+  handleDragOver,
+  handleDragLeave,
+  handleDrop,
+  clearAfterSubmit,
+} = useAttachmentUpload({ uploadImage: () => props.uploadImage });
 
-const attachments = ref<Attachment[]>([]);
-const previewAttachment = ref<Attachment | null>(null);
-const fileInputRef = ref<HTMLInputElement | null>(null);
-const isDragOver = ref(false);
-
-let localIdCounter = 0;
-function nextLocalId(): string {
-  return `att_${++localIdCounter}`;
-}
-
-function revokeAttachment(att: Attachment): void {
-  try { URL.revokeObjectURL(att.previewUrl); } catch { /* ignore */ }
-}
-
-function mediaKind(mime: string): 'image' | 'video' | null {
-  if (mime.startsWith('image/')) return 'image';
-  if (mime.startsWith('video/')) return 'video';
-  return null;
-}
-
-async function addFiles(files: File[]): Promise<void> {
-  if (!props.uploadImage) return;
-  const media = files
-    .map((file) => ({ file, kind: mediaKind(file.type) }))
-    .filter((m): m is { file: File; kind: 'image' | 'video' } => m.kind !== null);
-  if (media.length === 0) return;
-
-  for (const { file, kind } of media) {
-    const localId = nextLocalId();
-    const previewUrl = URL.createObjectURL(file);
-    const att: Attachment = { localId, name: file.name, kind, previewUrl, uploading: true };
-    attachments.value = [...attachments.value, att];
-
-    // Upload in background; update the attachment when done
-    props.uploadImage(file, file.name).then((result) => {
-      attachments.value = attachments.value.map((a) =>
-        a.localId === localId
-          ? { ...a, uploading: false, fileId: result?.fileId, error: result === null }
-          : a,
-      );
-    }).catch(() => {
-      attachments.value = attachments.value.map((a) =>
-        a.localId === localId ? { ...a, uploading: false, error: true } : a,
-      );
-    });
-  }
-}
-
-function removeAttachment(localId: string): void {
-  const att = attachments.value.find((a) => a.localId === localId);
-  if (previewAttachment.value?.localId === localId) previewAttachment.value = null;
-  if (att) revokeAttachment(att);
-  attachments.value = attachments.value.filter((a) => a.localId !== localId);
-}
-
-function openAttachmentPreview(att: Attachment): void {
-  previewAttachment.value = att;
-}
-
-function closeAttachmentPreview(): void {
-  previewAttachment.value = null;
-}
-
-function openFilePicker(): void {
-  fileInputRef.value?.click();
-}
-
-function handleFileInputChange(e: Event): void {
-  const input = e.target as HTMLInputElement;
-  const files = Array.from(input.files ?? []);
-  void addFiles(files);
-  // Reset so re-selecting the same file fires change again
-  input.value = '';
-}
-
-// Global document-level paste handler — captures Ctrl+V anywhere the composer is mounted.
-function handleDocumentPaste(e: ClipboardEvent): void {
-  if (!props.uploadImage) return;
-
-  const cd = e.clipboardData;
-  if (!cd) return;
-
-  // Collect image files from both .items and .files to cover all browsers/OS.
-  const files: File[] = [];
-  const seenKeys = new Set<string>();
-
-  const addBlob = (blob: File | Blob, name: string): void => {
-    const key = `${blob.size}:${blob.type}:${name}`;
-    if (seenKeys.has(key)) return;
-    seenKeys.add(key);
-    const ext = blob.type.split('/')[1] ?? 'png';
-    const safeName = name.includes('.') ? name : `paste-${Date.now()}.${ext}`;
-    files.push(blob instanceof File ? blob : new File([blob], safeName, { type: blob.type }));
-  };
-
-  // From DataTransferItemList
-  for (const item of Array.from(cd.items)) {
-    if (item.kind === 'file' && mediaKind(item.type)) {
-      const blob = item.getAsFile();
-      if (blob) addBlob(blob, blob.name || `paste-${Date.now()}.${item.type.split('/')[1] ?? 'png'}`);
-    }
-  }
-
-  // From FileList (some browsers/OS put screenshots here directly)
-  for (const file of Array.from(cd.files)) {
-    if (mediaKind(file.type)) {
-      addBlob(file, file.name);
-    }
-  }
-
-  if (files.length === 0) return; // No media — let normal text paste proceed unmodified.
-
-  e.preventDefault();
-  void addFiles(files);
-}
-
-// Drag-drop handlers
-function handleDragOver(e: DragEvent): void {
-  if (!props.uploadImage) return;
-  const hasFiles = Array.from(e.dataTransfer?.items ?? []).some((item) => item.kind === 'file');
-  if (!hasFiles) return;
-  e.preventDefault();
-  isDragOver.value = true;
-}
-
-function handleDragLeave(): void {
-  isDragOver.value = false;
-}
-
-function handleDrop(e: DragEvent): void {
-  isDragOver.value = false;
-  if (!props.uploadImage) return;
-  e.preventDefault();
-  const files = Array.from(e.dataTransfer?.files ?? []);
-  void addFiles(files);
-}
+// Silence noUnusedLocals: fileInputRef is used as a template ref (ref="fileInputRef").
+void fileInputRef;
 
 onMounted(() => {
-  document.addEventListener('paste', handleDocumentPaste);
   // Fit the box to a restored draft on first render.
   if (text.value) void nextTick(autosize);
 });
 
-// Revoke all object URLs and remove global listener on unmount
 onUnmounted(() => {
-  document.removeEventListener('paste', handleDocumentPaste);
   document.removeEventListener('mousedown', onModesDocClick);
-  for (const att of attachments.value) {
-    revokeAttachment(att);
-  }
-  previewAttachment.value = null;
   clearCompositionEndTimer();
 });
 
@@ -483,21 +182,7 @@ onUnmounted(() => {
 // Submit / keydown
 // ---------------------------------------------------------------------------
 
-/** Imperatively load text into the box for editing (used by "edit & resend the
-    last message" after an undo, or by the dock queue panel when the user edits
-    a queued prompt). Focuses with the caret at the end. */
-function loadForEdit(value: string): void {
-  text.value = value;
-  void nextTick(() => {
-    const el = textareaRef.value;
-    if (!el) return;
-    el.focus();
-    const pos = value.length;
-    el.setSelectionRange(pos, pos);
-    autosize();
-  });
-}
-
+// loadForEdit comes from useComposerDraft (it lives next to the text state).
 defineExpose({ loadForEdit });
 
 function handleSubmit(): void {
@@ -512,6 +197,11 @@ function handleSubmit(): void {
   const readyAttachments = attachments.value.filter((a) => !a.uploading && !a.error && a.fileId);
 
   if (!trimmed && readyAttachments.length === 0) return;
+
+  // Record for ↑/↓ recall before the slash branch so commands (with or without
+  // args) are recallable too, not just plain messages. `push` ignores empty /
+  // whitespace, so an image-only send adds nothing.
+  history.push(trimmed);
 
   // If it's a known slash command, keep the optional tail as command input
   // instead of submitting it as normal chat text. This covers `/goal <task>`,
@@ -535,14 +225,10 @@ function handleSubmit(): void {
     attachments: readyAttachments.map((a) => ({ fileId: a.fileId!, kind: a.kind })),
   };
 
-  // Revoke object URLs for submitted attachments
+  // Revoke object URLs and drop the submitted attachments.
   previewAttachment.value = null;
-  for (const att of attachments.value) {
-    revokeAttachment(att);
-  }
-  attachments.value = [];
+  clearAfterSubmit();
 
-  pushInputHistory(trimmed);
   text.value = '';
   slashOpen.value = false;
   mentionOpen.value = false;
@@ -566,11 +252,8 @@ function handleSteer(): void {
     text: trimmed,
     attachments: readyAttachments.map((a) => ({ fileId: a.fileId!, kind: a.kind })),
   };
-  for (const att of attachments.value) {
-    revokeAttachment(att);
-  }
-  attachments.value = [];
-  pushInputHistory(trimmed);
+  clearAfterSubmit();
+  history.push(trimmed);
   text.value = '';
   slashOpen.value = false;
   mentionOpen.value = false;
@@ -680,26 +363,26 @@ function handleKeydown(e: KeyboardEvent): void {
     return;
   }
 
-  // History recall (shell-style ↑/↓).
+  // History recall (shell-style ↑/↓) — see useInputHistory for the machinery.
   //
   // ENTERING history: a plain ArrowUp only recalls when the caret is on the
   // first line, so editing a multi-line draft with the arrows still works.
-  // ONCE BROWSING (historyIndex !== -1), the arrows walk history directly,
-  // regardless of where the caret landed — a recalled multi-line entry leaves
-  // the caret at its end, and the old "must be on the first line" gate then
-  // trapped it there, so further ArrowUp did nothing ("only one step back").
-  // Walking freely while browsing fixes that; typing exits history (handleInput
-  // resets historyIndex), after which the arrows move the caret normally again.
+  // ONCE BROWSING, the arrows walk history directly, regardless of where the
+  // caret landed — a recalled multi-line entry leaves the caret at its end, and
+  // the old "must be on the first line" gate then trapped it there, so further
+  // ArrowUp did nothing ("only one step back"). Walking freely while browsing
+  // fixes that; typing exits history (handleInput resets browsing), after which
+  // the arrows move the caret normally again.
   if (!slashOpen.value && !mentionOpen.value && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
-    const browsing = historyIndex !== -1;
-    if (e.key === 'ArrowUp' && inputHistory.value.length > 0 && (browsing || caretAtFirstLine())) {
+    const browsing = history.isBrowsing();
+    if (e.key === 'ArrowUp' && history.hasHistory() && (browsing || history.caretAtFirstLine())) {
       e.preventDefault();
-      recallOlder();
+      history.recallOlder();
       return;
     }
     if (e.key === 'ArrowDown' && browsing) {
       e.preventDefault();
-      recallNewer();
+      history.recallNewer();
       return;
     }
   }

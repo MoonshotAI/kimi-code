@@ -1822,6 +1822,11 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
+  toggleTodoPanelExpansion(): void {
+    this.state.todoPanel.toggleExpanded();
+    this.state.ui.requestRender();
+  }
+
   async detachCurrentForegroundTask(): Promise<void> {
     const session = this.session;
     if (session === undefined) {

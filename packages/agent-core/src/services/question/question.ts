@@ -142,14 +142,8 @@ function buildItem(
   if (item.header !== undefined) out.header = item.header;
   if (item.body !== undefined) out.body = item.body;
   if (item.multiSelect !== undefined) out.multi_select = item.multiSelect;
-  // SDK has no `allowOther` field — `otherLabel` / `otherDescription` exist
-  // and we expose them on the wire alongside an inferred `allow_other: true`
-  // when either tag is set. (SDK semantics: presence of `otherLabel` enables
-  // the "Other" affordance; we surface that explicitly on the wire so client
-  // renderers don't have to infer.)
-  const hasOtherAffordance =
-    item.otherLabel !== undefined || item.otherDescription !== undefined;
-  if (hasOtherAffordance) out.allow_other = true;
+  // SDK has no allowOther field; always advertise the free-text Other option on the wire.
+  out.allow_other = true;
   if (item.otherLabel !== undefined) out.other_label = item.otherLabel;
   if (item.otherDescription !== undefined) out.other_description = item.otherDescription;
   return out;

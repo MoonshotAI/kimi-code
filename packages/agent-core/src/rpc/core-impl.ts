@@ -228,7 +228,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const withCallerMcp = mergeCallerMcpServers(baseMcpConfig, options.mcpServers);
     const parentKaos = overrides.kaos ?? (await this.getKaos());
     const persistenceKaos = overrides.persistenceKaos ?? parentKaos;
-    const localWorkspaceDirs = await readWorkspaceAdditionalDirs(parentKaos, workDir);
+    // Read the workspace local config (`.kimi-code/local.toml`) through the
+    // persistence (local) kaos, not the tool kaos. In ACP mode the tool kaos is
+    // the reverse-RPC bridge and the client does not know the session yet during
+    // `session/new`, so reading through it fails with "unknown session"
+    // (https://github.com/MoonshotAI/kimi-code/issues/988). The local config is
+    // a system file and must not depend on the tool bridge — same reason
+    // `Session.systemContextKaos` is backed by the persistence sink.
+    const localWorkspaceDirs = await readWorkspaceAdditionalDirs(persistenceKaos, workDir);
     const callerAdditionalDirs = await resolveWorkspaceAdditionalDirs(
       parentKaos,
       workDir,
@@ -351,7 +358,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   ): Promise<ResumeSessionResult> {
     const summary = await this.sessionStore.get(input.sessionId);
     const parentKaosForRead = overrides.kaos ?? (await this.getKaos());
-    const localWorkspaceDirs = await readWorkspaceAdditionalDirs(parentKaosForRead, summary.workDir);
+    // Read `.kimi-code/local.toml` through the persistence (local) kaos, not the
+    // tool kaos — see createSessionWithOverrides and issue #988.
+    const localWorkspaceDirs = await readWorkspaceAdditionalDirs(
+      overrides.persistenceKaos ?? parentKaosForRead,
+      summary.workDir,
+    );
     const callerAdditionalDirs = await resolveWorkspaceAdditionalDirs(
       parentKaosForRead,
       summary.workDir,

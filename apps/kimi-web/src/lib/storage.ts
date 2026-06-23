@@ -24,6 +24,7 @@ export const STORAGE_KEYS = {
   hiddenWorkspaces: 'kimi-web.hidden-workspaces',
   betaToc: 'kimi-web.beta-toc',
   notifyOnComplete: 'kimi-web.notify-on-complete',
+  inputHistory: 'kimi-web.input-history',
   // cross-file
   locale: 'kimi-locale',
   clientId: 'kimi-web.client-id',
@@ -81,4 +82,43 @@ export function safeSetJson(key: string, value: unknown): void {
   } catch {
     // ignore
   }
+}
+
+/**
+ * Per-session unread flags: a session id is "unread" when its value is `true`.
+ * Persisted as a compact map of only the `true` entries (cleared sessions are
+ * dropped). Backed by a single localStorage key so the sidebar's unread dots
+ * survive a page refresh — there is no server-side read cursor.
+ */
+export function loadUnread(): Record<string, boolean> {
+  const raw = safeGetString(STORAGE_KEYS.unread);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: Record<string, boolean> = {};
+    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (value === true) out[id] = true;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Apply a partial set of unread changes on top of the latest stored value.
+ * Passing only the changed entries (rather than a full in-memory map) is what
+ * keeps a clear that landed from another tab from being overwritten by this
+ * tab's stale state. A `true` entry marks the session unread; a `false` entry
+ * deletes the key (clearing the unread dot).
+ */
+export function saveUnread(changes: Record<string, boolean>): void {
+  const current = loadUnread();
+  const merged: Record<string, boolean> = { ...current };
+  for (const [id, value] of Object.entries(changes)) {
+    if (value) merged[id] = true;
+    else delete merged[id];
+  }
+  safeSetString(STORAGE_KEYS.unread, JSON.stringify(merged));
 }

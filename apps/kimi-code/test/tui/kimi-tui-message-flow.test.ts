@@ -3482,6 +3482,51 @@ command = "vim"
     expect(driver.state.appState.thinking).toBe(true);
   });
 
+  it('applies /model selection to the session only on Alt+S without persisting', async () => {
+    const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+          turbo: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-turbo',
+            maxContextSize: 100,
+            displayName: 'Kimi Turbo',
+            capabilities: ['thinking'],
+          },
+        },
+        defaultModel: 'k2',
+        defaultThinking: false,
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model turbo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0];
+    // /model turbo preselects turbo; Alt+S applies it to the current session only.
+    (picker as TabbedModelSelectorComponent).handleInput(`${ESC}s`);
+
+    await vi.waitFor(() => {
+      expect(session.setModel).toHaveBeenCalledWith('turbo');
+      expect(session.setThinking).toHaveBeenCalledWith('on');
+    });
+    expect(setConfig).not.toHaveBeenCalled();
+    expect(driver.state.appState.model).toBe('turbo');
+    expect(driver.state.appState.thinking).toBe(true);
+  });
+
   it('persists /model selection even when runtime state is unchanged', async () => {
     const session = makeSession();
     const setConfig = vi.fn(async () => ({ providers: {} }));

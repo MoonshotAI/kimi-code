@@ -214,6 +214,50 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('streamed-only');
   });
 
+  describe('in-flight Bash command preview (args finalized, no result yet)', () => {
+    const longCommand = Array.from({ length: 15 }, (_, i) => `echo step${String(i + 1)}`).join(
+      '\n',
+    );
+
+    it('shows the truncated command while running and reveals the rest when expanded', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_bash_running', name: 'Bash', args: { command: longCommand } },
+        undefined,
+      );
+
+      const collapsed = strip(component.render(100).join('\n'));
+      expect(collapsed).toContain('Using Bash');
+      expect(collapsed).toContain('echo step1');
+      expect(collapsed).toContain('echo step10');
+      expect(collapsed).not.toContain('echo step11');
+
+      component.setExpanded(true);
+
+      const expanded = strip(component.render(100).join('\n'));
+      expect(expanded).toContain('echo step11');
+      expect(expanded).toContain('echo step15');
+    });
+
+    it('yields command rendering to the result renderer once the result lands', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_bash_done', name: 'Bash', args: { command: longCommand } },
+        undefined,
+      );
+
+      // Sanity: while running, the in-flight preview shows the command.
+      expect(strip(component.render(100).join('\n'))).toContain('$ echo step1');
+
+      component.setResult({ tool_call_id: 'call_bash_done', output: 'done', is_error: false });
+
+      // Collapsed result view delegates to shellExecutionResultRenderer, which
+      // hides the command — so the in-flight buildCallPreview preview must be
+      // gone, otherwise the command would render twice when expanded.
+      const out = strip(component.render(100).join('\n'));
+      expect(out).toContain('Used Bash');
+      expect(out).not.toContain('$ echo step1');
+    });
+  });
+
   it('hides tool output bodies that start with a <system tag', () => {
     const reminderOutput =
       '<system-reminder>\nThe task tools have not been used recently.\n</system-reminder>';
