@@ -507,8 +507,8 @@ export class KimiTUI {
 
   private startEventLoop(): void {
     this.state.ui.start();
-    this.terminalFocusTrackingDispose = installTerminalFocusTracking(this.state);
     this.startClipboardImageHintController();
+    this.terminalFocusTrackingDispose = installTerminalFocusTracking(this.state);
     this.refreshTerminalThemeTracking();
   }
 
@@ -770,10 +770,10 @@ export class KimiTUI {
 
   private disposeTerminalTracking(): void {
     this.stopTerminalThemeTracking();
-    this.terminalFocusTrackingDispose?.();
-    this.terminalFocusTrackingDispose = undefined;
     this.clipboardImageHintController?.stop();
     this.clipboardImageHintController = undefined;
+    this.terminalFocusTrackingDispose?.();
+    this.terminalFocusTrackingDispose = undefined;
   }
 
   private buildLayout(): void {

@@ -45,6 +45,24 @@ function createFakeTUI(): FakeTUI {
     }),
     emitInput: (data: string) => {
       for (const listener of listeners) {
+        listener(data);
+      }
+    },
+    requestRender: vi.fn(),
+  } as unknown as FakeTUI;
+}
+
+function createFakeTUIWithConsumingFocusTracker(): FakeTUI {
+  const listeners = new Set<(data: string) => { consume?: boolean; data?: string } | undefined>();
+  return {
+    addInputListener: vi.fn((listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    }),
+    emitInput: (data: string) => {
+      for (const listener of listeners) {
         const result = listener(data);
         if (result?.consume) return;
       }
@@ -469,6 +487,41 @@ describe('ClipboardImageHintController', () => {
     await vi.advanceTimersByTimeAsync(1000);
 
     expect(footer.getTransientHint()).not.toBeNull();
+
+    controller.stop();
+  });
+
+  it('observes focus events even when another listener consumes them', async () => {
+    vi.mocked(clipboardHasImage).mockResolvedValue(true);
+
+    const footer = createFakeFooter();
+    const ui = createFakeTUIWithConsumingFocusTracker();
+    const host: ClipboardImageHintHost = {
+      ui,
+      footer,
+      getModelSupportsImage: () => true,
+      requestRender: vi.fn(),
+    };
+
+    const controller = new ClipboardImageHintController(host);
+    controller.start();
+
+    // Register a second listener that consumes focus events, like installTerminalFocusTracking.
+    const consumedEvents: string[] = [];
+    ui.addInputListener((data) => {
+      if (data === TERMINAL_FOCUS_IN || data === TERMINAL_FOCUS_OUT) {
+        consumedEvents.push(data);
+        return { consume: true };
+      }
+      return undefined;
+    });
+
+    ui.emitInput(TERMINAL_FOCUS_OUT);
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(consumedEvents).toEqual([TERMINAL_FOCUS_OUT, TERMINAL_FOCUS_IN]);
+    expect(footer.getTransientHint()).toMatch(/Image in clipboard/);
 
     controller.stop();
   });

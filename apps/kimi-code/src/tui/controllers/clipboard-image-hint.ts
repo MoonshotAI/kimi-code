@@ -36,7 +36,9 @@ export class ClipboardImageHintController {
   }
 
   start(): void {
-    this.disposeInputListener = this.host.ui.addInputListener((data) => this.handleInput(data));
+    this.disposeInputListener = this.host.ui.addInputListener((data) => {
+      this.handleInput(data);
+    });
   }
 
   stop(): void {
@@ -50,18 +52,17 @@ export class ClipboardImageHintController {
     this.lastHintAtMs = 0;
   }
 
-  private handleInput(data: string): { consume: true } | undefined {
+  private handleInput(data: string): void {
     if (data === TERMINAL_FOCUS_IN) {
       this.focused = true;
       this.scheduleCheck();
-      return { consume: true };
+      return;
     }
     if (data === TERMINAL_FOCUS_OUT) {
       this.focused = false;
       this.clearDebounceTimer();
-      return { consume: true };
+      return;
     }
-    return undefined;
   }
 
   private scheduleCheck(): void {
