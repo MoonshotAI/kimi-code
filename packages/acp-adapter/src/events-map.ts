@@ -56,6 +56,11 @@ export function assistantDeltaToSessionUpdate(
  *   belong on the JSON-RPC error channel). Returning `end_turn` keeps the
  *   client unblocked; the caller is expected to log the `error` payload
  *   separately so the failure is observable in the agent logs.
+ * `filtered`  → `refusal`: the provider's safety policy blocked the
+ *   response. ACP's `refusal` stop reason is the native signal for a
+ *   model/provider decline, so the client can render the block instead of
+ *   mistaking it for a clean `end_turn`. The caller additionally logs the
+ *   block so it stays observable in the agent logs.
  */
 export function turnEndReasonToStopReason(reason: TurnEndReason): AcpStopReason {
   switch (reason) {
@@ -65,6 +70,8 @@ export function turnEndReasonToStopReason(reason: TurnEndReason): AcpStopReason 
       return 'cancelled';
     case 'failed':
       return 'end_turn';
+    case 'filtered':
+      return 'refusal';
   }
 }
 
@@ -411,7 +418,16 @@ export function todoListToSessionUpdate(
   // session-scoped (types.gen.d.ts:3499 — "The client replaces the
   // entire plan with each update") so we do not embed it in the payload.
   void turnId;
-  if (items.length === 0) return null;
+  if (items.length === 0) {
+    // Return an empty plan update so ACP clients clear stale tasks.
+    return {
+      sessionId,
+      update: {
+        sessionUpdate: 'plan',
+        entries: [],
+      },
+    };
+  }
   const entries: PlanEntry[] = items.map((item) => ({
     content: item.title,
     priority: 'medium',
