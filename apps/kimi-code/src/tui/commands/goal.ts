@@ -36,6 +36,7 @@ type GoalCommandHost = Pick<
   | 'state'
   | 'session'
   | 'requireSession'
+  | 'harness'
   | 'setAppState'
   | 'showError'
   | 'showStatus'
@@ -45,6 +46,10 @@ type GoalCommandHost = Pick<
   | 'restoreInputText'
   | 'sendNormalUserInput'
 >;
+
+function goalQueueSession(host: GoalCommandHost): { readonly id: string; readonly harnessHomeDir: string } {
+  return { id: host.requireSession().id, harnessHomeDir: host.harness.homeDir };
+}
 
 export interface GoalStartOptions {
   readonly beforeSend?: () => boolean | Promise<boolean>;
@@ -198,7 +203,7 @@ async function queueNextGoal(
   }
 
   try {
-    await appendGoalQueueItem(session, { objective: parsed.objective });
+    await appendGoalQueueItem(goalQueueSession(host), { objective: parsed.objective });
   } catch (error) {
     host.showError(formatErrorMessage(error));
     return;
@@ -217,7 +222,7 @@ async function showGoalQueueManager(
 ): Promise<void> {
   let snapshot: GoalQueueSnapshot;
   try {
-    snapshot = await readGoalQueue(host.requireSession());
+    snapshot = await readGoalQueue(goalQueueSession(host));
   } catch (error) {
     host.showError(`Failed to load upcoming goals: ${formatErrorMessage(error)}`);
     return;
@@ -250,7 +255,7 @@ async function handleGoalQueueManagerAction(
   const session = host.requireSession();
   switch (action.kind) {
     case 'move': {
-      const snapshot = await moveGoalQueueItem(session, {
+      const snapshot = await moveGoalQueueItem(goalQueueSession(host), {
         goalId: action.goalId,
         direction: action.direction,
       });
@@ -258,7 +263,7 @@ async function handleGoalQueueManagerAction(
       return snapshot;
     }
     case 'delete': {
-      const snapshot = await removeGoalQueueItem(session, { goalId: action.goalId });
+      const snapshot = await removeGoalQueueItem(goalQueueSession(host), { goalId: action.goalId });
       host.track('goal_queue_remove');
       return snapshot;
     }
@@ -274,7 +279,7 @@ async function showGoalQueueEditDialog(
 ): Promise<void> {
   let snapshot: GoalQueueSnapshot;
   try {
-    snapshot = await readGoalQueue(host.requireSession());
+    snapshot = await readGoalQueue(goalQueueSession(host));
   } catch (error) {
     host.showError(`Failed to load upcoming goals: ${formatErrorMessage(error)}`);
     return;
@@ -308,7 +313,7 @@ async function handleGoalQueueEditResult(
     return;
   }
 
-  await updateGoalQueueItem(host.requireSession(), {
+  await updateGoalQueueItem(goalQueueSession(host), {
     goalId: result.goalId,
     objective: result.objective,
   });

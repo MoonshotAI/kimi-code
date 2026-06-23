@@ -30,6 +30,7 @@ interface GoalQueueFile {
 
 interface GoalQueueSession {
   readonly id: string;
+  readonly harnessHomeDir?: string;
   readonly summary?: {
     readonly sessionDir?: string;
   };
@@ -130,12 +131,14 @@ export async function moveGoalQueueItem(
   });
 }
 
+
+
 function goalQueuePath(session: GoalQueueSession): string {
-  const sessionDir = session.summary?.sessionDir;
-  if (sessionDir === undefined || sessionDir.trim().length === 0) {
-    throw new Error(`Session ${session.id} does not expose a session directory`);
+  const homeDir = session.harnessHomeDir;
+  if (homeDir === undefined || homeDir.trim().length === 0) {
+    throw new Error(`Session ${session.id} does not expose a client home directory`);
   }
-  return join(sessionDir, GOAL_QUEUE_FILE);
+  return join(homeDir, 'goal-queues', `${session.id}.json`);
 }
 
 async function readQueueFile(session: GoalQueueSession): Promise<GoalQueueFile> {

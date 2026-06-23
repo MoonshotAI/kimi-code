@@ -14,6 +14,7 @@ import type {
   GoalChange,
   GoalUpdatedEvent,
   HookResultEvent,
+  KimiHarness,
   Session,
   SessionMetaUpdatedEvent,
   SkillActivatedEvent,
@@ -91,6 +92,7 @@ export interface SessionEventHost {
   session: Session | undefined;
   aborted: boolean;
   sessionEventUnsubscribe: (() => void) | undefined;
+  readonly harness: KimiHarness;
   readonly streamingUI: StreamingUIController;
 
   requireSession(): Session;
@@ -706,6 +708,10 @@ export class SessionEventHandler {
     );
   }
 
+  private goalQueueSession(session: Session): { readonly id: string; readonly harnessHomeDir: string } {
+    return { id: session.id, harnessHomeDir: this.host.harness.homeDir };
+  }
+
   private async promoteNextQueuedGoal(): Promise<boolean> {
     const { host } = this;
     const session = host.session;
@@ -713,7 +719,7 @@ export class SessionEventHandler {
 
     let queue;
     try {
-      queue = await readGoalQueue(session);
+      queue = await readGoalQueue(this.goalQueueSession(session));
     } catch (error) {
       host.showError(`Failed to read upcoming goals: ${formatErrorMessage(error)}`);
       return false;
@@ -736,7 +742,7 @@ export class SessionEventHandler {
             return false;
           }
           try {
-            await removeGoalQueueItem(session, { goalId: next.id });
+            await removeGoalQueueItem(this.goalQueueSession(session), { goalId: next.id });
           } catch (error) {
             host.showError(
               `Queued goal started, but could not be removed from the queue: ${formatErrorMessage(error)}`,
@@ -763,7 +769,7 @@ export class SessionEventHandler {
     goal: UpcomingGoal,
   ): Promise<void> {
     try {
-      await restoreGoalQueueItem(session, goal);
+      await restoreGoalQueueItem(this.goalQueueSession(session), goal);
     } catch (error) {
       this.host.showError(`Queued goal could not be restored: ${formatErrorMessage(error)}`);
     }
@@ -785,7 +791,7 @@ export class SessionEventHandler {
 
     let hasQueuedGoal = false;
     try {
-      const queue = await readGoalQueue(session);
+      const queue = await readGoalQueue(this.goalQueueSession(session));
       hasQueuedGoal = queue.goals.length > 0;
     } catch {
       return;
