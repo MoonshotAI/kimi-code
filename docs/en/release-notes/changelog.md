@@ -6,6 +6,18 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.19.1 (2026-06-23)
+
+### Bug Fixes
+
+- Fix ACP editors such as Zed failing to start a new thread.
+- Fix the web sidebar's unread dots getting out of sync across browser tabs.
+- Clear all per-session state when a session is archived or removed, so archived sessions no longer leave orphaned data behind.
+
+### Refactors
+
+- Consolidate web client localStorage access and split the root state store and app shell into focused composables.
+
 ## 0.19.0 (2026-06-22)
 
 ### Features
