@@ -168,15 +168,40 @@ export class AcpKaos implements Kaos {
     options?: { encoding?: BufferEncoding; errors?: 'strict' | 'replace' | 'ignore' },
   ): AsyncGenerator<string> {
     const text = await this.readText(path, options);
-    if (text.length === 0) return;
-    let start = 0;
-    for (let i = 0; i < text.length; i++) {
-      if (text.charCodeAt(i) === 0x0a /* \n */) {
-        yield text.slice(start, i + 1);
-        start = i + 1;
-      }
+    yield* splitLinesKeepTerminator(text);
+  }
+
+  /**
+   * Yield a line range from the file via ACP's native `line` / `limit`
+   * parameters on `fs/readTextFile`, so a compliant client can return
+   * only the requested window instead of the whole file. `startLine` is
+   * 1-based (ACP convention).
+   *
+   * `encoding` / `errors` are accepted for interface compatibility but
+   * ignored — the ACP response is already a decoded string. If the
+   * client does not honor `line` / `limit` and returns more than
+   * `maxLines` lines, the output is truncated to `maxLines` defensively
+   * so a non-compliant client cannot turn a range read into a full-file
+   * read.
+   */
+  async *readLineRange(
+    path: string,
+    options: { startLine: number; maxLines: number; errors?: 'strict' | 'replace' | 'ignore' },
+  ): AsyncGenerator<string> {
+    const rpcPath = this.toClientPath(path);
+    let text: string;
+    try {
+      const resp = await this.conn.readTextFile({
+        sessionId: this.sessionId,
+        path: rpcPath,
+        line: options.startLine,
+        limit: options.maxLines,
+      });
+      text = resp.content;
+    } catch (error) {
+      throw wrapKaosError(`acp: readTextFile failed for ${rpcPath}`, error);
     }
-    if (start < text.length) yield text.slice(start);
+    yield* splitLinesKeepTerminator(text, options.maxLines);
   }
 
   // ── writes: route through ACP `fs/writeTextFile` ───────────────────
@@ -247,6 +272,28 @@ export class AcpKaos implements Kaos {
 
   execWithEnv(args: string[], env?: Record<string, string>): Promise<KaosProcess> {
     return this.inner.execWithEnv(args, env);
+  }
+}
+
+/**
+ * Split a decoded string into lines, each terminated by its `\n` (the
+ * final line has no terminator if the string did not end with `\n`).
+ * When `maxLines` is given, stop after yielding that many lines — a
+ * defensive cap for ACP clients that ignore the `limit` parameter.
+ */
+function* splitLinesKeepTerminator(text: string, maxLines?: number): Generator<string> {
+  if (text.length === 0) return;
+  let start = 0;
+  let yielded = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) !== 0x0a /* \n */) continue;
+    yield text.slice(start, i + 1);
+    yielded += 1;
+    if (maxLines !== undefined && yielded >= maxLines) return;
+    start = i + 1;
+  }
+  if (start < text.length && (maxLines === undefined || yielded < maxLines)) {
+    yield text.slice(start);
   }
 }
 

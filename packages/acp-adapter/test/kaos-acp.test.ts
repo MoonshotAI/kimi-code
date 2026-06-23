@@ -337,6 +337,55 @@ describe('AcpKaos', () => {
     });
   });
 
+  describe('readLineRange', () => {
+    async function collect(gen: AsyncGenerator<string>): Promise<string[]> {
+      const out: string[] = [];
+      for await (const line of gen) out.push(line);
+      return out;
+    }
+
+    it('forwards line/limit to conn.readTextFile and yields the window lines', async () => {
+      const conn = makeMockConn({ readHandler: async () => ({ content: 'b\nc\n' }) });
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+      expect(await collect(kaos.readLineRange('/a.ts', { startLine: 2, maxLines: 2 }))).toEqual([
+        'b\n',
+        'c\n',
+      ]);
+      expect(conn.readCalls).toEqual([{ sessionId: 's1', path: '/a.ts', line: 2, limit: 2 }]);
+    });
+
+    it('truncates to maxLines when the client returns more than the window', async () => {
+      // Simulates a client that ignores `limit` and returns the whole file.
+      const conn = makeMockConn({ readHandler: async () => ({ content: 'a\nb\nc\nd\n' }) });
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+      expect(await collect(kaos.readLineRange('/a.ts', { startLine: 1, maxLines: 2 }))).toEqual([
+        'a\n',
+        'b\n',
+      ]);
+    });
+
+    it('yields nothing for an empty response', async () => {
+      const conn = makeMockConn({ readHandler: async () => ({ content: '' }) });
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+      expect(await collect(kaos.readLineRange('/a.ts', { startLine: 1, maxLines: 10 }))).toEqual(
+        [],
+      );
+    });
+
+    it('wraps RPC errors in KaosError with cause set', async () => {
+      const rpcErr = new Error('rpc died');
+      const conn = makeMockConn({
+        readHandler: async () => {
+          throw rpcErr;
+        },
+      });
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+      await expect(
+        collect(kaos.readLineRange('/x.ts', { startLine: 1, maxLines: 1 })),
+      ).rejects.toBeInstanceOf(KaosError);
+    });
+  });
+
   describe('writeText', () => {
     it('forwards content to conn.writeTextFile and returns char count', async () => {
       const conn = makeMockConn({});
