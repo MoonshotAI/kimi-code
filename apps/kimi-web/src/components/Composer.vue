@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/Composer.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
@@ -9,10 +9,10 @@ import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView } from '../types';
 import type { AppModel, AppSkill, ThinkingLevel } from '../api/types';
 import { modelThinkingAvailability } from '../lib/modelThinking';
-import { draftStorageKey, safeGetString, safeRemove, safeSetString } from '../lib/storage';
 import { useInputHistory } from '../composables/useInputHistory';
 import { useSlashMenu } from '../composables/useSlashMenu';
 import { useMentionMenu } from '../composables/useMentionMenu';
+import { useComposerDraft } from '../composables/useComposerDraft';
 
 // ---------------------------------------------------------------------------
 // Attachment state
@@ -101,47 +101,11 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 // ---------------------------------------------------------------------------
-// Textarea
+// Textarea + per-session draft persistence — see useComposerDraft.
 // ---------------------------------------------------------------------------
-
-// Unsent-draft persistence: the composer text is kept in localStorage PER
-// SESSION, so switching away and back (or a page refresh) restores whatever the
-// user was typing for that session. Cleared when the draft is sent/steered.
-function loadDraft(sid: string | undefined): string {
-  return safeGetString(draftStorageKey(sid)) ?? '';
-}
-function saveDraft(sid: string | undefined, value: string): void {
-  const key = draftStorageKey(sid);
-  if (value) safeSetString(key, value);
-  else safeRemove(key);
-}
-
-const text = ref(loadDraft(props.sessionId));
-const textareaRef = ref<HTMLTextAreaElement | null>(null);
-
-function autosize(): void {
-  const el = textareaRef.value;
-  if (!el) return;
-  el.style.removeProperty('height');
-}
-
-watch(text, (value) => {
-  void nextTick(autosize);
-  // Persist the live draft for the current session (empty clears the entry).
-  saveDraft(props.sessionId, value);
+const { text, textareaRef, autosize, loadForEdit } = useComposerDraft({
+  sessionId: () => props.sessionId,
 });
-
-// Switching sessions: stash the draft under the OLD session, then load the new
-// session's draft into the box.
-watch(
-  () => props.sessionId,
-  (newSid, oldSid) => {
-    if (newSid === oldSid) return;
-    saveDraft(oldSid, text.value);
-    text.value = loadDraft(newSid);
-    void nextTick(autosize);
-  },
-);
 
 // ---------------------------------------------------------------------------
 // Sent-message history recall (shell-style ↑/↓). See useInputHistory for the
@@ -362,21 +326,7 @@ onUnmounted(() => {
 // Submit / keydown
 // ---------------------------------------------------------------------------
 
-/** Imperatively load text into the box for editing (used by "edit & resend the
-    last message" after an undo, or by the dock queue panel when the user edits
-    a queued prompt). Focuses with the caret at the end. */
-function loadForEdit(value: string): void {
-  text.value = value;
-  void nextTick(() => {
-    const el = textareaRef.value;
-    if (!el) return;
-    el.focus();
-    const pos = value.length;
-    el.setSelectionRange(pos, pos);
-    autosize();
-  });
-}
-
+// loadForEdit comes from useComposerDraft (it lives next to the text state).
 defineExpose({ loadForEdit });
 
 function handleSubmit(): void {
