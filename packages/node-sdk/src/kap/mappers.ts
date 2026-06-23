@@ -110,3 +110,37 @@ export function toKapQuestionResponse(result: QuestionResult): KapQuestionRespon
   }
   return { answers };
 }
+
+import type { ContextMessage } from '@moonshot-ai/agent-core';
+import type { Message as ProtocolMessage, MessageContent } from '@moonshot-ai/protocol';
+
+/** Map a KAP wire `Message` to the agent-core `ContextMessage` used in replay. */
+export function toContextMessage(message: ProtocolMessage): ContextMessage {
+  return {
+    role: message.role,
+    content: message.content.map(toContextContent),
+    toolCalls: [],
+  } as ContextMessage;
+}
+
+function toContextContent(part: MessageContent): unknown {
+  switch (part.type) {
+    case 'text':
+      return { type: 'text', text: part.text };
+    case 'thinking':
+      return { type: 'think', think: part.thinking };
+    case 'tool_use':
+      return {
+        type: 'tool_call',
+        id: part.tool_call_id,
+        name: part.tool_name,
+        arguments: part.input === undefined ? null : JSON.stringify(part.input),
+      };
+    case 'tool_result':
+      return { type: 'tool_result', toolCallId: part.tool_call_id, output: part.output, isError: part.is_error };
+    case 'image':
+    case 'video':
+    case 'file':
+      return part; // pass through; refine if ContextMessage uses a different media shape
+  }
+}

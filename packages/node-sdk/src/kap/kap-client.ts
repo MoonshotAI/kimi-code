@@ -17,6 +17,7 @@ import type { SessionStatusResponse } from '@moonshot-ai/protocol';
 import { buildCoreApiProxy } from './core-proxy';
 import { metaHandlers } from './handlers/meta';
 import { promptHandlers } from './handlers/prompts';
+import { resumeHandlers } from './handlers/resume';
 import { sessionHandlers } from './handlers/sessions';
 import { KapHttpClient } from './http-client';
 import { handleReverseRequest } from './reverse-channel';
@@ -164,6 +165,7 @@ export class SDKKapClient extends SDKRpcClientBase {
     return {
       ...metaHandlers,
       ...sessionHandlers,
+      ...resumeHandlers,
       ...promptHandlers,
     };
   }
