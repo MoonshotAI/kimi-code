@@ -33,7 +33,15 @@ import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
+import ServerAuthDialog from './components/ServerAuthDialog.vue';
+import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
+
+// Hydrate the server-transport credential (fragment token or sessionStorage)
+// BEFORE the client connects, so the first REST/WS calls already carry it.
+const hasServerCredential = initServerAuth();
+const showServerAuth = ref(!hasServerCredential);
+let offAuthRequired: (() => void) | null = null;
 
 const client = useKimiWebClient();
 provide('resolveImage', client.resolveImageUrl);
@@ -98,10 +106,19 @@ onMounted(() => {
   // Capture-phase so Escape closes the side detail layer BEFORE the
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
+  offAuthRequired = onAuthRequired(() => {
+    showServerAuth.value = true;
+  });
 });
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
+  stopSpinner();
+  if (authLogoBlinkTimer !== null) clearTimeout(authLogoBlinkTimer);
+  if (offAuthRequired !== null) {
+    offAuthRequired();
+    offAuthRequired = null;
+  }
 });
 
 function onGlobalKeydown(e: KeyboardEvent): void {
@@ -504,6 +521,7 @@ function openPr(url: string): void {
 
 <template>
   <div class="app-shell">
+    <ServerAuthDialog v-if="showServerAuth" />
     <section v-if="showAuthGate" class="auth-page">
       <div class="auth-page-inner">
         <svg ref="authLogoRef" class="auth-page-logo ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @mousedown.prevent @click="blinkAuthLogo">
