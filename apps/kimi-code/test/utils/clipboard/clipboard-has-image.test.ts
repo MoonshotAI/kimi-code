@@ -45,6 +45,16 @@ describe('clipboardHasImage', () => {
     expect(result).toBe(false);
   });
 
+  it('returns false on macOS when clipboard contains a file-like native format', async () => {
+    const clip = fakeClipboard({
+      hasImage: vi.fn(() => true),
+      availableFormats: vi.fn(() => ['public.file-url', 'public.png']),
+    });
+    const result = await clipboardHasImage({ platform: 'darwin', clipboard: clip });
+    expect(result).toBe(false);
+    expect(clip.hasImage).not.toHaveBeenCalled();
+  });
+
   it('detects image on Wayland via wl-paste list-types', async () => {
     const runCommand = vi.fn((command: string, args: string[]) => {
       if (command === 'wl-paste' && args[0] === '--list-types') {

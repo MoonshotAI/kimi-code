@@ -28,11 +28,13 @@ import {
   DEFAULT_LIST_TIMEOUT_MS,
   SUPPORTED_IMAGE_MIME_TYPES,
   baseMimeType,
+  isFileLikeNativeFormat,
   isSupportedImageMimeType,
   isWaylandSession,
   isWSL,
   parseTargetList,
   runCommand as runCommandBase,
+  safeAvailableFormats,
   type RunCommand,
   type RunCommandOptions,
 } from './clipboard-common';
@@ -353,28 +355,6 @@ function readClipboardFilePathsViaMacOs(run: RunCommand): string[] {
   });
   if (!result.ok || result.stdout.length === 0) return [];
   return parseClipboardPaths(result.stdout.toString('utf-8'));
-}
-
-function isFileLikeNativeFormat(format: string): boolean {
-  const f = format.toLowerCase();
-  const base = baseMimeType(format);
-  return (
-    f.includes('file-url') ||
-    f.includes('file url') ||
-    f.includes('nsfilenames') ||
-    f.includes('com.apple.finder') ||
-    base === 'text/uri-list' ||
-    base === 'public.url'
-  );
-}
-
-function safeAvailableFormats(clip: ClipboardModule | null): string[] {
-  if (clip?.availableFormats === undefined) return [];
-  try {
-    return clip.availableFormats();
-  } catch {
-    return [];
-  }
 }
 
 async function readClipboardFileMediaViaNativeText(

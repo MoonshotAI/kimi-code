@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
+import type { ClipboardModule } from './clipboard-native';
+
 export type RunCommandOptions = { timeoutMs?: number; env?: NodeJS.ProcessEnv };
 export type RunCommand = (
   command: string,
@@ -57,5 +59,27 @@ export function isWSL(env: NodeJS.ProcessEnv): boolean {
     return /microsoft|wsl/i.test(readFileSync('/proc/version', 'utf-8'));
   } catch {
     return false;
+  }
+}
+
+export function isFileLikeNativeFormat(format: string): boolean {
+  const f = format.toLowerCase();
+  const base = baseMimeType(format);
+  return (
+    f.includes('file-url') ||
+    f.includes('file url') ||
+    f.includes('nsfilenames') ||
+    f.includes('com.apple.finder') ||
+    base === 'text/uri-list' ||
+    base === 'public.url'
+  );
+}
+
+export function safeAvailableFormats(clip: ClipboardModule | null): string[] {
+  if (clip?.availableFormats === undefined) return [];
+  try {
+    return clip.availableFormats();
+  } catch {
+    return [];
   }
 }

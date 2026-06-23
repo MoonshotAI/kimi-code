@@ -1,10 +1,12 @@
 import {
   DEFAULT_LIST_TIMEOUT_MS,
+  isFileLikeNativeFormat,
   isSupportedImageMimeType,
   isWaylandSession,
   isWSL,
   parseTargetList,
   runCommand,
+  safeAvailableFormats,
   type RunCommand,
 } from './clipboard-common';
 import { clipboard, type ClipboardModule } from './clipboard-native';
@@ -38,6 +40,13 @@ function hasImageViaPowerShell(run: RunCommand): boolean {
 
 async function hasImageViaNative(clip: ClipboardModule | null): Promise<boolean> {
   if (clip === null) return false;
+
+  // Finder exposes file icons/thumbnails as image data when a non-image file
+  // is copied. Treat file-like clipboard contents as "not a pasteable image"
+  // to match the read path in clipboard-image.ts.
+  const formats = safeAvailableFormats(clip);
+  if (formats.some(isFileLikeNativeFormat)) return false;
+
   try {
     return clip.hasImage();
   } catch {
