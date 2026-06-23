@@ -654,6 +654,61 @@ describe('ReadTool', () => {
     expect(readLines).not.toHaveBeenCalled();
   });
 
+  it('uses range reader without scan and omits total lines (ACP-style)', async () => {
+    const readLines = vi.fn<Kaos['readLines']>();
+    const readLineRange = vi.fn(async function* readLineRange(
+      _path: string,
+      options: { startLine: number; maxLines: number },
+    ): AsyncGenerator<string> {
+      for (let i = options.startLine; i < options.startLine + options.maxLines; i += 1) {
+        yield `line ${String(i)}\n`;
+      }
+    });
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(Buffer.from('text')),
+        readLines,
+        readLineRange,
+        // No scanTextFile — simulates AcpKaos (server-side range, no totalLines).
+      } as unknown as Partial<Kaos>),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool, context({ path: '/tmp/acp-range.txt', line_offset: 5, n_lines: 3 }));
+    const output = toolContentString(result);
+
+    expect(output).toContain('5\tline 5');
+    expect(output).toContain('7\tline 7');
+    expect(output).not.toContain('8\tline 8');
+    // totalLines is unavailable without a full read, so it is omitted.
+    expect(output).not.toContain('Total lines in file');
+    expect(readLineRange).toHaveBeenCalledWith('/tmp/acp-range.txt', {
+      startLine: 5,
+      maxLines: 3,
+      errors: 'strict',
+    });
+    expect(readLines).not.toHaveBeenCalled();
+  });
+
+  it('rejects range read when the window contains a NUL byte', async () => {
+    const readLineRange = vi.fn(async function* readLineRange(): AsyncGenerator<string> {
+      yield 'a\u0000b\n';
+    });
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(Buffer.from('text')),
+        readLineRange,
+      } as unknown as Partial<Kaos>),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool, context({ path: '/tmp/nul.txt' }));
+    expect(result.isError).toBe(true);
+    expect(toolContentString(result)).toContain('is not readable as UTF-8 text');
+  });
+
   it('uses tail reader when available without consuming readLines', async () => {
     const content = Array.from({ length: 20 }, (_, i) => `line ${String(i + 1)}`).join('\n');
     const bytes = Buffer.from(content, 'utf8');

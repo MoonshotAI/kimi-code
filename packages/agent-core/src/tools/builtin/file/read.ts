@@ -75,7 +75,7 @@ interface FinishReadResultInput {
   readonly maxBytesReached: boolean;
   readonly lineEndingStyle: LineEndingStyle;
   readonly startLine: number;
-  readonly totalLines: number;
+  readonly totalLines?: number;
   readonly requestedLines: number;
 }
 
@@ -359,6 +359,39 @@ export class ReadTool implements BuiltinTool<ReadInput> {
       });
     }
 
+    // Server-side range read (e.g. ACP `fs/read_text_file` with
+    // `line`/`limit`): the client returns only the requested window, so
+    // the whole file is never transferred. `totalLines` is unavailable
+    // without a full read, so it is omitted from the output.
+    if (rangeKaos.readLineRange !== undefined) {
+      const selectedEntries: ReadLineEntry[] = [];
+      const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
+      let lineNo = lineOffset;
+      for await (const rawLine of rangeKaos.readLineRange(safePath, {
+        startLine: lineOffset,
+        maxLines: effectiveLimit,
+        errors: 'strict',
+      })) {
+        if (containsNulByte(rawLine)) {
+          return { isError: true, output: notReadableFileOutput(displayPath) };
+        }
+        updateLineEndingFlags(flags, rawLine);
+        selectedEntries.push({ lineNo, rawContent: stripTrailingLf(rawLine) });
+        lineNo += 1;
+      }
+      const lineEndingStyle = lineEndingStyleFromFlags(flags);
+      const rendered = renderEntries(selectedEntries, lineEndingStyle);
+      return this.finishReadResult({
+        renderedLines: rendered.renderedLines,
+        truncatedLineNumbers: rendered.truncatedLineNumbers,
+        maxLinesReached: effectiveLimit >= MAX_LINES && selectedEntries.length >= effectiveLimit,
+        maxBytesReached: rendered.maxBytesReached,
+        lineEndingStyle,
+        startLine: selectedEntries.length > 0 ? lineOffset : 0,
+        requestedLines,
+      });
+    }
+
     const selectedEntries: ReadLineEntry[] = [];
     const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
     let currentLineNo = 0;
@@ -548,7 +581,9 @@ export class ReadTool implements BuiltinTool<ReadInput> {
           ]
         : ['No lines read from file.'];
 
-    parts.push(`Total lines in file: ${String(input.totalLines)}.`);
+    if (input.totalLines !== undefined) {
+      parts.push(`Total lines in file: ${String(input.totalLines)}.`);
+    }
     if (input.maxLinesReached) {
       parts.push(`Max ${String(MAX_LINES)} lines reached.`);
     } else if (input.maxBytesReached) {
