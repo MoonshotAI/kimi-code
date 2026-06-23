@@ -160,4 +160,26 @@ describe('guardLiteralDollarMath', () => {
       expect(types(text)).toContain('math_inline');
     }
   });
+
+  it('keeps shell variables and path-like values as text', () => {
+    for (const text of [
+      'Use $HOME/bin:$PATH now',
+      'echo $PATH:$HOME here',
+      'var $foo_$bar x',
+      'obj $a.$b y',
+    ]) {
+      expect(types(text)).not.toContain('math_inline');
+      expect(render(text)).toEqual([{ type: 'text', content: text }]);
+    }
+  });
+
+  it('still renders math next to sentence punctuation or brackets', () => {
+    // Trailing period / comma and wrapping parentheses are valid boundaries.
+    expect(render('equals $x^2$. today')).toEqual([
+      { type: 'text', content: 'equals ' },
+      { type: 'math_inline', content: 'x^2' },
+      { type: 'text', content: '. today' },
+    ]);
+    expect(render('see ($x^2$) here').map((n) => n.type)).toContain('math_inline');
+  });
 });
