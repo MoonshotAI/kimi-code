@@ -1852,6 +1852,20 @@ export class ToolCallComponent extends Container {
       for (const line of lines) {
         this.addChild(new Text(line, 2, 0));
       }
+    } else if (name === 'Bash' && this.result === undefined) {
+      // While a long-running Bash call is in-flight (args finalized, no result
+      // yet), surface its command in the body so the user can see what is
+      // running and expand it with ctrl+o. Once the result lands, buildContent's
+      // shellExecutionResultRenderer takes over command rendering.
+      const command = str(this.toolCall.args['command']);
+      if (command.length === 0) return;
+      this.addChild(
+        new ShellExecutionComponent({
+          command,
+          showCommand: true,
+          commandPreviewLines: this.expanded ? undefined : COMMAND_PREVIEW_LINES,
+        }),
+      );
     }
   }
 
