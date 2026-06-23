@@ -26,6 +26,8 @@ export class ClipboardImageHintController {
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
   private clearHintTimer: ReturnType<typeof setTimeout> | undefined;
   private lastHintAtMs = 0;
+  private lastHintText: string | undefined;
+  private checkGeneration = 0;
   private focused = true;
 
   constructor(host: ClipboardImageHintHost) {
@@ -41,7 +43,7 @@ export class ClipboardImageHintController {
     this.disposeInputListener?.();
     this.disposeInputListener = undefined;
 
-    if (this.host.footer.getTransientHint() !== null) {
+    if (this.host.footer.getTransientHint() === this.lastHintText) {
       this.host.footer.setTransientHint(null);
       this.host.requestRender();
     }
@@ -63,7 +65,9 @@ export class ClipboardImageHintController {
 
   private scheduleCheck(): void {
     this.clearTimers();
-    this.debounceTimer = setTimeout(() => void this.runCheck(), FOCUS_DEBOUNCE_MS);
+    this.checkGeneration += 1;
+    const generation = this.checkGeneration;
+    this.debounceTimer = setTimeout(() => void this.runCheck(generation), FOCUS_DEBOUNCE_MS);
   }
 
   private clearTimers(): void {
@@ -77,7 +81,7 @@ export class ClipboardImageHintController {
     }
   }
 
-  private async runCheck(): Promise<void> {
+  private async runCheck(generation: number): Promise<void> {
     if (!this.focused) return;
     if (!this.host.getModelSupportsImage()) return;
     if (Date.now() - this.lastHintAtMs < HINT_COOLDOWN_MS) return;
@@ -89,10 +93,12 @@ export class ClipboardImageHintController {
       return;
     }
 
+    if (generation !== this.checkGeneration) return;
     if (!this.focused) return;
     if (!hasImage) return;
 
     const hintText = `Image in clipboard · ${getPasteImageShortcut()} to paste`;
+    this.lastHintText = hintText;
     this.host.footer.setTransientHint(hintText);
     this.host.requestRender();
     this.lastHintAtMs = Date.now();

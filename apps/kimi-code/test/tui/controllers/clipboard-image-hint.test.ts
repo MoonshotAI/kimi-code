@@ -1,3 +1,4 @@
+import type { TUI } from '@earendil-works/pi-tui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -7,7 +8,6 @@ import {
 import type { FooterComponent } from '#/tui/components/chrome/footer';
 import { TERMINAL_FOCUS_IN, TERMINAL_FOCUS_OUT } from '#/tui/utils/terminal-focus';
 import { clipboardHasImage } from '#/utils/clipboard/clipboard-has-image';
-import type { TUI } from '@earendil-works/pi-tui';
 
 vi.mock('#/utils/clipboard/clipboard-has-image', () => ({
   clipboardHasImage: vi.fn(async () => false),
@@ -269,5 +269,74 @@ describe('ClipboardImageHintController', () => {
     controller.stop();
     expect(footer.getTransientHint()).toBeNull();
     expect(host.requestRender).toHaveBeenCalled();
+  });
+
+  it('does not clear a hint set by another caller when stopped', async () => {
+    vi.mocked(clipboardHasImage).mockResolvedValue(true);
+
+    const footer = createFakeFooter();
+    const ui = createFakeTUI();
+    const host: ClipboardImageHintHost = {
+      ui,
+      footer,
+      getModelSupportsImage: () => true,
+      requestRender: vi.fn(),
+    };
+
+    const controller = new ClipboardImageHintController(host);
+    controller.start();
+
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+    const otherHint = 'Other hint';
+    footer.setTransientHint(otherHint);
+
+    const requestRenderCalls = host.requestRender.mock.calls.length;
+    controller.stop();
+    expect(footer.getTransientHint()).toBe(otherHint);
+    expect(host.requestRender).toHaveBeenCalledTimes(requestRenderCalls);
+  });
+
+  it('uses only the latest clipboard read result after focus churn', async () => {
+    const deferreds: Array<{ resolve: (value: boolean) => void; promise: Promise<boolean> }> = [];
+    vi.mocked(clipboardHasImage).mockImplementation(() => {
+      let resolve: (value: boolean) => void = () => {};
+      const promise = new Promise<boolean>((res) => {
+        resolve = res;
+      });
+      deferreds.push({ resolve, promise });
+      return promise;
+    });
+
+    const footer = createFakeFooter();
+    const ui = createFakeTUI();
+    const host: ClipboardImageHintHost = {
+      ui,
+      footer,
+      getModelSupportsImage: () => true,
+      requestRender: vi.fn(),
+    };
+
+    const controller = new ClipboardImageHintController(host);
+    controller.start();
+
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(clipboardHasImage).toHaveBeenCalledTimes(1);
+
+    ui.emitInput(TERMINAL_FOCUS_OUT);
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(clipboardHasImage).toHaveBeenCalledTimes(2);
+
+    deferreds[0].resolve(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(footer.getTransientHint()).toBeNull();
+
+    deferreds[1].resolve(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(footer.getTransientHint()).toMatch(/Image in clipboard/);
+
+    controller.stop();
   });
 });
