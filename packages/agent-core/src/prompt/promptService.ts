@@ -2,8 +2,8 @@
  * `PromptService` — implementation of `IPromptService`.
  */
 
-import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
-import { Emitter } from '../../_base/event';
+import { Disposable, InstantiationType, registerSingleton } from '#/_base/di';
+import { Emitter } from '#/_base/event';
 import type {
   Event,
   PromptItem,
@@ -13,15 +13,15 @@ import type {
   PromptSubmitResult,
   PromptThinking,
 } from '@moonshot-ai/protocol';
-import type { PermissionMode } from '../../agent/permission';
+import type { PermissionMode } from '../agent/permission';
 import { ulid } from 'ulid';
 
 import { ICoreRuntime } from '#/coreProcess';
-import type { CoreRPC } from '../../rpc';
-import { IAuthSummaryService } from '../authSummary/authSummary';
+import type { CoreRPC } from '../rpc';
+import { IAuthSummaryService } from '../services/authSummary/authSummary';
 import { IEventService } from '#/event';
-import { ILogService } from '../logger/logger';
-import { ISessionService, SessionNotFoundError } from '../session/session';
+import { ILogService } from '../services/logger/logger';
+import { ISessionService, SessionNotFoundError } from '../services/session/session';
 import {
   IPromptService,
   PromptNotFoundError,

@@ -16,7 +16,7 @@ import { IApprovalService } from '#/approval';
 import type { IDomainEventBus, IEventService } from '#/event';
 import { IQuestionService } from '#/question';
 import type { AgentEvent, UsageStatus } from '../../src/rpc';
-import { IPromptService } from '../../src/services';
+import { IPromptService } from '#/prompt';
 import { type ICoreRuntime } from '#/coreProcess';
 import { SessionRuntimeService } from '../../src/services/session/sessionRuntimeService';
 

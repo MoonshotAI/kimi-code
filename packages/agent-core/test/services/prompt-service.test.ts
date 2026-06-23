@@ -45,11 +45,13 @@ import {
   type IAuthSummaryService,
   type ILogService,
   type ISessionService,
+  SessionNotFoundError,
+} from '../../src/services';
+import {
   PromptAlreadyCompletedError,
   PromptNotFoundError,
   PromptService,
-  SessionNotFoundError,
-} from '../../src/services';
+} from '#/prompt';
 import { type ICoreRuntime } from '#/coreProcess';
 
 const SID = 'sess_01PT';

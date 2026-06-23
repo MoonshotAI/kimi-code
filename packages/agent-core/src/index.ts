@@ -112,6 +112,10 @@ export * from './coreProcess';
 // keeps package root surface unchanged for server (`IMessageService` / `toProtocolMessage`)
 export * from './message';
 
+// ─── Prompt contract (di-v3) ───────────────────────────────────────────────
+// keeps package root surface unchanged for server (`IPromptService` / `PromptService`)
+export * from './prompt';
+
 // ─── Scope mechanism (di-v3) ───────────────────────────────────────────────
 // Exposes `LifecycleScope`, `registerScopedService` /
 // `getScopedServiceDescriptors` / `markBuilt` / `isBuilt`, the `I*Context`

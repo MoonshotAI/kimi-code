@@ -66,8 +66,8 @@
  * `IEventService.publish` (also a daemon-side interface; agent-core not touched).
  */
 
-import { createDecorator } from '../../_base/di';
-import type { Event } from '../../_base/event';
+import { createDecorator } from '#/_base/di';
+import type { Event } from '#/_base/event';
 import type {
   PromptListResponse,
   PromptSubmission,

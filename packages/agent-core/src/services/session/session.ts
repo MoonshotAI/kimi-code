@@ -3,7 +3,7 @@ import { encodeWorkDirKey } from '../../session/store';
 import type { Event } from '../../_base/event';
 import type { SessionSummary } from '../../rpc';
 import type { SessionMeta } from '../../session';
-import type { AgentStateSnapshot } from '../prompt/prompt';
+import type { AgentStateSnapshot } from '#/prompt';
 import {
   emptySessionUsage,
   type CompactSessionRequest,

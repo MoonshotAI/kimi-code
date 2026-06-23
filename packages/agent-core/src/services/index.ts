@@ -110,23 +110,6 @@ export { SessionQueryService } from './session/sessionQueryService';
 export { SessionRuntimeService } from './session/sessionRuntimeService';
 
 export {
-  IPromptService,
-  PromptAlreadyCompletedError,
-  PromptNotFoundError,
-  SessionBusyError,
-} from './prompt/prompt';
-export type {
-  AgentStateSnapshot,
-  PromptAbortResult,
-  PromptDispatchLogEntry,
-  SyntheticPromptAbortedEvent,
-  SyntheticPromptCompletedEvent,
-  SyntheticPromptSteeredEvent,
-  SyntheticPromptSubmittedEvent,
-} from './prompt/prompt';
-export { PromptService } from './prompt/promptService';
-
-export {
   IToolService,
   toProtocolTool,
   type AgentCoreToolInfoLike,

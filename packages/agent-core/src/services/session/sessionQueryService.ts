@@ -5,7 +5,7 @@ import type { CoreRPC, SessionSummary } from '../../rpc';
 import { IApprovalService } from '#/approval';
 import { ICoreRuntime } from '#/coreProcess';
 import { IEventService } from '#/event';
-import { IPromptService } from '../prompt/prompt';
+import { IPromptService } from '#/prompt';
 import { IQuestionService } from '#/question';
 import {
   ISessionQueryService,
