@@ -34,6 +34,7 @@ import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/ba
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
+import { normalizeUserPath } from '../../policies/path-access';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
@@ -466,7 +467,11 @@ async function readStreamIntoBuilder(
 
 function resolveProcessCwd(baseCwd: string, cwd: string, pathClass: 'posix' | 'win32'): string {
   const path = pathClass === 'win32' ? pathe.win32 : pathe.posix;
-  return path.isAbsolute(cwd) ? path.normalize(cwd) : path.resolve(baseCwd, cwd);
+  const normalizedBaseCwd = normalizeUserPath(baseCwd, pathClass);
+  const normalizedCwd = normalizeUserPath(cwd, pathClass);
+  return path.isAbsolute(normalizedCwd)
+    ? path.normalize(normalizedCwd)
+    : path.resolve(normalizedBaseCwd, normalizedCwd);
 }
 
 const WINDOWS_NUL_REDIRECT = /(\d?&?>+\s*)[Nn][Uu][Ll](?=\s|$|[|&;)\n])/g;

@@ -345,6 +345,33 @@ describe('BashTool', () => {
     expect(execWithEnv.mock.calls[0]?.[0]).toEqual(['/bin/bash', '-c', 'pwd']);
   });
 
+  it('normalizes Git Bash drive cwd before spawning on Windows', async () => {
+    const execWithEnv = vi.fn().mockResolvedValue(processWithOutput({ stdout: 'sub\n' }));
+    const kaos = createFakeKaos({
+      execWithEnv,
+      osEnv: windowsBashEnv,
+      pathClass: () => 'win32',
+    });
+    const withCwd = vi.fn((cwd: string) =>
+      createFakeKaos({
+        execWithEnv,
+        getcwd: () => cwd,
+        osEnv: windowsBashEnv,
+        pathClass: () => 'win32',
+      }),
+    );
+    const tool = new BashTool({ ...kaos, withCwd }, 'C:/workspace/kimi-code');
+
+    await executeTool(tool, context({ command: 'pwd', cwd: '/c/Users/me/project', timeout: 60 }));
+
+    expect(withCwd).toHaveBeenCalledWith('C:/Users/me/project');
+    expect(execWithEnv.mock.calls[0]?.[0]).toEqual([
+      'C:\\Program Files\\Git\\bin\\bash.exe',
+      '-c',
+      'pwd',
+    ]);
+  });
+
   it('keeps cwd out of the shell command string', async () => {
     const execWithEnv = vi.fn().mockResolvedValue(processWithOutput());
     const cwd = "/tmp/project-$(touch injected); `touch injected-too` & unsafe's";
