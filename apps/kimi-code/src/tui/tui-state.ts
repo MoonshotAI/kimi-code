@@ -60,6 +60,11 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
 
   const terminal = new ProcessTerminal();
   const ui = new TUI(terminal);
+  // Content shrinks (e.g. a tall inline image is replaced by a short
+  // placeholder or text) can leave stale rows behind because pi-tui's
+  // differential renderer does not clear them by default. Enable clearing so
+  // artifacts like duplicated input boxes do not accumulate.
+  ui.setClearOnShrink(true);
 
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
