@@ -182,4 +182,22 @@ describe('guardLiteralDollarMath', () => {
     ]);
     expect(render('see ($x^2$) here').map((n) => n.type)).toContain('math_inline');
   });
+
+  it('renders math in CJK prose and inside typographic quotes', () => {
+    // Full-width comma / period and CJK ideographs are valid boundaries.
+    expect(render('公式为 $E=mc^2$，其中')).toEqual([
+      { type: 'text', content: '公式为 ' },
+      { type: 'math_inline', content: 'E=mc^2' },
+      { type: 'text', content: '，其中' },
+    ]);
+    expect(render('中文 $x^2$。').map((n) => n.type)).toContain('math_inline');
+    // Curly quotes wrapping a formula.
+    expect(render('“$x$”')).toEqual([
+      { type: 'text', content: '“' },
+      { type: 'math_inline', content: 'x' },
+      { type: 'text', content: '”' },
+    ]);
+    // Math jammed against CJK ideographs with no spaces still renders.
+    expect(render('公式$E=mc^2$表明').map((n) => n.type)).toContain('math_inline');
+  });
 });

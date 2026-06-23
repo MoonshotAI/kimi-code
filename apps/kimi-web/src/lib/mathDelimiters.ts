@@ -1,32 +1,29 @@
 import type { MarkdownToken } from 'markstream-vue';
 
-// Characters that may sit immediately OUTSIDE a `$` delimiter while still
-// treating it as math — i.e. structural punctuation, not a prose token. A
-// letter or digit here means a second prose token (`$PATH:$HOME`, `$5/$10`).
-//   - left of an opening `$`: whitespace / line boundary / opening brackets.
-//   - right of a closing `$`: whitespace / line boundary / sentence or closing
-//     punctuation (so `$x^2$.` and `($x$)` still render).
-const LEFT_BOUNDARY = /[\s([{]/;
-const RIGHT_BOUNDARY = /[\s.,;:!?)\]}]/;
+// An ASCII letter or digit glued to the OUTSIDE of a `$` delimiter means a
+// second prose token is attached (`$PATH:$HOME`, `$5/$10`, `$foo_$bar`), so
+// the span is literal text, not math. Everything else — whitespace, line
+// boundaries, and any non-ASCII-alphanumeric character — is a valid math
+// boundary. That deliberately includes punctuation (ASCII and full-width/CJK),
+// CJK ideographs, and curly/typographic quotes, so localized prose like
+// `公式为 $E=mc^2$，其中` and quoted formulas like `“$x$”` still render.
+const ASCII_ALNUM = /[A-Za-z0-9]/;
 
-function isLeftBoundary(char: string | undefined): boolean {
-  return !char || LEFT_BOUNDARY.test(char);
-}
-
-function isRightBoundary(char: string | undefined): boolean {
-  return !char || RIGHT_BOUNDARY.test(char);
+function touchesProseToken(char: string | undefined): boolean {
+  return char !== undefined && ASCII_ALNUM.test(char);
 }
 
 /**
  * True when a single-`$` inline span is almost certainly plain prose dollars,
- * not a real LaTeX formula. Combines the two widely-used industry rules:
+ * not a real LaTeX formula. Combines two widely-used industry rules:
  *
  *   - Pandoc (`tex_math_dollars`): no whitespace immediately inside the
  *     delimiters — catches `Check $PATH before $HOME`, `costs $5 and $10`.
- *   - GitHub: each `$` must be bounded on its outer side by whitespace, a line
- *     boundary, or structural punctuation — catches compact prose where a
- *     second token touches the closing `$`, such as `costs $5/$10`,
- *     `Use $HOME/bin:$PATH`, or `$foo_$bar`.
+ *   - GitHub-style outer boundary, generalized beyond ASCII: a `$` glued to an
+ *     ASCII letter or digit means a second prose token, so the span is literal
+ *     text. Catches compact prose like `costs $5/$10`, `Use $HOME/bin:$PATH`,
+ *     and `$foo_$bar`, while still allowing CJK punctuation and quotes around
+ *     real formulas.
  *
  * `prevChar` / `nextChar` are the characters immediately before the opening `$`
  * and after the closing `$`, taken from the neighbouring text tokens.
@@ -37,8 +34,8 @@ function isProseDollarSpan(
   nextChar: string | undefined,
 ): boolean {
   if (/^\s|\s$/.test(content)) return true;
-  if (!isLeftBoundary(prevChar)) return true;
-  if (!isRightBoundary(nextChar)) return true;
+  if (touchesProseToken(prevChar)) return true;
+  if (touchesProseToken(nextChar)) return true;
   return false;
 }
 
