@@ -9,7 +9,8 @@ import {
   type PluginRemoveConfirmResult,
   type PluginsPanelSelection,
 } from '#/tui/components/dialogs/plugins-selector';
-import { darkColors } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
+import { darkColors, lightColors } from '#/tui/theme/colors';
 import { pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 
 const ANSI_SGR = /\u001b\[[0-9;]*m/g;
@@ -69,7 +70,6 @@ function makePanel(opts: {
   const panel = new PluginsPanelComponent({
     installed,
     installedIds: new Set(installed.map((p) => p.id)),
-    colors: darkColors,
     initialTab: opts.initialTab,
     selectedId: opts.selectedId,
     pluginHint: opts.pluginHint,
@@ -143,6 +143,23 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('? Superpowers  enabled');
     expect(out).toContain('Space toggle');
     expect(out).toContain('1 installed');
+  });
+
+  it('repaints from the current theme palette without remounting', () => {
+    const { panel } = makePanel({ installed: [superpowers] });
+    const previous = currentTheme.palette;
+    try {
+      currentTheme.setPalette(darkColors);
+      const darkOut = renderRaw(panel);
+      currentTheme.setPalette(lightColors);
+      const lightOut = renderRaw(panel);
+      // A palette snapshot cached at construction would render identically
+      // after the switch; reading currentTheme.palette at render time must
+      // produce different ANSI output for the same panel instance.
+      expect(darkOut).not.toBe(lightOut);
+    } finally {
+      currentTheme.setPalette(previous);
+    }
   });
 
   it('toggles an installed plugin with Space', () => {
@@ -308,7 +325,6 @@ describe('plugins selector dialogs', () => {
         ],
         diagnostics: [],
       },
-      colors: darkColors,
       onSelect: (selection) => {
         selections.push(selection);
       },

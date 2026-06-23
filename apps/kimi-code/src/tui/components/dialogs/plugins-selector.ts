@@ -45,7 +45,6 @@ export interface PluginMcpSelectorOptions {
     readonly server: string;
     readonly text: string;
   };
-  readonly colors: ColorPalette;
   readonly onSelect: (selection: PluginMcpSelection) => void;
   readonly onCancel: () => void;
 }
@@ -101,7 +100,8 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
   }
 
   override render(width: number): string[] {
-    const { colors, info } = this.opts;
+    const { info } = this.opts;
+    const colors = currentTheme.palette;
     const serverItems = this.items.filter((item) => item.kind === 'plugin');
     const actionItems = this.items.filter((item) => item.kind === 'action');
     const lines: string[] = [
@@ -132,7 +132,7 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
   }
 
   private renderItem(item: PluginsOverviewItem, index: number, width: number): string[] {
-    const { colors } = this.opts;
+    const colors = currentTheme.palette;
     const selected = index === this.selectedIndex;
     const pointer = selected ? SELECT_POINTER : ' ';
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
@@ -258,7 +258,6 @@ export type PluginsPanelSelection =
 export interface PluginsPanelOptions {
   readonly installed: readonly PluginSummary[];
   readonly installedIds: ReadonlySet<string>;
-  readonly colors: ColorPalette;
   readonly initialTab?: PluginsPanelTabId;
   readonly selectedId?: string;
   readonly pluginHint?: { readonly id: string; readonly text: string };
@@ -453,7 +452,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   override render(width: number): string[] {
-    const { colors } = this.opts;
+    const colors = currentTheme.palette;
     const tab = this.activeTab.id;
     const hint =
       tab === 'installed'
@@ -485,7 +484,8 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private renderInstalled(lines: string[], width: number): void {
-    const { colors, installed } = this.opts;
+    const { installed } = this.opts;
+    const colors = currentTheme.palette;
     if (installed.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('  No plugins installed.'));
     } else {
@@ -498,7 +498,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private renderInstalledRow(plugin: PluginSummary, index: number, width: number): string[] {
-    const { colors } = this.opts;
+    const colors = currentTheme.palette;
     const selected = index === this.selectedIndex;
     const pointer = selected ? SELECT_POINTER : ' ';
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
@@ -524,7 +524,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     width: number,
     entries: readonly PluginMarketplaceEntry[],
   ): void {
-    const { colors } = this.opts;
+    const colors = currentTheme.palette;
     if (this.market.status === 'loading' || this.market.status === 'idle') {
       lines.push(chalk.hex(colors.textMuted)('  Loading marketplace…'));
       return;
@@ -558,7 +558,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private renderMarketplaceRow(entry: PluginMarketplaceEntry, index: number, width: number): string[] {
-    const { colors } = this.opts;
+    const colors = currentTheme.palette;
     const selected = index === this.selectedIndex;
     const pointer = selected ? SELECT_POINTER : ' ';
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
@@ -575,9 +575,10 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private renderCustom(lines: string[], width: number): void {
-    lines.push(mutedHintLine(' Install from a GitHub URL (or zip URL / local path):', this.opts.colors));
+    const colors = currentTheme.palette;
+    lines.push(mutedHintLine(' Install from a GitHub URL (or zip URL / local path):', colors));
     lines.push('');
-    lines.push(...renderUrlInputBox(this.customInput, this.focused, width, this.opts.colors));
+    lines.push(...renderUrlInputBox(this.customInput, this.focused, width, colors));
   }
 }
 

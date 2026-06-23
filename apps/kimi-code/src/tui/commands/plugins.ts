@@ -163,7 +163,6 @@ async function showPluginsPicker(
     initialTab: options?.initialTab,
     selectedId: options?.selectedId,
     pluginHint: options?.pluginHint,
-    colors: host.state.theme.palette,
     onSelect: (selection) => {
       // Each branch of the handler either mounts the next view or restores the
       // editor itself, so do not pre-restore here — that would flash the editor
@@ -224,7 +223,6 @@ async function showPluginMcpPicker(
       info,
       selectedServer: options?.selectedServer,
       serverHint: options?.serverHint,
-      colors: host.state.theme.palette,
       onSelect: (selection) => {
         // Every MCP action re-mounts a picker, so let the handler do the
         // mounting — pre-restoring the editor here would flash on toggle.
