@@ -404,20 +404,54 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    // Swallow Tab while the autocomplete dropdown is closed so it does not
+    // trigger pi-tui's built-in file completion. When the dropdown is open,
+    // fall through so pi-tui can still accept the selected item with Tab.
+    if (matchesKey(normalized, Key.tab) && !this.isShowingAutocomplete()) {
+      return;
+    }
+
     super.handleInput(normalized);
-    this.reopenPathCompletionAfterInput();
+    this.reopenAutocompleteAfterInput();
   }
 
-  private reopenPathCompletionAfterInput(): void {
+  private reopenAutocompleteAfterInput(): void {
+    if (this.isShowingAutocomplete()) return;
     const { line, col } = this.getCursor();
     const textBeforeCursor = this.getLines()[line]?.slice(0, col) ?? '';
-    if (!textBeforeCursor.endsWith('/')) return;
-    if (this.isShowingAutocomplete()) return;
-    const isSlashArgument = textBeforeCursor.startsWith('/') && textBeforeCursor.includes(' ');
-    const isAtMention = extractAtPrefix(textBeforeCursor) !== null;
-    if (!isSlashArgument && !isAtMention) return;
-    (this as unknown as { requestAutocomplete?: (options: { force: boolean; explicitTab: boolean }) => void })
-      .requestAutocomplete?.({ force: true, explicitTab: false });
+    const editor = this as unknown as {
+      requestAutocomplete?: (options: { force: boolean; explicitTab: boolean }) => void;
+    };
+    if (editor.requestAutocomplete === undefined) return;
+    const trigger = (): void => {
+      // Use force:false so slash-aware logic runs: commands with argument
+      // completions return their subcommands, commands without them return
+      // null. force:true would bypass the slash branch and fall through to
+      // path completion, wrongly popping up the file list.
+      editor.requestAutocomplete?.({ force: false, explicitTab: false });
+    };
+
+    // Reopen path / argument completion right after a `/` is typed
+    // (e.g. `/add-dir /` or an `@dir/` mention).
+    if (textBeforeCursor.endsWith('/')) {
+      const isSlashArgument = textBeforeCursor.startsWith('/') && textBeforeCursor.includes(' ');
+      const isAtMention = extractAtPrefix(textBeforeCursor) !== null;
+      if (isSlashArgument || isAtMention) {
+        trigger();
+      }
+      return;
+    }
+
+    // After accepting a slash command name via Tab, pi-tui inserts a trailing
+    // space and closes the menu without triggering argument completion. Reopen
+    // it so subcommands (e.g. `/goal ` → status/pause/…) show immediately.
+    if (
+      textBeforeCursor.endsWith(' ') &&
+      textBeforeCursor.startsWith('/') &&
+      textBeforeCursor.includes(' ')
+    ) {
+      trigger();
+    }
   }
 }
 

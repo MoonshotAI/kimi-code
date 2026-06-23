@@ -142,6 +142,73 @@ describe('CustomEditor slash argument completion refresh', () => {
   });
 });
 
+describe('CustomEditor slash command name Tab-accept', () => {
+  it('reopens subcommand completions after Tab-accepting a slash command name', async () => {
+    const editor = makeEditor();
+    const provider = new FileMentionProvider(
+      [
+        {
+          name: 'goal',
+          description: 'Manage goals',
+          getArgumentCompletions: (prefix) =>
+            prefix === ''
+              ? [
+                  { value: 'status', label: 'status' },
+                  { value: 'pause', label: 'pause' },
+                ]
+              : null,
+        },
+      ],
+      process.cwd(),
+      null,
+    );
+    editor.setAutocompleteProvider(provider);
+
+    for (const char of '/go') {
+      editor.handleInput(char);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+
+    editor.handleInput('\t');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+
+    expect(editor.getText()).toBe('/goal ');
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+
+  it('does not fall back to file completions for a command without subcommands', async () => {
+    const editor = makeEditor();
+    const provider = new FileMentionProvider(
+      [
+        {
+          name: 'compact',
+          description: 'Compact context',
+        },
+      ],
+      process.cwd(),
+      null,
+    );
+    editor.setAutocompleteProvider(provider);
+
+    for (const char of '/comp') {
+      editor.handleInput(char);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+
+    editor.handleInput('\t');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+
+    expect(editor.getText()).toBe('/compact ');
+    expect(editor.isShowingAutocomplete()).toBe(false);
+  });
+});
+
 describe('CustomEditor @ mention completion refresh', () => {
   it('reopens the next directory level after tab-accepting an @ directory', async () => {
     const editor = makeEditor();
@@ -197,6 +264,21 @@ describe('CustomEditor @ mention completion refresh', () => {
 
     expect(editor.getText()).toBe('@shared/');
     expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+});
+
+describe('CustomEditor Tab key handling', () => {
+  it('does not open autocomplete when Tab is pressed with the dropdown closed', async () => {
+    const editor = makeEditor();
+    const provider = providerReturning([{ value: '@src/file.ts', label: 'file.ts' }]);
+    editor.setAutocompleteProvider(provider);
+
+    editor.handleInput('\t');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flushAutocomplete();
+
+    expect(provider.getSuggestions).not.toHaveBeenCalled();
+    expect(editor.isShowingAutocomplete()).toBe(false);
   });
 });
 
