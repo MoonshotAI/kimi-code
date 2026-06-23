@@ -48,6 +48,7 @@ import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import { GutterContainer } from './components/chrome/gutter-container';
 import { MoonLoader, type SpinnerStyle } from './components/chrome/moon-loader';
 import { WelcomeComponent } from './components/chrome/welcome';
+import { currentWorkingTip } from './components/chrome/working-tips';
 import {
   ApprovalPanelComponent,
   type ApprovalPanelResponse,
@@ -1693,11 +1694,13 @@ export class KimiTUI {
         const spinner = this.ensureActivitySpinner('braille', 'working...', (s) =>
           currentTheme.fg('primary', s),
         );
+        const tip = currentWorkingTip();
         this.syncAgentSwarmActivitySpinner(undefined);
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'composing',
             spinner,
+            tip: tip?.text,
           }),
         );
         break;
