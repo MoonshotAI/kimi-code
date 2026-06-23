@@ -28,6 +28,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+    terminal: { showHardwareCursor: false },
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-signals',
@@ -287,7 +288,7 @@ describe('KimiTUI signal handlers', () => {
 
   it('stop() unregisters previously-installed signal handlers', async () => {
     const { driver, tui } = makeDriver();
-    // Suppress real stop work for this test — focus on the cleanup contract.
+    // Suppress real stop work for this test 鈥?focus on the cleanup contract.
     vi.spyOn(tui, 'stop').mockImplementation(async () => {
       (tui as unknown as SignalDriver).unregisterSignalHandlers();
     });
@@ -323,7 +324,7 @@ describe('KimiTUI signal handlers', () => {
   it('start() unregisters signal handlers when initialization throws', async () => {
     const { tui } = makeDriver();
     // Force the very first awaited call inside start() to reject. We don't
-    // care which method blows up — only that the failure surfaces and any
+    // care which method blows up 鈥?only that the failure surfaces and any
     // listeners we installed up front get cleaned up before the throw escapes.
     vi.spyOn(tui as unknown as { initMainTui(): Promise<boolean> }, 'initMainTui').mockRejectedValue(
       new Error('init boom'),

@@ -10,6 +10,7 @@ import {
   ExperimentsSelectorComponent,
   type ExperimentalFeatureDraftChange,
 } from '../components/dialogs/experiments-selector';
+import { HardwareCursorSelectorComponent } from '../components/dialogs/hardware-cursor-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
@@ -277,6 +278,7 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
       editorCommand,
       notifications: host.state.appState.notifications,
       upgrade: host.state.appState.upgrade,
+      terminal: host.state.appState.terminal,
     });
   } catch (error) {
     host.showStatus(
@@ -443,6 +445,7 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
       editorCommand: host.state.appState.editorCommand,
       notifications: host.state.appState.notifications,
       upgrade: host.state.appState.upgrade,
+      terminal: host.state.appState.terminal,
     });
   } catch (error) {
     host.showStatus(
@@ -484,6 +487,21 @@ export function showUpdatePreferencePicker(host: SlashCommandHost): void {
       onSelect: (value) => {
         host.restoreEditor();
         void applyUpdatePreferenceChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+export function showHardwareCursorPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new HardwareCursorSelectorComponent({
+      currentValue: host.state.appState.terminal.showHardwareCursor,
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyHardwareCursorChoice(host, value);
       },
       onCancel: () => {
         host.restoreEditor();
@@ -562,7 +580,7 @@ type UpdatePreferenceHost = {
   readonly state: {
     readonly appState: Pick<
       SlashCommandHost['state']['appState'],
-      'theme' | 'editorCommand' | 'notifications' | 'upgrade'
+      'theme' | 'editorCommand' | 'notifications' | 'upgrade' | 'terminal'
     >;
   };
   setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'upgrade'>): void;
@@ -586,6 +604,7 @@ export async function applyUpdatePreferenceChoice(
       editorCommand: host.state.appState.editorCommand,
       notifications: host.state.appState.notifications,
       upgrade,
+      terminal: host.state.appState.terminal,
     });
   } catch (error) {
     host.showStatus(
@@ -598,6 +617,51 @@ export async function applyUpdatePreferenceChoice(
   host.setAppState({ upgrade });
   host.track('upgrade_preference_changed', { auto_install: autoInstall });
   host.showStatus(`Automatic updates ${autoInstall ? 'enabled' : 'disabled'}.`);
+}
+
+type HardwareCursorHost = {
+  readonly state: {
+    readonly appState: Pick<
+      SlashCommandHost['state']['appState'],
+      'theme' | 'editorCommand' | 'notifications' | 'upgrade' | 'terminal'
+    >;
+    readonly ui: Pick<SlashCommandHost['state']['ui'], 'setShowHardwareCursor'>;
+  };
+  setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'terminal'>): void;
+  showStatus(msg: string, color?: string): void;
+  track: SlashCommandHost['track'];
+};
+
+export async function applyHardwareCursorChoice(
+  host: HardwareCursorHost,
+  showHardwareCursor: boolean,
+): Promise<void> {
+  if (showHardwareCursor === host.state.appState.terminal.showHardwareCursor) {
+    host.showStatus(`Hardware cursor already ${showHardwareCursor ? 'enabled' : 'disabled'}.`);
+    return;
+  }
+
+  const terminal = { showHardwareCursor };
+  try {
+    await saveTuiConfig({
+      theme: host.state.appState.theme,
+      editorCommand: host.state.appState.editorCommand,
+      notifications: host.state.appState.notifications,
+      upgrade: host.state.appState.upgrade,
+      terminal,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save hardware cursor setting: ${formatErrorMessage(error)}`,
+      'error',
+    );
+    return;
+  }
+
+  host.state.ui.setShowHardwareCursor(showHardwareCursor);
+  host.setAppState({ terminal });
+  host.track('hardware_cursor_preference_changed', { show_hardware_cursor: showHardwareCursor });
+  host.showStatus(`Hardware cursor ${showHardwareCursor ? 'enabled' : 'disabled'}.`);
 }
 
 async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMode): Promise<void> {
@@ -639,6 +703,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'theme': showThemePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'experiments': void showExperimentsPanel(host); return;
+    case 'hardware-cursor': showHardwareCursorPicker(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;
     case 'usage': void showUsage(host); return;
   }

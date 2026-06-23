@@ -55,6 +55,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+    terminal: { showHardwareCursor: false },
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-a',
@@ -295,7 +296,7 @@ describe('KimiTUI resume message replay', () => {
         [
           {
             type: 'text',
-            text: '<system-reminder>\n✓ Goal complete.\nWorked 1 turn over 7m15s, using 4.3M tokens.\n</system-reminder>',
+            text: '<system-reminder>\n鉁?Goal complete.\nWorked 1 turn over 7m15s, using 4.3M tokens.\n</system-reminder>',
           },
         ],
         { origin: { kind: 'system_trigger', name: 'goal_completion' } },
@@ -393,7 +394,7 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('Goal paused');
     expect(transcript).toContain('Goal resumed');
     expect(transcript).toContain('Goal blocked');
-    expect(transcript).toContain('Goal complete — done');
+    expect(transcript).toContain('Goal complete 鈥?done');
     expect(transcript).toContain('Worked 1 turn over 7m15s, using 4.3k tokens.');
   });
 
@@ -440,7 +441,7 @@ describe('KimiTUI resume message replay', () => {
     expect(entry).toMatchObject({
       kind: 'assistant',
       renderMode: 'markdown',
-      content: '✓ Goal complete.\nWorked 1 turn over 7m15s, using 4.3M tokens.',
+      content: '鉁?Goal complete.\nWorked 1 turn over 7m15s, using 4.3M tokens.',
     });
   });
 
@@ -653,7 +654,7 @@ describe('KimiTUI resume message replay', () => {
     const driver = await replayIntoDriver(replay);
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
 
-    expect(transcript).toContain('Agent swarm: ✓ 1 completed · ✗ 1 failed');
+    expect(transcript).toContain('Agent swarm: 鉁?1 completed 路 鉁?1 failed');
     expect(transcript).not.toContain('<agent_swarm_result>');
     expect(transcript).not.toContain('Reviewed src/a.ts.');
     expect(transcript).not.toContain('Agent timed out.');
@@ -693,8 +694,8 @@ describe('KimiTUI resume message replay', () => {
     const driver = await replayIntoDriver(replay);
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
 
-    expect(transcript).toContain('Agent swarm: ✗ 1 failed · ⊘ 1 aborted');
-    expect(transcript).not.toContain('Agent swarm: ✓ Completed.');
+    expect(transcript).toContain('Agent swarm: 鉁?1 failed 路 鈯?1 aborted');
+    expect(transcript).not.toContain('Agent swarm: 鉁?Completed.');
     expect(transcript).not.toContain('<agent_swarm_result>');
   });
 
@@ -1017,7 +1018,7 @@ describe('KimiTUI resume message replay', () => {
     });
     const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
     expect(transcript).toContain('Compaction complete');
-    expect(transcript).toContain('120 → 24 tokens');
+    expect(transcript).toContain('120 鈫?24 tokens');
     expect(transcript).toContain('preserve implementation notes');
     expect(transcript).not.toContain('Compacted transcript summary.');
   });

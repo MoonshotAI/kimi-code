@@ -6,6 +6,7 @@ export type SettingsSelection =
   | 'editor'
   | 'permission'
   | 'experiments'
+  | 'hardware-cursor'
   | 'upgrade'
   | 'usage';
 
@@ -36,6 +37,11 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     description: 'Turn experimental features on or off.',
   },
   {
+    value: 'hardware-cursor',
+    label: 'Hardware cursor',
+    description: 'Make IME candidate windows follow the input cursor.',
+  },
+  {
     value: 'upgrade',
     label: 'Automatic updates',
     description: 'Turn automatic CLI updates on or off.',
@@ -54,6 +60,7 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'editor' ||
     value === 'permission' ||
     value === 'experiments' ||
+    value === 'hardware-cursor' ||
     value === 'upgrade' ||
     value === 'usage'
   );

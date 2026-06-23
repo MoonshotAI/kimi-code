@@ -37,6 +37,8 @@ describe('TUI config', () => {
     expect(text).toContain('command = ""');
     expect(text).toContain('[upgrade]');
     expect(text).toContain('auto_install = true');
+    expect(text).toContain('[terminal]');
+    expect(text).toContain('show_hardware_cursor = false');
     expect(text).toContain('[notifications]');
     expect(text).toContain('enabled = true');
     expect(text).toContain('notification_condition = "unfocused"');
@@ -55,6 +57,9 @@ notification_condition = "always"
 
 [upgrade]
 auto_install = false
+
+[terminal]
+show_hardware_cursor = true
 `);
 
     expect(config).toEqual({
@@ -62,6 +67,7 @@ auto_install = false
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
+      terminal: { showHardwareCursor: true },
     });
   });
 
@@ -76,6 +82,7 @@ command = "   "
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      terminal: { showHardwareCursor: false },
     });
   });
 
@@ -84,6 +91,7 @@ command = "   "
 
     expect(config.notifications).toEqual({ enabled: true, condition: 'unfocused' });
     expect(config.upgrade).toEqual({ autoInstall: true });
+    expect(config.terminal).toEqual({ showHardwareCursor: false });
   });
 
   it('throws TuiConfigParseError with fallback when parsing fails, leaving the file untouched', async () => {
@@ -107,6 +115,7 @@ command = "   "
         editorCommand: 'vim',
         notifications: { enabled: false, condition: 'always' },
         upgrade: { autoInstall: false },
+        terminal: { showHardwareCursor: true },
       },
       filePath,
     );
@@ -116,6 +125,7 @@ command = "   "
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
+      terminal: { showHardwareCursor: true },
     });
   });
 
@@ -127,6 +137,7 @@ command = "   "
         editorCommand: null,
         notifications: DEFAULT_TUI_CONFIG.notifications,
         upgrade: DEFAULT_TUI_CONFIG.upgrade,
+        terminal: DEFAULT_TUI_CONFIG.terminal,
       },
       filePath,
     );

@@ -44,6 +44,9 @@ notification_condition = "always"
 
 [upgrade]
 auto_install = false
+
+[terminal]
+show_hardware_cursor = true
 `);
     const session = { reloadSession: vi.fn() };
     const host = makeHost({ session });
@@ -58,7 +61,9 @@ auto_install = false
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
+      terminal: { showHardwareCursor: true },
     });
+    expect(host.state.ui.setShowHardwareCursor).toHaveBeenCalledWith(true);
     expect(host.showStatus).toHaveBeenCalledWith(
       'TUI config reloaded.',
       'success',
@@ -132,8 +137,12 @@ function makeHost({
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      terminal: { showHardwareCursor: false },
       availableModels: {},
       availableProviders: {},
+    },
+    ui: {
+      setShowHardwareCursor: vi.fn(),
     },
     theme: {
       palette: {

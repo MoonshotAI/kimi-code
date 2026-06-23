@@ -43,10 +43,12 @@ export async function applyReloadedTuiConfig(
     : undefined;
   await host.applyTheme(config.theme, resolved);
   host.refreshTerminalThemeTracking();
+  host.state.ui.setShowHardwareCursor(config.terminal.showHardwareCursor);
   host.setAppState({
     editorCommand: config.editorCommand,
     notifications: config.notifications,
     upgrade: config.upgrade,
+    terminal: config.terminal,
   });
 }
 

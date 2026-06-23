@@ -164,6 +164,7 @@ function tuiConfig(overrides: Partial<TuiConfig> = {}): TuiConfig {
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
+    terminal: { showHardwareCursor: false },
     ...overrides,
   };
 }
@@ -537,7 +538,7 @@ describe('runUpdatePreflight', () => {
     const { stdout, stderr, options } = captureOutput();
     await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
     expect(stderr.join('')).toContain('warning: failed to install');
-    // A failed install must never print the "Updated …" success line.
+    // A failed install must never print the "Updated 鈥? success line.
     expect(stdout.join('')).not.toContain('Updated @moonshot-ai/kimi-code');
   });
 
@@ -1061,9 +1062,9 @@ describe('runUpdatePreflight', () => {
 });
 
 describe('spawnForSource native', () => {
-  // No spawn mock here — we run real bash to prove the failure contract
-  // end-to-end. `curl … | bash` reports only the trailing bash's exit status,
-  // so a curl that never connects (exit 7, empty stdin → bash exits 0) is
+  // No spawn mock here 鈥?we run real bash to prove the failure contract
+  // end-to-end. `curl 鈥?| bash` reports only the trailing bash's exit status,
+  // so a curl that never connects (exit 7, empty stdin 鈫?bash exits 0) is
   // masked and the update is wrongly reported as successful. `set -o pipefail`
   // makes the pipeline surface curl's failure. Shadowing `curl` with a shell
   // function keeps this offline and deterministic; skipped on Windows (no bash,

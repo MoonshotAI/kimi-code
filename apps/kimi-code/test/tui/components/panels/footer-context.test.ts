@@ -43,15 +43,15 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
   } as AppState;
 }
 
-describe('FooterComponent — context NaN resilience', () => {
-  it('NaN usage → renders 0.0% (never literal "NaN%")', () => {
+describe('FooterComponent 鈥?context NaN resilience', () => {
+  it('NaN usage 鈫?renders 0.0% (never literal "NaN%")', () => {
     const fc = new FooterComponent(baseState({ contextUsage: Number.NaN }));
     const out = strip(fc.render(120).join(''));
     expect(out).not.toMatch(/NaN/);
     expect(out).toMatch(/context: 0\.0%/);
   });
 
-  it('undefined-ish (coerced) usage → renders 0.0%', () => {
+  it('undefined-ish (coerced) usage 鈫?renders 0.0%', () => {
     const fc = new FooterComponent(
       baseState({ contextUsage: undefined as unknown as number }),
     );
@@ -60,19 +60,19 @@ describe('FooterComponent — context NaN resilience', () => {
     expect(out).toMatch(/context: 0\.0%/);
   });
 
-  it('clamps ratios above 1.0 → renders 100.0%', () => {
+  it('clamps ratios above 1.0 鈫?renders 100.0%', () => {
     const fc = new FooterComponent(baseState({ contextUsage: 1.5 }));
     const out = strip(fc.render(120).join(''));
     expect(out).toMatch(/context: 100\.0%/);
   });
 
-  it('ratio 0.427 → renders 42.7%', () => {
+  it('ratio 0.427 鈫?renders 42.7%', () => {
     const fc = new FooterComponent(baseState({ contextUsage: 0.427 }));
     const out = strip(fc.render(200).join(''));
     expect(out).toMatch(/context: 42\.7%/);
   });
 
-  it('tokens provided but max=0 → falls back to percent-only, no division-by-zero artefact', () => {
+  it('tokens provided but max=0 鈫?falls back to percent-only, no division-by-zero artefact', () => {
     const fc = new FooterComponent(
       baseState({ contextUsage: 0, contextTokens: 500, maxContextTokens: 0 }),
     );
@@ -146,7 +146,7 @@ describe('FooterComponent — context NaN resilience', () => {
   });
 });
 
-describe('buildWeightedTips — weighted rotation', () => {
+describe('buildWeightedTips 鈥?weighted rotation', () => {
   it('repeats higher-priority tips more often (length = sum of weights)', () => {
     const seq = buildWeightedTips([
       { text: 'a' }, // weight 1 (default)
@@ -162,7 +162,7 @@ describe('buildWeightedTips — weighted rotation', () => {
     expect(count('b')).toBeGreaterThan(count('a'));
   });
 
-  it('keeps duplicates spread out — no tip sits next to itself', () => {
+  it('keeps duplicates spread out 鈥?no tip sits next to itself', () => {
     const seq = buildWeightedTips([
       { text: 'a' },
       { text: 'b', priority: 3 },

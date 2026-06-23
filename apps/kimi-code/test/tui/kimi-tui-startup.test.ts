@@ -90,6 +90,7 @@ function makeStartupInput(
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      terminal: { showHardwareCursor: false },
       ...tuiConfig,
     },
     version: '0.0.0-test',
@@ -1119,7 +1120,7 @@ describe('KimiTUI startup', () => {
     await (driver as any).refreshProviderModelsInBackground();
 
     expect(showStatus).toHaveBeenCalledTimes(1);
-    expect(showStatus).toHaveBeenCalledWith("New Models · +2 models.");
+    expect(showStatus).toHaveBeenCalledWith("New Models 路 +2 models.");
   });
 
   it("starts TUI without a session when fresh startup needs OAuth login", async () => {
@@ -1506,7 +1507,7 @@ describe('KimiTUI startup', () => {
       migrationPlan: MIGRATION_PLAN,
       migrateOnly: true,
     }) as unknown as MigrateExitDriver;
-    // pi-tui start/stop and focus tracking touch the real TTY — stub the I/O.
+    // pi-tui start/stop and focus tracking touch the real TTY 鈥?stub the I/O.
     vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
     vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
     vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
@@ -1518,7 +1519,7 @@ describe('KimiTUI startup', () => {
     await driver.start();
 
     // `kimi migrate` exits via process.exit; startEventLoop() installed focus
-    // tracking, so the exit path must dispose it — otherwise the terminal
+    // tracking, so the exit path must dispose it 鈥?otherwise the terminal
     // keeps emitting focus/OSC sequences after the command finishes.
     expect(driver.terminalFocusTrackingDispose).toBeUndefined();
     expect(onExit).toHaveBeenCalledWith(0);
@@ -1542,7 +1543,7 @@ describe('KimiTUI startup', () => {
     await expect(driver.start()).rejects.toThrow('resume boom');
 
     // The focus tracking installed by startEventLoop() must be torn down
-    // before the error propagates — not left active after the process exits.
+    // before the error propagates 鈥?not left active after the process exits.
     expect(driver.terminalFocusTrackingDispose).toBeUndefined();
   });
 

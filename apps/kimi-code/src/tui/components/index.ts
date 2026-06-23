@@ -9,6 +9,7 @@ export * from './dialogs/compaction';
 export * from './dialogs/editor-selector';
 export * from './dialogs/experiments-selector';
 export * from './dialogs/help-panel';
+export * from './dialogs/hardware-cursor-selector';
 export * from './dialogs/model-selector';
 export * from './dialogs/permission-selector';
 export * from './dialogs/question-dialog';
