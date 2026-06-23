@@ -40,6 +40,11 @@ export class ClipboardImageHintController {
     this.clearTimers();
     this.disposeInputListener?.();
     this.disposeInputListener = undefined;
+
+    if (this.host.footer.getTransientHint() !== null) {
+      this.host.footer.setTransientHint(null);
+      this.host.requestRender();
+    }
   }
 
   private handleInput(data: string): { consume: true } | undefined {
@@ -84,6 +89,7 @@ export class ClipboardImageHintController {
       return;
     }
 
+    if (!this.focused) return;
     if (!hasImage) return;
 
     const hintText = `Image in clipboard · ${getPasteImageShortcut()} to paste`;
