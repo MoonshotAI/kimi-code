@@ -386,6 +386,52 @@ describe('AcpKaos', () => {
     });
   });
 
+  describe('readTextPreview', () => {
+    it('reads only line 1 via line/limit and returns the first n chars', async () => {
+      const conn = makeMockConn({
+        readHandler: async () => ({ content: 'first line here\nsecond line\n' }),
+      });
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+
+      const buf = await kaos.readTextPreview('/a.ts', 5);
+
+      expect(buf.toString('utf8')).toBe('first');
+      // Crucially: the sniff is bounded to line 1 — never a whole-file read.
+      expect(conn.readCalls).toEqual([{ sessionId: 's1', path: '/a.ts', line: 1, limit: 1 }]);
+    });
+
+    it('stays bounded to line 1 even when the client ignores limit', async () => {
+      // Simulates a non-compliant client that returns the whole file despite
+      // `limit: 1`; readLineRange's defensive cap keeps the preview to line 1.
+      const conn = makeMockConn({ readHandler: async () => ({ content: 'a\nb\nc\nd\n' }) });
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+
+      const buf = await kaos.readTextPreview('/a.ts', 100);
+
+      expect(buf.toString('utf8')).toBe('a\n');
+    });
+
+    it('returns an empty buffer for an empty response', async () => {
+      const conn = makeMockConn({ readHandler: async () => ({ content: '' }) });
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+
+      const buf = await kaos.readTextPreview('/a.ts', 512);
+
+      expect(buf.byteLength).toBe(0);
+    });
+
+    it('wraps RPC errors in KaosError', async () => {
+      const conn = makeMockConn({
+        readHandler: async () => {
+          throw new Error('rpc died');
+        },
+      });
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+
+      await expect(kaos.readTextPreview('/x.ts', 512)).rejects.toBeInstanceOf(KaosError);
+    });
+  });
+
   describe('writeText', () => {
     it('forwards content to conn.writeTextFile and returns char count', async () => {
       const conn = makeMockConn({});

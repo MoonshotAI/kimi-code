@@ -150,9 +150,16 @@ export class AcpKaos implements Kaos {
    * Return a small UTF-8 header derived from the same ACP text source as
    * `readText` / `readLines`, used only by text-read callers for sniffing.
    * Keep `readBytes` local so binary callers such as ReadMediaFile stay safe.
+   *
+   * Bounded to the first line via ACP `line` / `limit` so a sniff never
+   * transfers the whole file: `detectFileType` only needs the leading magic
+   * bytes (≤16) plus a NUL scan, both of which line 1 covers, and line 1 is
+   * the smallest unit `fs/readTextFile` can return. A non-compliant client
+   * that ignores `limit` is still capped to line 1 by `readLineRange`.
    */
   async readTextPreview(path: string, n: number): Promise<Buffer> {
-    const text = await this.readText(path);
+    const first = await this.readLineRange(path, { startLine: 1, maxLines: 1 }).next();
+    const text = first.value ?? '';
     return Buffer.from(text.slice(0, n), 'utf8');
   }
 
