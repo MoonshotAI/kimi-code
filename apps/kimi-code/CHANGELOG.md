@@ -1,5 +1,17 @@
 # @moonshot-ai/kimi-code
 
+## 0.19.1
+
+### Patch Changes
+
+- [#992](https://github.com/MoonshotAI/kimi-code/pull/992) [`7341fb4`](https://github.com/MoonshotAI/kimi-code/commit/7341fb4979523d4429ccf9177b5e3907f544d8c0) - Fix ACP editors such as Zed failing to start a new thread.
+
+- [#984](https://github.com/MoonshotAI/kimi-code/pull/984) [`da81858`](https://github.com/MoonshotAI/kimi-code/commit/da81858802127cb8bb8ed2deaa1989793b356adf) - Clear all per-session state when a session is archived or removed, so archived sessions no longer leave orphaned data behind.
+
+- [#978](https://github.com/MoonshotAI/kimi-code/pull/978) [`d4ae02d`](https://github.com/MoonshotAI/kimi-code/commit/d4ae02d82e9da0d163ea4235a54d6535c591172e) - Fix the web sidebar's unread dots getting out of sync across browser tabs.
+
+- [#979](https://github.com/MoonshotAI/kimi-code/pull/979) [`8c6cade`](https://github.com/MoonshotAI/kimi-code/commit/8c6cade69efa42fdcc280f51a283ea6f717d62fc) - Consolidate web client localStorage access and split the root state store and app shell into focused composables.
+
 ## 0.19.0
 
 ### Minor Changes
