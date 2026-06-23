@@ -119,6 +119,11 @@ export {
   LLMRequesterService,
   type LLMRequesterServiceOptions,
 } from './llmRequester/llmRequesterService';
+export {
+  ILLMRequestLogService,
+  type LLMRequestLogInput,
+} from './llmRequestLog/llmRequestLog';
+export { LLMRequestLogService } from './llmRequestLog/llmRequestLogService';
 
 export { ITurnRunner } from './turnRunner/turnRunner';
 export { TurnRunnerService } from './turnRunner/turnRunnerService';

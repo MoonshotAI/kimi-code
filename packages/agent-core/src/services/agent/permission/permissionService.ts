@@ -21,8 +21,8 @@ import {
   SyncDescriptor,
 } from '../../../di';
 import type {
-  ToolAuthorizationResult,
-  ResolvedToolExecutionContext,
+  AuthorizeToolExecutionResult,
+  ResolvedToolExecutionHookContext,
 } from '../../../loop';
 import type { ToolFileAccess } from '../../../loop/tool-access';
 import type { ToolInputDisplay } from '../../../tools/display';
@@ -70,7 +70,7 @@ const DEFAULT_APPROVE_TOOLS = new Set([
 
 type PermissionPolicyResolution =
   | PermissionPolicyResult
-  | ({ readonly kind: 'result' } & ToolAuthorizationResult);
+  | ({ readonly kind: 'result' } & AuthorizeToolExecutionResult);
 
 type PermissionPolicyResult =
   | {
@@ -139,7 +139,7 @@ export class PermissionService extends Disposable implements IPermissionService 
           return;
         }
         if (event.type === 'swarm_mode.changed') {
-          this.swarmModeActive = event.isActive;
+          this.swarmModeActive = event.active !== null;
         }
       }),
     );
@@ -153,8 +153,8 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   async authorize(
-    context: ResolvedToolExecutionContext,
-  ): Promise<ToolAuthorizationResult | undefined> {
+    context: ResolvedToolExecutionHookContext,
+  ): Promise<AuthorizeToolExecutionResult | undefined> {
     const evaluation = await this.evaluatePolicies(context);
     if (evaluation === undefined) return undefined;
     return this.permissionPolicyResolutionToAuthorize(
@@ -165,13 +165,13 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private async evaluatePolicies(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): Promise<PolicyEvaluation | undefined> {
     const ordered: Array<
       [
         string,
         (
-          context: ResolvedToolExecutionContext,
+          context: ResolvedToolExecutionHookContext,
         ) => PermissionPolicyResult | undefined | Promise<PermissionPolicyResult | undefined>,
       ]
     > = [
@@ -203,7 +203,7 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private agentSwarmExclusiveDeny(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): PermissionPolicyResult | undefined {
     const agentSwarmCount = context.toolCalls.filter(
       (toolCall) => toolCall.name === 'AgentSwarm',
@@ -221,7 +221,7 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private autoModeAskUserQuestionDeny(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): PermissionPolicyResult | undefined {
     if (this.modeService.mode !== 'auto') return undefined;
     if (context.toolCall.name !== 'AskUserQuestion') return undefined;
@@ -233,7 +233,7 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private planModeGuardDeny(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): PermissionPolicyResult | undefined {
     if (!this.planModeActive()) return undefined;
 
@@ -267,7 +267,7 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private userConfiguredRule(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
     decision: PermissionRuleDecision,
   ): PermissionPolicyResult | undefined {
     const match = this.firstMatchingRule(context, decision, USER_CONFIGURED_SCOPES);
@@ -287,7 +287,7 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private sessionApprovalHistory(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): PermissionPolicyResult | undefined {
     for (const pattern of this.rulesService.sessionApprovalRulePatterns) {
       const match = matchPermissionRule({
@@ -306,7 +306,7 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private exitPlanModeReviewAsk(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): PermissionPolicyResult | undefined {
     if (context.toolCall.name !== 'ExitPlanMode') return undefined;
     if (this.modeService.mode === 'auto') return undefined;
@@ -326,7 +326,7 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private goalStartReviewAsk(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): PermissionPolicyResult | undefined {
     if (context.toolCall.name !== 'CreateGoal') return undefined;
     if (this.modeService.mode === 'auto') return undefined;
@@ -345,7 +345,7 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private planModeToolApprove(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): PermissionPolicyResult | undefined {
     const toolName = context.toolCall.name;
     if (toolName === 'EnterPlanMode') return { kind: 'approve' };
@@ -370,14 +370,14 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private sensitiveFileAccessAsk(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): PermissionPolicyResult | undefined {
     const access = fileAccesses(context).find((fileAccess) => isSensitiveFile(fileAccess.path));
     return access === undefined ? undefined : { kind: 'ask' };
   }
 
   private async gitControlPathAccessAsk(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): Promise<PermissionPolicyResult | undefined> {
     const cwd = this.cwd();
     if (cwd.length === 0) return undefined;
@@ -403,14 +403,14 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private swarmModeAgentSwarmApprove(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): PermissionPolicyResult | undefined {
     if (context.toolCall.name !== 'AgentSwarm') return undefined;
     return this.swarmModeIsActive() ? { kind: 'approve' } : undefined;
   }
 
   private defaultToolApprove(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): PermissionPolicyResult | undefined {
     return DEFAULT_APPROVE_TOOLS.has(context.toolCall.name)
       ? { kind: 'approve' }
@@ -418,7 +418,7 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private async gitCwdWriteApprove(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
   ): Promise<PermissionPolicyResult | undefined> {
     const toolName = context.toolCall.name;
     if (toolName !== 'Write' && toolName !== 'Edit') return undefined;
@@ -438,9 +438,9 @@ export class PermissionService extends Disposable implements IPermissionService 
 
   private async permissionPolicyResolutionToAuthorize(
     result: PermissionPolicyResolution,
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
     policyName?: string,
-  ): Promise<ToolAuthorizationResult | undefined> {
+  ): Promise<AuthorizeToolExecutionResult | undefined> {
     switch (result.kind) {
       case 'approve':
         return result.executionMetadata === undefined
@@ -461,10 +461,10 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private async requestToolApproval(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
     result: Extract<PermissionPolicyResult, { kind: 'ask' }>,
     _policyName: string | undefined,
-  ): Promise<ToolAuthorizationResult | undefined> {
+  ): Promise<AuthorizeToolExecutionResult | undefined> {
     const name = context.toolCall.name;
     const action = context.execution.description ?? `Call ${name}`;
     const display =
@@ -620,7 +620,7 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 
   private firstMatchingRule(
-    context: ResolvedToolExecutionContext,
+    context: ResolvedToolExecutionHookContext,
     decision: PermissionRuleDecision,
     scopes: ReadonlySet<PermissionRuleScope>,
   ): PermissionRuleMatch | undefined {
@@ -714,21 +714,21 @@ export class PermissionService extends Disposable implements IPermissionService 
   }
 }
 
-function fileAccesses(context: ResolvedToolExecutionContext): ToolFileAccess[] {
+function fileAccesses(context: ResolvedToolExecutionHookContext): ToolFileAccess[] {
   return (
     context.execution.accesses?.filter((access): access is ToolFileAccess => access.kind === 'file') ??
     []
   );
 }
 
-function writeFileAccesses(context: ResolvedToolExecutionContext): ToolFileAccess[] {
+function writeFileAccesses(context: ResolvedToolExecutionHookContext): ToolFileAccess[] {
   return fileAccesses(context).filter(
     (access) => access.operation === 'write' || access.operation === 'readwrite',
   );
 }
 
 function writesOnlyPlanFile(
-  context: ResolvedToolExecutionContext,
+  context: ResolvedToolExecutionHookContext,
   planFilePath: string,
 ): boolean {
   const writeAccesses = writeFileAccesses(context);

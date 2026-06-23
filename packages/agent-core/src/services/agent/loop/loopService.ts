@@ -626,7 +626,6 @@ export class LoopService extends Disposable implements ILoopService {
         continueAfterStop = false;
         return { continue: shouldContinue };
       },
-      authorizeToolExecution: hooks.authorizeToolExecution,
     };
   }
 

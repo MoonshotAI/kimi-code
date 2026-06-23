@@ -4,8 +4,8 @@ import type {
 } from '../../../agent/permission';
 import { createDecorator } from '../../../di';
 import type {
-  ToolAuthorizationResult,
-  ResolvedToolExecutionContext,
+  AuthorizeToolExecutionResult,
+  ResolvedToolExecutionHookContext,
 } from '../../../loop';
 import type { PathClass } from '../../../tools/policies/path-access';
 
@@ -41,8 +41,8 @@ export interface PermissionServiceOptions {
 export interface IPermissionService {
   data(): PermissionData;
   authorize(
-    context: ResolvedToolExecutionContext,
-  ): Promise<ToolAuthorizationResult | undefined>;
+    context: ResolvedToolExecutionHookContext,
+  ): Promise<AuthorizeToolExecutionResult | undefined>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare

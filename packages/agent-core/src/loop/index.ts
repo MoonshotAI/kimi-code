@@ -24,6 +24,7 @@ export type {
   LoopMessageBuilder,
   ExecutableTool,
   ToolExecution,
+  RunnableToolExecution,
   ToolCall,
   ExecutableToolContext,
   ToolExecutionHookContext,

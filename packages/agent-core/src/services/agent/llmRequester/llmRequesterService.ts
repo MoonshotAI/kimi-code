@@ -29,6 +29,7 @@ import { IContextMemory } from '../contextMemory/contextMemory';
 import { IContextProjector } from '../contextProjector/contextProjector';
 import { IToolRegistry } from '../toolRegistry/toolRegistry';
 import type { LLMEvent, LLMRequestOverrides } from '../types';
+import { ILLMRequestLogService } from '../llmRequestLog/llmRequestLog';
 import { AsyncEventQueue } from './asyncEventQueue';
 import { ILLMRequester, type LLMModelContext } from './llmRequester';
 
@@ -51,6 +52,7 @@ export class LLMRequesterService implements ILLMRequester {
     @IContextProjector private readonly projector: IContextProjector,
     @IToolRegistry private readonly tools: IToolRegistry,
     @IProfileService private readonly profile: IProfileService,
+    @ILLMRequestLogService private readonly requestLog: ILLMRequestLogService,
   ) {}
 
   request(
@@ -102,6 +104,14 @@ export class LLMRequesterService implements ILLMRequester {
       requestStartedAt = Date.now();
       firstChunkAt = undefined;
       streamEndedAt = undefined;
+      this.requestLog.logRequest({
+        provider: request.provider,
+        modelAlias: request.modelAlias,
+        systemPrompt: request.systemPrompt,
+        tools: request.tools,
+        messages: request.messages,
+        fields: request.requestLogFields,
+      });
       const result = await request.generate(
         request.provider,
         request.systemPrompt,
@@ -169,6 +179,7 @@ export class LLMRequesterService implements ILLMRequester {
       systemPrompt: overrides.systemPrompt ?? this.profile.getSystemPrompt(),
       tools: [...(overrides.tools ?? this.defaultTools())],
       messages: [...(overrides.messages ?? this.projector.project(this.context.getHistory()))],
+      requestLogFields: overrides.requestLogFields,
       generate: this.options.generate ?? generate,
     };
   }
@@ -239,6 +250,7 @@ interface ResolvedLLMRequest {
   readonly systemPrompt: string;
   readonly tools: readonly KosongTool[];
   readonly messages: Message[];
+  readonly requestLogFields: LLMRequestOverrides['requestLogFields'];
   readonly generate: typeof generate;
 }
 
