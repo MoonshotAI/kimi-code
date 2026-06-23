@@ -1,16 +1,8 @@
-import { getCapabilities, visibleWidth } from '@earendil-works/pi-tui';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resetCapabilitiesCache, setCapabilities, visibleWidth } from '@earendil-works/pi-tui';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
-
-vi.mock('@earendil-works/pi-tui', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@earendil-works/pi-tui')>();
-  return {
-    ...actual,
-    getCapabilities: vi.fn(() => ({ images: undefined, trueColor: false, hyperlinks: false })),
-  };
-});
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -18,10 +10,12 @@ function stripAnsi(text: string): string {
 
 describe('UserMessageComponent', () => {
   afterEach(() => {
-    vi.restoreAllMocks();
+    resetCapabilitiesCache();
   });
 
   it('renders video placeholders as plain text, not inline image escapes', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+
     const component = new UserMessageComponent(
       'please inspect [video #1 sample.mov]',
       [],
@@ -35,6 +29,8 @@ describe('UserMessageComponent', () => {
   });
 
   it('keeps user lines within very narrow widths', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+
     const component = new UserMessageComponent('please inspect the attached output', []);
 
     for (const width of [1, 2, 4, 10, 39]) {
@@ -45,7 +41,7 @@ describe('UserMessageComponent', () => {
   });
 
   it('does not truncate inline image escape sequences', () => {
-    vi.mocked(getCapabilities).mockReturnValue({ images: 'kitty', trueColor: true, hyperlinks: true });
+    setCapabilities({ images: 'kitty', trueColor: true, hyperlinks: true });
 
     // Minimal 2000x1302 PNG bytes so the inline Kitty sequence is long enough
     // to exceed a typical terminal width if treated as visible text.
