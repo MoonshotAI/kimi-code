@@ -85,11 +85,11 @@ You must first complete OAuth login with a Kimi Code account via `/login`. The p
 
 The current latest version is v3.2.0. The plugin does not update automatically — to upgrade to a newer version, repeat the installation steps above.
 
-### How to Use
+### How to use
 
 Once installed, describe your need in natural language and Kimi Code will automatically invoke the data capabilities. You can also explicitly trigger the data query skill with `/skill:kimi-datasource`.
 
-### What You Can Do
+### What you can do
 
 **Live market research**: Want to run a quantitative analysis on a stock? Pull three years of daily closing prices, MACD, and KDJ signals in a single query — no third-party data platforms needed.
 
@@ -111,7 +111,7 @@ Once installed, describe your need in natural language and Kimi Code will automa
 | Academic literature | Millions of papers across physics, mathematics, CS, quantitative finance, economics — including preprints |
 | Legal | Chinese laws, regulations, and judicial cases — semantic/keyword search and detail lookup for statutes across all authority levels (constitution, laws, judicial interpretations, departmental rules), plus ordinary and authoritative case search |
 
-### Notes
+### Billing and limitations
 
 - Data queries are billed per call and consume Kimi Code account credits
 - The plugin provides read-only queries; no write or trading functionality is available
@@ -229,8 +229,3 @@ Plugins have a limited loading scope. The following operations do not occur duri
 - MCP servers of enabled plugins start after `/reload` or in new sessions and can be disabled at any time from `/plugins`
 - Broken manifests or unsafe paths appear in `/plugins info <id>` diagnostics and do not affect other sessions
 
-## Next steps
-
-- [Kimi Datasource](./datasource.md) — Official data plugin: installation and usage for financial market data, corporate records, and academic literature
-- [Agent Skills](./skills.md) — File format and frontmatter field reference for Skills
-- [MCP](./mcp.md) — Full schema and permission configuration for plugin MCP servers
