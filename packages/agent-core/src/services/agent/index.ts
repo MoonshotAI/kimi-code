@@ -121,9 +121,16 @@ export {
 } from './extensions/cron';
 export { Skill, type SkillActivationInput } from './extensions/skill';
 export {
-  FullCompaction,
+  IFullCompaction,
   type CompactInput,
-} from './extensions/fullCompaction';
+  type FullCompactionHooks,
+  type PostCompactContext,
+  type PreCompactContext,
+} from './fullCompaction/fullCompaction';
+export {
+  FullCompaction,
+  FullCompactionService,
+} from './fullCompaction/fullCompactionService';
 export {
   MicroCompactingProjector,
   type MicroCompactingProjectorOptions,
