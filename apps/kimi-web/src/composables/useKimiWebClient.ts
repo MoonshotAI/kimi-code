@@ -1702,15 +1702,21 @@ const workspaceOrder = ref<string[]>(loadWorkspaceOrder());
 // workspace creation timestamp). Watched on the id *set* (joined) so a pure
 // daemon reorder of the same workspaces does not rewrite the user's order, and
 // a drag reorder (which also writes `workspaceOrder` but keeps the same id set)
-// does not re-trigger it. Skipped while nothing is loaded yet so an initial
-// empty `mergedWorkspaces` never wipes the stored order.
+// does not re-trigger it.
+//
+// The watch also tracks `loading` and bails out while a load is in progress.
+// During `load()`, sessions (and thus derived workspaces) are set *before* the
+// real workspaces arrive, so a real workspace with no sessions is momentarily
+// absent from `mergedWorkspaces`. Without the loading guard the reconciler would
+// drop it as "deleted" and then, when it appears a tick later, re-add it at the
+// top — undoing the user's drag on refresh. Waiting until the load settles
+// means we always reconcile against the complete set.
 watch(
-  () => mergedWorkspaces.value.map((w) => w.id).join('\0'),
-  () => {
-    const next = reconcileWorkspaceOrder(
-      mergedWorkspaces.value.map((w) => w.id),
-      workspaceOrder.value,
-    );
+  () => [mergedWorkspaces.value.map((w) => w.id).join('\0'), rawState.loading] as const,
+  ([idsKey, loading]) => {
+    if (loading) return;
+    const current = idsKey ? idsKey.split('\0') : [];
+    const next = reconcileWorkspaceOrder(current, workspaceOrder.value);
     if (next === null) return;
     workspaceOrder.value = next;
     saveWorkspaceOrder(next);

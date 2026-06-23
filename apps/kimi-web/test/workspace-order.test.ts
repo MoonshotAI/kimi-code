@@ -29,6 +29,20 @@ describe('reconcileWorkspaceOrder', () => {
   it('snapshots the initial order on first load', () => {
     expect(reconcileWorkspaceOrder(['ws-2', 'ws-1'], [])).toEqual(['ws-2', 'ws-1']);
   });
+
+  // Regression guard for the "dragged empty workspace bounces back on refresh"
+  // bug: if the reconciler is ever fed a *partial* workspace set, it drops the
+  // missing workspace and the next call (with the full set) re-adds it at the
+  // top. The watcher avoids this by only reconciling once loading has settled,
+  // but the reconciler's own "drop + re-add at top" behavior is what makes the
+  // guard necessary — pinning it here documents the contract.
+  it('drops a temporarily-absent workspace and re-adds it at the top (why the watcher waits for load)', () => {
+    const dragged = ['ws-b', 'ws-c', 'ws-empty'];
+    const afterPartial = reconcileWorkspaceOrder(['ws-b', 'ws-c'], dragged);
+    expect(afterPartial).toEqual(['ws-b', 'ws-c']);
+    const afterFull = reconcileWorkspaceOrder(['ws-empty', 'ws-b', 'ws-c'], afterPartial!);
+    expect(afterFull).toEqual(['ws-empty', 'ws-b', 'ws-c']);
+  });
 });
 
 describe('sortByWorkspaceOrder', () => {
