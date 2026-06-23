@@ -48,7 +48,7 @@ import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import { GutterContainer } from './components/chrome/gutter-container';
 import { MoonLoader, type SpinnerStyle } from './components/chrome/moon-loader';
 import { WelcomeComponent } from './components/chrome/welcome';
-import { currentWorkingTip } from './components/chrome/working-tips';
+import { pickRandomWorkingTip } from './components/chrome/working-tips';
 import {
   ApprovalPanelComponent,
   type ApprovalPanelResponse,
@@ -159,6 +159,13 @@ export interface KimiTUIStartupInput {
 }
 
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
+type LoadingTipKind = 'moon' | 'composing';
+
+function loadingTipKind(mode: EffectiveActivityPaneMode): LoadingTipKind | undefined {
+  if (mode === 'waiting' || mode === 'tool') return 'moon';
+  if (mode === 'composing') return 'composing';
+  return undefined;
+}
 
 function sameStringArrays(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
@@ -239,7 +246,8 @@ export class KimiTUI {
   private readonly migrateOnly: boolean;
   private startupNotice: string | undefined;
   private lastActivityMode: string | undefined;
-  private currentLoadingTip: string | undefined = undefined;
+  private currentLoadingTip: { kind: LoadingTipKind; tip: string | undefined } | undefined =
+    undefined;
   private lastHistoryContent: string | undefined;
   readonly streamingUI: StreamingUIController;
   readonly authFlow: AuthFlowController;
@@ -1651,13 +1659,22 @@ export class KimiTUI {
 
   updateActivityPane(): void {
     const effectiveMode = this.resolveActivityPaneMode();
-    // Keep the same loading tip for the entire turn; only clear it when the
-    // session is truly idle (thinking is an intermediate phase, not a reset).
-    if (
-      this.state.appState.streamingPhase === 'idle' &&
-      !this.state.appState.isCompacting
-    ) {
+    const tipKind = loadingTipKind(effectiveMode);
+    // Pick a fresh loading tip when the loading kind changes. The same kind
+    // covers waiting/tool (both moon spinners) and any intermediate thinking
+    // phase, so a continuous burst of tool calls does not flip tips. Clear the
+    // cache only when there is no loading UI at all.
+    if (effectiveMode === 'idle' || effectiveMode === 'session' || effectiveMode === 'hidden') {
       this.currentLoadingTip = undefined;
+    } else if (
+      tipKind !== undefined &&
+      (this.currentLoadingTip === undefined || this.currentLoadingTip.kind !== tipKind)
+    ) {
+      const previousTip = this.currentLoadingTip?.tip;
+      this.currentLoadingTip = {
+        kind: tipKind,
+        tip: pickRandomWorkingTip(previousTip)?.text,
+      };
     }
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
     const placeSpinnerInAgentSwarm = this.shouldPlaceActivitySpinnerInAgentSwarm(effectiveMode);
@@ -1684,14 +1701,13 @@ export class KimiTUI {
         return;
       case 'waiting': {
         const spinner = this.ensureActivitySpinner('moon');
-        this.currentLoadingTip ??= currentWorkingTip()?.text;
         this.syncAgentSwarmActivitySpinner(placeSpinnerInAgentSwarm ? spinner : undefined);
         if (placeSpinnerInAgentSwarm) break;
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'waiting',
             spinner,
-            tip: this.currentLoadingTip,
+            tip: this.currentLoadingTip?.tip,
           }),
         );
         break;
@@ -1705,27 +1721,25 @@ export class KimiTUI {
         const spinner = this.ensureActivitySpinner('braille', 'working...', (s) =>
           currentTheme.fg('primary', s),
         );
-        this.currentLoadingTip ??= currentWorkingTip()?.text;
         this.syncAgentSwarmActivitySpinner(undefined);
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'composing',
             spinner,
-            tip: this.currentLoadingTip,
+            tip: this.currentLoadingTip?.tip,
           }),
         );
         break;
       }
       case 'tool': {
         const spinner = this.ensureActivitySpinner('moon');
-        this.currentLoadingTip ??= currentWorkingTip()?.text;
         this.syncAgentSwarmActivitySpinner(placeSpinnerInAgentSwarm ? spinner : undefined);
         if (placeSpinnerInAgentSwarm) break;
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'tool',
             spinner,
-            tip: this.currentLoadingTip,
+            tip: this.currentLoadingTip?.tip,
           }),
         );
         break;
