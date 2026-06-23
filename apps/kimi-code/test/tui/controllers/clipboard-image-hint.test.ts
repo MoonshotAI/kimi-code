@@ -251,6 +251,36 @@ describe('ClipboardImageHintController', () => {
     controller.stop();
   });
 
+  it('ignores a pending clipboard read result after stop', async () => {
+    let resolveDeferred: (value: boolean) => void = () => {};
+    vi.mocked(clipboardHasImage).mockImplementation(
+      () => new Promise<boolean>((resolve) => {
+        resolveDeferred = resolve;
+      }),
+    );
+
+    const footer = createFakeFooter();
+    const ui = createFakeTUI();
+    const host: ClipboardImageHintHost = {
+      ui,
+      footer,
+      getModelSupportsImage: () => true,
+      requestRender: vi.fn(),
+    };
+
+    const controller = new ClipboardImageHintController(host);
+    controller.start();
+
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(clipboardHasImage).toHaveBeenCalledTimes(1);
+
+    controller.stop();
+    resolveDeferred(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(footer.getTransientHint()).toBeNull();
+  });
+
   it('clears a displayed hint when stopped', async () => {
     vi.mocked(clipboardHasImage).mockResolvedValue(true);
 

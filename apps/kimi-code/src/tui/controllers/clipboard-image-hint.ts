@@ -45,6 +45,7 @@ export class ClipboardImageHintController {
     this.disposeInputListener?.();
     this.disposeInputListener = undefined;
 
+    this.checkGeneration += 1;
     this.clearOwnedHint();
     this.lastHintAtMs = 0;
   }
