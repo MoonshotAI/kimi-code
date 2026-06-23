@@ -22,11 +22,15 @@ against the current implementation under `packages/agent-core/src/agent`.
 
 ## Loop Transcript Assembly
 
-- [ ] Handle loop events: `step.begin`, streamed content, tool calls, tool results, and `step.end`.
-- [ ] Preserve well-formed tool exchanges by tracking unresolved tool result ids.
-- [ ] Defer messages that arrive while a tool exchange is open.
-- [ ] Add resume handling for interrupted tool calls.
-- [ ] Add matched-tail message removal for stop-hook and goal-outcome cleanup.
+- [x] Handle loop events: `step.begin`, streamed content, tool calls, tool results, and `step.end`.
+- [x] Insert loop-generated assistant and tool messages into context without requiring context history to be ordered.
+- [x] Add resume handling for interrupted tool calls.
+- [ ] Add matched-tail message removal for stop-hook and goal-outcome cleanup in the service that owns that cleanup.
+
+## ContextProjector
+
+- [ ] Preserve well-formed projected tool exchanges when context history is out of order.
+- [ ] Order or defer projected non-tool messages around open tool exchanges.
 
 ## Context Usage Accounting
 
@@ -36,7 +40,7 @@ against the current implementation under `packages/agent-core/src/agent`.
 ## TurnRunner
 
 - [x] Allow `afterStep` hooks to request continuation of the current turn.
-- [ ] Continue automatically after tool results so the model can observe tool output.
+- [x] Continue automatically after tool results so the model can observe tool output.
 - [ ] Emit turn and step lifecycle events.
 - [ ] Replace random UUID turn ids with the monotonic turn id semantics expected by the current RPC/events.
 - [ ] Add first-request readiness semantics based on first model/step activity.

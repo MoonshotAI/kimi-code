@@ -35,6 +35,9 @@ export { ContextMemoryService } from './contextMemory/contextMemoryService';
 export { IContextProjector } from './contextProjector/contextProjector';
 export { ContextProjectorService } from './contextProjector/contextProjectorService';
 
+export { ILoopService } from './loop/loop';
+export { LoopService } from './loop/loopService';
+
 export { IToolRegistry } from './toolRegistry/toolRegistry';
 export { ToolRegistryService } from './toolRegistry/toolRegistryService';
 

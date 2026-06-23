@@ -1,4 +1,4 @@
-import { Disposable, InstantiationType, registerSingleton } from '../../../di';
+import { Disposable, registerSingleton, SyncDescriptor } from '../../../di';
 import { Emitter } from '../../../base/common/event';
 
 import { IEventBus } from './eventBus';
@@ -22,4 +22,4 @@ export class EventBusService extends Disposable implements IEventBus {
   }
 }
 
-registerSingleton(IEventBus, EventBusService, InstantiationType.Delayed);
+registerSingleton(IEventBus, new SyncDescriptor(EventBusService, [], true));
