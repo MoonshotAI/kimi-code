@@ -366,7 +366,9 @@ function handleCommand(cmd: string): void {
   if (cmd === '/btw' || cmd.startsWith('/btw ')) {
     const arg = cmd.slice('/btw'.length).trim();
     if (!arg && client.sideChatVisible.value) {
-      client.closeSideChat();
+      // Use the detail-layer close so detailTarget is cleared too; the bare
+      // client.closeSideChat() only hides the panel and leaves detailTarget set.
+      closeSideChat();
     } else {
       void openSideChatTab(arg || undefined);
     }
