@@ -2,6 +2,15 @@
   "version": "1",
   "plugins": [
     {
+      "id": "kimi-openspec",
+      "tier": "official",
+      "displayName": "OpenSpec",
+      "version": "0.1.0",
+      "description": "OpenSpec integration for spec-driven development.",
+      "keywords": ["openspec", "spec", "mcp"],
+      "source": "./official/kimi-openspec"
+    },
+    {
       "id": "kimi-datasource",
       "tier": "official",
       "displayName": "Kimi Datasource",
