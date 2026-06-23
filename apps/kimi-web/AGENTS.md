@@ -36,7 +36,6 @@ The browser web UI for Kimi Code — a peer to the TUI in `apps/kimi-code`. It t
 All via `pnpm --filter @moonshot-ai/kimi-web …`:
 
 - `dev` — Vite dev server (port `WEB_PORT`, default 5175; proxies `/api/v1` to `KIMI_SERVER_URL`, default `http://127.0.0.1:58627`).
-- `dev:stub` — offline stub daemon (`dev/stub-daemon.mjs`).
 - `build` — production build into `dist/`.
 - `typecheck` — `vue-tsc --noEmit`.
 - `test` — `vitest run` (pure logic tests only; no jsdom / component tests).
