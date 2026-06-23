@@ -31,15 +31,18 @@ import { ILLMRequester } from '../llmRequester/llmRequester';
 import { IProfileService } from '../profile/profile';
 import { IToolExecutor } from '../toolExecutor/toolExecutor';
 import { IToolRegistry } from '../toolRegistry/toolRegistry';
-import {
-  TOOL_INTERRUPTED_ON_RESUME_OUTPUT,
-  toolResultOutputForModel,
-} from '../transcript/transcript';
 import type { ContextMessage, ToolDefinition, ToolResult, Turn, TurnResult } from '../types';
 import { IUsageService } from '../usage/usage';
 import { IWireRecord } from '../wireRecord/wireRecord';
 import { ILoopService, type LoopRunHooks } from './loop';
 
+const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
+const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
+const TOOL_EMPTY_ERROR_STATUS =
+  '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
+const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
+const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
+  'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
   properties: {},
@@ -468,6 +471,35 @@ function unresolvedToolCallIdsFromHistory(history: readonly ContextMessage[]): s
 function stringifyToolArguments(args: unknown): string | null {
   if (args === undefined) return null;
   return JSON.stringify(args) ?? null;
+}
+
+function toolResultOutputForModel(result: ExecutableToolResult): string | ContentPart[] {
+  const output = result.output;
+  if (typeof output === 'string') {
+    if (result.isError === true) {
+      if (output.length === 0) return TOOL_EMPTY_ERROR_STATUS;
+      if (output.trimStart().startsWith('<system>ERROR:')) return output;
+      return `${TOOL_ERROR_STATUS}\n${output}`;
+    }
+    return isEmptyOutputText(output) ? TOOL_EMPTY_STATUS : output;
+  }
+
+  if (output.length === 0) {
+    return [
+      {
+        type: 'text',
+        text: result.isError === true ? TOOL_EMPTY_ERROR_STATUS : TOOL_EMPTY_STATUS,
+      },
+    ];
+  }
+  if (result.isError === true) {
+    return [{ type: 'text', text: TOOL_ERROR_STATUS }, ...output.map(cloneContentPart)];
+  }
+  return output.map(cloneContentPart);
+}
+
+function isEmptyOutputText(output: string): boolean {
+  return output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
 }
 
 function cloneContentPart<T extends ContentPart>(part: T): T {

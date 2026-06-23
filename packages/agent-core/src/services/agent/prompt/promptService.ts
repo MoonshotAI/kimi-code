@@ -1,5 +1,6 @@
 import { registerSingleton, SyncDescriptor } from '../../../di';
 import { ErrorCodes, KimiError } from '../../../errors';
+import { USER_PROMPT_ORIGIN } from '../../../agent/context';
 
 import { IContextMemory } from '../contextMemory/contextMemory';
 import { ITurnRunner } from '../turnRunner/turnRunner';
@@ -25,7 +26,7 @@ export class PromptService implements IPromptService {
   prompt(message: ContextMessage): Turn {
     this.assertNoActiveTurn('prompt');
     this.append(message);
-    const turn = this.turnRunner.launch();
+    const turn = this.turnRunner.launch(message.origin ?? USER_PROMPT_ORIGIN);
     this.observe(turn);
     return turn;
   }
@@ -39,14 +40,14 @@ export class PromptService implements IPromptService {
     }
 
     this.append(message);
-    const turn = this.turnRunner.launch();
+    const turn = this.turnRunner.launch(message.origin ?? USER_PROMPT_ORIGIN);
     this.observe(turn);
     return turn;
   }
 
   retry(): Turn {
     this.assertNoActiveTurn('retry');
-    const turn = this.turnRunner.launch();
+    const turn = this.turnRunner.launch({ kind: 'retry' });
     this.observe(turn);
     return turn;
   }
