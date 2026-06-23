@@ -21,6 +21,8 @@ How to paste:
 
 After pasting, the input box shows a placeholder that you can edit like normal text; on submit, the placeholder is replaced with the actual content. A plain-text clipboard falls back to ordinary paste. Media support depends on the current model's multimodal capabilities (`image_in` / `video_in`); it is enabled by default when you are logged in to a Kimi Code account.
 
+When an image is on the clipboard and the terminal regains focus, the footer shows a transient hint with the correct shortcut for your platform.
+
 ## Slash commands
 
 Anything starting with `/` is treated as a slash command. Typing `/` opens a completion menu that filters in real time as you keep typing; press `Esc` to close the menu. If nothing matches, the input is sent to the agent as a regular message.
