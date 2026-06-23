@@ -942,6 +942,22 @@ async function handleSessionNotFound(sessionId: string): Promise<void> {
   }
 }
 
+const sessionWarningsPulled = new Set<string>();
+
+async function pullSessionWarnings(sessionId: string): Promise<void> {
+  if (sessionWarningsPulled.has(sessionId)) return;
+  sessionWarningsPulled.add(sessionId);
+  try {
+    const warnings = await getKimiWebApi().getSessionWarnings(sessionId);
+    const label = i18n.global.t('warnings.noteLabel');
+    for (const warning of warnings) {
+      pushWarning(`${label}: ${warning.message}`);
+    }
+  } catch {
+    // best-effort: never block session sync on warning retrieval.
+  }
+}
+
 async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionResult> {
   try {
     const api = getKimiWebApi();
@@ -980,6 +996,7 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       eventConn.seedSnapshot(sessionId, snap);
       eventConn.subscribe(sessionId, { seq: snap.asOfSeq, epoch: snap.epoch });
     }
+    void pullSessionWarnings(sessionId);
     return 'ok';
   } catch (err) {
     if (isSessionNotFoundError(err)) {

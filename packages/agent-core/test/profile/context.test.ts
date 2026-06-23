@@ -115,16 +115,40 @@ describe('loadAgentsMd brand home (KIMI_CODE_HOME)', () => {
   });
 });
 
-describe('loadAgentsMd truncation marker', () => {
-  it('adds a marker when AGENTS.md content is truncated', async () => {
+describe('loadAgentsMd oversized content', () => {
+  it('keeps the full content when AGENTS.md exceeds the recommended size', async () => {
     const largeContent = 'x'.repeat(40 * 1024);
     await writeFile(join(workDir, 'AGENTS.md'), largeContent, 'utf-8');
 
     const result = await loadAgentsMd(testKaos);
 
-    expect(result).toContain('Some AGENTS.md files were truncated or omitted');
-    expect(result).toContain(`<!-- From: ${join(workDir, 'AGENTS.md')} -->`);
-    expect(result).not.toContain(largeContent);
+    expect(result).toContain(largeContent);
+    expect(result).not.toContain('truncated or omitted');
+  });
+});
+
+describe('prepareSystemPromptContext AGENTS.md size warning', () => {
+  it('returns agentsMdWarning and keeps full content when oversized', async () => {
+    const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-brand-'));
+    extraDirs.push(brandHome);
+    const largeContent = 'x'.repeat(40 * 1024);
+    await writeFile(join(workDir, 'AGENTS.md'), largeContent, 'utf-8');
+
+    const result = await prepareSystemPromptContext(testKaos, brandHome);
+
+    expect(result.agentsMd).toContain(largeContent);
+    expect(result.agentsMdWarning).toBeDefined();
+    expect(result.agentsMdWarning).toContain('exceeds the recommended');
+  });
+
+  it('does not return agentsMdWarning when within the recommended size', async () => {
+    const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-brand-'));
+    extraDirs.push(brandHome);
+    await writeFile(join(workDir, 'AGENTS.md'), 'small instructions', 'utf-8');
+
+    const result = await prepareSystemPromptContext(testKaos, brandHome);
+
+    expect(result.agentsMdWarning).toBeUndefined();
   });
 });
 

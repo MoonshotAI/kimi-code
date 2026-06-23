@@ -559,12 +559,26 @@ export class KimiTUI {
     }
     if (this.session !== undefined) {
       this.sessionEventHandler.startSubscription();
+      void this.showSessionWarnings(this.session);
     }
     void this.fetchSessions();
     if (this.session !== undefined) {
       this.updateTerminalTitle();
     }
     void this.refreshSkillCommands(this.session);
+  }
+
+  private async showSessionWarnings(session: Session): Promise<void> {
+    try {
+      const warnings = await session.getSessionWarnings();
+      if (this.session !== session) return;
+      for (const warning of warnings) {
+        const severity = warning.severity === 'error' ? 'error' : 'warning';
+        this.showStatus(`Warning: ${warning.message}`, severity);
+      }
+    } catch {
+      // Best-effort: startup must not block on warning retrieval.
+    }
   }
 
   private async showTmuxKeyboardWarningIfNeeded(): Promise<void> {
@@ -1355,6 +1369,7 @@ export class KimiTUI {
       this.showStatus(`Warning: ${resumeState.warning}`, 'warning');
     }
     this.showStatus(statusMessage);
+    void this.showSessionWarnings(session);
   }
 
   async reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void> {
@@ -1383,6 +1398,7 @@ export class KimiTUI {
       this.showStatus(`Warning: ${resumeState.warning}`, 'warning');
     }
     this.showStatus(statusMessage);
+    void this.showSessionWarnings(session);
   }
 
   async createNewSession(): Promise<void> {
@@ -1420,6 +1436,7 @@ export class KimiTUI {
     this.sessionEventHandler.startSubscription();
     this.clearTranscriptAndRedraw();
     this.showStatus(`Started a new session (${session.id}).`);
+    void this.showSessionWarnings(session);
     void this.showConfigWarningsIfAny();
   }
 

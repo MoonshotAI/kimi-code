@@ -124,6 +124,11 @@ export class Session {
     await this.rpc.generateAgentsMd({ sessionId: this.id });
   }
 
+  async getSessionWarnings() {
+    this.ensureOpen();
+    return this.rpc.getSessionWarnings({ sessionId: this.id });
+  }
+
   async addAdditionalDir(
     path: string,
     options?: AddAdditionalDirOptions,
