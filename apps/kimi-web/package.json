@@ -16,9 +16,9 @@
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "markstream-vue": "1.0.1-beta.5",
+    "markstream-vue": "1.0.3",
     "shiki": "^4.2.0",
-    "stream-markdown": "^0.0.15",
+    "stream-markdown": "^0.0.16",
     "vue": "^3.5.35",
     "vue-i18n": "^11.4.5"
   },

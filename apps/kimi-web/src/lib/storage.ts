@@ -24,6 +24,7 @@ export const STORAGE_KEYS = {
   hiddenWorkspaces: 'kimi-web.hidden-workspaces',
   betaToc: 'kimi-web.beta-toc',
   notifyOnComplete: 'kimi-web.notify-on-complete',
+  inputHistory: 'kimi-web.input-history',
   // cross-file
   locale: 'kimi-locale',
   clientId: 'kimi-web.client-id',

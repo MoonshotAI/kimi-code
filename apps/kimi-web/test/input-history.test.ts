@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ref, type Ref } from 'vue';
 import { useInputHistory } from '../src/composables/useInputHistory';
+import { STORAGE_KEYS } from '../src/lib/storage';
 
 interface MockTextarea {
   value: string;
@@ -132,5 +133,87 @@ describe('useInputHistory — caretAtFirstLine', () => {
   it('is true for an empty composer', () => {
     const { history } = setup('', 0);
     expect(history.caretAtFirstLine()).toBe(true);
+  });
+});
+
+function memoryStorage(): Storage {
+  const map = new Map<string, string>();
+  return {
+    get length() {
+      return map.size;
+    },
+    clear: () => {
+      map.clear();
+    },
+    getItem: (key: string) => map.get(key) ?? null,
+    key: (index: number) => Array.from(map.keys())[index] ?? null,
+    removeItem: (key: string) => {
+      map.delete(key);
+    },
+    setItem: (key: string, value: string) => {
+      map.set(key, value);
+    },
+  };
+}
+
+describe('useInputHistory — persistence', () => {
+  let original: Storage | undefined;
+
+  beforeEach(() => {
+    original = (globalThis as { localStorage?: Storage }).localStorage;
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: memoryStorage(),
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete (globalThis as { localStorage?: Storage }).localStorage;
+    } else {
+      Object.defineProperty(globalThis, 'localStorage', {
+        value: original,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
+  it('writes each pushed entry to localStorage', () => {
+    const { history } = setup();
+    history.push('hello');
+    const stored = globalThis.localStorage.getItem(STORAGE_KEYS.inputHistory);
+    expect(stored).toBe(JSON.stringify(['hello']));
+  });
+
+  it('a freshly mounted composable reads back the persisted history', () => {
+    const first = setup();
+    first.history.push('a');
+    first.history.push('b');
+
+    // Simulates the empty composer unmounting and the docked composer mounting.
+    const second = setup();
+    second.history.recallOlder();
+    expect(second.text.value).toBe('b');
+    second.history.recallOlder();
+    expect(second.text.value).toBe('a');
+  });
+
+  it('trims to the newest 200 entries, dropping the oldest', () => {
+    const { text, history } = setup();
+    for (let i = 0; i < 205; i++) history.push(`m${i}`);
+
+    // Walk all the way back; the oldest kept entry must be m5 (m0..m4 dropped).
+    for (let i = 0; i < 200; i++) history.recallOlder();
+    expect(text.value).toBe('m5');
+    history.recallOlder(); // already at the oldest kept entry — must not move
+    expect(text.value).toBe('m5');
+  });
+
+  it('ignores a malformed stored value and starts empty', () => {
+    globalThis.localStorage.setItem(STORAGE_KEYS.inputHistory, 'not-json');
+    const { history } = setup();
+    expect(history.hasHistory()).toBe(false);
   });
 });

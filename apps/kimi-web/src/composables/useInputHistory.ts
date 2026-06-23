@@ -1,5 +1,15 @@
 // apps/kimi-web/src/composables/useInputHistory.ts
 import { nextTick, ref, type Ref } from 'vue';
+import { STORAGE_KEYS, safeGetJson, safeSetJson } from '../lib/storage';
+
+/** Cap the persisted history so storage can't grow without bound. */
+const MAX_HISTORY = 200;
+
+function loadHistory(): string[] {
+  const stored = safeGetJson<unknown>(STORAGE_KEYS.inputHistory);
+  if (!Array.isArray(stored)) return [];
+  return stored.filter((s): s is string => typeof s === 'string' && s.length > 0);
+}
 
 export interface InputHistoryDeps {
   /** The live composer text — recalled entries overwrite it. */
@@ -18,6 +28,14 @@ export interface InputHistoryDeps {
  * they started browsing. Any manual edit drops out of browsing mode (see
  * `resetBrowsing`, called from the composer's input handler).
  *
+ * The history is persisted to localStorage (one global list). The composer has
+ * two mutually-exclusive instances — the empty-session composer and the docked
+ * composer — and the first message of a new session is sent by the empty
+ * composer, which unmounts as soon as the first turn appears. Persisting (and
+ * re-reading on mount) is what lets the docked composer recall that first
+ * message instead of starting from an empty list. A single global list also
+ * sidesteps the fact that a new session has no id until after the first submit.
+ *
  * The composer keeps the keydown orchestration (which also juggles the slash
  * and mention menus); this composable owns only the history list, the browsing
  * cursor, and the textarea caret/selection work needed to apply a recalled
@@ -26,7 +44,7 @@ export interface InputHistoryDeps {
 export function useInputHistory(deps: InputHistoryDeps) {
   const { text, textareaRef, autosize } = deps;
 
-  const inputHistory = ref<string[]>([]);
+  const inputHistory = ref(loadHistory());
   // -1 = browsing nothing (live draft). Otherwise an index into inputHistory.
   let historyIndex = -1;
   let draftBeforeHistory = '';
@@ -37,7 +55,9 @@ export function useInputHistory(deps: InputHistoryDeps) {
     if (!trimmed) return;
     // Skip consecutive duplicates so repeated sends don't pad the history.
     if (inputHistory.value.at(-1) === trimmed) return;
-    inputHistory.value = [...inputHistory.value, trimmed];
+    const next = [...inputHistory.value, trimmed];
+    inputHistory.value = next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
+    safeSetJson(STORAGE_KEYS.inputHistory, inputHistory.value);
   }
 
   function caretAtFirstLine(): boolean {
