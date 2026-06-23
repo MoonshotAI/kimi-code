@@ -1,23 +1,20 @@
-import { visibleWidth } from '@earendil-works/pi-tui';
+import { getCapabilities, visibleWidth } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { UserMessageComponent } from '#/tui/components/messages/user-message';
-import { darkColors } from '#/tui/theme/colors';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
+
+vi.mock('@earendil-works/pi-tui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@earendil-works/pi-tui')>();
+  return {
+    ...actual,
+    getCapabilities: vi.fn(() => ({ images: undefined, trueColor: false, hyperlinks: false })),
+  };
+});
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
-
-const getCapabilitiesMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@earendil-works/pi-tui', async () => {
-  const actual = (await vi.importActual('@earendil-works/pi-tui')) as Record<string, unknown>;
-  return {
-    ...actual,
-    getCapabilities: getCapabilitiesMock,
-  };
-});
 
 describe('UserMessageComponent', () => {
   afterEach(() => {
@@ -48,7 +45,7 @@ describe('UserMessageComponent', () => {
   });
 
   it('does not truncate inline image escape sequences', () => {
-    getCapabilitiesMock.mockReturnValue({ images: 'kitty', trueColor: true, hyperlinks: true });
+    vi.mocked(getCapabilities).mockReturnValue({ images: 'kitty', trueColor: true, hyperlinks: true });
 
     // Minimal 2000x1302 PNG bytes so the inline Kitty sequence is long enough
     // to exceed a typical terminal width if treated as visible text.
