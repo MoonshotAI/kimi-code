@@ -1,9 +1,11 @@
+import { getMarkdown, parseMarkdownToStructure } from 'markstream-vue';
 import { describe, expect, it } from 'vitest';
 import {
   collectFilePathAliases,
   findFilePathLinks,
   parseFilePathLinkCandidate,
 } from '../src/lib/filePathLinks';
+import { guardLiteralDollarMath } from '../src/lib/mathDelimiters';
 import { parseDiff } from '../src/lib/parseDiff';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 
@@ -74,5 +76,62 @@ describe('toolMeta', () => {
     expect(
       toolSummary('WebFetch', JSON.stringify({ url: 'https://example.com/path/to' })),
     ).toBe('example.com/path');
+  });
+});
+
+// Flatten a parsed node tree into leaf-ish `{type, content}` entries so the
+// assertions below don't care about paragraph/blockquote/list nesting.
+type FlatNode = { type: string; content?: string };
+function flatten(nodes: unknown[]): FlatNode[] {
+  const out: FlatNode[] = [];
+  for (const raw of nodes) {
+    const n = raw as { type: string; content?: string; children?: unknown[] };
+    if (n.children?.length) out.push(...flatten(n.children));
+    else out.push({ type: n.type, content: n.content });
+  }
+  return out;
+}
+
+describe('guardLiteralDollarMath', () => {
+  const md = getMarkdown('guardLiteralDollarMath');
+  const render = (text: string) =>
+    flatten(parseMarkdownToStructure(text, md, { postTransformTokens: guardLiteralDollarMath }));
+  const types = (text: string) => render(text).map((n) => n.type);
+
+  it('keeps literal-dollar prose as text, not inline math', () => {
+    for (const text of ['Check $PATH before $HOME', 'costs $5 and $10']) {
+      expect(types(text)).not.toContain('math_inline');
+      expect(render(text)).toEqual([{ type: 'text', content: text }]);
+    }
+  });
+
+  it('still renders tight inline math and block math', () => {
+    expect(render('Einstein $E=mc^2$ famous')).toEqual([
+      { type: 'text', content: 'Einstein ' },
+      { type: 'math_inline', content: 'E=mc^2' },
+      { type: 'text', content: ' famous' },
+    ]);
+    expect(render('inline $\\frac{1}{2}$ math').map((n) => n.type)).toContain('math_inline');
+    expect(render('$$a^2 + b^2 = c^2$$')).toEqual([
+      { type: 'math_block', content: 'a^2 + b^2 = c^2' },
+    ]);
+  });
+
+  it('guards prose dollars nested inside lists and blockquotes', () => {
+    expect(types('- $5 and $10')).not.toContain('math_inline');
+    expect(types('> $PATH before $HOME')).not.toContain('math_inline');
+  });
+
+  it('leaves code spans and a single unmatched dollar untouched', () => {
+    expect(types('code `$5 and $10` here')).not.toContain('math_inline');
+    expect(render('it costs $5')).toEqual([{ type: 'text', content: 'it costs $5' }]);
+  });
+
+  it('keeps multiple real inline math spans on one line', () => {
+    expect(render('$A$ and $B$').map((n) => n.type)).toEqual([
+      'math_inline',
+      'text',
+      'math_inline',
+    ]);
   });
 });

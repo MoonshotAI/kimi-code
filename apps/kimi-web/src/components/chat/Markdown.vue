@@ -3,10 +3,12 @@
 import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { MarkdownRender, enableKatex } from 'markstream-vue';
+import type { ParseOptions } from 'markstream-vue';
 import { useIsDark } from '../../composables/useIsDark';
 import type { FilePreviewRequest } from '../../types';
 import { collectFilePathAliases, findFilePathLinks } from '../../lib/filePathLinks';
 import { markdownRenderPlan } from '../../lib/markdownPerformance';
+import { guardLiteralDollarMath } from '../../lib/mathDelimiters';
 // px-based CSS build (our app is px, not rem). Imported here so the styles
 // load wherever Markdown is used; scoped overrides below re-skin it to
 // Terminal Pro. Importing the same file from multiple components is a no-op
@@ -19,6 +21,10 @@ import 'markstream-vue/index.px.css';
 // the CSS the math renders unstyled, so both must travel together.
 import 'katex/dist/katex.min.css';
 enableKatex();
+
+// Keep `$…$` inline math but stop two prose dollars (`$PATH before $HOME`,
+// `$5 and $10`) from being swallowed as one formula. See mathDelimiters.ts.
+const parseOptions: ParseOptions = { postTransformTokens: guardLiteralDollarMath };
 
 const { t } = useI18n();
 
@@ -363,6 +369,7 @@ function copyDiff(code: string, idx: number) {
       <MarkdownRender
         v-if="seg.kind === 'md'"
         :content="seg.text"
+        :parse-options="parseOptions"
         mode="chat"
         :code-renderer="renderPlan.codeRenderer"
         :is-dark="isDark"
