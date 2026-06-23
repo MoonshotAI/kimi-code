@@ -108,7 +108,10 @@ export function useResizable(options: UseResizableOptions): UseResizable {
     event.preventDefault();
     dragging.value = true;
     startX = event.clientX;
-    startWidth = width.value;
+    // The stored width can exceed the current cap (e.g. after the window narrows
+    // or a side panel opens). Clamp the drag start so the handle responds
+    // immediately instead of first covering an invisible delta.
+    startWidth = clamp(width.value);
     activeEl = event.currentTarget as HTMLElement;
     activePointerId = event.pointerId;
     // Suppress text selection / show a resize cursor for the whole drag.
