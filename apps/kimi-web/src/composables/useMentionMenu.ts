@@ -34,6 +34,7 @@ export function useMentionMenu(deps: MentionMenuDeps) {
   const items = ref<FileItem[]>([]);
   const active = ref(0);
   const loading = ref(false);
+  const error = ref<string | null>(null);
 
   // Debounce timer for the search.
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -67,10 +68,12 @@ export function useMentionMenu(deps: MentionMenuDeps) {
       loading.value = true;
       open.value = true;
       active.value = 0;
+      error.value = null;
       try {
         items.value = await search(query);
-      } catch {
+      } catch (err) {
         items.value = [];
+        error.value = extractMentionSearchError(err);
       } finally {
         loading.value = false;
       }
@@ -94,5 +97,15 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     });
   }
 
-  return { open, items, active, loading, update, select };
+  return { open, items, active, loading, error, update, select };
+}
+
+/** Extract a user-facing message from a mention-search failure. */
+function extractMentionSearchError(err: unknown): string {
+  // DaemonApiError exposes `msg` for code !== 0 envelope errors.
+  if (err && typeof err === 'object' && 'msg' in err && typeof err.msg === 'string') {
+    return err.msg;
+  }
+  if (err instanceof Error) return err.message;
+  return 'Search failed';
 }

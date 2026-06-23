@@ -4,6 +4,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { getKimiWebApi } from '../api';
 
 const { t } = useI18n();
 
@@ -22,6 +23,9 @@ const emit = defineEmits<{
 
 const cwdInput = ref('');
 const titleInput = ref('');
+const cwdError = ref<string | null>(null);
+const cwdValidating = ref(false);
+let cwdValidationTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Pre-fill with the first recentCwd if available
 watch(
@@ -35,7 +39,29 @@ watch(
 );
 
 const cwdTrimmed = computed(() => cwdInput.value.trim());
-const canCreate = computed(() => cwdTrimmed.value.length > 0);
+const canCreate = computed(() => cwdTrimmed.value.length > 0 && !cwdError.value && !cwdValidating.value);
+
+async function validateCwd(cwd: string): Promise<void> {
+  if (!cwd) {
+    cwdError.value = null;
+    return;
+  }
+  if (cwdValidationTimer !== null) clearTimeout(cwdValidationTimer);
+  cwdValidationTimer = setTimeout(async () => {
+    cwdValidating.value = true;
+    cwdError.value = null;
+    try {
+      await getKimiWebApi().browseFs(cwd);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      cwdError.value = msg.includes('ENOENT') ? t('newSession.cwdNotFound') : msg;
+    } finally {
+      cwdValidating.value = false;
+    }
+  }, 300);
+}
+
+watch(cwdTrimmed, (cwd) => void validateCwd(cwd), { immediate: true });
 
 // -------------------------------------------------------------------------
 // Actions
@@ -51,6 +77,7 @@ function handleCreate(): void {
 
 function pickRecent(cwd: string): void {
   cwdInput.value = cwd;
+  void validateCwd(cwd);
 }
 
 // -------------------------------------------------------------------------
@@ -66,7 +93,10 @@ function handleKeydown(e: KeyboardEvent): void {
 }
 
 onMounted(() => document.addEventListener('keydown', handleKeydown));
-onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown);
+  if (cwdValidationTimer !== null) clearTimeout(cwdValidationTimer);
+});
 </script>
 
 <template>
@@ -94,11 +124,14 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
             id="ns-cwd"
             v-model="cwdInput"
             class="finput"
+            :class="{ 'finput-error': cwdError }"
             type="text"
             :placeholder="t('newSession.cwdPlaceholder')"
             autocomplete="off"
             spellcheck="false"
           />
+          <div v-if="cwdError" class="field-error">{{ cwdError }}</div>
+          <div v-else-if="cwdValidating" class="field-hint">{{ t('newSession.validating') }}</div>
         </div>
 
         <!-- Recent cwds quick-pick -->
@@ -239,6 +272,21 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 .finput:focus-visible {
   border-color: var(--blue);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 25%, transparent);
+}
+.finput-error {
+  border-color: var(--red, #c62828);
+}
+.field-error {
+  flex: 1;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--red, #c62828);
+  padding-top: 4px;
+}
+.field-hint {
+  flex: 1;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--muted);
+  padding-top: 4px;
 }
 
 

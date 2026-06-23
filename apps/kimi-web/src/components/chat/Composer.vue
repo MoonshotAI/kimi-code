@@ -124,6 +124,7 @@ const {
   items: mentionItems,
   active: mentionActive,
   loading: mentionLoading,
+  error: mentionError,
   update: updateMentionMenu,
   select: selectMentionItem,
 } = useMentionMenu({
@@ -653,6 +654,7 @@ function selectModel(modelId: string): void {
           :items="mentionItems"
           :active-index="mentionActive"
           :loading="mentionLoading"
+          :error="mentionError"
           @select="selectMentionItem"
           @hover="mentionActive = $event"
         />

@@ -9,4 +9,6 @@ export default {
   create: 'Create',
   cancel: 'Cancel',
   footerHint: 'Enter to create · Esc to close',
+  cwdNotFound: 'Directory does not exist or is not accessible.',
+  validating: 'Checking directory…',
 } as const;
