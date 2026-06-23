@@ -234,7 +234,6 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     currentValue: host.state.appState.model,
     selectedValue: Object.keys(mergedModels).find((a) => a.startsWith(`${providerId}/`)),
     currentThinking: host.state.appState.thinking,
-    colors: host.state.theme.palette,
     initialTabId: providerId,
     onSelect: ({ alias, thinking }) => {
       host.restoreEditor();
@@ -325,7 +324,6 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     currentValue: host.state.appState.model,
     selectedValue: firstNewAlias,
     currentThinking: host.state.appState.thinking,
-    colors: host.state.theme.palette,
     initialTabId: firstNewProvider,
     onSelect: ({ alias, thinking }) => {
       host.restoreEditor();

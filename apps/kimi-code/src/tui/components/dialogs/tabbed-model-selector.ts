@@ -22,7 +22,7 @@ import {
   type Focusable,
 } from '@earendil-works/pi-tui';
 
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import { renderTabStrip } from '#/tui/utils/tab-strip';
 
 import {
@@ -40,7 +40,6 @@ export interface TabbedModelSelectorOptions {
   readonly currentValue: string;
   readonly selectedValue?: string;
   readonly currentThinking: boolean;
-  readonly colors: ColorPalette;
   /** When set, the tab for this provider id is initially active instead of the
    * tab derived from `currentValue`. */
   readonly initialTabId?: string;
@@ -105,7 +104,7 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
       labels: this.tabs.map((tab) => tab.label),
       activeIndex: this.activeIndex,
       width,
-      colors: this.opts.colors,
+      colors: currentTheme.palette,
     });
     const out: string[] = [
       inner[0] ?? '',
