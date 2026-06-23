@@ -1651,7 +1651,12 @@ export class KimiTUI {
 
   updateActivityPane(): void {
     const effectiveMode = this.resolveActivityPaneMode();
-    if (effectiveMode !== 'waiting' && effectiveMode !== 'tool' && effectiveMode !== 'composing') {
+    // Keep the same loading tip for the entire turn; only clear it when the
+    // session is truly idle (thinking is an intermediate phase, not a reset).
+    if (
+      this.state.appState.streamingPhase === 'idle' &&
+      !this.state.appState.isCompacting
+    ) {
       this.currentLoadingTip = undefined;
     }
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
