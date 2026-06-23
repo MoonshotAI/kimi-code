@@ -134,4 +134,30 @@ describe('guardLiteralDollarMath', () => {
       'math_inline',
     ]);
   });
+
+  it('keeps compact prose currency ranges as text, not inline math', () => {
+    for (const text of [
+      'costs $5/$10 here',
+      'costs $5-$10 here',
+      'costs $5~$10 here',
+      'ranges from $1,000/$2,000 today',
+    ]) {
+      expect(types(text)).not.toContain('math_inline');
+      expect(render(text)).toEqual([{ type: 'text', content: text }]);
+    }
+  });
+
+  it('still renders numeric math that is not a range', () => {
+    // Division / subtraction have content after the operator, so they are real
+    // formulas, not a dangling range connector.
+    expect(render('rate $5/2$ per unit')).toEqual([
+      { type: 'text', content: 'rate ' },
+      { type: 'math_inline', content: '5/2' },
+      { type: 'text', content: ' per unit' },
+    ]);
+    expect(render('math $5-2$ done').map((n) => n.type)).toContain('math_inline');
+    for (const text of ['amount $0.5$ exactly', 'neg $-5$ value']) {
+      expect(types(text)).toContain('math_inline');
+    }
+  });
 });
