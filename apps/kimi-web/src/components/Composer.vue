@@ -11,6 +11,7 @@ import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPrompt
 import type { AppModel, AppSkill, ThinkingLevel } from '../api/types';
 import { modelThinkingAvailability } from '../lib/modelThinking';
 import { draftStorageKey, safeGetString, safeRemove, safeSetString } from '../lib/storage';
+import { useInputHistory } from '../composables/useInputHistory';
 
 // ---------------------------------------------------------------------------
 // Attachment state
@@ -142,66 +143,11 @@ watch(
 );
 
 // ---------------------------------------------------------------------------
-// Sent-message history recall (shell-style ↑/↓). ArrowUp on the first line
-// recalls older messages; ArrowDown on the last line walks back toward the live
-// draft. Editing the text drops out of history browsing.
+// Sent-message history recall (shell-style ↑/↓). See useInputHistory for the
+// implementation; the composer keeps the keydown orchestration (which also
+// juggles the slash and mention menus).
 // ---------------------------------------------------------------------------
-const inputHistory = ref<string[]>([]);
-// -1 = browsing nothing (live draft). Otherwise an index into inputHistory.
-let historyIndex = -1;
-let draftBeforeHistory = '';
-
-function pushInputHistory(entry: string): void {
-  const trimmed = entry.trim();
-  historyIndex = -1;
-  if (!trimmed) return;
-  // Skip consecutive duplicates so repeated sends don't pad the history.
-  if (inputHistory.value[inputHistory.value.length - 1] === trimmed) return;
-  inputHistory.value = [...inputHistory.value, trimmed];
-}
-
-function caretAtFirstLine(): boolean {
-  const el = textareaRef.value;
-  if (!el) return false;
-  const pos = el.selectionStart ?? 0;
-  // No newline before the caret → it sits on the first visual line.
-  return el.value.lastIndexOf('\n', pos - 1) === -1;
-}
-
-function applyHistoryText(value: string): void {
-  text.value = value;
-  void nextTick(() => {
-    const el = textareaRef.value;
-    if (!el) return;
-    autosize();
-    const pos = value.length;
-    el.setSelectionRange(pos, pos);
-  });
-}
-
-function recallOlder(): void {
-  if (inputHistory.value.length === 0) return;
-  if (historyIndex === -1) {
-    draftBeforeHistory = text.value;
-    historyIndex = inputHistory.value.length - 1;
-  } else if (historyIndex > 0) {
-    historyIndex -= 1;
-  } else {
-    return; // already at the oldest entry
-  }
-  applyHistoryText(inputHistory.value[historyIndex]!);
-}
-
-function recallNewer(): void {
-  if (historyIndex === -1) return;
-  if (historyIndex < inputHistory.value.length - 1) {
-    historyIndex += 1;
-    applyHistoryText(inputHistory.value[historyIndex]!);
-  } else {
-    historyIndex = -1;
-    applyHistoryText(draftBeforeHistory);
-  }
-}
+const history = useInputHistory({ text, textareaRef, autosize });
 
 // ---------------------------------------------------------------------------
 // Slash-command menu
@@ -316,7 +262,7 @@ function selectMentionItem(item: FileItem): void {
 
 function handleInput(): void {
   // Manual typing leaves history-browsing mode — the text is now a fresh draft.
-  historyIndex = -1;
+  history.resetBrowsing();
   updateSlashMenu();
   updateMentionMenu();
 }
@@ -542,7 +488,7 @@ function handleSubmit(): void {
   }
   attachments.value = [];
 
-  pushInputHistory(trimmed);
+  history.push(trimmed);
   text.value = '';
   slashOpen.value = false;
   mentionOpen.value = false;
@@ -570,7 +516,7 @@ function handleSteer(): void {
     revokeAttachment(att);
   }
   attachments.value = [];
-  pushInputHistory(trimmed);
+  history.push(trimmed);
   text.value = '';
   slashOpen.value = false;
   mentionOpen.value = false;
@@ -680,26 +626,26 @@ function handleKeydown(e: KeyboardEvent): void {
     return;
   }
 
-  // History recall (shell-style ↑/↓).
+  // History recall (shell-style ↑/↓) — see useInputHistory for the machinery.
   //
   // ENTERING history: a plain ArrowUp only recalls when the caret is on the
   // first line, so editing a multi-line draft with the arrows still works.
-  // ONCE BROWSING (historyIndex !== -1), the arrows walk history directly,
-  // regardless of where the caret landed — a recalled multi-line entry leaves
-  // the caret at its end, and the old "must be on the first line" gate then
-  // trapped it there, so further ArrowUp did nothing ("only one step back").
-  // Walking freely while browsing fixes that; typing exits history (handleInput
-  // resets historyIndex), after which the arrows move the caret normally again.
+  // ONCE BROWSING, the arrows walk history directly, regardless of where the
+  // caret landed — a recalled multi-line entry leaves the caret at its end, and
+  // the old "must be on the first line" gate then trapped it there, so further
+  // ArrowUp did nothing ("only one step back"). Walking freely while browsing
+  // fixes that; typing exits history (handleInput resets browsing), after which
+  // the arrows move the caret normally again.
   if (!slashOpen.value && !mentionOpen.value && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
-    const browsing = historyIndex !== -1;
-    if (e.key === 'ArrowUp' && inputHistory.value.length > 0 && (browsing || caretAtFirstLine())) {
+    const browsing = history.isBrowsing();
+    if (e.key === 'ArrowUp' && history.hasHistory() && (browsing || history.caretAtFirstLine())) {
       e.preventDefault();
-      recallOlder();
+      history.recallOlder();
       return;
     }
     if (e.key === 'ArrowDown' && browsing) {
       e.preventDefault();
-      recallNewer();
+      history.recallNewer();
       return;
     }
   }
