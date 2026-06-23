@@ -42,9 +42,9 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AgentRecord } from '../../agent/records';
-import type { ContextMessage } from '../../agent/context';
-import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
+import type { AgentRecord } from '../agent/records';
+import type { ContextMessage } from '../agent/context';
+import type { ExecutableToolResult, LoopRecordedEvent } from '../loop';
 
 type ContentPart = ContextMessage['content'][number];
 

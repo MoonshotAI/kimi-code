@@ -22,15 +22,15 @@
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
-import type { CoreRPC, SessionSummary } from '../../rpc';
+import { Disposable, InstantiationType, registerSingleton } from '#/_base/di';
+import type { CoreRPC, SessionSummary } from '../rpc';
 import type {
   Message,
   PageResponse,
 } from '@moonshot-ai/protocol';
 
 import { ICoreRuntime } from '#/coreProcess';
-import { SessionNotFoundError } from '../session/session';
+import { SessionNotFoundError } from '../services/session/session';
 import {
   IMessageService,
   MessageNotFoundError,

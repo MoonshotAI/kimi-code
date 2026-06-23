@@ -32,7 +32,7 @@ import {
   readWireRecords,
   readWireTranscript,
   reduceWireRecords,
-} from '../../src/services';
+} from '#/message';
 import { type ICoreRuntime } from '#/coreProcess';
 
 const SESSION_ID = 'sess_01HZWIRE';

@@ -108,6 +108,10 @@ export * from './question';
 // keeps package root surface unchanged for server (`ICoreRuntime` / `CoreProcessService`)
 export * from './coreProcess';
 
+// ─── Message contract (di-v3) ──────────────────────────────────────────────
+// keeps package root surface unchanged for server (`IMessageService` / `toProtocolMessage`)
+export * from './message';
+
 // ─── Scope mechanism (di-v3) ───────────────────────────────────────────────
 // Exposes `LifecycleScope`, `registerScopedService` /
 // `getScopedServiceDescriptors` / `markBuilt` / `isBuilt`, the `I*Context`

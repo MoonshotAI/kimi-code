@@ -29,11 +29,11 @@ import type {
 import {
   MessageNotFoundError,
   MessageService,
-  SessionNotFoundError,
   deriveMessageId,
   parseMessageId,
   toProtocolMessage,
-} from '../../src/services';
+} from '#/message';
+import { SessionNotFoundError } from '../../src/services';
 import { type ICoreRuntime } from '#/coreProcess';
 
 const SESSION_ID = 'sess_01HZTEST';

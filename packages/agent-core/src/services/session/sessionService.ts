@@ -21,7 +21,7 @@ import {
 import { IApprovalService } from '#/approval';
 import { ICoreRuntime } from '#/coreProcess';
 import { IEventService } from '#/event';
-import { toProtocolMessage } from '../message/message';
+import { toProtocolMessage } from '#/message';
 import { IPromptService, type AgentStatePatch } from '../prompt/prompt';
 import { IQuestionService } from '#/question';
 import {

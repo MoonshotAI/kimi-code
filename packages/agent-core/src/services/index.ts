@@ -110,22 +110,6 @@ export { SessionQueryService } from './session/sessionQueryService';
 export { SessionRuntimeService } from './session/sessionRuntimeService';
 
 export {
-  IMessageService,
-  MessageNotFoundError,
-  deriveMessageId,
-  parseMessageId,
-  toProtocolMessage,
-} from './message/message';
-export type { MessageListQuery } from './message/message';
-export { MessageService } from './message/messageService';
-export {
-  readWireRecords,
-  readWireTranscript,
-  reduceWireRecords,
-} from './message/transcript';
-export type { TranscriptEntry, WireTranscript } from './message/transcript';
-
-export {
   IPromptService,
   PromptAlreadyCompletedError,
   PromptNotFoundError,

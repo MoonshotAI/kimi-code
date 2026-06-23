@@ -43,8 +43,8 @@
  * at the route layer. This impl receives a fully-validated query.
  */
 
-import { createDecorator } from '../../_base/di';
-import type { ContextMessage } from '../../agent/context';
+import { createDecorator } from '#/_base/di';
+import type { ContextMessage } from '../agent/context';
 import type {
   CursorQuery,
   Message,
