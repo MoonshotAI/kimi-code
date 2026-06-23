@@ -12,6 +12,7 @@ import { modelThinkingAvailability } from '../lib/modelThinking';
 import { draftStorageKey, safeGetString, safeRemove, safeSetString } from '../lib/storage';
 import { useInputHistory } from '../composables/useInputHistory';
 import { useSlashMenu } from '../composables/useSlashMenu';
+import { useMentionMenu } from '../composables/useMentionMenu';
 
 // ---------------------------------------------------------------------------
 // Attachment state
@@ -170,72 +171,23 @@ const {
 });
 
 // ---------------------------------------------------------------------------
-// @-mention menu
+// @-mention menu — see useMentionMenu for the implementation. The composer
+// keeps the keydown orchestration because it also juggles the slash menu and
+// history recall.
 // ---------------------------------------------------------------------------
-
-const mentionOpen = ref(false);
-const mentionItems = ref<FileItem[]>([]);
-const mentionActive = ref(0);
-const mentionLoading = ref(false);
-
-// Debounce timer for mention search
-let mentionTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** Find the @token under the cursor in the current text value. Returns null if none. */
-function getMentionToken(): { token: string; start: number; end: number } | null {
-  const val = text.value;
-  const pos = textareaRef.value?.selectionStart ?? val.length;
-  // Walk backwards from cursor to find the start of a @token
-  let start = pos - 1;
-  while (start >= 0 && !/\s/.test(val[start]!)) {
-    start--;
-  }
-  start++;
-  const tokenPart = val.slice(start, pos);
-  if (!tokenPart.startsWith('@')) return null;
-  // The end of the token is where the cursor is (or after the next space)
-  return { token: tokenPart.slice(1), start, end: pos };
-}
-
-function updateMentionMenu(): void {
-  const mt = getMentionToken();
-  if (!mt || !props.searchFiles) {
-    mentionOpen.value = false;
-    return;
-  }
-  const query = mt.token;
-  if (mentionTimer !== null) clearTimeout(mentionTimer);
-  mentionTimer = setTimeout(async () => {
-    mentionLoading.value = true;
-    mentionOpen.value = true;
-    mentionActive.value = 0;
-    try {
-      const results = await props.searchFiles!(query);
-      mentionItems.value = results;
-    } catch {
-      mentionItems.value = [];
-    } finally {
-      mentionLoading.value = false;
-    }
-  }, 200);
-}
-
-function selectMentionItem(item: FileItem): void {
-  const mt = getMentionToken();
-  if (!mt) return;
-  const val = text.value;
-  // Replace @query token with the file path
-  text.value = val.slice(0, mt.start) + item.path + val.slice(mt.end);
-  mentionOpen.value = false;
-  void nextTick(() => {
-    const el = textareaRef.value;
-    if (!el) return;
-    const newPos = mt.start + item.path.length;
-    el.setSelectionRange(newPos, newPos);
-    el.focus();
-    autosize();
-  });
-}
+const {
+  open: mentionOpen,
+  items: mentionItems,
+  active: mentionActive,
+  loading: mentionLoading,
+  update: updateMentionMenu,
+  select: selectMentionItem,
+} = useMentionMenu({
+  text,
+  textareaRef,
+  autosize,
+  searchFiles: () => props.searchFiles,
+});
 
 // ---------------------------------------------------------------------------
 // Input event handler — updates both menus

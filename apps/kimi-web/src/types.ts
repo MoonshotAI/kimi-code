@@ -18,6 +18,12 @@ export interface FileData {
   lineCount?: number;
 }
 
+/** A file entry shown in the composer's @-mention menu. */
+export interface FileItem {
+  path: string;
+  name: string;
+}
+
 export interface Session {
   id: string;
   title: string;

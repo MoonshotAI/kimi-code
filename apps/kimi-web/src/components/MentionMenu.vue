@@ -2,11 +2,11 @@
 <!-- Popup list of file paths shown when user types @ in the Composer textarea. -->
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
+import type { FileItem } from '../types';
 
-export interface FileItem {
-  path: string;
-  name: string;
-}
+// Re-exported for the .vue consumers (Composer / ChatDock / ConversationPane)
+// that import FileItem from this component.
+export type { FileItem };
 
 const props = defineProps<{
   items: FileItem[];
