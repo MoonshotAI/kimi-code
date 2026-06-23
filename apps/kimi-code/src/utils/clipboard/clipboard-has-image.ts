@@ -1,66 +1,15 @@
-import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-
+import {
+  DEFAULT_LIST_TIMEOUT_MS,
+  isSupportedImageMimeType,
+  isWaylandSession,
+  isWSL,
+  parseTargetList,
+  runCommand,
+  type RunCommand,
+} from './clipboard-common';
 import { clipboard, type ClipboardModule } from './clipboard-native';
 
-type RunCommandOptions = { timeoutMs?: number; env?: NodeJS.ProcessEnv };
-type RunCommand = (
-  command: string,
-  args: string[],
-  options?: RunCommandOptions,
-) => { stdout: Buffer; ok: boolean };
-
-const SUPPORTED_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
-const DEFAULT_LIST_TIMEOUT_MS = 1000;
 const DEFAULT_POWERSHELL_TIMEOUT_MS = 2000;
-const DEFAULT_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
-
-function baseMimeType(raw: string): string {
-  return raw.split(';')[0]?.trim().toLowerCase() ?? raw.toLowerCase();
-}
-
-function isSupportedImageMimeType(mime: string): boolean {
-  const base = baseMimeType(mime);
-  return (SUPPORTED_IMAGE_MIME_TYPES as readonly string[]).includes(base);
-}
-
-function parseTargetList(output: Buffer): string[] {
-  return output
-    .toString('utf-8')
-    .split(/\r?\n/)
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0);
-}
-
-function runCommand(
-  command: string,
-  args: string[],
-  options?: RunCommandOptions,
-): { stdout: Buffer; ok: boolean } {
-  const result = spawnSync(command, args, {
-    timeout: options?.timeoutMs ?? DEFAULT_LIST_TIMEOUT_MS,
-    maxBuffer: DEFAULT_MAX_BUFFER_BYTES,
-    env: options?.env,
-  });
-  if (result.error !== undefined || result.status !== 0) {
-    return { ok: false, stdout: Buffer.alloc(0) };
-  }
-  const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? '');
-  return { ok: true, stdout };
-}
-
-function isWaylandSession(env: NodeJS.ProcessEnv): boolean {
-  return Boolean(env['WAYLAND_DISPLAY']) || env['XDG_SESSION_TYPE'] === 'wayland';
-}
-
-function isWSL(env: NodeJS.ProcessEnv): boolean {
-  if (env['WSL_DISTRO_NAME'] !== undefined || env['WSLENV'] !== undefined) return true;
-  try {
-    return /microsoft|wsl/i.test(readFileSync('/proc/version', 'utf-8'));
-  } catch {
-    return false;
-  }
-}
 
 function hasImageViaWlPaste(run: RunCommand): boolean {
   const list = run('wl-paste', ['--list-types'], { timeoutMs: DEFAULT_LIST_TIMEOUT_MS });
@@ -87,14 +36,16 @@ function hasImageViaPowerShell(run: RunCommand): boolean {
   return output === 'true';
 }
 
-async function hasImageViaMacOs(clip: ClipboardModule | null, run: RunCommand): Promise<boolean> {
-  if (clip !== null) {
-    try {
-      if (clip.hasImage()) return true;
-    } catch {
-      // fall through to osascript
-    }
+async function hasImageViaNative(clip: ClipboardModule | null): Promise<boolean> {
+  if (clip === null) return false;
+  try {
+    return clip.hasImage();
+  } catch {
+    return false;
   }
+}
+
+function hasImageViaMacOsOsascript(run: RunCommand): boolean {
   const result = run('osascript', ['-e', 'the clipboard as «class PNGf»'], {
     timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
   });
@@ -117,27 +68,26 @@ export async function clipboardHasImage(options?: {
   if (platform === 'linux') {
     const wayland = isWaylandSession(env);
     const wsl = isWSL(env);
+    const xclipHasImage = !wayland && hasImageViaXclip(run);
 
     if (wayland || wsl) {
-      if (hasImageViaWlPaste(run) || hasImageViaXclip(run)) return true;
+      if (hasImageViaWlPaste(run) || xclipHasImage) return true;
     }
     if (wsl && hasImageViaPowerShell(run)) return true;
     if (!wayland) {
-      if (hasImageViaXclip(run)) return true;
-      try {
-        if (await hasImageViaMacOs(clip, run)) return true;
-      } catch {
-        return false;
-      }
+      if (xclipHasImage) return true;
+      if (await hasImageViaNative(clip)) return true;
     }
     return false;
   }
 
   if (platform === 'darwin') {
-    return hasImageViaMacOs(clip, run);
+    if (await hasImageViaNative(clip)) return true;
+    return hasImageViaMacOsOsascript(run);
   }
 
   if (platform === 'win32') {
+    if (await hasImageViaNative(clip)) return true;
     return hasImageViaPowerShell(run);
   }
 
