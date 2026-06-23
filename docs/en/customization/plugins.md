@@ -188,19 +188,19 @@ Plugin MCP servers start after `/reload` or in new sessions. To enable or disabl
 /reload
 ```
 
-## Official Plugins
+## Kimi Datasource
 
-The Kimi Code CLI official marketplace hosts reviewed official plugins. Currently available:
+Kimi Datasource is the official Kimi Code data plugin. It lets you query financial market data, macroeconomic indicators, corporate registration records, and academic literature in natural language — no manual API calls or data account registration required.
 
-**[Kimi Datasource](./datasource.md)** — Query financial market data, macroeconomic indicators, corporate registration records, and academic literature in natural language.
+### Installation
 
-Installation:
+You must first complete OAuth login with a Kimi Code account via `/login`; the plugin relies on local credentials to access data services.
 
 1. Run `/plugins` and select **Official**
 2. Find **Kimi Datasource** and press `Enter` to install
-3. Run `/reload` or `/new` after installation
+3. After installation completes, run `/reload` or `/new` to activate the plugin
 
-For data capabilities and usage examples, see the [Official Plugins documentation](./datasource.md).
+Once installed, describe your need in natural language and Kimi Code will invoke the data capabilities, or trigger the query skill explicitly with `/skill:kimi-datasource`.
 
 ## Security Model
 
