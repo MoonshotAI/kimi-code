@@ -71,7 +71,6 @@ const running = computed(() => client.activity.value !== 'idle');
 // object) and a stable actions object keeps the parent/child contract small
 // without changing any data source or behavior.
 const conversationVm = computed<ConversationVm>(() => ({
-  turns: client.turns.value,
   sessionId: client.activeSessionId.value ?? undefined,
   approvals: client.pendingApprovals.value,
   gitInfo: client.gitInfo.value,
@@ -660,6 +659,7 @@ function openPr(url: string): void {
       ref="conversationPaneRef"
       :vm="conversationVm"
       :actions="conversationActions"
+      :turns="client.turns.value"
       @open-changes="openDiffDetail()"
       @select-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="showAddWorkspace = true"

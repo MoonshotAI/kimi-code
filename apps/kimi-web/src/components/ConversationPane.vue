@@ -15,6 +15,9 @@ import { getVisibleWorkspaces } from '../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../lib/storage';
 
 const props = defineProps<{
+  /** Chat turns — kept as a separate prop (not in vm) so streaming updates
+   *  to the hot path stay fine-grained and don't rebuild the whole vm. */
+  turns: ChatTurn[];
   vm: ConversationVm;
   actions: ConversationActions;
 }>();
@@ -194,7 +197,7 @@ function tocTitle(turn: ChatTurn): string {
 }
 
 const conversationTocItems = computed<ConversationTocItem[]>(() =>
-  props.vm.turns.map((turn, index) => ({
+  props.turns.map((turn, index) => ({
     id: turn.id,
     role: turn.role,
     no: turn.no || index + 1,
@@ -224,7 +227,7 @@ const TOC_TRACK_HEIGHT = 420;
 const tocMetrics = computed<{ id: string; height: number }[]>(() => {
   const items = conversationTocItems.value;
   const lengths = items.map((item) => {
-    const turn = props.vm.turns.find((t) => t.id === item.id);
+    const turn = props.turns.find((t) => t.id === item.id);
     return turn ? turnContentLength(turn) : TOC_BUBBLE_MIN;
   });
   const total = lengths.reduce((s, n) => s + n, 0) || items.length * TOC_BUBBLE_MIN;
@@ -572,7 +575,7 @@ function isHistoryPrependOnly(prev: ScrollKey | undefined, next: ScrollKey): boo
 
 const scrollKey = computed<ScrollKey>(() => {
   const approvalIds = (props.vm.approvals ?? []).map((a) => a.approvalId).join(',');
-  const t = props.vm.turns;
+  const t = props.turns;
   const last = t.at(-1);
   const thinkingLen = last?.thinking?.length ?? 0;
   const toolsLen =
@@ -820,7 +823,7 @@ defineExpose({ loadComposerForEdit });
     <!-- Chat context header: workspace/session, git status, open-in-editor,
          copy-all, PR. Hidden for the empty-composer (no session context yet). -->
     <ChatHeader
-      v-if="!vm.mobile && !(vm.turns.length === 0 && !vm.sessionLoading)"
+      v-if="!vm.mobile && !(turns.length === 0 && !vm.sessionLoading)"
       :session-id="vm.sessionId"
       :workspace-name="vm.workspaceName"
       :workspace-root="vm.workspaceRoot"
@@ -887,7 +890,7 @@ defineExpose({ loadComposerForEdit });
         @scroll.passive="onPanesScroll"
       >
         <div class="content-wrap" :class="[vm.mobile ? 'align-mobile' : 'align-center']">
-          <template v-if="vm.turns.length === 0 && !vm.sessionLoading">
+          <template v-if="turns.length === 0 && !vm.sessionLoading">
             <!-- Empty session: Composer rendered in the centre of the pane -->
             <div class="empty-spacer" />
             <div class="empty-hint">
@@ -997,7 +1000,7 @@ defineExpose({ loadComposerForEdit });
             <ChatPane
               ref="chatPaneRef"
               :key="vm.fileReloadKey ?? 'no-session'"
-              :turns="vm.turns"
+              :turns="turns"
               :approvals="vm.approvals"
               :bubble="bubble"
               :mobile="vm.mobile"
@@ -1026,7 +1029,7 @@ defineExpose({ loadComposerForEdit });
         </div>
       </div>
       <ChatDock
-        v-if="!(vm.turns.length === 0 && !vm.sessionLoading)"
+        v-if="!(turns.length === 0 && !vm.sessionLoading)"
         :ref="bindChatDock"
         :style="chatDockStyle"
         :session-id="vm.sessionId"

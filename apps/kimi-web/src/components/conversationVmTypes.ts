@@ -2,13 +2,12 @@
 // View-model and actions aggregates for ConversationPane. These mirror the
 // component's previous individual props one-for-one so the refactor is purely
 // structural (no type or behavior changes).
-import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, QueuedPromptView, TaskItem, TodoView, UIQuestion, WorkspaceView } from '../types';
+import type { ActivationBadges, ApprovalBlock, ConversationStatus, QueuedPromptView, TaskItem, TodoView, UIQuestion, WorkspaceView } from '../types';
 import type { AppGoal, AppModel, AppSkill, ThinkingLevel } from '../api/types';
 import type { SwarmGroup } from '../composables/swarmGroups';
 import type { FileItem } from './MentionMenu.vue';
 
 export interface ConversationVm {
-  turns: ChatTurn[];
   sessionId?: string;
   approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string }[];
   gitInfo?: { branch: string; ahead: number; behind: number } | null;
