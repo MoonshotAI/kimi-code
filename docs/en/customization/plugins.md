@@ -6,16 +6,17 @@ Kimi Code CLI applies a conservative loading strategy for plugins: installing a 
 
 ## Installation and Management
 
-Run `/plugins` in the TUI to open the plugin manager, where you can perform all routine operations. Common keys:
+Run `/plugins` in the TUI to open the plugin manager. It is a single panel with four tabs — **Installed** (manage what you have), **Official** (Kimi-maintained marketplace plugins), **Third-party** (marketplace plugins from other publishers), and **Custom** (install from a URL) — switched with `Tab` / `Shift+Tab`. Common keys:
 
 | Key | Action |
 | --- | --- |
-| `Enter` or `→` | Open the selected item, or install a marketplace plugin |
-| `Space` | Enable or disable an installed plugin; install or update a marketplace plugin |
-| `M` | Manage MCP servers for the selected plugin |
-| `←` or `Esc` | Go back to the previous level |
-
-In the marketplace list, an installed plugin with a newer version available shows `update <local> → <latest>`, an up-to-date one shows `installed · v<version>`, and an uninstalled one shows `install v<version>`. Select an updatable entry and press `Enter` to update.
+| `Tab` / `Shift+Tab` | Switch between the Installed / Official / Third-party / Custom tabs |
+| `Space` | Enable or disable the selected installed plugin (Installed tab) |
+| `D` | Remove the selected installed plugin (Installed tab) |
+| `M` | Manage MCP servers for the selected plugin (Installed tab) |
+| `R` | Reload `installed.json` and all manifests (Installed tab) |
+| `Enter` | Installed tab: view plugin details · Official/Third-party tab: open or install · Custom tab: install |
+| `Esc` | Go back or cancel |
 
 You can also use slash commands directly:
 
@@ -33,11 +34,7 @@ You can also use slash commands directly:
 | `/plugins mcp enable <id> <server>` | Enable an MCP server declared by a plugin |
 | `/plugins mcp disable <id> <server>` | Disable an MCP server declared by a plugin |
 
-The plugin manager shows the installation source and a trust badge for each install: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else).
-
-### Installing from GitHub
-
-Use `/plugins install <url>` to install directly from a GitHub repository. Four URL forms are supported:
+**GitHub URL supports four forms:**
 
 - `https://github.com/<owner>/<repo>`: Install the latest release; falls back to the default branch if no release exists
 - `https://github.com/<owner>/<repo>/tree/<ref>`: Install a specific branch, tag, or short commit SHA
@@ -46,59 +43,48 @@ Use `/plugins install <url>` to install directly from a GitHub repository. Four 
 
 Network requests only go through `github.com` redirects and `codeload.github.com` downloads; `api.github.com` is not called.
 
-### Notes
+The plugin manager shows each install's source and a trust badge. `kimi-official` marks plugin zips downloaded from `https://code.kimi.com/kimi-code/plugins/official/`; `curated` marks plugin zips downloaded from `https://code.kimi.com/kimi-code/plugins/curated/`. `third-party` marks anything else, including GitHub installs, local directories, custom marketplace sources, and other URLs. Marketplace `tier` is listing metadata; the installed trust badge still comes from the actual downloaded source.
 
-- Plugin changes only take effect for new sessions. After installing, enabling/disabling, or removing a plugin, run `/reload` to reload plugins or `/new` to start a new session; the current session will not update.
+The **Official** and **Third-party** tabs list the marketplace catalog by tier — **Official** holds Kimi-maintained plugins and **Third-party** holds plugins from other publishers. Installed entries are listed first. Both tabs load lazily — opening `/plugins` is instant and works offline; only switching to either tab fetches the catalog, and a fetch failure is shown inline on the tab instead of closing the panel. The **Custom** tab installs a plugin straight from a GitHub URL (or zip URL / local path), without it being a marketplace listing. `/plugins marketplace` opens directly on the Official tab.
+
+By default, marketplace items are plugins: Kimi Code installs their `source` and tracks the install in `installed.json`.
+
+For custom marketplace JSON, omit `type` or set `"type": "plugin"`, and provide a `source`. `source` may be a local path, a zip URL, or a GitHub repository URL. New CLIs accept `"type": "managed"` and the legacy `"type": "guide"` as aliases for `"plugin"`.
+
+The marketplace JSON has a single `plugins` array. Do not split the same marketplace into separate old and new arrays. Old CLIs read the same list and ignore fields they do not understand.
+
+```json
+{
+  "version": "2",
+  "plugins": [
+    {
+      "id": "my-plugin",
+      "type": "plugin",
+      "displayName": "My Plugin",
+      "source": "./my-plugin"
+    }
+  ]
+}
+```
+
+The marketplace JSON is a versioned contract. Keep existing field meanings stable, add optional fields when possible, and decide how each change behaves across CLI versions:
+
+| Case | Rule |
+| --- | --- |
+| New CLI with old marketplace JSON | Works: missing `type` defaults to `plugin`, `"managed"` is accepted as a legacy alias, and legacy `url` / `downloadUrl` fields are still accepted as source aliases. |
+| Old CLI with new plugin items | Works from the same `plugins` array when the item provides `source` and the source uses a manifest path the old CLI already supports; old CLIs ignore fields they do not understand. |
+| Legacy `"type": "guide"` items | Treated as a normal plugin install; any `installSkill` / `removeSkill` fields are ignored. |
+| Existing installed records | Keep working; the `installed.json` and managed plugin directory contract is unchanged. |
+| New entry types or install behavior | Keep a single `plugins` array where possible. Use `version`, parser defaults, field aliases, and clear rejection rules; only add a separate artifact or publishing gate when one array cannot stay compatible. |
+
+If you operate a custom marketplace, apply the same rule to your own marketplace URL. Before changing fields or entry types, decide whether old CLIs should keep installing the same `plugins` list, ignore the new fields, or reject it with a clear error.
+
+**A few notes:**
+
+- Plugin changes apply after `/reload` or in new sessions. This includes newly installed or enabled Skills, same-name Skill updates, disabled or removed Skills, MCP servers, and `sessionStart.skill` changes.
 - Local installations are copied to `$KIMI_CODE_HOME/plugins/managed/<id>/`, and the CLI always runs from this managed copy. Editing the original source directory after installation has no effect; you must reinstall.
 - Removing a plugin only deletes the installation record; the managed copy and original source files remain on disk.
 - Plugins are currently installed per-user and apply to all projects; project-level installation scope is not yet supported.
-
-## Kimi Datasource
-
-Kimi Datasource is the official Kimi Code data plugin. It lets you query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language — no manual API calls or data account registration required.
-
-### Installation
-
-You must first complete OAuth login with a Kimi Code account via `/login`. The plugin relies on local credentials to access data services.
-
-1. Run `/plugins` and select **Marketplace**
-2. Find **Kimi Datasource** and press `Space` to install
-3. After installation completes, run `/reload` to activate the plugin
-
-The current latest version is v3.2.0. The plugin does not update automatically — to upgrade to a newer version, repeat the installation steps above.
-
-### How to Use
-
-Once installed, describe your need in natural language and Kimi Code will automatically invoke the data capabilities. You can also explicitly trigger the data query skill with `/skill:kimi-datasource`.
-
-### What You Can Do
-
-**Live market research**: Want to run a quantitative analysis on a stock? Pull three years of daily closing prices, MACD, and KDJ signals in a single query — no third-party data platforms needed.
-
-**Cross-country macro comparison**: Studying supply-chain shifts across China, India, and Vietnam? Get complete GDP growth, trade volume, and demographic time-series from World Bank data spanning 50+ years, all in one go.
-
-**Pre-contract risk check**: Need to vet a counterparty fast? Type the company name and instantly get business registration, equity structure, litigation disputes, and credit blacklist status — right when you need it.
-
-**Literature review acceleration**: Tracing the research arc of RLHF? Get the most-cited papers, key authors, and core findings in seconds, so your literature review outline takes shape in half the time.
-
-**On-the-spot legal lookup**: Stuck on which statute governs a residence-right contract dispute? Pinpoint the relevant Civil Code articles — full text, authority level, and validity — then pull a few comparable precedents to back them up, without digging through statute databases.
-
-### Coverage
-
-| Category | Scope |
-|---|---|
-| Stock market data | A-shares, HK, US, and major global markets — real-time/historical prices, technical indicators, financial statements, stock screening |
-| Macroeconomic data | World Bank data for 189 countries, 50+ years of time series (GDP, trade, population, climate, and more) |
-| Corporate data | Business registration, equity chain, legal risk, and related-entity graph for mainland Chinese companies |
-| Academic literature | Millions of papers across physics, mathematics, CS, quantitative finance, economics — including preprints |
-| Legal | Chinese laws, regulations, and judicial cases — semantic/keyword search and detail lookup for statutes across all authority levels (constitution, laws, judicial interpretations, departmental rules), plus ordinary and authoritative case search |
-
-### Notes
-
-- Data queries are billed per call and consume Kimi Code account credits
-- The plugin provides read-only queries; no write or trading functionality is available
-- Technical indicators and real-time prices are only available during active trading hours
-- AI-generated output is for reference only and does not constitute investment or business advice
 
 ## Plugin Manifest
 
@@ -192,15 +178,29 @@ HTTP server (remote service):
 
 For stdio servers, `command` can be a command on `PATH` or a path starting with `./` within the plugin root directory. `cwd` likewise must start with `./` and be within the plugin root directory; otherwise the server is ignored.
 
-Plugin MCP servers only start in new sessions. To enable or disable a server:
+Plugin MCP servers start after `/reload` or in new sessions. To enable or disable a server:
 
 ```sh
 /plugins mcp disable kimi-finance finance
-/new
+/reload
 
 /plugins mcp enable kimi-finance finance
-/new
+/reload
 ```
+
+## Official Plugins
+
+The Kimi Code CLI official marketplace hosts reviewed official plugins. Currently available:
+
+**[Kimi Datasource](./datasource.md)** — Query financial market data, macroeconomic indicators, corporate registration records, and academic literature in natural language.
+
+Installation:
+
+1. Run `/plugins` and select **Official**
+2. Find **Kimi Datasource** and press `Enter` to install
+3. Run `/reload` or `/new` after installation
+
+For data capabilities and usage examples, see the [Official Plugins documentation](./datasource.md).
 
 ## Security Model
 
@@ -208,10 +208,11 @@ Plugins have a limited loading scope. The following operations do not occur duri
 
 - Command-type plugin tools, hooks, and legacy tool runtimes are not executed
 - All paths must remain within the plugin root directory after symbolic link resolution
-- MCP servers of enabled plugins only start in new sessions and can be disabled at any time from `/plugins`
+- MCP servers of enabled plugins start after `/reload` or in new sessions and can be disabled at any time from `/plugins`
 - Broken manifests or unsafe paths appear in `/plugins info <id>` diagnostics and do not affect other sessions
 
 ## Next steps
 
+- [Kimi Datasource](./datasource.md) — Official data plugin: installation and usage for financial market data, corporate records, and academic literature
 - [Agent Skills](./skills.md) — File format and frontmatter field reference for Skills
 - [MCP](./mcp.md) — Full schema and permission configuration for plugin MCP servers

@@ -35,6 +35,7 @@ function make(): {
     },
     currentValue: 'k2',
     currentThinking: false,
+    colors: darkColors,
     onSelect,
     onCancel: vi.fn(),
   });
