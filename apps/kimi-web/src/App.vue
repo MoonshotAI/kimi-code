@@ -136,9 +136,11 @@ const {
   revealPreviewFile,
 } = useFilePreview({ client, detailTarget });
 
-// True while a file preview or any detail panel claims the right-side slot, so
-// the sidebar reserves room for it and the conversation can never be squeezed.
-const previewOpen = computed(() => detailTarget.value !== null || previewTarget.value !== null);
+// True while the right-side slot is actually occupied, so the sidebar reserves
+// room for it and the conversation can never be squeezed. Keyed off detailTarget
+// (the real occupant) rather than previewTarget, which can stay set after the
+// panel is hidden.
+const previewOpen = computed(() => detailTarget.value !== null);
 
 // ---------------------------------------------------------------------------
 // Layout: resizable session column. ResizeHandle owns the column width (with
@@ -538,7 +540,7 @@ function openPr(url: string): void {
     <template v-if="!isMobile">
       <Sidebar
         v-show="!sidebarCollapsed"
-        :col-width="sessionColWidth"
+        :col-width="sideWidth"
         :active-workspace="client.visibleWorkspace.value"
         :active-workspace-id="client.activeWorkspaceId.value"
         :sessions="client.sessionsForView.value"
