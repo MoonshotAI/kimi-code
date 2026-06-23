@@ -88,6 +88,73 @@ describe('TodoPanelComponent', () => {
     const out = strip(panel.render(80).join('\n'));
     expect(out).toMatch(/\+2 more/);
   });
+
+  const many = (n: number): TodoItem[] =>
+    Array.from({ length: n }, (_, i) => ({ title: `t${i}`, status: 'pending' as const }));
+
+  it('hasOverflow() is false when count <= 5 and true when count > 5', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos(many(5));
+    expect(panel.hasOverflow()).toBe(false);
+    panel.setTodos(many(6));
+    expect(panel.hasOverflow()).toBe(true);
+  });
+
+  it('collapsed footer advertises "ctrl+t to expand"', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos(many(7));
+    const out = strip(panel.render(80).join('\n'));
+    expect(out).toMatch(/\+2 more/);
+    expect(out).toMatch(/ctrl\+t to expand/);
+  });
+
+  it('renders every todo with a collapse hint when expanded', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos(many(7));
+    panel.setExpanded(true);
+    const out = strip(panel.render(80).join('\n'));
+    expect(out).toMatch(/t0/);
+    expect(out).toMatch(/t6/);
+    expect(out).not.toMatch(/\+\d+ more/);
+    expect(out).toMatch(/ctrl\+t to collapse/);
+  });
+
+  it('toggleExpanded() flips between collapsed and expanded', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos(many(7));
+    expect(strip(panel.render(80).join('\n'))).toMatch(/\+2 more/);
+    panel.toggleExpanded();
+    expect(strip(panel.render(80).join('\n'))).toMatch(/ctrl\+t to collapse/);
+    panel.toggleExpanded();
+    expect(strip(panel.render(80).join('\n'))).toMatch(/\+2 more/);
+  });
+
+  it('setTodos() keeps the expanded state across list updates', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos(many(7));
+    panel.setExpanded(true);
+    panel.setTodos([
+      { title: 'u0', status: 'pending' },
+      { title: 'u1', status: 'pending' },
+      { title: 'u2', status: 'pending' },
+      { title: 'u3', status: 'pending' },
+      { title: 'u4', status: 'pending' },
+      { title: 'u5', status: 'pending' },
+      { title: 'u6', status: 'pending' },
+    ]);
+    const out = strip(panel.render(80).join('\n'));
+    expect(out).toMatch(/u6/);
+    expect(out).toMatch(/ctrl\+t to collapse/);
+  });
+
+  it('clear() resets the expanded state', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos(many(7));
+    panel.setExpanded(true);
+    panel.clear();
+    panel.setTodos(many(7));
+    expect(strip(panel.render(80).join('\n'))).toMatch(/\+2 more/);
+  });
 });
 
 describe('selectVisibleTodos', () => {
