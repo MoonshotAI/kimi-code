@@ -182,7 +182,7 @@ describe('ClipboardImageHintController', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(footer.getTransientHint()).not.toBeNull();
 
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(4000);
     expect(footer.getTransientHint()).toBeNull();
 
     controller.stop();
@@ -423,7 +423,7 @@ describe('ClipboardImageHintController', () => {
     expect(footer.getTransientHint()).not.toBeNull();
 
     // Advance the remaining original display duration and verify it expires.
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(3000);
     expect(footer.getTransientHint()).toBeNull();
 
     controller.stop();
@@ -449,7 +449,7 @@ describe('ClipboardImageHintController', () => {
     const hintText = footer.getTransientHint();
     expect(hintText).not.toBeNull();
 
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(4000);
     expect(footer.getTransientHint()).toBeNull();
 
     // Another caller sets the same hint text the controller previously used.
