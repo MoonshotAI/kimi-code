@@ -15,6 +15,7 @@ import type { KimiHarnessOptions } from '#/types';
 
 import { buildCoreApiProxy } from './core-proxy';
 import { metaHandlers } from './handlers/meta';
+import { promptHandlers } from './handlers/prompts';
 import { sessionHandlers } from './handlers/sessions';
 import { KapHttpClient } from './http-client';
 import type { CoreApiHandlerMap } from './types';
@@ -115,6 +116,7 @@ export class SDKKapClient extends SDKRpcClientBase {
     return {
       ...metaHandlers,
       ...sessionHandlers,
+      ...promptHandlers,
     };
   }
 }
