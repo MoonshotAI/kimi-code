@@ -857,6 +857,229 @@ describe('Agent resume', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('closes every open call of a multi-call interrupted step in order', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Run both' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'interrupted-step', turnId: '0', step: 1 },
+      },
+      ...['call_a', 'call_b'].map((toolCallId) => ({
+        type: 'context.append_loop_event' as const,
+        event: {
+          type: 'tool.call' as const,
+          uuid: toolCallId,
+          turnId: '0',
+          step: 1,
+          stepUuid: 'interrupted-step',
+          toolCallId,
+          name: 'Lookup',
+          args: {},
+        },
+      })),
+      ...loopEventsForTurn('1', 'All done.'),
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    // Both open calls get a synthetic result, in tool-call order, before the
+    // next turn.
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+      'assistant',
+    ]);
+    expect(ctx.agent.context.history[2]).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_a',
+      isError: true,
+    });
+    expect(ctx.agent.context.history[3]).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_b',
+      isError: true,
+    });
+    await ctx.expectResumeMatches();
+  });
+
+  it('synthesizes only the unresolved call when a step is partially resolved', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Run both' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'interrupted-step', turnId: '0', step: 1 },
+      },
+      ...['call_done', 'call_open'].map((toolCallId) => ({
+        type: 'context.append_loop_event' as const,
+        event: {
+          type: 'tool.call' as const,
+          uuid: toolCallId,
+          turnId: '0',
+          step: 1,
+          stepUuid: 'interrupted-step',
+          toolCallId,
+          name: 'Lookup',
+          args: {},
+        },
+      })),
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: 'call_done',
+          toolCallId: 'call_done',
+          result: { output: 'real result' },
+        },
+      },
+      ...loopEventsForTurn('1', 'All done.'),
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'tool',
+      'assistant',
+    ]);
+    // The recorded result is kept verbatim; only the open call is synthesized.
+    expect(ctx.agent.context.history[2]).toMatchObject({ toolCallId: 'call_done' });
+    expect(textContent(ctx.agent.context.history[2])).toBe('real result');
+    expect(ctx.agent.context.history[3]).toMatchObject({
+      toolCallId: 'call_open',
+      isError: true,
+    });
+    expect(textContent(ctx.agent.context.history[3])).toContain(
+      'Tool execution was interrupted before its result was recorded',
+    );
+    await ctx.expectResumeMatches();
+  });
+
+  it('closes consecutive interrupted steps each at their own boundary', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Go' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      // First interrupted step.
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'step-1', turnId: '0', step: 1 },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call_one',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'step-1',
+          toolCallId: 'call_one',
+          name: 'Lookup',
+          args: {},
+        },
+      },
+      // Second interrupted step (closes the first in place at its step.begin).
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'step-2', turnId: '1', step: 1 },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call_two',
+          turnId: '1',
+          step: 1,
+          stepUuid: 'step-2',
+          toolCallId: 'call_two',
+          name: 'Lookup',
+          args: {},
+        },
+      },
+      // Final fully-run turn (closes the second in place).
+      ...loopEventsForTurn('2', 'Done.'),
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+      'tool',
+      'assistant',
+    ]);
+    expect(ctx.agent.context.history[2]).toMatchObject({ toolCallId: 'call_one', isError: true });
+    expect(ctx.agent.context.history[4]).toMatchObject({ toolCallId: 'call_two', isError: true });
+    await ctx.expectResumeMatches();
+  });
+
+  it('drops an orphan tool result whose call was never recorded', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Hi' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      ...loopEventsForTurn('0', 'Hello.'),
+      // A result with no matching tool.call (e.g. its call was compacted away).
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: 'ghost',
+          toolCallId: 'call_ghost',
+          result: { output: 'orphaned' },
+        },
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+    ]);
+    expect(
+      ctx.agent.context.history.some((message) => message.role === 'tool'),
+    ).toBe(false);
+    await ctx.expectResumeMatches();
+  });
+
   it('rebuilds goal completion replay cards without adding model-visible context', async () => {
     const persistence = new RecordingAgentPersistence([
       {

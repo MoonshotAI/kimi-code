@@ -269,6 +269,49 @@ describe('reduceWireRecords', () => {
     expect(foldedLength).toBe(5);
   });
 
+  it('closes every open call of a multi-call interrupted step, keeping foldedLength aligned', () => {
+    const { entries, foldedLength } = reduceWireRecords([
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: 't', step: 0 }),
+      ...['call_a', 'call_b'].map((toolCallId) =>
+        loopEvent({
+          type: 'tool.call',
+          uuid: toolCallId,
+          turnId: 't',
+          step: 0,
+          stepUuid: 's1',
+          toolCallId,
+          name: 'Run',
+          args: {},
+        }),
+      ),
+      ...assistantStep('s2', 'a2'),
+    ]);
+    expect(entries.map((e) => e.message.role)).toEqual([
+      'assistant',
+      'tool',
+      'tool',
+      'assistant',
+    ]);
+    expect(entries[1]!.message.toolCallId).toBe('call_a');
+    expect(entries[2]!.message.toolCallId).toBe('call_b');
+    expect(foldedLength).toBe(4);
+  });
+
+  it('drops an orphan tool result whose call was never recorded', () => {
+    const { entries, foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      loopEvent({
+        type: 'tool.result',
+        parentUuid: 'ghost',
+        toolCallId: 'call_ghost',
+        result: { output: 'orphaned' },
+      }),
+    ]);
+    expect(entries.map((e) => e.message.role)).toEqual(['user', 'assistant']);
+    expect(foldedLength).toBe(2);
+  });
+
   it('wraps tool errors and empty outputs with <system> statuses like agent-core', () => {
     const { entries } = reduceWireRecords([
       loopEvent({ type: 'step.begin', uuid: 's1', turnId: 't', step: 0 }),
