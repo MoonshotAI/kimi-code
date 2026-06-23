@@ -4,13 +4,15 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
-import type { SlashCommand } from '../lib/slashCommands';
-import { buildSlashItems, filterCommands, parseSlash } from '../lib/slashCommands';
+import { buildSlashItems, parseSlash } from '../lib/slashCommands';
 import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView } from '../types';
 import type { AppModel, AppSkill, ThinkingLevel } from '../api/types';
 import { modelThinkingAvailability } from '../lib/modelThinking';
 import { draftStorageKey, safeGetString, safeRemove, safeSetString } from '../lib/storage';
+import { useInputHistory } from '../composables/useInputHistory';
+import { useSlashMenu } from '../composables/useSlashMenu';
+import { useMentionMenu } from '../composables/useMentionMenu';
 
 // ---------------------------------------------------------------------------
 // Attachment state
@@ -142,173 +144,50 @@ watch(
 );
 
 // ---------------------------------------------------------------------------
-// Sent-message history recall (shell-style ↑/↓). ArrowUp on the first line
-// recalls older messages; ArrowDown on the last line walks back toward the live
-// draft. Editing the text drops out of history browsing.
+// Sent-message history recall (shell-style ↑/↓). See useInputHistory for the
+// implementation; the composer keeps the keydown orchestration (which also
+// juggles the slash and mention menus).
 // ---------------------------------------------------------------------------
-const inputHistory = ref<string[]>([]);
-// -1 = browsing nothing (live draft). Otherwise an index into inputHistory.
-let historyIndex = -1;
-let draftBeforeHistory = '';
-
-function pushInputHistory(entry: string): void {
-  const trimmed = entry.trim();
-  historyIndex = -1;
-  if (!trimmed) return;
-  // Skip consecutive duplicates so repeated sends don't pad the history.
-  if (inputHistory.value[inputHistory.value.length - 1] === trimmed) return;
-  inputHistory.value = [...inputHistory.value, trimmed];
-}
-
-function caretAtFirstLine(): boolean {
-  const el = textareaRef.value;
-  if (!el) return false;
-  const pos = el.selectionStart ?? 0;
-  // No newline before the caret → it sits on the first visual line.
-  return el.value.lastIndexOf('\n', pos - 1) === -1;
-}
-
-function applyHistoryText(value: string): void {
-  text.value = value;
-  void nextTick(() => {
-    const el = textareaRef.value;
-    if (!el) return;
-    autosize();
-    const pos = value.length;
-    el.setSelectionRange(pos, pos);
-  });
-}
-
-function recallOlder(): void {
-  if (inputHistory.value.length === 0) return;
-  if (historyIndex === -1) {
-    draftBeforeHistory = text.value;
-    historyIndex = inputHistory.value.length - 1;
-  } else if (historyIndex > 0) {
-    historyIndex -= 1;
-  } else {
-    return; // already at the oldest entry
-  }
-  applyHistoryText(inputHistory.value[historyIndex]!);
-}
-
-function recallNewer(): void {
-  if (historyIndex === -1) return;
-  if (historyIndex < inputHistory.value.length - 1) {
-    historyIndex += 1;
-    applyHistoryText(inputHistory.value[historyIndex]!);
-  } else {
-    historyIndex = -1;
-    applyHistoryText(draftBeforeHistory);
-  }
-}
+const history = useInputHistory({ text, textareaRef, autosize });
 
 // ---------------------------------------------------------------------------
-// Slash-command menu
+// Slash-command menu — see useSlashMenu for the implementation. The composer
+// keeps the keydown orchestration (arrow keys / Enter / Escape) because it also
+// juggles the mention menu and history recall.
 // ---------------------------------------------------------------------------
-
-const slashOpen = ref(false);
-const slashItems = ref<SlashCommand[]>([]);
-const slashActive = ref(0);
-
-function updateSlashMenu(): void {
-  const val = text.value;
-  // Only show if the value starts with / and has no space yet (single token)
-  if (val.startsWith('/') && !val.includes(' ')) {
-    // Built-in commands + the active session's skills (shown as /<skill-name>).
-    slashItems.value = filterCommands(val, buildSlashItems(props.skills));
-    slashActive.value = 0;
-    slashOpen.value = slashItems.value.length > 0;
-  } else {
-    slashOpen.value = false;
-  }
-}
-
-function selectSlashCommand(item: SlashCommand): void {
-  slashOpen.value = false;
-  if (item.acceptsInput) {
-    text.value = `${item.name} `;
-    void nextTick(() => {
-      const el = textareaRef.value;
-      if (!el) return;
-      const pos = text.value.length;
-      el.setSelectionRange(pos, pos);
-      el.focus();
-      autosize();
-    });
-    return;
-  }
-  text.value = '';
-  emit('command', item.name);
-}
+const {
+  open: slashOpen,
+  items: slashItems,
+  active: slashActive,
+  update: updateSlashMenu,
+  select: selectSlashCommand,
+} = useSlashMenu({
+  text,
+  textareaRef,
+  autosize,
+  skills: () => props.skills,
+  emitCommand: (cmd) => emit('command', cmd),
+  historyPush: (entry) => history.push(entry),
+});
 
 // ---------------------------------------------------------------------------
-// @-mention menu
+// @-mention menu — see useMentionMenu for the implementation. The composer
+// keeps the keydown orchestration because it also juggles the slash menu and
+// history recall.
 // ---------------------------------------------------------------------------
-
-const mentionOpen = ref(false);
-const mentionItems = ref<FileItem[]>([]);
-const mentionActive = ref(0);
-const mentionLoading = ref(false);
-
-// Debounce timer for mention search
-let mentionTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** Find the @token under the cursor in the current text value. Returns null if none. */
-function getMentionToken(): { token: string; start: number; end: number } | null {
-  const val = text.value;
-  const pos = textareaRef.value?.selectionStart ?? val.length;
-  // Walk backwards from cursor to find the start of a @token
-  let start = pos - 1;
-  while (start >= 0 && !/\s/.test(val[start]!)) {
-    start--;
-  }
-  start++;
-  const tokenPart = val.slice(start, pos);
-  if (!tokenPart.startsWith('@')) return null;
-  // The end of the token is where the cursor is (or after the next space)
-  return { token: tokenPart.slice(1), start, end: pos };
-}
-
-function updateMentionMenu(): void {
-  const mt = getMentionToken();
-  if (!mt || !props.searchFiles) {
-    mentionOpen.value = false;
-    return;
-  }
-  const query = mt.token;
-  if (mentionTimer !== null) clearTimeout(mentionTimer);
-  mentionTimer = setTimeout(async () => {
-    mentionLoading.value = true;
-    mentionOpen.value = true;
-    mentionActive.value = 0;
-    try {
-      const results = await props.searchFiles!(query);
-      mentionItems.value = results;
-    } catch {
-      mentionItems.value = [];
-    } finally {
-      mentionLoading.value = false;
-    }
-  }, 200);
-}
-
-function selectMentionItem(item: FileItem): void {
-  const mt = getMentionToken();
-  if (!mt) return;
-  const val = text.value;
-  // Replace @query token with the file path
-  text.value = val.slice(0, mt.start) + item.path + val.slice(mt.end);
-  mentionOpen.value = false;
-  void nextTick(() => {
-    const el = textareaRef.value;
-    if (!el) return;
-    const newPos = mt.start + item.path.length;
-    el.setSelectionRange(newPos, newPos);
-    el.focus();
-    autosize();
-  });
-}
+const {
+  open: mentionOpen,
+  items: mentionItems,
+  active: mentionActive,
+  loading: mentionLoading,
+  update: updateMentionMenu,
+  select: selectMentionItem,
+} = useMentionMenu({
+  text,
+  textareaRef,
+  autosize,
+  searchFiles: () => props.searchFiles,
+});
 
 // ---------------------------------------------------------------------------
 // Input event handler — updates both menus
@@ -316,7 +195,7 @@ function selectMentionItem(item: FileItem): void {
 
 function handleInput(): void {
   // Manual typing leaves history-browsing mode — the text is now a fresh draft.
-  historyIndex = -1;
+  history.resetBrowsing();
   updateSlashMenu();
   updateMentionMenu();
 }
@@ -513,6 +392,11 @@ function handleSubmit(): void {
 
   if (!trimmed && readyAttachments.length === 0) return;
 
+  // Record for ↑/↓ recall before the slash branch so commands (with or without
+  // args) are recallable too, not just plain messages. `push` ignores empty /
+  // whitespace, so an image-only send adds nothing.
+  history.push(trimmed);
+
   // If it's a known slash command, keep the optional tail as command input
   // instead of submitting it as normal chat text. This covers `/goal <task>`,
   // `/swarm <task>`, `/btw <question>`, slash skills with args, and bare
@@ -542,7 +426,6 @@ function handleSubmit(): void {
   }
   attachments.value = [];
 
-  pushInputHistory(trimmed);
   text.value = '';
   slashOpen.value = false;
   mentionOpen.value = false;
@@ -570,7 +453,7 @@ function handleSteer(): void {
     revokeAttachment(att);
   }
   attachments.value = [];
-  pushInputHistory(trimmed);
+  history.push(trimmed);
   text.value = '';
   slashOpen.value = false;
   mentionOpen.value = false;
@@ -680,26 +563,26 @@ function handleKeydown(e: KeyboardEvent): void {
     return;
   }
 
-  // History recall (shell-style ↑/↓).
+  // History recall (shell-style ↑/↓) — see useInputHistory for the machinery.
   //
   // ENTERING history: a plain ArrowUp only recalls when the caret is on the
   // first line, so editing a multi-line draft with the arrows still works.
-  // ONCE BROWSING (historyIndex !== -1), the arrows walk history directly,
-  // regardless of where the caret landed — a recalled multi-line entry leaves
-  // the caret at its end, and the old "must be on the first line" gate then
-  // trapped it there, so further ArrowUp did nothing ("only one step back").
-  // Walking freely while browsing fixes that; typing exits history (handleInput
-  // resets historyIndex), after which the arrows move the caret normally again.
+  // ONCE BROWSING, the arrows walk history directly, regardless of where the
+  // caret landed — a recalled multi-line entry leaves the caret at its end, and
+  // the old "must be on the first line" gate then trapped it there, so further
+  // ArrowUp did nothing ("only one step back"). Walking freely while browsing
+  // fixes that; typing exits history (handleInput resets browsing), after which
+  // the arrows move the caret normally again.
   if (!slashOpen.value && !mentionOpen.value && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
-    const browsing = historyIndex !== -1;
-    if (e.key === 'ArrowUp' && inputHistory.value.length > 0 && (browsing || caretAtFirstLine())) {
+    const browsing = history.isBrowsing();
+    if (e.key === 'ArrowUp' && history.hasHistory() && (browsing || history.caretAtFirstLine())) {
       e.preventDefault();
-      recallOlder();
+      history.recallOlder();
       return;
     }
     if (e.key === 'ArrowDown' && browsing) {
       e.preventDefault();
-      recallNewer();
+      history.recallNewer();
       return;
     }
   }
