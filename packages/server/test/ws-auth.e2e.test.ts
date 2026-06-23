@@ -225,7 +225,8 @@ describe('ws upgrade auth', () => {
       headers: { Authorization: 'Bearer test-token' },
     });
 
-    await receiveType(conn, 'server_hello', 1000);
+    const hello = await receiveType(conn, 'server_hello', 1000);
+    expect(hello.type).toBe('server_hello');
 
     conn.ws.close();
     await conn.closed;

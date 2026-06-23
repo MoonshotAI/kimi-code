@@ -1,4 +1,4 @@
-import { compare, hash } from '@node-rs/bcrypt';
+import { compare, hash } from 'bcryptjs';
 
 const BCRYPT_COST = 12;
 

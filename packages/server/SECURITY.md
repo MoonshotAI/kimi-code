@@ -136,7 +136,7 @@ the remote reachability and TLS.
   hash is needed later, generate one externally with cost 12, e.g.:
 
   ```
-  node -e "require('@node-rs/bcrypt').hash(process.env.KIMI_CODE_PASSWORD,12).then(h=>console.log(h))"
+  node -e "require('bcryptjs').hash(process.env.KIMI_CODE_PASSWORD,12).then(h=>console.log(h))"
   ```
 
   (This is forward-looking; do not rely on it until config support lands.)

@@ -42,7 +42,7 @@
     "@fastify/swagger": "^9.7.0",
     "@moonshot-ai/agent-core": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^",
-    "@node-rs/bcrypt": "^1.10.7",
+    "bcryptjs": "^2.4.3",
     "fastify": "^5.1.0",
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",
@@ -52,6 +52,7 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/ws": "^8.18.0"
   }
 }

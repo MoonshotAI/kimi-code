@@ -229,7 +229,8 @@ describe('WS Host/Origin checks (wsGatewayService)', () => {
   it('accepts a normal Host and delivers server_hello', async () => {
     const r = await spawn({ hostCheck: { boundHost: '127.0.0.1' }, allowedOrigins: [] });
     const conn = await openConn(wsUrl(r.address));
-    await receiveType(conn, 'server_hello', 1000);
+    const hello = await receiveType(conn, 'server_hello', 1000);
+    expect(hello.type).toBe('server_hello');
     conn.ws.close();
     await conn.closed;
   });
@@ -244,7 +245,8 @@ describe('WS Host/Origin checks (wsGatewayService)', () => {
   it('allows a Node client with no Origin (present-only check)', async () => {
     const r = await spawn({ hostCheck: { boundHost: '127.0.0.1' }, allowedOrigins: [] });
     const conn = await openConn(wsUrl(r.address));
-    await receiveType(conn, 'server_hello', 1000);
+    const hello = await receiveType(conn, 'server_hello', 1000);
+    expect(hello.type).toBe('server_hello');
     conn.ws.close();
     await conn.closed;
   });
@@ -252,7 +254,8 @@ describe('WS Host/Origin checks (wsGatewayService)', () => {
   it('skips the checks when the options are unset', async () => {
     const r = await spawn();
     const conn = await openConn(wsUrl(r.address));
-    await receiveType(conn, 'server_hello', 1000);
+    const hello = await receiveType(conn, 'server_hello', 1000);
+    expect(hello.type).toBe('server_hello');
     conn.ws.close();
     await conn.closed;
   });

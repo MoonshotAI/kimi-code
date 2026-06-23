@@ -113,8 +113,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
-  stopSpinner();
-  if (authLogoBlinkTimer !== null) clearTimeout(authLogoBlinkTimer);
   if (offAuthRequired !== null) {
     offAuthRequired();
     offAuthRequired = null;

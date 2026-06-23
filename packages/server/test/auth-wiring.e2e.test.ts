@@ -150,7 +150,11 @@ function expectRejected(url: string): Promise<void> {
       } catch {
         // ignore
       }
-      err === undefined ? resolve() : reject(err);
+      if (err === undefined) {
+        resolve();
+      } else {
+        reject(err);
+      }
     };
     ws.once('open', () => done(new Error('connection unexpectedly opened')));
     ws.once('error', () => done());

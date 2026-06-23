@@ -61,7 +61,9 @@ export class WSGateway extends Disposable implements IWSGateway {
       },
     });
     this.server = this.restGateway.app.server;
-    this.upgradeListener = (req, sock, head) => this.onUpgrade(req, sock, head);
+    this.upgradeListener = (req, sock, head) => {
+      void this.onUpgrade(req, sock, head);
+    };
     this.server.on('upgrade', this.upgradeListener);
     this.logger.debug({ path: WS_PATH }, 'ws gateway attached upgrade listener');
   }

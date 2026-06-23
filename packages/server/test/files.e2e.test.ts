@@ -90,7 +90,7 @@ function appOf(r: RunningServer): FastifyAppLike {
       const q = req as { headers?: Record<string, string | string[] | undefined> };
       return app.inject({
         ...q,
-        headers: { authorization: 'Bearer test-token', ...(q.headers ?? {}) },
+        headers: { authorization: 'Bearer test-token', ...q.headers },
       });
     },
   };
