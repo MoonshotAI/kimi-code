@@ -59,7 +59,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const theme = currentTheme;
 
   const terminal = new ProcessTerminal();
-  const ui = new TUI(terminal);
+  const ui = new TUI(terminal, initialAppState.terminal.showHardwareCursor);
 
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);

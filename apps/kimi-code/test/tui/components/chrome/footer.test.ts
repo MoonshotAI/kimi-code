@@ -53,6 +53,7 @@ const appState: AppState = {
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
+  terminal: { showHardwareCursor: false },
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,

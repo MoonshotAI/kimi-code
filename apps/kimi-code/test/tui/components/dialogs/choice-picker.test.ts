@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { EditorSelectorComponent } from '#/tui/components/dialogs/editor-selector';
+import { HardwareCursorSelectorComponent } from '#/tui/components/dialogs/hardware-cursor-selector';
 import { PermissionSelectorComponent } from '#/tui/components/dialogs/permission-selector';
 import { SettingsSelectorComponent } from '#/tui/components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '#/tui/components/dialogs/theme-selector';
@@ -103,6 +104,7 @@ describe('ChoicePickerComponent', () => {
     const settingsOutput = settings.render(120).map(strip);
     expect(settingsOutput).toContain('  ❯ Model');
     expect(settingsOutput).toContain('    Switch the active model and thinking mode.');
+    expect(settingsOutput).toContain('    Make IME candidate windows follow the input cursor.');
     expect(settingsOutput).toContain('    Turn automatic CLI updates on or off.');
 
     const upgradePreference = new UpdatePreferenceSelectorComponent({
@@ -113,6 +115,14 @@ describe('ChoicePickerComponent', () => {
     const upgradePreferenceOutput = upgradePreference.render(120).map(strip);
     expect(upgradePreferenceOutput).toContain('  ❯ On ← current');
     expect(upgradePreferenceOutput).toContain('    Install new versions in the background.');
+
+    const hardwareCursor = new HardwareCursorSelectorComponent({
+      currentValue: false,
+      onSelect,
+      onCancel,
+    });
+    const hardwareCursorOutput = hardwareCursor.render(120).map(strip);
+    expect(hardwareCursorOutput).toContain('    Show the terminal cursor for IME candidate positioning.');
   });
 
   it('routes Space into the query for searchable lists instead of selecting', () => {

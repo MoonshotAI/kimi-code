@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
     theme: 'dark' | 'light' | 'auto';
     editorCommand: string | null;
     notifications: { enabled: boolean; condition: 'unfocused' | 'always' };
+    terminal: { showHardwareCursor: boolean };
   };
 
   class TuiConfigParseError extends Error {
@@ -415,6 +416,7 @@ describe('runShell', () => {
         theme: 'auto',
         editorCommand: 'vim',
         notifications: { enabled: true, condition: 'always' },
+        terminal: { showHardwareCursor: false },
       }),
     );
     mocks.detectTerminalTheme.mockResolvedValue('light');
@@ -622,7 +624,7 @@ describe('runShell', () => {
       new Error('Invalid configuration in ~/.kimi-code/config.toml'),
     );
 
-    // A broken config.toml must fail loudly — `kimi migrate` must not swallow
+    // A broken config.toml must fail loudly 鈥?`kimi migrate` must not swallow
     // it and proceed, or the user never learns their config is broken.
     await expect(
       runShell(

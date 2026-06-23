@@ -59,17 +59,23 @@ describe('isTuiStubOrMissing', () => {
   it('returns true when content is byte-equal to default render', async () => {
     const defaultRender =
       '# ~/.kimi-code/tui.toml\n' +
-      '# Terminal UI preferences for kimi-code.\n' +
+      '# Client preferences for kimi-code.\n' +
       '# Agent/runtime settings stay in ~/.kimi-code/config.toml.\n' +
       '\n' +
-      'theme = "auto" # "auto" | "dark" | "light"\n' +
+      'theme = "auto" # "auto" | "dark" | "light" | custom theme name\n' +
       '\n' +
       '[editor]\n' +
       'command = "" # Empty uses $VISUAL / $EDITOR\n' +
       '\n' +
       '[notifications]\n' +
       'enabled = true # true | false\n' +
-      'notification_condition = "unfocused" # "unfocused" | "always"\n';
+      'notification_condition = "unfocused" # "unfocused" | "always"\n' +
+      '\n' +
+      '[upgrade]\n' +
+      'auto_install = true # true | false\n' +
+      '\n' +
+      '[terminal]\n' +
+      'show_hardware_cursor = false # true | false\n';
     await writeFile(join(dir, 'tui.toml'), defaultRender, 'utf-8');
     expect(await isTuiStubOrMissing(join(dir, 'tui.toml'))).toBe(true);
   });

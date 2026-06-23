@@ -105,6 +105,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+    terminal: { showHardwareCursor: false },
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-a',
@@ -1759,7 +1760,7 @@ command = "vim"
     const finalLines = mountedPanel.render(80).map(stripSgr);
     expect(finalLines).toHaveLength(thinkingLines.length);
     expect(finalLines.join('\n')).toContain('final answer');
-    expect(finalLines.at(-1)).toMatch(/^│\s+│$/);
+    expect(finalLines.at(-1)).toMatch(/^鈹俓s+鈹?/);
   });
 
   it('caps /btw height to one-third of the terminal and supports scrolling', async () => {
@@ -1779,7 +1780,7 @@ command = "vim"
 
     const collapsed = panel.render(80).map(stripSgr);
     expect(collapsed).toHaveLength(5);
-    expect(collapsed.join('\n')).toContain('BTW ─ Esc close · ↑↓ scroll');
+    expect(collapsed.join('\n')).toContain('BTW 鈹€ Esc close 路 鈫戔啌 scroll');
     expect(collapsed.join('\n')).not.toContain('ctrl+o expand');
     expect(collapsed.join('\n')).toContain('question 8');
     expect(collapsed.join('\n')).toContain('answer 8');
@@ -1787,8 +1788,8 @@ command = "vim"
 
     driver.state.editor.setText('draft main input');
     const collapsedWithInput = panel.render(80).map(stripSgr);
-    expect(collapsedWithInput.join('\n')).toContain('BTW ─ Esc close');
-    expect(collapsedWithInput.join('\n')).not.toContain('↑↓ scroll');
+    expect(collapsedWithInput.join('\n')).toContain('BTW 鈹€ Esc close');
+    expect(collapsedWithInput.join('\n')).not.toContain('鈫戔啌 scroll');
     driver.state.editor.setText('');
 
     const requestRender = vi.mocked(driver.state.ui.requestRender);
@@ -2574,7 +2575,7 @@ command = "vim"
     );
 
     transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('✓ Imports are stable');
+    expect(transcript).toContain('鉁?Imports are stable');
     expect(transcript).not.toContain('Completed');
   });
 
@@ -2638,8 +2639,8 @@ command = "vim"
     );
 
     const transcript = stripSgr(driver.state.transcriptContainer.render(200).join('\n'));
-    expect(transcript).toContain('⊘ Cancelled.');
-    expect(transcript).toContain('✗ The user manually interrupted this subagent x.');
+    expect(transcript).toContain('鈯?Cancelled.');
+    expect(transcript).toContain('鉁?The user manually interrupted this subagent x.');
   });
 
   it('does not let later transcript entries reduce the AgentSwarm grid height', async () => {
@@ -2757,8 +2758,8 @@ command = "vim"
     const totalStatusLine = transcript.split('\n').find((line) => line.includes('Completed.'));
     expect(totalStatusLine).toBeDefined();
     expect(totalStatusLine).not.toContain('Failed.');
-    expect(transcript).toContain('✓ Imports are stable.');
-    expect(transcript).toContain('✗ Agent timed out after 30s.');
+    expect(transcript).toContain('鉁?Imports are stable.');
+    expect(transcript).toContain('鉁?Agent timed out after 30s.');
   });
 
   it('renders AgentSwarm progress while tool args are still streaming', async () => {
@@ -2912,7 +2913,7 @@ command = "vim"
 
     await vi.waitFor(() => {
       const transcript = stripSgr(renderTranscript(driver));
-      expect(transcript).toContain('plan: reject-plan.md · Rejected');
+      expect(transcript).toContain('plan: reject-plan.md 路 Rejected');
       expect(transcript).toContain('Reject Plan');
       expect(countOccurrences(transcript, 'keep this plan visible after reject')).toBe(1);
       expect(transcript).not.toContain('Rejected: Review plan');
@@ -3006,7 +3007,7 @@ command = "vim"
       expect(output).toContain('/mcp-config login linear');
       expect(output).toContain('disabled-tools');
       expect(output).toContain('disabled');
-      expect(output).toContain('1 connected · 1 needs auth · 1 failed · 1 disabled · 2 tools available');
+      expect(output).toContain('1 connected 路 1 needs auth 路 1 failed 路 1 disabled 路 2 tools available');
     });
   });
 
@@ -3204,7 +3205,7 @@ command = "vim"
     // refreshed render rather than for an instance swap.
     await vi.waitFor(() => {
       const refreshed = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-      expect(refreshed).toContain('❯ Demo  disabled  require run /new or /reload to apply');
+      expect(refreshed).toContain('鉂?Demo  disabled  require run /new or /reload to apply');
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
     expect(out).not.toContain('Space enable');
@@ -3299,7 +3300,7 @@ command = "vim"
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginMcpSelectorComponent);
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).toContain('❯ data  disabled  require run /new or /reload to apply');
+    expect(out).toContain('鉂?data  disabled  require run /new or /reload to apply');
     expect(stripSgr(renderTranscript(driver))).not.toContain(
       'Disabled MCP server data for kimi-datasource. Run /new or /reload to apply.',
     );
@@ -3387,8 +3388,8 @@ command = "vim"
     });
     const picker = driver.state.editorContainer.children[0];
     const pickerOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
-    expect(pickerOutput).toMatch(/Kimi K2\s+Kimi Code ← current/);
-    expect(pickerOutput).toMatch(/❯ Kimi Turbo\s+Kimi Code/);
+    expect(pickerOutput).toMatch(/Kimi K2\s+Kimi Code 鈫?current/);
+    expect(pickerOutput).toMatch(/鉂?Kimi Turbo\s+Kimi Code/);
     (picker as TabbedModelSelectorComponent).handleInput('t');
     (picker as TabbedModelSelectorComponent).handleInput('u');
     const filteredOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
@@ -3396,7 +3397,7 @@ command = "vim"
     expect(filteredOutput).toContain('Kimi Turbo');
     expect(filteredOutput).not.toContain('Kimi K2');
     // Turbo is a thinking-capable model that is not the active one, so it
-    // defaults to thinking on — selecting it applies thinking without a toggle.
+    // defaults to thinking on 鈥?selecting it applies thinking without a toggle.
     (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {

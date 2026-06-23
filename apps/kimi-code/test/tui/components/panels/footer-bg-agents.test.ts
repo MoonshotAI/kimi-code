@@ -33,7 +33,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
   } as AppState;
 }
 
-describe('FooterComponent — background task / agent badges', () => {
+describe('FooterComponent 鈥?background task / agent badges', () => {
   it('omits both badges when counts are 0', () => {
     const footer = new FooterComponent(baseState());
     const [line1] = footer.render(120);

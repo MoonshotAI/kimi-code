@@ -51,7 +51,7 @@ function goal(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
   } as GoalSnapshot;
 }
 
-describe('FooterComponent — goal badge', () => {
+describe('FooterComponent 鈥?goal badge', () => {
   afterEach(() => {
     vi.useRealTimers();
   });

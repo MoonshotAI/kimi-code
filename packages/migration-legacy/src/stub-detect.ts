@@ -11,17 +11,23 @@ export const DEFAULT_CONFIG_FILE_TEXT =
 // Verbatim from apps/kimi-code/src/tui/config.ts:renderTuiConfig(DEFAULT_TUI_CONFIG)
 export const DEFAULT_TUI_RENDER =
   '# ~/.kimi-code/tui.toml\n' +
-  '# Terminal UI preferences for kimi-code.\n' +
+  '# Client preferences for kimi-code.\n' +
   '# Agent/runtime settings stay in ~/.kimi-code/config.toml.\n' +
   '\n' +
-  'theme = "auto" # "auto" | "dark" | "light"\n' +
+  'theme = "auto" # "auto" | "dark" | "light" | custom theme name\n' +
   '\n' +
   '[editor]\n' +
   'command = "" # Empty uses $VISUAL / $EDITOR\n' +
   '\n' +
   '[notifications]\n' +
   'enabled = true # true | false\n' +
-  'notification_condition = "unfocused" # "unfocused" | "always"\n';
+  'notification_condition = "unfocused" # "unfocused" | "always"\n' +
+  '\n' +
+  '[upgrade]\n' +
+  'auto_install = true # true | false\n' +
+  '\n' +
+  '[terminal]\n' +
+  'show_hardware_cursor = false # true | false\n';
 
 export async function isConfigStubOrMissing(configPath: string): Promise<boolean> {
   let text: string;
@@ -48,6 +54,8 @@ export async function isTuiStubOrMissing(tuiPath: string): Promise<boolean> {
     const theme = parsed['theme'];
     const editor = parsed['editor'] as Record<string, unknown> | undefined;
     const notifications = parsed['notifications'] as Record<string, unknown> | undefined;
+    const upgrade = parsed['upgrade'] as Record<string, unknown> | undefined;
+    const terminal = parsed['terminal'] as Record<string, unknown> | undefined;
 
     const themeOk = theme === undefined || theme === 'auto';
     const editorOk =
@@ -60,8 +68,16 @@ export async function isTuiStubOrMissing(tuiPath: string): Promise<boolean> {
       notifications === undefined ||
       notifications['notification_condition'] === undefined ||
       notifications['notification_condition'] === 'unfocused';
+    const upgradeOk =
+      upgrade === undefined ||
+      upgrade['auto_install'] === undefined ||
+      upgrade['auto_install'] === true;
+    const terminalOk =
+      terminal === undefined ||
+      terminal['show_hardware_cursor'] === undefined ||
+      terminal['show_hardware_cursor'] === false;
 
-    return themeOk && editorOk && notifEnabledOk && notifCondOk;
+    return themeOk && editorOk && notifEnabledOk && notifCondOk && upgradeOk && terminalOk;
   } catch {
     return false; // unparseable = treat as user-modified, do not overwrite
   }

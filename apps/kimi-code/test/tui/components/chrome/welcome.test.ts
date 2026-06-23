@@ -31,6 +31,7 @@ const appState: AppState = {
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
+  terminal: { showHardwareCursor: false },
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,
@@ -75,7 +76,7 @@ describe('WelcomeComponent', () => {
   it('renders the banner in a single brand color by default', () => {
     const codes = truecolorCodes(headerOf(new WelcomeComponent(appState).render(80)));
 
-    // No rainbow by default — just the brand primary (plus the dim tagline).
+    // No rainbow by default 鈥?just the brand primary (plus the dim tagline).
     expect(codes.size).toBeLessThanOrEqual(2);
   });
 

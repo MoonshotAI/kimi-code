@@ -248,6 +248,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
 | `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
+| `[terminal].show_hardware_cursor` | `boolean` | `false` | Whether to show the terminal cursor so some IMEs can place candidate windows at the input cursor |
 
 ```toml
 # ~/.kimi-code/tui.toml
@@ -262,6 +263,9 @@ notification_condition = "unfocused" # "unfocused" | "always"
 
 [upgrade]
 auto_install = true
+
+[terminal]
+show_hardware_cursor = false
 ```
 
 Changes apply on the next start, or immediately with `/reload-tui` (which reloads only `tui.toml`); `/reload` reloads both `config.toml` and `tui.toml`.
