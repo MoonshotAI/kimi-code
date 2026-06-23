@@ -8,6 +8,7 @@
 import { onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../../types';
+import { copyTextToClipboard } from '../../lib/clipboard';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 
 const { t } = useI18n();
@@ -188,7 +189,7 @@ function toggleWsMenu(id: string): void {
   confirmingWsDeleteId.value = null;
 }
 function onCopyWsPath(ws: WorkspaceView): void {
-  void navigator.clipboard.writeText(ws.root);
+  void copyTextToClipboard(ws.root);
   wsMenuFor.value = null;
 }
 function onDeleteWorkspace(id: string): void {

@@ -11,6 +11,7 @@ import AgentCard from './AgentCard.vue';
 import AgentGroup from './AgentGroup.vue';
 import MoonSpinner from '../MoonSpinner.vue';
 import { formatMessageTime } from '../../lib/formatMessageTime';
+import { copyTextToClipboard } from '../../lib/clipboard';
 import {
   assistantRenderBlocks,
   formatDuration,
@@ -296,7 +297,8 @@ function copyConversation(): void {
     }
   }
   const markdown = lines.join('\n\n---\n\n');
-  navigator.clipboard.writeText(markdown).then(() => {
+  void copyTextToClipboard(markdown).then((ok) => {
+    if (!ok) return;
     copiedConversation.value = true;
     emit('copyConversationCopied');
     if (copiedConversationTimer !== null) clearTimeout(copiedConversationTimer);
@@ -334,7 +336,8 @@ function finalSummaryText(): string {
 function copyFinalSummary(): void {
   const text = finalSummaryText();
   if (!text.trim()) return;
-  navigator.clipboard.writeText(text).then(() => {
+  void copyTextToClipboard(text).then((ok) => {
+    if (!ok) return;
     copiedConversation.value = true;
     emit('copyConversationCopied');
     if (copiedConversationTimer !== null) clearTimeout(copiedConversationTimer);
@@ -362,7 +365,8 @@ function copyAssistantRun(index: number): void {
   if (!turn) return;
   const text = assistantRunFinalText(index);
   if (!text.trim()) return;
-  navigator.clipboard.writeText(text).then(() => {
+  void copyTextToClipboard(text).then((ok) => {
+    if (!ok) return;
     copiedTurn.value = turn.id;
     if (copiedTimer !== null) clearTimeout(copiedTimer);
     copiedTimer = setTimeout(() => {

@@ -8,6 +8,7 @@ import { useIsDark } from '../../composables/useIsDark';
 import type { FilePreviewRequest } from '../../types';
 import { collectFilePathAliases, findFilePathLinks } from '../../lib/filePathLinks';
 import { markdownRenderPlan } from '../../lib/markdownPerformance';
+import { copyTextToClipboard } from '../../lib/clipboard';
 import { guardLiteralDollarMath } from '../../lib/mathDelimiters';
 // px-based CSS build (our app is px, not rem). Imported here so the styles
 // load wherever Markdown is used; scoped overrides below re-skin it to
@@ -348,17 +349,13 @@ function diffLines(code: string): { cls: string; text: string }[] {
 // Copy state for local diff blocks (keyed by segment index).
 const copiedDiff = ref<number | null>(null);
 function copyDiff(code: string, idx: number) {
-  navigator.clipboard
-    .writeText(code)
-    .then(() => {
-      copiedDiff.value = idx;
-      setTimeout(() => {
-        copiedDiff.value = null;
-      }, 1400);
-    })
-    .catch(() => {
-      /* ignore */
-    });
+  void copyTextToClipboard(code).then((ok) => {
+    if (!ok) return;
+    copiedDiff.value = idx;
+    setTimeout(() => {
+      copiedDiff.value = null;
+    }, 1400);
+  });
 }
 </script>
 

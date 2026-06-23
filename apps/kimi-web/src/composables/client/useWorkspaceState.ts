@@ -1049,15 +1049,22 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
     const api = getKimiWebApi();
 
-    // 3. If we have a real id, try the per-prompt abort first. On 40402 fall back
-    //    to session-level abort (the daemon may have restarted or the id is stale).
+    // 3. If we have a real id, try the per-prompt abort first. If the daemon
+    //    reports the prompt is missing/already completed, clear the stale id and
+    //    fall back to session-level abort for whatever is currently running.
     if (promptId !== undefined) {
       try {
-        await api.abortPrompt(sid, promptId);
-        return;
+        const result = await api.abortPrompt(sid, promptId);
+        if (result.aborted) return;
+        const nextPromptIds = { ...rawState.promptIdBySession };
+        delete nextPromptIds[sid];
+        rawState.promptIdBySession = nextPromptIds;
       } catch (err) {
         if (isDaemonApiError(err) && err.code === PROMPT_NOT_FOUND_CODE) {
           // Stale id — try the session-level fallback below.
+          const nextPromptIds = { ...rawState.promptIdBySession };
+          delete nextPromptIds[sid];
+          rawState.promptIdBySession = nextPromptIds;
         } else {
           pushOperationFailure('abortCurrentPrompt', err, { sessionId: sid });
           return;

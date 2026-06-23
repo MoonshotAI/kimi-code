@@ -5,6 +5,7 @@
 import { reactive } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TaskItem } from '../../types';
+import { copyTextToClipboard } from '../../lib/clipboard';
 
 defineProps<{ tasks: TaskItem[] }>();
 
@@ -47,13 +48,10 @@ function statusClass(state: string): string {
 }
 
 async function copyToClipboard(text: string, taskId: string, set: Set<string>): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text);
-    set.add(taskId);
-    setTimeout(() => set.delete(taskId), 1500);
-  } catch {
-    // Ignore clipboard failures (e.g. denied permission).
-  }
+  const ok = await copyTextToClipboard(text);
+  if (!ok) return;
+  set.add(taskId);
+  setTimeout(() => set.delete(taskId), 1500);
 }
 
 async function copyTaskCommand(task: TaskItem): Promise<void> {

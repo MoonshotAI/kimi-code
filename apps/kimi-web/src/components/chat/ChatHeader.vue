@@ -5,6 +5,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { copyTextToClipboard } from '../../lib/clipboard';
 
 const { t } = useI18n();
 
@@ -124,12 +125,13 @@ function onCopyFinalSummary(): void {
 const copiedId = ref(false);
 function copySessionId(): void {
   if (!props.sessionId) return;
-  navigator.clipboard.writeText(props.sessionId).then(() => {
+  void copyTextToClipboard(props.sessionId).then((ok) => {
+    if (!ok) return;
     copiedId.value = true;
     setTimeout(() => {
       copiedId.value = false;
     }, 1200);
-  }).catch(() => { /* ignore */ });
+  });
 }
 
 // ---------------------------------------------------------------------------

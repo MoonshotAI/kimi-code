@@ -5,6 +5,7 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useDialogFocus } from '../../composables/useDialogFocus';
+import { copyTextToClipboard } from '../../lib/clipboard';
 
 const { t } = useI18n();
 
@@ -160,13 +161,10 @@ async function retryFlow(): Promise<void> {
 
 async function copyCode(): Promise<void> {
   if (!flow.value) return;
-  try {
-    await navigator.clipboard.writeText(flow.value.userCode);
-    copied.value = true;
-    setTimeout(() => { copied.value = false; }, 2000);
-  } catch {
-    // clipboard unavailable — ignore
-  }
+  const ok = await copyTextToClipboard(flow.value.userCode);
+  if (!ok) return;
+  copied.value = true;
+  setTimeout(() => { copied.value = false; }, 2000);
 }
 
 async function close(): Promise<void> {
