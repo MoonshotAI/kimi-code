@@ -71,7 +71,7 @@ export async function clipboardHasImage(options?: {
 
     let xclipResult: boolean | undefined;
     const xclipHasImage = (): boolean => {
-      if (xclipResult === undefined) xclipResult = hasImageViaXclip(run);
+      xclipResult ??= hasImageViaXclip(run);
       return xclipResult;
     };
 
