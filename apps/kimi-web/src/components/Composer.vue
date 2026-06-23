@@ -13,27 +13,7 @@ import { useInputHistory } from '../composables/useInputHistory';
 import { useSlashMenu } from '../composables/useSlashMenu';
 import { useMentionMenu } from '../composables/useMentionMenu';
 import { useComposerDraft } from '../composables/useComposerDraft';
-
-// ---------------------------------------------------------------------------
-// Attachment state
-// ---------------------------------------------------------------------------
-
-interface Attachment {
-  /** Unique local id (used as :key) */
-  localId: string;
-  /** File name */
-  name: string;
-  /** image or video — drives the chip preview and the content-block type. */
-  kind: 'image' | 'video';
-  /** Object URL for the thumbnail preview */
-  previewUrl: string;
-  /** True while uploading */
-  uploading: boolean;
-  /** Resolved daemon file id (set after upload completes) */
-  fileId?: string;
-  /** True if upload failed */
-  error?: boolean;
-}
+import { useAttachmentUpload } from '../composables/useAttachmentUpload';
 
 // ---------------------------------------------------------------------------
 // Props & emits
@@ -165,160 +145,36 @@ function handleInput(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Attachments
+// Attachments — see useAttachmentUpload. The composer keeps handleSubmit /
+// handleSteer (which read the attachments to build the payload) and the
+// `hasUpload` toolbar flag.
 // ---------------------------------------------------------------------------
+const {
+  attachments,
+  previewAttachment,
+  fileInputRef,
+  isDragOver,
+  removeAttachment,
+  openAttachmentPreview,
+  closeAttachmentPreview,
+  openFilePicker,
+  handleFileInputChange,
+  handleDragOver,
+  handleDragLeave,
+  handleDrop,
+  clearAfterSubmit,
+} = useAttachmentUpload({ uploadImage: () => props.uploadImage });
 
-const attachments = ref<Attachment[]>([]);
-const previewAttachment = ref<Attachment | null>(null);
-const fileInputRef = ref<HTMLInputElement | null>(null);
-const isDragOver = ref(false);
-
-let localIdCounter = 0;
-function nextLocalId(): string {
-  return `att_${++localIdCounter}`;
-}
-
-function revokeAttachment(att: Attachment): void {
-  try { URL.revokeObjectURL(att.previewUrl); } catch { /* ignore */ }
-}
-
-function mediaKind(mime: string): 'image' | 'video' | null {
-  if (mime.startsWith('image/')) return 'image';
-  if (mime.startsWith('video/')) return 'video';
-  return null;
-}
-
-async function addFiles(files: File[]): Promise<void> {
-  if (!props.uploadImage) return;
-  const media = files
-    .map((file) => ({ file, kind: mediaKind(file.type) }))
-    .filter((m): m is { file: File; kind: 'image' | 'video' } => m.kind !== null);
-  if (media.length === 0) return;
-
-  for (const { file, kind } of media) {
-    const localId = nextLocalId();
-    const previewUrl = URL.createObjectURL(file);
-    const att: Attachment = { localId, name: file.name, kind, previewUrl, uploading: true };
-    attachments.value = [...attachments.value, att];
-
-    // Upload in background; update the attachment when done
-    props.uploadImage(file, file.name).then((result) => {
-      attachments.value = attachments.value.map((a) =>
-        a.localId === localId
-          ? { ...a, uploading: false, fileId: result?.fileId, error: result === null }
-          : a,
-      );
-    }).catch(() => {
-      attachments.value = attachments.value.map((a) =>
-        a.localId === localId ? { ...a, uploading: false, error: true } : a,
-      );
-    });
-  }
-}
-
-function removeAttachment(localId: string): void {
-  const att = attachments.value.find((a) => a.localId === localId);
-  if (previewAttachment.value?.localId === localId) previewAttachment.value = null;
-  if (att) revokeAttachment(att);
-  attachments.value = attachments.value.filter((a) => a.localId !== localId);
-}
-
-function openAttachmentPreview(att: Attachment): void {
-  previewAttachment.value = att;
-}
-
-function closeAttachmentPreview(): void {
-  previewAttachment.value = null;
-}
-
-function openFilePicker(): void {
-  fileInputRef.value?.click();
-}
-
-function handleFileInputChange(e: Event): void {
-  const input = e.target as HTMLInputElement;
-  const files = Array.from(input.files ?? []);
-  void addFiles(files);
-  // Reset so re-selecting the same file fires change again
-  input.value = '';
-}
-
-// Global document-level paste handler — captures Ctrl+V anywhere the composer is mounted.
-function handleDocumentPaste(e: ClipboardEvent): void {
-  if (!props.uploadImage) return;
-
-  const cd = e.clipboardData;
-  if (!cd) return;
-
-  // Collect image files from both .items and .files to cover all browsers/OS.
-  const files: File[] = [];
-  const seenKeys = new Set<string>();
-
-  const addBlob = (blob: File | Blob, name: string): void => {
-    const key = `${blob.size}:${blob.type}:${name}`;
-    if (seenKeys.has(key)) return;
-    seenKeys.add(key);
-    const ext = blob.type.split('/')[1] ?? 'png';
-    const safeName = name.includes('.') ? name : `paste-${Date.now()}.${ext}`;
-    files.push(blob instanceof File ? blob : new File([blob], safeName, { type: blob.type }));
-  };
-
-  // From DataTransferItemList
-  for (const item of Array.from(cd.items)) {
-    if (item.kind === 'file' && mediaKind(item.type)) {
-      const blob = item.getAsFile();
-      if (blob) addBlob(blob, blob.name || `paste-${Date.now()}.${item.type.split('/')[1] ?? 'png'}`);
-    }
-  }
-
-  // From FileList (some browsers/OS put screenshots here directly)
-  for (const file of Array.from(cd.files)) {
-    if (mediaKind(file.type)) {
-      addBlob(file, file.name);
-    }
-  }
-
-  if (files.length === 0) return; // No media — let normal text paste proceed unmodified.
-
-  e.preventDefault();
-  void addFiles(files);
-}
-
-// Drag-drop handlers
-function handleDragOver(e: DragEvent): void {
-  if (!props.uploadImage) return;
-  const hasFiles = Array.from(e.dataTransfer?.items ?? []).some((item) => item.kind === 'file');
-  if (!hasFiles) return;
-  e.preventDefault();
-  isDragOver.value = true;
-}
-
-function handleDragLeave(): void {
-  isDragOver.value = false;
-}
-
-function handleDrop(e: DragEvent): void {
-  isDragOver.value = false;
-  if (!props.uploadImage) return;
-  e.preventDefault();
-  const files = Array.from(e.dataTransfer?.files ?? []);
-  void addFiles(files);
-}
+// Silence noUnusedLocals: fileInputRef is used as a template ref (ref="fileInputRef").
+void fileInputRef;
 
 onMounted(() => {
-  document.addEventListener('paste', handleDocumentPaste);
   // Fit the box to a restored draft on first render.
   if (text.value) void nextTick(autosize);
 });
 
-// Revoke all object URLs and remove global listener on unmount
 onUnmounted(() => {
-  document.removeEventListener('paste', handleDocumentPaste);
   document.removeEventListener('mousedown', onModesDocClick);
-  for (const att of attachments.value) {
-    revokeAttachment(att);
-  }
-  previewAttachment.value = null;
   clearCompositionEndTimer();
 });
 
@@ -369,12 +225,9 @@ function handleSubmit(): void {
     attachments: readyAttachments.map((a) => ({ fileId: a.fileId!, kind: a.kind })),
   };
 
-  // Revoke object URLs for submitted attachments
+  // Revoke object URLs and drop the submitted attachments.
   previewAttachment.value = null;
-  for (const att of attachments.value) {
-    revokeAttachment(att);
-  }
-  attachments.value = [];
+  clearAfterSubmit();
 
   text.value = '';
   slashOpen.value = false;
@@ -399,10 +252,7 @@ function handleSteer(): void {
     text: trimmed,
     attachments: readyAttachments.map((a) => ({ fileId: a.fileId!, kind: a.kind })),
   };
-  for (const att of attachments.value) {
-    revokeAttachment(att);
-  }
-  attachments.value = [];
+  clearAfterSubmit();
   history.push(trimmed);
   text.value = '';
   slashOpen.value = false;

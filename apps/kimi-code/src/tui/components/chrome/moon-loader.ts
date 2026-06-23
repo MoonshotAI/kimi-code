@@ -1,4 +1,4 @@
-import { Text } from '@earendil-works/pi-tui';
+import { Text, visibleWidth } from '@earendil-works/pi-tui';
 import type { TUI } from '@earendil-works/pi-tui';
 
 import {
@@ -7,6 +7,7 @@ import {
   MOON_SPINNER_FRAMES,
   MOON_SPINNER_INTERVAL_MS,
 } from '#/tui/constant/rendering';
+import { currentTheme } from '#/tui/theme';
 
 export type SpinnerStyle = 'moon' | 'braille';
 
@@ -19,6 +20,8 @@ export class MoonLoader extends Text {
   private colorFn?: (s: string) => string;
   private label: string;
   private displayText = '';
+  private tip: string = '';
+  private availableWidth = 0;
 
   constructor(
     ui: TUI,
@@ -60,6 +63,17 @@ export class MoonLoader extends Text {
     this.updateDisplay();
   }
 
+  setTip(tip: string): void {
+    this.tip = tip;
+    this.updateDisplay();
+  }
+
+  setAvailableWidth(width: number): void {
+    if (this.availableWidth === width) return;
+    this.availableWidth = width;
+    this.updateDisplay();
+  }
+
   renderInline(): string {
     return this.displayText;
   }
@@ -67,7 +81,15 @@ export class MoonLoader extends Text {
   private updateDisplay(): void {
     const frame = this.frames[this.currentFrame]!;
     const coloredFrame = this.colorFn ? this.colorFn(frame) : frame;
-    this.displayText = this.label ? `${coloredFrame} ${this.label}` : coloredFrame;
+    const baseText = this.label ? `${coloredFrame} ${this.label}` : coloredFrame;
+    let text = baseText;
+    if (this.tip) {
+      const withTip = baseText + currentTheme.fg('textDim', this.tip);
+      if (this.availableWidth === 0 || visibleWidth(withTip) <= this.availableWidth) {
+        text = withTip;
+      }
+    }
+    this.displayText = text;
     this.setText(this.displayText);
     this.ui.requestRender();
   }
