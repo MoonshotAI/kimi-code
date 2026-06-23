@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ALL_TIPS } from '#/tui/constant/tips';
+import { ALL_TIPS, WORKING_TIPS } from '#/tui/constant/tips';
 
 describe('tips constants', () => {
   it('ALL_TIPS is non-empty', () => {
@@ -26,6 +26,25 @@ describe('tips constants', () => {
       if (tip.solo !== undefined) {
         expect(typeof tip.solo).toBe('boolean');
       }
+    }
+  });
+
+  it('WORKING_TIPS is non-empty', () => {
+    expect(WORKING_TIPS.length).toBeGreaterThan(0);
+  });
+
+  it('every working tip is included in ALL_TIPS', () => {
+    for (const workingTip of WORKING_TIPS) {
+      expect(ALL_TIPS.some((tip) => tip.text === workingTip.text)).toBe(true);
+    }
+  });
+
+  it('shared working tips match ALL_TIPS priority and solo values', () => {
+    for (const workingTip of WORKING_TIPS) {
+      const allTip = ALL_TIPS.find((tip) => tip.text === workingTip.text);
+      expect(allTip).toBeDefined();
+      expect(allTip?.priority).toBe(workingTip.priority);
+      expect(allTip?.solo).toBe(workingTip.solo);
     }
   });
 });

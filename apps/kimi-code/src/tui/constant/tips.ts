@@ -12,18 +12,25 @@ export interface ToolbarTip {
   readonly priority?: number;
 }
 
-export const ALL_TIPS: readonly ToolbarTip[] = [
-  { text: 'shift+tab: plan mode' },
-  { text: '/model: switch model' },
+/**
+ * Subset of toolbar tips shown behind the composing spinner.
+ */
+export const WORKING_TIPS: readonly ToolbarTip[] = [
   { text: 'ctrl+s: steer mid-turn', priority: 2 },
   { text: 'ctrl+b: background task', priority: 2 },
   { text: '/compact: compact context', priority: 2 },
+  { text: 'shift+tab: plan mode' },
+  { text: '/init: generate AGENTS.md', priority: 2 },
+  { text: '@: mention files' },
+];
+
+export const ALL_TIPS: readonly ToolbarTip[] = [
+  ...WORKING_TIPS,
+  { text: '/model: switch model' },
   { text: 'ctrl+o: expand tool output' },
   { text: 'ctrl+t: expand todo list' },
   { text: '/tasks: background tasks' },
   { text: 'shift+enter: newline' },
-  { text: '/init: generate AGENTS.md', priority: 2 },
-  { text: '@: mention files' },
   { text: 'ctrl+c: cancel' },
   { text: '/theme: switch theme' },
   { text: '/auto: auto permission mode' },
