@@ -23,6 +23,8 @@ const props = defineProps<{
   pendingBySession: Record<string, { approvals: number; questions: number }>;
   unreadBySession: Record<string, boolean>;
   wsMenuOpenId: string | null;
+  /** True while this group is the active drag source (drag-to-reorder). */
+  dragging: boolean;
   isCollapsed: (id: string) => boolean;
   isExpanded: (id: string) => boolean;
   visibleSessions: (sessions: Session[], expanded: boolean, activeId?: string) => Session[];
@@ -41,6 +43,8 @@ const emit = defineEmits<{
   confirmRename: [];
   cancelRename: [];
   updateRenameValue: [value: string];
+  wsDragstart: [workspaceId: string];
+  wsDragend: [];
 }>();
 
 // v-model bridge: Sidebar owns renameValue (confirmRenameWorkspace reads it),
@@ -57,15 +61,28 @@ const renameValueModel = computed<string>({
 function setRenameInputRef(el: Element | ComponentPublicInstance | null): void {
   props.renameInputRef.value = el instanceof HTMLInputElement ? el : null;
 }
+
+// Drag-to-reorder: the group header is the drag handle. We stash the workspace
+// id on the dataTransfer (so drop targets elsewhere could read it) and tell the
+// sidebar which group is being dragged so it can compute the new order on drop.
+function onHeaderDragStart(event: DragEvent): void {
+  if (!event.dataTransfer) return;
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', props.group.workspace.id);
+  emit('wsDragstart', props.group.workspace.id);
+}
 </script>
 
 <template>
-  <div class="group">
+  <div class="group" :class="{ dragging }">
     <div
       class="gh"
       :class="{ on: group.workspace.id === activeWorkspaceId, sel: selectedIds.has(group.workspace.id) }"
+      draggable="true"
       @click.stop="emit('groupClick', group.workspace.id, $event)"
       @contextmenu="emit('groupContextmenu', group.workspace, $event)"
+      @dragstart="onHeaderDragStart"
+      @dragend="emit('wsDragend')"
     >
       <div class="gh-top">
         <!-- Folder icon -->
@@ -168,6 +185,7 @@ function setRenameInputRef(el: Element | ComponentPublicInstance | null): void {
 /* Workspace group. The --sb-* custom properties are inherited from .side in
    Sidebar.vue, so they don't need to be redeclared here. */
 .group { padding-bottom: 6px; }
+.group.dragging { opacity: 0.45; }
 .gh {
   display: flex;
   flex-direction: column;
@@ -176,7 +194,10 @@ function setRenameInputRef(el: Element | ComponentPublicInstance | null): void {
   font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
   user-select: none;
   position: relative;
+  /* The header doubles as the drag handle for reordering. */
+  cursor: grab;
 }
+.gh:active { cursor: grabbing; }
 .gh-top {
   display: flex;
   align-items: center;

@@ -2,11 +2,21 @@
 // Vue state composable — the only place that imports both src/api/* and src/types.ts.
 // Components consume computed view props and call actions; they never touch the API or reducer.
 
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { i18n } from '../i18n';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
-import { loadUnread, safeGetString, safeRemove, safeSetString, saveUnread, STORAGE_KEYS } from '../lib/storage';
+import { reconcileWorkspaceOrder, sortByWorkspaceOrder } from '../lib/workspaceOrder';
+import {
+  loadUnread,
+  loadWorkspaceOrder,
+  safeGetString,
+  safeRemove,
+  safeSetString,
+  saveUnread,
+  saveWorkspaceOrder,
+  STORAGE_KEYS,
+} from '../lib/storage';
 import { useAppearance } from './client/useAppearance';
 import { useNotification } from './client/useNotification';
 import { useTaskPoller } from './client/useTaskPoller';
@@ -1679,17 +1689,46 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
   return result;
 });
 
-/** Sidebar-facing workspace list. */
-const workspacesView = computed<WorkspaceView[]>(() =>
-  mergedWorkspaces.value.map((w) => ({
+/**
+ * User-defined display order of workspace ids, persisted to localStorage. The
+ * sidebar stops following the daemon's recency-based order: once a workspace is
+ * known, its position is fixed until the user drags it elsewhere.
+ */
+const workspaceOrder = ref<string[]>(loadWorkspaceOrder());
+
+// Reconcile the persisted order with the set of currently-known workspaces:
+// drop ids that no longer exist, and prepend newly-seen ids (newest first,
+// matching "createdAt desc" — the closest signal we have without a real
+// workspace creation timestamp). Watched on the id *set* (joined) so a pure
+// daemon reorder of the same workspaces does not rewrite the user's order, and
+// a drag reorder (which also writes `workspaceOrder` but keeps the same id set)
+// does not re-trigger it. Skipped while nothing is loaded yet so an initial
+// empty `mergedWorkspaces` never wipes the stored order.
+watch(
+  () => mergedWorkspaces.value.map((w) => w.id).join('\0'),
+  () => {
+    const next = reconcileWorkspaceOrder(
+      mergedWorkspaces.value.map((w) => w.id),
+      workspaceOrder.value,
+    );
+    if (next === null) return;
+    workspaceOrder.value = next;
+    saveWorkspaceOrder(next);
+  },
+);
+
+/** Sidebar-facing workspace list, ordered by the persisted/dragged order. */
+const workspacesView = computed<WorkspaceView[]>(() => {
+  const views = mergedWorkspaces.value.map((w) => ({
     id: w.id,
     name: w.name,
     root: w.root,
     shortPath: shortenHome(w.root, rawState.fsHome),
     branch: w.branch,
     sessionCount: w.sessionCount,
-  })),
-);
+  }));
+  return sortByWorkspaceOrder(views, workspaceOrder.value);
+});
 
 /** The active workspace id, falling back to the first available workspace. */
 const activeWorkspaceId = computed<string | null>(() => {
@@ -1754,6 +1793,16 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
     sessions: byId.get(w.id) ?? [],
   }));
 });
+
+/**
+ * Replace the workspace display order (e.g. after a drag reorder in the
+ * sidebar) and persist it. The id set is unchanged, so the reconciliation
+ * watcher above will not fire — only the sort in `workspacesView` reacts.
+ */
+function reorderWorkspaces(ids: string[]): void {
+  workspaceOrder.value = ids;
+  saveWorkspaceOrder(ids);
+}
 
 /**
  * Per-session pending-attention count = pending approvals + pending questions.
@@ -2090,6 +2139,7 @@ export function useKimiWebClient() {
     renameSession: workspaceState.renameSession,
     renameWorkspace: workspaceState.renameWorkspace,
     deleteWorkspace: workspaceState.deleteWorkspace,
+    reorderWorkspaces,
     archiveSession: workspaceState.archiveSession,
     compact: workspaceState.compact,
     forkSession: workspaceState.forkSession,
