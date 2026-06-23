@@ -33,9 +33,13 @@ export function renderTabStrip(opts: RenderTabStripOptions): string {
   const { labels, activeIndex, width, colors } = opts;
   const segments = labels.map((label, i) => styleTab(label, i === activeIndex, colors));
 
-  // If everything fits with a leading space, show the whole strip.
+  // If everything fits with a leading space, show the whole strip. Account for
+  // the single spaces `segments.join(' ')` inserts between tabs — otherwise the
+  // strip is declared to fit at widths where the joined line is actually wider
+  // and gets truncated instead of showing the `<`/`>` scroll markers.
   const totalSegmentWidth = segments.reduce((sum, s) => sum + visibleWidth(s), 0);
-  if (1 + totalSegmentWidth <= width) {
+  const fullSeparatorWidth = Math.max(0, segments.length - 1);
+  if (1 + totalSegmentWidth + fullSeparatorWidth <= width) {
     return ' ' + segments.join(' ');
   }
 
@@ -49,7 +53,8 @@ export function renderTabStrip(opts: RenderTabStripOptions): string {
     const needLeft = s > 0;
     const needRight = e < segments.length;
     const frameWidth = (needLeft ? 2 : 1) + (needRight ? 2 : 0);
-    return cw + frameWidth <= width;
+    const separators = Math.max(0, e - s - 1);
+    return cw + separators + frameWidth <= width;
   };
 
   while (true) {
