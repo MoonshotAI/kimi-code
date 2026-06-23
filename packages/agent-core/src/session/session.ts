@@ -1,8 +1,8 @@
-import { createDecorator } from '../../_base/di';
-import { encodeWorkDirKey } from '../../session/store';
-import type { Event } from '../../_base/event';
-import type { SessionSummary } from '../../rpc';
-import type { SessionMeta } from '../../session';
+import { createDecorator } from '#/_base/di';
+import { encodeWorkDirKey } from './store';
+import type { Event } from '#/_base/event';
+import type { SessionSummary } from '#/rpc';
+import type { SessionMeta } from '.';
 import type { AgentStateSnapshot } from '#/prompt';
 import {
   emptySessionUsage,

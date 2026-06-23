@@ -427,6 +427,31 @@ export class Session {
 
 export * from './subagent-host';
 
+// ─── Session service domain (migrated from the legacy services session dir) ─
+// Contract (decorators + types + errors + translator) and the three DI
+// singleton implementations plus the read-model index. Re-exporting the impl
+// modules here triggers their top-level `registerSingleton(...)` side effects,
+// keeping the DI registry populated (previously done via `services/index.ts`).
+export {
+  ISessionService,
+  ISessionQueryService,
+  ISessionRuntimeService,
+  SessionNotFoundError,
+  SessionUndoUnavailableError,
+  toProtocolSession,
+} from './session';
+export type {
+  SessionClientTelemetry,
+  SessionCreateOptions,
+  SessionIndexListOpts,
+  SessionListQuery,
+  SessionQueryScope,
+} from './session';
+export { SessionIndex } from './sessionIndex';
+export { SessionService } from './sessionService';
+export { SessionQueryService } from './sessionQueryService';
+export { SessionRuntimeService } from './sessionRuntimeService';
+
 function initCompletionReminder(agentsMd: string): string {
   const latest =
     agentsMd.trim().length === 0

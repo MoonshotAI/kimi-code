@@ -11,7 +11,7 @@ import type {
   FsGitStatusResponse,
   FsPullRequest,
 } from '@moonshot-ai/protocol';
-import { ISessionService } from '../session/session';
+import { ISessionService } from '#/session';
 
 import { FsPathNotFoundError } from './fs';
 import { IFsGitService, FsGitUnavailableError, parsePorcelain, parseNumstat } from './fsGit';

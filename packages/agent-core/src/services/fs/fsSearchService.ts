@@ -16,7 +16,7 @@ import type {
 } from '@moonshot-ai/protocol';
 import ignore, { type Ignore } from 'ignore';
 
-import { ISessionService } from '../session/session';
+import { ISessionService } from '#/session';
 
 import { ILogService } from '../logger/logger';
 import { IFsSearchService, FsGrepTimeoutError } from './fsSearch';

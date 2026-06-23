@@ -33,7 +33,7 @@ import {
   parseMessageId,
   toProtocolMessage,
 } from '#/message';
-import { SessionNotFoundError } from '../../src/services';
+import { SessionNotFoundError } from '#/session';
 import { type ICoreRuntime } from '#/coreProcess';
 
 const SESSION_ID = 'sess_01HZTEST';

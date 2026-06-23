@@ -3,13 +3,13 @@ import { resolve } from 'pathe';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import { resolveGlobalLogPath } from '#/_base/logging';
-import { buildExportManifest } from '#/session/export/manifest';
-import { scanSessionWire } from '#/session/export/wire-scan';
+import { buildExportManifest } from './manifest';
+import { scanSessionWire } from './wire-scan';
 import {
   type ExtraZipEntry,
   collectFilesRecursive,
   writeExportZip,
-} from '#/session/export/zip';
+} from './zip';
 import type { ExportSessionPayload, ExportSessionResult, SessionSummary } from '#/rpc/core-api';
 
 const SESSION_LOG_REL = 'logs/kimi-code.log';

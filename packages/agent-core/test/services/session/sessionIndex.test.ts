@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SessionSummary } from '../../../src/rpc';
-import type { SessionIndexListOpts, SessionQueryScope } from '../../../src/services/session/session';
-import { SessionIndex } from '../../../src/services/session/sessionIndex';
+import { SessionIndex, type SessionIndexListOpts, type SessionQueryScope } from '#/session';
 import { encodeWorkDirKey } from '../../../src/session/store';
 
 const WORKDIR_A = '/repos/alpha';

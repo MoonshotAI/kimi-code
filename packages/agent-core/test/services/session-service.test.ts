@@ -20,13 +20,13 @@ import type { IEventService } from '#/event';
 import { IQuestionService } from '#/question';
 import { emptySessionUsage, type Event, type Session } from '@moonshot-ai/protocol';
 
+import { type IAuthSummaryService } from '../../src/services';
 import {
-  type IAuthSummaryService,
   SessionNotFoundError,
-  SessionUndoUnavailableError,
   SessionService,
+  SessionUndoUnavailableError,
   toProtocolSession,
-} from '../../src/services';
+} from '#/session';
 import { IPromptService, PromptService } from '#/prompt';
 import { type ICoreRuntime } from '#/coreProcess';
 

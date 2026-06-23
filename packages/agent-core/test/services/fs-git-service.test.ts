@@ -22,7 +22,7 @@ vi.mock('node:fs', () => ({
   },
 }));
 
-import type { ISessionService } from '../../src/services';
+import type { ISessionService } from '#/session';
 import { FsGitService } from '../../src/services';
 
 interface FakeChild extends EventEmitter {

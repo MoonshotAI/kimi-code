@@ -13,8 +13,7 @@ import type { IEventService } from '#/event';
 import { IQuestionService } from '#/question';
 import { IPromptService, type AgentStateSnapshot } from '#/prompt';
 import { type ICoreRuntime } from '#/coreProcess';
-import { SessionRuntimeService } from '../../../src/services/session/sessionRuntimeService';
-import { SessionNotFoundError } from '../../../src/services/session/session';
+import { SessionRuntimeService, SessionNotFoundError } from '#/session';
 
 const WORKDIR_A = '/repos/alpha';
 

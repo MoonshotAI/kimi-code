@@ -12,7 +12,7 @@ import type {
 import { ulid } from 'ulid';
 
 import { resolveSafePath } from '../fs/fsPathSafety';
-import { ISessionService } from '../session/session';
+import { ISessionService } from '#/session';
 import {
   disposeAll,
   ITerminalService,

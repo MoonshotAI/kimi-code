@@ -45,6 +45,7 @@
     "#/coreProcess": "./src/coreProcess/index.ts",
     "#/message": "./src/message/index.ts",
     "#/prompt": "./src/prompt/index.ts",
+    "#/session": "./src/session/index.ts",
     "#/*": [
       "./src/*.ts",
       "./src/*/index.ts"

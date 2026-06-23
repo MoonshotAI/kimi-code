@@ -1,7 +1,7 @@
-import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '../../_base/di';
-import { Emitter } from '../../_base/event';
+import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '#/_base/di';
+import { Emitter } from '#/_base/event';
 import type { Event, SessionStatus, SessionStatusResponse } from '@moonshot-ai/protocol';
-import type { CoreRPC } from '../../rpc';
+import type { CoreRPC } from '#/rpc';
 
 import { IApprovalService } from '#/approval';
 import { ICoreRuntime } from '#/coreProcess';

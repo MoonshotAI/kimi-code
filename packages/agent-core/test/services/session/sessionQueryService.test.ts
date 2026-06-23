@@ -15,11 +15,7 @@ import type { IEventService } from '#/event';
 import { IQuestionService } from '#/question';
 import { IPromptService } from '#/prompt';
 import { type ICoreRuntime } from '#/coreProcess';
-import { SessionQueryService } from '../../../src/services/session/sessionQueryService';
-import {
-  SessionNotFoundError,
-  type SessionQueryScope,
-} from '../../../src/services/session/session';
+import { SessionQueryService, SessionNotFoundError, type SessionQueryScope } from '#/session';
 import { encodeWorkDirKey } from '../../../src/session/store';
 
 const WORKDIR_A = '/repos/alpha';

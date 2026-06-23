@@ -4,7 +4,7 @@ import { FSWatcher } from 'chokidar';
 
 import { Disposable, DisposableMap, ReferenceCollection, dispose } from '../../_base/di';
 import type { IDisposable, IReference } from '../../_base/di';
-import { ISessionService } from '../session/session';
+import { ISessionService } from '#/session';
 
 import type {
   FsChangeAction,

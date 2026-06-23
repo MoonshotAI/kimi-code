@@ -7,7 +7,7 @@ import type { BackgroundTask } from '@moonshot-ai/protocol';
 
 import type { CoreRPC } from '../../rpc';
 import { ICoreRuntime } from '#/coreProcess';
-import { SessionNotFoundError } from '../session/session';
+import { SessionNotFoundError } from '#/session';
 import {
   ITaskService,
   TaskNotFoundError,

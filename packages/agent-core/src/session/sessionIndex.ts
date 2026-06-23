@@ -1,5 +1,5 @@
-import type { SessionSummary } from '../../rpc';
-import { encodeWorkDirKey } from '../../session/store';
+import type { SessionSummary } from '#/rpc';
+import { encodeWorkDirKey } from './store';
 import type {
   ISessionIndex,
   SessionIndexArchiveVisibility,

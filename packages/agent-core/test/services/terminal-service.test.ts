@@ -6,12 +6,11 @@ import { Emitter } from '../../src';
 import type { Session } from '@moonshot-ai/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { SessionNotFoundError, type ISessionService } from '#/session';
 import {
   FsPathEscapesError,
-  SessionNotFoundError,
   TerminalNotFoundError,
   TerminalService,
-  type ISessionService,
   type TerminalBackend,
   type TerminalFrame,
   type TerminalProcess,

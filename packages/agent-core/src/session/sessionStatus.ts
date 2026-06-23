@@ -1,8 +1,8 @@
 import type { Event, SessionStatus } from '@moonshot-ai/protocol';
 
 import type { ICoreRuntime } from '#/coreProcess';
-import type { CoreRPC } from '../../rpc';
-import type { SessionMeta } from '../../session';
+import type { CoreRPC } from '#/rpc';
+import type { SessionMeta } from '.';
 
 /**
  * Narrow in-process CoreAPI accessor supplied by the concrete

@@ -1,8 +1,8 @@
-import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '../../_base/di';
-import { Emitter } from '../../_base/event';
-import { ErrorCodes, KimiError } from '../../errors';
-import type { AgentContextData, ContextMessage } from '../../agent/context';
-import type { CoreRPC, JsonObject, SessionSummary } from '../../rpc';
+import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '#/_base/di';
+import { Emitter } from '#/_base/event';
+import { ErrorCodes, KimiError } from '#/errors';
+import type { AgentContextData, ContextMessage } from '../agent/context';
+import type { CoreRPC, JsonObject, SessionSummary } from '#/rpc';
 import {
   type CompactSessionRequest,
   type CompactSessionResponse,

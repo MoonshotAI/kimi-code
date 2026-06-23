@@ -44,9 +44,8 @@ import type { IEventService } from '#/event';
 import {
   type IAuthSummaryService,
   type ILogService,
-  type ISessionService,
-  SessionNotFoundError,
 } from '../../src/services';
+import { SessionNotFoundError, type ISessionService } from '#/session';
 import {
   PromptAlreadyCompletedError,
   PromptNotFoundError,

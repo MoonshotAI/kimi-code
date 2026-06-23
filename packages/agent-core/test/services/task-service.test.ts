@@ -21,8 +21,8 @@ import type {
   StopBackgroundPayload,
 } from '../../src';
 
+import { SessionNotFoundError } from '#/session';
 import {
-  SessionNotFoundError,
   TaskAlreadyFinishedError,
   TaskNotFoundError,
   TaskService,

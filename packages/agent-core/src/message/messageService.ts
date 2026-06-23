@@ -30,7 +30,7 @@ import type {
 } from '@moonshot-ai/protocol';
 
 import { ICoreRuntime } from '#/coreProcess';
-import { SessionNotFoundError } from '../services/session/session';
+import { SessionNotFoundError } from '#/session';
 import {
   IMessageService,
   MessageNotFoundError,

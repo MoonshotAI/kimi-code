@@ -97,19 +97,6 @@ export { IConfigService } from './config/config';
 export { ConfigService } from './config/configService';
 
 export {
-  ISessionService,
-  ISessionQueryService,
-  ISessionRuntimeService,
-  SessionNotFoundError,
-  SessionUndoUnavailableError,
-  toProtocolSession,
-} from './session/session';
-export type { SessionClientTelemetry, SessionCreateOptions, SessionListQuery } from './session/session';
-export { SessionService } from './session/sessionService';
-export { SessionQueryService } from './session/sessionQueryService';
-export { SessionRuntimeService } from './session/sessionRuntimeService';
-
-export {
   IToolService,
   toProtocolTool,
   type AgentCoreToolInfoLike,

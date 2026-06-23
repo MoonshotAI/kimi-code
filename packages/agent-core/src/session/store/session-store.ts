@@ -4,9 +4,9 @@ import { dirname, isAbsolute, join, relative } from 'pathe';
 import { z } from 'zod';
 
 import { ErrorCodes, KimiError } from '#/errors';
-import type { SessionIndexEntry } from '#/session/store/session-index';
-import { appendSessionIndexEntry, readSessionIndex } from '#/session/store/session-index';
-import { encodeWorkDirKey, normalizeWorkDir } from '#/session/store/workdir-key';
+import type { SessionIndexEntry } from './session-index';
+import { appendSessionIndexEntry, readSessionIndex } from './session-index';
+import { encodeWorkDirKey, normalizeWorkDir } from './workdir-key';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '#/rpc/core-api';
 import { FileSystemAgentRecordPersistence, type AgentRecordOf } from '../../agent/records';
 import { createDecorator } from '../../_base/di';

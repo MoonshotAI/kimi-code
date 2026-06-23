@@ -21,7 +21,7 @@ import type { CoreRPC } from '../rpc';
 import { IAuthSummaryService } from '../services/authSummary/authSummary';
 import { IEventService } from '#/event';
 import { ILogService } from '../services/logger/logger';
-import { ISessionService, SessionNotFoundError } from '../services/session/session';
+import { ISessionService, SessionNotFoundError } from '#/session';
 import {
   IPromptService,
   PromptNotFoundError,

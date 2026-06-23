@@ -19,7 +19,7 @@ import type {
 } from '@moonshot-ai/protocol';
 import ignore, { type Ignore } from 'ignore';
 
-import { ISessionService, SessionNotFoundError } from '../session/session';
+import { ISessionService, SessionNotFoundError } from '#/session';
 
 import {
   IFsService,
