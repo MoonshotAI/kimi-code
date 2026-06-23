@@ -459,6 +459,11 @@ function handleSubmit(): void {
 
   if (!trimmed && readyAttachments.length === 0) return;
 
+  // Record for ↑/↓ recall before the slash branch so commands (with or without
+  // args) are recallable too, not just plain messages. `push` ignores empty /
+  // whitespace, so an image-only send adds nothing.
+  history.push(trimmed);
+
   // If it's a known slash command, keep the optional tail as command input
   // instead of submitting it as normal chat text. This covers `/goal <task>`,
   // `/swarm <task>`, `/btw <question>`, slash skills with args, and bare
@@ -488,7 +493,6 @@ function handleSubmit(): void {
   }
   attachments.value = [];
 
-  history.push(trimmed);
   text.value = '';
   slashOpen.value = false;
   mentionOpen.value = false;
