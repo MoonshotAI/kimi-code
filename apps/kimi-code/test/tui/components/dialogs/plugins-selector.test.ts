@@ -196,6 +196,19 @@ describe('plugins selector dialogs', () => {
     });
   });
 
+  it('keeps a valid selection if ↓ is pressed while the catalog is loading', () => {
+    const { panel, onSelect } = makePanel({ initialTab: 'third-party' });
+    // Catalog still loading (entries empty); pressing ↓ must not drive the
+    // selection negative, or the later Enter would read entries[-1].
+    panel.handleInput('\u001b[B'); // ↓
+    panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'superpowers' }),
+    });
+  });
+
   it('shows untiered marketplace entries on the Third-party tab', () => {
     const untiered = [
       { id: 'custom-plugin', displayName: 'Custom Plugin', source: 'https://x/c.zip' },

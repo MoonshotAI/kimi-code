@@ -435,7 +435,9 @@ export class PluginsPanelComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.down)) {
-      this.selectedIndex = Math.min(entries.length - 1, this.selectedIndex + 1);
+      // Clamp to 0 while the catalog is still loading (entries empty); otherwise
+      // `entries.length - 1` is -1 and a later Enter reads `entries[-1]`.
+      this.selectedIndex = entries.length === 0 ? 0 : Math.min(entries.length - 1, this.selectedIndex + 1);
       return;
     }
     if (matchesKey(data, Key.enter)) {
