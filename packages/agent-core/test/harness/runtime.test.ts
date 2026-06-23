@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'pathe';
+import { join, normalize } from 'pathe';
 
 import type { Kaos } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -50,6 +50,36 @@ function rejectedKaos(error: Error): Promise<Kaos> {
   const promise = Promise.reject(error) as Promise<Kaos>;
   promise.catch(() => undefined);
   return promise;
+}
+
+// Builds a Kaos that behaves like the ACP reverse-RPC bridge during
+// `session/new`: reading a `local.toml` rejects with a non-ENOENT error because
+// the client does not know the session yet (issue #988). Everything else
+// delegates to the underlying kaos, so once the system-file read is routed
+// through a working (local) kaos, session bootstrap can still proceed.
+function createLocalTomlFailingKaos(base: Kaos): Kaos {
+  return new Proxy(base, {
+    get(target, prop, receiver) {
+      if (prop === 'readText') {
+        return (
+          path: string,
+          options?: { encoding?: BufferEncoding; errors?: 'strict' | 'replace' | 'ignore' },
+        ) => {
+          if (String(path).endsWith('local.toml')) {
+            return Promise.reject(
+              new Error(`acp: readTextFile failed for ${path}: unknown session (issue #988)`),
+            );
+          }
+          return target.readText(path, options);
+        };
+      }
+      if (prop === 'withCwd') {
+        return (cwd: string) => createLocalTomlFailingKaos(target.withCwd(cwd));
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
 }
 
 describe('KimiCore runtime config', () => {
@@ -188,6 +218,45 @@ micro_compaction = false
     await rpc.reloadSession({ sessionId: created.id });
     const reloadedMainAgent = core.sessions.get(created.id)?.getReadyAgent('main');
     expect(reloadedMainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
+  });
+
+  // Regression for https://github.com/MoonshotAI/kimi-code/issues/988: during
+  // ACP `session/new` the tool kaos is the reverse-RPC bridge and the client
+  // does not know the session yet, so reading `.kimi-code/local.toml` through
+  // it rejects. The workspace local config is a local system file and must be
+  // read through the persistence (local) kaos instead.
+  it('reads workspace local.toml through persistenceKaos during createSession', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const sharedDir = join(tmp, 'shared');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(join(workDir, '.git'), { recursive: true });
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await mkdir(sharedDir, { recursive: true });
+    await writeFile(
+      join(workDir, '.kimi-code', 'local.toml'),
+      `[workspace]\nadditional_dir = ["../shared"]\n`,
+    );
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await core.createSessionWithOverrides(
+      { id: 'ses_runtime_local_toml_bootstrap', workDir, model: 'default-mock' },
+      { kaos: createLocalTomlFailingKaos(testKaos), persistenceKaos: testKaos },
+    );
+
+    const session = core.sessions.get(created.id);
+    expect(session).toBeDefined();
+    expect(session?.getAdditionalDirs()).toContain(normalize(sharedDir));
   });
 
   it('uses the shared OAuth resolver for Moonshot service tokens', async () => {
