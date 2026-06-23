@@ -52,9 +52,9 @@ export async function loadMcpServers(
 ): Promise<Record<string, McpServerConfig>> {
   const paths = await resolveMcpJsonPaths({ cwd: input.cwd, homeDir: input.homeDir });
   const [user, projectRoot, project] = await Promise.all([
-    readMcpJson(paths.user),
+    readMcpJson(paths.user, { stdioCwdBase: input.cwd }),
     readMcpJson(paths.projectRoot, { stdioCwdBase: dirname(paths.projectRoot) }),
-    readMcpJson(paths.project),
+    readMcpJson(paths.project, { stdioCwdBase: input.cwd }),
   ]);
   return { ...user, ...projectRoot, ...project };
 }
