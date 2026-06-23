@@ -93,6 +93,7 @@ import { CHROME_GUTTER } from './constant/rendering';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
 import { AuthFlowController } from './controllers/auth-flow';
 import { BtwPanelController } from './controllers/btw-panel';
+import { ClipboardImageHintController } from './controllers/clipboard-image-hint';
 import { EditorKeyboardController } from './controllers/editor-keyboard';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import { SessionReplayRenderer } from './controllers/session-replay';
@@ -231,6 +232,7 @@ export class KimiTUI {
   aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
+  private clipboardImageHintController: ClipboardImageHintController | undefined;
   private uninstallRainbowDance: () => void;
   private signalCleanupHandlers: Array<() => void> = [];
   private isShuttingDown = false;
@@ -506,7 +508,18 @@ export class KimiTUI {
   private startEventLoop(): void {
     this.state.ui.start();
     this.terminalFocusTrackingDispose = installTerminalFocusTracking(this.state);
+    this.startClipboardImageHintController();
     this.refreshTerminalThemeTracking();
+  }
+
+  private startClipboardImageHintController(): void {
+    this.clipboardImageHintController = new ClipboardImageHintController({
+      ui: this.state.ui,
+      footer: this.state.footer,
+      getModelSupportsImage: () => this.supportsCurrentModelCapability('image_in'),
+      requestRender: () => this.state.ui.requestRender(),
+    });
+    this.clipboardImageHintController.start();
   }
 
   private startBackgroundFdAutocomplete(): void {
@@ -757,6 +770,8 @@ export class KimiTUI {
     this.stopTerminalThemeTracking();
     this.terminalFocusTrackingDispose?.();
     this.terminalFocusTrackingDispose = undefined;
+    this.clipboardImageHintController?.stop();
+    this.clipboardImageHintController = undefined;
   }
 
   private buildLayout(): void {

@@ -310,11 +310,12 @@ describe('ClipboardImageHintController', () => {
 
     const footer = createFakeFooter();
     const ui = createFakeTUI();
+    const requestRender = vi.fn();
     const host: ClipboardImageHintHost = {
       ui,
       footer,
       getModelSupportsImage: () => true,
-      requestRender: vi.fn(),
+      requestRender,
     };
 
     const controller = new ClipboardImageHintController(host);
@@ -325,7 +326,7 @@ describe('ClipboardImageHintController', () => {
     const otherHint = 'Other hint';
     footer.setTransientHint(otherHint);
 
-    const requestRenderCalls = host.requestRender.mock.calls.length;
+    const requestRenderCalls = requestRender.mock.calls.length;
     controller.stop();
     expect(footer.getTransientHint()).toBe(otherHint);
     expect(host.requestRender).toHaveBeenCalledTimes(requestRenderCalls);
@@ -363,11 +364,11 @@ describe('ClipboardImageHintController', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(clipboardHasImage).toHaveBeenCalledTimes(2);
 
-    deferreds[0].resolve(true);
+    deferreds[0]!.resolve(true);
     await vi.advanceTimersByTimeAsync(0);
     expect(footer.getTransientHint()).toBeNull();
 
-    deferreds[1].resolve(true);
+    deferreds[1]!.resolve(true);
     await vi.advanceTimersByTimeAsync(0);
     expect(footer.getTransientHint()).toMatch(/Image in clipboard/);
 
