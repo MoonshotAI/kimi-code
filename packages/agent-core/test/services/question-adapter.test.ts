@@ -63,6 +63,9 @@ describe('question-adapter · toBrokerRequest (in-process → protocol)', () => 
     expect(protoReq.questions[0]?.header).toBe('Pets');
     expect(protoReq.questions[0]?.body).toBe('pick one');
     expect(protoReq.questions[0]?.multi_select).toBe(false);
+    // Other affordance is always on, even when the SDK item has no otherLabel.
+    expect(protoReq.questions[0]?.allow_other).toBe(true);
+    expect(protoReq.questions[0]?.other_label).toBeUndefined();
 
     expect(protoReq.questions[1]?.id).toBe('q_1');
     expect(protoReq.questions[1]?.options.map((o) => o.id)).toEqual([
