@@ -4,14 +4,14 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
-import type { SlashCommand } from '../lib/slashCommands';
-import { buildSlashItems, filterCommands, parseSlash } from '../lib/slashCommands';
+import { buildSlashItems, parseSlash } from '../lib/slashCommands';
 import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView } from '../types';
 import type { AppModel, AppSkill, ThinkingLevel } from '../api/types';
 import { modelThinkingAvailability } from '../lib/modelThinking';
 import { draftStorageKey, safeGetString, safeRemove, safeSetString } from '../lib/storage';
 import { useInputHistory } from '../composables/useInputHistory';
+import { useSlashMenu } from '../composables/useSlashMenu';
 
 // ---------------------------------------------------------------------------
 // Attachment state
@@ -150,47 +150,24 @@ watch(
 const history = useInputHistory({ text, textareaRef, autosize });
 
 // ---------------------------------------------------------------------------
-// Slash-command menu
+// Slash-command menu — see useSlashMenu for the implementation. The composer
+// keeps the keydown orchestration (arrow keys / Enter / Escape) because it also
+// juggles the mention menu and history recall.
 // ---------------------------------------------------------------------------
-
-const slashOpen = ref(false);
-const slashItems = ref<SlashCommand[]>([]);
-const slashActive = ref(0);
-
-function updateSlashMenu(): void {
-  const val = text.value;
-  // Only show if the value starts with / and has no space yet (single token)
-  if (val.startsWith('/') && !val.includes(' ')) {
-    // Built-in commands + the active session's skills (shown as /<skill-name>).
-    slashItems.value = filterCommands(val, buildSlashItems(props.skills));
-    slashActive.value = 0;
-    slashOpen.value = slashItems.value.length > 0;
-  } else {
-    slashOpen.value = false;
-  }
-}
-
-function selectSlashCommand(item: SlashCommand): void {
-  slashOpen.value = false;
-  if (item.acceptsInput) {
-    text.value = `${item.name} `;
-    void nextTick(() => {
-      const el = textareaRef.value;
-      if (!el) return;
-      const pos = text.value.length;
-      el.setSelectionRange(pos, pos);
-      el.focus();
-      autosize();
-    });
-    return;
-  }
-  text.value = '';
-  // Menu-selected bare commands (e.g. /model, /login) reach here directly and
-  // never go through handleSubmit, so record them for ↑/↓ recall too. acceptsInput
-  // commands are pushed later by handleSubmit with their argument.
-  history.push(item.name);
-  emit('command', item.name);
-}
+const {
+  open: slashOpen,
+  items: slashItems,
+  active: slashActive,
+  update: updateSlashMenu,
+  select: selectSlashCommand,
+} = useSlashMenu({
+  text,
+  textareaRef,
+  autosize,
+  skills: () => props.skills,
+  emitCommand: (cmd) => emit('command', cmd),
+  historyPush: (entry) => history.push(entry),
+});
 
 // ---------------------------------------------------------------------------
 // @-mention menu
