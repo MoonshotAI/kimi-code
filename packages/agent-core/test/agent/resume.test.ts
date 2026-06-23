@@ -686,6 +686,99 @@ describe('Agent resume', () => {
     expect(textContent(resumedAgain.agent.context.history[4])).toBe('continue after resume');
   });
 
+  it('closes an interrupted tool call mid-history so later turns stay aligned', async () => {
+    // An interrupted tool call (`call_interrupted`) sits in the MIDDLE of the
+    // recorded stream: a later user prompt and a fully-run assistant turn follow
+    // it. Without in-place reconciliation the unresolved exchange keeps
+    // `hasOpenToolExchange` true, stranding the later user prompt in
+    // `deferredMessages` and only aligning the trailing turn.
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Run the lookup' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'interrupted-step', turnId: '0', step: 1 },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call-interrupted',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'interrupted-step',
+          toolCallId: 'call_interrupted',
+          name: 'Lookup',
+          args: { query: 'one' },
+        },
+      },
+      // Recorded while the interrupted exchange was still open, so live deferral
+      // captured it after the unresolved tool call.
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'keep going' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      ...loopEventsForTurn('1', 'All done.'),
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'user',
+      'assistant',
+    ]);
+    // The synthetic result is spliced in place (index 2), directly after the
+    // interrupted assistant step — not flushed to the tail.
+    const synthetic = ctx.agent.context.history[2];
+    expect(synthetic).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_interrupted',
+      isError: true,
+    });
+    expect(textContent(synthetic)).toContain(
+      'Tool execution was interrupted before its result was recorded',
+    );
+    // The deferred user prompt is restored in its recorded position, between the
+    // closed exchange and the following turn.
+    expect(textContent(ctx.agent.context.history[3])).toBe('keep going');
+    expect(textContent(ctx.agent.context.history[4])).toBe('All done.');
+
+    expect(ctx.agent.context.messages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'user',
+      'assistant',
+    ]);
+
+    // Option A: the mid-history result is re-derived on every resume and is not
+    // persisted as a positioned record (replay logging is suppressed).
+    expect(
+      persistence.appended.filter(
+        (record) =>
+          record.type === 'context.append_loop_event' && record.event.type === 'tool.result',
+      ),
+    ).toEqual([]);
+
+    await ctx.expectResumeMatches();
+  });
+
   it('rebuilds goal completion replay cards without adding model-visible context', async () => {
     const persistence = new RecordingAgentPersistence([
       {
