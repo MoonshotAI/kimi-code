@@ -17,15 +17,10 @@ export class ActivityPaneComponent extends Container {
     super();
     this.spinnerRef = options.spinner;
 
-    if (options.mode === 'waiting' || options.mode === 'tool') {
-      if (options.spinner !== undefined) {
-        this.addChild(new Spacer(1));
-        this.addChild(options.spinner);
-      }
-      return;
-    }
-
-    if (options.mode === 'composing' && options.spinner !== undefined) {
+    if (
+      (options.mode === 'waiting' || options.mode === 'tool' || options.mode === 'composing') &&
+      options.spinner !== undefined
+    ) {
       this.addChild(new Spacer(1));
       if (options.tip) {
         options.spinner.setTip(` · Tips: ${options.tip}`);

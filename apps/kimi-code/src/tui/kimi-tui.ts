@@ -239,7 +239,7 @@ export class KimiTUI {
   private readonly migrateOnly: boolean;
   private startupNotice: string | undefined;
   private lastActivityMode: string | undefined;
-  private currentComposingTip: string | undefined = undefined;
+  private currentLoadingTip: string | undefined = undefined;
   private lastHistoryContent: string | undefined;
   readonly streamingUI: StreamingUIController;
   readonly authFlow: AuthFlowController;
@@ -1651,8 +1651,8 @@ export class KimiTUI {
 
   updateActivityPane(): void {
     const effectiveMode = this.resolveActivityPaneMode();
-    if (effectiveMode !== 'composing') {
-      this.currentComposingTip = undefined;
+    if (effectiveMode !== 'waiting' && effectiveMode !== 'tool' && effectiveMode !== 'composing') {
+      this.currentLoadingTip = undefined;
     }
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
     const placeSpinnerInAgentSwarm = this.shouldPlaceActivitySpinnerInAgentSwarm(effectiveMode);
@@ -1679,12 +1679,14 @@ export class KimiTUI {
         return;
       case 'waiting': {
         const spinner = this.ensureActivitySpinner('moon');
+        this.currentLoadingTip ??= currentWorkingTip()?.text;
         this.syncAgentSwarmActivitySpinner(placeSpinnerInAgentSwarm ? spinner : undefined);
         if (placeSpinnerInAgentSwarm) break;
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'waiting',
             spinner,
+            tip: this.currentLoadingTip,
           }),
         );
         break;
@@ -1698,25 +1700,27 @@ export class KimiTUI {
         const spinner = this.ensureActivitySpinner('braille', 'working...', (s) =>
           currentTheme.fg('primary', s),
         );
-        this.currentComposingTip ??= currentWorkingTip()?.text;
+        this.currentLoadingTip ??= currentWorkingTip()?.text;
         this.syncAgentSwarmActivitySpinner(undefined);
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'composing',
             spinner,
-            tip: this.currentComposingTip,
+            tip: this.currentLoadingTip,
           }),
         );
         break;
       }
       case 'tool': {
         const spinner = this.ensureActivitySpinner('moon');
+        this.currentLoadingTip ??= currentWorkingTip()?.text;
         this.syncAgentSwarmActivitySpinner(placeSpinnerInAgentSwarm ? spinner : undefined);
         if (placeSpinnerInAgentSwarm) break;
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'tool',
             spinner,
+            tip: this.currentLoadingTip,
           }),
         );
         break;

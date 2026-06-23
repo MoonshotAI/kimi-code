@@ -45,44 +45,53 @@ describe('ActivityPaneComponent', () => {
     expect(component.render(80).map((line) => line.trimEnd())).toEqual(['', 'working']);
   });
 
-  it('renders composing spinner with tip after a spacer', () => {
-    const { spinner } = createMockSpinner('working');
-    const component = new ActivityPaneComponent({
-      mode: 'composing',
-      spinner,
-      tip: 'ctrl+s: steer mid-turn',
-    });
+  it.each(['waiting', 'tool', 'composing'] as const)(
+    'renders %s spinner with tip after a spacer',
+    (mode) => {
+      const { spinner } = createMockSpinner('working');
+      const component = new ActivityPaneComponent({
+        mode,
+        spinner,
+        tip: 'ctrl+s: steer mid-turn',
+      });
 
-    expect(component.render(80).map((line) => line.trimEnd())).toEqual([
-      '',
-      'working · Tips: ctrl+s: steer mid-turn',
-    ]);
-  });
+      expect(component.render(80).map((line) => line.trimEnd())).toEqual([
+        '',
+        'working · Tips: ctrl+s: steer mid-turn',
+      ]);
+    },
+  );
 
-  it('does not render a tip when none is provided', () => {
-    const { spinner } = createMockSpinner('working');
-    const component = new ActivityPaneComponent({
-      mode: 'composing',
-      spinner,
-    });
+  it.each(['waiting', 'tool', 'composing'] as const)(
+    'does not render a tip for %s when none is provided',
+    (mode) => {
+      const { spinner } = createMockSpinner('working');
+      const component = new ActivityPaneComponent({
+        mode,
+        spinner,
+      });
 
-    expect(component.render(80).map((line) => line.trimEnd())).toEqual(['', 'working']);
-  });
+      expect(component.render(80).map((line) => line.trimEnd())).toEqual(['', 'working']);
+    },
+  );
 
   it('renders nothing for hidden and thinking modes', () => {
     expect(new ActivityPaneComponent({ mode: 'hidden' }).render(80)).toEqual([]);
     expect(new ActivityPaneComponent({ mode: 'thinking' }).render(80)).toEqual([]);
   });
 
-  it('hides the tip when the terminal is too narrow', () => {
-    const { spinner } = createMockSpinner('working');
-    const component = new ActivityPaneComponent({
-      mode: 'composing',
-      spinner,
-      tip: 'ctrl+s: steer mid-turn',
-    });
+  it.each(['waiting', 'tool', 'composing'] as const)(
+    'hides the tip for %s when the terminal is too narrow',
+    (mode) => {
+      const { spinner } = createMockSpinner('working');
+      const component = new ActivityPaneComponent({
+        mode,
+        spinner,
+        tip: 'ctrl+s: steer mid-turn',
+      });
 
-    // Width 8 is exactly the width of "working" (no spinner frame in the mock).
-    expect(component.render(8).map((line) => line.trimEnd())).toEqual(['', 'working']);
-  });
+      // Width 8 is exactly the width of "working" (no spinner frame in the mock).
+      expect(component.render(8).map((line) => line.trimEnd())).toEqual(['', 'working']);
+    },
+  );
 });
