@@ -121,7 +121,7 @@ describe('loadPluginMarketplace', () => {
     });
   });
 
-  it('includes Superpowers in the repository marketplace fixture', async () => {
+  it('pins Superpowers to the upstream release in the repository marketplace fixture', async () => {
     const marketplace = await loadPluginMarketplace({
       workDir: REPO_ROOT,
       source: join(REPO_ROOT, 'plugins/marketplace.json'),
@@ -132,7 +132,8 @@ describe('loadPluginMarketplace', () => {
         id: 'superpowers',
         displayName: 'Superpowers',
         tier: 'curated',
-        source: join(REPO_ROOT, 'plugins/curated/superpowers'),
+        version: '6.0.3',
+        source: 'https://github.com/obra/superpowers/releases/tag/v6.0.3',
       }),
     );
     expect(marketplace.plugins).toContainEqual(
