@@ -34,7 +34,9 @@ You can also use slash commands directly:
 | `/plugins mcp enable <id> <server>` | Enable an MCP server declared by a plugin |
 | `/plugins mcp disable <id> <server>` | Disable an MCP server declared by a plugin |
 
-**GitHub URL supports four forms:**
+### Installing from GitHub
+
+Use `/plugins install <url>` to install directly from a GitHub repository. Four URL forms are supported:
 
 - `https://github.com/<owner>/<repo>`: Install the latest release; falls back to the default branch if no release exists
 - `https://github.com/<owner>/<repo>/tree/<ref>`: Install a specific branch, tag, or short commit SHA
