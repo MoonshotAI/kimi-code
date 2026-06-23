@@ -54,13 +54,17 @@ function createFakeTUI(): FakeTUI {
 }
 
 describe('ClipboardImageHintController', () => {
+  let platformSpy: ReturnType<typeof vi.spyOn> | undefined;
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     vi.mocked(clipboardHasImage).mockResolvedValue(false);
+    platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
   });
 
   afterEach(() => {
+    platformSpy?.mockRestore();
     vi.useRealTimers();
   });
 
@@ -219,7 +223,7 @@ describe('ClipboardImageHintController', () => {
     controller.stop();
   });
 
-  it('cancels an in-flight clipboard read when focus is lost', async () => {
+  it('ignores stale clipboard read result when focus is lost', async () => {
     vi.mocked(clipboardHasImage).mockImplementation(
       () => new Promise((resolve) => setTimeout(() => { resolve(true); }, 1500)),
     );
@@ -336,6 +340,129 @@ describe('ClipboardImageHintController', () => {
     deferreds[1].resolve(true);
     await vi.advanceTimersByTimeAsync(0);
     expect(footer.getTransientHint()).toMatch(/Image in clipboard/);
+
+    controller.stop();
+  });
+
+  it('keeps the existing auto-clear timer when a re-check exits early', async () => {
+    vi.mocked(clipboardHasImage).mockResolvedValue(true);
+
+    const footer = createFakeFooter();
+    const ui = createFakeTUI();
+    const host: ClipboardImageHintHost = {
+      ui,
+      footer,
+      getModelSupportsImage: () => true,
+      requestRender: vi.fn(),
+    };
+
+    const controller = new ClipboardImageHintController(host);
+    controller.start();
+
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(footer.getTransientHint()).not.toBeNull();
+
+    // Trigger a re-check that exits early because the clipboard is now empty.
+    vi.mocked(clipboardHasImage).mockResolvedValue(false);
+    ui.emitInput(TERMINAL_FOCUS_OUT);
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    // The previous hint should still be visible because its auto-clear timer
+    // was preserved through the re-check.
+    expect(footer.getTransientHint()).not.toBeNull();
+
+    // Advance the remaining original display duration and verify it expires.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(footer.getTransientHint()).toBeNull();
+
+    controller.stop();
+  });
+
+  it('does not clear a matching hint owned by another caller after auto-clear', async () => {
+    vi.mocked(clipboardHasImage).mockResolvedValue(true);
+
+    const footer = createFakeFooter();
+    const ui = createFakeTUI();
+    const host: ClipboardImageHintHost = {
+      ui,
+      footer,
+      getModelSupportsImage: () => true,
+      requestRender: vi.fn(),
+    };
+
+    const controller = new ClipboardImageHintController(host);
+    controller.start();
+
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+    const hintText = footer.getTransientHint();
+    expect(hintText).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(footer.getTransientHint()).toBeNull();
+
+    // Another caller sets the same hint text the controller previously used.
+    footer.setTransientHint(hintText);
+
+    controller.stop();
+    expect(footer.getTransientHint()).toBe(hintText);
+  });
+
+  it('does not inherit cooldown after stop and restart', async () => {
+    vi.mocked(clipboardHasImage).mockResolvedValue(true);
+
+    const footer = createFakeFooter();
+    const ui = createFakeTUI();
+    const host: ClipboardImageHintHost = {
+      ui,
+      footer,
+      getModelSupportsImage: () => true,
+      requestRender: vi.fn(),
+    };
+
+    const controller = new ClipboardImageHintController(host);
+    controller.start();
+
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(footer.getTransientHint()).not.toBeNull();
+
+    controller.stop();
+    controller.start();
+
+    footer.setTransientHint(null);
+    ui.emitInput(TERMINAL_FOCUS_OUT);
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(footer.getTransientHint()).not.toBeNull();
+
+    controller.stop();
+  });
+
+  it('shows Alt+V shortcut on Windows', async () => {
+    platformSpy?.mockRestore();
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    vi.mocked(clipboardHasImage).mockResolvedValue(true);
+
+    const footer = createFakeFooter();
+    const ui = createFakeTUI();
+    const host: ClipboardImageHintHost = {
+      ui,
+      footer,
+      getModelSupportsImage: () => true,
+      requestRender: vi.fn(),
+    };
+
+    const controller = new ClipboardImageHintController(host);
+    controller.start();
+
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(footer.getTransientHint()).toMatch(/Alt\+V/);
 
     controller.stop();
   });
