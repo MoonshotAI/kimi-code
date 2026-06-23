@@ -6,16 +6,16 @@ Kimi Code CLI applies a conservative loading strategy for plugins: installing a 
 
 ## Installation and Management
 
-Run `/plugins` in the TUI to open the plugin manager. It is a single panel with four tabs — **Installed** (manage what you have), **Official** (Kimi-maintained marketplace plugins), **Third-party** (marketplace plugins from other publishers), and **Custom** (install from a URL) — switched with `Tab` / `Shift+Tab`. Common keys:
+Run `/plugins` in the TUI to open the plugin manager. It is a single panel with four tabs — **Installed** (manage what you have), **Official** (Kimi-maintained marketplace plugins), **Third-party** (marketplace plugins from other publishers), and **Custom** (install from a URL) — switched with `Tab` / `Shift-Tab`. Common keys:
 
 | Key | Action |
 | --- | --- |
-| `Tab` / `Shift+Tab` | Switch between the Installed / Official / Third-party / Custom tabs |
+| `Tab` / `Shift-Tab` | Switch between the Installed / Official / Third-party / Custom tabs |
 | `Space` | Enable or disable the selected installed plugin (Installed tab) |
 | `D` | Remove the selected installed plugin (Installed tab) |
 | `M` | Manage MCP servers for the selected plugin (Installed tab) |
 | `R` | Reload `installed.json` and all manifests (Installed tab) |
-| `Enter` | Installed tab: view plugin details · Official/Third-party tab: open or install · Custom tab: install |
+| `Enter` | Installed tab: view plugin details · Official/Third-party tab: install or update · Custom tab: install |
 | `Esc` | Go back or cancel |
 
 You can also use slash commands directly:
