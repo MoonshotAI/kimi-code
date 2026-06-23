@@ -80,16 +80,17 @@ against the current implementation under `packages/agent-core/src/agent`.
 
 ## PlanMode
 
-- [ ] Track plan id.
-- [ ] Generate and expose plan file paths.
-- [ ] Create plan directories/files and roll back failed enter operations.
-- [ ] Implement `cancel(id)`, `clear()`, and `data()`.
-- [ ] Use record types compatible with current plan replay.
+- [x] Track plan id.
+- [x] Generate and expose plan file paths.
+- [x] Create plan directories/files and roll back failed enter operations.
+- [x] Implement `cancel(id)`, `clear()`, and `data()`.
+- [x] Use record types compatible with current plan replay.
 - [ ] Update replay builder state.
-- [ ] Emit status updates.
-- [ ] Replace the minimal `EnterPlanMode` and `ExitPlanMode` tools with behavior matching current tools.
-- [ ] Implement plan file validation, empty-plan rejection, plan review display, options validation, and approval outcomes.
-- [ ] Restore full/sparse/reentry/exit plan-mode reminders.
+- [x] Emit status updates.
+- [x] Replace the minimal `EnterPlanMode` and `ExitPlanMode` tools with behavior matching current tools.
+- [x] Implement plan file validation, empty-plan rejection, plan review display, and options validation.
+- [ ] Restore plan approval outcomes.
+- [x] Restore full/sparse/reentry/exit plan-mode reminders.
 - [ ] Restore permission policies for plan-mode writes and plan approval.
 
 ## DynamicInjector
