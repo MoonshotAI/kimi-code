@@ -1,6 +1,6 @@
 import { Container, Spacer } from '@earendil-works/pi-tui';
 
-import type { MoonLoader } from '../chrome/moon-loader';
+import type { MoonLoader } from '#/tui/components/chrome/moon-loader';
 
 export type ActivityPaneMode = 'hidden' | 'waiting' | 'thinking' | 'composing' | 'tool';
 
@@ -11,8 +11,11 @@ export interface ActivityPaneOptions {
 }
 
 export class ActivityPaneComponent extends Container {
+  private spinnerRef?: MoonLoader;
+
   constructor(options: ActivityPaneOptions) {
     super();
+    this.spinnerRef = options.spinner;
 
     if (options.mode === 'waiting' || options.mode === 'tool') {
       if (options.spinner !== undefined) {
@@ -29,5 +32,12 @@ export class ActivityPaneComponent extends Container {
       }
       this.addChild(options.spinner);
     }
+  }
+
+  override render(width: number): string[] {
+    if (this.spinnerRef && 'setAvailableWidth' in this.spinnerRef) {
+      this.spinnerRef.setAvailableWidth(width);
+    }
+    return super.render(width);
   }
 }

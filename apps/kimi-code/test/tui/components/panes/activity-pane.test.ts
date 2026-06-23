@@ -1,4 +1,4 @@
-import { Text } from '@earendil-works/pi-tui';
+import { Text, visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { ActivityPaneComponent } from '#/tui/components/panes/activity-pane';
@@ -6,11 +6,20 @@ import { ActivityPaneComponent } from '#/tui/components/panes/activity-pane';
 function createMockSpinner(initialText = 'working') {
   const spinner = new Text(initialText, 0, 0);
   let tip = '';
+  let availableWidth = 0;
+  const update = () => {
+    const fullText = initialText + tip;
+    spinner.setText(availableWidth > 0 && visibleWidth(fullText) > availableWidth ? initialText : fullText);
+  };
   return {
     spinner: Object.assign(spinner, {
       setTip(value: string) {
         tip = value;
-        spinner.setText(initialText + tip);
+        update();
+      },
+      setAvailableWidth(width: number) {
+        availableWidth = width;
+        update();
       },
     }) as unknown as import('#/tui/components/chrome/moon-loader').MoonLoader,
     getTip: () => tip,
@@ -63,5 +72,17 @@ describe('ActivityPaneComponent', () => {
   it('renders nothing for hidden and thinking modes', () => {
     expect(new ActivityPaneComponent({ mode: 'hidden' }).render(80)).toEqual([]);
     expect(new ActivityPaneComponent({ mode: 'thinking' }).render(80)).toEqual([]);
+  });
+
+  it('hides the tip when the terminal is too narrow', () => {
+    const { spinner } = createMockSpinner('working');
+    const component = new ActivityPaneComponent({
+      mode: 'composing',
+      spinner,
+      tip: 'ctrl+s: steer mid-turn',
+    });
+
+    // Width 8 is exactly the width of "working" (no spinner frame in the mock).
+    expect(component.render(8).map((line) => line.trimEnd())).toEqual(['', 'working']);
   });
 });

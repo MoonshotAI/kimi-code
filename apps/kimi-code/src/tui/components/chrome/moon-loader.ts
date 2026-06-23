@@ -1,4 +1,4 @@
-import { Text } from '@earendil-works/pi-tui';
+import { Text, visibleWidth } from '@earendil-works/pi-tui';
 import type { TUI } from '@earendil-works/pi-tui';
 
 import {
@@ -21,6 +21,7 @@ export class MoonLoader extends Text {
   private label: string;
   private displayText = '';
   private tip: string = '';
+  private availableWidth = 0;
 
   constructor(
     ui: TUI,
@@ -67,6 +68,11 @@ export class MoonLoader extends Text {
     this.updateDisplay();
   }
 
+  setAvailableWidth(width: number): void {
+    this.availableWidth = width;
+    this.updateDisplay();
+  }
+
   renderInline(): string {
     return this.displayText;
   }
@@ -74,9 +80,13 @@ export class MoonLoader extends Text {
   private updateDisplay(): void {
     const frame = this.frames[this.currentFrame]!;
     const coloredFrame = this.colorFn ? this.colorFn(frame) : frame;
-    let text = this.label ? `${coloredFrame} ${this.label}` : coloredFrame;
+    const baseText = this.label ? `${coloredFrame} ${this.label}` : coloredFrame;
+    let text = baseText;
     if (this.tip) {
-      text += currentTheme.fg('textDim', this.tip);
+      const withTip = baseText + currentTheme.fg('textDim', this.tip);
+      if (this.availableWidth === 0 || visibleWidth(withTip) <= this.availableWidth) {
+        text = withTip;
+      }
     }
     this.displayText = text;
     this.setText(this.displayText);
