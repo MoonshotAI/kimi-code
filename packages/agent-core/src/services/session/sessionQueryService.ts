@@ -2,7 +2,7 @@ import { Disposable, IInstantiationService, InstantiationType, registerSingleton
 import type { PageResponse, Session } from '@moonshot-ai/protocol';
 import type { CoreRPC, SessionSummary } from '../../rpc';
 
-import { IApprovalService } from '../approval/approval';
+import { IApprovalService } from '#/approval';
 import { ICoreRuntime } from '../coreProcess/coreProcess';
 import { IEventService } from '../event/event';
 import { IPromptService } from '../prompt/prompt';

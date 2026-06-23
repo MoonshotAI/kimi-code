@@ -15,11 +15,11 @@ import {
   type QuestionResult,
 } from '../../src';
 import { TestInstantiationService } from '#/_base/di/test';
+import { IApprovalService } from '#/approval';
 
 import {
   BridgeClientAPI,
   CoreProcessService,
-  IApprovalService,
   IEnvironmentService,
   IEventService,
   ILogService,

@@ -15,10 +15,10 @@ import {
   type UpdateSessionMetadataPayload,
 } from '../../src';
 import { TestInstantiationService } from '#/_base/di/test';
+import { IApprovalService } from '#/approval';
 import { emptySessionUsage, type Event, type Session } from '@moonshot-ai/protocol';
 
 import {
-  IApprovalService,
   type IAuthSummaryService,
   type ICoreRuntime,
   type IEventService,

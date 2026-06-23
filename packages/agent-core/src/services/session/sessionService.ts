@@ -18,7 +18,7 @@ import {
   type UndoSessionResponse,
 } from '@moonshot-ai/protocol';
 
-import { IApprovalService } from '../approval/approval';
+import { IApprovalService } from '#/approval';
 import { ICoreRuntime } from '../coreProcess/coreProcess';
 import { IEventService } from '../event/event';
 import { toProtocolMessage } from '../message/message';

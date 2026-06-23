@@ -8,10 +8,10 @@ import {
   Emitter,
 } from '../../src';
 import { TestInstantiationService } from '#/_base/di/test';
+import { IApprovalService, type ApprovalResponse } from '#/approval';
 import type { ApprovalRequest, Event, QuestionRequest } from '../../src';
 
 import {
-  IApprovalService,
   IEventService,
   IFileStore,
   IFsGitService,
@@ -31,7 +31,6 @@ import {
   WorkspaceRegistryService,
   parsePorcelain,
   resolveSafePath,
-  type ApprovalResponse,
   type QuestionResult,
 } from '../../src/services';
 

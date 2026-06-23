@@ -13,7 +13,7 @@ import {
 
 import { createManagedAuthFacade } from '../auth/managedAuth';
 import { BridgeClientAPI } from './coreProcessClient';
-import { IApprovalService } from '../approval/approval';
+import { IApprovalService } from '#/approval';
 import { IEnvironmentService } from '../environment/environment';
 import { IEventService } from '../event/event';
 import { ILogService } from '../logger/logger';

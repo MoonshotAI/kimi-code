@@ -10,8 +10,8 @@ import {
   type SessionSummary,
 } from '../../../src';
 import { TestInstantiationService } from '#/_base/di/test';
+import { IApprovalService } from '#/approval';
 import {
-  IApprovalService,
   type ICoreRuntime,
   type IEventService,
   IPromptService,

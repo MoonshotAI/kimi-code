@@ -3,7 +3,7 @@ import { Emitter } from '../../_base/event';
 import type { Event, SessionStatus, SessionStatusResponse } from '@moonshot-ai/protocol';
 import type { CoreRPC } from '../../rpc';
 
-import { IApprovalService } from '../approval/approval';
+import { IApprovalService } from '#/approval';
 import { ICoreRuntime } from '../coreProcess/coreProcess';
 import { IEventService } from '../event/event';
 import { IPromptService } from '../prompt/prompt';

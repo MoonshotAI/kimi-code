@@ -9,7 +9,7 @@ import type { ApprovalRequest as InProcessApprovalRequest } from '../../src';
 import {
   approvalToAgentCoreResponse as toAgentCoreResponse,
   approvalToBrokerRequest as toBrokerRequest,
-} from '../../src/services';
+} from '#/approval';
 
 describe('approval-adapter · toBrokerRequest (in-process → protocol)', () => {
   const inProc: InProcessApprovalRequest = {

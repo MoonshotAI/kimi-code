@@ -9,14 +9,6 @@ export { CoreProcessService } from './coreProcess/coreProcessService';
 export { IEventService } from './event/event';
 export { EventService } from './event/eventService';
 
-export { IApprovalService } from './approval/approval';
-export type { ApprovalRequest, ApprovalResponse } from './approval/approval';
-export {
-  toAgentCoreResponse as approvalToAgentCoreResponse,
-  toBrokerRequest as approvalToBrokerRequest,
-  type ToBrokerRequestParams as ApprovalToBrokerRequestParams,
-} from './approval/approval';
-
 export { IQuestionService } from './question/question';
 export type { QuestionRequest, QuestionResult } from './question/question';
 export {

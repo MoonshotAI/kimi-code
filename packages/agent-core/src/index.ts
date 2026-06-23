@@ -92,6 +92,10 @@ export * from './_base/di';
 // here keeps the package root surface unchanged for consumers like `server`.
 export * from './_base/errors';
 
+// ─── Approval contract (di-v3) ─────────────────────────────────────────────
+// keeps package root surface unchanged for server
+export * from './approval';
+
 // ─── Scope mechanism (di-v3) ───────────────────────────────────────────────
 // Exposes `LifecycleScope`, `registerScopedService` /
 // `getScopedServiceDescriptors` / `markBuilt` / `isBuilt`, the `I*Context`
