@@ -6,7 +6,7 @@ import { IApprovalService } from '#/approval';
 import { ICoreRuntime } from '../coreProcess/coreProcess';
 import { IEventService } from '#/event';
 import { IPromptService } from '../prompt/prompt';
-import { IQuestionService } from '../question/question';
+import { IQuestionService } from '#/question';
 import {
   ISessionQueryService,
   SessionNotFoundError,

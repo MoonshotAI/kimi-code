@@ -20,7 +20,7 @@ import type { ApprovalRequest, ApprovalResponse, Event, QuestionRequest, Questio
 import type { IApprovalService } from '#/approval';
 import type { IEventService } from '#/event';
 import type { ILogService } from '../logger/logger';
-import type { IQuestionService } from '../question/question';
+import type { IQuestionService } from '#/question';
 
 export interface CoreProcessClientDeps {
   readonly eventService: IEventService;

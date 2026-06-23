@@ -23,7 +23,7 @@ import { ICoreRuntime } from '../coreProcess/coreProcess';
 import { IEventService } from '#/event';
 import { toProtocolMessage } from '../message/message';
 import { IPromptService, type AgentStatePatch } from '../prompt/prompt';
-import { IQuestionService } from '../question/question';
+import { IQuestionService } from '#/question';
 import {
   ISessionRuntimeService,
   ISessionService,

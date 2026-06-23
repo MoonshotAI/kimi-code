@@ -17,13 +17,13 @@ import {
 import { TestInstantiationService } from '#/_base/di/test';
 import { IApprovalService } from '#/approval';
 import type { IEventService } from '#/event';
+import { IQuestionService } from '#/question';
 import { emptySessionUsage, type Event, type Session } from '@moonshot-ai/protocol';
 
 import {
   type IAuthSummaryService,
   type ICoreRuntime,
   IPromptService,
-  IQuestionService,
   PromptService,
   SessionNotFoundError,
   SessionUndoUnavailableError,

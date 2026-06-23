@@ -41,6 +41,7 @@
     "#/_utils/net": "./src/_utils/net/index.ts",
     "#/approval": "./src/approval/index.ts",
     "#/event": "./src/event/index.ts",
+    "#/question": "./src/question/index.ts",
     "#/*": [
       "./src/*.ts",
       "./src/*/index.ts"

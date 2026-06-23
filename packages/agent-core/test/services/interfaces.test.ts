@@ -10,6 +10,7 @@ import {
 import { TestInstantiationService } from '#/_base/di/test';
 import { IApprovalService, type ApprovalResponse } from '#/approval';
 import { IEventService } from '#/event';
+import { IQuestionService, type QuestionResult } from '#/question';
 import type { ApprovalRequest, Event, QuestionRequest } from '../../src';
 
 import {
@@ -19,7 +20,6 @@ import {
   IFsService,
   IFsWatcher,
   ILogService,
-  IQuestionService,
   IWorkspaceFsService,
   IWorkspaceRegistry,
   FileStore,
@@ -31,7 +31,6 @@ import {
   WorkspaceRegistryService,
   parsePorcelain,
   resolveSafePath,
-  type QuestionResult,
 } from '../../src/services';
 
 const packageRoot = fileURLToPath(new URL('../..', import.meta.url));

@@ -13,7 +13,7 @@ import {
   questionDismissedResult as dismissedResult,
   questionToAgentCoreResponse as toAgentCoreResponse,
   questionToBrokerRequest as toBrokerRequest,
-} from '../../src/services';
+} from '#/question';
 
 describe('question-adapter · toBrokerRequest (in-process → protocol)', () => {
   const inProc: InProcessQuestionRequest = {

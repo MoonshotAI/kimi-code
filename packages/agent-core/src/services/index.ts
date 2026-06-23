@@ -6,15 +6,6 @@ export {
 } from './coreProcess/coreProcess';
 export { CoreProcessService } from './coreProcess/coreProcessService';
 
-export { IQuestionService } from './question/question';
-export type { QuestionRequest, QuestionResult } from './question/question';
-export {
-  toAgentCoreResponse as questionToAgentCoreResponse,
-  toBrokerRequest as questionToBrokerRequest,
-  dismissedResult as questionDismissedResult,
-  type QuestionToBrokerRequestParams,
-} from './question/question';
-
 export { IEnvironmentService } from './environment/environment';
 
 export { ILogService } from './logger/logger';

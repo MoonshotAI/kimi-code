@@ -17,6 +17,7 @@ import {
 import { TestInstantiationService } from '#/_base/di/test';
 import { IApprovalService } from '#/approval';
 import { IEventService } from '#/event';
+import { IQuestionService } from '#/question';
 
 import {
   BridgeClientAPI,
@@ -24,7 +25,6 @@ import {
   IEnvironmentService,
   ILogService,
   ICoreRuntime,
-  IQuestionService,
 } from '../../src/services';
 
 class RecordingEventService implements IEventService {

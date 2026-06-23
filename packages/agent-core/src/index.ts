@@ -100,6 +100,10 @@ export * from './approval';
 // keeps package root surface unchanged for server (`IEventService` / `EventService`)
 export * from './event';
 
+// ─── Question contract (di-v3) ─────────────────────────────────────────────
+// keeps package root surface unchanged for server (`IQuestionService` / `QuestionRequest`)
+export * from './question';
+
 // ─── Scope mechanism (di-v3) ───────────────────────────────────────────────
 // Exposes `LifecycleScope`, `registerScopedService` /
 // `getScopedServiceDescriptors` / `markBuilt` / `isBuilt`, the `I*Context`

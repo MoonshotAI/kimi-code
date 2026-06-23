@@ -17,7 +17,7 @@ import { IApprovalService } from '#/approval';
 import { IEnvironmentService } from '../environment/environment';
 import { IEventService } from '#/event';
 import { ILogService } from '../logger/logger';
-import { IQuestionService } from '../question/question';
+import { IQuestionService } from '#/question';
 import { ICoreRuntime, type CoreProcessServiceOptions } from './coreProcess';
 
 export class CoreProcessService extends Disposable implements ICoreRuntime {

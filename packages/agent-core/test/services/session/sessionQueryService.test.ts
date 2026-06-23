@@ -12,10 +12,10 @@ import {
 import { TestInstantiationService } from '#/_base/di/test';
 import { IApprovalService } from '#/approval';
 import type { IEventService } from '#/event';
+import { IQuestionService } from '#/question';
 import {
   type ICoreRuntime,
   IPromptService,
-  IQuestionService,
 } from '../../../src/services';
 import { SessionQueryService } from '../../../src/services/session/sessionQueryService';
 import {

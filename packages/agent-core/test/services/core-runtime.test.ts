@@ -16,12 +16,12 @@ import {
 import { TestInstantiationService } from '#/_base/di/test';
 import { IApprovalService } from '#/approval';
 import { IEventService } from '#/event';
+import { IQuestionService } from '#/question';
 
 import {
   CoreProcessService,
   IEnvironmentService,
   ILogService,
-  IQuestionService,
 } from '../../src/services';
 import { ICoreRuntime } from '../../src/services/coreProcess/coreProcess';
 

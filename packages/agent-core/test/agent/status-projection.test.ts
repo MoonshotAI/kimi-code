@@ -14,11 +14,11 @@ import type { IUsageService } from '../../src/agent/usage';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IApprovalService } from '#/approval';
 import type { IDomainEventBus, IEventService } from '#/event';
+import { IQuestionService } from '#/question';
 import type { AgentEvent, UsageStatus } from '../../src/rpc';
 import {
   type ICoreRuntime,
   IPromptService,
-  IQuestionService,
 } from '../../src/services';
 import { SessionRuntimeService } from '../../src/services/session/sessionRuntimeService';
 

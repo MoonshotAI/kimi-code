@@ -45,8 +45,8 @@
  * happens for question.
  */
 
-import { createDecorator } from '../../_base/di';
-import type { QuestionAnswers as InProcessQuestionAnswers, QuestionItem as InProcessQuestionItem, QuestionRequest as InProcessQuestionRequest, QuestionRequest, QuestionResponse as InProcessQuestionResponse, QuestionResult } from '../../rpc';
+import { createDecorator } from '#/_base/di';
+import type { QuestionAnswers as InProcessQuestionAnswers, QuestionItem as InProcessQuestionItem, QuestionRequest as InProcessQuestionRequest, QuestionRequest, QuestionResponse as InProcessQuestionResponse, QuestionResult } from '#/rpc';
 import type {
   QuestionItem as ProtocolQuestionItem,
   QuestionOption as ProtocolQuestionOption,
