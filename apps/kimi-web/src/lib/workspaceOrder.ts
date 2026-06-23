@@ -36,8 +36,11 @@ export function sortByWorkspaceOrder<T extends { id: string }>(items: T[], order
 }
 
 /**
- * Move `fromId` to `toId`'s position within `order`. Returns the original array
- * unchanged when either id is missing or they are the same.
+ * Move `fromId` so it lands immediately before `toId` — matching the
+ * "drop-before" insertion marker shown in the sidebar. Returns the original
+ * array unchanged when either id is missing or they are the same. After the
+ * source is removed, a downward move shifts the target left by one, so the
+ * insertion index is adjusted to keep the result "before the target".
  */
 export function moveInOrder(order: string[], fromId: string, toId: string): string[] {
   const fromIdx = order.indexOf(fromId);
@@ -45,6 +48,7 @@ export function moveInOrder(order: string[], fromId: string, toId: string): stri
   if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return order;
   const next = [...order];
   next.splice(fromIdx, 1);
-  next.splice(toIdx, 0, fromId);
+  const insertIdx = fromIdx < toIdx ? toIdx - 1 : toIdx;
+  next.splice(insertIdx, 0, fromId);
   return next;
 }

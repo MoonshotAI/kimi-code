@@ -64,12 +64,19 @@ describe('sortByWorkspaceOrder', () => {
 });
 
 describe('moveInOrder', () => {
-  it('moves an item down onto the target', () => {
-    expect(moveInOrder(['a', 'b', 'c', 'd'], 'a', 'c')).toEqual(['b', 'c', 'a', 'd']);
+  // The drop indicator is a line at the *top* of the target ("insert before"),
+  // so the result must always place fromId immediately before toId.
+  it('moves an item down so it lands before the target', () => {
+    expect(moveInOrder(['a', 'b', 'c', 'd'], 'a', 'c')).toEqual(['b', 'a', 'c', 'd']);
   });
 
-  it('moves an item up onto the target', () => {
+  it('moves an item up so it lands before the target', () => {
     expect(moveInOrder(['a', 'b', 'c', 'd'], 'd', 'b')).toEqual(['a', 'd', 'b', 'c']);
+  });
+
+  it('is a no-op when dropping on the adjacent item in the indicator direction', () => {
+    // "before b" keeps a above b; to move a below b you drop onto c instead.
+    expect(moveInOrder(['a', 'b', 'c'], 'a', 'b')).toEqual(['a', 'b', 'c']);
   });
 
   it('is a no-op when from === to', () => {
