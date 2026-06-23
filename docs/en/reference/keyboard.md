@@ -14,6 +14,7 @@ The following keys are always available in the input box:
 | `Esc` | Close a popup / cancel completion / interrupt streaming output or context compaction |
 | `Ctrl-C` | Interrupt the current streaming output, or clear the input box |
 | `Ctrl-D` | Exit Kimi Code CLI when the input box is empty |
+| `Ctrl-T` | Expand or collapse the todo list when it is truncated |
 
 Pressing `Ctrl-C` **during streaming** cancels immediately — no second confirmation needed.
 
