@@ -544,6 +544,7 @@ exports[`server API surface snapshot > matches the registered route surface snap
       "querystring": {
         "properties": [
           "after_id",
+          "archived_only",
           "before_id",
           "include_archive",
           "page_size",
@@ -551,6 +552,7 @@ exports[`server API surface snapshot > matches the registered route surface snap
           "workspace_id",
         ],
         "required": [
+          "archived_only",
           "include_archive",
         ],
         "type": "object",
@@ -569,6 +571,7 @@ exports[`server API surface snapshot > matches the registered route surface snap
       "querystring": {
         "properties": [
           "after_id",
+          "archived_only",
           "before_id",
           "include_archive",
           "page_size",
@@ -576,6 +579,7 @@ exports[`server API surface snapshot > matches the registered route surface snap
           "workspace_id",
         ],
         "required": [
+          "archived_only",
           "include_archive",
         ],
         "type": "object",

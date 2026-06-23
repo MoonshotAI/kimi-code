@@ -21,11 +21,12 @@ import {
   undoSessionResponseSchema,
   workspaceIdSchema,
 } from '@moonshot-ai/protocol';
-import { IPromptService, ISessionService, ISessionQueryService, ISessionRuntimeService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IWorkspaceRegistry, WorkspaceNotFoundError, type IInstantiationService, type SessionClientTelemetry } from '@moonshot-ai/agent-core';
+import { IPromptService, ISessionService, ISessionQueryService, ISessionRuntimeService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IEnvironmentService, IWorkspaceRegistry, WorkspaceNotFoundError, type IInstantiationService, type SessionClientTelemetry } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { restoreArchivedSession } from '../lib/sessionArchive';
 import { defineRoute } from '../middleware/defineRoute';
 import { parseActionSuffix } from './action-suffix';
 
@@ -81,6 +82,7 @@ const sessionsListQueryCoercion = z
     page_size: z.coerce.number().int().min(1).max(100).optional(),
     status: sessionStatusSchema.optional(),
     include_archive: booleanQueryParam,
+    archived_only: booleanQueryParam,
 
     workspace_id: workspaceIdSchema.optional(),
   })
@@ -90,6 +92,14 @@ const sessionsListQueryCoercion = z
         code: 'custom',
         message: 'before_id and after_id are mutually exclusive',
         path: ['before_id'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
+    if (value.archived_only === true && value.include_archive === true) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'archived_only and include_archive are mutually exclusive',
+        path: ['archived_only'],
         params: { code: ErrorCode.VALIDATION_FAILED },
       });
     }
@@ -264,12 +274,15 @@ export function registerSessionsRoutes(
     async (req, reply) => {
       try {
         const raw = req.query;
+        const archivedOnly = raw.archived_only === true;
         const baseQuery = {
           before_id: raw.before_id,
           after_id: raw.after_id,
           page_size: raw.page_size,
           status: raw.status,
-          includeArchive: raw.include_archive,
+          // archived_only needs the mixed set so we can post-filter to
+          // archived-only below (temporary server-side filter; see comment).
+          includeArchive: archivedOnly ? true : raw.include_archive,
         };
         let query;
         if (raw.workspace_id !== undefined) {
@@ -291,6 +304,24 @@ export function registerSessionsRoutes(
           query = baseQuery;
         }
         const page = await ix.invokeFunction((a) => a.get(ISessionQueryService).list(query));
+        if (archivedOnly) {
+          // Temporary server-side archived-only filter. The post-filter happens
+          // after pagination, so `has_more` still reflects the mixed set: a page
+          // may come back short (or empty) while `has_more` is true, and clients
+          // must keep paging. No data is lost. Remove once agent-core supports
+          // archived-only natively (SessionIndex already has the `'only'`
+          // visibility for this).
+          reply.send(
+            okEnvelope(
+              {
+                items: page.items.filter((session) => session.archived === true),
+                has_more: page.has_more,
+              },
+              req.id,
+            ),
+          );
+          return;
+        }
         reply.send(okEnvelope(page, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
@@ -409,7 +440,7 @@ export function registerSessionsRoutes(
         const { tail } = req.params;
         const parsed = parseActionSuffix({
           tail,
-          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw', 'archive'] as const,
+          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw', 'archive', 'restore'] as const,
           resourceLabel: 'session',
         });
         if (parsed.kind !== 'action') {
@@ -464,6 +495,16 @@ export function registerSessionsRoutes(
             a.get(ISessionService).archive(parsed.id),
           );
           reply.send(okEnvelope(result, req.id));
+          return;
+        }
+
+        if (parsed.action === 'restore') {
+          const homeDir = ix.invokeFunction((a) => a.get(IEnvironmentService)).homeDir;
+          await restoreArchivedSession(homeDir, parsed.id);
+          const session = await ix.invokeFunction((a) =>
+            a.get(ISessionService).get(parsed.id),
+          );
+          reply.send(okEnvelope(session, req.id));
           return;
         }
 
