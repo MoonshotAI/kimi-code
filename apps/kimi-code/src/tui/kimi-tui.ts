@@ -1698,9 +1698,7 @@ export class KimiTUI {
         const spinner = this.ensureActivitySpinner('braille', 'working...', (s) =>
           currentTheme.fg('primary', s),
         );
-        if (this.currentComposingTip === undefined) {
-          this.currentComposingTip = currentWorkingTip()?.text;
-        }
+        this.currentComposingTip ??= currentWorkingTip()?.text;
         this.syncAgentSwarmActivitySpinner(undefined);
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({

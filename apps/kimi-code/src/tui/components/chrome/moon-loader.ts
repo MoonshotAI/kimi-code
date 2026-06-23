@@ -69,6 +69,7 @@ export class MoonLoader extends Text {
   }
 
   setAvailableWidth(width: number): void {
+    if (this.availableWidth === width) return;
     this.availableWidth = width;
     this.updateDisplay();
   }
