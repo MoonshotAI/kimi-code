@@ -23,25 +23,21 @@ describe('clipboardHasImage', () => {
     expect(result).toBe(true);
   });
 
-  it('falls back to osascript when native clipboard reports no image on macOS', async () => {
+  it('returns false on macOS when native clipboard reports no image', async () => {
     const clip = fakeClipboard({ hasImage: vi.fn(() => false) });
-    const runCommand = vi.fn((command: string) => {
-      if (command === 'osascript') {
-        return { stdout: Buffer.alloc(0), ok: true };
-      }
-      return { stdout: Buffer.alloc(0), ok: false };
-    });
-    const result = await clipboardHasImage({ platform: 'darwin', clipboard: clip, runCommand });
-    expect(result).toBe(true);
-    expect(runCommand).toHaveBeenCalledWith('osascript', ['-e', 'the clipboard as «class PNGf»'], expect.anything());
-  });
-
-  it('returns false when native clipboard throws and osascript fails on macOS', async () => {
-    const clip = fakeClipboard({ hasImage: vi.fn(() => {
-      throw new Error('native error');
-    }) });
     const runCommand = vi.fn(() => ({ stdout: Buffer.alloc(0), ok: false }));
     const result = await clipboardHasImage({ platform: 'darwin', clipboard: clip, runCommand });
+    expect(result).toBe(false);
+    expect(runCommand).not.toHaveBeenCalledWith('osascript', expect.anything(), expect.anything());
+  });
+
+  it('returns false on macOS when native clipboard throws', async () => {
+    const clip = fakeClipboard({
+      hasImage: vi.fn(() => {
+        throw new Error('native error');
+      }),
+    });
+    const result = await clipboardHasImage({ platform: 'darwin', clipboard: clip });
     expect(result).toBe(false);
   });
 
@@ -188,7 +184,7 @@ describe('clipboardHasImage', () => {
     expect(result).toBe(false);
   });
 
-  it('detects image on Windows via native clipboard, skipping PowerShell', async () => {
+  it('detects image on Windows via native clipboard', async () => {
     const clip = fakeClipboard({ hasImage: vi.fn(() => true) });
     const runCommand = vi.fn(() => ({ stdout: Buffer.alloc(0), ok: false }));
     const result = await clipboardHasImage({ platform: 'win32', clipboard: clip, runCommand });
@@ -196,23 +192,11 @@ describe('clipboardHasImage', () => {
     expect(runCommand).not.toHaveBeenCalledWith('powershell.exe', expect.anything(), expect.anything());
   });
 
-  it('falls back to PowerShell on Windows when native clipboard has no image', async () => {
+  it('returns false on Windows when native clipboard reports no image', async () => {
     const clip = fakeClipboard({ hasImage: vi.fn(() => false) });
     const runCommand = vi.fn((command: string) => {
       if (command === 'powershell.exe') {
         return { stdout: Buffer.from('True\n'), ok: true };
-      }
-      return { stdout: Buffer.alloc(0), ok: false };
-    });
-    const result = await clipboardHasImage({ platform: 'win32', clipboard: clip, runCommand });
-    expect(result).toBe(true);
-  });
-
-  it('returns false on Windows when native and PowerShell both report no image', async () => {
-    const clip = fakeClipboard({ hasImage: vi.fn(() => false) });
-    const runCommand = vi.fn((command: string) => {
-      if (command === 'powershell.exe') {
-        return { stdout: Buffer.from('False\n'), ok: true };
       }
       return { stdout: Buffer.alloc(0), ok: false };
     });

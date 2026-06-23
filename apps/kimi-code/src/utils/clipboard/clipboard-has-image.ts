@@ -54,13 +54,6 @@ async function hasImageViaNative(clip: ClipboardModule | null): Promise<boolean>
   }
 }
 
-function hasImageViaMacOsOsascript(run: RunCommand): boolean {
-  const result = run('osascript', ['-e', 'the clipboard as «class PNGf»'], {
-    timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
-  });
-  return result.ok;
-}
-
 export async function clipboardHasImage(options?: {
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
@@ -97,13 +90,11 @@ export async function clipboardHasImage(options?: {
   }
 
   if (platform === 'darwin') {
-    if (await hasImageViaNative(clip)) return true;
-    return hasImageViaMacOsOsascript(run);
+    return hasImageViaNative(clip);
   }
 
   if (platform === 'win32') {
-    if (await hasImageViaNative(clip)) return true;
-    return hasImageViaPowerShell(run);
+    return hasImageViaNative(clip);
   }
 
   return false;
