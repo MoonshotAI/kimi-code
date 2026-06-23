@@ -4,7 +4,7 @@
 import { computed, inject, nextTick, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Markdown from './Markdown.vue';
-import type { FilePreviewRequest } from '../types';
+import type { FileData, FilePreviewRequest } from '../types';
 
 const { t } = useI18n();
 
@@ -60,18 +60,6 @@ function resolveMarkdownFileTarget(target: { path: string; line?: number }): Fil
   }
   const base = markdownBaseDir.value;
   return { ...target, path: resolveRelativePath(href, base) };
-}
-
-export interface FileData {
-  path: string;
-  content: string;
-  encoding: 'utf-8' | 'base64';
-  mime: string;
-  sourceUrl?: string;
-  languageId?: string;
-  isBinary: boolean;
-  size: number;
-  lineCount?: number;
 }
 
 const props = defineProps<{

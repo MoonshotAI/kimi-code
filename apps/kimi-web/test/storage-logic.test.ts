@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  loadUnread,
+  saveUnread,
   STORAGE_KEYS,
   draftStorageKey,
   safeGetJson,
@@ -133,5 +135,37 @@ describe('STORAGE_KEYS', () => {
     expect(STORAGE_KEYS.activeWorkspace).toBe('kimi-active-workspace');
     expect(STORAGE_KEYS.notifyOnComplete).toBe('kimi-web.notify-on-complete');
     expect(STORAGE_KEYS.locale).toBe('kimi-locale');
+  });
+});
+
+describe('loadUnread / saveUnread', () => {
+  it('returns an empty map when the key is missing', () => {
+    expect(loadUnread()).toEqual({});
+  });
+
+  it('keeps only true entries', () => {
+    safeSetString(STORAGE_KEYS.unread, JSON.stringify({ B: true, C: false, D: 'yes' }));
+    expect(loadUnread()).toEqual({ B: true });
+  });
+
+  it('drops false entries, clearing the unread dot', () => {
+    saveUnread({ B: true, C: true });
+    saveUnread({ B: false });
+    expect(loadUnread()).toEqual({ C: true });
+  });
+
+  it('merges with the latest stored value so a clear from another tab is not overwritten', () => {
+    // This tab marks B unread.
+    saveUnread({ B: true });
+    expect(loadUnread()).toEqual({ B: true });
+
+    // Another tab clears B and marks C (simulated by writing the key directly).
+    safeSetString(STORAGE_KEYS.unread, JSON.stringify({ C: true }));
+
+    // This tab marks D unread, passing only the change (not a full, stale map).
+    saveUnread({ D: true });
+
+    // B must NOT come back — it was cleared by the other tab.
+    expect(loadUnread()).toEqual({ C: true, D: true });
   });
 });
