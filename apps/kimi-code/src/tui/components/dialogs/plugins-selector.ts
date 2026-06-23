@@ -402,7 +402,10 @@ export class PluginsPanelComponent extends Container implements Focusable {
     }
     const plugin = plugins[this.selectedIndex];
     const ch = printableChar(data);
-    if (matchesKey(data, Key.space)) {
+    // Decode Space for terminals that send printable keys via Kitty/CSI-u
+    // sequences (e.g. VS Code's integrated terminal); `matchesKey(Key.space)`
+    // alone misses those and the toggle silently stops working.
+    if (matchesKey(data, Key.space) || ch === ' ') {
       if (plugin !== undefined) {
         this.opts.onSelect({ kind: 'toggle', id: plugin.id, enabled: !plugin.enabled });
       }
