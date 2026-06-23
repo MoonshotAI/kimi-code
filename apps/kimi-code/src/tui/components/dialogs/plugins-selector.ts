@@ -16,7 +16,7 @@ import type { ColorPalette } from '#/tui/theme/colors';
 import { formatPluginSourceLabel, pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 import { printableChar } from '#/tui/utils/printable-key';
 import { renderTabStrip } from '#/tui/utils/tab-strip';
-import type { PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
+import { computeUpdateStatus, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 
 import { ChoicePickerComponent } from './choice-picker';
 
@@ -212,8 +212,11 @@ function pluginStatus(plugin: PluginSummary): string | undefined {
 }
 
 function marketplaceStatusStyle(status: string, colors: ColorPalette): (text: string) => string {
-  // "installed" reads as success; "install" / "install vX" as an available action.
-  return status === 'installed' ? chalk.hex(colors.success) : chalk.hex(colors.primary);
+  // "update …" is a warning (actionable); "installed …" is success;
+  // "install …" is the available action.
+  if (status.startsWith('update')) return chalk.hex(colors.warning);
+  if (status.startsWith('installed')) return chalk.hex(colors.success);
+  return chalk.hex(colors.primary);
 }
 
 /** Rounded single-line URL input box (DESIGN §9), shared by the marketplace
@@ -333,12 +336,19 @@ export class PluginsPanelComponent extends Container implements Focusable {
     );
   }
 
+  private get installedVersions(): ReadonlyMap<string, string | undefined> {
+    return new Map(this.opts.installed.map((plugin) => [plugin.id, plugin.version]));
+  }
+
   private get officialEntries(): readonly PluginMarketplaceEntry[] {
     return this.marketplaceEntries.filter((entry) => entry.tier === 'official');
   }
 
   private get thirdPartyEntries(): readonly PluginMarketplaceEntry[] {
-    return this.marketplaceEntries.filter((entry) => entry.tier === 'curated');
+    // Anything not explicitly marked official lands here: `curated` entries plus
+    // entries that omit `tier` (custom marketplaces often do). Without this,
+    // untiered entries would be invisible in both marketplace tabs.
+    return this.marketplaceEntries.filter((entry) => entry.tier !== 'official');
   }
 
   private requestMarketplaceIfNeeded(): void {
@@ -543,12 +553,12 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private renderMarketplaceRow(entry: PluginMarketplaceEntry, index: number, width: number): string[] {
-    const { colors, installedIds } = this.opts;
+    const { colors } = this.opts;
     const selected = index === this.selectedIndex;
     const pointer = selected ? SELECT_POINTER : ' ';
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
     const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
-    const status = marketplaceEntryStatus(entry, installedIds);
+    const status = marketplaceEntryStatus(entry, this.installedVersions);
     const line =
       prefix + labelStyle(entry.displayName) + '  ' + marketplaceStatusStyle(status, colors)(status);
     const descWidth = Math.max(1, width - 4);
@@ -623,9 +633,17 @@ function installStatus(entry: PluginMarketplaceEntry): string {
 
 function marketplaceEntryStatus(
   entry: PluginMarketplaceEntry,
-  installedIds: ReadonlySet<string>,
+  installed: ReadonlyMap<string, string | undefined>,
 ): string {
-  return installedIds.has(entry.id) ? 'installed' : installStatus(entry);
+  const status = computeUpdateStatus(entry.version, installed.get(entry.id), installed.has(entry.id));
+  switch (status.kind) {
+    case 'update':
+      return `update ${status.local} → ${status.latest}`;
+    case 'up-to-date':
+      return status.version === undefined ? 'installed' : `installed · v${status.version}`;
+    case 'not-installed':
+      return installStatus(entry);
+  }
 }
 
 function sectionLabel(label: string, colors: ColorPalette): string {

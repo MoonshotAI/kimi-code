@@ -196,6 +196,50 @@ describe('plugins selector dialogs', () => {
     });
   });
 
+  it('shows untiered marketplace entries on the Third-party tab', () => {
+    const untiered = [
+      { id: 'custom-plugin', displayName: 'Custom Plugin', source: 'https://x/c.zip' },
+    ];
+    const { panel } = makePanel({ initialTab: 'third-party' });
+    panel.setMarketplace(untiered, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Custom Plugin  install');
+  });
+
+  it('shows an update badge when the marketplace version is newer than installed', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel } = makePanel({ installed, initialTab: 'third-party' });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Superpowers  update 4.0.0 → 5.0.0');
+  });
+
+  it('shows installed · v<version> when the installed plugin is up to date', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '5.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel } = makePanel({ installed, initialTab: 'third-party' });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Superpowers  installed · v5.0.0');
+  });
+
   it('shows an inline error when the Official catalog fails', () => {
     const { panel } = makePanel({ installed: [superpowers] });
     panel.handleInput('\t'); // → Official
