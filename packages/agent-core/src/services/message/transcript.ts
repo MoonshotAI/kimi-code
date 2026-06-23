@@ -183,6 +183,9 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
         return;
       }
       case 'tool.result': {
+        // Drop a result for an id not awaiting one (already closed in place, or
+        // its call is gone) — mirrors ContextMemory.
+        if (!pendingToolResultIds.has(event.toolCallId)) return;
         push({
           message: {
             role: 'tool',

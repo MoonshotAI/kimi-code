@@ -20,6 +20,19 @@ describe('Agent context', () => {
     });
     ctx.dispatch({
       type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'origin-tool',
+        turnId: '',
+        step: 1,
+        stepUuid: 'origin-step',
+        toolCallId: 'call_origin',
+        name: 'Run',
+        args: {},
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
       event: { type: 'step.end', uuid: 'origin-step', turnId: '', step: 1 },
     });
     ctx.dispatch({
@@ -47,6 +60,25 @@ describe('Agent context', () => {
 
     ctx.dispatch({
       type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 's1', turnId: 't', step: 1 },
+    });
+    for (const toolCallId of ['call_error', 'call_empty']) {
+      ctx.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: toolCallId,
+          turnId: 't',
+          step: 1,
+          stepUuid: 's1',
+          toolCallId,
+          name: 'Run',
+          args: {},
+        },
+      });
+    }
+    ctx.dispatch({
+      type: 'context.append_loop_event',
       event: {
         type: 'tool.result',
         parentUuid: 'call_error',
@@ -65,6 +97,7 @@ describe('Agent context', () => {
     });
 
     expect(ctx.agent.context.messages).toMatchObject([
+      { role: 'assistant', toolCalls: [{ id: 'call_error' }, { id: 'call_empty' }] },
       {
         role: 'tool',
         content: [

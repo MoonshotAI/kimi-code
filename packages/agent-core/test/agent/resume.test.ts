@@ -779,6 +779,84 @@ describe('Agent resume', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('drops a stale tail interrupted result already closed in place on resume', async () => {
+    // Legacy log: an older tail-only finishResume appended the synthetic result
+    // for `call_interrupted` at the END of the stream (after the later turn from
+    // the deferral avalanche). The new in-place closure handles it at step.begin,
+    // so the trailing persisted copy must be dropped rather than duplicated.
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Run the lookup' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'interrupted-step', turnId: '0', step: 1 },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call-interrupted',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'interrupted-step',
+          toolCallId: 'call_interrupted',
+          name: 'Lookup',
+          args: { query: 'one' },
+        },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'keep going' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      ...loopEventsForTurn('1', 'All done.'),
+      // The stale synthetic result an older resume appended at the tail.
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: 'call_interrupted',
+          toolCallId: 'call_interrupted',
+          result: {
+            output:
+              'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.',
+            isError: true,
+          },
+        },
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    // The trailing duplicate is dropped: exactly one synthetic result, in place.
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'user',
+      'assistant',
+    ]);
+    expect(ctx.agent.context.history[2]).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_interrupted',
+      isError: true,
+    });
+    expect(textContent(ctx.agent.context.history[4])).toBe('All done.');
+    await ctx.expectResumeMatches();
+  });
+
   it('rebuilds goal completion replay cards without adding model-visible context', async () => {
     const persistence = new RecordingAgentPersistence([
       {

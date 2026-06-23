@@ -230,9 +230,60 @@ describe('reduceWireRecords', () => {
     expect(foldedLength).toBe(5);
   });
 
+  it('drops a stale tail interrupted result already closed in place', () => {
+    const { entries, foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: 't', step: 0 }),
+      loopEvent({
+        type: 'tool.call',
+        uuid: 'c1',
+        turnId: 't',
+        step: 0,
+        stepUuid: 's1',
+        toolCallId: 'call_interrupted',
+        name: 'Lookup',
+        args: { query: 'one' },
+      }),
+      appendMessage(userMessage('keep going')),
+      ...assistantStep('s2', 'a2'),
+      // The stale synthetic result an older tail-only resume appended.
+      loopEvent({
+        type: 'tool.result',
+        parentUuid: 'call_interrupted',
+        toolCallId: 'call_interrupted',
+        result: {
+          output:
+            'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.',
+          isError: true,
+        },
+      }),
+    ]);
+    expect(entries.map((e) => e.message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'user',
+      'assistant',
+    ]);
+    expect(entries[2]!.message.toolCallId).toBe('call_interrupted');
+    expect(foldedLength).toBe(5);
+  });
+
   it('wraps tool errors and empty outputs with <system> statuses like agent-core', () => {
     const { entries } = reduceWireRecords([
       loopEvent({ type: 'step.begin', uuid: 's1', turnId: 't', step: 0 }),
+      ...['call_err', 'call_empty'].map((toolCallId) =>
+        loopEvent({
+          type: 'tool.call',
+          uuid: toolCallId,
+          turnId: 't',
+          step: 0,
+          stepUuid: 's1',
+          toolCallId,
+          name: 'Run',
+          args: {},
+        }),
+      ),
       loopEvent({
         type: 'tool.result',
         parentUuid: 's1',

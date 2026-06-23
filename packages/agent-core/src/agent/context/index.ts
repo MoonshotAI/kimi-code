@@ -331,6 +331,10 @@ export class ContextMemory {
         return;
       }
       case 'tool.result': {
+        // Drop a result for an id that is not awaiting one: it was already
+        // closed in place at a step boundary (a stale duplicate from an older
+        // tail-only finishResume), or its call is gone.
+        if (!this.pendingToolResultIds.has(event.toolCallId)) return;
         const message = createToolMessage(event.toolCallId, toolResultOutputForModel(event.result));
         this.pushHistory({
           ...message,
