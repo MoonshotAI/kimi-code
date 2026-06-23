@@ -8,7 +8,7 @@ import type { Stats } from 'node:fs';
 import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 import { encodeWorkDirKey } from '../../session/store';
 import { IEnvironmentService } from '../environment/environment';
-import { IEventService } from '../event/event';
+import { IEventService } from '#/event';
 
 import type { Workspace } from '@moonshot-ai/protocol';
 

@@ -19,7 +19,7 @@ import { ulid } from 'ulid';
 import { ICoreRuntime } from '../coreProcess/coreProcess';
 import type { CoreRPC } from '../../rpc';
 import { IAuthSummaryService } from '../authSummary/authSummary';
-import { IEventService } from '../event/event';
+import { IEventService } from '#/event';
 import { ILogService } from '../logger/logger';
 import { ISessionService, SessionNotFoundError } from '../session/session';
 import {

@@ -16,12 +16,12 @@ import {
 } from '../../src';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IApprovalService } from '#/approval';
+import type { IEventService } from '#/event';
 import { emptySessionUsage, type Event, type Session } from '@moonshot-ai/protocol';
 
 import {
   type IAuthSummaryService,
   type ICoreRuntime,
-  type IEventService,
   IPromptService,
   IQuestionService,
   PromptService,

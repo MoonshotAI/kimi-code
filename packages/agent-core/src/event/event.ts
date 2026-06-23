@@ -25,8 +25,8 @@
  * (e.g. `PromptService.onDidComplete`, `SessionService.onDidCreate`).
  */
 
-import { createDecorator } from '../../_base/di';
-import type { Event } from '../../_base/event';
+import { createDecorator } from '#/_base/di';
+import type { Event } from '#/_base/event';
 import type { Event as ProtocolEvent } from '@moonshot-ai/protocol';
 
 /**

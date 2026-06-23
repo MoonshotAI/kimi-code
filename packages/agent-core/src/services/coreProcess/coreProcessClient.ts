@@ -18,7 +18,7 @@
 import type { ApprovalRequest, ApprovalResponse, Event, QuestionRequest, QuestionResult, SDKAPI, ToolCallRequest, ToolCallResponse } from '../../rpc';
 
 import type { IApprovalService } from '#/approval';
-import type { IEventService } from '../event/event';
+import type { IEventService } from '#/event';
 import type { ILogService } from '../logger/logger';
 import type { IQuestionService } from '../question/question';
 

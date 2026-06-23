@@ -9,10 +9,10 @@ import {
 } from '../../src';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IApprovalService, type ApprovalResponse } from '#/approval';
+import { IEventService } from '#/event';
 import type { ApprovalRequest, Event, QuestionRequest } from '../../src';
 
 import {
-  IEventService,
   IFileStore,
   IFsGitService,
   IFsSearchService,

@@ -11,7 +11,7 @@ import { IRecordsService } from '../../src/agent/records';
 import { IAgentSkillService } from '../../src/agent/skill';
 import type { SkillRegistry } from '../../src/agent/skill/types';
 import { ITurnService } from '../../src/agent/turn';
-import { IDomainEventBus } from '../../src/event/event-bus';
+import { IDomainEventBus } from '#/event';
 import { noopTelemetryClient } from '../../src/telemetry';
 
 function makeStubAgent(overrides: { type?: AgentType } = {}): Agent {

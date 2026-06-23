@@ -19,7 +19,7 @@ import {
   type IInstantiationService,
 } from '../_base/di';
 import { BackgroundTaskPersistence, IBackgroundService } from './background';
-import { IDomainEventBus } from '../event/event-bus';
+import { IDomainEventBus } from '#/event';
 import { ILifecycleService } from './lifecycle';
 import {
   type CompactionStrategy,

@@ -4,7 +4,7 @@ import type { CoreRPC } from '../../rpc';
 import type { ConfigResponse, PatchConfigRequest } from '@moonshot-ai/protocol';
 
 import { ICoreRuntime } from '../coreProcess/coreProcess';
-import { IEventService } from '../event/event';
+import { IEventService } from '#/event';
 import { IConfigService } from './config';
 
 /**

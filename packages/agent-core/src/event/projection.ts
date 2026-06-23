@@ -8,7 +8,7 @@
  *   loop and the per-domain services). It carries bare domain events with no
  *   `agentId` / `sessionId` stamped on them.
  *
- * - `IEventService` (`../services/event/event.ts`) — the daemon's transport
+ * - `IEventService` (`./event.ts`) — the daemon's transport
  *   bus. A pub-sub for the protocol `Event`
  *   (= `AgentEvent & { agentId, sessionId }`). `WSBroadcastService`
  *   (`@moonshot-ai/server/services/WSBroadcastService`) subscribes to it via

@@ -1,10 +1,10 @@
 import type { Event as ProtocolEvent } from '@moonshot-ai/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
-import { DomainEventBus } from '#/event/event-bus';
-import { shouldProjectToProtocol } from '#/event/projection';
+import { DomainEventBus } from '#/event';
+import { shouldProjectToProtocol } from '#/event';
 import type { AgentEvent } from '#/rpc';
-import type { IEventService } from '#/services/event/event';
+import type { IEventService } from '#/event';
 
 // ─── projection boundary model ──────────────────────────────────────────────
 //

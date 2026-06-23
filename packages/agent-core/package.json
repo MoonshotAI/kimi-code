@@ -40,6 +40,7 @@
     "#/_utils/persistence": "./src/_utils/persistence/index.ts",
     "#/_utils/net": "./src/_utils/net/index.ts",
     "#/approval": "./src/approval/index.ts",
+    "#/event": "./src/event/index.ts",
     "#/*": [
       "./src/*.ts",
       "./src/*/index.ts"

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentEvent } from '#/rpc';
-import { DomainEventBus } from '#/event/event-bus';
+import { DomainEventBus } from '#/event';
 
 const warningEvent = (message: string): AgentEvent =>
   ({ type: 'warning', message }) satisfies AgentEvent;

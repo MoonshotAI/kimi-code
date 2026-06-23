@@ -39,10 +39,10 @@ import type {
   SessionSummary,
 } from '../../src';
 import type { PromptSubmission, Session } from '@moonshot-ai/protocol';
+import type { IEventService } from '#/event';
 
 import {
   type IAuthSummaryService,
-  type IEventService,
   type ICoreRuntime,
   type ILogService,
   type ISessionService,

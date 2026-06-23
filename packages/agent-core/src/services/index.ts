@@ -6,9 +6,6 @@ export {
 } from './coreProcess/coreProcess';
 export { CoreProcessService } from './coreProcess/coreProcessService';
 
-export { IEventService } from './event/event';
-export { EventService } from './event/eventService';
-
 export { IQuestionService } from './question/question';
 export type { QuestionRequest, QuestionResult } from './question/question';
 export {

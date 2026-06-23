@@ -15,11 +15,11 @@ import {
 } from '../../src';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IApprovalService } from '#/approval';
+import { IEventService } from '#/event';
 
 import {
   CoreProcessService,
   IEnvironmentService,
-  IEventService,
   ILogService,
   IQuestionService,
 } from '../../src/services';

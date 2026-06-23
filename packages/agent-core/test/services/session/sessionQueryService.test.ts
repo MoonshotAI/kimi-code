@@ -11,9 +11,9 @@ import {
 } from '../../../src';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IApprovalService } from '#/approval';
+import type { IEventService } from '#/event';
 import {
   type ICoreRuntime,
-  type IEventService,
   IPromptService,
   IQuestionService,
 } from '../../../src/services';

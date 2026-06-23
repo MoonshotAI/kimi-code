@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { AgentStatusService, type AgentStatusHost } from '../../src/agent/status';
 import type { IAgentConfigService } from '../../src/agent/config';
 import type { IContextService } from '../../src/agent/context';
-import type { IDomainEventBus } from '../../src/event/event-bus';
+import type { IDomainEventBus } from '#/event';
 import type { IPermissionService, PermissionMode } from '../../src/agent/permission';
 import type { IPlanService } from '../../src/agent/plan';
 import type { IRecordsService } from '../../src/agent/records';

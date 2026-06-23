@@ -16,12 +16,12 @@ import {
 } from '../../src';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IApprovalService } from '#/approval';
+import { IEventService } from '#/event';
 
 import {
   BridgeClientAPI,
   CoreProcessService,
   IEnvironmentService,
-  IEventService,
   ILogService,
   ICoreRuntime,
   IQuestionService,
@@ -279,8 +279,13 @@ describe('singleton registry composition', () => {
     const { eventService, approvalService, questionService } = makePeers();
     const moduleEntries = getSingletonServiceDescriptors();
     expect(moduleEntries.length).toBeGreaterThanOrEqual(1);
-    expect(moduleEntries[0]![0]).toBe(ICoreRuntime);
-    expect(moduleEntries[0]![1]).toBeInstanceOf(SyncDescriptor);
+    // Locate the CoreProcessService descriptor by identifier rather than by
+    // registry index: module-load registration order shifts as domains migrate
+    // out of `services/` into their own barrels (e.g. `event`), so the
+    // descriptor is no longer guaranteed to sit at index 0.
+    const coreRuntimeEntry = moduleEntries.find(([id]) => id === ICoreRuntime);
+    expect(coreRuntimeEntry).toBeDefined();
+    expect(coreRuntimeEntry![1]).toBeInstanceOf(SyncDescriptor);
 
     const ix = new TestInstantiationService();
     for (const [id, desc] of moduleEntries) {

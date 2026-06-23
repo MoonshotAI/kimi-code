@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { Emitter } from '../../../src';
 import { IEnvironmentService } from '../../../src/services/environment/environment';
-import { IEventService } from '../../../src/services/event/event';
+import { IEventService } from '#/event';
 import { ILogService } from '../../../src/services/logger/logger';
 import { RECENT_ROOTS_LIMIT } from '../../../src/services/workspace/workspaceFs';
 import {
