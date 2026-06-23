@@ -517,7 +517,9 @@ export class KimiTUI {
       ui: this.state.ui,
       footer: this.state.footer,
       getModelSupportsImage: () => this.supportsCurrentModelCapability('image_in'),
-      requestRender: () => this.state.ui.requestRender(),
+      requestRender: () => {
+        this.state.ui.requestRender();
+      },
     });
     this.clipboardImageHintController.start();
   }
