@@ -7,6 +7,7 @@ import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { serverEndpointLabel } from '../api/config';
 import { copyTextToClipboard } from '../lib/clipboard';
+import { loadCollapsedWorkspaces, saveCollapsedWorkspaces } from '../lib/storage';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
@@ -89,7 +90,7 @@ function onSelectResult(sessionId: string): void {
 // ---------------------------------------------------------------------------
 // Collapse groups
 // ---------------------------------------------------------------------------
-const collapsedIds = ref<Set<string>>(new Set());
+const collapsedIds = ref<Set<string>>(new Set(loadCollapsedWorkspaces()));
 
 function isCollapsed(id: string): boolean {
   return collapsedIds.value.has(id);
@@ -107,6 +108,7 @@ function toggleCollapse(id: string): void {
     next.add(id);
   }
   collapsedIds.value = next;
+  saveCollapsedWorkspaces(next);
 }
 
 // ---------------------------------------------------------------------------

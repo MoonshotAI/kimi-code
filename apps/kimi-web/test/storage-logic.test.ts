@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  loadCollapsedWorkspaces,
   loadUnread,
+  saveCollapsedWorkspaces,
   saveUnread,
   STORAGE_KEYS,
   draftStorageKey,
@@ -167,5 +169,29 @@ describe('loadUnread / saveUnread', () => {
 
     // B must NOT come back — it was cleared by the other tab.
     expect(loadUnread()).toEqual({ C: true, D: true });
+  });
+});
+
+describe('loadCollapsedWorkspaces / saveCollapsedWorkspaces', () => {
+  it('returns an empty array when the key is missing', () => {
+    expect(loadCollapsedWorkspaces()).toEqual([]);
+  });
+
+  it('round-trips the collapsed ids', () => {
+    saveCollapsedWorkspaces(['ws-1', 'ws-2']);
+    expect(loadCollapsedWorkspaces()).toEqual(['ws-1', 'ws-2']);
+  });
+
+  it('accepts any iterable of ids', () => {
+    saveCollapsedWorkspaces(new Set(['ws-1', 'ws-3']));
+    expect(loadCollapsedWorkspaces()).toEqual(['ws-1', 'ws-3']);
+  });
+
+  it('drops non-string entries and returns [] for malformed values', () => {
+    safeSetString(STORAGE_KEYS.collapsedWorkspaces, JSON.stringify(['ws-1', 2, null, 'ws-2']));
+    expect(loadCollapsedWorkspaces()).toEqual(['ws-1', 'ws-2']);
+
+    safeSetString(STORAGE_KEYS.collapsedWorkspaces, JSON.stringify({ ws: true }));
+    expect(loadCollapsedWorkspaces()).toEqual([]);
   });
 });

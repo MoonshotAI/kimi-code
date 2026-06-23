@@ -22,6 +22,7 @@ export const STORAGE_KEYS = {
   accent: 'kimi-web.accent',
   colorScheme: 'kimi-web.color-scheme',
   hiddenWorkspaces: 'kimi-web.hidden-workspaces',
+  collapsedWorkspaces: 'kimi-web.collapsed-workspaces',
   betaToc: 'kimi-web.beta-toc',
   notifyOnComplete: 'kimi-web.notify-on-complete',
   inputHistory: 'kimi-web.input-history',
@@ -121,4 +122,19 @@ export function saveUnread(changes: Record<string, boolean>): void {
     else delete merged[id];
   }
   safeSetString(STORAGE_KEYS.unread, JSON.stringify(merged));
+}
+
+/**
+ * Collapsed workspace ids in the sidebar. Persisted as a JSON array of ids so
+ * the fold state of each workspace group survives a page refresh. There is no
+ * server-side source of truth for this UI-only state.
+ */
+export function loadCollapsedWorkspaces(): string[] {
+  const parsed = safeGetJson<unknown>(STORAGE_KEYS.collapsedWorkspaces);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((id): id is string => typeof id === 'string');
+}
+
+export function saveCollapsedWorkspaces(ids: Iterable<string>): void {
+  safeSetJson(STORAGE_KEYS.collapsedWorkspaces, Array.from(ids));
 }
