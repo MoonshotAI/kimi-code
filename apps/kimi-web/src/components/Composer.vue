@@ -185,6 +185,10 @@ function selectSlashCommand(item: SlashCommand): void {
     return;
   }
   text.value = '';
+  // Menu-selected bare commands (e.g. /model, /login) reach here directly and
+  // never go through handleSubmit, so record them for ↑/↓ recall too. acceptsInput
+  // commands are pushed later by handleSubmit with their argument.
+  history.push(item.name);
   emit('command', item.name);
 }
 
