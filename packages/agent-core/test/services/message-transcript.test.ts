@@ -193,11 +193,6 @@ describe('reduceWireRecords', () => {
   });
 
   it('closes a tool call interrupted mid-history at the next step.begin', () => {
-    // Mirrors ContextMemory's replay-time closePendingToolResults: the synthetic
-    // interrupted result is re-derived (not persisted to the wire log), so the
-    // reducer must reconstruct it and flush the deferred message in place — and
-    // foldedLength must match the live folded history length so the downstream
-    // tail merge slices from the right index.
     const { entries, foldedLength } = reduceWireRecords([
       appendMessage(userMessage('u1')),
       loopEvent({ type: 'step.begin', uuid: 's1', turnId: 't', step: 0 }),

@@ -118,11 +118,8 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
     push(...deferred);
     deferred = [];
   };
-  // Mirrors ContextMemory.closePendingToolResults: a tool call left open when a
-  // new step begins was interrupted, so synthesize its error result in place.
-  // ContextMemory does this during replay, where the synthetic result is NOT
-  // re-persisted to the wire log, so the reducer must reconstruct it to keep
-  // `foldedLength` aligned with the live folded history.
+  // ContextMemory closes these during replay without persisting the synthetic
+  // result, so the reducer must reconstruct it to keep foldedLength aligned.
   const closePendingToolResults = (time: number | undefined): void => {
     if (pendingToolResultIds.size === 0) return;
     const interruptedToolCallIds = [...pendingToolResultIds];
