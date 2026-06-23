@@ -68,14 +68,20 @@ export async function clipboardHasImage(options?: {
   if (platform === 'linux') {
     const wayland = isWaylandSession(env);
     const wsl = isWSL(env);
-    const xclipHasImage = !wayland && hasImageViaXclip(run);
+
+    let xclipResult: boolean | undefined;
+    const xclipHasImage = (): boolean => {
+      if (xclipResult === undefined) xclipResult = hasImageViaXclip(run);
+      return xclipResult;
+    };
 
     if (wayland || wsl) {
-      if (hasImageViaWlPaste(run) || xclipHasImage) return true;
+      if (hasImageViaWlPaste(run)) return true;
+      if (xclipHasImage()) return true;
     }
     if (wsl && hasImageViaPowerShell(run)) return true;
     if (!wayland) {
-      if (xclipHasImage) return true;
+      if (xclipHasImage()) return true;
       if (await hasImageViaNative(clip)) return true;
     }
     return false;

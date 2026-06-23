@@ -73,6 +73,25 @@ describe('clipboardHasImage', () => {
     expect(result).toBe(false);
   });
 
+  it('falls back to xclip on Wayland when wl-paste reports no image', async () => {
+    const runCommand = vi.fn((command: string, args: string[]) => {
+      if (command === 'wl-paste' && args[0] === '--list-types') {
+        return { stdout: Buffer.from('text/plain\n'), ok: true };
+      }
+      if (command === 'xclip' && args.includes('TARGETS')) {
+        return { stdout: Buffer.from('TARGETS\nimage/png\n'), ok: true };
+      }
+      return { stdout: Buffer.alloc(0), ok: false };
+    });
+    const result = await clipboardHasImage({
+      platform: 'linux',
+      env: { WAYLAND_DISPLAY: 'wayland-1' },
+      runCommand,
+    });
+    expect(result).toBe(true);
+    expect(runCommand).toHaveBeenCalledWith('xclip', ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], expect.anything());
+  });
+
   it('detects image on X11 via xclip TARGETS', async () => {
     const runCommand = vi.fn((command: string, args: string[]) => {
       if (command === 'xclip' && args.includes('TARGETS')) {
