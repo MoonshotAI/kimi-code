@@ -32,6 +32,7 @@ export type { ProviderConfig, ProviderType } from './providers';
 // kwargs, `thinking.keep` extra body).
 export { KimiChatProvider } from './providers/kimi';
 export type { ExtraBody, GenerationKwargs, KimiOptions, ThinkingConfig } from './providers/kimi';
+export { isKimiReasoningModel } from './providers/kimi-reasoning';
 
 // Model capability matrix
 export { UNKNOWN_CAPABILITY, isUnknownCapability } from './capability';

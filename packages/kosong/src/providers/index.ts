@@ -1,6 +1,7 @@
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '../capability';
 import type { ChatProvider } from '../provider';
 import { AnthropicChatProvider, type AnthropicOptions } from './anthropic';
+import { AzureFoundryChatProvider, type AzureFoundryOptions } from './azure-foundry';
 import {
   getAnthropicModelCapability,
   getGoogleGenAIModelCapability,
@@ -14,6 +15,7 @@ import { OpenAIResponsesChatProvider, type OpenAIResponsesOptions } from './open
 
 export type ProviderConfig =
   | ({ type: 'anthropic' } & AnthropicOptions)
+  | ({ type: 'azure-foundry' } & AzureFoundryOptions)
   | ({ type: 'openai' } & OpenAILegacyOptions)
   | ({ type: 'kimi' } & KimiOptions)
   | ({ type: 'google-genai' } & GoogleGenAIOptions)
@@ -26,6 +28,8 @@ export function createProvider(config: ProviderConfig): ChatProvider {
   switch (config.type) {
     case 'anthropic':
       return new AnthropicChatProvider(config);
+    case 'azure-foundry':
+      return new AzureFoundryChatProvider(config);
     case 'openai':
       return new OpenAILegacyChatProvider(config);
     case 'kimi':
@@ -55,6 +59,7 @@ export function getModelCapability(wire: ProviderType, modelName: string): Model
   switch (wire) {
     case 'anthropic':
       return getAnthropicModelCapability(modelName);
+    case 'azure-foundry':
     case 'openai':
       return getOpenAILegacyModelCapability(modelName);
     case 'openai_responses':

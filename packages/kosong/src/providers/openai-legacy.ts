@@ -35,6 +35,10 @@ import {
   requireProviderApiKey,
   resolveAuthBackedClient,
 } from './request-auth';
+import { clampCompletionTokensForSharedContextWindow } from './shared-context-window';
+import {
+  usesMaxCompletionTokensOnWire,
+} from './kimi-reasoning';
 import {
   normalizeToolCallIdsForProvider,
   sanitizeToolCallId,
@@ -71,6 +75,8 @@ export interface OpenAILegacyOptions {
   model: string;
   stream?: boolean | undefined;
   maxTokens?: number | undefined;
+  /** Total input+output budget when the backend enforces a shared context window. */
+  sharedContextWindowTokens?: number | undefined;
   reasoningKey?: string | undefined;
   httpClient?: unknown;
   defaultHeaders?: Record<string, string>;
@@ -105,8 +111,7 @@ interface OpenAIToolCallOut {
 }
 
 function usesMaxCompletionTokens(model: string): boolean {
-  const normalized = model.toLowerCase();
-  return /^o\d(?:$|[-.])/.test(normalized) || /^gpt-5(?:$|[-.])/.test(normalized);
+  return usesMaxCompletionTokensOnWire(model);
 }
 
 function completionTokenKwargs(
@@ -444,11 +449,14 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private _defaultHeaders: Record<string, string> | undefined;
   private _reasoningKey: string | undefined;
   private _reasoningEffort: string | undefined;
+  /** When true, reasoning is explicitly disabled and must not be auto-enabled from history. */
+  private _thinkingExplicitlyOff: boolean;
   private _generationKwargs: OpenAILegacyGenerationKwargs;
   private _toolMessageConversion: ToolMessageConversion;
   private _client: OpenAI | undefined;
   private _httpClient: unknown;
   private _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
+  private _sharedContextWindowTokens: number | undefined;
 
   constructor(options: OpenAILegacyOptions) {
     const apiKey = options.apiKey ?? process.env['OPENAI_API_KEY'];
@@ -467,11 +475,13 @@ export class OpenAILegacyChatProvider implements ChatProvider {
         ? normalizedReasoningKey
         : undefined;
     this._reasoningEffort = undefined;
+    this._thinkingExplicitlyOff = false;
     this._generationKwargs =
       options.maxTokens !== undefined ? completionTokenKwargs(this._model, options.maxTokens) : {};
     this._toolMessageConversion = options.toolMessageConversion ?? null;
     this._httpClient = options.httpClient;
     this._clientFactory = options.clientFactory;
+    this._sharedContextWindowTokens = options.sharedContextWindowTokens;
 
     this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
   }
@@ -481,6 +491,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   }
 
   get thinkingEffort(): ThinkingEffort | null {
+    if (this._thinkingExplicitlyOff) return 'off';
     return reasoningEffortToThinkingEffort(this._reasoningEffort);
   }
 
@@ -512,7 +523,16 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     const kwargs: Record<string, unknown> = normalizeGenerationKwargs(
       this._model,
-      this._generationKwargs,
+      this._sharedContextWindowTokens === undefined
+        ? this._generationKwargs
+        : clampCompletionTokensForSharedContextWindow({
+            model: this._model,
+            sharedContextWindowTokens: this._sharedContextWindowTokens,
+            generationKwargs: this._generationKwargs,
+            systemPrompt,
+            history,
+            tools,
+          }),
     );
 
     // Determine reasoning_effort
@@ -524,7 +544,11 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     // Skip when the caller already pinned reasoning_effort via withGenerationKwargs —
     // their value would otherwise be silently overwritten below.
     // See: https://github.com/MoonshotAI/kimi-code/issues/1616
-    if (reasoningEffort === undefined && kwargs['reasoning_effort'] === undefined) {
+    if (
+      !this._thinkingExplicitlyOff &&
+      reasoningEffort === undefined &&
+      kwargs['reasoning_effort'] === undefined
+    ) {
       const hasThinkPart = history.some((message) =>
         message.content.some((part) => part.type === 'think'),
       );
@@ -574,9 +598,14 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): OpenAILegacyChatProvider {
-    const reasoningEffort = thinkingEffortToReasoningEffort(effort);
     const clone = this._clone();
-    clone._reasoningEffort = reasoningEffort;
+    if (effort === 'off') {
+      clone._thinkingExplicitlyOff = true;
+      clone._reasoningEffort = undefined;
+    } else {
+      clone._thinkingExplicitlyOff = false;
+      clone._reasoningEffort = thinkingEffortToReasoningEffort(effort);
+    }
     return clone;
   }
 

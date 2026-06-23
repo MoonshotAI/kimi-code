@@ -58,6 +58,8 @@ KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 | `ANTHROPIC_BASE_URL` | Anthropic | Anthropic SDK 默认值 |
 | `OPENAI_API_KEY` | OpenAI（`openai` 和 `openai_responses`） | 无 |
 | `OPENAI_BASE_URL` | OpenAI（`openai` 和 `openai_responses`） | `https://api.openai.com/v1` |
+| `AZURE_FOUNDRY_API_KEY` | Microsoft Foundry（`azure-foundry`） | 无 |
+| `AZURE_FOUNDRY_BASE_URL` | Microsoft Foundry（`azure-foundry`） | 无 |
 | `GOOGLE_API_KEY` | Google GenAI、Vertex AI | 无 |
 | `VERTEXAI_API_KEY` | Vertex AI | 无 |
 | `GOOGLE_CLOUD_PROJECT` | Vertex AI | 无 |

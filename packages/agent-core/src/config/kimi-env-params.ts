@@ -50,8 +50,10 @@ export function applyKimiEnvThinkingKeep(
   thinkingLevel: ThinkingEffort,
   env: Env = process.env,
 ): ChatProvider {
-  if (!(provider instanceof KimiChatProvider)) return provider;
   const keep = env['KIMI_MODEL_THINKING_KEEP']?.trim();
   if (keep === undefined || keep.length === 0 || thinkingLevel === 'off') return provider;
-  return provider.withExtraBody({ thinking: { keep } });
+  if (provider instanceof KimiChatProvider) {
+    return provider.withExtraBody({ thinking: { keep } });
+  }
+  return provider;
 }

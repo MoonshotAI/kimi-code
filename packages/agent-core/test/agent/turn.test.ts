@@ -112,6 +112,29 @@ describe('Agent turn flow', () => {
     });
   });
 
+  it('continues once after a post-tool step ends without further tool calls', async () => {
+    const ctx = testAgent({ kaos: createCommandKaos('ok') });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'Running first command.' },
+      bashCallWithId('call_1', 'printf ok'),
+    );
+    ctx.mockNextResponse({ type: 'text', text: 'I will continue exploring.' });
+    ctx.mockNextResponse(
+      { type: 'text', text: 'Continuing with another command.' },
+      bashCallWithId('call_2', 'printf more'),
+    );
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Explore the repo' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(4);
+    expect(JSON.stringify(ctx.llmCalls[2]?.history ?? [])).toContain('system-reminder');
+  });
+
   it('tracks cross-step duplicate tool-call detection telemetry', async () => {
     const records: TelemetryRecord[] = [];
     const ctx = testAgent({

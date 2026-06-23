@@ -1,4 +1,4 @@
-import { type ChatProvider, KimiChatProvider } from '@moonshot-ai/kosong';
+import { createProvider, type ChatProvider, KimiChatProvider } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '../../src/config/kimi-env-params';
@@ -6,6 +6,15 @@ import { KimiError } from '../../src/errors';
 
 function kimi(): KimiChatProvider {
   return new KimiChatProvider({ model: 'kimi-k2', apiKey: 'k' });
+}
+
+function foundryKimi(): ChatProvider {
+  return createProvider({
+    type: 'azure-foundry',
+    model: 'Kimi-K2.6',
+    apiKey: 'k',
+    baseUrl: 'https://example.openai.azure.com/openai/v1',
+  });
 }
 
 interface KimiGenerationState {
@@ -61,6 +70,12 @@ describe('applyKimiEnvThinkingKeep', () => {
   it('injects thinking.keep when thinking is on', () => {
     const out = applyKimiEnvThinkingKeep(kimi(), 'high', { KIMI_MODEL_THINKING_KEEP: 'all' });
     expect(genState(out).extra_body?.thinking?.keep).toBe('all');
+  });
+
+  it('does not inject thinking.keep for Foundry-hosted Kimi models', () => {
+    const provider = foundryKimi();
+    const out = applyKimiEnvThinkingKeep(provider, 'high', { KIMI_MODEL_THINKING_KEEP: 'all' });
+    expect(out).toBe(provider);
   });
 
   it('does NOT inject thinking.keep when thinking is off', () => {

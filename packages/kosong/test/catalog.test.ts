@@ -23,6 +23,11 @@ describe('inferWireType', () => {
     expect(inferWireType({ id: 'google-vertex' })).toBe('vertexai');
   });
 
+  it('infers azure-foundry from azure or foundry ids', () => {
+    expect(inferWireType({ id: 'azure-foundry' })).toBe('azure-foundry');
+    expect(inferWireType({ id: 'microsoft-foundry' })).toBe('azure-foundry');
+  });
+
   it('returns undefined for unknown / invalid wire types', () => {
     expect(inferWireType({ id: 'some-proxy' })).toBeUndefined();
     expect(inferWireType({ id: 'x', type: 'not-a-wire' })).toBeUndefined();

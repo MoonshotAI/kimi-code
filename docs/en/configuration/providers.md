@@ -12,6 +12,7 @@ The `type` field in the `providers` table determines which protocol implementati
 | `anthropic` | Anthropic Messages | Claude model family |
 | `openai` | OpenAI Chat Completions | OpenAI and compatible services, DeepSeek, Qwen, etc. |
 | `openai_responses` | OpenAI Responses API | OpenAI's newer Responses interface |
+| `azure-foundry` | Microsoft Foundry (OpenAI v1) | Azure AI Foundry model deployments (GPT, DeepSeek, Llama, Mistral, etc.) |
 | `google-genai` | Google GenAI | Gemini API |
 | `vertexai` | Google GenAI on Vertex | Google Cloud Vertex AI |
 
@@ -106,6 +107,30 @@ type = "openai_responses"
 base_url = "https://api.openai.com/v1"
 api_key = "sk-xxxxx"
 ```
+
+## `azure-foundry`
+
+For connecting to [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/) model deployments through the OpenAI v1-compatible inference route. Foundry hosts multiple model families — OpenAI GPT, DeepSeek, Meta Llama, Mistral, and others sold directly by Azure — not just OpenAI models. Put the model ID from your Foundry deployment in `[models.<alias>]`.
+
+Microsoft recommends the OpenAI v1 route for third-party SDKs and custom applications. See [Integrate Microsoft Foundry with your applications](https://learn.microsoft.com/en-us/azure/foundry/how-to/integrate-with-other-apps).
+
+- Recommended `base_url`: `https://{resource}.openai.azure.com/openai/v1`
+- Credential key names: `AZURE_FOUNDRY_API_KEY`, `AZURE_FOUNDRY_BASE_URL`
+- Auth: sends the Foundry `api-key` header
+
+```toml
+[providers.foundry]
+type = "azure-foundry"
+base_url = "https://YOUR-RESOURCE.openai.azure.com/openai/v1"
+api_key = "YOUR_KEY"
+
+[models.foundry-gpt4o]
+provider = "foundry"
+model = "gpt-4o"
+max_context_size = 128000
+```
+
+Third-party reasoning models on Foundry work the same way as on the generic `openai` provider: set `reasoning_key` on the model alias when your gateway returns reasoning content under a non-standard field name.
 
 ## `google-genai`
 

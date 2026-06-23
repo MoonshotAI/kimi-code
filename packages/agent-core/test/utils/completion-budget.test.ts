@@ -50,24 +50,32 @@ describe('computeCompletionBudgetCap', () => {
     ).toBe(1);
   });
 
-  it('uses the model context window when no hard cap is set', () => {
-    const maxCtx = 100000;
+  it('uses the reserved-context fallback when no hard cap is set', () => {
     const cap = computeCompletionBudgetCap({
       budget: { fallback: 32000 },
+      capability: makeCapability(100000),
+    });
+    expect(cap).toBe(32000);
+  });
+
+  it('uses the model context window when no hard cap or fallback is set', () => {
+    const maxCtx = 100000;
+    const cap = computeCompletionBudgetCap({
+      budget: {},
       capability: makeCapability(maxCtx),
     });
     expect(cap).toBe(maxCtx);
   });
 
-  it('uses the explicit hard cap when configured', () => {
+  it('clamps the explicit hard cap to the model context window when it is smaller', () => {
     const cap = computeCompletionBudgetCap({
       budget: { hardCap: 32000 },
       capability: makeCapability(10000),
     });
-    expect(cap).toBe(32000);
+    expect(cap).toBe(10000);
   });
 
-  it('ignores fallback when the model context window is known', () => {
+  it('clamps the fallback to the model context window when it is smaller', () => {
     const cap = computeCompletionBudgetCap({
       budget: { fallback: 32000 },
       capability: makeCapability(10000),

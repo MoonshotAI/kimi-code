@@ -986,6 +986,28 @@ describe('OpenAILegacyChatProvider', () => {
 
       expect(body['reasoning_effort']).toBe('high');
     });
+
+    it('does not auto-inject reasoning_effort when thinking is explicitly off', async () => {
+      const provider = createProvider({ model: 'kimi-k2.5', reasoningKey: 'reasoning_content' }).withThinking(
+        'off',
+      );
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'Let me think...' },
+            { type: 'text', text: 'Hi!' },
+          ],
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'How are you?' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBeUndefined();
+      expect(provider.thinkingEffort).toBe('off');
+    });
   });
 
   describe('default reasoning protocol (no explicit reasoningKey)', () => {
