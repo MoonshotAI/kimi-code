@@ -104,6 +104,10 @@ export * from './event';
 // keeps package root surface unchanged for server (`IQuestionService` / `QuestionRequest`)
 export * from './question';
 
+// ─── CoreProcess contract (di-v3) ──────────────────────────────────────────
+// keeps package root surface unchanged for server (`ICoreRuntime` / `CoreProcessService`)
+export * from './coreProcess';
+
 // ─── Scope mechanism (di-v3) ───────────────────────────────────────────────
 // Exposes `LifecycleScope`, `registerScopedService` /
 // `getScopedServiceDescriptors` / `markBuilt` / `isBuilt`, the `I*Context`

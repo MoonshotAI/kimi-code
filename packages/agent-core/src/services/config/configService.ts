@@ -3,7 +3,7 @@ import type { KimiConfig, ProviderConfig } from '../../config';
 import type { CoreRPC } from '../../rpc';
 import type { ConfigResponse, PatchConfigRequest } from '@moonshot-ai/protocol';
 
-import { ICoreRuntime } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '#/coreProcess';
 import { IEventService } from '#/event';
 import { IConfigService } from './config';
 

@@ -6,7 +6,7 @@ import { Disposable, InstantiationType, registerSingleton } from '../../_base/di
 import type { McpServer } from '@moonshot-ai/protocol';
 
 import type { CoreRPC } from '../../rpc';
-import { ICoreRuntime } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '#/coreProcess';
 import {
   IMcpService,
   McpServerNotFoundError,

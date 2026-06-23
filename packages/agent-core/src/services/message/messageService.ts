@@ -29,7 +29,7 @@ import type {
   PageResponse,
 } from '@moonshot-ai/protocol';
 
-import { ICoreRuntime } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '#/coreProcess';
 import { SessionNotFoundError } from '../session/session';
 import {
   IMessageService,

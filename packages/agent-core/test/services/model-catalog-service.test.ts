@@ -10,7 +10,6 @@ import type {
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 
 import {
-  type ICoreRuntime,
   type IEnvironmentService,
   ModelCatalogService,
   ModelNotFoundError,
@@ -18,6 +17,7 @@ import {
   toProtocolModel,
   toProtocolProvider,
 } from '../../src/services';
+import { type ICoreRuntime } from '#/coreProcess';
 import type { ServicesAuthFacade } from '../../src/services/auth/managedAuth';
 
 afterEach(() => {

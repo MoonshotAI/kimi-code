@@ -16,7 +16,7 @@ import type {
 import type { PermissionMode } from '../../agent/permission';
 import { ulid } from 'ulid';
 
-import { ICoreRuntime } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '#/coreProcess';
 import type { CoreRPC } from '../../rpc';
 import { IAuthSummaryService } from '../authSummary/authSummary';
 import { IEventService } from '#/event';

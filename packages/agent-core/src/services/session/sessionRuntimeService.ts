@@ -4,7 +4,7 @@ import type { Event, SessionStatus, SessionStatusResponse } from '@moonshot-ai/p
 import type { CoreRPC } from '../../rpc';
 
 import { IApprovalService } from '#/approval';
-import { ICoreRuntime } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '#/coreProcess';
 import { IEventService } from '#/event';
 import { IPromptService } from '../prompt/prompt';
 import { IQuestionService } from '#/question';

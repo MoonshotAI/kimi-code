@@ -7,7 +7,7 @@ import { ErrorCodes, KimiError } from '../../errors';
 import type { SkillDescriptor } from '@moonshot-ai/protocol';
 
 import type { CoreRPC } from '../../rpc';
-import { ICoreRuntime } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '#/coreProcess';
 import { SessionNotFoundError } from '../session/session';
 import {
   ISkillService,

@@ -21,13 +21,13 @@ import type {
 } from '../../src';
 
 import {
-  type ICoreRuntime,
   McpServerNotFoundError,
   McpService,
   ToolService,
   toProtocolMcpServer,
   toProtocolTool,
 } from '../../src/services';
+import { type ICoreRuntime } from '#/coreProcess';
 import type { AgentCoreToolInfoLike } from '../../src/services';
 
 interface FakeBridgeState {

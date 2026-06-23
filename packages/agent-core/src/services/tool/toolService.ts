@@ -5,7 +5,7 @@
 import { Disposable, InstantiationType, registerSingleton } from '../../_base/di';
 import type { CoreRPC } from '../../rpc';
 
-import { ICoreRuntime } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '#/coreProcess';
 import { IToolService, toProtocolTool, type AgentCoreToolInfoLike } from './tool';
 
 /** Matches the convention used elsewhere in services (message-service uses 'main'). */

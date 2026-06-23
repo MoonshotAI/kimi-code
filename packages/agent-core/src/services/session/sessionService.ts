@@ -19,7 +19,7 @@ import {
 } from '@moonshot-ai/protocol';
 
 import { IApprovalService } from '#/approval';
-import { ICoreRuntime } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '#/coreProcess';
 import { IEventService } from '#/event';
 import { toProtocolMessage } from '../message/message';
 import { IPromptService, type AgentStatePatch } from '../prompt/prompt';

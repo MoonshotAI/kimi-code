@@ -17,7 +17,7 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 
 import { createManagedAuthFacade, type ServicesAuthFacade } from '../auth/managedAuth';
-import { ICoreRuntime } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '#/coreProcess';
 import { IEnvironmentService } from '../environment/environment';
 import {
   IModelCatalogService,

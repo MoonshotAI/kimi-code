@@ -42,6 +42,7 @@
     "#/approval": "./src/approval/index.ts",
     "#/event": "./src/event/index.ts",
     "#/question": "./src/question/index.ts",
+    "#/coreProcess": "./src/coreProcess/index.ts",
     "#/*": [
       "./src/*.ts",
       "./src/*/index.ts"

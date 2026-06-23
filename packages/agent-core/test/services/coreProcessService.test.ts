@@ -20,12 +20,10 @@ import { IEventService } from '#/event';
 import { IQuestionService } from '#/question';
 
 import {
-  BridgeClientAPI,
-  CoreProcessService,
   IEnvironmentService,
   ILogService,
-  ICoreRuntime,
 } from '../../src/services';
+import { BridgeClientAPI, CoreProcessService, ICoreRuntime } from '#/coreProcess';
 
 class RecordingEventService implements IEventService {
   readonly _serviceBrand: undefined;

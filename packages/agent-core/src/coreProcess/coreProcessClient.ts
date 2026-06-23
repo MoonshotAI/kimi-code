@@ -15,11 +15,11 @@
  * NOT here. The peer-service interfaces stay SDK-shaped.
  */
 
-import type { ApprovalRequest, ApprovalResponse, Event, QuestionRequest, QuestionResult, SDKAPI, ToolCallRequest, ToolCallResponse } from '../../rpc';
+import type { ApprovalRequest, ApprovalResponse, Event, QuestionRequest, QuestionResult, SDKAPI, ToolCallRequest, ToolCallResponse } from '../rpc';
 
 import type { IApprovalService } from '#/approval';
 import type { IEventService } from '#/event';
-import type { ILogService } from '../logger/logger';
+import type { ILogService } from '../services/logger/logger';
 import type { IQuestionService } from '#/question';
 
 export interface CoreProcessClientDeps {

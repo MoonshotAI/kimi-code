@@ -22,13 +22,13 @@ import type {
 } from '../../src';
 
 import {
-  type ICoreRuntime,
   SessionNotFoundError,
   TaskAlreadyFinishedError,
   TaskNotFoundError,
   TaskService,
   toProtocolTask,
 } from '../../src/services';
+import { type ICoreRuntime } from '#/coreProcess';
 
 interface FakeState {
   sessions: SessionSummary[];

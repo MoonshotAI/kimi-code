@@ -1,11 +1,3 @@
-export { BridgeClientAPI } from './coreProcess/coreProcessClient';
-export type { CoreProcessClientDeps } from './coreProcess/coreProcessClient';
-export {
-  ICoreRuntime,
-  type CoreProcessServiceOptions,
-} from './coreProcess/coreProcess';
-export { CoreProcessService } from './coreProcess/coreProcessService';
-
 export { IEnvironmentService } from './environment/environment';
 
 export { ILogService } from './logger/logger';

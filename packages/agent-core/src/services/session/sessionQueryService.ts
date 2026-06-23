@@ -3,7 +3,7 @@ import type { PageResponse, Session } from '@moonshot-ai/protocol';
 import type { CoreRPC, SessionSummary } from '../../rpc';
 
 import { IApprovalService } from '#/approval';
-import { ICoreRuntime } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '#/coreProcess';
 import { IEventService } from '#/event';
 import { IPromptService } from '../prompt/prompt';
 import { IQuestionService } from '#/question';

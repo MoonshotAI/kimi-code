@@ -26,7 +26,7 @@
  *
  * `agent.rpc.emitEvent` crosses the in-process RPC to the daemon, where
  * `BridgeClientAPI.emitEvent`
- * (`services/coreProcess/coreProcessClient.ts`) calls
+ * (`coreProcess/coreProcessClient.ts`) calls
  * `IEventService.publish(event)`. So every domain event that flows through
  * `IDomainEventBus` lands on `IEventService` and therefore reaches
  * `WSBroadcastService`.

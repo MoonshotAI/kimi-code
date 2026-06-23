@@ -2,21 +2,21 @@
  * `CoreProcessService` — implementation of `ICoreRuntime`.
  */
 
-import { createRPC, KimiCore } from '../../rpc';
-import { Disposable, IInstantiationService, registerSingleton, SyncDescriptor } from '../../_base/di';
-import type { CoreAPI, CoreRPC, SDKAPI } from '../../rpc';
-import type { OAuthTokenProviderResolver } from '../../session/provider-manager';
+import { createRPC, KimiCore } from '../rpc';
+import { Disposable, IInstantiationService, registerSingleton, SyncDescriptor } from '#/_base/di';
+import type { CoreAPI, CoreRPC, SDKAPI } from '../rpc';
+import type { OAuthTokenProviderResolver } from '../session/provider-manager';
 import {
   createKimiDefaultHeaders,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import { createManagedAuthFacade } from '../auth/managedAuth';
+import { createManagedAuthFacade } from '../services/auth/managedAuth';
 import { BridgeClientAPI } from './coreProcessClient';
 import { IApprovalService } from '#/approval';
-import { IEnvironmentService } from '../environment/environment';
+import { IEnvironmentService } from '../services/environment/environment';
 import { IEventService } from '#/event';
-import { ILogService } from '../logger/logger';
+import { ILogService } from '../services/logger/logger';
 import { IQuestionService } from '#/question';
 import { ICoreRuntime, type CoreProcessServiceOptions } from './coreProcess';
 

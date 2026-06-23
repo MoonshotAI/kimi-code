@@ -19,11 +19,10 @@ import { IEventService } from '#/event';
 import { IQuestionService } from '#/question';
 
 import {
-  CoreProcessService,
   IEnvironmentService,
   ILogService,
 } from '../../src/services';
-import { ICoreRuntime } from '../../src/services/coreProcess/coreProcess';
+import { CoreProcessService, ICoreRuntime } from '#/coreProcess';
 
 class RecordingEventService implements IEventService {
   readonly _serviceBrand: undefined;

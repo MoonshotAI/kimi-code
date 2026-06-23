@@ -28,12 +28,12 @@ import type {
 } from '../../src';
 
 import {
-  type ICoreRuntime,
   MessageService,
   readWireRecords,
   readWireTranscript,
   reduceWireRecords,
 } from '../../src/services';
+import { type ICoreRuntime } from '#/coreProcess';
 
 const SESSION_ID = 'sess_01HZWIRE';
 const SESSION_CREATED_AT = 1_700_000_000_000;

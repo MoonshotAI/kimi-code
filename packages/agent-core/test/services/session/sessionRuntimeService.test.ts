@@ -11,10 +11,8 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IApprovalService } from '#/approval';
 import type { IEventService } from '#/event';
 import { IQuestionService } from '#/question';
-import {
-  type ICoreRuntime,
-  IPromptService,
-} from '../../../src/services';
+import { IPromptService } from '../../../src/services';
+import { type ICoreRuntime } from '#/coreProcess';
 import type { AgentStateSnapshot } from '../../../src/services/prompt/prompt';
 import { SessionRuntimeService } from '../../../src/services/session/sessionRuntimeService';
 import { SessionNotFoundError } from '../../../src/services/session/session';

@@ -8,7 +8,7 @@ import type { CoreRPC } from '../../rpc';
 import type { AuthSummary } from '@moonshot-ai/protocol';
 import { createManagedAuthFacade, type ServicesAuthFacade } from '../auth/managedAuth';
 import { IEnvironmentService } from '../environment/environment';
-import { ICoreRuntime } from '../coreProcess/coreProcess';
+import { ICoreRuntime } from '#/coreProcess';
 import {
   IAuthSummaryService,
   AuthProvisioningRequiredError,

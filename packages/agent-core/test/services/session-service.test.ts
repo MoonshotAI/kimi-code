@@ -22,7 +22,6 @@ import { emptySessionUsage, type Event, type Session } from '@moonshot-ai/protoc
 
 import {
   type IAuthSummaryService,
-  type ICoreRuntime,
   IPromptService,
   PromptService,
   SessionNotFoundError,
@@ -30,6 +29,7 @@ import {
   SessionService,
   toProtocolSession,
 } from '../../src/services';
+import { type ICoreRuntime } from '#/coreProcess';
 
 type WithSessionId<T> = T & { readonly sessionId: string };
 

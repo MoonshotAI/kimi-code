@@ -43,7 +43,6 @@ import type { IEventService } from '#/event';
 
 import {
   type IAuthSummaryService,
-  type ICoreRuntime,
   type ILogService,
   type ISessionService,
   PromptAlreadyCompletedError,
@@ -51,6 +50,7 @@ import {
   PromptService,
   SessionNotFoundError,
 } from '../../src/services';
+import { type ICoreRuntime } from '#/coreProcess';
 
 const SID = 'sess_01PT';
 const SESSION_CREATED_AT = 1_700_000_000_000;

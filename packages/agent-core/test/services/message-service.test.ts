@@ -27,7 +27,6 @@ import type {
 } from '../../src';
 
 import {
-  type ICoreRuntime,
   MessageNotFoundError,
   MessageService,
   SessionNotFoundError,
@@ -35,6 +34,7 @@ import {
   parseMessageId,
   toProtocolMessage,
 } from '../../src/services';
+import { type ICoreRuntime } from '#/coreProcess';
 
 const SESSION_ID = 'sess_01HZTEST';
 const SESSION_CREATED_AT = 1_700_000_000_000;
