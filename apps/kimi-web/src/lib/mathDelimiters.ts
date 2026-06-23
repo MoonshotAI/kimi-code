@@ -1,81 +1,110 @@
-import type { MarkdownToken } from 'markstream-vue';
-
-// An ASCII letter or digit glued to the OUTSIDE of a `$` delimiter means a
-// second prose token is attached (`$PATH:$HOME`, `$5/$10`, `$foo_$bar`), so
-// the span is literal text, not math. Everything else — whitespace, line
-// boundaries, and any non-ASCII-alphanumeric character — is a valid math
-// boundary. That deliberately includes punctuation (ASCII and full-width/CJK),
-// CJK ideographs, and curly/typographic quotes, so localized prose like
-// `公式为 $E=mc^2$，其中` and quoted formulas like `“$x$”` still render.
-const ASCII_ALNUM = /[A-Za-z0-9]/;
-
-function touchesProseToken(char: string | undefined): boolean {
-  return char !== undefined && ASCII_ALNUM.test(char);
-}
-
 /**
- * True when a single-`$` inline span is almost certainly plain prose dollars,
- * not a real LaTeX formula. Combines two widely-used industry rules:
- *
- *   - Pandoc (`tex_math_dollars`): no whitespace immediately inside the
- *     delimiters — catches `Check $PATH before $HOME`, `costs $5 and $10`.
- *   - GitHub-style outer boundary, generalized beyond ASCII: a `$` glued to an
- *     ASCII letter or digit means a second prose token, so the span is literal
- *     text. Catches compact prose like `costs $5/$10`, `Use $HOME/bin:$PATH`,
- *     and `$foo_$bar`, while still allowing CJK punctuation and quotes around
- *     real formulas.
- *
- * `prevChar` / `nextChar` are the characters immediately before the opening `$`
- * and after the closing `$`, taken from the neighbouring text tokens.
- */
-function isProseDollarSpan(
-  content: string,
-  prevChar: string | undefined,
-  nextChar: string | undefined,
-): boolean {
-  if (/^\s|\s$/.test(content)) return true;
-  if (touchesProseToken(prevChar)) return true;
-  if (touchesProseToken(nextChar)) return true;
-  return false;
-}
-
-/**
- * Guard ordinary prose dollars from being rendered as KaTeX inline math.
+ * Escape prose `$` characters so they are not mistaken for inline math.
  *
  * markstream renders `$…$` as inline math once KaTeX is enabled, but its
- * tokenizer is lax — it mechanically pairs any two `$` characters — so prose
- * like `Check $PATH before $HOME`, `costs $5/$10`, and
- * `Use $HOME/bin:$PATH` all get swallowed as one formula instead of readable
- * text.
+ * tokenizer greedily pairs any two `$` characters with no notion of "this is a
+ * price / env var / path, not a formula". Worse, that greedy pairing runs
+ * *before* any token-level hook, so a prose dollar in front of a real formula
+ * (`costs $5 and formula $x$`) steals the formula's opening `$`, and fixing it
+ * after the fact can only blank the span — the later formula is lost.
  *
- * A single-`$` span that looks like prose (see isProseDollarSpan) is turned
- * back into literal `$…$` text. Block `$$…$$` math and tight inline math are
- * left untouched.
+ * So we fix it at the source: a `$` is only a math delimiter when it has a
+ * valid partner under the two widely-used industry rules:
  *
- * This runs on the flat markdown-it token stream, so it also covers dollars
- * nested inside lists and blockquotes (their `inline` tokens sit at the top
- * level of the stream). Code spans are already excluded by the tokenizer.
+ *   - Pandoc (`tex_math_dollars`): the opening `$` must be followed by a
+ *     non-space, the closing `$` must be preceded by a non-space.
+ *   - GitHub-style outer boundary: each `$` must not be glued to an ASCII
+ *     letter or digit on its outer side (whitespace, line boundaries, and any
+ *     other character — including CJK punctuation/ideographs and curly quotes
+ *     — are valid boundaries).
+ *
+ * `$` characters that fail to form a valid pair are escaped as `\$`, which the
+ * tokenizer leaves as a literal dollar. Code spans, fenced code blocks, and
+ * `$$…$$` display math are left untouched.
  */
-export function guardLiteralDollarMath(tokens: MarkdownToken[]): MarkdownToken[] {
-  for (const token of tokens) {
-    if (token.type !== 'inline' || !token.children) continue;
-    const children = token.children;
-    for (let i = 0; i < children.length; i++) {
-      const child = children[i]!;
-      if (child.type !== 'math_inline' || child.markup !== '$') continue;
+const FENCED_CODE_RE = /(^[ \t]{0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^[ \t]{0,3}\2[ \t]*(?=\n|$))/gm;
+const INLINE_CODE_RE = /(`+)(?=[^`])[\s\S]*?\1/g;
+const BLOCK_MATH_RE = /\$\$[\s\S]*?\$\$/g;
+const PLACEHOLDER_RE = /\u0000(\d+)\u0000/g;
+const ASCII_ALNUM = /[A-Za-z0-9]/;
 
-      const prev = children[i - 1];
-      const next = children[i + 1];
-      const prevChar = prev?.type === 'text' ? prev.content?.slice(-1) : undefined;
-      const nextChar = next?.type === 'text' ? next.content?.charAt(0) : undefined;
+/** Replace protected regions (code / display math) with opaque placeholders. */
+function protect(src: string): { text: string; protected: string[] } {
+  const stash: string[] = [];
+  const save = (match: string) => {
+    stash.push(match);
+    return `\u0000${stash.length - 1}\u0000`;
+  };
+  let text = src.replace(FENCED_CODE_RE, save);
+  text = text.replace(INLINE_CODE_RE, save);
+  text = text.replace(BLOCK_MATH_RE, save);
+  return { text, protected: stash };
+}
 
-      if (isProseDollarSpan(child.content ?? '', prevChar, nextChar)) {
-        child.type = 'text';
-        child.markup = '';
-        child.content = `$${child.content ?? ''}$`;
-        child.children = null;
-      }
+function restore(text: string, stash: string[]): string {
+  return text.replace(PLACEHOLDER_RE, (_, n) => stash[Number(n)] ?? '');
+}
+
+/** A `$` at `i` can open inline math: tight on the right, bounded on the left. */
+function isValidOpen(text: string, i: number): boolean {
+  const after = text[i + 1];
+  if (after === undefined || /\s/.test(after) || after === '$') return false;
+  const before = text[i - 1];
+  if (before !== undefined && ASCII_ALNUM.test(before)) return false;
+  return true;
+}
+
+/**
+ * The index of the `$` that closes an opener at `openIdx`, or -1 if the nearest
+ * candidate is not a valid closer (so the opener is prose). We only consider
+ * the nearest `$`: any other `$` in between would be prose that itself failed
+ * to pair, and skipping it would over-span real text.
+ */
+function findValidClose(text: string, openIdx: number): number {
+  const closeIdx = text.indexOf('$', openIdx + 1);
+  if (closeIdx === -1) return -1;
+  const before = text[closeIdx - 1];
+  if (before === undefined || /\s/.test(before)) return -1;
+  const after = text[closeIdx + 1];
+  if (after !== undefined && ASCII_ALNUM.test(after)) return -1;
+  return closeIdx;
+}
+
+/** Pair valid `$…$` spans and escape every other `$` as `\$`. */
+function pairAndEscape(text: string): string {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '\\' && text[i + 1] === '$') {
+      out += '\\$';
+      i += 2;
+      continue;
     }
+    if (ch !== '$') {
+      out += ch;
+      i++;
+      continue;
+    }
+    if (!isValidOpen(text, i)) {
+      out += '\\$';
+      i++;
+      continue;
+    }
+    const closeIdx = findValidClose(text, i);
+    if (closeIdx === -1) {
+      out += '\\$';
+      i++;
+      continue;
+    }
+    out += text.slice(i, closeIdx + 1);
+    i = closeIdx + 1;
   }
-  return tokens;
+  return out;
+}
+
+export function escapeProseDollars(src: string): string {
+  if (!src.includes('$')) return src;
+  const { text, protected: stash } = protect(src);
+  return restore(pairAndEscape(text), stash);
 }

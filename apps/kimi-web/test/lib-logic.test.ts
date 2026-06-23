@@ -1,11 +1,10 @@
-import { getMarkdown, parseMarkdownToStructure } from 'markstream-vue';
 import { describe, expect, it } from 'vitest';
 import {
   collectFilePathAliases,
   findFilePathLinks,
   parseFilePathLinkCandidate,
 } from '../src/lib/filePathLinks';
-import { guardLiteralDollarMath } from '../src/lib/mathDelimiters';
+import { escapeProseDollars } from '../src/lib/mathDelimiters';
 import { parseDiff } from '../src/lib/parseDiff';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 
@@ -79,125 +78,77 @@ describe('toolMeta', () => {
   });
 });
 
-// Flatten a parsed node tree into leaf-ish `{type, content}` entries so the
-// assertions below don't care about paragraph/blockquote/list nesting.
-type FlatNode = { type: string; content?: string };
-function flatten(nodes: unknown[]): FlatNode[] {
-  const out: FlatNode[] = [];
-  for (const raw of nodes) {
-    const n = raw as { type: string; content?: string; children?: unknown[] };
-    if (n.children?.length) out.push(...flatten(n.children));
-    else out.push({ type: n.type, content: n.content });
-  }
-  return out;
-}
-
-describe('guardLiteralDollarMath', () => {
-  const md = getMarkdown('guardLiteralDollarMath');
-  const render = (text: string) =>
-    flatten(parseMarkdownToStructure(text, md, { postTransformTokens: guardLiteralDollarMath }));
-  const types = (text: string) => render(text).map((n) => n.type);
-
-  it('keeps literal-dollar prose as text, not inline math', () => {
-    for (const text of ['Check $PATH before $HOME', 'costs $5 and $10']) {
-      expect(types(text)).not.toContain('math_inline');
-      expect(render(text)).toEqual([{ type: 'text', content: text }]);
-    }
+describe('escapeProseDollars', () => {
+  it('escapes literal-dollar prose so it is not parsed as math', () => {
+    expect(escapeProseDollars('Check $PATH before $HOME')).toBe(
+      'Check \\$PATH before \\$HOME',
+    );
+    expect(escapeProseDollars('costs $5 and $10')).toBe('costs \\$5 and \\$10');
+    expect(escapeProseDollars('it costs $5')).toBe('it costs \\$5');
   });
 
-  it('still renders tight inline math and block math', () => {
-    expect(render('Einstein $E=mc^2$ famous')).toEqual([
-      { type: 'text', content: 'Einstein ' },
-      { type: 'math_inline', content: 'E=mc^2' },
-      { type: 'text', content: ' famous' },
-    ]);
-    expect(render('inline $\\frac{1}{2}$ math').map((n) => n.type)).toContain('math_inline');
-    expect(render('$$a^2 + b^2 = c^2$$')).toEqual([
-      { type: 'math_block', content: 'a^2 + b^2 = c^2' },
-    ]);
+  it('escapes compact prose currency ranges', () => {
+    expect(escapeProseDollars('costs $5/$10 here')).toBe('costs \\$5/\\$10 here');
+    expect(escapeProseDollars('costs $5-$10 here')).toBe('costs \\$5-\\$10 here');
+    expect(escapeProseDollars('ranges from $1,000/$2,000 today')).toBe(
+      'ranges from \\$1,000/\\$2,000 today',
+    );
   });
 
-  it('guards prose dollars nested inside lists and blockquotes', () => {
-    expect(types('- $5 and $10')).not.toContain('math_inline');
-    expect(types('> $PATH before $HOME')).not.toContain('math_inline');
+  it('escapes shell variables and path-like values', () => {
+    expect(escapeProseDollars('Use $HOME/bin:$PATH now')).toBe(
+      'Use \\$HOME/bin:\\$PATH now',
+    );
+    expect(escapeProseDollars('echo $PATH:$HOME here')).toBe(
+      'echo \\$PATH:\\$HOME here',
+    );
+    expect(escapeProseDollars('var $foo_$bar x')).toBe('var \\$foo_\\$bar x');
   });
 
-  it('leaves code spans and a single unmatched dollar untouched', () => {
-    expect(types('code `$5 and $10` here')).not.toContain('math_inline');
-    expect(render('it costs $5')).toEqual([{ type: 'text', content: 'it costs $5' }]);
+  it('preserves a real formula that follows a prose dollar', () => {
+    // The prose `$` must not steal the formula's opening `$`.
+    expect(escapeProseDollars('costs $5 and formula $x$')).toBe(
+      'costs \\$5 and formula $x$',
+    );
+    expect(escapeProseDollars('Use $HOME before $E=mc^2$')).toBe(
+      'Use \\$HOME before $E=mc^2$',
+    );
+    expect(escapeProseDollars('price $5 then $x^2$ done')).toBe(
+      'price \\$5 then $x^2$ done',
+    );
+    expect(escapeProseDollars('$5 and $10 and $x$')).toBe('\\$5 and \\$10 and $x$');
   });
 
-  it('keeps multiple real inline math spans on one line', () => {
-    expect(render('$A$ and $B$').map((n) => n.type)).toEqual([
-      'math_inline',
-      'text',
-      'math_inline',
-    ]);
+  it('leaves real inline and block math untouched', () => {
+    expect(escapeProseDollars('$E=mc^2$')).toBe('$E=mc^2$');
+    expect(escapeProseDollars('Einstein $E=mc^2$ famous')).toBe(
+      'Einstein $E=mc^2$ famous',
+    );
+    expect(escapeProseDollars('inline $\\frac{1}{2}$ math')).toBe(
+      'inline $\\frac{1}{2}$ math',
+    );
+    expect(escapeProseDollars('$A$ and $B$')).toBe('$A$ and $B$');
+    expect(escapeProseDollars('rate $5/2$ per unit')).toBe('rate $5/2$ per unit');
+    expect(escapeProseDollars('$$a^2 + b^2 = c^2$$')).toBe('$$a^2 + b^2 = c^2$$');
   });
 
-  it('keeps compact prose currency ranges as text, not inline math', () => {
-    for (const text of [
-      'costs $5/$10 here',
-      'costs $5-$10 here',
-      'costs $5~$10 here',
-      'ranges from $1,000/$2,000 today',
-    ]) {
-      expect(types(text)).not.toContain('math_inline');
-      expect(render(text)).toEqual([{ type: 'text', content: text }]);
-    }
+  it('leaves math next to punctuation, brackets, and CJK untouched', () => {
+    expect(escapeProseDollars('equals $x^2$. today')).toBe('equals $x^2$. today');
+    expect(escapeProseDollars('see ($x^2$) here')).toBe('see ($x^2$) here');
+    expect(escapeProseDollars('公式为 $E=mc^2$，其中')).toBe('公式为 $E=mc^2$，其中');
+    expect(escapeProseDollars('中文 $x^2$。')).toBe('中文 $x^2$。');
+    expect(escapeProseDollars('“$x$”')).toBe('“$x$”');
+    expect(escapeProseDollars('公式$E=mc^2$表明')).toBe('公式$E=mc^2$表明');
   });
 
-  it('still renders numeric math that is not a range', () => {
-    // Division / subtraction have content after the operator, so they are real
-    // formulas, not a dangling range connector.
-    expect(render('rate $5/2$ per unit')).toEqual([
-      { type: 'text', content: 'rate ' },
-      { type: 'math_inline', content: '5/2' },
-      { type: 'text', content: ' per unit' },
-    ]);
-    expect(render('math $5-2$ done').map((n) => n.type)).toContain('math_inline');
-    for (const text of ['amount $0.5$ exactly', 'neg $-5$ value']) {
-      expect(types(text)).toContain('math_inline');
-    }
+  it('does not touch dollars inside code spans or fenced code', () => {
+    expect(escapeProseDollars('code `$5 and $10` here')).toBe('code `$5 and $10` here');
+    expect(escapeProseDollars('use `$HOME` var')).toBe('use `$HOME` var');
+    const fenced = '```\n$5 and $10\n```';
+    expect(escapeProseDollars(fenced)).toBe(fenced);
   });
 
-  it('keeps shell variables and path-like values as text', () => {
-    for (const text of [
-      'Use $HOME/bin:$PATH now',
-      'echo $PATH:$HOME here',
-      'var $foo_$bar x',
-      'obj $a.$b y',
-    ]) {
-      expect(types(text)).not.toContain('math_inline');
-      expect(render(text)).toEqual([{ type: 'text', content: text }]);
-    }
-  });
-
-  it('still renders math next to sentence punctuation or brackets', () => {
-    // Trailing period / comma and wrapping parentheses are valid boundaries.
-    expect(render('equals $x^2$. today')).toEqual([
-      { type: 'text', content: 'equals ' },
-      { type: 'math_inline', content: 'x^2' },
-      { type: 'text', content: '. today' },
-    ]);
-    expect(render('see ($x^2$) here').map((n) => n.type)).toContain('math_inline');
-  });
-
-  it('renders math in CJK prose and inside typographic quotes', () => {
-    // Full-width comma / period and CJK ideographs are valid boundaries.
-    expect(render('公式为 $E=mc^2$，其中')).toEqual([
-      { type: 'text', content: '公式为 ' },
-      { type: 'math_inline', content: 'E=mc^2' },
-      { type: 'text', content: '，其中' },
-    ]);
-    expect(render('中文 $x^2$。').map((n) => n.type)).toContain('math_inline');
-    // Curly quotes wrapping a formula.
-    expect(render('“$x$”')).toEqual([
-      { type: 'text', content: '“' },
-      { type: 'math_inline', content: 'x' },
-      { type: 'text', content: '”' },
-    ]);
-    // Math jammed against CJK ideographs with no spaces still renders.
-    expect(render('公式$E=mc^2$表明').map((n) => n.type)).toContain('math_inline');
+  it('does not double-escape already-escaped dollars', () => {
+    expect(escapeProseDollars('literal \\$5 here')).toBe('literal \\$5 here');
   });
 });
