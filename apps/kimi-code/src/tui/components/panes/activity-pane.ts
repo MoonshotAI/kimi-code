@@ -23,7 +23,7 @@ export class ActivityPaneComponent extends Container {
     ) {
       this.addChild(new Spacer(1));
       if (options.tip) {
-        options.spinner.setTip(` · Tips: ${options.tip}`);
+        options.spinner.setTip(` · Tip: ${options.tip}`);
       }
       this.addChild(options.spinner);
     }

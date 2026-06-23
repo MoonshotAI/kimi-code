@@ -57,7 +57,7 @@ describe('ActivityPaneComponent', () => {
 
       expect(component.render(80).map((line) => line.trimEnd())).toEqual([
         '',
-        'working · Tips: ctrl+s: steer mid-turn',
+        'working · Tip: ctrl+s: steer mid-turn',
       ]);
     },
   );
