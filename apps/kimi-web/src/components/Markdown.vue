@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { MarkdownRender } from 'markstream-vue';
+import { MarkdownRender, enableKatex } from 'markstream-vue';
 import { useIsDark } from '../composables/useIsDark';
 import type { FilePreviewRequest } from '../types';
 import { collectFilePathAliases, findFilePathLinks } from '../lib/filePathLinks';
@@ -12,6 +12,13 @@ import { markdownRenderPlan } from '../lib/markdownPerformance';
 // Terminal Pro. Importing the same file from multiple components is a no-op
 // after the first (Vite dedups the CSS import).
 import 'markstream-vue/index.px.css';
+// KaTeX math: markstream renders `$…$` / `$$…$$` only after the optional katex
+// peer is enabled, and its stylesheet (+ bundled fonts) is what gives formulas
+// their layout. enableKatex() registers the default `import('katex')` loader; it
+// runs once on first import of this module and is safe at module scope. Without
+// the CSS the math renders unstyled, so both must travel together.
+import 'katex/dist/katex.min.css';
+enableKatex();
 
 const { t } = useI18n();
 
@@ -576,6 +583,19 @@ function copyDiff(code: string, idx: number) {
 }
 .md :deep(a:hover) {
   text-decoration: underline;
+}
+
+/* KaTeX math. Colour already inherits (--text) since KaTeX draws with
+   currentColor, so the only skinning needed is layout: let a wide display
+   formula scroll inside its own box instead of overflowing the chat column and
+   breaking the mobile layout. Inline math stays in the text flow. */
+.md :deep(.katex-display) {
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* room for the horizontal scrollbar so it doesn't clip the bottom of the
+     formula (e.g. integral/sum subscripts) */
+  padding: 2px 0 6px;
+  margin: 0.6em 0;
 }
 
 /* Blockquote */
