@@ -846,6 +846,70 @@ describe('GET /api/v1/sessions?archived_only — archived-only list', () => {
     expect(archivedOnly.data!.items.every((s) => s.archived === true)).toBe(true);
   });
 
+  it('paginates archived_only without returning empty filtered pages', async () => {
+    const r = await bootDaemon();
+    const cwd = join(tmpDir, 'workspace-archived-only-pagination');
+
+    const archivedOlder = envelopeOf<{ id: string }>(
+      (await appOf(r).inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { metadata: { cwd } },
+      })).json(),
+    ).data!;
+    await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${archivedOlder.id}:archive`,
+      payload: {},
+    });
+
+    const archivedNewer = envelopeOf<{ id: string }>(
+      (await appOf(r).inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { metadata: { cwd } },
+      })).json(),
+    ).data!;
+    await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${archivedNewer.id}:archive`,
+      payload: {},
+    });
+
+    await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/sessions',
+      payload: { metadata: { cwd } },
+    });
+    await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/sessions',
+      payload: { metadata: { cwd } },
+    });
+
+    const first = envelopeOf<{ items: Array<{ id: string; archived?: boolean }>; has_more: boolean }>(
+      (await appOf(r).inject({
+        method: 'GET',
+        url: '/api/v1/sessions?archived_only=true&page_size=1',
+      })).json(),
+    );
+    expect(first.code).toBe(0);
+    expect(first.data!.items).toHaveLength(1);
+    expect(first.data!.items[0]).toMatchObject({ id: archivedNewer.id, archived: true });
+    expect(first.data!.has_more).toBe(true);
+
+    const second = envelopeOf<{ items: Array<{ id: string; archived?: boolean }>; has_more: boolean }>(
+      (await appOf(r).inject({
+        method: 'GET',
+        url: `/api/v1/sessions?archived_only=true&page_size=1&before_id=${archivedNewer.id}`,
+      })).json(),
+    );
+    expect(second.code).toBe(0);
+    expect(second.data!.items).toHaveLength(1);
+    expect(second.data!.items[0]).toMatchObject({ id: archivedOlder.id, archived: true });
+    expect(second.data!.has_more).toBe(false);
+  });
+
   it('rejects archived_only together with include_archive', async () => {
     const r = await bootDaemon();
     const res = await appOf(r).inject({

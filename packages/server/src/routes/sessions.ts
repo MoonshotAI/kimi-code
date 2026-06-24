@@ -165,6 +165,56 @@ function headerString(headers: Record<string, unknown>, key: string): string | u
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
+const DEFAULT_SESSION_LIST_PAGE_SIZE = 20;
+const MAX_SESSION_LIST_PAGE_SIZE = 100;
+
+type SessionListRequest = Parameters<ISessionService['list']>[0];
+type SessionListPage = Awaited<ReturnType<ISessionService['list']>>;
+type SessionListItem = SessionListPage['items'][number];
+type SessionListBaseQuery = Omit<SessionListRequest, 'before_id' | 'after_id' | 'page_size' | 'status'>;
+type SessionListCursor = Pick<SessionListRequest, 'before_id' | 'after_id' | 'page_size'>;
+
+function normalizeSessionListPageSize(cursor: SessionListCursor): number {
+  const requested = cursor.page_size ?? DEFAULT_SESSION_LIST_PAGE_SIZE;
+  return Math.min(Math.max(requested, 1), MAX_SESSION_LIST_PAGE_SIZE);
+}
+
+async function listSessionsWithRouteFilter(
+  fetchPage: (query: SessionListRequest) => Promise<SessionListPage>,
+  baseQuery: SessionListBaseQuery,
+  cursor: SessionListCursor,
+  predicate: (session: SessionListItem) => boolean,
+): Promise<SessionListPage> {
+  const targetSize = normalizeSessionListPageSize(cursor);
+  const matches: SessionListItem[] = [];
+  let beforeId = cursor.before_id;
+  let afterId = cursor.after_id;
+  let coreHasMore = true;
+
+  while (matches.length <= targetSize && coreHasMore) {
+    const page = await fetchPage({
+      ...baseQuery,
+      before_id: beforeId,
+      after_id: afterId,
+      page_size: MAX_SESSION_LIST_PAGE_SIZE,
+    });
+    if (page.items.length === 0) break;
+
+    matches.push(...page.items.filter(predicate));
+    coreHasMore = page.has_more;
+
+    const nextBeforeId = page.items[page.items.length - 1]?.id;
+    if (!coreHasMore || nextBeforeId === undefined || nextBeforeId === beforeId) break;
+    beforeId = nextBeforeId;
+    afterId = undefined;
+  }
+
+  return {
+    items: matches.slice(0, targetSize),
+    has_more: matches.length > targetSize,
+  };
+}
+
 export function registerSessionsRoutes(
   app: SessionRouteHost,
   ix: IInstantiationService,
@@ -276,16 +326,10 @@ export function registerSessionsRoutes(
       try {
         const raw = req.query;
         const archivedOnly = raw.archived_only === true;
-        const baseQuery = {
-          before_id: raw.before_id,
-          after_id: raw.after_id,
-          page_size: raw.page_size,
-          status: raw.status,
-          // archived_only needs the mixed set so we can post-filter to
-          // archived-only below (temporary server-side filter; see comment).
+        const status = raw.status;
+        let baseQuery: SessionListBaseQuery = {
           includeArchive: archivedOnly ? true : raw.include_archive,
         };
-        let query;
         if (raw.workspace_id !== undefined) {
           const registry = ix.invokeFunction((a) => a.get(IWorkspaceRegistry));
           let root: string;
@@ -300,28 +344,30 @@ export function registerSessionsRoutes(
             }
             throw err;
           }
-          query = { ...baseQuery, workDir: root };
-        } else {
-          query = baseQuery;
+          baseQuery = { ...baseQuery, workDir: root };
         }
-        const page = await ix.invokeFunction((a) => a.get(ISessionService).list(query));
+
         if (archivedOnly) {
-          // Temporary server-side archived-only filter. The post-filter happens
-          // after pagination, so `has_more` still reflects the mixed set: a page
-          // may come back short (or empty) while `has_more` is true, and clients
-          // must keep paging. No data is lost. Remove once agent-core supports
-          // archived-only natively.
-          reply.send(
-            okEnvelope(
-              {
-                items: page.items.filter((session) => session.archived === true),
-                has_more: page.has_more,
-              },
-              req.id,
-            ),
+          const page = await listSessionsWithRouteFilter(
+            (query) => ix.invokeFunction((a) => a.get(ISessionService).list(query)),
+            baseQuery,
+            raw,
+            (session) =>
+              session.archived === true && (status === undefined || session.status === status),
           );
+          reply.send(okEnvelope(page, req.id));
           return;
         }
+
+        const page = await ix.invokeFunction((a) =>
+          a.get(ISessionService).list({
+            ...baseQuery,
+            before_id: raw.before_id,
+            after_id: raw.after_id,
+            page_size: raw.page_size,
+            status,
+          }),
+        );
         reply.send(okEnvelope(page, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
