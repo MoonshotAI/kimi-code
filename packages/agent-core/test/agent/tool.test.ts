@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -456,6 +456,31 @@ describe('Agent tools', () => {
 
     expect(budgeted).toBe(result);
     expect(budgeted.output).toBe(largeOutput);
+  });
+
+  it('does not save already-truncated tool result previews as full output', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'tool-result-overflow-'));
+    try {
+      const largeOutput = `${'x'.repeat(60_000)}[...truncated]`;
+      const result = {
+        output: largeOutput,
+        truncated: true,
+      };
+
+      const budgeted = await budgetToolResultForModel({
+        homedir: sessionDir,
+        toolName: 'Lookup',
+        toolCallId: 'call_lookup',
+        result,
+      });
+
+      expect(budgeted).toBe(result);
+      expect(budgeted.output).toBe(largeOutput);
+      expect(budgeted.output).not.toContain('output_path:');
+      expect(existsSync(join(sessionDir, 'tool-results'))).toBe(false);
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
   });
 });
 
