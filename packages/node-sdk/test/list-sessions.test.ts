@@ -11,6 +11,7 @@ import type { KimiError } from '#/index';
 import {
   SessionStore,
   encodeWorkDirKey,
+  normalizeWorkDir,
   sessionIndexPath,
 } from '../../agent-core/src/session/store';
 import { TEST_IDENTITY } from './test-identity';
@@ -56,7 +57,7 @@ describe('SessionStore.list', () => {
 
     expect(summary).toMatchObject({
       id: 'ses_list_full',
-      workDir,
+      workDir: normalizeWorkDir(workDir),
       title: undefined,
     });
     expect(summary.sessionDir).not.toBe(join(homeDir, 'sessions', 'ses_list_full'));
@@ -219,7 +220,7 @@ describe('SessionStore.list', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({
       id: other.id,
-      workDir: otherWorkDir,
+      workDir: normalizeWorkDir(otherWorkDir),
     });
   });
 
