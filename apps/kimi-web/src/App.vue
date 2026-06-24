@@ -33,6 +33,7 @@ import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
+import { parseSkillCommand } from './lib/slashCommands';
 import type { AppConfig, ThinkingLevel } from './api/types';
 
 const client = useKimiWebClient();
@@ -425,13 +426,11 @@ function handleCommand(cmd: string): void {
       break;
     default: {
       // Not a built-in command → treat it as a session skill activation
-      // (the user picked `/<skill>` from the menu, or typed `/<skill> args`).
-      // The daemon answers an unknown name with skill.not_found, surfaced as a
-      // warning, so a stray slash is harmless.
-      const space = cmd.indexOf(' ');
-      const name = (space === -1 ? cmd : cmd.slice(0, space)).slice(1);
-      const args = space === -1 ? undefined : cmd.slice(space + 1).trim() || undefined;
-      if (name) void client.activateSkill(name, args);
+      // (the user picked `/<skill>` or `/skill:<skill>` from the menu, or typed
+      // it with args). The daemon answers an unknown name with skill.not_found,
+      // surfaced as a warning, so a stray slash is harmless.
+      const parsed = parseSkillCommand(cmd);
+      if (parsed) void client.activateSkill(parsed.name, parsed.args);
       break;
     }
   }
