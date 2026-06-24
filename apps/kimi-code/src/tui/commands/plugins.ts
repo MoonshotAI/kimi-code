@@ -372,7 +372,8 @@ async function handlePluginMcpSelection(
 
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   await host.requireSession().removePlugin(id);
-  host.showStatus(`Removed ${id}. Run /reload or /new to apply plugin changes.`);
+  host.showStatus(`Removed ${id}.`);
+  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
 
 async function renderPluginsList(
@@ -416,6 +417,8 @@ async function installPluginFromSource(
   showPluginInstallResult(host, beforeList, summary, options);
 }
 
+const PLUGIN_RELOAD_HINT = 'Run /new or /reload to apply plugin changes.';
+
 function showPluginInstallResult(
   host: SlashCommandHost,
   beforeList: readonly PluginSummary[],
@@ -431,13 +434,12 @@ function showPluginInstallResult(
       ? ` Declares ${summary.mcpServerCount} MCP ${serverWord}; enabled by default and configurable from /plugins.`
       : '';
   const action = describeInstallAction(previous, summary);
-  host.showStatus(
-    `${action} (${summary.id}).${mcpHint} Run /new or /reload to apply plugin changes.`,
-  );
+  host.showStatus(`${action} (${summary.id}).${mcpHint}`);
+  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
   if (options?.successNotice === 'marketplace') {
     host.showNotice(
       `Installed or updated ${summary.displayName}`,
-      `Marketplace install or update succeeded for ${summary.id}. Run /new or /reload to apply plugin changes.`,
+      `Marketplace install or update succeeded for ${summary.id}.`,
     );
   }
 }
