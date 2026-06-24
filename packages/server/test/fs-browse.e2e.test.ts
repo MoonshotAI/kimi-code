@@ -170,7 +170,7 @@ describe('GET /api/v1/fs:browse', () => {
     expect(envelopeOf(res.json()).code).toBe(40409);
   });
 
-  it('returns 40411 when path is unreadable (chmod 000)', async () => {
+  it.skipIf(process.platform === 'win32')('returns 40411 when path is unreadable (chmod 000)', async () => {
     if (process.getuid?.() === 0) {
       // Root bypasses permission checks; skip.
       return;
