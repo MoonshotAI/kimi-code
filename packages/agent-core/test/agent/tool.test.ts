@@ -1,3 +1,7 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -371,6 +375,43 @@ describe('Agent tools', () => {
         user: text "Can you still use Lookup?"
     `);
     await ctx.expectResumeMatches();
+  });
+
+  it('persists oversized registered tool results before adding them to model context', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'tool-result-overflow-'));
+    try {
+      const lookupCall: ToolCall = {
+        type: 'function',
+        id: 'call_lookup',
+        name: 'Lookup',
+        arguments: '{"query":"moon"}',
+      };
+      const largeOutput = `${'x'.repeat(60_000)}tail survives`;
+      const ctx = testAgent({ homedir: sessionDir });
+      ctx.configure();
+      await ctx.rpc.setPermission({ mode: 'auto' });
+      await ctx.rpc.registerTool({
+        name: 'Lookup',
+        description: 'Look up a short test value.',
+        parameters: { type: 'object', properties: {} },
+      });
+
+      ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
+      await ctx.untilToolCall({ output: largeOutput });
+
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+      await ctx.untilTurnEnd();
+
+      const toolText = ctx.compactHistory().find((message) => message.role === 'tool')?.text ?? '';
+      const outputPath = /^output_path: (.+)$/m.exec(toolText)?.[1];
+      expect(toolText).toContain('Tool output exceeded 50000 characters');
+      expect(toolText).not.toContain('tail survives');
+      expect(outputPath).toBeTruthy();
+      expect(readFileSync(outputPath!, 'utf8')).toBe(largeOutput);
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
   });
 });
 
