@@ -166,6 +166,10 @@ export interface CompactOptions {
   readonly instruction?: string | undefined;
 }
 
+export interface ReloadSessionOptions {
+  readonly forcePluginSessionStartReminder?: boolean;
+}
+
 export interface PlanInfo {
   readonly id: string;
   readonly content: string;

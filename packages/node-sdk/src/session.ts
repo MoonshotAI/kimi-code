@@ -22,6 +22,7 @@ import type {
   PluginInfo,
   PluginSummary,
   PromptInput,
+  ReloadSessionOptions,
   ReloadSummary,
   ResumedSessionState,
   ResumedSessionSummary,
@@ -68,9 +69,12 @@ export class Session {
     return this.resumeState;
   }
 
-  async reloadSession(): Promise<ResumedSessionSummary> {
+  async reloadSession(options?: ReloadSessionOptions): Promise<ResumedSessionSummary> {
     this.ensureOpen();
-    const summary = await this.rpc.reloadSession({ sessionId: this.id });
+    const summary = await this.rpc.reloadSession({
+      sessionId: this.id,
+      forcePluginSessionStartReminder: options?.forcePluginSessionStartReminder,
+    });
     this.summary = summary;
     this.resumeState = resumeStateFromSummary(summary);
     return summary;

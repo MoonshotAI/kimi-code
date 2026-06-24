@@ -10,6 +10,7 @@ import type { KimiConfig, SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentOptions, type AgentType } from '../agent';
+import { renderPluginSessionStartReminder } from '../agent/injection/plugin-session-start';
 import { HookEngine, type HookDef } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import {
@@ -542,6 +543,29 @@ export class Session {
         { cause: error },
       );
     }
+  }
+
+  /**
+   * Appends a fresh `<plugin_session_start>` system reminder to the main agent
+   * using the currently enabled plugins, then flushes records so the reminder is
+   * persisted and visible on the wire. Used by the explicit `/reload` flow after
+   * the session has been re-resumed with reloaded plugin state. No-ops when there
+   * are no resolvable plugin session starts.
+   */
+  async appendPluginSessionStartReminder(): Promise<void> {
+    await this.skillsReady;
+    const mainAgent = this.requireMainAgent();
+    const reminder = renderPluginSessionStartReminder({
+      sessionStarts: mainAgent.pluginSessionStarts,
+      registry: mainAgent.skills?.registry,
+      log: mainAgent.log,
+    });
+    if (reminder === undefined) return;
+    mainAgent.context.appendSystemReminder(
+      `${reminder}\n\nThis supersedes any earlier plugin_session_start reminder in this session.`,
+      { kind: 'injection', variant: 'plugin_session_start' },
+    );
+    await mainAgent.records.flush();
   }
 
   get hasActiveTurn(): boolean {

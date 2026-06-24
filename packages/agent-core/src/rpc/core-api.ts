@@ -76,6 +76,13 @@ export interface ResumeSessionPayload {
 
 export interface ReloadSessionPayload {
   readonly sessionId: string;
+  /**
+   * When true, append a fresh `<plugin_session_start>` system reminder to the
+   * main agent after the session is reloaded, reflecting the currently enabled
+   * plugins. Used by the explicit `/reload` command so the model sees plugin
+   * changes without starting a new session. Defaults to false.
+   */
+  readonly forcePluginSessionStartReminder?: boolean;
 }
 
 export interface ForkSessionPayload {

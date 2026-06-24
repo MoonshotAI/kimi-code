@@ -452,7 +452,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       await active.closeForReload();
       this.sessions.delete(summary.id);
     }
-    return this.resumeSession({ sessionId: summary.id });
+    const result = await this.resumeSession({ sessionId: summary.id });
+    if (input.forcePluginSessionStartReminder === true) {
+      await this.sessions.get(summary.id)?.appendPluginSessionStartReminder();
+    }
+    return result;
   }
 
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {

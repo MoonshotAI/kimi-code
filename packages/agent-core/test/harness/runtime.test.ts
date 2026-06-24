@@ -921,7 +921,165 @@ base_url = "https://search.example.test/v1"
     });
     expect(core.sessions.get(created.id)).toBe(active);
   });
+
+  it('appends a fresh plugin_session_start reminder on forced reload', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const pluginRoot = join(tmp, 'plugin');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    await writeSessionStartPlugin(pluginRoot, 'OLD BODY');
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    await core.installPlugin({ source: pluginRoot });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_reload_reminder',
+      workDir,
+      model: 'default-mock',
+    });
+
+    // Before any forced reload the model has not been told about the plugin yet
+    // (no turn has run, so the turn-loop injector has not fired).
+    expect(pluginSessionStartReminders(core, created.id)).toHaveLength(0);
+
+    // Update the skill content on disk so the reload must pick up the new body.
+    // Preserve the SKILL.md frontmatter — the parser requires it to register the skill.
+    await writeFile(
+      managedSkillPath(homeDir),
+      `---\nname: greeter\ndescription: A greeter skill\n---\nNEW BODY\n`,
+    );
+
+    await rpc.reloadSession({
+      sessionId: created.id,
+      forcePluginSessionStartReminder: true,
+    });
+
+    const reminders = pluginSessionStartReminders(core, created.id);
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0]).toContain('<plugin_session_start plugin="demo" skill="greeter">');
+    expect(reminders[0]).toContain('NEW BODY');
+    expect(reminders[0]).not.toContain('OLD BODY');
+    expect(reminders[0]).toContain('supersedes any earlier plugin_session_start');
+  });
+
+  it('does not append a plugin_session_start reminder on reload without the force flag', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const pluginRoot = join(tmp, 'plugin');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    await writeSessionStartPlugin(pluginRoot, 'BODY');
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    await core.installPlugin({ source: pluginRoot });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_reload_no_force',
+      workDir,
+      model: 'default-mock',
+    });
+
+    await rpc.reloadSession({ sessionId: created.id });
+
+    expect(pluginSessionStartReminders(core, created.id)).toHaveLength(0);
+  });
+
+  it('appends nothing on forced reload when no plugin declares a sessionStart', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const pluginRoot = join(tmp, 'plugin');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    await mkdir(pluginRoot, { recursive: true });
+    await writeFile(
+      join(pluginRoot, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', version: '1.0.0' }),
+    );
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    await core.installPlugin({ source: pluginRoot });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_reload_no_sessionstart',
+      workDir,
+      model: 'default-mock',
+    });
+
+    await rpc.reloadSession({
+      sessionId: created.id,
+      forcePluginSessionStartReminder: true,
+    });
+
+    expect(pluginSessionStartReminders(core, created.id)).toHaveLength(0);
+  });
 });
+
+async function writeSessionStartPlugin(root: string, skillBody: string): Promise<void> {
+  await mkdir(join(root, 'skills', 'greeter'), { recursive: true });
+  await writeFile(
+    join(root, 'kimi.plugin.json'),
+    JSON.stringify({
+      name: 'demo',
+      version: '1.0.0',
+      skills: ['./skills'],
+      sessionStart: { skill: 'greeter' },
+    }),
+  );
+  await writeFile(
+    join(root, 'skills', 'greeter', 'SKILL.md'),
+    `---\nname: greeter\ndescription: A greeter skill\n---\n${skillBody}\n`,
+  );
+}
+
+function managedSkillPath(homeDir: string): string {
+  return join(homeDir, 'plugins', 'managed', 'demo', 'skills', 'greeter', 'SKILL.md');
+}
+
+function pluginSessionStartReminders(core: KimiCore, sessionId: string): string[] {
+  const agent = core.sessions.get(sessionId)?.getReadyAgent('main');
+  if (agent === undefined) return [];
+  const history = agent.context.history as ReadonlyArray<{
+    role: string;
+    origin?: { kind: string; variant?: string };
+    content: ReadonlyArray<{ type: string; text?: string }>;
+  }>;
+  return history
+    .filter(
+      (message) =>
+        message.role === 'user' &&
+        message.origin?.kind === 'injection' &&
+        message.origin.variant === 'plugin_session_start',
+    )
+    .map((message) => message.content.map((part) => part.text ?? '').join(''));
+}
 
 async function readMainWire(sessionDir: string): Promise<readonly Record<string, unknown>[]> {
   const wire = await readFile(join(sessionDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
