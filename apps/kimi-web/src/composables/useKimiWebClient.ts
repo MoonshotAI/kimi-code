@@ -1063,6 +1063,11 @@ function hasLoadedMessages(sessionId: string): boolean {
 function subscribeToSessionEvents(sessionId: string): void {
   connectEventsIfNeeded();
   if (eventConn) {
+    // Apply any queued streaming deltas before re-subscribing so the transcript
+    // is current. (These deltas are volatile — never replayed by the server and
+    // they don't advance lastSeqBySession — but flushing here is cheap and
+    // future-proofs the cursor if the batching set ever changes.)
+    enqueueEvent.flush();
     const seq = rawState.lastSeqBySession[sessionId] ?? 0;
     const epoch = epochBySession[sessionId];
     eventConn.subscribe(sessionId, { seq, epoch });
