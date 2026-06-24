@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto';
 
 import {
+  APIConnectionError,
   APIContextOverflowError,
+  APIEmptyResponseError,
+  APIStatusError,
+  APITimeoutError,
   createToolMessage,
   emptyUsage,
+  inputTotal,
   isContentPart,
+  isContextOverflowStatusError,
   isRetryableGenerateError,
   isToolCall,
   isToolCallPart,
@@ -17,7 +23,12 @@ import {
 import { canonicalTelemetryArgs } from '../../../agent/turn/canonical-args';
 import { ToolCallDeduplicator } from '../../../agent/turn/tool-dedup';
 import { Disposable, IInstantiationService, registerSingleton, SyncDescriptor } from '../../../di';
-import { ErrorCodes, isKimiError } from '../../../errors';
+import {
+  ErrorCodes,
+  isKimiError,
+  toKimiErrorPayload,
+  type KimiErrorPayload,
+} from '../../../errors';
 import {
   runTurn as runLoopTurn,
   type ExecutableTool,
@@ -44,6 +55,7 @@ import { ILLMRequester } from '../llmRequester/llmRequester';
 import { IMcpRuntimeService } from '../mcpRuntime/mcpRuntime';
 import { IPermissionService } from '../permission/permission';
 import { IProfileService } from '../profile/profile';
+import { ITelemetryService } from '../telemetry/telemetry';
 import { IToolRegistry } from '../toolRegistry/toolRegistry';
 import { IToolExecutor } from '../toolExecutor/toolExecutor';
 import type { ContextMessage, ToolInfo, ToolResult, Turn, TurnResult } from '../types';
@@ -64,87 +76,12 @@ const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
 };
 type ToolTelemetryEvent = 'tool_call' | 'tool_call_dedup_detected' | 'tool_call_repeat';
 
-declare module '../types' {
-  interface AgentEventMap {
-    'turn.step.started': {
-      turnId: number;
-      step: number;
-      stepId: string;
-    };
-    'turn.step.completed': {
-      turnId: number;
-      step: number;
-      stepId: string;
-      usage?: LoopStepEndEvent['usage'];
-      finishReason?: LoopStepEndEvent['finishReason'];
-      llmFirstTokenLatencyMs?: number;
-      llmStreamDurationMs?: number;
-      providerFinishReason?: LoopStepEndEvent['providerFinishReason'];
-      rawFinishReason?: string;
-    };
-    'turn.step.retrying': {
-      turnId: number;
-      step: number;
-      stepId: string;
-      failedAttempt: number;
-      nextAttempt: number;
-      maxAttempts: number;
-      delayMs: number;
-      errorName: string;
-      errorMessage: string;
-      statusCode?: number;
-    };
-    'turn.step.interrupted': {
-      turnId: number;
-      step: number;
-      reason: Extract<LoopEvent, { type: 'turn.interrupted' }>['reason'];
-      message?: string;
-    };
-    'assistant.delta': {
-      turnId: number;
-      delta: string;
-    };
-    'thinking.delta': {
-      turnId: number;
-      delta: string;
-    };
-    'tool.call.delta': {
-      turnId: number;
-      toolCallId: string;
-      name?: string;
-      argumentsPart?: string;
-    };
-    'tool.call.started': {
-      turnId: number;
-      toolCallId: string;
-      name: string;
-      args: unknown;
-      description?: string;
-      display?: Extract<LoopEvent, { type: 'tool.call' }>['display'];
-    };
-    'tool.progress': {
-      turnId: number;
-      toolCallId: string;
-      update: Extract<LoopEvent, { type: 'tool.progress' }>['update'];
-    };
-    'tool.result': {
-      turnId: number;
-      toolCallId: string;
-      output: Extract<LoopEvent, { type: 'tool.result' }>['result']['output'];
-      isError?: boolean;
-    };
-    'tool.telemetry': {
-      event: ToolTelemetryEvent;
-      properties: TelemetryProperties;
-    };
-  }
-}
-
 export class LoopService extends Disposable implements ILoopService {
   private readonly openSteps = new Map<string, OpenStep>();
   private readonly toolCallStartedAt = new Map<string, ToolCallTelemetryStart>();
   private readonly toolCallDupType = new Map<string, 'normal' | 'cross_step'>();
   private readonly stepToolCallKeys = new Map<number, Set<string>>();
+  private readonly stepFailureByTurn = new Map<number, Extract<LoopEvent, { type: 'turn.interrupted' }>>();
   private ownSpliceDepth = 0;
   private protocolTurnId: number | undefined;
 
@@ -159,6 +96,7 @@ export class LoopService extends Disposable implements ILoopService {
     @IPermissionService private readonly permission: IPermissionService,
     @IUsageService private readonly usage: IUsageService,
     @IProfileService private readonly profile: IProfileService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWireRecord private readonly wireRecord: IWireRecord,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IMcpRuntimeService private readonly mcpRuntime: IMcpRuntimeService,
@@ -182,6 +120,7 @@ export class LoopService extends Disposable implements ILoopService {
 
   async runTurn(turn: Turn, hooks: LoopRunHooks | undefined): Promise<TurnResult> {
     let usageModel = this.profile.data().modelAlias ?? 'unknown';
+    const startedAt = Date.now();
     this.protocolTurnId = turn.id;
     const llm = this.createLLM((model) => {
       usageModel = model ?? this.profile.data().modelAlias ?? 'unknown';
@@ -221,6 +160,9 @@ export class LoopService extends Disposable implements ILoopService {
           throw error;
         }
       }
+    } catch (error) {
+      this.trackApiError(turn.id, error, startedAt);
+      throw error;
     } finally {
       if (this.protocolTurnId === turn.id) {
         this.protocolTurnId = undefined;
@@ -228,6 +170,7 @@ export class LoopService extends Disposable implements ILoopService {
       this.toolCallStartedAt.clear();
       this.toolCallDupType.clear();
       this.stepToolCallKeys.clear();
+      this.stepFailureByTurn.delete(turn.id);
     }
   }
 
@@ -327,6 +270,11 @@ export class LoopService extends Disposable implements ILoopService {
         });
         return;
       case 'turn.interrupted':
+        if (this.protocolTurnId !== undefined) {
+          if (event.reason === 'error' && event.activeStep !== undefined) {
+            this.stepFailureByTurn.set(this.protocolTurnId, event);
+          }
+        }
         if (this.protocolTurnId === undefined || event.activeStep === undefined) return;
         this.events.emit({
           type: 'turn.step.interrupted',
@@ -478,7 +426,32 @@ export class LoopService extends Disposable implements ILoopService {
   }
 
   private emitToolTelemetry(event: ToolTelemetryEvent, properties: TelemetryProperties = {}): void {
-    this.events.emit({ type: 'tool.telemetry', event, properties });
+    this.telemetry.track(event, properties);
+  }
+
+  private trackApiError(turnId: number, error: unknown, startedAt: number): void {
+    if (!this.shouldTrackApiError(turnId)) return;
+    const summary = toKimiErrorPayload(error);
+    const classification = classifyApiError(error, summary);
+    const properties: Record<string, string | number | boolean | undefined> = {
+      error_type: classification.errorType,
+      model: this.profile.data().modelAlias ?? 'unknown',
+      retryable: summary.retryable,
+      duration_ms: Date.now() - startedAt,
+    };
+    if (classification.statusCode !== undefined) {
+      properties['status_code'] = classification.statusCode;
+    }
+    const currentTurnUsage = this.usage.data().currentTurn;
+    if (currentTurnUsage !== undefined) {
+      properties['input_tokens'] = inputTotal(currentTurnUsage);
+    }
+    this.telemetry.track('api_error', properties);
+  }
+
+  private shouldTrackApiError(turnId: number): boolean {
+    const failure = this.stepFailureByTurn.get(turnId);
+    return failure?.reason === 'error' && failure.activeStep !== undefined;
   }
 
   private hasPriorStepToolCallKey(step: number, key: string): boolean {
@@ -838,6 +811,63 @@ function isContextOverflowError(error: unknown): boolean {
     error instanceof APIContextOverflowError ||
     (isKimiError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW)
   );
+}
+
+interface ApiErrorClassification {
+  readonly errorType: string;
+  readonly statusCode?: number;
+}
+
+function classifyApiError(error: unknown, summary: KimiErrorPayload): ApiErrorClassification {
+  const statusCode = apiStatusCode(error) ?? summaryStatusCode(summary);
+  if (statusCode !== undefined) {
+    if (statusCode === 429) return { errorType: 'rate_limit', statusCode };
+    if (statusCode === 401 || statusCode === 403) return { errorType: 'auth', statusCode };
+    if (statusCode >= 500) return { errorType: '5xx_server', statusCode };
+    if (isContextOverflowStatusError(statusCode, summary.message)) {
+      return { errorType: 'context_overflow', statusCode };
+    }
+    if (statusCode >= 400) return { errorType: '4xx_client', statusCode };
+    return { errorType: 'api', statusCode };
+  }
+
+  if (summary.code === ErrorCodes.PROVIDER_RATE_LIMIT) return { errorType: 'rate_limit' };
+  if (summary.code === ErrorCodes.PROVIDER_AUTH_ERROR) return { errorType: 'auth' };
+  if (summary.code === ErrorCodes.CONTEXT_OVERFLOW) return { errorType: 'context_overflow' };
+  if (isApiConnectionError(error, summary)) return { errorType: 'network' };
+  if (isApiTimeoutError(error, summary)) return { errorType: 'timeout' };
+  if (isApiEmptyResponseError(error, summary)) return { errorType: 'empty_response' };
+  return { errorType: 'other' };
+}
+
+function apiStatusCode(error: unknown): number | undefined {
+  if (error instanceof APIStatusError) return error.statusCode;
+  if (typeof error !== 'object' || error === null) return undefined;
+  const statusCode = (error as { readonly statusCode?: unknown }).statusCode;
+  if (typeof statusCode === 'number') return statusCode;
+  const status = (error as { readonly status?: unknown }).status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+function summaryStatusCode(summary: KimiErrorPayload): number | undefined {
+  const statusCode = summary.details?.['statusCode'];
+  return typeof statusCode === 'number' ? statusCode : undefined;
+}
+
+function isApiConnectionError(error: unknown, summary: KimiErrorPayload): boolean {
+  return error instanceof APIConnectionError || summary.name === 'APIConnectionError';
+}
+
+function isApiTimeoutError(error: unknown, summary: KimiErrorPayload): boolean {
+  return (
+    error instanceof APITimeoutError ||
+    summary.name === 'APITimeoutError' ||
+    summary.name === 'TimeoutError'
+  );
+}
+
+function isApiEmptyResponseError(error: unknown, summary: KimiErrorPayload): boolean {
+  return error instanceof APIEmptyResponseError || summary.name === 'APIEmptyResponseError';
 }
 
 function toolResultOutputForModel(result: ExecutableToolResult): string | ContentPart[] {

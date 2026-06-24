@@ -1,11 +1,11 @@
+import type { AgentEvent as ProtocolAgentEvent } from '@moonshot-ai/protocol';
+
 import { createDecorator } from '../../../di';
 import type { IDisposable } from '../../../di';
 
-import type { AgentEvent } from '../types';
-
 export interface IEventBus {
-  emit(event: AgentEvent): void;
-  on(handler: (event: AgentEvent) => void): IDisposable;
+  emit(event: ProtocolAgentEvent): void;
+  on(handler: (event: ProtocolAgentEvent) => void): IDisposable;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare

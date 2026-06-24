@@ -15,12 +15,6 @@ declare module '../types' {
       usageScope?: UsageRecordScope;
     };
   }
-
-  interface AgentEventMap {
-    'usage.changed': {
-      status: UsageStatus;
-    };
-  }
 }
 
 export class UsageService implements IUsageService {
@@ -95,7 +89,6 @@ export class UsageService implements IUsageService {
   private publishChanged(): void {
     const status = this.status();
     if (status === undefined) return;
-    this.events.emit({ type: 'usage.changed', status });
     this.events.emit({ type: 'agent.status.updated', usage: status });
   }
 

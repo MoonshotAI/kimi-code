@@ -9,35 +9,14 @@ import type {
 } from '@moonshot-ai/kosong';
 
 import type { ContextMessage, PromptOrigin } from '../../agent/context';
-import type { PermissionMode } from '../../agent/permission';
 import type {
   ExecutableToolContext,
   ToolExecution as LoopToolExecution,
 } from '../../loop';
 import type { LLMRequestLogFields } from '../../loop';
 import type { ToolInputDisplay } from '../../tools/display';
-import type { UsageStatus } from './usage/usage';
 
 export type { ContextMessage };
-
-export interface AgentStatusUpdatedPatch {
-  readonly model?: string;
-  readonly contextTokens?: number;
-  readonly maxContextTokens?: number;
-  readonly contextUsage?: number;
-  readonly planMode?: boolean;
-  readonly swarmMode?: boolean;
-  readonly permission?: PermissionMode;
-  readonly usage?: UsageStatus;
-}
-
-export interface AgentEventMap {
-  'agent.status.updated': AgentStatusUpdatedPatch;
-}
-
-export type AgentEvent<K extends keyof AgentEventMap = keyof AgentEventMap> = {
-  [T in K]: { readonly type: T } & Readonly<AgentEventMap[T]>;
-}[K];
 
 export interface WireRecordMap {}
 

@@ -34,6 +34,14 @@ export interface TodoItem {
   readonly status: TodoStatus;
 }
 
+export function readTodoItems(raw: unknown): readonly TodoItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isTodoItem).map((todo) => ({
+    title: todo.title,
+    status: todo.status,
+  }));
+}
+
 declare module '../../store' {
   interface ToolStoreData {
     todo: readonly TodoItem[];
@@ -86,6 +94,16 @@ function statusMarker(status: TodoStatus): string {
       return _exhaustive;
     }
   }
+}
+
+function isTodoItem(value: unknown): value is TodoItem {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record['title'] === 'string' && isTodoStatus(record['status']);
+}
+
+function isTodoStatus(value: unknown): value is TodoStatus {
+  return value === 'pending' || value === 'in_progress' || value === 'done';
 }
 
 export class TodoListTool implements BuiltinTool<TodoListInput> {

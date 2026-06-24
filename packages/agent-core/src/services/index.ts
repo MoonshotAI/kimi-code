@@ -134,6 +134,12 @@ export type { SessionClientTelemetry, SessionCreateOptions, SessionListQuery } f
 export { SessionService } from './session/sessionService';
 
 export {
+  AgentRuntimeTodoError,
+  IAgentRuntimeService,
+} from './agentRuntime/agentRuntime';
+export { AgentRuntimeService } from './agentRuntime/agentRuntimeService';
+
+export {
   IMessageService,
   MessageNotFoundError,
   deriveMessageId,

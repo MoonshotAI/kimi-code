@@ -25,7 +25,6 @@ export interface MicroCompactionEffect {
 }
 
 export interface IMicroCompactionService {
-  detect(): void;
   compact(messages: readonly ContextMessage[]): readonly ContextMessage[];
 }
 

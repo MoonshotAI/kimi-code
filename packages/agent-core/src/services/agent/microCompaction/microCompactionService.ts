@@ -15,6 +15,7 @@ import { IContextMemory } from '../contextMemory/contextMemory';
 import { IContextUsageService } from '../contextUsage/contextUsage';
 import { IProfileService } from '../profile/profile';
 import { ITelemetryService } from '../telemetry/telemetry';
+import { ITurnRunner } from '../turnRunner/turnRunner';
 import type { ContextMessage } from '../types';
 import { IWireRecord } from '../wireRecord/wireRecord';
 import {
@@ -49,11 +50,22 @@ export class MicroCompactionService
     @IWireRecord private readonly wireRecord: IWireRecord,
     @IProfileService private readonly profile: IProfileService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @ITurnRunner turnRunner: ITurnRunner,
   ) {
     super();
     this.config = { ...DEFAULT_CONFIG, ...options.config };
     this.flags = options.experimentalFlags ?? new FlagResolver();
     this.clock = options.now ?? Date.now;
+    this._register(
+      turnRunner.hooks.beforeStep.register(
+        'micro-compaction',
+        async (_ctx, next) => {
+          this.detect();
+          await next();
+        },
+        { after: 'turn-before-step-event' },
+      ),
+    );
     this._register(
       this.wireRecord.register('micro_compaction.apply', (record) => {
         this.apply(record.cutoff);
@@ -84,7 +96,7 @@ export class MicroCompactionService
     this.cutoff = cutoff;
   }
 
-  detect(): void {
+  private detect(): void {
     if (!this.flags.enabled('micro_compaction')) return;
 
     const lastAssistantAt = this._lastAssistantAt;

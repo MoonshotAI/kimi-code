@@ -4,6 +4,7 @@ import type {
   AuthorizeToolExecutionResult,
   ResolvedToolExecutionHookContext,
 } from '../../../loop';
+import type { TelemetryProperties } from '../../../telemetry';
 import type { PermissionServiceOptions } from '../permission/permission';
 
 export type PermissionPolicyResolution =
@@ -13,14 +14,17 @@ export type PermissionPolicyResolution =
 export type PermissionPolicyResult =
   | {
       readonly kind: 'approve';
+      readonly reason?: TelemetryProperties;
       readonly executionMetadata?: unknown;
     }
   | {
       readonly kind: 'deny';
+      readonly reason?: TelemetryProperties;
       readonly message?: string;
     }
   | {
       readonly kind: 'ask';
+      readonly reason?: TelemetryProperties;
       readonly resolveApproval?: (
         result: ApprovalResponse,
       ) => PermissionPolicyResolution | undefined;

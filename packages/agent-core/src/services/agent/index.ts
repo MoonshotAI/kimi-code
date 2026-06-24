@@ -7,8 +7,6 @@ export {
   type HookSlot,
 } from './hooks';
 export type {
-  AgentEventMap,
-  AgentEvent as AgentServiceEvent,
   ContextMessage,
   LLMEvent,
   LLMRequestOverrides,
@@ -86,7 +84,6 @@ export {
   type MicroCompactionConfig,
   type MicroCompactionEffect,
   type MicroCompactionServiceOptions,
-  type MicroCompactionTelemetryProperties,
 } from './microCompaction/microCompaction';
 export { MicroCompactionService } from './microCompaction/microCompactionService';
 
@@ -128,12 +125,16 @@ export {
 export { IToolStoreService } from './toolStore/toolStore';
 export { ToolStoreService } from './toolStore/toolStoreService';
 
+export { ITodoListService } from './todoList/todoList';
+export { TodoListService } from './todoList/todoListService';
+
 export { IToolExecutor, type ToolExecutorOptions } from './toolExecutor/toolExecutor';
 export { ToolExecutorService } from './toolExecutor/toolExecutorService';
 
 export {
   IPermissionModeService,
   type PermissionModeChangedContext,
+  type PermissionModeSetOptions,
 } from './permissionMode/permissionMode';
 export { PermissionModeService } from './permissionMode/permissionModeService';
 export {
@@ -207,12 +208,22 @@ export {
 } from './telemetry/telemetry';
 export { TelemetryService } from './telemetry/telemetryService';
 
-export { PlanMode } from './extensions/planMode';
-export { PermissionModeInjection } from './extensions/permissionModeInjection';
-export { GoalInjection, type GoalInjectionOptions } from './extensions/goalInjection';
+export {
+  IPlanModeService,
+  type PlanData,
+  type PlanFilePath,
+} from './planMode/planMode';
+export { PlanModeService, PlanMode } from './planMode/planModeService';
+export {
+  PermissionModeInjection,
+  registerPermissionModeInjection,
+} from './permissionMode/injection/permissionModeInjection';
+export {
+  GoalInjection,
+  type GoalInjectionOptions,
+} from './goalMode/injection/goalInjection';
 export {
   ISwarmMode,
-  type SwarmModeOptions,
   type SwarmModeTrigger,
 } from './swarmMode/swarmMode';
 export {
@@ -257,4 +268,13 @@ export {
 export {
   MicroCompactingProjector,
   type MicroCompactingProjectorOptions,
-} from './extensions/microCompactingProjector';
+} from './contextProjector/microCompactingProjector';
+export {
+  AgentRuntime,
+  createAgentRuntime,
+  getAgentServiceDescriptors,
+  isAgentServiceIdentifier,
+  type AgentRuntimeGoalOptions,
+  type AgentRuntimeOptions,
+  type AgentRuntimeType,
+} from './runtime';

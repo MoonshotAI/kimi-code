@@ -6,7 +6,7 @@ import {
   SyncDescriptor,
   type IDisposable,
 } from '../../../di';
-import { ErrorCodes, makeErrorPayload, type KimiErrorPayload } from '../../../errors';
+import { ErrorCodes, makeErrorPayload } from '../../../errors';
 import type { ExecutableToolResult } from '../../../loop';
 import { createMcpAuthTool } from '../../../mcp/auth-tool';
 import type { McpServerEntry } from '../../../mcp/connection-manager';
@@ -17,12 +17,6 @@ import { IEventBus } from '../eventBus/eventBus';
 import { IToolRegistry } from '../toolRegistry/toolRegistry';
 import type { Tool } from '../types';
 import { IMcpRuntimeService, type McpRuntimeServiceOptions } from './mcpRuntime';
-
-declare module '../types' {
-  interface AgentEventMap {
-    error: KimiErrorPayload;
-  }
-}
 
 interface McpToolRegistration {
   readonly disposable: IDisposable;
@@ -87,10 +81,24 @@ export class McpRuntimeService extends Disposable implements IMcpRuntimeService 
     for (const entry of this.list()) {
       this.handleMcpServerStatusChange(entry);
     }
-    this._register(this.onStatusChange((entry) => this.handleMcpServerStatusChange(entry)));
+    this._register(
+      this.onStatusChange((entry) => {
+        this.handleMcpServerStatusChange(entry);
+      }),
+    );
   }
 
   private handleMcpServerStatusChange(entry: McpServerEntry): void {
+    this.events.emit({
+      type: 'mcp.server.status',
+      server: {
+        name: entry.name,
+        transport: entry.transport,
+        status: entry.status,
+        toolCount: entry.toolCount,
+        error: entry.error,
+      },
+    });
     if (entry.status === 'connected') {
       this.registerConnectedMcpServer(entry);
       return;
@@ -99,12 +107,24 @@ export class McpRuntimeService extends Disposable implements IMcpRuntimeService 
       this.registerNeedsAuthMcpServer(entry);
       return;
     }
-    if (
-      entry.status === 'failed' ||
-      entry.status === 'disabled' ||
-      entry.status === 'pending'
-    ) {
+    if (entry.status === 'failed') {
       this.unregisterMcpServer(entry.name);
+      this.events.emit({
+        type: 'tool.list.updated',
+        reason: 'mcp.failed',
+        serverName: entry.name,
+      });
+      return;
+    }
+    if (entry.status === 'disabled' || entry.status === 'pending') {
+      const removed = this.unregisterMcpServer(entry.name);
+      if (removed) {
+        this.events.emit({
+          type: 'tool.list.updated',
+          reason: 'mcp.disconnected',
+          serverName: entry.name,
+        });
+      }
     }
   }
 
@@ -118,6 +138,11 @@ export class McpRuntimeService extends Disposable implements IMcpRuntimeService 
       resolved.enabledNames,
     );
     this.emitMcpToolCollisions(entry.name, result.collisions);
+    this.events.emit({
+      type: 'tool.list.updated',
+      reason: 'mcp.connected',
+      serverName: entry.name,
+    });
   }
 
   private registerNeedsAuthMcpServer(entry: McpServerEntry): void {
@@ -134,6 +159,11 @@ export class McpRuntimeService extends Disposable implements IMcpRuntimeService 
     const disposable = this._register(this.registry.register(tool, { source: 'mcp' }));
     this.mcpTools.set(tool.name, { disposable, serverName: entry.name });
     this.mcpToolsByServer.set(entry.name, [tool.name]);
+    this.events.emit({
+      type: 'tool.list.updated',
+      reason: 'mcp.connected',
+      serverName: entry.name,
+    });
   }
 
   private registerMcpServer(

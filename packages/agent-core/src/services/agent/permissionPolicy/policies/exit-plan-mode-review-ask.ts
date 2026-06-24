@@ -41,6 +41,9 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
     });
     return {
       kind: 'ask',
+      reason: {
+        has_options: display.options !== undefined,
+      },
       resolveApproval: (result) =>
         this.exitPlanModeApprovalResult(result, {
           plan: display.plan,

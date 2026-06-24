@@ -20,6 +20,10 @@ export class AgentSwarmExclusiveDenyPermissionPolicyService implements Permissio
         agentSwarmCount > 1
           ? multipleAgentSwarmDeniedMessage(context.toolCalls.length > agentSwarmCount)
           : mixedAgentSwarmDeniedMessage(),
+      reason: {
+        agent_swarm_tool_calls: agentSwarmCount,
+        tool_calls: context.toolCalls.length,
+      },
     };
   }
 }

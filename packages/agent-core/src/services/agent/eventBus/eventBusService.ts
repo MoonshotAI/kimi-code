@@ -1,23 +1,24 @@
+import type { AgentEvent as ProtocolAgentEvent } from '@moonshot-ai/protocol';
+
 import { Disposable, registerSingleton, SyncDescriptor } from '../../../di';
 import { Emitter } from '../../../base/common/event';
 
 import { IEventBus } from './eventBus';
-import type { AgentEvent } from '../types';
 import { IWireRecord } from '../wireRecord/wireRecord';
 
 export class EventBusService extends Disposable implements IEventBus {
-  private readonly onDidEmitEmitter = this._register(new Emitter<AgentEvent>());
+  private readonly onDidEmitEmitter = this._register(new Emitter<ProtocolAgentEvent>());
 
   constructor(@IWireRecord private readonly wireRecord: IWireRecord) {
     super();
   }
 
-  emit(event: AgentEvent): void {
+  emit(event: ProtocolAgentEvent): void {
     if (this.wireRecord.restoring) return;
     this.onDidEmitEmitter.fire(event);
   }
 
-  on(handler: (event: AgentEvent) => void) {
+  on(handler: (event: ProtocolAgentEvent) => void) {
     return this.onDidEmitEmitter.event(handler);
   }
 }

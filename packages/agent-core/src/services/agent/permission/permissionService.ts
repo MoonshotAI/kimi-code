@@ -21,6 +21,7 @@ import {
   type PermissionPolicyResult,
 } from '../permissionPolicy/permissionPolicy';
 import { IPermissionRulesService } from '../permissionRules/permissionRules';
+import { ITelemetryService } from '../telemetry/telemetry';
 import {
   IPermissionService,
   type PermissionServiceOptions,
@@ -33,11 +34,12 @@ export class PermissionService extends Disposable implements IPermissionService 
     @IPermissionRulesService private readonly rulesService: IPermissionRulesService,
     @IPermissionPolicyService private readonly policyService: IPermissionPolicyService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
     this.policyService.configure(options);
     if (options.initialMode !== undefined) {
-      this.modeService.setMode(options.initialMode);
+      this.modeService.setMode(options.initialMode, { track: false });
     }
   }
 
@@ -53,6 +55,13 @@ export class PermissionService extends Disposable implements IPermissionService 
   ): Promise<AuthorizeToolExecutionResult | undefined> {
     const evaluation = await this.policyService.evaluate(context);
     if (evaluation === undefined) return undefined;
+    this.telemetry.track('permission_policy_decision', {
+      policy_name: evaluation.policyName,
+      tool_name: context.toolCall.name,
+      permission_mode: this.modeService.mode,
+      decision: evaluation.result.kind,
+      ...evaluation.result.reason,
+    });
     return this.permissionPolicyResolutionToAuthorize(
       evaluation.result,
       context,
@@ -98,6 +107,7 @@ export class PermissionService extends Disposable implements IPermissionService 
         summary: action,
         detail: context.args,
       } as ToolInputDisplay);
+    const startedAt = Date.now();
 
     let response: ApprovalResponse;
     const approvalService = this.tryApprovalService();
@@ -116,6 +126,16 @@ export class PermissionService extends Disposable implements IPermissionService 
         });
         context.signal.throwIfAborted();
       } catch (error) {
+        this.telemetry.track('permission_approval_result', {
+          policy_name: policyName ?? null,
+          tool_name: name,
+          permission_mode: this.modeService.mode,
+          result: 'error',
+          approval_surface: display.kind,
+          duration_ms: Date.now() - startedAt,
+          session_cache_written: false,
+          has_feedback: false,
+        });
         const resolved = result.resolveError?.(error);
         if (resolved !== undefined) {
           return this.permissionPolicyResolutionToAuthorize(resolved, context, policyName);
@@ -135,6 +155,19 @@ export class PermissionService extends Disposable implements IPermissionService 
       action,
       sessionApprovalRule,
       result: response,
+    });
+    this.telemetry.track('permission_approval_result', {
+      policy_name: policyName ?? null,
+      tool_name: name,
+      permission_mode: this.modeService.mode,
+      result:
+        response.decision === 'approved' && response.scope === 'session'
+          ? 'approved_for_session'
+          : response.decision,
+      approval_surface: display.kind,
+      duration_ms: Date.now() - startedAt,
+      session_cache_written: sessionApprovalRule !== undefined,
+      has_feedback: response.feedback !== undefined && response.feedback.length > 0,
     });
 
     const resolved = result.resolveApproval?.(response);

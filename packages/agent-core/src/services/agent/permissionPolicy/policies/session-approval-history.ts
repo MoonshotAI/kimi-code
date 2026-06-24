@@ -25,7 +25,15 @@ export class SessionApprovalHistoryPermissionPolicyService implements Permission
         toolName: context.toolCall.name,
         execution: context.execution,
       });
-      if (match !== undefined) return { kind: 'approve' };
+      if (match !== undefined) {
+        return {
+          kind: 'approve',
+          reason: {
+            has_rule_args: match.hasRuleArgs,
+            match_strategy: match.strategy,
+          },
+        };
+      }
     }
     return undefined;
   }

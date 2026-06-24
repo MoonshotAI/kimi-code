@@ -8,7 +8,8 @@ import { IEventBus } from '../eventBus/eventBus';
 import { IExternalHooksService } from '../externalHooks/externalHooks';
 import { OrderedHookSlot } from '../hooks';
 import { ILoopService } from '../loop/loop';
-import { IMicroCompactionService } from '../microCompaction/microCompaction';
+import { IPlanModeService } from '../planMode/planMode';
+import { ITelemetryService } from '../telemetry/telemetry';
 import type {
   Turn,
   TurnEndedContext,
@@ -20,28 +21,6 @@ import { IWireRecord } from '../wireRecord/wireRecord';
 import { ITurnRunner } from './turnRunner';
 
 declare module '../types' {
-  interface AgentEventMap {
-    'turn.before_step': {
-      turnId: number;
-    };
-    'turn.started': {
-      turnId: number;
-      origin: PromptOrigin;
-    };
-    'turn.ended': {
-      turnId: number;
-      reason: TurnResult['reason'];
-      error?: KimiErrorPayload;
-      durationMs: number;
-    };
-    'hook.result': {
-      turnId: number;
-      hookEvent: string;
-      content: string;
-      blocked?: boolean;
-    };
-  }
-
   interface WireRecordMap {
     'turn.launch': {
       turnId: number;
@@ -55,6 +34,9 @@ export class TurnRunnerService implements ITurnRunner {
   private activeTurn: Turn | undefined;
   private readonly readyControllers = new WeakMap<Turn, ControlledPromise<void>>();
   private readonly readySettled = new WeakSet<Turn>();
+  private readonly currentStepByTurn = new Map<number, number>();
+  private readonly interruptedTelemetryTurnIds = new Set<number>();
+  private readonly telemetryModeByTurn = new Map<number, 'agent' | 'plan'>();
 
   readonly hooks = {
     onLaunched: new OrderedHookSlot<{ turn: Turn }>(),
@@ -70,15 +52,24 @@ export class TurnRunnerService implements ITurnRunner {
     @IWireRecord private readonly wireRecord: IWireRecord,
     @IContextMemory private readonly context: IContextMemory,
     @IExternalHooksService private readonly externalHooks: IExternalHooksService,
-    @IMicroCompactionService _microCompaction: IMicroCompactionService,
+    @IPlanModeService private readonly planMode: IPlanModeService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     wireRecord.register('turn.launch', (record) => {
       this.restoreLaunch(record.turnId);
     });
     this.hooks.beforeStep.register('turn-before-step-event', async (ctx, next) => {
-      this.events.emit({ type: 'turn.before_step', turnId: ctx.turn.id });
       await next();
       this.resolveReady(ctx.turn);
+    });
+    this.events.on((event) => {
+      if (event.type === 'turn.step.started') {
+        this.currentStepByTurn.set(event.turnId, event.step);
+        return;
+      }
+      if (event.type === 'turn.step.interrupted') {
+        this.trackTurnInterrupted(event.turnId, event.step);
+      }
     });
   }
 
@@ -119,9 +110,12 @@ export class TurnRunnerService implements ITurnRunner {
 
   private async runTurn(turn: Turn, origin: PromptOrigin): Promise<TurnResult> {
     const startedAt = Date.now();
+    const telemetryMode = this.telemetryMode();
+    this.telemetryModeByTurn.set(turn.id, telemetryMode);
     let result: TurnResult | undefined;
     try {
       this.usage.beginTurn();
+      this.telemetry.track('turn_started', { mode: telemetryMode });
       this.events.emit({ type: 'turn.started', turnId: turn.id, origin });
       const promptHookResult = await this.applyUserPromptHook(turn, origin);
       if (promptHookResult !== undefined) {
@@ -151,11 +145,21 @@ export class TurnRunnerService implements ITurnRunner {
         this.activeTurn = undefined;
       }
       if (result !== undefined) {
-        this.events.emit(toTurnEndedEvent(turn, result, Date.now() - startedAt));
+        const ended = toTurnEndedEvent(turn, result, Date.now() - startedAt);
+        this.events.emit(ended);
+        if (ended.error !== undefined) {
+          this.events.emit({ type: 'error', ...ended.error });
+        }
+        if (ended.reason !== 'completed') {
+          this.trackTurnInterrupted(turn.id, this.currentStepByTurn.get(turn.id) ?? 0);
+        }
       }
       if (result !== undefined) {
         await this.hooks.onEnded.run({ turn, result });
       }
+      this.currentStepByTurn.delete(turn.id);
+      this.interruptedTelemetryTurnIds.delete(turn.id);
+      this.telemetryModeByTurn.delete(turn.id);
     }
   }
 
@@ -226,6 +230,19 @@ export class TurnRunnerService implements ITurnRunner {
     if (this.readySettled.has(turn)) return;
     this.readySettled.add(turn);
     this.readyControllers.get(turn)?.reject(reason);
+  }
+
+  private trackTurnInterrupted(turnId: number, atStep: number): void {
+    if (this.interruptedTelemetryTurnIds.has(turnId)) return;
+    this.interruptedTelemetryTurnIds.add(turnId);
+    this.telemetry.track('turn_interrupted', {
+      mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
+      at_step: atStep,
+    });
+  }
+
+  private telemetryMode(): 'agent' | 'plan' {
+    return this.planMode.isActive ? 'plan' : 'agent';
   }
 }
 
