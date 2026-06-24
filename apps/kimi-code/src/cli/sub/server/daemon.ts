@@ -44,6 +44,8 @@ const POLL_INTERVAL_MS = 200;
 const DEFAULT_DAEMON_LOG_LEVEL = 'info';
 
 export interface EnsureDaemonOptions {
+  /** Bind host; defaults to loopback (`127.0.0.1`). Use `0.0.0.0` for LAN access. */
+  host?: string;
   /** Preferred port; on conflict a free port is chosen automatically. */
   port?: number;
   /** Pino log level for the spawned daemon (defaults to `info`). */
@@ -178,6 +180,7 @@ export function resolveDaemonProgram(
 }
 
 interface SpawnDaemonChildOptions {
+  host?: string;
   port: number;
   logLevel: string;
   debugEndpoints?: boolean;
@@ -198,6 +201,9 @@ export function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
     '--log-level',
     options.logLevel,
   ];
+  if (options.host !== undefined) {
+    args.push('--host', options.host);
+  }
   if (options.debugEndpoints === true) {
     args.push('--debug-endpoints');
   }
@@ -253,10 +259,19 @@ function sleep(ms: number): Promise<void> {
 export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<EnsureDaemonResult> {
   const preferred = options.port ?? DEFAULT_SERVER_PORT;
   const logLevel = options.logLevel ?? DEFAULT_DAEMON_LOG_LEVEL;
+  const host = options.host ?? DEFAULT_SERVER_HOST;
 
   // 1. Reuse an already-live daemon if one holds the lock.
   const existing = getLiveLock();
   if (existing) {
+    // Refuse to silently reuse a daemon bound to a different host.
+    const existingHost = existing.host ?? DEFAULT_SERVER_HOST;
+    if (host !== existingHost) {
+      throw new Error(
+        `Existing daemon is bound to ${existingHost}:${existing.port}. ` +
+        `Run 'kimi server kill' first to bind to ${host}:${preferred}.`,
+      );
+    }
     const origin = serverOrigin(lockConnectHost(existing), existing.port);
     if (await waitForServerHealthy(origin, REUSE_HEALTH_TIMEOUT_MS)) {
       return { origin };
@@ -267,8 +282,9 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
   }
 
   // 2. No reusable daemon — pick a free port and spawn one detached.
-  const port = await resolveDaemonPort(DEFAULT_SERVER_HOST, preferred);
+  const port = await resolveDaemonPort(host, preferred);
   spawnDaemonChild({
+    host,
     port,
     logLevel,
     debugEndpoints: options.debugEndpoints,

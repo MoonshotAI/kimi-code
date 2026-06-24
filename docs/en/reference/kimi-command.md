@@ -159,12 +159,13 @@ kimi server status             # snapshot of installed/running state
 | Option | Description |
 | --- | --- |
 | `--port <port>` | Bind port; defaults to `58627` |
+| `--host <host>` | Bind host; defaults to `127.0.0.1` (loopback). Use `0.0.0.0` to expose the server on the LAN |
 | `--log-level <level>` | Enable server logs at the selected level; omitted by default |
 | `--debug-endpoints` | Mount `/api/v1/debug/*` routes (off by default) |
 | `--foreground` | Run in the foreground instead of spawning a background daemon |
 | `--open` | Open the web UI in the default browser once the server is healthy |
 
-`kimi server run` binds to local loopback only. By default it spawns a single background daemon (reused across runs) and exits once the daemon is healthy; the daemon shuts itself down after the last web client disconnects. Pass `--foreground` to run the server in the current process instead — it then stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM`.
+`kimi server run` binds to local loopback by default. Pass `--host 0.0.0.0` (or a specific interface IP) to make it reachable from other machines on the network, e.g. over Tailscale/VPN or from a browser on another device. By default it spawns a single background daemon (reused across runs) and exits once the daemon is healthy; the daemon shuts itself down after the last web client disconnects. Pass `--foreground` to run the server in the current process instead — it then stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM`.
 
 #### `kimi server install`
 
@@ -203,9 +204,10 @@ Equivalent to `kimi server run --open`: it starts a local Kimi server in the bac
 kimi web                 # start the server in the background and open the browser (reuses a running one)
 kimi web --no-open       # don't open the browser; same as `kimi server run`
 kimi web --foreground    # run attached to the current terminal and open the browser
+kimi web --host 0.0.0.0  # bind to all interfaces for LAN/remote access
 ```
 
-Stop the server with `kimi server kill` and list active connections with `kimi server ps`; `--port`, `--log-level`, and the other flags match `kimi server run`.
+Stop the server with `kimi server kill` and list active connections with `kimi server ps`; `--host`, `--port`, `--log-level`, and the other flags match `kimi server run`.
 
 ### `kimi doctor`
 

@@ -29,6 +29,7 @@ import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../.
 import { ensureDaemon } from './daemon';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
+  DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
   parseServerOptions,
   VALID_LOG_LEVELS,
@@ -69,6 +70,11 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
       '--port <port>',
       `Bind port (default ${DEFAULT_SERVER_PORT})`,
       String(DEFAULT_SERVER_PORT),
+    )
+    .option(
+      '--host <host>',
+      `Bind host (default ${DEFAULT_SERVER_HOST}; use 0.0.0.0 for LAN access).`,
+      DEFAULT_SERVER_HOST,
     )
     .option(
       '--log-level <level>',
@@ -127,7 +133,7 @@ export async function handleRunCommand(
         const readyMs = Date.now() - startedAt;
         deps.stdout.write(
           parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-            ? formatReadyBanner(origin, readyMs)
+            ? formatReadyBanner(origin, readyMs, parsed.host)
             : `Kimi server: ${origin}\n`,
         );
         if (opts.open === true) {
@@ -141,7 +147,7 @@ export async function handleRunCommand(
   const readyMs = Date.now() - startedAt;
   deps.stdout.write(
     parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-      ? formatReadyBanner(origin, readyMs)
+      ? formatReadyBanner(origin, readyMs, parsed.host)
       : `Kimi server: ${origin}\n`,
   );
   if (opts.open === true) {
@@ -159,6 +165,7 @@ export async function startServerBackground(
   options: ParsedServerOptions,
 ): Promise<{ origin: string }> {
   const { origin } = await ensureDaemon({
+    host: options.host,
     port: options.port,
     logLevel: options.logLevel,
     debugEndpoints: options.debugEndpoints,
@@ -323,7 +330,7 @@ export function resolveServerWebAssetsDir(
   return nativeWebAssetsDir ?? join(getHostPackageRoot(), WEB_ASSETS_DIR);
 }
 
-function formatReadyBanner(origin: string, readyMs: number): string {
+function formatReadyBanner(origin: string, readyMs: number, host: string = DEFAULT_SERVER_HOST): string {
   const primary = (text: string): string => chalk.hex(darkColors.primary)(text);
   const title = (text: string): string => chalk.bold.hex(darkColors.primary)(text);
   const dim = (text: string): string => chalk.hex(darkColors.textDim)(text);
@@ -348,7 +355,7 @@ function formatReadyBanner(origin: string, readyMs: number): string {
   ];
   const infoLines = [
     label('URL:      ') + url,
-    label('Network:  ') + muted('local only'),
+    label('Network:  ') + muted(networkDescription(host)),
     label('Logs:     ') + muted('off') + dim('  use --log-level info to enable'),
     label('Stop:     ') + muted('kimi server kill'),
     label('Ready:    ') + muted(`${String(Math.max(0, readyMs))} ms`),
@@ -376,6 +383,24 @@ function formatReadyBanner(origin: string, readyMs: number): string {
 
 function displayOrigin(origin: string): string {
   return origin.endsWith('/') ? origin : `${origin}/`;
+}
+
+/**
+ * Human-readable bind scope for the ready banner. Loopback hosts stay "local
+ * only"; anything else (e.g. `0.0.0.0`) is surfaced as LAN-reachable so users
+ * know the server is exposed beyond this machine.
+ */
+function networkDescription(host: string): string {
+  const normalized = host.trim().toLowerCase().replaceAll('[', '').replaceAll(']', '');
+  if (
+    normalized === 'localhost' ||
+    normalized === '::1' ||
+    normalized === '0:0:0:0:0:0:0:1' ||
+    normalized.startsWith('127.')
+  ) {
+    return 'local only';
+  }
+  return `LAN (${host})`;
 }
 
 const DEFAULT_RUN_COMMAND_DEPS: RunCommandDeps = {

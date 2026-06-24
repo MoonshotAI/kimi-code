@@ -159,12 +159,13 @@ kimi server status             # 查看安装与运行状态
 | 选项 | 说明 |
 | --- | --- |
 | `--port <port>` | 绑定端口；默认 `58627` |
+| `--host <host>` | 绑定主机；默认 `127.0.0.1`（回环地址）。使用 `0.0.0.0` 可在局域网内暴露服务 |
 | `--log-level <level>` | 按所选级别开启服务日志；默认不输出 |
 | `--debug-endpoints` | 挂载 `/api/v1/debug/*` 调试路由（默认关闭） |
 | `--foreground` | 前台运行，不 spawn 后台守护进程 |
 | `--open` | 服务健康后用默认浏览器打开 web UI |
 
-`kimi server run` 只绑定本机 loopback 地址。默认会 spawn 一个后台守护进程（多次运行会复用同一个），健康后即退出；守护进程在最后一个 web 客户端断开后自行关闭。加 `--foreground` 则在当前进程中运行——保持挂在终端，在 `SIGINT` / `SIGTERM` 时干净退出。
+`kimi server run` 默认只绑定本机 loopback 地址。传入 `--host 0.0.0.0`（或某个网卡 IP）可让局域网内其他机器访问，例如通过 Tailscale/VPN 或从另一台设备的浏览器访问。默认会 spawn 一个后台守护进程（多次运行会复用同一个），健康后即退出；守护进程在最后一个 web 客户端断开后自行关闭。加 `--foreground` 则在当前进程中运行——保持挂在终端，在 `SIGINT` / `SIGTERM` 时干净退出。
 
 #### `kimi server install`
 
@@ -203,9 +204,10 @@ kimi server status             # 查看安装与运行状态
 kimi web                 # 后台启动服务并打开浏览器（已运行则复用）
 kimi web --no-open       # 不打开浏览器，等同 `kimi server run`
 kimi web --foreground    # 在当前终端前台运行，同时打开浏览器
+kimi web --host 0.0.0.0  # 绑定到所有网卡，供局域网/远程访问
 ```
 
-停止服务使用 `kimi server kill`，查看活动连接使用 `kimi server ps`；`--port`、`--log-level` 等选项与 `kimi server run` 一致。
+停止服务使用 `kimi server kill`，查看活动连接使用 `kimi server ps`；`--host`、`--port`、`--log-level` 等选项与 `kimi server run` 一致。
 
 ### `kimi doctor`
 
