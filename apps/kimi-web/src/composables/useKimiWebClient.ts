@@ -730,19 +730,6 @@ function connectEventsIfNeeded(): void {
       ) {
         onSessionIdle(appEvent.sessionId, appEvent.status);
       }
-
-      // Permission auto-approve: CLIENT-SIDE POLICY until the daemon exposes a
-      // permission endpoint. When permission is 'auto' or 'yolo' and an approval
-      // request arrives, immediately respond with 'approved'.
-      if (appEvent.type === 'approvalRequested') {
-        const perm = rawState.permission;
-        if (perm === 'auto' || perm === 'yolo') {
-          void workspaceState.respondApproval(appEvent.approval.approvalId, {
-            decision: 'approved',
-            scope: perm === 'yolo' ? 'session' : undefined,
-          });
-        }
-      }
     },
 
     onResync(sessionId: string, currentSeq: number, epoch?: string) {

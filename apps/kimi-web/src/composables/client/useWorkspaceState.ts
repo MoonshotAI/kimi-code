@@ -1229,25 +1229,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       });
   }
 
-  /** Persist and apply a new permission mode; auto-approve pending approvals if switching to auto/yolo */
+  /** Persist and apply a new permission mode. Approval decisions are owned by
+   *  the daemon (auto/yolo are resolved server-side), so any pending approvals
+   *  are left for the user to answer explicitly. */
   function setPermission(mode: PermissionMode): void {
     rawState.permission = mode;
     savePermissionToStorage(mode);
     persistSessionProfile({ permissionMode: mode });
-
-    // If switching to auto/yolo, auto-approve any currently-pending approvals for the active session
-    if (mode === 'auto' || mode === 'yolo') {
-      const sid = rawState.activeSessionId;
-      if (sid) {
-        const approvals = [...(rawState.approvalsBySession[sid] ?? [])];
-        for (const a of approvals) {
-          void respondApproval(a.approvalId, {
-            decision: 'approved',
-            scope: mode === 'yolo' ? 'session' : undefined,
-          });
-        }
-      }
-    }
   }
 
   /** Dismiss a warning by index */
