@@ -3,7 +3,7 @@
 // Provides tools to interact with OpenSpec projects (fission.ai/openspec)
 
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import readline from 'node:readline';
 
 const VERSION = '0.1.0';

@@ -6,6 +6,8 @@
  * should not be registered (not exposed to the LLM).
  */
 
+import type { ContentPart } from '@moonshot-ai/kosong';
+
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
@@ -25,14 +27,19 @@ import DESCRIPTION from './fetch-url.md?raw';
  *   returned verbatim, in full.
  * - `extracted` — the body was an HTML page; only the main article text
  *   was extracted and returned.
+ * - `image` — the body is an image; returned as a base64 data URI.
  */
-export type UrlFetchKind = 'passthrough' | 'extracted';
+export type UrlFetchKind = 'passthrough' | 'extracted' | 'image';
 
 export interface UrlFetchResult {
-  /** The text handed to the LLM. */
+  /** The text handed to the LLM, or a base64 data URI for images. */
   content: string;
-  /** Whether `content` is a verbatim passthrough or extracted main text. */
+  /** Whether `content` is a verbatim passthrough, extracted main text, or image. */
   kind: UrlFetchKind;
+  /** The MIME type of the response, when known. */
+  mimeType?: string | undefined;
+  /** Image dimensions, when the response is an image and they can be determined. */
+  dimensions?: { width: number; height: number } | null | undefined;
 }
 
 export interface UrlFetcher {
@@ -89,13 +96,36 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      const { content, kind } = await this.fetcher.fetch(args.url, { toolCallId });
+      const { content, kind, mimeType, dimensions } = await this.fetcher.fetch(args.url, { toolCallId });
 
       if (!content) {
         return {
           output: 'The response body is empty.',
           isError: false,
         };
+      }
+
+      if (kind === 'image') {
+        const systemParts: string[] = ['Fetched image from URL.'];
+        if (mimeType) {
+          systemParts.push(`Mime type: ${mimeType}.`);
+        }
+        if (dimensions) {
+          systemParts.push(
+            `Original dimensions: ${String(dimensions.width)}x${String(dimensions.height)} pixels.`,
+          );
+          systemParts.push(
+            'If you need to output coordinates, output relative coordinates first ' +
+              'and compute absolute coordinates using the original image size.',
+          );
+        }
+        const output: ContentPart[] = [
+          { type: 'text', text: `<system>${systemParts.join(' ')}</system>` },
+          { type: 'text', text: `<image url="${args.url}">` },
+          { type: 'image_url', imageUrl: { url: content } },
+          { type: 'text', text: '</image>' },
+        ];
+        return { output, isError: false };
       }
 
       const builder = new ToolResultBuilder({ maxLineLength: null });
