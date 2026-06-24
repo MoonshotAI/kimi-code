@@ -329,7 +329,14 @@ async function handlePluginsPanelSelection(
     case 'install': {
       panel.setInstalling(selection.entry.displayName);
       host.state.ui.requestRender();
-      await installPluginFromSource(host, selection.entry.source);
+      try {
+        await installPluginFromSource(host, selection.entry.source);
+      } catch (error) {
+        panel.clearInstalling();
+        host.state.ui.requestRender();
+        host.showError(`Failed to install ${selection.entry.displayName}: ${formatErrorMessage(error)}`);
+        return;
+      }
       // Close the panel after installing so the success notice and the
       // "/reload or /new" / post-install tip are visible in the transcript.
       host.restoreEditor();
@@ -338,7 +345,14 @@ async function handlePluginsPanelSelection(
     case 'install-source': {
       panel.setInstalling(truncateForStatus(selection.source));
       host.state.ui.requestRender();
-      await installPluginFromSource(host, selection.source);
+      try {
+        await installPluginFromSource(host, selection.source);
+      } catch (error) {
+        panel.clearInstalling();
+        host.state.ui.requestRender();
+        host.showError(`Failed to install from ${truncateForStatus(selection.source)}: ${formatErrorMessage(error)}`);
+        return;
+      }
       host.restoreEditor();
       return;
     }

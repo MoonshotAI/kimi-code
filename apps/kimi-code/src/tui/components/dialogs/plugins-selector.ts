@@ -329,6 +329,11 @@ export class PluginsPanelComponent extends Container implements Focusable {
     this.invalidate();
   }
 
+  clearInstalling(): void {
+    this.installing = undefined;
+    this.invalidate();
+  }
+
   private get activeTab(): (typeof PLUGINS_PANEL_TABS)[number] {
     return PLUGINS_PANEL_TABS[this.activeTabIndex]!;
   }

@@ -3118,12 +3118,56 @@ command = "vim"
     });
     await vi.waitFor(() => {
       const transcript = stripSgr(renderTranscript(driver));
-      expect(transcript).toContain('Installing or updating Kimi Datasource from marketplace...');
-      expect(transcript).toContain('Installed or updated Demo');
+      expect(transcript).toContain('Installed Demo');
+      expect(transcript).toContain('Run /new or /reload to apply plugin changes.');
     });
     // Installing closes the panel so the success notice / reload tip is visible.
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBe(driver.state.editor);
+    });
+  });
+
+  it('returns to the plugin list when a marketplace install fails', async () => {
+    const marketplaceDir = await makeTempHome();
+    const marketplacePath = join(marketplaceDir, 'marketplace.json');
+    await writeFile(
+      marketplacePath,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'kimi-datasource',
+            tier: 'official',
+            displayName: 'Kimi Datasource',
+            source: './kimi-datasource',
+          },
+        ],
+      }),
+      'utf8',
+    );
+    process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] = marketplacePath;
+    const installPlugin = vi.fn(async () => {
+      throw new Error('install failed');
+    });
+    const session = makeSession({ installPlugin });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins marketplace');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
+    });
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    await vi.waitFor(() => {
+      expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
+    });
+    panel.handleInput('\r');
+
+    // The panel must not get stuck on the one-way "Installing…" view; it should
+    // return to the list so the user can retry.
+    await vi.waitFor(() => {
+      const rendered = stripSgr(panel.render(120).join('\n'));
+      expect(rendered).toContain('Kimi Datasource');
+      expect(rendered).not.toContain('Installing');
     });
   });
 
