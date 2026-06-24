@@ -25,6 +25,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { DEFAULT_LOCK_DIR, getLiveLock, type LockContents } from '@moonshot-ai/server';
 
 import {
+  connectableServerHost,
   DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
   isServerHealthy,
@@ -44,6 +45,8 @@ const POLL_INTERVAL_MS = 200;
 const DEFAULT_DAEMON_LOG_LEVEL = 'info';
 
 export interface EnsureDaemonOptions {
+  /** Host/interface the daemon should bind. */
+  host?: string;
   /** Preferred port; on conflict a free port is chosen automatically. */
   port?: number;
   /** Pino log level for the spawned daemon (defaults to `info`). */
@@ -56,6 +59,7 @@ export interface EnsureDaemonOptions {
 
 export interface EnsureDaemonResult {
   readonly origin: string;
+  readonly host: string;
 }
 
 /** Path of the daemon log file (shared with the OS-service log location). */
@@ -65,7 +69,7 @@ export function daemonLogPath(): string {
 
 export function lockConnectHost(lock: LockContents): string {
   const host = lock.host ?? DEFAULT_SERVER_HOST;
-  return host === '0.0.0.0' ? DEFAULT_SERVER_HOST : host;
+  return connectableServerHost(host);
 }
 
 /** True when `host:port` is currently free to bind (nothing listening). */
@@ -178,6 +182,7 @@ export function resolveDaemonProgram(
 }
 
 interface SpawnDaemonChildOptions {
+  host: string;
   port: number;
   logLevel: string;
   debugEndpoints?: boolean;
@@ -193,6 +198,8 @@ export function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
     'server',
     'run',
     '--daemon',
+    '--host',
+    options.host,
     '--port',
     String(options.port),
     '--log-level',
@@ -251,15 +258,17 @@ function sleep(ms: number): Promise<void> {
  * detached process after this returns.
  */
 export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<EnsureDaemonResult> {
+  const host = options.host ?? DEFAULT_SERVER_HOST;
   const preferred = options.port ?? DEFAULT_SERVER_PORT;
   const logLevel = options.logLevel ?? DEFAULT_DAEMON_LOG_LEVEL;
 
   // 1. Reuse an already-live daemon if one holds the lock.
   const existing = getLiveLock();
   if (existing) {
+    const existingHost = existing.host ?? DEFAULT_SERVER_HOST;
     const origin = serverOrigin(lockConnectHost(existing), existing.port);
     if (await waitForServerHealthy(origin, REUSE_HEALTH_TIMEOUT_MS)) {
-      return { origin };
+      return { origin, host: existingHost };
     }
     // Live pid but not responding (wedged or mid-boot failure). Fall through
     // and spawn: if it is truly wedged our child loses the lock race and we
@@ -267,8 +276,9 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
   }
 
   // 2. No reusable daemon — pick a free port and spawn one detached.
-  const port = await resolveDaemonPort(DEFAULT_SERVER_HOST, preferred);
+  const port = await resolveDaemonPort(host, preferred);
   spawnDaemonChild({
+    host,
     port,
     logLevel,
     debugEndpoints: options.debugEndpoints,
@@ -280,9 +290,10 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
   while (Date.now() < deadline) {
     const live = getLiveLock();
     if (live) {
+      const liveHost = live.host ?? DEFAULT_SERVER_HOST;
       const origin = serverOrigin(lockConnectHost(live), live.port);
       if (await isServerHealthy(origin, 500)) {
-        return { origin };
+        return { origin, host: liveHost };
       }
     }
     await sleep(POLL_INTERVAL_MS);

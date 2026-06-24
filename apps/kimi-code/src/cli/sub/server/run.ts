@@ -29,8 +29,10 @@ import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../.
 import { ensureDaemon } from './daemon';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
+  DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
   parseServerOptions,
+  serverOriginFromAddress,
   VALID_LOG_LEVELS,
   type ParsedServerOptions,
   type ServerCliOptions,
@@ -51,7 +53,7 @@ export interface StartForegroundHooks {
 }
 
 export interface RunCommandDeps {
-  startServerBackground(options: ParsedServerOptions): Promise<{ origin: string }>;
+  startServerBackground(options: ParsedServerOptions): Promise<{ origin: string; host?: string }>;
   /** Foreground runner; defaults to the real in-process runner when omitted. */
   startServerForeground?: (
     options: ParsedServerOptions,
@@ -65,6 +67,11 @@ export interface RunCommandDeps {
 /** Build the `run` subcommand, mounted under a parent (`server` or top-level). */
 export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean }): Command {
   return cmd
+    .option(
+      '--host <host>',
+      `Host to bind (default ${DEFAULT_SERVER_HOST})`,
+      DEFAULT_SERVER_HOST,
+    )
     .option(
       '--port <port>',
       `Bind port (default ${DEFAULT_SERVER_PORT})`,
@@ -127,7 +134,7 @@ export async function handleRunCommand(
         const readyMs = Date.now() - startedAt;
         deps.stdout.write(
           parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-            ? formatReadyBanner(origin, readyMs)
+            ? formatReadyBanner(origin, readyMs, parsed.host)
             : `Kimi server: ${origin}\n`,
         );
         if (opts.open === true) {
@@ -137,11 +144,12 @@ export async function handleRunCommand(
     });
     return;
   }
-  const { origin } = await deps.startServerBackground(parsed);
+  const background = await deps.startServerBackground(parsed);
+  const { origin } = background;
   const readyMs = Date.now() - startedAt;
   deps.stdout.write(
     parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-      ? formatReadyBanner(origin, readyMs)
+      ? formatReadyBanner(origin, readyMs, background.host ?? parsed.host)
       : `Kimi server: ${origin}\n`,
   );
   if (opts.open === true) {
@@ -157,14 +165,15 @@ export async function handleRunCommand(
  */
 export async function startServerBackground(
   options: ParsedServerOptions,
-): Promise<{ origin: string }> {
-  const { origin } = await ensureDaemon({
+): Promise<{ origin: string; host: string }> {
+  const { origin, host } = await ensureDaemon({
+    host: options.host,
     port: options.port,
     logLevel: options.logLevel,
     debugEndpoints: options.debugEndpoints,
     idleGraceMs: options.idleGraceMs,
   });
-  return { origin };
+  return { origin, host };
 }
 
 /**
@@ -267,7 +276,7 @@ async function runServerInProcess(
     : { address: running.address };
   running.logger.info(readyFields, mode.daemon ? 'daemon ready' : 'server ready');
 
-  onReady?.(running.address);
+  onReady?.(serverOriginFromAddress(options.host, running.address, options.port));
 
   return new Promise<never>(() => {
     // Keeps the event loop alive; the process ends via shutdown()/process.exit.
@@ -323,7 +332,7 @@ export function resolveServerWebAssetsDir(
   return nativeWebAssetsDir ?? join(getHostPackageRoot(), WEB_ASSETS_DIR);
 }
 
-function formatReadyBanner(origin: string, readyMs: number): string {
+function formatReadyBanner(origin: string, readyMs: number, host: string): string {
   const primary = (text: string): string => chalk.hex(darkColors.primary)(text);
   const title = (text: string): string => chalk.bold.hex(darkColors.primary)(text);
   const dim = (text: string): string => chalk.hex(darkColors.textDim)(text);
@@ -348,7 +357,8 @@ function formatReadyBanner(origin: string, readyMs: number): string {
   ];
   const infoLines = [
     label('URL:      ') + url,
-    label('Network:  ') + muted('local only'),
+    label('Network:  ') + muted(networkLabel(host)),
+    ...(isLocalHost(host) ? [] : [label('Access:   ') + muted('trusted network only')]),
     label('Logs:     ') + muted('off') + dim('  use --log-level info to enable'),
     label('Stop:     ') + muted('kimi server kill'),
     label('Ready:    ') + muted(`${String(Math.max(0, readyMs))} ms`),
@@ -376,6 +386,16 @@ function formatReadyBanner(origin: string, readyMs: number): string {
 
 function displayOrigin(origin: string): string {
   return origin.endsWith('/') ? origin : `${origin}/`;
+}
+
+function networkLabel(host: string): string {
+  if (isLocalHost(host)) return 'local only';
+  return `listening on ${host}`;
+}
+
+function isLocalHost(host: string): boolean {
+  const bareHost = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+  return bareHost === DEFAULT_SERVER_HOST || bareHost === 'localhost' || bareHost === '::1';
 }
 
 const DEFAULT_RUN_COMMAND_DEPS: RunCommandDeps = {

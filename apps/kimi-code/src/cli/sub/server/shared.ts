@@ -92,8 +92,38 @@ export function parseLogLevel(raw: string | undefined): ServerLogLevel {
   );
 }
 
+export function connectableServerHost(host: string): string {
+  const bareHost = unbracketHost(host);
+  if (bareHost === '0.0.0.0') return DEFAULT_SERVER_HOST;
+  if (bareHost === '::') return '::1';
+  return bareHost;
+}
+
 export function serverOrigin(host: string, port: number): string {
-  return `http://${host}:${port}`;
+  return `http://${urlHost(connectableServerHost(host))}:${port}`;
+}
+
+export function serverOriginFromAddress(host: string, address: string, fallbackPort: number): string {
+  try {
+    const port = Number.parseInt(new URL(address).port, 10);
+    if (Number.isFinite(port)) {
+      return serverOrigin(host, port);
+    }
+  } catch {
+    // Fall back below if the listening address is unexpectedly malformed.
+  }
+  return serverOrigin(host, fallbackPort);
+}
+
+function urlHost(host: string): string {
+  return host.includes(':') ? `[${host}]` : host;
+}
+
+function unbracketHost(host: string): string {
+  if (host.startsWith('[') && host.endsWith(']')) {
+    return host.slice(1, -1);
+  }
+  return host;
 }
 
 /** Strip `/api/v1` and trailing slashes so user-supplied origins are uniform. */
