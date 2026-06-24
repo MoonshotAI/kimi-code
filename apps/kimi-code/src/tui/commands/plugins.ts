@@ -174,15 +174,21 @@ async function showPluginsPicker(
     onCancel: () => {
       host.restoreEditor();
     },
-    // The Official/Third-party tabs fetch their catalog lazily so /plugins
-    // opens instantly and Installed/Custom keep working even when the
-    // marketplace is unreachable.
+    // Every tab except Custom needs the catalog: Official/Third-party list it,
+    // and Installed uses it to show update badges. The Installed/Custom tabs
+    // keep working even when the marketplace is unreachable (badges simply stay
+    // hidden until data arrives).
     onRequestMarketplace: () => {
       void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
     },
   });
   host.mountEditorReplacement(panel);
-  if (options?.initialTab === 'official' || options?.initialTab === 'third-party') {
+  // Kick off the catalog fetch for any tab that needs it: Installed uses it for
+  // update badges, Official/Third-party list it. Custom never reads the catalog,
+  // so skip the fetch there. Done here (after `panel` is initialized) rather
+  // than inside the component constructor, because the callback above closes
+  // over `panel`.
+  if (options?.initialTab !== 'custom') {
     panel.setMarketplaceLoading();
     void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
   }

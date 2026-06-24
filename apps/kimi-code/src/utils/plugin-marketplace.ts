@@ -172,12 +172,13 @@ function parseMarketplaceEntry(
   if (source === undefined) {
     throw new Error(`Plugin marketplace entry ${id} must define "source".`);
   }
+  const resolvedSource = resolveEntrySource(source, location);
   return {
     id,
     displayName: stringField(value, 'displayName') ?? stringField(value, 'name') ?? id,
-    source: resolveEntrySource(source, location),
+    source: resolvedSource,
     tier: parseMarketplaceTier(value, id),
-    version: stringField(value, 'version'),
+    version: stringField(value, 'version') ?? deriveVersionFromGithubSource(resolvedSource),
     description: stringField(value, 'description') ?? stringField(value, 'shortDescription'),
     homepage: stringField(value, 'homepage') ?? stringField(value, 'websiteURL'),
     keywords: stringArrayField(value, 'keywords'),
@@ -232,6 +233,44 @@ function resolveEntrySource(source: string, location: MarketplaceLocation): stri
     return new URL(trimmed, location.resolved).toString();
   }
   return resolve(dirname(location.resolved), trimmed);
+}
+
+/**
+ * Best-effort derivation of a semver version from a GitHub source URL that pins
+ * a specific ref. Lets a marketplace entry omit `version` when the source
+ * already encodes the release (for example `/releases/tag/v6.0.3`), keeping the
+ * source URL the single source of truth and avoiding drift between the two.
+ *
+ * Only refs shaped like semver (`v6.0.3`, `6.0.3`, `6.0.3-rc.1`) are accepted;
+ * bare repo URLs, branch names and commit SHAs yield `undefined`, so update
+ * detection degrades to "unknown" instead of comparing meaningless values.
+ */
+function deriveVersionFromGithubSource(source: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return undefined;
+  }
+  if (url.hostname !== 'github.com' && url.hostname !== 'www.github.com') {
+    return undefined;
+  }
+  // Pathname shape: /<owner>/<repo>/<tail...>. Recognized tails:
+  //   releases/tag/<tag>
+  //   tree/<ref>
+  //   commit/<sha>
+  const [, , kind, a, b] = url.pathname.split('/').filter(Boolean);
+  const ref =
+    kind === 'releases' && a === 'tag' ? b : kind === 'tree' || kind === 'commit' ? a : undefined;
+  if (ref === undefined) return undefined;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(ref);
+  } catch {
+    decoded = ref;
+  }
+  const candidate = decoded.replace(/^v/i, '');
+  return valid(candidate) !== null ? candidate : undefined;
 }
 
 function resolveLocalPath(input: string, workDir: string): string {

@@ -253,6 +253,32 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Superpowers  update 4.0.0 → 5.0.0');
   });
 
+  it('shows an update badge on the Installed tab when the marketplace version is newer', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Superpowers  enabled  update 4.0.0 → 5.0.0');
+  });
+
+  it('does not show an update badge on the Installed tab before the marketplace loads', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const { panel } = makePanel({ installed });
+    // The marketplace has not been loaded yet, so the badge stays hidden rather
+    // than guessing.
+    const out = strip(renderRaw(panel));
+    expect(out).not.toContain('update');
+  });
+
   it('shows installed · v<version> when the installed plugin is up to date', () => {
     const installed = [{ ...superpowers, id: 'superpowers', version: '5.0.0' }];
     const entries = [

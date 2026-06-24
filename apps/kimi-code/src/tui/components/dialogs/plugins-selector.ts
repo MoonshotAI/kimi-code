@@ -351,7 +351,9 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private requestMarketplaceIfNeeded(): void {
-    if (this.market.status === 'idle' && this.activeTab.id !== 'installed' && this.activeTab.id !== 'custom') {
+    // The Installed tab also needs the catalog to render update badges; only the
+    // Custom tab (manual URL entry) can skip the fetch entirely.
+    if (this.market.status === 'idle' && this.activeTab.id !== 'custom') {
       this.market = { status: 'loading' };
       this.opts.onRequestMarketplace?.();
     }
@@ -497,6 +499,14 @@ export class PluginsPanelComponent extends Container implements Focusable {
     lines.push(mutedHintLine(` ${installed.length} installed`, colors));
   }
 
+  private installedUpdateBadge(plugin: PluginSummary): string | undefined {
+    if (this.market.status !== 'loaded') return undefined;
+    const entry = this.market.entries.find((e) => e.id === plugin.id);
+    if (entry === undefined) return undefined;
+    const status = computeUpdateStatus(entry.version, plugin.version, true);
+    return status.kind === 'update' ? `update ${status.local} → ${status.latest}` : undefined;
+  }
+
   private renderInstalledRow(plugin: PluginSummary, index: number, width: number): string[] {
     const colors = currentTheme.palette;
     const selected = index === this.selectedIndex;
@@ -504,9 +514,13 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
     const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
     const status = pluginStatus(plugin);
+    const update = this.installedUpdateBadge(plugin);
     let line = prefix + labelStyle(plugin.displayName);
     if (status !== undefined) {
       line += '  ' + statusStyle({ kind: 'plugin', value: '', label: '', description: '', status }, colors)(status);
+    }
+    if (update !== undefined) {
+      line += '  ' + marketplaceStatusStyle(update, colors)(update);
     }
     if (this.opts.pluginHint?.id === plugin.id) {
       line += '  ' + chalk.hex(colors.warning)(this.opts.pluginHint.text);

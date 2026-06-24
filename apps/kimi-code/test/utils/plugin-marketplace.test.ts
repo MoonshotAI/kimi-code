@@ -135,7 +135,7 @@ describe('loadPluginMarketplace', () => {
         id: 'superpowers',
         displayName: 'Superpowers',
         tier: 'curated',
-        source: join(REPO_ROOT, 'plugins/curated/superpowers'),
+        source: 'https://github.com/obra/superpowers/releases/tag/v6.0.3',
       }),
     );
     expect(marketplace.plugins).toContainEqual(
@@ -197,7 +197,7 @@ describe('loadPluginMarketplace', () => {
       expect(marketplace.plugins).toContainEqual(
         expect.objectContaining({
           id: 'superpowers',
-          source: join(REPO_ROOT, 'plugins/curated/superpowers'),
+          source: 'https://github.com/obra/superpowers/releases/tag/v6.0.3',
         }),
       );
     } finally {
@@ -219,6 +219,67 @@ describe('loadPluginMarketplace', () => {
       source: KIMI_CODE_PLUGIN_MARKETPLACE_URL,
       fetchImpl,
     })).rejects.toThrow(/fetch failed/);
+  });
+
+  describe('version derivation from a GitHub source', () => {
+    async function loadEntry(source: string, version?: string) {
+      const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+      const file = join(dir, 'marketplace.json');
+      await writeFile(
+        file,
+        JSON.stringify({
+          plugins: [
+            {
+              id: 'demo',
+              displayName: 'Demo',
+              source,
+              version,
+            },
+          ],
+        }),
+        'utf8',
+      );
+      const marketplace = await loadPluginMarketplace({ workDir: dir, source: file });
+      return marketplace.plugins[0]!;
+    }
+
+    it('derives a version from a /releases/tag/ source', async () => {
+      const entry = await loadEntry('https://github.com/obra/superpowers/releases/tag/v6.0.3');
+      expect(entry.version).toBe('6.0.3');
+    });
+
+    it('derives a version from a /tree/ source', async () => {
+      const entry = await loadEntry('https://github.com/obra/superpowers/tree/v6.0.3');
+      expect(entry.version).toBe('6.0.3');
+    });
+
+    it('accepts a tag without a leading v', async () => {
+      const entry = await loadEntry('https://github.com/obra/superpowers/releases/tag/6.0.3');
+      expect(entry.version).toBe('6.0.3');
+    });
+
+    it('does not derive a version from a bare repo URL', async () => {
+      const entry = await loadEntry('https://github.com/obra/superpowers');
+      expect(entry.version).toBeUndefined();
+    });
+
+    it('does not derive a version from a commit SHA', async () => {
+      const entry = await loadEntry('https://github.com/obra/superpowers/commit/abc1234');
+      expect(entry.version).toBeUndefined();
+    });
+
+    it('does not derive a version from a non-GitHub URL', async () => {
+      const entry = await loadEntry('https://code.kimi.com/kimi-code/plugins/curated/superpowers.zip');
+      expect(entry.version).toBeUndefined();
+    });
+
+    it('lets an explicit version override the derived one', async () => {
+      const entry = await loadEntry(
+        'https://github.com/obra/superpowers/releases/tag/v6.0.3',
+        '9.9.9',
+      );
+      expect(entry.version).toBe('9.9.9');
+    });
   });
 
   it('accepts legacy marketplace type aliases as normal plugins', async () => {
