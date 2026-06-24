@@ -27,8 +27,10 @@ import { WebSocket } from 'ws';
 
 import {
   IApprovalService,
+  IEventService,
   type ApprovalRequest,
   type ApprovalResponse,
+  type Event,
 } from '@moonshot-ai/agent-core';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
@@ -260,6 +262,67 @@ describe('Approval reverse-RPC: WS broadcast → REST resolve → Promise settle
     expect(resolvedPayload.approval_id).toBe(payload.approval_id);
     expect(resolvedPayload.decision).toBe('approved');
     expect(resolvedPayload.selected_label).toBe('Run');
+
+    ws.close();
+  });
+
+  it('aborts the pending approval when the turn ends for a cancellation reason', async () => {
+    const r = await bootDaemon();
+    const sid = await createSession(r);
+    const { ws, received } = await openSubscriber(r, sid);
+
+    const broker = r.services.invokeFunction(
+      (a) => a.get(IApprovalService) as ApprovalService,
+    );
+    const eventService = r.services.invokeFunction((a) => a.get(IEventService));
+
+    const pending = broker.request({
+      sessionId: sid,
+      agentId: 'main',
+      turnId: 21,
+      toolCallId: 'tc_approval_abort',
+      toolName: 'shell.run',
+      action: 'Run `ls`',
+      display: { kind: 'command', command: 'ls', summary: 'ls' } as never,
+    });
+
+    const requested = await waitFor(
+      received,
+      (f) => f['type'] === 'event.approval.requested',
+      2000,
+    );
+    const payload = requested['payload'] as { approval_id: string };
+    expect(broker.isPending(payload.approval_id)).toBe(true);
+
+    // Simulate the agent's turn being aborted before the user resolves the
+    // approval. The broker subscribes to the in-process bus because the turn
+    // abort signal never reaches it through the RPC boundary.
+    eventService.publish({
+      type: 'turn.ended',
+      sessionId: sid,
+      agentId: 'main',
+      turnId: 21,
+      reason: 'cancelled',
+    } as unknown as Event);
+
+    const resolvedFrame = await waitFor(
+      received,
+      (f) => f['type'] === 'event.approval.resolved',
+      2000,
+    );
+    const resolvedPayload = resolvedFrame['payload'] as {
+      approval_id: string;
+      decision: string;
+    };
+    expect(resolvedPayload.approval_id).toBe(payload.approval_id);
+    expect(resolvedPayload.decision).toBe('cancelled');
+
+    // Broker entry is cleaned up so listPending()/session status don't stick
+    // in awaiting_approval for a dead turn.
+    expect(broker.isPending(payload.approval_id)).toBe(false);
+
+    const inProcResp: ApprovalResponse = await pending;
+    expect(inProcResp.decision).toBe('cancelled');
 
     ws.close();
   });

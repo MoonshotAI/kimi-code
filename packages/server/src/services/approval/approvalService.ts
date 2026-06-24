@@ -70,6 +70,39 @@ export class ApprovalService extends Disposable implements IApprovalService {
   ) {
     super();
     this._pending = this._register(new DisposableMap<string, PendingApproval>());
+
+    // The turn's abort signal never reaches this broker: agent-core's
+    // `BridgeClientAPI.requestApproval` drops the `{ signal }` option, so an
+    // aborted turn would otherwise leave the approval in `_pending` forever
+    // (pinning the session in `awaiting_approval` and keeping the web panel
+    // open). Settle stale approvals when the in-process bus reports the turn
+    // ended for a cancellation reason. This is intentionally session-scoped: a
+    // turn has at most one pending approval, and on normal completion the
+    // approval is already resolved so this is a no-op.
+    this._register(
+      this.eventService.onDidPublish((event) => {
+        if ((event as { type?: string }).type !== 'turn.ended') return;
+        const reason = (event as { reason?: string }).reason;
+        if (reason !== 'cancelled' && reason !== 'failed' && reason !== 'filtered') return;
+        const sessionId = (event as { sessionId?: string }).sessionId;
+        if (sessionId === undefined || sessionId === '') return;
+        this.dismissForSession(sessionId);
+      }),
+    );
+  }
+
+  private dismissForSession(sessionId: string): void {
+    const ids: string[] = [];
+    for (const p of this._pending.values()) {
+      if (p.sessionId === sessionId) ids.push(p.approvalId);
+    }
+    for (const id of ids) {
+      // Reuse resolve(): clears `_pending` / `_byToolCallId` and publishes
+      // `event.approval.resolved` (decision: 'cancelled') so the web panel
+      // closes. The agent-core caller's promise is already rejected by the
+      // abort, so the resolved value is only observed by tests.
+      this.resolve(id, { decision: 'cancelled' });
+    }
   }
 
   async request(
