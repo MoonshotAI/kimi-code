@@ -19,6 +19,17 @@ export function buildOpenableUrl(bareOrigin: string, token: string | undefined):
   return token === undefined ? `${base}/` : `${base}/#token=${token}`;
 }
 
+/**
+ * Split a full URL into the part before `#token=` and the `#token=…` fragment
+ * itself, so callers can render the fragment in a de-emphasized color. Returns
+ * `[fullUrl, '']` when there is no token fragment.
+ */
+export function splitTokenFragment(fullUrl: string): [string, string] {
+  const marker = '#token=';
+  const idx = fullUrl.indexOf(marker);
+  return idx < 0 ? [fullUrl, ''] : [fullUrl.slice(0, idx), fullUrl.slice(idx)];
+}
+
 export interface AccessUrlLine {
   /** Fixed-width label including trailing padding, e.g. `"Local:    "`. */
   label: string;
