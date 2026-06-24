@@ -336,6 +336,44 @@ describe('`kimi server run` background start', () => {
     expect(parsed).toMatchObject({ logLevel: 'debug' });
   });
 
+  it('warns and uses the running server host when a daemon is reused', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+
+    // The user asks for a public bind, but a loopback daemon is already up.
+    await handleRunCommand(
+      { port: '58627', host: '0.0.0.0' },
+      {
+        startServerBackground: async () => ({
+          origin: 'http://127.0.0.1:58627',
+          reused: true,
+          host: '127.0.0.1',
+          port: 58627,
+        }),
+        resolveToken: () => 'tok',
+        openUrl: vi.fn(),
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: { write: () => true },
+      },
+    );
+
+    const plain = stripAnsi(stdout);
+    // A clear notice that a server was already running and options were ignored.
+    expect(plain).toContain('A server is already running');
+    expect(plain).toContain('kimi server kill');
+    // The banner uses the *actual* host (loopback), not the requested 0.0.0.0 —
+    // so it shows a Local URL plus the "network disabled" hint, NOT real
+    // Network addresses (which would be misleading since nothing binds them).
+    expect(plain).toContain('http://127.0.0.1:58627/#token=tok');
+    expect(plain).toContain('use --host 0.0.0.0 to enable');
+    expect(plain).not.toContain('Network:  http');
+  });
+
   it('prints a TUI-style ready panel once the daemon is up', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let stdout = '';
@@ -363,6 +401,9 @@ describe('`kimi server run` background start', () => {
     expect(plain).toContain('Kimi server ready');
     expect(plain).toContain('Local:');
     expect(plain).toContain('http://127.0.0.1:58627/');
+    // Loopback bind shows a Network hint for enabling network access.
+    expect(plain).toContain('Network:');
+    expect(plain).toContain('use --host 0.0.0.0 to enable');
     expect(plain).toContain('Logs:');
     expect(plain).toContain('off');
     expect(plain).toContain('Stop:');

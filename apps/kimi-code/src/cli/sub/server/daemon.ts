@@ -64,6 +64,12 @@ export interface EnsureDaemonOptions {
 
 export interface EnsureDaemonResult {
   readonly origin: string;
+  /** True when an already-running daemon was reused (no new server started). */
+  readonly reused: boolean;
+  /** Bind host the running daemon is actually listening on (from the lock). */
+  readonly host: string;
+  /** Port the running daemon is actually listening on (from the lock). */
+  readonly port: number;
 }
 
 /** Path of the daemon log file (shared with the OS-service log location). */
@@ -285,7 +291,12 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
   if (existing) {
     const origin = serverOrigin(lockConnectHost(existing), existing.port);
     if (await waitForServerHealthy(origin, REUSE_HEALTH_TIMEOUT_MS)) {
-      return { origin };
+      return {
+        origin,
+        reused: true,
+        host: existing.host ?? DEFAULT_SERVER_HOST,
+        port: existing.port,
+      };
     }
     // Live pid but not responding (wedged or mid-boot failure). Fall through
     // and spawn: if it is truly wedged our child loses the lock race and we
@@ -327,7 +338,12 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
     if (live) {
       const origin = serverOrigin(lockConnectHost(live), live.port);
       if (await isServerHealthy(origin, 500)) {
-        return { origin };
+        return {
+          origin,
+          reused: false,
+          host: live.host ?? DEFAULT_SERVER_HOST,
+          port: live.port,
+        };
       }
     }
     if (childExit !== undefined && !live) {

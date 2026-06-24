@@ -26,8 +26,13 @@ import { getDataDir } from '#/utils/paths';
 
 import { initializeServerTelemetry } from '../../telemetry';
 import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../../version';
-import { accessUrlLines, buildOpenableUrl, splitTokenFragment } from './access-urls';
-import { ensureDaemon } from './daemon';
+import {
+  accessUrlLines,
+  buildOpenableUrl,
+  isLoopbackHost,
+  splitTokenFragment,
+} from './access-urls';
+import { ensureDaemon, type EnsureDaemonResult } from './daemon';
 import { type NetworkAddress } from './networks';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
@@ -54,7 +59,15 @@ export interface StartForegroundHooks {
 }
 
 export interface RunCommandDeps {
-  startServerBackground(options: ParsedServerOptions): Promise<{ origin: string }>;
+  startServerBackground(options: ParsedServerOptions): Promise<{
+    origin: string;
+    /** True when an already-running daemon was reused (no new server started). */
+    reused?: boolean;
+    /** Bind host the running daemon is actually listening on (from the lock). */
+    host?: string;
+    /** Port the running daemon is actually listening on (from the lock). */
+    port?: number;
+  }>;
   /** Foreground runner; defaults to the real in-process runner when omitted. */
   startServerForeground?: (
     options: ParsedServerOptions,
@@ -169,27 +182,46 @@ export async function handleRunCommand(
   // Resolve the persistent token once: it is printed in the ready banner and
   // rides in the opened Web UI URL's `#token=` fragment (M5.5). Falls back to
   // the plain origin / no token line when unavailable.
-  const writeReady = (origin: string): void => {
+  const writeReady = (result: { origin: string; reused?: boolean; host?: string }): void => {
+    const { origin } = result;
+    const host = result.host ?? parsed.host;
     const token = deps.resolveToken?.();
-    deps.stdout.write(
+    let output = '';
+    if (result.reused === true) {
+      // A daemon was already running, so this command's --host/--port/etc. did
+      // not start a new one. Say so loudly, then print the actual running
+      // server's URLs (using its real bind host, not the requested one).
+      output += formatReuseNotice(origin);
+    }
+    output +=
       parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-        ? formatReadyBanner(origin, parsed.host, {
+        ? formatReadyBanner(origin, host, {
             token,
             networkAddresses: deps.networkAddresses,
           })
-        : formatReadyLine(origin, token),
-    );
+        : formatReadyLine(origin, token);
+    deps.stdout.write(output);
     if (opts.open === true) {
       deps.openUrl(token !== undefined ? buildWebUrl(origin, token) : origin);
     }
   };
   if (opts.foreground === true) {
     const run = deps.startServerForeground ?? startServerForeground;
-    await run(parsed, { onReady: writeReady });
+    await run(parsed, {
+      onReady: (origin) => writeReady({ origin, reused: false, host: parsed.host }),
+    });
     return;
   }
-  const { origin } = await deps.startServerBackground(parsed);
-  writeReady(origin);
+  const result = await deps.startServerBackground(parsed);
+  writeReady(result);
+}
+
+function formatReuseNotice(origin: string): string {
+  return (
+    `${chalk.yellow('A server is already running')} at ${origin} — ` +
+    `the options from this command were not applied. ` +
+    `Run ${chalk.bold('kimi server kill')} first to bind a new host/port.\n`
+  );
 }
 
 function formatReadyLine(origin: string, token: string | undefined): string {
@@ -204,8 +236,8 @@ function formatReadyLine(origin: string, token: string | undefined): string {
  */
 export async function startServerBackground(
   options: ParsedServerOptions,
-): Promise<{ origin: string }> {
-  const { origin } = await ensureDaemon({
+): Promise<EnsureDaemonResult> {
+  return ensureDaemon({
     host: options.host,
     port: options.port,
     logLevel: options.logLevel,
@@ -215,7 +247,6 @@ export async function startServerBackground(
     allowRemoteTerminals: options.allowRemoteTerminals,
     idleGraceMs: options.idleGraceMs,
   });
-  return { origin };
 }
 
 /**
@@ -421,6 +452,10 @@ function formatReadyBanner(
     opts.networkAddresses,
   )) {
     lines.push(`  ${label(text)}${urlWithDimToken(href)}`);
+  }
+  // On a loopback bind there is no network URL; show how to enable one.
+  if (isLoopbackHost(host)) {
+    lines.push(`  ${label('Network:  ')}${muted('off')}${dim('  use --host 0.0.0.0 to enable')}`);
   }
   if (opts.token !== undefined) {
     // Set the token off with surrounding whitespace rather than color, so it is

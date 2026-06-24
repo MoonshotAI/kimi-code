@@ -41,7 +41,8 @@ function isWildcard(host: string): boolean {
   return host === '' || host === '0.0.0.0' || host === '::';
 }
 
-function isLoopback(host: string): boolean {
+/** True when `host` is a loopback address (this host only). */
+export function isLoopbackHost(host: string): boolean {
   return host === 'localhost' || host === '127.0.0.1' || host === '::1';
 }
 
@@ -77,7 +78,7 @@ export function accessUrlLines(
     }
     return lines;
   }
-  if (isLoopback(host)) {
+  if (isLoopbackHost(host)) {
     return [{ label: 'Local:    ', url: buildOpenableUrl(hostOrigin(host, port), token) }];
   }
   return [{ label: 'URL:      ', url: buildOpenableUrl(hostOrigin(host, port), token) }];
