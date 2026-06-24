@@ -26,7 +26,7 @@ import { getDataDir } from '#/utils/paths';
 
 import { initializeServerTelemetry } from '../../telemetry';
 import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../../version';
-import { accessUrlLines, buildOpenableUrl } from './access-urls';
+import { accessUrlLines, buildOpenableUrl, splitTokenFragment } from './access-urls';
 import { ensureDaemon } from './daemon';
 import { type NetworkAddress } from './networks';
 import {
@@ -398,7 +398,12 @@ function formatReadyBanner(
   const muted = (text: string): string => chalk.hex(darkColors.textMuted)(text);
   const label = (text: string): string => chalk.bold.hex(darkColors.textDim)(text);
   const url = (text: string): string => chalk.hex(darkColors.accent)(text);
-  const tokenColor = (text: string): string => chalk.bold.hex(darkColors.warning)(text);
+  // Render the `#token=…` fragment in a de-emphasized gray so the host/port
+  // stands out while the full URL stays selectable for copying.
+  const urlWithDimToken = (href: string): string => {
+    const [base, frag] = splitTokenFragment(href);
+    return frag === '' ? url(base) : url(base) + dim(frag);
+  };
 
   const port = Number(new URL(origin).port);
   // Borderless header: the Kimi sprite (the little mascot with eyes) sits next
@@ -417,10 +422,14 @@ function formatReadyBanner(
     opts.token,
     opts.networkAddresses,
   )) {
-    lines.push(`  ${label(text)}${url(href)}`);
+    lines.push(`  ${label(text)}${urlWithDimToken(href)}`);
   }
   if (opts.token !== undefined) {
-    lines.push(`  ${label('Token:    ')}${tokenColor(opts.token)}`);
+    // Set the token off with surrounding whitespace rather than color, so it is
+    // easy to spot without being highlighted.
+    lines.push('');
+    lines.push(`  ${label('Token:    ')}${opts.token}`);
+    lines.push('');
   }
   lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
   lines.push(`  ${label('Stop:     ')}${muted('kimi server kill')}`);

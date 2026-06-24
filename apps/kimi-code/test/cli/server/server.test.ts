@@ -1279,6 +1279,12 @@ describe('accessUrlLines', () => {
     const lines = accessUrlLines('192.168.1.5', 58627, undefined);
     expect(lines).toEqual([{ label: 'URL:      ', url: 'http://192.168.1.5:58627/' }]);
   });
+
+  it('splitTokenFragment splits off the #token= fragment', async () => {
+    const { splitTokenFragment } = await import('#/cli/sub/server/access-urls');
+    expect(splitTokenFragment('http://h:1/#token=abc')).toEqual(['http://h:1/', '#token=abc']);
+    expect(splitTokenFragment('http://h:1/')).toEqual(['http://h:1/', '']);
+  });
 });
 
 describe('`kimi web` / `server run --open` token fragment (M5.5)', () => {
