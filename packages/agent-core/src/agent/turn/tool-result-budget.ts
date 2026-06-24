@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 
 import type { ContentPart } from '@moonshot-ai/kosong';
@@ -16,10 +16,6 @@ interface BudgetToolResultOptions {
   readonly result: ExecutableToolResult;
 }
 
-interface SavedToolResult {
-  readonly outputPath: string;
-}
-
 export async function budgetToolResultForModel(
   options: BudgetToolResultOptions,
 ): Promise<ExecutableToolResult> {
@@ -29,12 +25,12 @@ export async function budgetToolResultForModel(
   if (text.includes('\n[Full output saved]\n')) return options.result;
   if (options.homedir === undefined) return options.result;
 
-  const saved = await saveToolResult(
+  const outputPath = await saveToolResult(
     { homedir: options.homedir, toolName: options.toolName, toolCallId: options.toolCallId },
     text,
   );
-  if (saved === undefined) return options.result;
-  const output = renderPersistedToolResult(options.toolName, options.toolCallId, text, saved);
+  if (outputPath === undefined) return options.result;
+  const output = renderPersistedToolResult(options.toolName, options.toolCallId, text, outputPath);
   return options.result.isError === true
     ? { ...options.result, output, isError: true }
     : { ...options.result, output };
@@ -53,7 +49,7 @@ function persistableToolResultText(output: ExecutableToolResult['output']): stri
 async function saveToolResult(
   options: { readonly homedir: string; readonly toolName: string; readonly toolCallId: string },
   text: string,
-): Promise<SavedToolResult | undefined> {
+): Promise<string | undefined> {
   try {
     const dir = join(options.homedir, 'tool-results');
     await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -62,7 +58,7 @@ async function saveToolResult(
       `${safeToolResultFileStem(options.toolName, options.toolCallId)}-${randomUUID()}.txt`,
     );
     await writeFile(outputPath, text, { encoding: 'utf8', flag: 'wx' });
-    return { outputPath };
+    return outputPath;
   } catch {
     return undefined;
   }
@@ -72,7 +68,7 @@ function renderPersistedToolResult(
   toolName: string,
   toolCallId: string,
   text: string,
-  saved: SavedToolResult,
+  outputPath: string,
 ): string {
   const lines = [
     `Tool output exceeded ${String(TOOL_RESULT_MAX_CHARS)} characters; showing a preview only.`,
@@ -80,11 +76,9 @@ function renderPersistedToolResult(
     `tool_call_id: ${toolCallId}`,
     `output_size_chars: ${String(text.length)}`,
     `output_size_bytes: ${String(Buffer.byteLength(text, 'utf8'))}`,
-  ];
-  lines.push(
-    `output_path: ${saved.outputPath}`,
+    `output_path: ${outputPath}`,
     'next_step: Use Read with output_path to page through the full output.',
-  );
+  ];
   lines.push('', '[preview]', text.slice(0, TOOL_RESULT_PREVIEW_CHARS));
   return lines.join('\n');
 }
@@ -94,6 +88,5 @@ function safeToolResultFileStem(toolName: string, toolCallId: string): string {
     .replace(/[^a-zA-Z0-9._-]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 80);
-  const hash = createHash('sha256').update(`${toolName}:${toolCallId}`).digest('hex').slice(0, 12);
-  return `${label || 'tool-result'}-${hash}`;
+  return label || 'tool-result';
 }
