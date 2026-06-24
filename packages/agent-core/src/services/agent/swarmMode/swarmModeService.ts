@@ -1,49 +1,36 @@
 import SWARM_MODE_ENTER_REMINDER from '../../../agent/swarm/enter-reminder.md?raw';
 import SWARM_MODE_EXIT_REMINDER from '../../../agent/swarm/exit-reminder.md?raw';
-import { Disposable, IInstantiationService } from '../../../di';
 import {
-  AgentSwarmTool,
-  type AgentSwarmSubagentHost,
-} from '../../../tools/builtin/collaboration/agent-swarm';
+  Disposable,
+  registerSingleton,
+  SyncDescriptor,
+} from '../../../di';
+import { AgentSwarmTool } from '../../../tools/builtin/collaboration/agent-swarm';
 
 import { IContextMemory } from '../contextMemory/contextMemory';
 import { IEventBus } from '../eventBus/eventBus';
+import { ISubagentHost } from '../subagentHost/subagentHost';
 import { IToolRegistry } from '../toolRegistry/toolRegistry';
 import { ITurnRunner } from '../turnRunner/turnRunner';
 import type { ContextMessage } from '../types';
 import { IWireRecord } from '../wireRecord/wireRecord';
+import {
+  ISwarmMode,
+  type SwarmModeTrigger,
+} from './swarmMode';
 
-export type SwarmModeTrigger = 'manual' | 'task' | 'tool';
+export class SwarmModeService extends Disposable implements ISwarmMode {
+  declare readonly _serviceBrand: undefined;
 
-export interface SwarmModeOptions {
-  readonly subagentHost?: AgentSwarmSubagentHost;
-}
-
-declare module '../types' {
-  interface WireRecordMap {
-    'swarm_mode.enter': {
-      trigger: SwarmModeTrigger;
-    };
-    'swarm_mode.exit': {};
-  }
-
-  interface AgentEventMap {
-    'swarm_mode.changed': {
-      active: SwarmModeTrigger | null;
-    };
-  }
-}
-
-export class SwarmMode extends Disposable {
   private _active: SwarmModeTrigger | null = null;
 
   constructor(
-    private readonly options: SwarmModeOptions = {},
     @IContextMemory private readonly context: IContextMemory,
     @IWireRecord private readonly wireRecord: IWireRecord,
     @IEventBus private readonly events: IEventBus,
     @ITurnRunner turnRunner?: ITurnRunner,
-    @IInstantiationService private readonly instantiation?: IInstantiationService,
+    @IToolRegistry toolRegistry?: IToolRegistry,
+    @ISubagentHost subagentHost?: ISubagentHost,
   ) {
     super();
     this._register(
@@ -66,11 +53,11 @@ export class SwarmMode extends Disposable {
         }),
       );
     }
-    if (options.subagentHost !== undefined) {
-      this._register(
-        this.resolveToolRegistry().register(new AgentSwarmTool(options.subagentHost, this)),
-      );
-    }
+    this._register(
+      this.requireToolRegistry(toolRegistry).register(
+        new AgentSwarmTool(this.requireSubagentHost(subagentHost), this),
+      ),
+    );
   }
 
   enter(trigger: SwarmModeTrigger): void {
@@ -129,16 +116,14 @@ export class SwarmMode extends Disposable {
     this.events.emit({ type: 'agent.status.updated', swarmMode: this.isActive });
   }
 
-  private resolveToolRegistry(): IToolRegistry {
-    try {
-      const toolRegistry = this.instantiation?.invokeFunction((accessor) =>
-        accessor.get(IToolRegistry),
-      );
-      if (toolRegistry !== undefined) return toolRegistry;
-    } catch (error) {
-      void error;
-    }
+  private requireToolRegistry(toolRegistry: IToolRegistry | undefined): IToolRegistry {
+    if (toolRegistry !== undefined) return toolRegistry;
     throw new Error('AgentSwarm requires the agent tool registry service.');
+  }
+
+  private requireSubagentHost(subagentHost: ISubagentHost | undefined): ISubagentHost {
+    if (subagentHost !== undefined) return subagentHost;
+    throw new Error('AgentSwarm requires the agent subagent host service.');
   }
 
   private appendSystemReminder(content: string, variant: string): void {
@@ -171,3 +156,8 @@ export class SwarmMode extends Disposable {
     return false;
   }
 }
+
+registerSingleton(
+  ISwarmMode,
+  new SyncDescriptor(SwarmModeService, [], true),
+);

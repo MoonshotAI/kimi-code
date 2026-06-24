@@ -7,10 +7,10 @@ import {
   type CompactionSource,
   type CompactionStrategy,
 } from '../../../agent/compaction';
-import type { LLMModelContext } from '../llmRequester/llmRequester';
+import type { ProfileModelContext } from '../profile/profile';
 
 export class RuntimeCompactionStrategy implements CompactionStrategy {
-  constructor(private readonly context: () => LLMModelContext) {}
+  constructor(private readonly context: () => ProfileModelContext) {}
 
   shouldCompact(usedSize: number): boolean {
     return this.delegate().shouldCompact(usedSize);
@@ -44,7 +44,7 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
     );
   }
 
-  private config(model: LLMModelContext = this.context()): CompactionConfig {
+  private config(model: ProfileModelContext = this.context()): CompactionConfig {
     const triggerRatio = model.compactionTriggerRatio ?? DEFAULT_COMPACTION_CONFIG.triggerRatio;
     const blockRatio = Math.max(triggerRatio, DEFAULT_COMPACTION_CONFIG.blockRatio);
     return {

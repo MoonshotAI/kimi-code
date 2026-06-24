@@ -1,29 +1,20 @@
 import {
-  createProvider,
   emptyUsage,
   generate,
   type ChatProvider,
   type GenerateCallbacks,
   type Message,
-  type ModelCapability,
-  type ProviderConfig,
   type ProviderRequestAuth,
   type Tool as KosongTool,
 } from '@moonshot-ai/kosong';
 
-import {
-  applyKimiEnvSamplingParams,
-  applyKimiEnvThinkingKeep,
-} from '../../../config/kimi-env-params';
 import type { KimiConfig } from '../../../config';
 import { registerSingleton, SyncDescriptor } from '../../../di';
-import { ErrorCodes, KimiError } from '../../../errors';
 import type { ModelProvider } from '../../../session/provider-manager';
 import {
   applyCompletionBudget,
   resolveCompletionBudget,
 } from '../../../utils/completion-budget';
-import { resolveThinkingEffort } from '../../../agent/config/thinking';
 import { IProfileService } from '../profile/profile';
 import { IContextMemory } from '../contextMemory/contextMemory';
 import { IContextProjector } from '../contextProjector/contextProjector';
@@ -31,7 +22,7 @@ import { IToolCatalogService } from '../toolCatalog/toolCatalog';
 import type { LLMEvent, LLMRequestOverrides } from '../types';
 import { ILLMRequestLogService } from '../llmRequestLog/llmRequestLog';
 import { AsyncEventQueue } from './asyncEventQueue';
-import { ILLMRequester, type LLMModelContext } from './llmRequester';
+import { ILLMRequester } from './llmRequester';
 
 export interface LLMRequesterServiceOptions {
   readonly modelProvider?: ModelProvider;
@@ -39,7 +30,6 @@ export interface LLMRequesterServiceOptions {
   readonly generate?: typeof generate;
 }
 
-const EMPTY_CONFIG: KimiConfig = { providers: {} };
 const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   type: 'object',
   properties: {},
@@ -53,23 +43,20 @@ export class LLMRequesterService implements ILLMRequester {
     @IToolCatalogService private readonly tools: IToolCatalogService,
     @IProfileService private readonly profile: IProfileService,
     @ILLMRequestLogService private readonly requestLog: ILLMRequestLogService,
-  ) {}
+  ) {
+    if (options.modelProvider !== undefined || options.config !== undefined) {
+      this.profile.configure({
+        modelProvider: options.modelProvider,
+        config: options.config,
+      });
+    }
+  }
 
   request(
     overrides: LLMRequestOverrides = {},
     signal?: AbortSignal,
   ): AsyncIterable<LLMEvent> {
     return this.requestStream(overrides, signal);
-  }
-
-  getModelContext(): LLMModelContext {
-    const resolved = this.resolveModelContext();
-    return {
-      modelAlias: resolved.modelAlias,
-      modelCapabilities: resolved.modelCapabilities,
-      reservedContextSize: resolved.reservedContextSize,
-      compactionTriggerRatio: resolved.compactionTriggerRatio,
-    };
   }
 
   private async *requestStream(
@@ -157,13 +144,8 @@ export class LLMRequesterService implements ILLMRequester {
   }
 
   private resolveRequest(overrides: LLMRequestOverrides): ResolvedLLMRequest {
-    const resolved = this.resolveModelContext();
-    const thinkingLevel = this.resolveThinkingLevel(resolved.thinkingLevel, resolved);
-    const baseProvider = createProvider(resolved.provider).withThinking(thinkingLevel);
-    const providerWithEnv = applyKimiEnvThinkingKeep(
-      applyKimiEnvSamplingParams(baseProvider),
-      thinkingLevel,
-    );
+    const resolved = this.profile.resolveModelContext();
+    const providerWithEnv = this.profile.getProvider();
     const provider = applyCompletionBudget({
       provider: providerWithEnv,
       budget: resolveCompletionBudget({
@@ -184,52 +166,8 @@ export class LLMRequesterService implements ILLMRequester {
     };
   }
 
-  private resolveModelContext(): ResolvedLLMModelContext {
-    const modelProvider = this.options.modelProvider;
-    if (modelProvider === undefined) {
-      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model provider not set');
-    }
-
-    const data = this.profile.data();
-    const modelAlias = data.modelAlias ?? modelProvider.defaultModel;
-    if (modelAlias === undefined) {
-      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
-    }
-
-    const config = this.config();
-    const resolved = modelProvider.resolveProviderConfig(modelAlias);
-    return {
-      provider: resolved.provider,
-      modelAlias,
-      modelCapabilities: resolved.modelCapabilities,
-      maxOutputSize: resolved.maxOutputSize,
-      alwaysThinking: resolved.alwaysThinking,
-      thinkingLevel: data.thinkingLevel,
-      reservedContextSize: config.loopControl?.reservedContextSize,
-      compactionTriggerRatio: config.loopControl?.compactionTriggerRatio,
-    };
-  }
-
-  private resolveThinkingLevel(
-    requested: string | undefined,
-    resolved: { readonly alwaysThinking?: boolean; readonly modelCapabilities: ModelCapability },
-  ) {
-    const config = this.config();
-    const thinking = resolveThinkingEffort(requested, config.thinking);
-    if (thinking === 'off' && resolved.alwaysThinking === true) {
-      return resolveThinkingEffort('on', config.thinking);
-    }
-    return thinking;
-  }
-
   private resolveAuth(modelAlias: string) {
     return this.options.modelProvider?.resolveAuth?.(modelAlias);
-  }
-
-  private config(): KimiConfig {
-    const config = this.options.config;
-    if (config === undefined) return EMPTY_CONFIG;
-    return typeof config === 'function' ? config() : config;
   }
 
   private defaultTools(): readonly KosongTool[] {
@@ -252,13 +190,6 @@ interface ResolvedLLMRequest {
   readonly messages: Message[];
   readonly requestLogFields: LLMRequestOverrides['requestLogFields'];
   readonly generate: typeof generate;
-}
-
-interface ResolvedLLMModelContext extends LLMModelContext {
-  readonly provider: ProviderConfig;
-  readonly maxOutputSize: number | undefined;
-  readonly alwaysThinking: boolean | undefined;
-  readonly thinkingLevel: string | undefined;
 }
 
 registerSingleton(ILLMRequester, new SyncDescriptor(LLMRequesterService, [{}], true));

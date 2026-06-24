@@ -34,6 +34,7 @@ import { IContextUsageService } from '../contextUsage/contextUsage';
 import { IEventBus } from '../eventBus/eventBus';
 import { OrderedHookSlot } from '../hooks';
 import { ILLMRequester } from '../llmRequester/llmRequester';
+import { IProfileService } from '../profile/profile';
 import { IToolStoreService } from '../toolStore/toolStore';
 import { ITurnRunner } from '../turnRunner/turnRunner';
 import type { ContextMessage, LLMEvent } from '../types';
@@ -85,6 +86,7 @@ export class FullCompactionService extends Disposable implements IFullCompaction
     @IContextProjector private readonly projector: IContextProjector,
     @IContextUsageService private readonly contextUsage: IContextUsageService,
     @ILLMRequester private readonly llmRequester: ILLMRequester,
+    @IProfileService private readonly profile: IProfileService,
     @IToolStoreService private readonly toolStore: IToolStoreService,
     @IUsageService private readonly usage: IUsageService,
     @IWireRecord private readonly wireRecord: IWireRecord,
@@ -92,7 +94,7 @@ export class FullCompactionService extends Disposable implements IFullCompaction
     @ITurnRunner turnRunner: ITurnRunner,
   ) {
     super();
-    this.strategy = new RuntimeCompactionStrategy(() => this.llmRequester.getModelContext());
+    this.strategy = new RuntimeCompactionStrategy(() => this.profile.resolveModelContext());
     this._register(
       turnRunner.hooks.onLaunched.register('full-compaction-reset', async (_ctx, next) => {
         this.resetForTurn();
@@ -344,7 +346,10 @@ export class FullCompactionService extends Disposable implements IFullCompaction
       }
 
       if (attempt.usage !== null) {
-        this.usage.record(attempt.model ?? this.llmRequester.getModelContext().modelAlias, attempt.usage);
+        this.usage.record(
+          attempt.model ?? this.profile.resolveModelContext().modelAlias,
+          attempt.usage,
+        );
       }
 
       if (!historyUnchanged(this.context.getHistory(), originalHistory)) {
