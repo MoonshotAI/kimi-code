@@ -3,7 +3,8 @@ Find files by glob pattern, sorted by modification time (most recent first).
 Powered by ripgrep. Respects `.gitignore`, `.ignore`, and `.rgignore` by default — set `include_ignored` to also match ignored files (e.g. build outputs, `node_modules`). Sensitive files (such as `.env`) are always filtered out.
 
 Good patterns:
-- `*.ts` — files in the current directory matching an extension
+- `*.ts` — all files matching an extension, at any depth below the search root (a bare pattern without `/` matches recursively)
+- `src/*.ts` — files directly inside `src/` (one level, not recursive)
 - `src/**/*.ts` — recursive walk with a subdirectory anchor and extension
 - `**/*.py` — recursive walk from the search root for an extension
 - `*.{ts,tsx}` — brace expansion is supported

@@ -206,7 +206,7 @@ describe('current builtin file and shell tools', () => {
     const result = await executeTool(tool, context({ pattern: '**' }));
     expect(result.isError).toBeFalsy();
     expect(exec).toHaveBeenCalled();
-    expect((exec.mock.calls[0] as string[]).at(-1)).toBe('/workspace');
+    expect((exec.mock.calls[0] as string[]).at(-1)).toBe('.');
     expect(result.output).toContain('a.ts');
   });
 

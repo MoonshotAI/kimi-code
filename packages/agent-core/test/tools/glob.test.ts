@@ -1,9 +1,20 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { Readable, type Writable } from 'node:stream';
 
+import { LocalKaos } from '@moonshot-ai/kaos';
 import type { Kaos, KaosProcess, StatResult } from '@moonshot-ai/kaos';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { type GlobInput, GlobInputSchema, GlobTool, MAX_MATCHES } from '../../src/tools/builtin/file/glob';
+import {
+  type GlobInput,
+  GlobInputSchema,
+  GlobTool,
+  MAX_MATCHES,
+  splitCompletePaths,
+} from '../../src/tools/builtin/file/glob';
+import { ensureRgPath } from '../../src/tools/support/rg-locator';
 import type { WorkspaceConfig } from '../../src/tools/support/workspace';
 import { createFakeKaos } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
@@ -85,12 +96,16 @@ describe('GlobTool', () => {
     expect(GlobInputSchema.safeParse({ pattern: '*.js', path: '/src' }).success).toBe(true);
   });
 
-  it('is files-only: no include_dirs, exposes include_ignored', () => {
+  it('is files-only and exposes include_ignored; include_dirs is deprecated and ignored', () => {
     const tool = new GlobTool(createFakeKaos(), workspace);
-    const schema = tool.parameters as { properties: Record<string, unknown> };
+    const schema = tool.parameters as { properties: Record<string, { description?: string }> };
 
-    expect(schema.properties).not.toHaveProperty('include_dirs');
     expect(schema.properties).toHaveProperty('include_ignored');
+    // include_dirs is kept only so older calls that still pass it are not
+    // rejected by parameter validation. It is deprecated and ignored — results
+    // are always files-only regardless of its value.
+    expect(schema.properties).toHaveProperty('include_dirs');
+    expect(schema.properties['include_dirs']?.description?.toLowerCase()).toContain('deprecated');
   });
 
   it('injects the Windows path hint into the description on a win32 backend', () => {
@@ -107,13 +122,15 @@ describe('GlobTool', () => {
     expect(tool.description).not.toContain('forward slashes');
   });
 
-  it('returns matching paths relative to an explicit search root in rg order', async () => {
-    // rg --sort=modified already orders by mtime; the tool preserves that order.
+  it('requests reverse modified sort and preserves the rg output order', async () => {
     const exec = execReturning('/workspace/src/new.ts\n/workspace/src/old.ts\n');
     const tool = new GlobTool(kaosWithExec(exec), workspace);
 
     const result = await executeTool(tool, context({ pattern: 'src/**/*.ts', path: '/workspace' }));
+    const args = execArgs(exec);
 
+    expect(args).toContain('--sortr=modified');
+    expect(args).not.toContain('--sort=modified');
     expect(result.output).toBe('src/new.ts\nsrc/old.ts');
   });
 
@@ -141,7 +158,7 @@ describe('GlobTool', () => {
     const result = await executeTool(tool, context({ pattern: '**' }));
 
     expect(result.isError).toBeFalsy();
-    expect(execArgs(exec).at(-1)).toBe('/workspace');
+    expect(execArgs(exec).at(-1)).toBe('.');
     expect(result.output).toContain(`[Truncated at ${String(MAX_MATCHES)} matches`);
   });
 
@@ -158,6 +175,20 @@ describe('GlobTool', () => {
     expect(result.output).toContain('shared.tsx');
   });
 
+  it('passes an escaped-brace pattern through unchanged so literal-brace files stay matchable', async () => {
+    // `\{a,b\}.ts` opts out of brace expansion — the user wants a file
+    // literally named `{a,b}.ts`. The pattern must reach rg with the escapes
+    // intact (the tool must not strip or reinterpret the backslashes).
+    const exec = execReturning('/workspace/{a,b}.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '\\{a,b\\}.ts' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(execArgs(exec)).toContain('\\{a,b\\}.ts');
+    expect(result.output).toContain('{a,b}.ts');
+  });
+
   it('searches only the current workspace when path is omitted', async () => {
     const exec = execReturning('/workspace/a.ts\n/workspace/shared.ts\n');
     const tool = new GlobTool(kaosWithExec(exec), workspace);
@@ -165,7 +196,7 @@ describe('GlobTool', () => {
     const result = await executeTool(tool, context({ pattern: '*.ts' }));
 
     expect(exec).toHaveBeenCalledTimes(1);
-    expect(execArgs(exec).at(-1)).toBe('/workspace');
+    expect(execArgs(exec).at(-1)).toBe('.');
     expect(result.output).toBe('a.ts\nshared.ts');
   });
 
@@ -177,7 +208,7 @@ describe('GlobTool', () => {
     const result = await executeTool(tool, context({ pattern: 'pkg/**/*.ts', path: '/extra' }));
 
     expect(result.output).toBe('/extra/pkg/a.ts');
-    expect(execArgs(exec).at(-1)).toBe('/extra');
+    expect(execArgs(exec).at(-1)).toBe('.');
   });
 
   it('adds --no-ignore when include_ignored is true', async () => {
@@ -263,7 +294,7 @@ describe('GlobTool', () => {
 
       expect(result.output).toContain('/skills/read_content.py');
       expect(result.output).toContain('/skills/utils.py');
-      expect(execArgs(exec).at(-1)).toBe('/skills');
+      expect(execArgs(exec).at(-1)).toBe('.');
     });
 
     it('searches inside a subdirectory of an additionalDir entry', async () => {
@@ -444,7 +475,7 @@ describe('GlobTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('test.py');
-    expect(execArgs(exec).at(-1)).toBe('/workspace/relative/path');
+    expect(execArgs(exec).at(-1)).toBe('.');
   });
 
   it('expands a leading "~/" path before searching outside the workspace', async () => {
@@ -458,7 +489,7 @@ describe('GlobTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toBe('No matches found');
-    expect(execArgs(exec).at(-1)).toBe('/home/test');
+    expect(execArgs(exec).at(-1)).toBe('.');
   });
 
   it('allows a path sharing the workspace prefix when it is absolute', async () => {
@@ -475,7 +506,7 @@ describe('GlobTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toBe('No matches found');
-    expect(execArgs(exec).at(-1)).toBe('/parent/workdir-sneaky');
+    expect(execArgs(exec).at(-1)).toBe('.');
   });
 
   it('locks down brace-expansion mention and large-directory caveats in the description', () => {
@@ -496,5 +527,156 @@ describe('GlobTool', () => {
 
     expect(tool.description).toContain('C:\\Users\\foo');
     expect(tool.description).toContain('/c/Users/foo');
+  });
+});
+
+describe('splitCompletePaths', () => {
+  it('keeps every line when output is complete (trailing newline)', () => {
+    expect(splitCompletePaths('/a/b.ts\n/c/d.ts\n', false)).toEqual(['/a/b.ts', '/c/d.ts']);
+  });
+
+  it('keeps every line when output is complete even if flagged truncated', () => {
+    // A trailing newline means the last path is intact; nothing to drop.
+    expect(splitCompletePaths('/a/b.ts\n/c/d.ts\n', true)).toEqual(['/a/b.ts', '/c/d.ts']);
+  });
+
+  it('drops a half-written trailing path when output is truncated', () => {
+    expect(splitCompletePaths('/a/b.ts\n/c/d.t', true)).toEqual(['/a/b.ts']);
+  });
+
+  it('keeps the trailing path when output is not flagged truncated', () => {
+    // Without the truncation flag the final segment is trusted as-is.
+    expect(splitCompletePaths('/a/b.ts\n/c/d.ts', false)).toEqual(['/a/b.ts', '/c/d.ts']);
+  });
+
+  it('returns an empty list when truncated output has no complete line', () => {
+    expect(splitCompletePaths('/partial-no-newline', true)).toEqual([]);
+  });
+});
+
+describe('GlobTool integration (real ripgrep)', () => {
+  // Spawns the actual rg binary through a real LocalKaos so the ripgrep
+  // semantics the tool relies on (sort direction, recursion, brace handling)
+  // are exercised end-to-end — not just the argument plumbing.
+
+  let tmpDir: string | undefined;
+  let kaos: LocalKaos;
+  let runRealRg = false;
+
+  beforeAll(async () => {
+    try {
+      const actual = await vi.importActual<typeof import('../../src/tools/support/rg-locator')>(
+        '../../src/tools/support/rg-locator',
+      );
+      const resolution = await actual.ensureRgPath();
+      vi.mocked(ensureRgPath).mockResolvedValue(resolution);
+      runRealRg = true;
+    } catch {
+      // rg unavailable in this environment; beforeEach skips the suite.
+    }
+  });
+
+  beforeEach(async (testCtx) => {
+    if (!runRealRg) testCtx.skip();
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'glob-rg-'));
+    kaos = await LocalKaos.create();
+  });
+
+  afterEach(async () => {
+    if (tmpDir !== undefined) {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  async function touch(rel: string, mtime: Date): Promise<void> {
+    const full = path.join(tmpDir!, rel);
+    await fs.mkdir(path.dirname(full), { recursive: true });
+    await fs.writeFile(full, '');
+    await fs.utimes(full, mtime, mtime);
+  }
+
+  const ws = (): WorkspaceConfig => ({ workspaceDir: tmpDir!, additionalDirs: [] });
+
+  it('returns files newest-first by modification time (--sortr=modified)', async () => {
+    await touch('old.ts', new Date('2020-01-01T00:00:00Z'));
+    await touch('mid.ts', new Date('2022-01-01T00:00:00Z'));
+    await touch('new.ts', new Date('2024-01-01T00:00:00Z'));
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: '*.ts', path: tmpDir! }));
+
+    expect(result.output).toBe('new.ts\nmid.ts\nold.ts');
+  });
+
+  it('treats a bare pattern (no slash) as recursive across subdirectories', async () => {
+    await touch('root.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('src/a.ts', new Date('2023-01-01T00:00:00Z'));
+    await touch('src/sub/b.ts', new Date('2022-01-01T00:00:00Z'));
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: '*.ts', path: tmpDir! }));
+
+    expect(result.output).toContain('root.ts');
+    expect(result.output).toContain('src/a.ts');
+    expect(result.output).toContain('src/sub/b.ts');
+  });
+
+  it('matches brace alternatives across directories', async () => {
+    await touch('src/a.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('test/a.ts', new Date('2023-01-01T00:00:00Z'));
+    await touch('other/a.ts', new Date('2022-01-01T00:00:00Z'));
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: '{src,test}/*.ts', path: tmpDir! }));
+
+    expect(result.output).toContain('src/a.ts');
+    expect(result.output).toContain('test/a.ts');
+    expect(result.output).not.toContain('other/a.ts');
+  });
+
+  it('matches a recursive anchored pattern (src/**/*.ts) under an absolute search root', async () => {
+    // Regression guard for F11: with an absolute search root, ripgrep matches
+    // a `--glob` pattern containing a `/` against the absolute path, so
+    // `src/**/*.ts` returns nothing unless the tool runs rg from the search
+    // root (cwd) with `.` as the search path.
+    await touch('src/a.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('src/sub/b.ts', new Date('2023-01-01T00:00:00Z'));
+    await touch('other/c.ts', new Date('2022-01-01T00:00:00Z'));
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: 'src/**/*.ts', path: tmpDir! }));
+
+    expect(result.output).toContain('src/a.ts');
+    expect(result.output).toContain('src/sub/b.ts');
+    expect(result.output).not.toContain('other/c.ts');
+  });
+
+  it('treats an escaped brace as a literal filename', async () => {
+    await touch('{a,b}.ts', new Date('2024-01-01T00:00:00Z'));
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: '\\{a,b\\}.ts', path: tmpDir! }));
+
+    expect(result.output).toContain('{a,b}.ts');
+  });
+
+  it('returns absolute paths when the search root is outside the workspace', async () => {
+    // Exercises the cwd-based fix (F11) end-to-end on an external root: rg
+    // emits paths relative to the external root, the tool resolves them back
+    // to absolute, and since the root is outside the workspace they stay
+    // absolute in the output.
+    const externalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'glob-ext-'));
+    try {
+      const extFile = path.join(externalDir, 'pkg.ts');
+      await fs.writeFile(extFile, '');
+      const tool = new GlobTool(kaos, ws());
+
+      const result = await executeTool(tool, context({ pattern: '*.ts', path: externalDir }));
+
+      expect(result.output).toBe(extFile);
+    } finally {
+      await fs.rm(externalDir, { recursive: true, force: true });
+    }
   });
 });

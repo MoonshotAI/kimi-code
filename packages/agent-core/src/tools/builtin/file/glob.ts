@@ -25,7 +25,7 @@
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
-import { normalize } from 'pathe';
+import { normalize, resolve } from 'pathe';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
@@ -40,6 +40,7 @@ import { ensureRgPath, rgUnavailableMessage } from '../../support/rg-locator';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import {
   DEFAULT_TIMEOUT_MS,
+  MAX_OUTPUT_BYTES,
   SENSITIVE_GLOBS_TO_EXCLUDE,
   VCS_DIRECTORIES_TO_EXCLUDE,
   runRipgrepOnce,
@@ -61,6 +62,12 @@ export const GlobInputSchema = z.object({
     .optional()
     .describe(
       'Also match files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. Defaults to false.',
+    ),
+  include_dirs: z
+    .boolean()
+    .optional()
+    .describe(
+      'Deprecated and ignored. Results are always files-only — directories are never listed. Accepted only so older calls that still pass this flag are not rejected by parameter validation.',
     ),
 });
 
@@ -176,24 +183,31 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       return { isError: true, output: rgUnavailableMessage(error) };
     }
 
+    // Run rg with its cwd pinned to the search root and `.` as the search
+    // path. ripgrep matches `--glob` patterns against the path *as passed to
+    // rg*, so with an absolute search path a pattern containing a `/` (e.g.
+    // `src/**/*.ts`) is matched against the absolute path and never matches.
+    // Running from the search root makes glob matching relative to it.
+    const execKaos = this.kaos.withCwd(searchRoot);
+
     let runResult = await runRipgrepOnce(
-      this.kaos,
-      buildRgArgs(rgPath, args, searchRoot),
+      execKaos,
+      buildRgArgs(rgPath, args),
       signal,
       { abortedMessage: 'Glob aborted' },
     );
     if (runResult.kind === 'tool-error') return runResult.result;
     if (shouldRetryRipgrepEagain(runResult)) {
       runResult = await runRipgrepOnce(
-        this.kaos,
-        buildRgArgs(rgPath, args, searchRoot, true),
+        execKaos,
+        buildRgArgs(rgPath, args, true),
         signal,
         { abortedMessage: 'Glob aborted' },
       );
       if (runResult.kind === 'tool-error') return runResult.result;
     }
 
-    const { exitCode, stdoutText, stderrText, timedOut } = runResult;
+    const { exitCode, stdoutText, stderrText, bufferTruncated, timedOut } = runResult;
 
     // rg exit codes: 0 = matches, 1 = no matches, 2+ = error. Timeout
     // kills usually surface as a signal exit code; keep any partial paths.
@@ -204,8 +218,17 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       return { isError: true, output: 'Glob aborted' };
     }
 
-    // One path per line from `rg --files`.
-    const rawPaths = stdoutText.split('\n').filter((p) => p.length > 0);
+    // One path per line from `rg --files`. When stdout is capped or the run
+    // timed out, the final chunk can cut a path in half; drop any trailing
+    // line that lacks its terminating newline so a half-written path is never
+    // surfaced as a match. Mirrors GrepTool's omitIncompleteTrailingRecord.
+    // rg reports paths relative to its cwd (the search root), e.g.
+    // `./src/a.ts`; resolve them back to absolute paths so the sensitive-file
+    // check, workspace relativization, and display all keep working on
+    // absolute paths as before.
+    const rawPaths = splitCompletePaths(stdoutText, bufferTruncated || timedOut).map((p) =>
+      resolve(searchRoot, p),
+    );
 
     // Authoritative sensitive-file check (the rg prefilter is conservative).
     const kept: string[] = [];
@@ -246,6 +269,11 @@ export class GlobTool implements BuiltinTool<GlobInput> {
         `Glob timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned.`,
       );
     }
+    if (bufferTruncated) {
+      lines.push(
+        `[stdout truncated at ${String(MAX_OUTPUT_BYTES)} bytes; results may be incomplete — use a more specific pattern]`,
+      );
+    }
     if (truncated) {
       lines.push(`[Truncated at ${String(MAX_MATCHES)} matches — use a more specific pattern]`);
       lines.push(`Only the first ${String(MAX_MATCHES)} matches are returned.`);
@@ -261,15 +289,10 @@ export class GlobTool implements BuiltinTool<GlobInput> {
   }
 }
 
-function buildRgArgs(
-  rgPath: string,
-  args: GlobInput,
-  searchRoot: string,
-  singleThreaded = false,
-): string[] {
+function buildRgArgs(rgPath: string, args: GlobInput, singleThreaded = false): string[] {
   const cmd: string[] = [rgPath];
   if (singleThreaded) cmd.push('-j', '1');
-  cmd.push('--files', '--hidden', '--sort=modified');
+  cmd.push('--files', '--hidden', '--sortr=modified');
   for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) {
     cmd.push('--glob', `!${dir}`);
   }
@@ -280,7 +303,9 @@ function buildRgArgs(
     cmd.push('--glob', `!${glob}`);
   }
   if (args.include_ignored) cmd.push('--no-ignore');
-  cmd.push(searchRoot);
+  // Search path is `.` because the process cwd is pinned to the search root
+  // (see execution()); this keeps `--glob` matching relative to that root.
+  cmd.push('.');
   return cmd;
 }
 
@@ -298,6 +323,21 @@ function errorCode(error: unknown): string | undefined {
     return typeof code === 'string' ? code : undefined;
   }
   return undefined;
+}
+
+/**
+ * Split `rg --files` stdout into complete paths. When the run was capped or
+ * timed out (`truncatedOutput`), a path cut mid-write lacks its terminating
+ * newline; drop that trailing fragment so it is never surfaced as a match.
+ * Complete output always ends in `\n`, so the split is lossless in that case.
+ */
+export function splitCompletePaths(stdoutText: string, truncatedOutput: boolean): string[] {
+  let text = stdoutText;
+  if (truncatedOutput && !text.endsWith('\n')) {
+    const lastNewline = text.lastIndexOf('\n');
+    text = lastNewline >= 0 ? text.slice(0, lastNewline + 1) : '';
+  }
+  return text.split('\n').filter((p) => p.length > 0);
 }
 
 /**
