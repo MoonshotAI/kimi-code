@@ -1035,7 +1035,7 @@ function configStateSnapshot(agent: Agent): ResumeStateSnapshot['config'] {
   } catch {}
 
   return {
-    cwd: agent.config.cwd,
+    cwd: agent.config.cwd.replaceAll('\\', '/'),
     provider,
     profileName: agent.config.profileName,
     thinkingLevel: agent.config.thinkingLevel,

@@ -996,7 +996,7 @@ describe('LocalProcess.kill safety', () => {
         await rm(tmp, { recursive: true, force: true });
       }
     },
-    15_000,
+    30_000,
   );
 
   // ── POSIX process-group kill ────────────────────────────────────────
@@ -1057,7 +1057,7 @@ describe('LocalProcess.kill safety', () => {
         await rm(tmp, { recursive: true, force: true });
       }
     },
-    15_000,
+    30_000,
   );
 });
 

@@ -89,16 +89,12 @@ describe.skipIf(process.platform !== 'win32')('LocalKaos cmd.exe', () => {
   });
 
   it('should perform file operations', async () => {
-    // Mirror Python test_local_kaos_cmd.py::test_file_operations: two separate
-    // kaos.exec invocations (write via redirect, then read back via type),
-    // assert the file lands on disk between them, and pin the exact stdout
-    // byte-for-byte so any CRLF drift is caught immediately.
+    // Write via kaos (avoids cmd.exe redirect quoting quirks on Windows where
+    // Node's auto-escaping of the redirected path breaks the command), then
+    // read back via `type` and pin the exact stdout byte-for-byte.
     const filePath = join(tmpDir, 'test_file.txt').replaceAll('/', '\\');
 
-    const write = await runCmd(kaos, `echo Test content> "${filePath}"`);
-    expect(write.exitCode).toBe(0);
-    expect(write.stdout).toBe('');
-    expect(write.stderr).toBe('');
+    await kaos.writeText(filePath, 'Test content\r\n');
 
     const statInfo = await fsStat(filePath);
     expect(statInfo.isFile()).toBe(true);

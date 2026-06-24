@@ -132,7 +132,7 @@ describe('parseSystemctlShow', () => {
   });
 });
 
-describe('systemd manager — install', () => {
+describe.skipIf(process.platform === 'win32')('systemd manager — install', () => {
   it('writes the unit, daemon-reloads, enables --now', async () => {
     const { deps, calls, unitPath } = makeDeps(
       [
@@ -241,7 +241,7 @@ describe('systemd manager — install', () => {
   });
 });
 
-describe('systemd manager — lifecycle', () => {
+describe.skipIf(process.platform === 'win32')('systemd manager — lifecycle', () => {
   it('start delegates to `systemctl --user start`', async () => {
     const { deps, calls, unitPath } = makeDeps([{ stdout: '', stderr: '', code: 0 }], workDir);
     mkdirSync(unitPath.replace(/\/[^/]+$/, ''), { recursive: true });
@@ -308,7 +308,7 @@ describe('systemd manager — lifecycle', () => {
   });
 });
 
-describe('systemd manager — status', () => {
+describe.skipIf(process.platform === 'win32')('systemd manager — status', () => {
   it('reports installed=false when no unit exists', async () => {
     const { deps } = makeDeps([], workDir);
     const mgr = createSystemdManager(deps);

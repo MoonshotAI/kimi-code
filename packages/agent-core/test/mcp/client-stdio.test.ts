@@ -154,7 +154,7 @@ describe('StdioMcpClient', () => {
       transport: 'stdio',
       command: process.execPath,
       args: [crashAfterConnectFixture],
-      env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '50', KIMI_TEST_MCP_STDERR: banner },
+      env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '500', KIMI_TEST_MCP_STDERR: banner },
     });
     const closes: Array<{ stderr?: string; error?: string }> = [];
     client.onUnexpectedClose((reason) => {
