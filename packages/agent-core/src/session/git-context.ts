@@ -3,14 +3,23 @@
  *
  * `collectGitContext` produces a `<git-context>` block that is prepended to a
  * fresh explore subagent's prompt so it can orient itself in the repository
- * before searching. Every git command is individually guarded — a single
- * failure never aborts the whole collection — and remote URLs are sanitized
- * so internal infrastructure is not surfaced to the model.
+ * before searching. The block is all-or-nothing for the probes that can
+ * mislead: if `git status` or `git branch` fails, the whole block is dropped
+ * (and logged) rather than showing a partial snapshot — e.g. a timed-out
+ * `git status` would make a dirty tree look clean. Optional probes — the
+ * `origin` remote and recent commits — degrade to an empty section when
+ * unavailable, since a missing remote or no commits yet are normal repo
+ * states. The only explicit state surfaced to the subagent is
+ * `reason="not-a-repo"`, so it doesn't waste turns probing git history in a
+ * non-repo directory. Remote URLs are sanitized so internal infrastructure
+ * is not surfaced to the model.
  */
 
 import type { Readable } from 'node:stream';
 
 import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
+
+import { log } from '../logging/logger';
 
 const GIT_TIMEOUT_MS = 5_000;
 const MAX_DIRTY_FILES = 20;
@@ -42,17 +51,63 @@ async function disposeProcess(proc: KaosProcess): Promise<void> {
  * directory is not a git repository or no useful information was collected.
  */
 export async function collectGitContext(kaos: Kaos, cwd: string): Promise<string> {
-  // Quick check: is this a git repo?
-  if ((await runGit(kaos, cwd, ['rev-parse', '--is-inside-work-tree'])) === null) {
+  // Step 1: is this a git repo? `rev-parse` is the authoritative probe — it
+  // handles `.git` files (worktrees/submodules), subdirectories, bare repos,
+  // and `$GIT_DIR` redirection, none of which a plain FS check covers.
+  const revParseArgs = ['rev-parse', '--is-inside-work-tree'] as const;
+  const revParse = await runGit(kaos, cwd, revParseArgs);
+  if (!revParse.ok) {
+    if (revParse.kind === 'command-failed' && isNotARepo(revParse.stderr)) {
+      // Definitive "not a repo" — tell the subagent so it doesn't waste turns
+      // probing git history. All other failures are logged but surface as an
+      // empty block (the subagent works without git context, same as before):
+      // a transient `git status` hang shouldn't read as "git is broken".
+      return `<git-context status="unavailable" reason="not-a-repo"/>`;
+    }
+    logGitFailure(cwd, revParseArgs, revParse);
     return '';
   }
 
-  const [remoteUrl, branch, dirtyRaw, logRaw] = await Promise.all([
-    runGit(kaos, cwd, ['remote', 'get-url', 'origin']),
-    runGit(kaos, cwd, ['branch', '--show-current']),
-    runGit(kaos, cwd, ['status', '--porcelain']),
-    runGit(kaos, cwd, ['log', '-3', '--format=%h %s']),
-  ]);
+  // Step 2: collect context in parallel. Probes split into two classes:
+  //
+  //   - fatal (`status`, `branch`): if either fails, drop the whole block. A
+  //     missing `status` would make a dirty tree look clean, and a non-zero
+  //     `branch` exit means git itself is broken (detached HEAD is exit 0).
+  //   - optional (`remote`, `log`): a missing `origin` remote or a repo with
+  //     no commits yet are normal states, not collection failures. Log at
+  //     debug and leave that section empty rather than dropping the block.
+  const commandArgs = [
+    ['remote', 'get-url', 'origin'],
+    ['branch', '--show-current'],
+    ['status', '--porcelain'],
+    ['log', '-3', '--format=%h %s'],
+  ] as const;
+  const [remote, branch, status, gitLog] = (await Promise.all(
+    commandArgs.map(async (args) => ({ args, result: await runGit(kaos, cwd, args) })),
+  )) as unknown as [TaggedGitResult, TaggedGitResult, TaggedGitResult, TaggedGitResult];
+
+  const fatal = [branch, status].filter(({ result }) => !result.ok);
+  if (fatal.length > 0) {
+    for (const { args, result } of fatal) {
+      if (!result.ok) logGitFailure(cwd, args, result);
+    }
+    return '';
+  }
+
+  for (const { args, result } of [remote, gitLog]) {
+    if (!result.ok) {
+      log.debug('git context optional probe unavailable', {
+        cwd,
+        command: `git ${args.join(' ')}`,
+        reason: result.kind,
+      });
+    }
+  }
+
+  const remoteUrl = stdoutOf(remote.result);
+  const branchName = stdoutOf(branch.result);
+  const dirtyRaw = stdoutOf(status.result);
+  const logRaw = stdoutOf(gitLog.result);
 
   const sections: string[] = [`Working directory: ${cwd}`];
 
@@ -67,19 +122,17 @@ export async function collectGitContext(kaos: Kaos, cwd: string): Promise<string
     }
   }
 
-  if (branch) sections.push(`Branch: ${branch}`);
+  if (branchName) sections.push(`Branch: ${branchName}`);
 
-  if (dirtyRaw !== null) {
-    const dirtyLines = dirtyRaw.split('\n').filter((line) => line.trim().length > 0);
-    if (dirtyLines.length > 0) {
-      const total = dirtyLines.length;
-      const shown = dirtyLines.slice(0, MAX_DIRTY_FILES);
-      let body = shown.map((line) => `  ${line}`).join('\n');
-      if (total > MAX_DIRTY_FILES) {
-        body += `\n  ... and ${String(total - MAX_DIRTY_FILES)} more`;
-      }
-      sections.push(`Dirty files (${String(total)}):\n${body}`);
+  const dirtyLines = dirtyRaw.split('\n').filter((line) => line.trim().length > 0);
+  if (dirtyLines.length > 0) {
+    const total = dirtyLines.length;
+    const shown = dirtyLines.slice(0, MAX_DIRTY_FILES);
+    let body = shown.map((line) => `  ${line}`).join('\n');
+    if (total > MAX_DIRTY_FILES) {
+      body += `\n  ... and ${String(total - MAX_DIRTY_FILES)} more`;
     }
+    sections.push(`Dirty files (${String(total)}):\n${body}`);
   }
 
   if (logRaw) {
@@ -135,7 +188,10 @@ export function parseProjectName(remoteUrl: string): string | null {
   const scp = /^[^/]+@[^/:]+:(.+)$/.exec(remoteUrl);
   const rawPath = scp?.[1] ?? tryUrlPath(remoteUrl);
   if (rawPath === null) return null;
-  const project = rawPath.replace(/^\/+/, '').replace(/\/+$/, '').replace(/\.git$/, '');
+  const project = rawPath
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .replace(/\.git$/, '');
   return project.length > 0 ? project : null;
 }
 
@@ -148,16 +204,61 @@ function tryUrlPath(remoteUrl: string): string | null {
 }
 
 /**
- * Run a single `git -C <cwd> <args>` command and return its trimmed stdout,
- * or `null` on any failure (spawn error, non-zero exit, or timeout). The
- * `git -C` form runs in the target directory regardless of the Kaos backend.
+ * Outcome of a single `git` invocation.
+ *
+ * - `ok: true` — exited 0; `stdout` is trimmed.
+ * - `timeout` — exceeded `GIT_TIMEOUT_MS`; process was SIGKILLed.
+ * - `spawn-error` — `kaos.exec` itself rejected (git missing / backend error).
+ * - `command-failed` — git ran but exited non-zero, or its streams errored.
+ *   `exitCode`/`stderr` are populated for the non-zero-exit case.
  */
-async function runGit(kaos: Kaos, cwd: string, args: readonly string[]): Promise<string | null> {
+type GitFailure =
+  | { readonly kind: 'timeout' }
+  | { readonly kind: 'spawn-error' }
+  | { readonly kind: 'command-failed'; readonly exitCode?: number; readonly stderr?: string };
+
+type GitResult =
+  | { readonly ok: true; readonly stdout: string }
+  | ({ readonly ok: false } & GitFailure);
+
+type TaggedGitResult = { readonly args: readonly string[]; readonly result: GitResult };
+
+function stdoutOf(result: GitResult): string {
+  return result.ok ? result.stdout : '';
+}
+
+function isNotARepo(stderr: string | undefined): boolean {
+  return stderr !== undefined && stderr.includes('not a git repository');
+}
+
+function logGitFailure(cwd: string, args: readonly string[], failure: GitFailure): void {
+  const command = `git ${args.join(' ')}`;
+  if (failure.kind === 'timeout') {
+    log.debug('git context command timed out', { cwd, command });
+  } else if (failure.kind === 'spawn-error') {
+    log.warn('git context command failed to spawn', { cwd, command });
+  } else {
+    log.debug('git context command failed', {
+      cwd,
+      command,
+      exitCode: failure.exitCode,
+      stderr: failure.stderr,
+    });
+  }
+}
+
+/**
+ * Run a single `git -C <cwd> <args>` command and return a structured result.
+ * The `git -C` form runs in the target directory regardless of the Kaos
+ * backend. Both stdout and stderr are captured so callers can tell "not a
+ * git repository" (exit 128 + telltale stderr) apart from other failures.
+ */
+async function runGit(kaos: Kaos, cwd: string, args: readonly string[]): Promise<GitResult> {
   let proc: KaosProcess | undefined;
   try {
     proc = await kaos.exec('git', '-C', cwd, ...args);
   } catch {
-    return null;
+    return { ok: false, kind: 'spawn-error' };
   }
 
   try {
@@ -166,31 +267,36 @@ async function runGit(kaos: Kaos, cwd: string, args: readonly string[]): Promise
     /* stdin already closed */
   }
 
-  const work = Promise.all([collectStream(proc.stdout), proc.wait()]);
+  const work = Promise.all([collectStream(proc.stdout), collectStream(proc.stderr), proc.wait()]);
   // Attach a rejection handler up front: if `work` rejects during the
   // timeout-handling window (before the catch block re-awaits it), Node must
   // not flag it as an unhandled rejection.
   work.catch(() => {});
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   try {
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
+        timedOut = true;
         reject(new Error(`git ${args.join(' ')} timed out`));
       }, GIT_TIMEOUT_MS);
     });
-    const [stdout, exitCode] = await Promise.race([work, timeout]);
-    if (exitCode !== 0) return null;
-    return stdout.trim();
+    const [stdout, stderr, exitCode] = await Promise.race([work, timeout]);
+    if (exitCode !== 0) {
+      return { ok: false, kind: 'command-failed', exitCode, stderr: stderr.trim() };
+    }
+    return { ok: true, stdout: stdout.trim() };
   } catch {
     try {
       await proc.kill('SIGKILL');
     } catch {
       /* process already gone */
     }
-    // Let the stdout drain settle so the process resources are released,
-    // even though the timed-out output is discarded.
+    // Let the streams drain so process resources are released, even though
+    // the timed-out/errored output is discarded.
     await work.catch(() => {});
-    return null;
+    if (timedOut) return { ok: false, kind: 'timeout' };
+    return { ok: false, kind: 'command-failed' };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
     if (proc !== undefined) await disposeProcess(proc);
