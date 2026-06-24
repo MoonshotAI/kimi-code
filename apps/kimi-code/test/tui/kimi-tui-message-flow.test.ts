@@ -1327,7 +1327,7 @@ command = "vim"
       await vi.runOnlyPendingTimersAsync();
 
       expect(updateSpy).toHaveBeenCalledTimes(1);
-      expect(updateSpy).toHaveBeenLastCalledWith('abc');
+      expect(updateSpy).toHaveBeenLastCalledWith('abc', { transient: true });
     } finally {
       vi.useRealTimers();
     }
