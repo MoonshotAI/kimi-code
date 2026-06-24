@@ -1,0 +1,69 @@
+{
+  "name": "@moonshot-ai/agent-core-v2",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The unified agent engine for Kimi (v2 — DI Scope architecture)",
+  "license": "MIT",
+  "author": "Moonshot AI",
+  "homepage": "https://github.com/MoonshotAI/kimi-code/tree/main/packages/agent-core-v2#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MoonshotAI/kimi-code.git",
+    "directory": "packages/agent-core-v2"
+  },
+  "bugs": {
+    "url": "https://github.com/MoonshotAI/kimi-code/issues"
+  },
+  "keywords": [
+    "kimi",
+    "agent",
+    "ai",
+    "llm",
+    "session",
+    "tools"
+  ],
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "imports": {
+    "#/*": [
+      "./src/*.ts",
+      "./src/*/index.ts"
+    ]
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": {
+      "types": "./package.json",
+      "default": "./package.json"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint:domain": "node scripts/check-domain-layers.mjs",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@moonshot-ai/kaos": "workspace:^",
+    "@moonshot-ai/kimi-code-oauth": "workspace:^",
+    "@moonshot-ai/kimi-telemetry": "workspace:^",
+    "@moonshot-ai/kosong": "workspace:^",
+    "@moonshot-ai/protocol": "workspace:^",
+    "smol-toml": "^1.6.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/sinon": "^21.0.1",
+    "sinon": "^22.0.0"
+  }
+}

@@ -430,6 +430,37 @@ importers:
         specifier: ^3.3.1
         version: 3.3.1
 
+  packages/agent-core-v2:
+    dependencies:
+      '@moonshot-ai/kaos':
+        specifier: workspace:^
+        version: link:../kaos
+      '@moonshot-ai/kimi-code-oauth':
+        specifier: workspace:^
+        version: link:../oauth
+      '@moonshot-ai/kimi-telemetry':
+        specifier: workspace:^
+        version: link:../telemetry
+      '@moonshot-ai/kosong':
+        specifier: workspace:^
+        version: link:../kosong
+      '@moonshot-ai/protocol':
+        specifier: workspace:^
+        version: link:../protocol
+      smol-toml:
+        specifier: ^1.6.1
+        version: 1.6.1
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/sinon':
+        specifier: ^21.0.1
+        version: 21.0.1
+      sinon:
+        specifier: ^22.0.0
+        version: 22.0.0
+
   packages/kaos:
     dependencies:
       pathe:
