@@ -309,7 +309,7 @@ export class BashTool implements BuiltinTool<BashInput> {
         );
       }
 
-      return this.foregroundCompletionResult(taskId, proc, builder, foregroundTimeoutMs);
+      return await this.foregroundCompletionResult(taskId, proc, builder, foregroundTimeoutMs);
     } finally {
       collectForegroundOutput = false;
     }

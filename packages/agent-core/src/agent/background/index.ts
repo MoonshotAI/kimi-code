@@ -18,6 +18,7 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 import type { Agent } from '../..';
 import { errorMessage } from '../../loop/errors';
 import { timeoutOutcome } from '../../utils/promise';
+import { escapeXml, escapeXmlAttr } from '../../utils/xml-escape';
 import type { BackgroundTaskOrigin } from '../context';
 import { renderNotificationXml } from '../context/notification-xml';
 import { type BackgroundTaskPersistence } from './persist';
@@ -157,7 +158,7 @@ type BackgroundTaskNotification = Record<string, unknown> & {
   readonly title: string;
   readonly severity: 'info' | 'warning';
   readonly body: string;
-  readonly tail_output: string;
+  readonly children?: readonly string[] | undefined;
 };
 
 interface BackgroundTaskNotificationContext {
@@ -165,8 +166,6 @@ interface BackgroundTaskNotificationContext {
   readonly origin: BackgroundTaskOrigin;
   readonly notification: BackgroundTaskNotification;
 }
-
-const NOTIFICATION_TAIL_BYTES = 3_000;
 
 export interface RegisterBackgroundTaskOptions {
   /**
@@ -667,8 +666,7 @@ export class BackgroundManager {
     if (this.deliveredNotificationKeys.has(key)) return;
 
     this.scheduledNotificationKeys.add(key);
-    const tailOutput = (await this.getOutputSnapshot(info.taskId, NOTIFICATION_TAIL_BYTES))
-      .preview;
+    const output = await this.getOutputSnapshot(info.taskId, 0);
     if (this.isTerminalNotificationSuppressed(info.taskId)) return undefined;
     const notification: BackgroundTaskNotification = {
       id: origin.notificationId,
@@ -680,7 +678,7 @@ export class BackgroundManager {
       title: `Background ${info.kind} ${info.status}`,
       severity: info.status === 'completed' ? 'info' : 'warning',
       body: buildBackgroundTaskNotificationBody(info),
-      tail_output: tailOutput,
+      children: backgroundTaskNotificationChildren(output),
     };
     const content = [
       {
@@ -857,6 +855,21 @@ export class BackgroundManager {
     };
     return entry.task.toInfo(base);
   }
+}
+
+function backgroundTaskNotificationChildren(
+  output: BackgroundTaskOutputSnapshot,
+): readonly string[] | undefined {
+  if (!output.fullOutputAvailable || output.outputPath === undefined) return undefined;
+  return [renderOutputFileBlock(output.outputPath, output.outputSizeBytes)];
+}
+
+function renderOutputFileBlock(outputPath: string, outputSizeBytes: number): string {
+  return [
+    `<output-file path="${escapeXmlAttr(outputPath)}" bytes="${String(outputSizeBytes)}">`,
+    `Read the output file to retrieve the result: ${escapeXml(outputPath)}`,
+    '</output-file>',
+  ].join('\n');
 }
 
 function notificationKey(origin: BackgroundTaskOrigin): string {

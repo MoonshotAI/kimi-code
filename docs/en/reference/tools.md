@@ -99,7 +99,7 @@ Collaboration tools handle inter-Agent coordination, user interaction, and Skill
 
 ## Background Tasks
 
-Background task tools manage tasks started via `Bash`, `Agent`, or `AskUserQuestion`. When a task reaches a terminal state, its status and trailing output are automatically delivered back to the Agent; use `TaskOutput` to check progress early.
+Background task tools manage tasks started via `Bash`, `Agent`, or `AskUserQuestion`. When a task reaches a terminal state, its status and saved output path are automatically delivered back to the Agent; use `TaskOutput` to check progress early.
 
 | Tool | Default Approval | Description |
 | --- | --- | --- |
