@@ -13,9 +13,8 @@
 
 import { join } from 'node:path';
 
-import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
-import { classify, startServer, type RunningServer } from '@moonshot-ai/server';
+import { startServer, type RunningServer } from '@moonshot-ai/server';
 import chalk from 'chalk';
 import { Option, type Command } from 'commander';
 
@@ -27,8 +26,9 @@ import { getDataDir } from '#/utils/paths';
 
 import { initializeServerTelemetry } from '../../telemetry';
 import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../../version';
+import { accessUrlLines, buildOpenableUrl } from './access-urls';
 import { ensureDaemon } from './daemon';
-import { formatHostForUrl, listNetworkAddresses, type NetworkAddress } from './networks';
+import { type NetworkAddress } from './networks';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
   DEFAULT_SERVER_HOST,
@@ -41,7 +41,6 @@ import {
 } from './shared';
 
 const WEB_ASSETS_DIR = 'dist-web';
-const READY_PANEL_WIDTH = 72;
 
 export interface RunCliOptions extends ServerCliOptions {
   open?: boolean;
@@ -87,8 +86,7 @@ export interface RunCommandDeps {
  * logged by proxies. The Web UI reads it from `location.hash` after load.
  */
 export function buildWebUrl(origin: string, token: string): string {
-  const base = origin.endsWith('/') ? origin : `${origin}/`;
-  return `${base}#token=${token}`;
+  return buildOpenableUrl(origin, token);
 }
 
 /** Build the `run` subcommand, mounted under a parent (`server` or top-level). */
@@ -197,9 +195,7 @@ export async function handleRunCommand(
 }
 
 function formatReadyLine(origin: string, token: string | undefined): string {
-  return token === undefined
-    ? `Kimi server: ${origin}\n`
-    : `Kimi server: ${origin}\nToken: ${token}\n`;
+  return `Kimi server: ${buildOpenableUrl(origin, token)}\n`;
 }
 
 /**
@@ -403,84 +399,35 @@ function formatReadyBanner(
   const label = (text: string): string => chalk.bold.hex(darkColors.textDim)(text);
   const url = (text: string): string => chalk.hex(darkColors.accent)(text);
   const tokenColor = (text: string): string => chalk.bold.hex(darkColors.warning)(text);
-  const width = READY_PANEL_WIDTH;
-  const innerWidth = width - 4;
-  const pad = '  ';
 
+  const port = Number(new URL(origin).port);
+  // Borderless header: the Kimi sprite (the little mascot with eyes) sits next
+  // to the title, keeping the brand without the enclosing box.
   const logo = ['▐█▛█▛█▌', '▐█████▌'] as const;
-  const logoWidth = Math.max(...logo.map((row) => visibleWidth(row)));
-  const gap = '  ';
-  const textWidth = innerWidth - logoWidth - gap.length;
-
-  const port = new URL(origin).port;
-  const isWildcard = host === '' || host === '0.0.0.0' || host === '::';
-
-  // URL/Network lines. A wildcard bind gets a Vite-style listing (Local + one
-  // Network line per interface); loopback stays "local only"; a specific
-  // non-loopback bind shows its tier plus a reachability / hardening hint.
-  const networkLines: string[] = [];
-  if (isWildcard) {
-    networkLines.push(label('Local:    ') + url(`http://localhost:${port}/`));
-    const addrs = opts.networkAddresses ?? listNetworkAddresses();
-    for (const addr of addrs) {
-      networkLines.push(
-        label('Network:  ') +
-          url(`http://${formatHostForUrl(addr.address, addr.family)}:${port}/`),
-      );
-    }
-    if (addrs.length === 0) {
-      networkLines.push(label('Network:  ') + muted('no non-loopback interfaces found'));
-    }
-  } else {
-    const bindClass = classify(host);
-    networkLines.push(label('URL:      ') + url(displayOrigin(origin)));
-    const networkText =
-      bindClass === 'loopback'
-        ? 'local only'
-        : bindClass === 'lan'
-          ? 'LAN — reachable from your local network'
-          : 'public — reachable from the internet; use a tunnel or TLS proxy';
-    networkLines.push(label('Network:  ') + muted(networkText));
-  }
-
-  const headerLines = [
-    primary(logo[0].padEnd(logoWidth)) +
-      gap +
-      truncateToWidth(title('Kimi server ready'), textWidth, '…'),
-    primary(logo[1].padEnd(logoWidth)) +
-      gap +
-      truncateToWidth(dim('Local web UI is available from this machine.'), textWidth, '…'),
-  ];
-  const infoLines = [
-    ...networkLines,
-    ...(opts.token !== undefined ? [label('Token:    ') + tokenColor(opts.token)] : []),
-    label('Logs:     ') + muted('off') + dim('  use --log-level info to enable'),
-    label('Stop:     ') + muted('kimi server kill'),
-    label('Ready:    ') + muted(`${String(Math.max(0, readyMs))} ms`),
-    label('Version:  ') + muted(getVersion()),
-  ];
-  const contentLines = [...headerLines, '', ...infoLines];
-
-  const lines = [
+  const lines: string[] = [
     '',
-    primary('╭' + '─'.repeat(width - 2) + '╮'),
-    primary('│') + ' '.repeat(width - 2) + primary('│'),
+    `  ${primary(logo[0])}  ${title('Kimi server ready')}`,
+    `  ${primary(logo[1])}  ${dim('Local web UI is available from this machine.')}`,
+    '',
   ];
 
-  for (const content of contentLines) {
-    const truncated = truncateToWidth(content, innerWidth, '…');
-    const rightPad = Math.max(0, innerWidth - visibleWidth(truncated));
-    lines.push(primary('│') + pad + truncated + ' '.repeat(rightPad) + primary('│'));
+  for (const { label: text, url: href } of accessUrlLines(
+    host,
+    port,
+    opts.token,
+    opts.networkAddresses,
+  )) {
+    lines.push(`  ${label(text)}${url(href)}`);
   }
-
-  lines.push(primary('│') + ' '.repeat(width - 2) + primary('│'));
-  lines.push(primary('╰' + '─'.repeat(width - 2) + '╯'));
+  if (opts.token !== undefined) {
+    lines.push(`  ${label('Token:    ')}${tokenColor(opts.token)}`);
+  }
+  lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
+  lines.push(`  ${label('Stop:     ')}${muted('kimi server kill')}`);
+  lines.push(`  ${label('Ready:    ')}${muted(`${String(Math.max(0, readyMs))} ms`)}`);
+  lines.push(`  ${label('Version:  ')}${muted(getVersion())}`);
   lines.push('');
   return lines.join('\n');
-}
-
-function displayOrigin(origin: string): string {
-  return origin.endsWith('/') ? origin : `${origin}/`;
 }
 
 const DEFAULT_RUN_COMMAND_DEPS: RunCommandDeps = {

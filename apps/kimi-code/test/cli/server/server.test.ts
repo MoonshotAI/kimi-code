@@ -360,19 +360,21 @@ describe('`kimi server run` background start', () => {
     );
 
     const plain = stripAnsi(stdout);
-    expect(plain).toContain('╭');
-    expect(plain).toContain('╰');
-    expect(plain).toContain('▐█▛█▛█▌');
-    expect(plain).toContain('▐█████▌');
     expect(plain).toContain('Kimi server ready');
-    expect(plain).toContain('URL:');
+    expect(plain).toContain('Local:');
     expect(plain).toContain('http://127.0.0.1:58627/');
-    expect(plain).toContain('Network:');
-    expect(plain).toContain('local only');
     expect(plain).toContain('Logs:');
     expect(plain).toContain('off');
     expect(plain).toContain('Stop:');
     expect(plain).toContain('kimi server kill');
+    expect(plain).toContain('Ready:');
+    expect(plain).toContain('Version:');
+    // No bordered panel (the token URL must print in full for copying), but
+    // the Kimi sprite stays next to the title.
+    expect(plain).not.toContain('╭');
+    expect(plain).not.toContain('╰');
+    expect(plain).toContain('▐█▛█▛█▌');
+    expect(plain).toContain('▐█████▌');
     expect(plain).not.toContain('➜');
     expect(plain).not.toContain('Kimi server:');
   });
@@ -410,8 +412,8 @@ describe('`kimi server run` background start', () => {
     expect(stdout).toContain(color.hex(darkColors.primary)('▐█▛█▛█▌'));
     expect(stdout).toContain(color.bold.hex(darkColors.primary)('Kimi server ready'));
     expect(stdout).toContain(color.hex(darkColors.accent)('http://127.0.0.1:58627/'));
-    expect(stdout).toContain(color.bold.hex(darkColors.textDim)('URL:      '));
-    expect(stdout).toContain(color.hex(darkColors.textMuted)('local only'));
+    expect(stdout).toContain(color.bold.hex(darkColors.textDim)('Local:    '));
+    expect(stdout).toContain(color.hex(darkColors.textMuted)('off'));
   });
 });
 
@@ -706,18 +708,21 @@ describe('ready banner reflects the bind class (M6.3)', () => {
       },
     );
 
-    const plain = stripAnsi(stdout);
-    expect(plain).toContain('Local:');
-    expect(plain).toContain('http://localhost:58627/');
-    expect(plain).toContain('Network:');
-    expect(plain).toContain('http://192.168.98.66:58627/');
-    expect(plain).toContain('http://10.8.12.216:58627/');
-    expect(plain).toContain('Token:');
-    expect(plain).toContain('tok-xyz');
-    expect(plain).not.toContain('local only');
+    const raw = stripAnsi(stdout);
+    expect(raw).toContain('Kimi server ready');
+    expect(raw).toContain('Local:');
+    expect(raw).toContain('Network:');
+    // Full token-bearing URLs are printed plainly (no box, no truncation) so
+    // they are easy to copy.
+    expect(raw).toContain('http://localhost:58627/#token=tok-xyz');
+    expect(raw).toContain('http://192.168.98.66:58627/#token=tok-xyz');
+    expect(raw).toContain('http://10.8.12.216:58627/#token=tok-xyz');
+    expect(raw).toContain('Token:');
+    expect(raw).toContain('tok-xyz');
+    expect(raw).not.toContain('╭');
   });
 
-  it('labels a 127.0.0.1 bind as local only and prints the token', async () => {
+  it('prints the Local URL and token for a 127.0.0.1 bind', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let stdout = '';
 
@@ -737,12 +742,14 @@ describe('ready banner reflects the bind class (M6.3)', () => {
       },
     );
 
-    const plain = stripAnsi(stdout);
-    expect(plain).toContain('local only');
-    expect(plain).toContain('URL:');
-    expect(plain).toContain('http://127.0.0.1:58627/');
-    expect(plain).toContain('Token:');
-    expect(plain).toContain('tok-loop');
+    const raw = stripAnsi(stdout);
+    expect(raw).toContain('Kimi server ready');
+    expect(raw).toContain('Local:');
+    // Full token-bearing URL, printed plainly for copying.
+    expect(raw).toContain('http://127.0.0.1:58627/#token=tok-loop');
+    expect(raw).toContain('Token:');
+    expect(raw).toContain('tok-loop');
+    expect(raw).not.toContain('╭');
   });
 });
 
@@ -1247,6 +1254,33 @@ describe('buildWebUrl', () => {
   });
 });
 
+describe('accessUrlLines', () => {
+  it('returns Local + Network lines for a wildcard bind', async () => {
+    const { accessUrlLines } = await import('#/cli/sub/server/access-urls');
+    const lines = accessUrlLines('0.0.0.0', 58627, 'tok', [
+      { address: '192.168.1.5', family: 'IPv4' },
+    ]);
+    expect(lines).toEqual([
+      { label: 'Local:    ', url: 'http://localhost:58627/#token=tok' },
+      { label: 'Network:  ', url: 'http://192.168.1.5:58627/#token=tok' },
+    ]);
+  });
+
+  it('returns a single Local line for a loopback bind', async () => {
+    const { accessUrlLines } = await import('#/cli/sub/server/access-urls');
+    const lines = accessUrlLines('127.0.0.1', 58627, 'tok');
+    expect(lines).toEqual([
+      { label: 'Local:    ', url: 'http://127.0.0.1:58627/#token=tok' },
+    ]);
+  });
+
+  it('returns a single URL line for a specific host (no token)', async () => {
+    const { accessUrlLines } = await import('#/cli/sub/server/access-urls');
+    const lines = accessUrlLines('192.168.1.5', 58627, undefined);
+    expect(lines).toEqual([{ label: 'URL:      ', url: 'http://192.168.1.5:58627/' }]);
+  });
+});
+
 describe('`kimi web` / `server run --open` token fragment (M5.5)', () => {
   it('opens the Web UI URL with the token fragment when a token is resolvable', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
@@ -1318,6 +1352,38 @@ describe('`kimi server rotate-token`', () => {
     expect(token.length).toBeGreaterThan(20);
     expect(stdout).toContain('New server token');
     expect(stdout).toContain(token);
+  });
+
+  it('re-prints the access links with the new token when a server is running', async () => {
+    const { registerServerCommand } = await import('#/cli/sub/server');
+    const { mkdirSync, writeFileSync: writeSync } = await import('node:fs');
+    // Fake a live lock pointing at this (alive) process so getLiveLock() finds
+    // the running server and the command can re-print its links.
+    mkdirSync(join(dir, 'server'), { recursive: true });
+    writeSync(
+      join(dir, 'server', 'lock'),
+      JSON.stringify({
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        port: 58627,
+        host: '127.0.0.1',
+      }),
+    );
+
+    const program = new Command('kimi').exitOverride();
+    registerServerCommand(program);
+    let stdout = '';
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdout += String(chunk);
+      return true;
+    });
+
+    await program.parseAsync(['node', 'kimi', 'server', 'rotate-token']);
+    writeSpy.mockRestore();
+
+    const token = readFileSync(join(dir, 'server.token'), 'utf8').trim();
+    expect(stdout).toContain('New server token');
+    expect(stdout).toContain(`http://127.0.0.1:58627/#token=${token}`);
   });
 });
 
