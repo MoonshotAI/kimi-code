@@ -7,6 +7,7 @@ import { i18n } from '../i18n';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import { reconcileWorkspaceOrder, sortByWorkspaceOrder } from '../lib/workspaceOrder';
+import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
   loadWorkspaceOrder,
@@ -747,7 +748,7 @@ function connectEventsIfNeeded(): void {
       // returns the authoritative {asOfSeq, epoch} and re-subscribes.
       if (epoch !== undefined) epochBySession[sessionId] = epoch;
       void currentSeq;
-      void syncSessionFromSnapshot(sessionId);
+      snapshotSyncRunner.request(sessionId);
     },
 
     onError(_code: number, msg: string, _fatal: boolean) {
@@ -1008,6 +1009,8 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     return 'failed';
   }
 }
+
+const snapshotSyncRunner = createCoalescedAsyncRunner(syncSessionFromSnapshot);
 
 function hasLoadedMessages(sessionId: string): boolean {
   return Object.prototype.hasOwnProperty.call(rawState.messagesBySession, sessionId);
