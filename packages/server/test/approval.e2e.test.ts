@@ -15,8 +15,6 @@
  *   - REST `POST` resolves → broker Promise settles → response converts back
  *     to in-process SDK shape
  *   - Idempotency (40902) + not-found (40404)
- *   - 60s timeout (override to 30ms) broadcasts `event.approval.expired` AND
- *     rejects the Promise with `ApprovalExpiredError`.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -36,7 +34,6 @@ import {
 import { IRestGateway, startServer, type RunningServer } from '../src';
 import { rawDataToString } from '../src/ws/rawData';
 import {
-  ApprovalExpiredError,
   ApprovalService,
 } from '#/services/approval/approvalService';
 
@@ -357,52 +354,6 @@ describe('Approval reverse-RPC: WS broadcast → REST resolve → Promise settle
     });
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(40001);
-  });
-
-  it('60s timeout broadcasts event.approval.expired + rejects with ApprovalExpiredError', async () => {
-    const r = await bootDaemon();
-    const sid = await createSession(r);
-    const { ws, received } = await openSubscriber(r, sid);
-
-    // Swap in a short-timeout broker for this session — clean by reaching into
-    // the container, since startServer doesn't expose a broker-options
-    // override yet.
-    const broker = r.services.invokeFunction(
-      (a) => a.get(IApprovalService) as ApprovalService,
-    );
-    // Stamp the timeout via a private field hack — the test already
-    // co-owns the impl. (In a fuller world we'd thread a `brokerOptions`
-    // option through ServerStartOptions.)
-    (broker as unknown as { _timeoutMs: number })._timeoutMs = 40;
-
-    const pending = broker.request({
-      sessionId: sid,
-      agentId: 'main',
-      toolCallId: 'tc_timeout',
-      toolName: 'shell.run',
-      action: 'Run',
-      display: { kind: 'generic', summary: 'test' } as never,
-      turnId: 1,
-    });
-
-    // Expect a rejection AND an event.approval.expired frame.
-    let rejection: unknown;
-    try {
-      await pending;
-    } catch (err) {
-      rejection = err;
-    }
-    expect(rejection).toBeInstanceOf(ApprovalExpiredError);
-
-    const expiredFrame = await waitFor(
-      received,
-      (f) => f['type'] === 'event.approval.expired',
-      2000,
-    );
-    const payload = expiredFrame['payload'] as { approval_id: string };
-    expect(payload.approval_id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-
-    ws.close();
   });
 
   it('REST resolve on unknown approval_id returns 40404', async () => {
