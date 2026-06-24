@@ -4,6 +4,7 @@ export { okEnvelope, errEnvelope } from './envelope';
 export type { Envelope } from './envelope';
 export { classify } from './services/auth/bindClassify';
 export type { BindClass } from './services/auth/bindClassify';
+export { rotateServerToken, serverTokenPath } from './services/auth/persistentToken';
 export { createServerLogger } from './services/pinoLoggerService';
 export type {
   CreateLoggerOptions,

@@ -15,7 +15,7 @@ import { join } from 'node:path';
 
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
-import { classify, getLiveLock, startServer, type RunningServer } from '@moonshot-ai/server';
+import { classify, startServer, type RunningServer } from '@moonshot-ai/server';
 import chalk from 'chalk';
 import { Option, type Command } from 'commander';
 
@@ -28,6 +28,7 @@ import { getDataDir } from '#/utils/paths';
 import { initializeServerTelemetry } from '../../telemetry';
 import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../../version';
 import { ensureDaemon } from './daemon';
+import { formatHostForUrl, listNetworkAddresses, type NetworkAddress } from './networks';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
   DEFAULT_SERVER_HOST,
@@ -62,12 +63,18 @@ export interface RunCommandDeps {
   ) => Promise<never>;
   openUrl(url: string): void;
   /**
-   * Best-effort read of the running server's per-start bearer token. When it
-   * returns a token, the opened Web UI URL carries it in the `#token=` fragment
-   * (M5.5). Optional so callers/tests that don't supply it simply open the
-   * plain origin.
+   * Best-effort read of the server's persistent bearer token. When it returns
+   * a token, the ready banner prints it and the opened Web UI URL carries it in
+   * the `#token=` fragment (M5.5). Optional so callers/tests that don't supply
+   * it simply print/open the plain origin.
    */
   resolveToken?: () => string | undefined;
+  /**
+   * Non-loopback interface addresses to display for a wildcard bind. Defaults
+   * to the machine's own interfaces (`listNetworkAddresses()`); inject a fixed
+   * list in tests for deterministic output.
+   */
+  networkAddresses?: NetworkAddress[];
   stdout: Pick<NodeJS.WriteStream, 'write'>;
   stderr: Pick<NodeJS.WriteStream, 'write'>;
 }
@@ -94,12 +101,12 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
     )
     .option(
       '--host <host>',
-      `Bind host (default ${DEFAULT_SERVER_HOST}). Use 0.0.0.0 to listen on all interfaces (requires a password + --insecure-no-tls unless behind a TLS proxy).`,
+      `Bind host (default ${DEFAULT_SERVER_HOST}). Use 0.0.0.0 to listen on all interfaces (requires --insecure-no-tls unless behind a TLS proxy). The bearer token is printed at startup.`,
       String(DEFAULT_SERVER_HOST),
     )
     .option(
       '--insecure-no-tls',
-      'Allow a non-loopback bind without a TLS-terminating reverse proxy. Required (with a password) to bind beyond 127.0.0.1; use a tunnel or reverse proxy in production.',
+      'Allow a non-loopback bind without a TLS-terminating reverse proxy. Required to bind beyond 127.0.0.1; use a tunnel or reverse proxy in production.',
       false,
     )
     .option(
@@ -162,40 +169,37 @@ export async function handleRunCommand(
     return;
   }
   const startedAt = Date.now();
-  // Open the Web UI, appending the bearer token in the URL fragment when one
-  // can be resolved (M5.5). Falls back to the plain origin when the token is
-  // unavailable (older build, missing lock, etc.).
-  const openWebUrl = (origin: string): void => {
+  // Resolve the persistent token once: it is printed in the ready banner and
+  // rides in the opened Web UI URL's `#token=` fragment (M5.5). Falls back to
+  // the plain origin / no token line when unavailable.
+  const writeReady = (origin: string): void => {
+    const readyMs = Date.now() - startedAt;
     const token = deps.resolveToken?.();
-    deps.openUrl(token !== undefined ? buildWebUrl(origin, token) : origin);
+    deps.stdout.write(
+      parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
+        ? formatReadyBanner(origin, readyMs, parsed.host, {
+            token,
+            networkAddresses: deps.networkAddresses,
+          })
+        : formatReadyLine(origin, token),
+    );
+    if (opts.open === true) {
+      deps.openUrl(token !== undefined ? buildWebUrl(origin, token) : origin);
+    }
   };
   if (opts.foreground === true) {
     const run = deps.startServerForeground ?? startServerForeground;
-    await run(parsed, {
-      onReady: (origin) => {
-        const readyMs = Date.now() - startedAt;
-        deps.stdout.write(
-          parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-            ? formatReadyBanner(origin, readyMs, parsed.host)
-            : `Kimi server: ${origin}\n`,
-        );
-        if (opts.open === true) {
-          openWebUrl(origin);
-        }
-      },
-    });
+    await run(parsed, { onReady: writeReady });
     return;
   }
   const { origin } = await deps.startServerBackground(parsed);
-  const readyMs = Date.now() - startedAt;
-  deps.stdout.write(
-    parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-      ? formatReadyBanner(origin, readyMs, parsed.host)
-      : `Kimi server: ${origin}\n`,
-  );
-  if (opts.open === true) {
-    openWebUrl(origin);
-  }
+  writeReady(origin);
+}
+
+function formatReadyLine(origin: string, token: string | undefined): string {
+  return token === undefined
+    ? `Kimi server: ${origin}\n`
+    : `Kimi server: ${origin}\nToken: ${token}\n`;
 }
 
 /**
@@ -379,13 +383,26 @@ export function resolveServerWebAssetsDir(
   return nativeWebAssetsDir ?? join(getHostPackageRoot(), WEB_ASSETS_DIR);
 }
 
-function formatReadyBanner(origin: string, readyMs: number, host: string): string {
+interface FormatReadyBannerOptions {
+  /** Persistent bearer token to print; omitted when unresolvable. */
+  token?: string;
+  /** Non-loopback interface addresses to list for a wildcard bind. */
+  networkAddresses?: NetworkAddress[];
+}
+
+function formatReadyBanner(
+  origin: string,
+  readyMs: number,
+  host: string,
+  opts: FormatReadyBannerOptions = {},
+): string {
   const primary = (text: string): string => chalk.hex(darkColors.primary)(text);
   const title = (text: string): string => chalk.bold.hex(darkColors.primary)(text);
   const dim = (text: string): string => chalk.hex(darkColors.textDim)(text);
   const muted = (text: string): string => chalk.hex(darkColors.textMuted)(text);
   const label = (text: string): string => chalk.bold.hex(darkColors.textDim)(text);
-  const url = chalk.hex(darkColors.accent)(displayOrigin(origin));
+  const url = (text: string): string => chalk.hex(darkColors.accent)(text);
+  const tokenColor = (text: string): string => chalk.bold.hex(darkColors.warning)(text);
   const width = READY_PANEL_WIDTH;
   const innerWidth = width - 4;
   const pad = '  ';
@@ -394,16 +411,38 @@ function formatReadyBanner(origin: string, readyMs: number, host: string): strin
   const logoWidth = Math.max(...logo.map((row) => visibleWidth(row)));
   const gap = '  ';
   const textWidth = innerWidth - logoWidth - gap.length;
-  // Bind class drives the Network line: loopback stays "local only"; a
-  // non-loopback bind prints the tier plus a reachability / hardening hint so
-  // the operator knows the server is exposed beyond this host.
-  const bindClass = classify(host);
-  const networkText =
-    bindClass === 'loopback'
-      ? 'local only'
-      : bindClass === 'lan'
-        ? 'LAN — reachable from your local network'
-        : 'public — reachable from the internet; use a tunnel or TLS proxy';
+
+  const port = new URL(origin).port;
+  const isWildcard = host === '' || host === '0.0.0.0' || host === '::';
+
+  // URL/Network lines. A wildcard bind gets a Vite-style listing (Local + one
+  // Network line per interface); loopback stays "local only"; a specific
+  // non-loopback bind shows its tier plus a reachability / hardening hint.
+  const networkLines: string[] = [];
+  if (isWildcard) {
+    networkLines.push(label('Local:    ') + url(`http://localhost:${port}/`));
+    const addrs = opts.networkAddresses ?? listNetworkAddresses();
+    for (const addr of addrs) {
+      networkLines.push(
+        label('Network:  ') +
+          url(`http://${formatHostForUrl(addr.address, addr.family)}:${port}/`),
+      );
+    }
+    if (addrs.length === 0) {
+      networkLines.push(label('Network:  ') + muted('no non-loopback interfaces found'));
+    }
+  } else {
+    const bindClass = classify(host);
+    networkLines.push(label('URL:      ') + url(displayOrigin(origin)));
+    const networkText =
+      bindClass === 'loopback'
+        ? 'local only'
+        : bindClass === 'lan'
+          ? 'LAN — reachable from your local network'
+          : 'public — reachable from the internet; use a tunnel or TLS proxy';
+    networkLines.push(label('Network:  ') + muted(networkText));
+  }
+
   const headerLines = [
     primary(logo[0].padEnd(logoWidth)) +
       gap +
@@ -413,8 +452,8 @@ function formatReadyBanner(origin: string, readyMs: number, host: string): strin
       truncateToWidth(dim('Local web UI is available from this machine.'), textWidth, '…'),
   ];
   const infoLines = [
-    label('URL:      ') + url,
-    label('Network:  ') + muted(networkText),
+    ...networkLines,
+    ...(opts.token !== undefined ? [label('Token:    ') + tokenColor(opts.token)] : []),
     label('Logs:     ') + muted('off') + dim('  use --log-level info to enable'),
     label('Stop:     ') + muted('kimi server kill'),
     label('Ready:    ') + muted(`${String(Math.max(0, readyMs))} ms`),
@@ -449,13 +488,10 @@ const DEFAULT_RUN_COMMAND_DEPS: RunCommandDeps = {
   startServerForeground,
   openUrl: defaultOpenUrl,
   resolveToken: () => {
-    // The background daemon's pid lives in the lock; the foreground server is
-    // this process. Either way, `<homeDir>/server-<pid>.token` is the file the
-    // server wrote at boot (M5.1). Best-effort: a missing/older server yields
-    // undefined and the caller opens the plain origin.
-    const lock = getLiveLock();
-    const pid = lock?.pid ?? process.pid;
-    return tryResolveServerToken(getDataDir(), pid);
+    // Read the persistent `<homeDir>/server.token` written on first boot
+    // (M5.1). Best-effort: a missing/older server yields undefined and the
+    // caller opens the plain origin.
+    return tryResolveServerToken(getDataDir());
   },
   stdout: process.stdout,
   stderr: process.stderr,

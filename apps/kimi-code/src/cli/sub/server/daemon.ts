@@ -16,8 +16,8 @@
  * foreground runner so it can share the same bootstrap helpers.
  */
 
-import { spawn } from 'node:child_process';
-import { appendFileSync, closeSync, mkdirSync, openSync } from 'node:fs';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -196,7 +196,7 @@ interface SpawnDaemonChildOptions {
   idleGraceMs?: number;
 }
 
-export function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
+export function spawnDaemonChild(options: SpawnDaemonChildOptions): ChildProcess {
   const program = resolveDaemonProgram();
   const logPath = daemonLogPath();
   const logDir = dirname(logPath);
@@ -257,6 +257,7 @@ export function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
       }
     });
     child.unref();
+    return child;
   } finally {
     // `spawn` dups the fd into the child; the parent must not keep it open.
     closeSync(logFd);
@@ -293,7 +294,7 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
 
   // 2. No reusable daemon — pick a free port and spawn one detached.
   const port = await resolveDaemonPort(host, preferred);
-  spawnDaemonChild({
+  const child = spawnDaemonChild({
     host,
     port,
     logLevel,
@@ -302,6 +303,21 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
     allowRemoteShutdown: options.allowRemoteShutdown,
     allowRemoteTerminals: options.allowRemoteTerminals,
     idleGraceMs: options.idleGraceMs,
+  });
+
+  // Watch for an early exit so a boot failure (e.g. the non-loopback TLS gate,
+  // a config error, or a lost lock race with no other daemon to fall back to)
+  // surfaces the real error immediately instead of waiting out the full spawn
+  // timeout. The exit code/signal plus a tail of the daemon log is what tells
+  // the operator *why* it failed.
+  let childExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  child.once('exit', (code, signal) => {
+    childExit = { code, signal };
+  });
+  child.once('error', () => {
+    // Spawn failure (ENOENT etc.) is already recorded in the log by
+    // spawnDaemonChild; treat it as an early exit here.
+    childExit = { code: -1, signal: null };
   });
 
   // 3. Wait until some live daemon (ours, or a racer that won the lock) is up.
@@ -314,11 +330,45 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
         return { origin };
       }
     }
+    if (childExit !== undefined && !live) {
+      // Our child exited and no other live daemon holds the lock to fall back
+      // to — this is a real boot failure, not a lost race.
+      throw new Error(formatDaemonBootFailure(childExit, daemonLogPath()));
+    }
     await sleep(POLL_INTERVAL_MS);
   }
 
   throw new Error(
-    `Kimi server daemon failed to start within ${String(SPAWN_TIMEOUT_MS)}ms. ` +
-      `Check the log for details: ${daemonLogPath()}`,
+    `Kimi server daemon failed to start within ${String(SPAWN_TIMEOUT_MS)}ms.\n\n` +
+      formatLogTail(daemonLogPath()),
   );
+}
+
+function formatDaemonBootFailure(
+  exit: { code: number | null; signal: NodeJS.Signals | null },
+  logPath: string,
+): string {
+  const reason =
+    exit.signal === null
+      ? `exited with code ${String(exit.code)}`
+      : `was terminated by signal ${exit.signal}`;
+  return `Kimi server daemon ${reason} during startup.\n\n${formatLogTail(logPath)}`;
+}
+
+function formatLogTail(logPath: string): string {
+  const tail = tailFile(logPath, 30);
+  if (tail.length === 0) {
+    return `Check the log for details: ${logPath}`;
+  }
+  return `Last log lines (${logPath}):\n${tail}`;
+}
+
+function tailFile(filePath: string, maxLines: number): string {
+  try {
+    const content = readFileSync(filePath, 'utf8');
+    const lines = content.split('\n').filter((line) => line.length > 0);
+    return lines.slice(-maxLines).join('\n');
+  } catch {
+    return '';
+  }
 }

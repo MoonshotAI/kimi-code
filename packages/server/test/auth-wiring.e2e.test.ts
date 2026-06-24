@@ -3,8 +3,8 @@
  *
  * Unlike the override-driven tests (which inject a fixed-token
  * `IAuthTokenService`), this file boots `startServer` with NO auth override so
- * the REAL `defaultAuth` is built: a random token written to
- * `<homeDir>/server-<pid>.token` (0600) plus the HTTP/WS auth hooks. The token
+ * the REAL `defaultAuth` is built: a persistent token written to
+ * `<homeDir>/server.token` (0600) plus the HTTP/WS auth hooks. The token
  * is read back from disk — exactly what the CLI does (M5.4) — and exercised
  * against a gated HTTP route and the WS upgrade path. This proves the
  * production wiring, not just the override seam.
@@ -45,7 +45,7 @@ afterEach(async () => {
 });
 
 function tokenPath(): string {
-  return join(bridgeHome, `server-${String(process.pid)}.token`);
+  return join(bridgeHome, 'server.token');
 }
 
 function readToken(): string {
@@ -163,7 +163,7 @@ function expectRejected(url: string): Promise<void> {
 }
 
 describe('production auth wiring (M5.1)', () => {
-  it('writes a 0600 token file at boot and removes it on close', async () => {
+  it('writes a 0600 token file at boot and keeps it on close (persistent)', async () => {
     const r = await bootReal();
     const p = tokenPath();
 
@@ -174,7 +174,8 @@ describe('production auth wiring (M5.1)', () => {
     expect(token.length).toBeGreaterThan(0);
 
     await r.close();
-    expect(() => statSync(p)).toThrow();
+    // Persistent token: the file survives shutdown so the next start reuses it.
+    expect(statSync(p).mode & 0o777).toBe(0o600);
   });
 
   it('gates HTTP: 200 with the token, 401 without', async () => {

@@ -200,22 +200,26 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   };
 
   // Token auth (ROADMAP M5.1). The real `IAuthTokenService` needs an
-  // async-built `TokenStore` (writes `<homeDir>/server-<pid>.token` at 0600)
-  // and an optional bcrypt password hash — both awaited here, then supplied to
-  // the collection via `serviceOverrides` so tests can inject a fixed-token
-  // impl that wins (last-wins) over this default. The token file is disposed
-  // (best-effort) on shutdown and on every boot-error path below.
-  const tokenStore = await createTokenStore(envService.homeDir, process.pid);
+  // async-built `TokenStore` over the persistent `<homeDir>/server.token`
+  // (0600; generated once on first boot and reused across restarts) and an
+  // optional bcrypt password hash — both awaited here, then supplied to the
+  // collection via `serviceOverrides` so tests can inject a fixed-token impl
+  // that wins (last-wins) over this default. The store re-reads the file when
+  // its mtime changes, so `kimi server rotate-token` takes effect without a
+  // restart; the file is intentionally kept on shutdown (dispose is a no-op).
+  const tokenStore = await createTokenStore(envService.homeDir);
   const passwordHash = await resolvePasswordHash(process.env);
   const defaultAuth = createAuthTokenService({ tokenStore, passwordHash });
 
   // Public-bind hardening gate (ROADMAP M6.3). Classify the bind host and, for
-  // any non-loopback tier (LAN or public), refuse to start unless (a) a user
-  // password is configured and (b) the operator explicitly acknowledged that
-  // TLS is terminated elsewhere (`insecureNoTls`). Failing here — before the
-  // container is built and before we listen — keeps a public/LAN bind from
-  // ever serving plain HTTP by accident. On refusal we tear down the token
-  // file and release the lock so the operator can retry cleanly.
+  // any non-loopback tier (LAN or public), refuse to start unless the operator
+  // explicitly acknowledged that TLS is terminated elsewhere (`insecureNoTls`).
+  // Auth is bearer-token based: the persistent token is printed in the startup
+  // banner and reused across restarts, so a password is no longer mandatory for
+  // a non-loopback bind — `KIMI_CODE_PASSWORD` remains an optional additional
+  // credential. Failing here (before the container is built and before we
+  // listen) keeps a public/LAN bind from ever serving plain HTTP by accident.
+  // On refusal we release the lock so the operator can retry cleanly.
   const bindClass = classify(opts.host, { bindClass: opts.bindClass });
   if (bindClass !== 'loopback') {
     const refusePublicBind = async (message: string): Promise<never> => {
@@ -227,19 +231,17 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       lockHandle.release();
       throw new Error(message);
     };
-    if (passwordHash === undefined) {
-      await refusePublicBind(
-        'Refusing to bind a non-loopback host without a password. ' +
-          'Set KIMI_CODE_PASSWORD (or configure a bcrypt password hash) before using --host ' +
-          opts.host +
-          '.',
-      );
-    }
     if (opts.insecureNoTls !== true) {
       await refusePublicBind(
         'Refusing to bind a non-loopback host without TLS. ' +
           'Put the server behind a TLS-terminating reverse proxy (Caddy/nginx), ' +
           'or pass --insecure-no-tls to acknowledge the risk.',
+      );
+    }
+    if (passwordHash === undefined) {
+      pinoLogger.warn(
+        { host: opts.host, bindClass },
+        'binding non-loopback host with token-only auth (no KIMI_CODE_PASSWORD) — the bearer token printed in the startup banner is the only credential protecting this server',
       );
     }
     pinoLogger.warn(
@@ -598,9 +600,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
     }
 
-    // Remove the on-disk token file now that the server is gone (ROADMAP M5.1).
-    // Best-effort: a missing/unwritable file must not keep shutdown from
-    // releasing the lock.
+    // The persistent token is intentionally left on disk so it survives the
+    // next start (ROADMAP M5.1). dispose() is a no-op for the persistent store;
+    // the call is kept so the interface is honored uniformly and a test
+    // override can still observe shutdown.
     try {
       await tokenStore.dispose();
     } catch {

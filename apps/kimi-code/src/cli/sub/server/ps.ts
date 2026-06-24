@@ -65,9 +65,9 @@ async function handlePsCommand(opts: { json?: boolean }): Promise<void> {
   }
 
   // The `/api/v1/connections` route is gated by bearer auth (M5.1). Read the
-  // per-start token the server wrote at boot; a clear error here means the
-  // server is an older build or the token file was removed.
-  const token = resolveServerToken(getDataDir(), lock.pid);
+  // persistent token; a clear error here means the server has never been
+  // started (no token file yet) or the token file was removed.
+  const token = resolveServerToken(getDataDir());
   const connections = await fetchConnections(origin, token);
 
   if (opts.json) {

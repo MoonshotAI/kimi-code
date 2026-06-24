@@ -1,8 +1,8 @@
 /**
  * `IAuthTokenService` DI surface (ROADMAP M2.1).
  *
- * Exposes the per-start bearer token plus a single validity check that accepts
- * EITHER the per-start token (constant-time, via `TokenStore`) OR a verified
+ * Exposes the persistent bearer token plus a single validity check that accepts
+ * EITHER the persistent token (constant-time, via `TokenStore`) OR a verified
  * user password (bcrypt, async). The seam exists so tests can inject a
  * fixed-token impl via `startServer({ serviceOverrides })`, and so `start.ts`
  * (M5.1) can wire the real async-built instance at boot.
@@ -19,11 +19,11 @@ import type { TokenStore } from './tokenStore';
 export interface IAuthTokenService {
   readonly _serviceBrand: undefined;
 
-  /** The per-start bearer token (held in memory; never re-read from disk). */
+  /** The persistent bearer token (re-read from disk when its mtime changes). */
   getToken(): string;
 
   /**
-   * True when `candidate` matches the per-start token OR verifies against the
+   * True when `candidate` matches the persistent token OR verifies against the
    * configured password hash. Constant-time on the token path; bcrypt on the
    * password path.
    */

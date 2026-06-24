@@ -3,8 +3,9 @@
  *
  * End-to-end coverage of the §3.5 public-bind hardening stack on a
  * `host: '0.0.0.0'` + `KIMI_CODE_PASSWORD` + `insecureNoTls: true` server:
- *   - M6.3 public-bind gate (no password → refuse; password-but-no-TLS →
- *     refuse; password + `insecureNoTls` → boot + warn logged).
+ *   - M6.3 public-bind gate (no `--insecure-no-tls` → refuse; token-only
+ *     (no password) + `insecureNoTls` → boot + token-only warning logged;
+ *     password + `insecureNoTls` → boot + warn logged).
  *   - Real password auth path (`Authorization: Bearer <password>` → 200 via
  *     `verifyPassword`; wrong/missing credentials → 401).
  *   - M6.4 auth-failure rate limit (N bad tokens → 429 on the (N+1)th).
@@ -71,21 +72,29 @@ afterEach(async () => {
 });
 
 describe('non-loopback bind gate (M6.3)', () => {
-  it('refuses to bind 0.0.0.0 without a password', async () => {
+  it('boots 0.0.0.0 without a password (token-only) and logs the token-only warning', async () => {
     delete process.env['KIMI_CODE_PASSWORD'];
     const { lockPath, homeDir } = tmpPaths();
+    const { logger, lines } = capturingLogger();
 
-    await expect(
-      startServer({
-        serviceOverrides: [fixedTokenAuth()],
-        host: '0.0.0.0',
-        port: 0,
-        lockPath,
-        insecureNoTls: true,
-        logger: pino({ level: 'silent' }),
-        coreProcessOptions: { homeDir },
-      }),
-    ).rejects.toThrow(/without a password/);
+    const server = await startServer({
+      serviceOverrides: [fixedTokenAuth()],
+      host: '0.0.0.0',
+      port: 0,
+      lockPath,
+      insecureNoTls: true,
+      logger,
+      coreProcessOptions: { homeDir },
+    });
+    running.push(server);
+
+    // The server is up with token-only auth: a gated route answers 200.
+    const res = await fetch(`${server.address}/api/v1/healthz`, { headers: authHeaders() });
+    expect(res.status).toBe(200);
+
+    // The token-only warning was logged so the operator knows the bearer token
+    // is the only credential protecting the exposed server.
+    expect(lines.join('')).toContain('token-only auth');
   });
 
   it('refuses to bind 0.0.0.0 with a password but without --insecure-no-tls', async () => {

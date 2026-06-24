@@ -9,7 +9,7 @@
  */
 
 import type { ChildProcess } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -45,7 +45,7 @@ describe('kimi server', () => {
     const server = program.commands.find((c) => c.name() === 'server');
     expect(server).toBeDefined();
     const subs = server?.commands.map((c) => c.name()).toSorted();
-    expect(subs).toEqual(['kill', 'ps', 'run']);
+    expect(subs).toEqual(['kill', 'ps', 'rotate-token', 'run']);
   });
 
   it('`server run` exposes local-only foreground options', () => {
@@ -682,7 +682,7 @@ describe('--insecure-no-tls threading (M6.3)', () => {
 });
 
 describe('ready banner reflects the bind class (M6.3)', () => {
-  it('labels a 0.0.0.0 bind as public with a reachability hint', async () => {
+  it('lists Local + Network addresses for a 0.0.0.0 bind (Vite-style)', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let stdout = '';
 
@@ -690,6 +690,11 @@ describe('ready banner reflects the bind class (M6.3)', () => {
       { host: '0.0.0.0', insecureNoTls: true },
       {
         startServerBackground: async () => ({ origin: 'http://0.0.0.0:58627' }),
+        resolveToken: () => 'tok-xyz',
+        networkAddresses: [
+          { address: '192.168.98.66', family: 'IPv4' },
+          { address: '10.8.12.216', family: 'IPv4' },
+        ],
         openUrl: vi.fn(),
         stdout: {
           write(chunk: string | Uint8Array) {
@@ -702,12 +707,17 @@ describe('ready banner reflects the bind class (M6.3)', () => {
     );
 
     const plain = stripAnsi(stdout);
-    expect(plain).toContain('public');
-    expect(plain).toContain('reachable from the internet');
+    expect(plain).toContain('Local:');
+    expect(plain).toContain('http://localhost:58627/');
+    expect(plain).toContain('Network:');
+    expect(plain).toContain('http://192.168.98.66:58627/');
+    expect(plain).toContain('http://10.8.12.216:58627/');
+    expect(plain).toContain('Token:');
+    expect(plain).toContain('tok-xyz');
     expect(plain).not.toContain('local only');
   });
 
-  it('labels a 127.0.0.1 bind as local only', async () => {
+  it('labels a 127.0.0.1 bind as local only and prints the token', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let stdout = '';
 
@@ -715,6 +725,7 @@ describe('ready banner reflects the bind class (M6.3)', () => {
       { host: '127.0.0.1' },
       {
         startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+        resolveToken: () => 'tok-loop',
         openUrl: vi.fn(),
         stdout: {
           write(chunk: string | Uint8Array) {
@@ -726,7 +737,12 @@ describe('ready banner reflects the bind class (M6.3)', () => {
       },
     );
 
-    expect(stripAnsi(stdout)).toContain('local only');
+    const plain = stripAnsi(stdout);
+    expect(plain).toContain('local only');
+    expect(plain).toContain('URL:');
+    expect(plain).toContain('http://127.0.0.1:58627/');
+    expect(plain).toContain('Token:');
+    expect(plain).toContain('tok-loop');
   });
 });
 
@@ -864,6 +880,68 @@ describe('spawnDaemonChild', () => {
 
     const [, args] = spawnMock.mock.calls[0]!;
     expect(args).toEqual(expect.arrayContaining(['--insecure-no-tls']));
+  });
+});
+
+describe('ensureDaemon surfaces boot failures via early exit', () => {
+  let workDir: string;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), 'kimi-ensure-exit-'));
+    prevHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = workDir;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) {
+      delete process.env['KIMI_CODE_HOME'];
+    } else {
+      process.env['KIMI_CODE_HOME'] = prevHome;
+    }
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  it('rejects fast with the exit reason and a log tail when the daemon exits early', async () => {
+    const { spawn } = await import('node:child_process');
+    const spawnMock = vi.mocked(spawn);
+    const { mkdirSync, writeFileSync: writeSync } = await import('node:fs');
+    const { daemonLogPath, ensureDaemon } = await import('#/cli/sub/server/daemon');
+
+    // Seed the daemon log with the kind of line a failing boot writes, so we
+    // can assert it is surfaced to the user instead of a generic timeout.
+    mkdirSync(dirname(daemonLogPath()), { recursive: true });
+    writeSync(daemonLogPath(), 'fatal: Refusing to bind a non-loopback host without TLS.\n');
+
+    // Fake child that exits with code 1 shortly after the 'exit' listener is
+    // attached — simulating a daemon that fails during boot.
+    const fakeChild = {
+      unref: vi.fn(),
+      once: vi.fn((event: string, cb: (...a: unknown[]) => void) => {
+        if (event === 'exit') {
+          setTimeout(() => cb(1, null), 5);
+        }
+        return fakeChild;
+      }),
+    };
+    spawnMock.mockReturnValueOnce(fakeChild as unknown as ChildProcess);
+
+    const start = Date.now();
+    let caught: unknown;
+    try {
+      await ensureDaemon({ port: 0 });
+    } catch (error) {
+      caught = error;
+    }
+    const elapsed = Date.now() - start;
+
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    expect(message).toMatch(/exited with code 1/);
+    expect(message).toContain('Refusing to bind');
+    // Must fail fast — nowhere near the 20s spawn timeout.
+    expect(elapsed).toBeLessThan(5000);
   });
 });
 
@@ -1085,21 +1163,21 @@ describe('resolveServerToken', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('reads the token from <homeDir>/server-<pid>.token', async () => {
+  it('reads the token from <homeDir>/server.token', async () => {
     const { resolveServerToken } = await import('#/cli/sub/server/shared');
-    writeFileSync(join(dir, 'server-42.token'), 'secret-token\n');
-    expect(resolveServerToken(dir, 42)).toBe('secret-token');
+    writeFileSync(join(dir, 'server.token'), 'secret-token\n');
+    expect(resolveServerToken(dir)).toBe('secret-token');
   });
 
   it('trims surrounding whitespace', async () => {
     const { resolveServerToken } = await import('#/cli/sub/server/shared');
-    writeFileSync(join(dir, 'server-7.token'), '  tok  \n');
-    expect(resolveServerToken(dir, 7)).toBe('tok');
+    writeFileSync(join(dir, 'server.token'), '  tok  \n');
+    expect(resolveServerToken(dir)).toBe('tok');
   });
 
   it('throws a clear error when the token file is missing', async () => {
     const { resolveServerToken } = await import('#/cli/sub/server/shared');
-    expect(() => resolveServerToken(dir, 99)).toThrow(/unable to read server token/);
+    expect(() => resolveServerToken(dir)).toThrow(/unable to read server token/);
   });
 });
 
@@ -1200,6 +1278,73 @@ describe('`kimi web` / `server run --open` token fragment (M5.5)', () => {
       },
     );
     expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627');
+  });
+});
+
+describe('`kimi server rotate-token`', () => {
+  let dir: string;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'kimi-rotate-'));
+    prevHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = dir;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) {
+      delete process.env['KIMI_CODE_HOME'];
+    } else {
+      process.env['KIMI_CODE_HOME'] = prevHome;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes a new token to server.token and prints it', async () => {
+    const { registerServerCommand } = await import('#/cli/sub/server');
+    const program = new Command('kimi').exitOverride();
+    registerServerCommand(program);
+    let stdout = '';
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdout += String(chunk);
+      return true;
+    });
+
+    await program.parseAsync(['node', 'kimi', 'server', 'rotate-token']);
+    writeSpy.mockRestore();
+
+    const token = readFileSync(join(dir, 'server.token'), 'utf8').trim();
+    expect(token.length).toBeGreaterThan(20);
+    expect(stdout).toContain('New server token');
+    expect(stdout).toContain(token);
+  });
+});
+
+describe('formatHostForUrl', () => {
+  it('bracket-wraps IPv6 and leaves IPv4 as-is', async () => {
+    const { formatHostForUrl } = await import('#/cli/sub/server/networks');
+    expect(formatHostForUrl('192.168.1.5', 'IPv4')).toBe('192.168.1.5');
+    expect(formatHostForUrl('fe80::1', 'IPv6')).toBe('[fe80::1]');
+  });
+});
+
+describe('filterDisplayAddresses', () => {
+  it('drops IPv6 link-local, de-duplicates, and orders IPv4 before IPv6', async () => {
+    const { filterDisplayAddresses } = await import('#/cli/sub/server/networks');
+    const out = filterDisplayAddresses([
+      { address: 'fe80::ecf3:c2ff:fe9c:11c3', family: 'IPv6' },
+      { address: '192.168.1.5', family: 'IPv4' },
+      { address: 'fe80::ecf3:c2ff:fe9c:11c3', family: 'IPv6' },
+      { address: '10.0.0.1', family: 'IPv4' },
+      { address: 'fe80::1', family: 'IPv6' },
+      { address: '2001:db8::1', family: 'IPv6' },
+    ]);
+    expect(out).toEqual([
+      { address: '192.168.1.5', family: 'IPv4' },
+      { address: '10.0.0.1', family: 'IPv4' },
+      { address: '2001:db8::1', family: 'IPv6' },
+    ]);
   });
 });
 

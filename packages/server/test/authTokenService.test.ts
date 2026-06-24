@@ -46,7 +46,7 @@ describe('createAuthTokenService', () => {
 
   beforeEach(async () => {
     homeDir = mkdtempSync(join(tmpdir(), 'kimi-auth-token-store-'));
-    store = await createTokenStore(homeDir, process.pid);
+    store = await createTokenStore(homeDir);
   });
 
   afterEach(async () => {

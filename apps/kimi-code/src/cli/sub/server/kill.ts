@@ -35,8 +35,8 @@ const POLL_INTERVAL_MS = 100;
 export interface KillCommandDeps {
   getLiveLock(): LockContents | undefined;
   requestShutdown(origin: string, token: string | undefined): Promise<void>;
-  /** Best-effort read of the per-start bearer token for `pid`; undefined on miss. */
-  resolveToken(pid: number): string | undefined;
+  /** Best-effort read of the persistent bearer token; undefined on miss. */
+  resolveToken(): string | undefined;
   signalPid(pid: number, signal: NodeJS.Signals): boolean;
   pidAlive(pid: number): boolean;
   sleep(ms: number): Promise<void>;
@@ -73,7 +73,7 @@ export async function handleKillCommand(deps: KillCommandDeps): Promise<void> {
   //    drop the connection as it exits. The bearer token (M5.1) is best-effort
   //    too: if it can't be read the API call 401s and the PID path below still
   //    guarantees the kill.
-  const token = deps.resolveToken(pid);
+  const token = deps.resolveToken();
   await deps.requestShutdown(origin, token).catch(() => {});
 
   // 2. PID path — SIGTERM, wait, then SIGKILL.
@@ -155,7 +155,7 @@ export async function requestShutdownViaApi(
 const DEFAULT_KILL_DEPS: KillCommandDeps = {
   getLiveLock,
   requestShutdown: requestShutdownViaApi,
-  resolveToken: (pid) => tryResolveServerToken(getDataDir(), pid),
+  resolveToken: () => tryResolveServerToken(getDataDir()),
   signalPid,
   pidAlive,
   sleep: (ms) =>

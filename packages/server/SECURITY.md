@@ -10,15 +10,16 @@ The server classifies the bind host into one of three tiers
 
 | Tier | Bind host | Trust boundary | Primary threats | Mitigations |
 |---|---|---|---|---|
-| loopback | `127.0.0.0/8`, `::1`, `localhost` (default) | This host only; local process isolation | Same-host processes/users connecting to the port; malicious web pages hitting `localhost` (CSRF / DNS rebinding) | Per-start bearer token; Host/Origin checks; token file `0600` (this user only) |
-| LAN | RFC1918 + `169.254/16`, `fe80::/10` (`--host 192.168.x.x`) | The local network is untrusted | Network-reachable attackers; brute force; CSRF; remote shell / shutdown | **Full hardening (same as public):** mandatory password, TLS or explicit opt-out, auth-failure rate limiting, dangerous endpoints disabled, security headers |
+| loopback | `127.0.0.0/8`, `::1`, `localhost` (default) | This host only; local process isolation | Same-host processes/users connecting to the port; malicious web pages hitting `localhost` (CSRF / DNS rebinding) | Persistent bearer token; Host/Origin checks; token file `0600` (this user only) |
+| LAN | RFC1918 + `169.254/16`, `fe80::/10` (`--host 192.168.x.x`) | The local network is untrusted | Network-reachable attackers; brute force; CSRF; remote shell / shutdown | **Full hardening (same as public):** bearer token auth (password optional), TLS or explicit opt-out, auth-failure rate limiting, dangerous endpoints disabled, security headers |
 | public | Everything else; `0.0.0.0` / `::` / empty | The whole internet is untrusted | Same as LAN, at internet scale | Same hardening as LAN; a TLS-terminating reverse proxy (or tunnel) is strongly recommended |
 
 **Important:** the hardening gate in `start.ts` is `bindClass !== 'loopback'`. LAN and
-public binds therefore receive the **same** hardening stack (password + TLS +
-rate-limit + endpoint downgrade + security headers). The tier label only changes the
-banner and the automatic Host allowlist entry. Treat LAN exposure with the same care
-as public exposure.
+public binds therefore receive the **same** hardening stack (TLS opt-out + rate-limit
++ endpoint downgrade + security headers). Authentication is the persistent bearer
+token (printed in the startup banner); `KIMI_CODE_PASSWORD` is an optional additional
+credential on every tier. The tier label only changes the banner and the automatic
+Host allowlist entry. Treat LAN exposure with the same care as public exposure.
 
 Not in scope (see PLAN §6): NAT traversal, untrusted relays, end-to-end encryption.
 
@@ -29,9 +30,12 @@ kimi server run          # or: kimi web
 ```
 
 - Binds `127.0.0.1:58627` by default (`--host` / `--port` to override).
-- Generates a per-start bearer token (`crypto.randomBytes(32)`, base64url) kept only
-  in memory and written to `<KIMI_CODE_HOME>/server-<pid>.token` with mode `0600`
-  (parent directory `0700`). The file is deleted when the server exits.
+- Uses a persistent bearer token (`crypto.randomBytes(32)`, base64url) generated
+  once on first boot and written to `<KIMI_CODE_HOME>/server.token` with mode
+  `0600` (parent directory `0700`). The same token is reused across restarts; it
+  is NOT deleted when the server exits. Rotate it explicitly with
+  `kimi server rotate-token` (a running server picks up the new token without a
+  restart).
 - The local CLI reads that token file automatically and sends
   `Authorization: Bearer <token>` on every REST/WebSocket call — no setup required.
 - Only loopback is reachable; nothing is exposed to the network.
@@ -39,15 +43,15 @@ kimi server run          # or: kimi web
 ## LAN deployment
 
 Bind a specific LAN interface. Because the hardening gate is `bindClass !== 'loopback'`,
-a LAN bind requires the same credentials as a public bind:
+a LAN bind gets the same hardening stack as a public bind:
 
 ```
-export KIMI_CODE_PASSWORD='a long random password'
 kimi server run --host 192.168.1.10 --insecure-no-tls
 ```
 
-- `KIMI_CODE_PASSWORD` is **required**; the server refuses to start without it on any
-  non-loopback bind.
+- Authentication is the persistent bearer token printed in the startup banner; send it
+  as `Authorization: Bearer <token>`. `KIMI_CODE_PASSWORD` is optional and adds a
+  second credential (it is never required).
 - `--insecure-no-tls` is required unless TLS is terminated in front of the server
   (reverse proxy or tunnel). Use it only on a trusted network.
 - `POST /api/v1/shutdown` and the PTY `/api/v1/terminals/*` routes are **404 by
@@ -62,11 +66,11 @@ server behind a TLS-terminating reverse proxy (or a tunnel); do not terminate TL
 process.
 
 ```
-export KIMI_CODE_PASSWORD='a long random password'
 kimi server run --host 0.0.0.0 --insecure-no-tls
 ```
 
-- `KIMI_CODE_PASSWORD` is mandatory. `--insecure-no-tls` is mandatory here because
+- Authentication is the persistent bearer token printed in the startup banner;
+  `KIMI_CODE_PASSWORD` is optional. `--insecure-no-tls` is mandatory here because
   the proxy terminates TLS; without it (and without app-level TLS) the server refuses
   to bind.
 - The reverse proxy must pass through the `Authorization` header and the `Host`
@@ -125,9 +129,12 @@ the remote reachability and TLS.
 
 ## Credential management
 
-- **Token** — generated fresh per start, held in memory, written to
-  `<KIMI_CODE_HOME>/server-<pid>.token` (`0600`, directory `0700`), deleted on exit.
-  The CLI reads it automatically; treat the file as a secret.
+- **Token** — a persistent bearer token generated once on first boot, held in
+  memory and written to `<KIMI_CODE_HOME>/server.token` (`0600`, directory
+  `0700`). It survives restarts and is reused until explicitly rotated with
+  `kimi server rotate-token`, which rewrites the file (the previous token stops
+  working immediately, even for a running server). The CLI reads it
+  automatically; treat the file as a secret.
 - **Password** — set `KIMI_CODE_PASSWORD` in the environment. The server hashes it at
   boot with bcrypt (cost 12) and keeps only the hash in memory; verification uses
   `bcrypt.compare`. Password auth is accepted as `Authorization: Bearer <password>`.
