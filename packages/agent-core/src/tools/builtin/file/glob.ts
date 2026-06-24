@@ -211,8 +211,17 @@ export class GlobTool implements BuiltinTool<GlobInput> {
 
     // rg exit codes: 0 = matches, 1 = no matches, 2+ = error. Timeout
     // kills usually surface as a signal exit code; keep any partial paths.
+    // If rg returned complete paths before failing on a traversal error such
+    // as an unreadable subdirectory, keep those paths and surface a warning
+    // instead of failing the whole search. If no complete path was produced,
+    // treat stderr as authoritative (invalid glob, spawn failure, etc.).
+    let traversalWarning: string | undefined;
     if (exitCode !== 0 && exitCode !== 1 && !timedOut) {
-      return { isError: true, output: formatGlobError(searchRoot, stderrText) };
+      const rawPathsBeforeError = splitCompletePaths(stdoutText, true);
+      if (rawPathsBeforeError.length === 0) {
+        return { isError: true, output: formatGlobError(searchRoot, stderrText) };
+      }
+      traversalWarning = formatGlobWarning(stderrText);
     }
     if (signal.aborted) {
       return { isError: true, output: 'Glob aborted' };
@@ -274,6 +283,9 @@ export class GlobTool implements BuiltinTool<GlobInput> {
         `[stdout truncated at ${String(MAX_OUTPUT_BYTES)} bytes; results may be incomplete — use a more specific pattern]`,
       );
     }
+    if (traversalWarning !== undefined) {
+      lines.push(traversalWarning);
+    }
     if (truncated) {
       lines.push(`[Truncated at ${String(MAX_MATCHES)} matches — use a more specific pattern]`);
       lines.push(`Only the first ${String(MAX_MATCHES)} matches are returned.`);
@@ -315,6 +327,13 @@ function formatGlobError(searchRoot: string, stderr: string): string {
     return `${searchRoot} does not exist`;
   }
   return trimmed.length > 0 ? `Glob failed: ${trimmed}` : 'Glob failed';
+}
+
+function formatGlobWarning(stderr: string): string {
+  const trimmed = stderr.trim();
+  return trimmed.length > 0
+    ? `Glob completed with warnings; some directories could not be read: ${trimmed}`
+    : 'Glob completed with warnings; some directories could not be read.';
 }
 
 function errorCode(error: unknown): string | undefined {

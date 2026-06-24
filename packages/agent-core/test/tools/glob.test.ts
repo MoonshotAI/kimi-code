@@ -381,6 +381,33 @@ describe('GlobTool', () => {
     expect(result.output).toContain('No matches found');
   });
 
+  it('keeps complete paths and surfaces a warning when rg exits 2 after traversal errors', async () => {
+    const exec = execReturning(
+      '/workspace/a.ts\n/workspace/src/b.ts\n',
+      'rg: ./locked: Permission denied (os error 13)',
+      2,
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '*.ts', path: '/workspace' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('a.ts');
+    expect(result.output).toContain('src/b.ts');
+    expect(result.output).toContain('Glob completed with warnings');
+    expect(result.output).toContain('Permission denied');
+  });
+
+  it('keeps ripgrep errors hard failures when no complete path is produced', async () => {
+    const exec = execReturning('', 'error: invalid glob', 2);
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '[', path: '/workspace' }));
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Glob failed: error: invalid glob');
+  });
+
   it('reports "does not exist" when the search directory is missing', async () => {
     const exec = vi.fn();
     const stat = vi
