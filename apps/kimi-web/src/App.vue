@@ -560,6 +560,7 @@ function openPr(url: string): void {
         @fork="(id) => client.forkSession(id)"
         @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
         @delete-workspace="(id) => client.deleteWorkspace(id)"
+        @reorder-workspaces="client.reorderWorkspaces($event)"
         @select-workspaces="handleSelectWorkspaces"
         @open-settings="showSettings = true"
         @collapse="toggleSidebarCollapse"

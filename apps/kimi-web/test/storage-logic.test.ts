@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   loadCollapsedWorkspaces,
   loadUnread,
+  loadWorkspaceOrder,
   saveCollapsedWorkspaces,
   saveUnread,
+  saveWorkspaceOrder,
   STORAGE_KEYS,
   draftStorageKey,
   safeGetJson,
@@ -193,5 +195,29 @@ describe('loadCollapsedWorkspaces / saveCollapsedWorkspaces', () => {
 
     safeSetString(STORAGE_KEYS.collapsedWorkspaces, JSON.stringify({ ws: true }));
     expect(loadCollapsedWorkspaces()).toEqual([]);
+  });
+});
+
+describe('loadWorkspaceOrder / saveWorkspaceOrder', () => {
+  it('returns an empty array when the key is missing', () => {
+    expect(loadWorkspaceOrder()).toEqual([]);
+  });
+
+  it('round-trips the ordered ids', () => {
+    saveWorkspaceOrder(['ws-2', 'ws-1']);
+    expect(loadWorkspaceOrder()).toEqual(['ws-2', 'ws-1']);
+  });
+
+  it('accepts any iterable of ids', () => {
+    saveWorkspaceOrder(new Set(['ws-3', 'ws-1']));
+    expect(loadWorkspaceOrder()).toEqual(['ws-3', 'ws-1']);
+  });
+
+  it('drops non-string entries and returns [] for malformed values', () => {
+    safeSetString(STORAGE_KEYS.workspaceOrder, JSON.stringify(['ws-1', 2, null]));
+    expect(loadWorkspaceOrder()).toEqual(['ws-1']);
+
+    safeSetString(STORAGE_KEYS.workspaceOrder, JSON.stringify({ ws: true }));
+    expect(loadWorkspaceOrder()).toEqual([]);
   });
 });

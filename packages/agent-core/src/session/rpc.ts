@@ -1,4 +1,5 @@
 import { ErrorCodes, KimiError } from '#/errors';
+import type { SessionWarning } from '@moonshot-ai/protocol';
 import type {
   ActivateSkillPayload,
   AddAdditionalDirPayload,
@@ -91,6 +92,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   generateAgentsMd(_payload: EmptyPayload): Promise<void> {
     return this.session.generateAgentsMd();
+  }
+
+  getSessionWarnings(_payload: EmptyPayload): Promise<readonly SessionWarning[]> {
+    return this.session.getSessionWarnings();
   }
 
   addAdditionalDir(payload: AddAdditionalDirPayload): Promise<AddAdditionalDirResult> {

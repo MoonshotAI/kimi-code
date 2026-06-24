@@ -6,16 +6,21 @@ import { normalizeAdditionalDirs } from '../config';
 import { listDirectory } from '../tools/support/list-directory';
 import type { SystemPromptContext } from './types';
 
-const AGENTS_MD_MAX_BYTES = 32 * 1024;
-const AGENTS_MD_TRUNCATION_MARKER =
-  '<!-- Some AGENTS.md files were truncated or omitted to fit the 32 KB budget -->';
+// Soft budget for the combined AGENTS.md content injected into the system
+// prompt. ~32 KB is roughly 8K–20K tokens (≈1.5–3% of a 262144-token context),
+// large enough to leave the bulk of the context window to the conversation
+// while still catching accidental oversized instruction files. Exceeding it no
+// longer truncates content; it only surfaces a user-visible warning so the user
+// can trim oversized instruction files.
+const AGENTS_MD_RECOMMENDED_MAX_BYTES = 32 * 1024;
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
-export type PreparedSystemPromptContext = Pick<
-  SystemPromptContext,
-  'cwdListing' | 'agentsMd' | 'additionalDirsInfo'
->;
+export interface PreparedSystemPromptContext
+  extends Pick<SystemPromptContext, 'cwdListing' | 'agentsMd' | 'additionalDirsInfo'> {
+  /** Present when the combined AGENTS.md content exceeds the recommended size. */
+  readonly agentsMdWarning?: string;
+}
 
 export interface PrepareSystemPromptContextOptions {
   readonly additionalDirs?: readonly string[];
@@ -27,23 +32,34 @@ export async function prepareSystemPromptContext(
   options?: PrepareSystemPromptContextOptions,
 ): Promise<PreparedSystemPromptContext> {
   const additionalDirs = normalizeAdditionalDirs(options?.additionalDirs ?? []);
-  const [cwdListing, agentsMd, additionalDirsInfo] = await Promise.all([
+  const [cwdListing, agentsMdResult, additionalDirsInfo] = await Promise.all([
     listDirectory(kaos, undefined, { collapseHiddenDirs: true }),
-    loadAgentsMd(kaos, brandHome),
+    loadAgentsMdForRoots(kaos, brandHome, [kaos.getcwd()]),
     loadAdditionalDirsInfo(kaos, additionalDirs),
   ]);
-  return { cwdListing, agentsMd, additionalDirsInfo };
+  return {
+    cwdListing,
+    agentsMd: agentsMdResult.content,
+    additionalDirsInfo,
+    agentsMdWarning: agentsMdResult.warning,
+  };
 }
 
 export async function loadAgentsMd(kaos: Kaos, brandHome?: string): Promise<string> {
-  return loadAgentsMdForRoots(kaos, brandHome, [kaos.getcwd()]);
+  const result = await loadAgentsMdForRoots(kaos, brandHome, [kaos.getcwd()]);
+  return result.content;
+}
+
+interface LoadedAgentsMd {
+  readonly content: string;
+  readonly warning: string | undefined;
 }
 
 async function loadAgentsMdForRoots(
   kaos: Kaos,
   brandHome: string | undefined,
   workDirs: readonly string[],
-): Promise<string> {
+): Promise<LoadedAgentsMd> {
   const discovered: AgentFile[] = [];
   const seen = new Set<string>();
 
@@ -87,7 +103,15 @@ async function loadAgentsMdForRoots(
     }
   }
 
-  return renderAgentFiles(discovered);
+  const content = renderAgentFiles(discovered);
+  const totalBytes = byteLength(content);
+  const warning =
+    totalBytes > AGENTS_MD_RECOMMENDED_MAX_BYTES
+      ? `AGENTS.md total ${formatKB(totalBytes)} KB exceeds the recommended ` +
+        `${formatKB(AGENTS_MD_RECOMMENDED_MAX_BYTES)} KB. Large instruction files ` +
+        `increase cost and may impact performance; consider trimming.`
+      : undefined;
+  return { content, warning };
 }
 
 async function loadAdditionalDirsInfo(
@@ -163,77 +187,18 @@ async function isFile(kaos: Kaos, path: string): Promise<boolean> {
 
 function renderAgentFiles(files: readonly AgentFile[]): string {
   if (files.length === 0) return '';
-
-  let remaining = AGENTS_MD_MAX_BYTES;
-  let didTruncate = false;
-  const budgeted: Array<AgentFile | undefined> = Array.from({ length: files.length });
-
-  for (let i = files.length - 1; i >= 0; i--) {
-    const file = files[i];
-    if (file === undefined) continue;
-
-    const annotation = annotationFor(file.path);
-    const separator = i < files.length - 1 ? '\n\n' : '';
-    remaining -= byteLength(annotation) + byteLength(separator);
-    if (remaining <= 0) {
-      budgeted[i] = { path: file.path, content: '' };
-      remaining = 0;
-      didTruncate = true;
-      continue;
-    }
-
-    let content = file.content;
-    if (byteLength(content) > remaining) {
-      content = truncateUtf8(content, remaining).trim();
-      didTruncate = true;
-    }
-    remaining -= byteLength(content);
-    budgeted[i] = { path: file.path, content };
-  }
-
-  const rendered = budgeted
-    .filter((file): file is AgentFile => file !== undefined && file.content.length > 0)
-    .map((file) => `${annotationFor(file.path)}${file.content}`)
-    .join('\n\n');
-
-  return didTruncate ? `${AGENTS_MD_TRUNCATION_MARKER}\n${rendered}` : rendered;
-}
-
-function truncateUtf8(text: string, maxBytes: number): string {
-  if (maxBytes <= 0) return '';
-  if (byteLength(text) <= maxBytes) return text;
-
-  let low = 0;
-  let high = text.length;
-  while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
-    const candidate = text.slice(0, mid);
-    if (byteLength(candidate) <= maxBytes) {
-      low = mid;
-    } else {
-      high = mid - 1;
-    }
-  }
-
-  let result = text.slice(0, low);
-  while (endsWithUnpairedHighSurrogate(result)) {
-    result = result.slice(0, -1);
-  }
-  return result;
-}
-
-function endsWithUnpairedHighSurrogate(text: string): boolean {
-  if (text.length === 0) return false;
-  const codePoint = text.codePointAt(text.length - 1);
-  return codePoint !== undefined && codePoint >= 0xd800 && codePoint <= 0xdbff;
+  return files.map((file) => `${annotationFor(file.path)}${file.content}`).join('\n\n');
 }
 
 function byteLength(text: string): number {
   return Buffer.byteLength(text, 'utf8');
 }
 
+function formatKB(bytes: number): string {
+  const kb = bytes / 1024;
+  return Number.isInteger(kb) ? String(kb) : kb.toFixed(1);
+}
+
 function annotationFor(path: string): string {
   return `<!-- From: ${path} -->\n`;
 }
-
-

@@ -25,7 +25,13 @@ import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
-import type { ActivityState, ConversationStatus, DiffViewLine, PermissionMode } from '../../types';
+import type {
+  ActivityState,
+  ConversationStatus,
+  DiffViewLine,
+  PermissionMode,
+  WorkspaceView,
+} from '../../types';
 import type { ExtendedState, PromptAttachment } from '../useKimiWebClient';
 import type { UseModelProviderState } from './useModelProviderState';
 import type { UseSideChat } from './useSideChat';
@@ -79,6 +85,8 @@ export interface UseWorkspaceStateDeps {
   refreshSessionStatus: (sessionId: string) => Promise<void>;
   persistSessionProfile: (patch: PersistSessionProfilePatch) => void;
   mergedWorkspaces: ComputedRef<AppWorkspace[]>;
+  /** Sidebar-facing workspaces in the user's (dragged) display order. */
+  workspacesView: ComputedRef<WorkspaceView[]>;
   status: ComputedRef<ConversationStatus>;
   workspaceIdForSession: (s: { workspaceId?: string; cwd: string }) => string;
   savePermissionToStorage: (mode: PermissionMode) => void;
@@ -121,6 +129,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     refreshSessionStatus,
     persistSessionProfile,
     mergedWorkspaces,
+    workspacesView,
     status,
     workspaceIdForSession,
     savePermissionToStorage,
@@ -446,7 +455,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const removingActiveWorkspace =
       rawState.activeWorkspaceId === event.workspaceId || rawState.activeWorkspaceId === root;
     if (removingActiveWorkspace) {
-      const nextWorkspace = mergedWorkspaces.value[0]?.id ?? null;
+      const nextWorkspace = workspacesView.value[0]?.id ?? null;
       rawState.activeWorkspaceId = nextWorkspace;
       if (nextWorkspace) saveActiveWorkspaceToStorage(nextWorkspace);
       else {
@@ -1229,25 +1238,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       });
   }
 
-  /** Persist and apply a new permission mode; auto-approve pending approvals if switching to auto/yolo */
+  /** Persist and apply a new permission mode. Approval decisions are owned by
+   *  the daemon (auto/yolo are resolved server-side), so any pending approvals
+   *  are left for the user to answer explicitly. */
   function setPermission(mode: PermissionMode): void {
     rawState.permission = mode;
     savePermissionToStorage(mode);
     persistSessionProfile({ permissionMode: mode });
-
-    // If switching to auto/yolo, auto-approve any currently-pending approvals for the active session
-    if (mode === 'auto' || mode === 'yolo') {
-      const sid = rawState.activeSessionId;
-      if (sid) {
-        const approvals = [...(rawState.approvalsBySession[sid] ?? [])];
-        for (const a of approvals) {
-          void respondApproval(a.approvalId, {
-            decision: 'approved',
-            scope: mode === 'yolo' ? 'session' : undefined,
-          });
-        }
-      }
-    }
   }
 
   /** Dismiss a warning by index */
@@ -1309,7 +1306,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
     rawState.workspaces = rawState.workspaces.filter((w) => w.id !== id && w.root !== root);
     if (removingActiveWorkspace || activeSessionInRemovedWorkspace) {
-      const nextWorkspace = mergedWorkspaces.value[0]?.id ?? null;
+      const nextWorkspace = workspacesView.value[0]?.id ?? null;
       rawState.activeWorkspaceId = nextWorkspace;
       if (nextWorkspace) saveActiveWorkspaceToStorage(nextWorkspace);
       else {

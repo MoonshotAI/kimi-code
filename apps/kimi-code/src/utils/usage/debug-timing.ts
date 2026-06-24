@@ -1,7 +1,16 @@
+import { formatTokenCount } from './usage-format';
+
+interface DebugTokenUsage {
+  readonly inputOther?: number;
+  readonly inputCacheRead?: number;
+  readonly inputCacheCreation?: number;
+  readonly output?: number;
+}
+
 export interface StepTimingInput {
-  readonly llmFirstTokenLatencyMs?: number | undefined;
-  readonly llmStreamDurationMs?: number | undefined;
-  readonly usage?: { readonly output: number } | undefined;
+  readonly llmFirstTokenLatencyMs?: number;
+  readonly llmStreamDurationMs?: number;
+  readonly usage?: DebugTokenUsage;
 }
 
 // Decode TPS is only meaningful when the output actually streamed over a
@@ -29,7 +38,31 @@ export function formatStepDebugTiming(input: StepTimingInput): string | undefine
       );
     }
   }
+
+  const inputTokens = usageInputTotal(input.usage);
+  const hasInputUsage =
+    input.usage !== undefined &&
+    (input.usage.inputOther !== undefined ||
+      input.usage.inputCacheRead !== undefined ||
+      input.usage.inputCacheCreation !== undefined);
+  if (hasInputUsage && (inputTokens > 0 || (outputTokens ?? 0) > 0)) {
+    const cacheReadTokens = input.usage.inputCacheRead ?? 0;
+    const cacheCreationTokens = input.usage.inputCacheCreation ?? 0;
+    const cacheHitRate = inputTokens > 0 ? Math.round((cacheReadTokens / inputTokens) * 100) : 0;
+    const cacheParts = [`cache read ${formatTokenCount(cacheReadTokens)} (${cacheHitRate}%)`];
+    if (cacheCreationTokens > 0) {
+      cacheParts.push(`write ${formatTokenCount(cacheCreationTokens)}`);
+    }
+    parts.push(`tokens in ${formatTokenCount(inputTokens)}`);
+    parts.push(cacheParts.join(' / '));
+  }
+
   return `[Debug] ${parts.join(' | ')}`;
+}
+
+function usageInputTotal(usage: DebugTokenUsage | undefined): number {
+  if (usage === undefined) return 0;
+  return (usage.inputOther ?? 0) + (usage.inputCacheRead ?? 0) + (usage.inputCacheCreation ?? 0);
 }
 
 function formatDuration(ms: number): string {

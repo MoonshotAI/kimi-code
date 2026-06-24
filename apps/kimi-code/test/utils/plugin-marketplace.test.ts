@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import {
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+} from '#/constant/app';
 import { computeUpdateStatus, loadPluginMarketplace } from '#/utils/plugin-marketplace';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -179,6 +182,100 @@ describe('loadPluginMarketplace', () => {
     );
   });
 
+  it('falls back to the source checkout marketplace when the default CDN cannot be fetched', async () => {
+    const previous = process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV];
+    delete process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV];
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('fetch failed');
+    }) as unknown as typeof fetch;
+
+    try {
+      const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', fetchImpl });
+
+      expect(fetchImpl).toHaveBeenCalledWith(KIMI_CODE_PLUGIN_MARKETPLACE_URL);
+      expect(marketplace.source).toBe(join(REPO_ROOT, 'plugins/marketplace.json'));
+      expect(marketplace.plugins).toContainEqual(
+        expect.objectContaining({
+          id: 'superpowers',
+          source: join(REPO_ROOT, 'plugins/curated/superpowers'),
+        }),
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV];
+      } else {
+        process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] = previous;
+      }
+    }
+  });
+
+  it('does not use the source checkout fallback for explicit marketplace sources', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('fetch failed');
+    }) as unknown as typeof fetch;
+
+    await expect(loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+      fetchImpl,
+    })).rejects.toThrow(/fetch failed/);
+  });
+
+  it('accepts legacy marketplace type aliases as normal plugins', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+    const file = join(dir, 'marketplace.json');
+    await writeFile(
+      file,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'kimi-webbridge',
+            type: 'guide',
+            displayName: 'Kimi WebBridge',
+            source: './kimi-webbridge',
+            installSkill: 'install',
+            removeSkill: 'remove',
+          },
+          {
+            id: 'demo-managed',
+            type: 'managed',
+            source: './demo-managed',
+          },
+        ],
+      }),
+      'utf8',
+    );
+
+    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
+
+    expect(marketplace.plugins).toContainEqual(
+      expect.objectContaining({
+        id: 'kimi-webbridge',
+        source: join(dir, 'kimi-webbridge'),
+      }),
+    );
+    expect(marketplace.plugins).toContainEqual(
+      expect.objectContaining({
+        id: 'demo-managed',
+        source: join(dir, 'demo-managed'),
+      }),
+    );
+  });
+
+  it('rejects an entry without a source', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+    const file = join(dir, 'marketplace.json');
+    await writeFile(
+      file,
+      JSON.stringify({ plugins: [{ id: 'broken', displayName: 'Broken' }] }),
+      'utf8',
+    );
+
+    await expect(loadPluginMarketplace({ workDir: '/tmp/work', source: file })).rejects.toThrow(
+      /must define "source"/,
+    );
+  });
+
   it('loads an explicit remote marketplace with injectable fetch', async () => {
     const source = 'https://example.com/plugins/marketplace.json';
     const fetchImpl = vi.fn(async () => ({
@@ -227,4 +324,21 @@ describe('loadPluginMarketplace', () => {
       /"tier" must be one of/,
     );
   });
+
+  it('rejects unknown marketplace entry types', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-'));
+    const file = join(dir, 'marketplace.json');
+    await writeFile(
+      file,
+      JSON.stringify({
+        plugins: [{ id: 'demo', type: 'integration', source: './demo' }],
+      }),
+      'utf8',
+    );
+
+    await expect(loadPluginMarketplace({ workDir: '/tmp/work', source: file })).rejects.toThrow(
+      /Legacy aliases "managed" and "guide" are also accepted/,
+    );
+  });
+
 });
