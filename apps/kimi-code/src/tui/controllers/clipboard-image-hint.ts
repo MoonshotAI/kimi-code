@@ -25,10 +25,15 @@ export class ClipboardImageHintController {
   private lastHintText: string | undefined;
   private checkGeneration = 0;
   private focused = true;
-  // Whether a detected clipboard image is allowed to trigger a hint. Starts
-  // armed; after showing a hint for an image it disarms so the same lingering
-  // image does not nag on every focus. A focus check that finds the clipboard
-  // empty re-arms it, so the next genuinely new image notifies again.
+  // Whether the controller has completed its first clipboard observation since
+  // start. The first observation only establishes a baseline: an image already
+  // in the clipboard when the session starts is not "new", so it must not
+  // trigger a hint during initialization.
+  private initialized = false;
+  // Whether a detected clipboard image is allowed to trigger a hint. After
+  // showing a hint for an image it disarms so the same lingering image does
+  // not nag on every focus. A focus check that finds the clipboard empty
+  // re-arms it, so the next genuinely new image notifies again.
   private armed = true;
 
   constructor(host: ClipboardImageHintHost) {
@@ -49,6 +54,7 @@ export class ClipboardImageHintController {
 
     this.checkGeneration += 1;
     this.clearOwnedHint();
+    this.initialized = false;
     this.armed = true;
   }
 
@@ -107,6 +113,15 @@ export class ClipboardImageHintController {
 
     if (generation !== this.checkGeneration) return;
     if (!this.focused) return;
+
+    // First observation after start only establishes the baseline. An image
+    // already in the clipboard when the session began is not "new", so we
+    // record the state and stay quiet instead of nagging during initialization.
+    if (!this.initialized) {
+      this.initialized = true;
+      this.armed = !hasImage;
+      return;
+    }
 
     if (!hasImage) {
       // Clipboard holds no image, so the next image that appears is a new one
