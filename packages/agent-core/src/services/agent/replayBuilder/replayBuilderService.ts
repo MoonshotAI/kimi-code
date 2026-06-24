@@ -1,14 +1,23 @@
 import { Disposable, registerSingleton, SyncDescriptor } from '../../../di';
 import type { AgentReplayRecord, AgentReplayRecordPayload } from '../../../rpc/resumed';
 
-import type { ContextMessage } from '../types';
+import type { ContextMessage, WireRecord } from '../types';
 import { IWireRecord } from '../wireRecord/wireRecord';
 import {
   IReplayBuilderService,
   type ReplayBuilderServiceOptions,
 } from './replayBuilder';
 
-const UNDO_BOUNDARY_RECORD_TYPES = new Set(['context.clear', 'context.apply_compaction']);
+// An undo boundary is a `context.splice` that removes messages from the start of
+// the history. It is the canonical (post v1.5 migration) equivalent of the legacy
+// `context.clear` and `context.apply_compaction` records, both of which the v1.5
+// migration rewrites into a `context.splice` with `start === 0` and
+// `deleteCount > 0` (see wireRecord/migration/v1.5.ts). A splice that only
+// appends (`deleteCount === 0`) or removes messages from the middle/end of the
+// history (`start > 0`, e.g. a migrated `context.undo`) is not a boundary.
+function isUndoBoundaryRecord(record: WireRecord): boolean {
+  return record.type === 'context.splice' && record.start === 0 && record.deleteCount > 0;
+}
 
 export class ReplayBuilderService extends Disposable implements IReplayBuilderService {
   declare readonly _serviceBrand: undefined;
@@ -28,7 +37,7 @@ export class ReplayBuilderService extends Disposable implements IReplayBuilderSe
     this._register(
       wireRecord.hooks.onRestoredRecord.register('replay-builder', async (context, next) => {
         await next();
-        if (this.finishRestoringRecord(context.record.type)) {
+        if (this.finishRestoringRecord(context.record)) {
           context.stop = true;
         }
       }),
@@ -78,11 +87,11 @@ export class ReplayBuilderService extends Disposable implements IReplayBuilderSe
     this.removeMessagesFrom(this.records, removedMessages);
   }
 
-  finishRestoringRecord(type: string): boolean {
+  finishRestoringRecord(record: WireRecord): boolean {
     const range = this.options.range;
     if (range === undefined) return false;
     if (this.frozen) return true;
-    if (!UNDO_BOUNDARY_RECORD_TYPES.has(type)) return false;
+    if (!isUndoBoundaryRecord(record)) return false;
     if (range.start === undefined) return false;
 
     const start = range.start;

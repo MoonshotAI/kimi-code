@@ -69,7 +69,18 @@ export class ContextMemoryService extends Disposable implements IContextMemory {
 
   private applySplice(record: WireRecord<'context.splice'>): void {
     const messages = [...record.messages];
+    // A splice that deletes the whole history mirrors `context.clear`: prior
+    // messages stay in the replay (as a boundary) and must not be removed.
+    // Only a partial delete (old `context.undo`) drops the deleted messages
+    // from the replay, symmetric to the insert `push` below.
+    const clearsHistory = record.start === 0 && record.deleteCount >= this.history.length;
+    const removedMessages = clearsHistory
+      ? []
+      : this.history.slice(record.start, record.start + record.deleteCount);
     this.history.splice(record.start, record.deleteCount, ...messages);
+    if (removedMessages.length > 0) {
+      this.replayBuilder.removeLastMessages(new Set(removedMessages));
+    }
     for (const message of messages) {
       this.replayBuilder.push({ type: 'message', message });
     }

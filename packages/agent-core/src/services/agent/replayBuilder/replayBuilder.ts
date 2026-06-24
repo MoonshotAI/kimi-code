@@ -1,7 +1,7 @@
 import { createDecorator } from '../../../di';
 import type { AgentReplayRecord, AgentReplayRecordPayload } from '../../../rpc/resumed';
 
-import type { ContextMessage } from '../types';
+import type { ContextMessage, WireRecord } from '../types';
 
 export interface ReplayRangeOptions {
   readonly start?: number;
@@ -24,7 +24,7 @@ export interface IReplayBuilderService {
     patch: Partial<Extract<AgentReplayRecord, { type: T }>>,
   ): void;
   removeLastMessages(removedMessages: ReadonlySet<ContextMessage>): void;
-  finishRestoringRecord(type: string): boolean;
+  finishRestoringRecord(record: WireRecord): boolean;
   buildResult(): readonly AgentReplayRecord[];
 }
 
