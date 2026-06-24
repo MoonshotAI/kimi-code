@@ -329,7 +329,7 @@ async function handlePluginsPanelSelection(
     case 'install': {
       panel.setInstalling(selection.entry.displayName);
       host.state.ui.requestRender();
-      await installPluginFromSource(host, selection.entry.source, { successNotice: 'marketplace' });
+      await installPluginFromSource(host, selection.entry.source);
       // Close the panel after installing so the success notice and the
       // "/reload or /new" / post-install tip are visible in the transcript.
       host.restoreEditor();
@@ -338,7 +338,7 @@ async function handlePluginsPanelSelection(
     case 'install-source': {
       panel.setInstalling(truncateForStatus(selection.source));
       host.state.ui.requestRender();
-      await installPluginFromSource(host, selection.source, { successNotice: 'marketplace' });
+      await installPluginFromSource(host, selection.source);
       host.restoreEditor();
       return;
     }
@@ -405,16 +405,13 @@ async function renderPluginInfo(host: SlashCommandHost, id: string): Promise<voi
 async function installPluginFromSource(
   host: SlashCommandHost,
   source: string,
-  options?: {
-    readonly successNotice?: 'marketplace';
-  },
 ): Promise<void> {
   const session = host.requireSession();
   const beforeList = await session.listPlugins();
   const summary = await session.installPlugin(
     resolvePluginInstallSource(source, host.state.appState.workDir),
   );
-  showPluginInstallResult(host, beforeList, summary, options);
+  showPluginInstallResult(host, beforeList, summary);
 }
 
 const PLUGIN_RELOAD_HINT = 'Run /new or /reload to apply plugin changes.';
@@ -423,9 +420,6 @@ function showPluginInstallResult(
   host: SlashCommandHost,
   beforeList: readonly PluginSummary[],
   summary: PluginSummary,
-  options?: {
-    readonly successNotice?: 'marketplace';
-  },
 ): void {
   const previous = beforeList.find((entry) => entry.id === summary.id);
   const serverWord = summary.mcpServerCount === 1 ? 'server' : 'servers';
@@ -436,12 +430,6 @@ function showPluginInstallResult(
   const action = describeInstallAction(previous, summary);
   host.showStatus(`${action} (${summary.id}).${mcpHint}`);
   host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
-  if (options?.successNotice === 'marketplace') {
-    host.showNotice(
-      `Installed or updated ${summary.displayName}`,
-      `Marketplace install or update succeeded for ${summary.id}.`,
-    );
-  }
 }
 
 function describeInstallAction(
