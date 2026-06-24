@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
+import { budgetToolResultForModel } from '../../src/agent/turn/tool-result-budget';
 import { HookEngine } from '../../src/session/hooks';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
@@ -413,6 +414,49 @@ describe('Agent tools', () => {
       rmSync(sessionDir, { recursive: true, force: true });
     }
   });
+
+  it('does not overwrite saved oversized tool results with repeated call IDs', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'tool-result-overflow-'));
+    try {
+      const firstOutput = `${'a'.repeat(60_000)}first tail`;
+      const secondOutput = `${'b'.repeat(60_000)}second tail`;
+
+      const first = await budgetToolResultForModel({
+        homedir: sessionDir,
+        toolName: 'Lookup',
+        toolCallId: 'call_lookup',
+        result: { output: firstOutput },
+      });
+      const second = await budgetToolResultForModel({
+        homedir: sessionDir,
+        toolName: 'Lookup',
+        toolCallId: 'call_lookup',
+        result: { output: secondOutput },
+      });
+
+      const firstPath = savedOutputPath(first.output);
+      const secondPath = savedOutputPath(second.output);
+      expect(firstPath).not.toBe(secondPath);
+      expect(readFileSync(firstPath, 'utf8')).toBe(firstOutput);
+      expect(readFileSync(secondPath, 'utf8')).toBe(secondOutput);
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps oversized tool results intact when no session directory is available', async () => {
+    const largeOutput = `${'x'.repeat(60_000)}tail survives`;
+    const result = { output: largeOutput };
+
+    const budgeted = await budgetToolResultForModel({
+      toolName: 'Lookup',
+      toolCallId: 'call_lookup',
+      result,
+    });
+
+    expect(budgeted).toBe(result);
+    expect(budgeted.output).toBe(largeOutput);
+  });
 });
 
 function bashCall(): ToolCall {
@@ -435,6 +479,13 @@ function agentCall(): ToolCall {
         subagent_type: 'coder',
       }),
   };
+}
+
+function savedOutputPath(output: unknown): string {
+  expect(typeof output).toBe('string');
+  const outputPath = /^output_path: (.+)$/m.exec(output as string)?.[1];
+  expect(outputPath).toBeTruthy();
+  return outputPath!;
 }
 
 function hookErrorMessageAssertCommand(expected: string): string {

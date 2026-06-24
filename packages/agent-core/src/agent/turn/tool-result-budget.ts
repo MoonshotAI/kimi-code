@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 
 import type { ContentPart } from '@moonshot-ai/kosong';
@@ -16,9 +16,9 @@ interface BudgetToolResultOptions {
   readonly result: ExecutableToolResult;
 }
 
-type SavedToolResult =
-  | { readonly outputPath: string }
-  | { readonly error: string };
+interface SavedToolResult {
+  readonly outputPath: string;
+}
 
 export async function budgetToolResultForModel(
   options: BudgetToolResultOptions,
@@ -26,8 +26,13 @@ export async function budgetToolResultForModel(
   const text = persistableToolResultText(options.result.output);
   if (text === undefined || text.length <= TOOL_RESULT_MAX_CHARS) return options.result;
   if (text.includes('\n[Full output saved]\n')) return options.result;
+  if (options.homedir === undefined) return options.result;
 
-  const saved = await saveToolResult(options, text);
+  const saved = await saveToolResult(
+    { homedir: options.homedir, toolName: options.toolName, toolCallId: options.toolCallId },
+    text,
+  );
+  if (saved === undefined) return options.result;
   const output = renderPersistedToolResult(options.toolName, options.toolCallId, text, saved);
   return options.result.isError === true
     ? { ...options.result, output, isError: true }
@@ -45,21 +50,20 @@ function persistableToolResultText(output: ExecutableToolResult['output']): stri
 }
 
 async function saveToolResult(
-  options: Pick<BudgetToolResultOptions, 'homedir' | 'toolName' | 'toolCallId'>,
+  options: { readonly homedir: string; readonly toolName: string; readonly toolCallId: string },
   text: string,
-): Promise<SavedToolResult> {
-  if (options.homedir === undefined) return { error: 'No session directory is available.' };
+): Promise<SavedToolResult | undefined> {
   try {
     const dir = join(options.homedir, 'tool-results');
     await mkdir(dir, { recursive: true, mode: 0o700 });
     const outputPath = join(
       dir,
-      `${safeToolResultFileStem(options.toolName, options.toolCallId)}.txt`,
+      `${safeToolResultFileStem(options.toolName, options.toolCallId)}-${randomUUID()}.txt`,
     );
-    await writeFile(outputPath, text, 'utf8');
+    await writeFile(outputPath, text, { encoding: 'utf8', flag: 'wx' });
     return { outputPath };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
+  } catch {
+    return undefined;
   }
 }
 
@@ -76,14 +80,10 @@ function renderPersistedToolResult(
     `output_size_chars: ${String(text.length)}`,
     `output_size_bytes: ${String(Buffer.byteLength(text, 'utf8'))}`,
   ];
-  if ('outputPath' in saved) {
-    lines.push(
-      `output_path: ${saved.outputPath}`,
-      'next_step: Use Read with output_path to page through the full output.',
-    );
-  } else {
-    lines.push('full_output_available: false', `full_output_error: ${saved.error}`);
-  }
+  lines.push(
+    `output_path: ${saved.outputPath}`,
+    'next_step: Use Read with output_path to page through the full output.',
+  );
   lines.push('', '[preview]', text.slice(0, TOOL_RESULT_PREVIEW_CHARS));
   return lines.join('\n');
 }
