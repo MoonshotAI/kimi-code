@@ -20,6 +20,11 @@ import {
   type TelemetryContextRecord,
 } from '../fixtures/telemetry';
 
+// agent-core renders skill paths with forward slashes (pathe). Mirror that in
+// path assertions so they hold on Windows, where node:fs.realpath produces
+// backslashes.
+const toPosix = (p: string): string => p.replaceAll('\\', '/');
+
 describe('HarnessAPI session skills', () => {
   let tmp: string;
   let homeDir: string;
@@ -514,7 +519,7 @@ describe('HarnessAPI session skills', () => {
     await second.rpc.resumeSession({ sessionId: created.id });
     const context = await second.rpc.getContext({ sessionId: created.id, agentId: 'main' });
 
-    const skillDir = await realpath(join(workDir, '.kimi-code', 'skills', 'bundled-tool'));
+    const skillDir = toPosix(await realpath(join(workDir, '.kimi-code', 'skills', 'bundled-tool')));
     const skillMessage = context.history.find(
       (entry) =>
         entry.origin?.kind === 'skill_activation' &&
@@ -528,7 +533,7 @@ describe('HarnessAPI session skills', () => {
     // ...and it is the directory that actually holds the bundled script, so an
     // agent reading the context can resolve the resource by relative path.
     expect(join(skillDir, 'scripts', 'run.sh')).toBe(
-      await realpath(join(scriptDir, 'run.sh')),
+      toPosix(await realpath(join(scriptDir, 'run.sh'))),
     );
     // Guard the regression: the path is surfaced by the wrapper, not because
     // the skill body happened to mention it.

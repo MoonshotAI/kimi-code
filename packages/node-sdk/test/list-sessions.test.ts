@@ -146,7 +146,9 @@ describe('SessionStore.list', () => {
     expect(forkState.title).toBe('Fork title');
     expect(forkState.isCustomTitle).toBe(true);
     expect(forkState.forkedFrom).toBe(source.id);
-    expect(forkState.agents?.main?.homedir).toBe(join(fork.sessionDir, 'agents', 'main'));
+    expect(forkState.agents?.main?.homedir).toBe(
+      normalizeWorkDir(join(fork.sessionDir, 'agents', 'main')),
+    );
     expect(forkState.custom).toMatchObject({ source: true, child: true });
     expect(forkState.custom).not.toHaveProperty('goal');
     expect(existsSync(join(fork.sessionDir, 'upcoming-goals.json'))).toBe(false);

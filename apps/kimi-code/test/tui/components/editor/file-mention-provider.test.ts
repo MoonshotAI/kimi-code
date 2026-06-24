@@ -279,7 +279,7 @@ describe('FileMentionProvider', () => {
 
     expect(result).not.toBeNull();
     expect(result!.items.map((item) => item.value)).toContain(
-      `@${join(extraDir, 'src', 'Additional.ts')}`,
+      `@${join(extraDir, 'src', 'Additional.ts').replaceAll('\\', '/')}`,
     );
   });
 
@@ -298,7 +298,7 @@ describe('FileMentionProvider', () => {
     const additionalResult = await provider.getSuggestions(['@add'], 0, 4, { signal: ctrl() });
     expect(additionalResult).not.toBeNull();
     expect(additionalResult!.items.map((item) => item.value)).toContain(
-      `@${join(extraDir, 'src', 'Additional.ts')}`,
+      `@${join(extraDir, 'src', 'Additional.ts').replaceAll('\\', '/')}`,
     );
   });
 

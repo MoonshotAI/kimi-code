@@ -6,6 +6,11 @@ import { KaosFileExistsError } from '#/errors';
 import { LocalKaos } from '#/local';
 import { afterEach, beforeEach, describe, expect, it, test } from 'vitest';
 
+// LocalKaos normalizes every path to forward slashes (pathe). Mirror that in
+// path assertions so they hold on Windows, where node:path/node:os produce
+// backslashes.
+const toPosix = (p: string): string => p.replaceAll('\\', '/');
+
 function nodeArgs(code: string): string[] {
   return ['node', '-e', code];
 }
@@ -16,7 +21,7 @@ describe('LocalKaos', () => {
 
   beforeEach(async () => {
     kaos = await LocalKaos.create();
-    tempDir = await realpath(await mkdtemp(join(tmpdir(), 'kaos-test-')));
+    tempDir = toPosix(await realpath(await mkdtemp(join(tmpdir(), 'kaos-test-'))));
     await kaos.chdir(tempDir);
   });
 
@@ -39,7 +44,7 @@ describe('LocalKaos', () => {
       // asserting length > 0 alone was too weak — a stub returning any
       // non-empty string would pass.
       const home = kaos.gethome();
-      expect(home).toBe(homedir());
+      expect(home).toBe(toPosix(homedir()));
     });
 
     it('should return the current working directory', () => {
@@ -50,7 +55,7 @@ describe('LocalKaos', () => {
 
   describe('chdir + stat', () => {
     it('should change directory and stat a file', async () => {
-      const nested = join(tempDir, 'nested');
+      const nested = toPosix(join(tempDir, 'nested'));
       await kaos.mkdir(nested);
 
       await kaos.chdir(nested);
@@ -100,7 +105,7 @@ describe('LocalKaos', () => {
         entries.push(entry);
       }
 
-      expect(entries).toContain(join(tempDir, 'file.txt'));
+      expect(entries).toContain(toPosix(join(tempDir, 'file.txt')));
       // No entry should contain duplicated separators.
       expect(entries.every((e) => !e.includes('//'))).toBe(true);
     });
@@ -848,8 +853,8 @@ describe('LocalKaos instance isolation', () => {
     const kaosA = await LocalKaos.create();
     const kaosB = await LocalKaos.create();
 
-    const tmpA = await realpath(await mkdtemp(join(tmpdir(), 'kaos-a-')));
-    const tmpB = await realpath(await mkdtemp(join(tmpdir(), 'kaos-b-')));
+    const tmpA = toPosix(await realpath(await mkdtemp(join(tmpdir(), 'kaos-a-'))));
+    const tmpB = toPosix(await realpath(await mkdtemp(join(tmpdir(), 'kaos-b-'))));
 
     try {
       await kaosA.chdir(tmpA);
@@ -874,8 +879,8 @@ describe('LocalKaos instance isolation', () => {
       await procB.wait();
       const outA = await streamToBuffer(procA.stdout);
       const outB = await streamToBuffer(procB.stdout);
-      expect(outA.toString('utf-8')).toBe(tmpA);
-      expect(outB.toString('utf-8')).toBe(tmpB);
+      expect(toPosix(outA.toString('utf-8'))).toBe(tmpA);
+      expect(toPosix(outB.toString('utf-8'))).toBe(tmpB);
     } finally {
       await rm(tmpA, { recursive: true, force: true });
       await rm(tmpB, { recursive: true, force: true });
