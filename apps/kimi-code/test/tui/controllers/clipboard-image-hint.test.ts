@@ -135,7 +135,7 @@ describe('ClipboardImageHintController', () => {
     controller.stop();
   });
 
-  it('respects cooldown between hints', async () => {
+  it('does not repeat the hint for the same lingering image', async () => {
     vi.mocked(clipboardHasImage).mockResolvedValue(true);
 
     const footer = createFakeFooter();
@@ -152,13 +152,54 @@ describe('ClipboardImageHintController', () => {
 
     ui.emitInput(TERMINAL_FOCUS_IN);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(footer.getTransientHint()).not.toBeNull();
+    expect(footer.getTransientHint()).toMatch(/Image in clipboard/);
+    expect(clipboardHasImage).toHaveBeenCalledTimes(1);
 
+    // The same image is still in the clipboard: focusing again must not nag.
     footer.setTransientHint(null);
     ui.emitInput(TERMINAL_FOCUS_OUT);
     ui.emitInput(TERMINAL_FOCUS_IN);
     await vi.advanceTimersByTimeAsync(1000);
     expect(footer.getTransientHint()).toBeNull();
+    expect(clipboardHasImage).toHaveBeenCalledTimes(2);
+
+    controller.stop();
+  });
+
+  it('shows the hint again for a new image after the clipboard is cleared', async () => {
+    vi.mocked(clipboardHasImage).mockResolvedValue(true);
+
+    const footer = createFakeFooter();
+    const ui = createFakeTUI();
+    const host: ClipboardImageHintHost = {
+      ui,
+      footer,
+      getModelSupportsImage: () => true,
+      requestRender: vi.fn(),
+    };
+
+    const controller = new ClipboardImageHintController(host);
+    controller.start();
+
+    // First image: hint shows and the controller disarms.
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(footer.getTransientHint()).toMatch(/Image in clipboard/);
+
+    // Clipboard cleared: the empty check re-arms the controller.
+    vi.mocked(clipboardHasImage).mockResolvedValue(false);
+    footer.setTransientHint(null);
+    ui.emitInput(TERMINAL_FOCUS_OUT);
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(footer.getTransientHint()).toBeNull();
+
+    // A genuinely new image: hint shows again.
+    vi.mocked(clipboardHasImage).mockResolvedValue(true);
+    ui.emitInput(TERMINAL_FOCUS_OUT);
+    ui.emitInput(TERMINAL_FOCUS_IN);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(footer.getTransientHint()).toMatch(/Image in clipboard/);
 
     controller.stop();
   });
@@ -459,7 +500,7 @@ describe('ClipboardImageHintController', () => {
     expect(footer.getTransientHint()).toBe(hintText);
   });
 
-  it('does not inherit cooldown after stop and restart', async () => {
+  it('does not inherit disarmed state after stop and restart', async () => {
     vi.mocked(clipboardHasImage).mockResolvedValue(true);
 
     const footer = createFakeFooter();
