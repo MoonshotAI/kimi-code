@@ -44,6 +44,7 @@ export class ClipboardImageHintController {
     this.disposeInputListener = this.host.ui.addInputListener((data) => {
       this.handleInput(data);
     });
+    void this.establishInitialBaseline();
   }
 
   stop(): void {
@@ -98,6 +99,25 @@ export class ClipboardImageHintController {
       this.host.requestRender();
     }
     this.lastHintText = undefined;
+  }
+
+  private async establishInitialBaseline(): Promise<void> {
+    if (!this.host.getModelSupportsImage()) return;
+
+    this.checkGeneration += 1;
+    const generation = this.checkGeneration;
+
+    let hasImage = false;
+    try {
+      hasImage = await clipboardHasImage();
+    } catch {
+      return;
+    }
+
+    if (generation !== this.checkGeneration) return;
+
+    this.initialized = true;
+    this.armed = !hasImage;
   }
 
   private async runCheck(generation: number): Promise<void> {
