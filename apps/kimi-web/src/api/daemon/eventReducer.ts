@@ -480,8 +480,7 @@ export function reduceAppEvent(
 
     // -------------------------------------------------------------------------
     case 'questionAnswered':
-    case 'questionDismissed':
-    case 'questionExpired': {
+    case 'questionDismissed': {
       const sid = event.sessionId;
       const qid = event.questionId;
       const list = next.questionsBySession[sid] ?? [];

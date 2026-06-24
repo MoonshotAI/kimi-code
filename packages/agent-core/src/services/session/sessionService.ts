@@ -223,8 +223,7 @@ export class SessionService extends Disposable implements ISessionService {
       case 'event.approval.expired':
       case 'event.question.requested':
       case 'event.question.answered':
-      case 'event.question.dismissed':
-      case 'event.question.expired': {
+      case 'event.question.dismissed': {
         this._emitStatusChanged(sessionId);
         break;
       }
