@@ -39,14 +39,22 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
     const goal = this.agent.goal;
 
     const normalizedArgs = normalizeBudgetInput(args);
+    const budget = budgetLimitsFromInput(normalizedArgs);
+    // Recording a budget the goal has already spent (e.g. the user says "one
+    // turn" after a turn was already used) leaves the goal immediately over
+    // budget. The goal driver only enforces budgets at turn boundaries, so
+    // without a stop here the rest of this tool batch and the next model step
+    // would run past the ceiling before the goal is blocked. Predict that case
+    // and stop the batch; the driver then blocks the goal at the boundary.
+    const overBudgetAfterSet = budget !== null && this.wouldExceedBudget(budget);
     return {
       description: `Setting goal budget: ${formatBudget(
         normalizedArgs.value,
         normalizedArgs.unit,
       )}`,
+      stopBatchAfterThis: overBudgetAfterSet,
       approvalRule: this.name,
       execute: async () => {
-        const budget = budgetLimitsFromInput(normalizedArgs);
         if (budget === null) {
           return {
             output:
@@ -54,12 +62,41 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
               'reasonable goal budget.',
           };
         }
-        await goal.setBudgetLimits({ budgetLimits: budget }, 'model');
+        const snapshot = await goal.setBudgetLimits({ budgetLimits: budget }, 'model');
+        if (snapshot.budget.overBudget) {
+          return {
+            output:
+              `Goal budget set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)}. ` +
+              'The goal has already reached this budget and will stop now.',
+            stopTurn: true,
+          };
+        }
         return {
           output: `Goal budget set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)}.`,
         };
       },
     };
+  }
+
+  /**
+   * Predicts whether merging {@link newLimits} into the current goal's budget
+   * would already be at or over budget, mirroring the reached-budget math in
+   * `computeBudgetReport`. Used to stop the tool batch synchronously when a
+   * just-set budget is exhausted. Returns false when there is no current goal
+   * (the set itself will reject with GOAL_NOT_FOUND).
+   */
+  private wouldExceedBudget(newLimits: GoalBudgetLimits): boolean {
+    const goal = this.agent.goal.getGoal().goal;
+    if (goal === null) return false;
+    const current = goal.budget;
+    const turnBudget = newLimits.turnBudget ?? current.turnBudget;
+    const tokenBudget = newLimits.tokenBudget ?? current.tokenBudget;
+    const wallClockBudgetMs = newLimits.wallClockBudgetMs ?? current.wallClockBudgetMs;
+    return (
+      (turnBudget !== null && goal.turnsUsed >= turnBudget) ||
+      (tokenBudget !== null && goal.tokensUsed >= tokenBudget) ||
+      (wallClockBudgetMs !== null && goal.wallClockMs >= wallClockBudgetMs)
+    );
   }
 }
 

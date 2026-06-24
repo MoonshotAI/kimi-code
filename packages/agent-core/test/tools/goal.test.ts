@@ -247,6 +247,37 @@ describe('SetGoalBudgetTool', () => {
     expect(huge.output).toContain('not a reasonable goal budget');
     expect(store.getGoal().goal?.budget.wallClockBudgetMs).toBeNull();
   });
+
+  it('stops the batch and turn when the new budget is already exhausted', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    await store.incrementTurn(); // turnsUsed = 1
+    const tool = new SetGoalBudgetTool(fakeAgent({ goal: store }));
+
+    const execution = tool.resolveExecution({ value: 1, unit: 'turns' });
+    if (execution.isError === true) throw new Error('execution should not be an error');
+    expect(execution.stopBatchAfterThis).toBe(true);
+
+    const result = await execution.execute({ turnId: '0', toolCallId: 'call_1', signal });
+    expect(result.stopTurn).toBe(true);
+    expect(result.output).toContain('will stop now');
+    expect(store.getGoal().goal?.budget.overBudget).toBe(true);
+  });
+
+  it('does not stop when the new budget leaves room', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    await store.incrementTurn(); // turnsUsed = 1
+    const tool = new SetGoalBudgetTool(fakeAgent({ goal: store }));
+
+    const execution = tool.resolveExecution({ value: 5, unit: 'turns' });
+    if (execution.isError === true) throw new Error('execution should not be an error');
+    expect(execution.stopBatchAfterThis).toBeFalsy();
+
+    const result = await execution.execute({ turnId: '0', toolCallId: 'call_1', signal });
+    expect(result.stopTurn).toBeFalsy();
+    expect(result.output).toBe('Goal budget set: 5 turns.');
+  });
 });
 
 describe('UpdateGoalTool', () => {
