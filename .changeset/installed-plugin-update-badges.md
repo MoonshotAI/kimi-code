@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Show update badges for installed plugins on the /plugins Installed tab.
+Show update badges on the /plugins Installed tab, where Enter now installs the available update and I opens plugin details.

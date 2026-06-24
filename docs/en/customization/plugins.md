@@ -15,7 +15,8 @@ Run `/plugins` in the TUI to open the plugin manager. It is a single panel with 
 | `D` | Remove the selected installed plugin (Installed tab) |
 | `M` | Manage MCP servers for the selected plugin (Installed tab) |
 | `R` | Reload `installed.json` and all manifests (Installed tab) |
-| `Enter` | Installed tab: view plugin details · Official/Third-party tab: install or update · Custom tab: install |
+| `Enter` | Installed tab: install the available update, or view details if up to date · Official/Third-party tab: install or update · Custom tab: install |
+| `I` | View plugin details (Installed tab) |
 | `Esc` | Go back or cancel |
 
 You can also use slash commands directly:

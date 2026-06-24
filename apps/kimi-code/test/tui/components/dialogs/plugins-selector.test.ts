@@ -180,6 +180,60 @@ describe('plugins selector dialogs', () => {
     expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'superpowers' });
   });
 
+  it('Enter on an installed plugin with an available update installs it', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'superpowers' }),
+    });
+  });
+
+  it('Enter on an up-to-date installed plugin opens details', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '5.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'superpowers' });
+  });
+
+  it('I on an installed plugin opens details even when an update is available', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    panel.handleInput('i');
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'superpowers' });
+  });
+
   it('renders the inline plugin hint on the installed row', () => {
     const datasource = { ...superpowers, id: 'kimi-datasource', displayName: 'Kimi Datasource', skillCount: 1 };
     const { panel } = makePanel({
