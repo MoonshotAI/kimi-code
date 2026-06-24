@@ -3,24 +3,34 @@
 import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { MarkdownRender, enableKatex } from 'markstream-vue';
+import type { MarkdownIt } from 'markstream-vue';
 import { useIsDark } from '../../composables/useIsDark';
 import type { FilePreviewRequest } from '../../types';
 import { collectFilePathAliases, findFilePathLinks } from '../../lib/filePathLinks';
 import { markdownRenderPlan } from '../../lib/markdownPerformance';
 import { copyTextToClipboard } from '../../lib/clipboard';
-import { escapeProseDollars } from '../../lib/mathDelimiters';
 // px-based CSS build (our app is px, not rem). Imported here so the styles
 // load wherever Markdown is used; scoped overrides below re-skin it to
 // Terminal Pro. Importing the same file from multiple components is a no-op
 // after the first (Vite dedups the CSS import).
 import 'markstream-vue/index.px.css';
-// KaTeX math: markstream renders `$…$` / `$$…$$` only after the optional katex
-// peer is enabled, and its stylesheet (+ bundled fonts) is what gives formulas
-// their layout. enableKatex() registers the default `import('katex')` loader; it
-// runs once on first import of this module and is safe at module scope. Without
-// the CSS the math renders unstyled, so both must travel together.
+// KaTeX math: markstream renders `$$…$$` display math only after the optional
+// katex peer is enabled, and its stylesheet (+ bundled fonts) is what gives
+// formulas their layout. enableKatex() registers the default `import('katex')`
+// loader; it runs once on first import of this module and is safe at module
+// scope. Without the CSS the math renders unstyled, so both must travel
+// together.
 import 'katex/dist/katex.min.css';
 enableKatex();
+
+// Only `$$…$$` display math is rendered; single `$` inline math is disabled so
+// prices, env vars, and shell paths (`$5`, `$PATH`, `$HOME/bin`) stay literal
+// without any escaping or code-detection gymnastics. `math_block` (the $$ rule)
+// is left enabled.
+function disableInlineMath(md: MarkdownIt): MarkdownIt {
+  md.inline.ruler.disable('math');
+  return md;
+}
 
 const { t } = useI18n();
 
@@ -321,12 +331,12 @@ const segments = computed<Segment[]>(() => {
     // as a boundary out of the markdown segment).
     const lead = m[1] ?? '';
     const before = text.slice(lastIndex, m.index) + (lead ? lead : '');
-    if (before.trim()) out.push({ kind: 'md', text: escapeProseDollars(before) });
+    if (before.trim()) out.push({ kind: 'md', text: before });
     out.push({ kind: 'diff', code: m[2] ?? '' });
     lastIndex = DIFF_FENCE_RE.lastIndex;
   }
   const tail = text.slice(lastIndex);
-  if (tail.trim() || out.length === 0) out.push({ kind: 'md', text: escapeProseDollars(tail) });
+  if (tail.trim() || out.length === 0) out.push({ kind: 'md', text: tail });
   return out;
 });
 
@@ -361,6 +371,7 @@ function copyDiff(code: string, idx: number) {
       <MarkdownRender
         v-if="seg.kind === 'md'"
         :content="seg.text"
+        :custom-markdown-it="disableInlineMath"
         mode="chat"
         :code-renderer="renderPlan.codeRenderer"
         :is-dark="isDark"
