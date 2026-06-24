@@ -267,6 +267,13 @@ describe('plugins selector dialogs', () => {
     });
   });
 
+  it('renders an installing state while an install is in progress', () => {
+    const { panel } = makePanel({ installed: [superpowers] });
+    panel.setInstalling('Superpowers');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Installing Superpowers from marketplace');
+  });
+
   it('keeps a valid selection if ↓ is pressed while the catalog is loading', () => {
     const { panel, onSelect } = makePanel({ initialTab: 'third-party' });
     // Catalog still loading (entries empty); pressing ↓ must not drive the

@@ -167,7 +167,7 @@ async function showPluginsPicker(
       // Each branch of the handler either mounts the next view or restores the
       // editor itself, so do not pre-restore here — that would flash the editor
       // for in-place actions like toggling a plugin.
-      void handlePluginsPanelSelection(host, selection).catch((error: unknown) => {
+      void handlePluginsPanelSelection(host, panel, selection).catch((error: unknown) => {
         host.showError(`/plugins failed: ${formatErrorMessage(error)}`);
       });
     },
@@ -293,6 +293,7 @@ async function applyPluginEnabled(
 
 async function handlePluginsPanelSelection(
   host: SlashCommandHost,
+  panel: PluginsPanelComponent,
   selection: PluginsPanelSelection,
 ): Promise<void> {
   switch (selection.kind) {
@@ -326,18 +327,21 @@ async function handlePluginsPanelSelection(
       await showPluginsPicker(host, { initialTab: 'installed' });
       return;
     case 'install': {
-      host.showStatus(`Installing or updating ${selection.entry.displayName} from marketplace...`);
+      panel.setInstalling(selection.entry.displayName);
+      host.state.ui.requestRender();
       await installPluginFromSource(host, selection.entry.source, { successNotice: 'marketplace' });
       // Close the panel after installing so the success notice and the
       // "/reload or /new" / post-install tip are visible in the transcript.
       host.restoreEditor();
       return;
     }
-    case 'install-source':
-      host.showStatus(`Installing plugin from ${truncateForStatus(selection.source)}…`);
+    case 'install-source': {
+      panel.setInstalling(truncateForStatus(selection.source));
+      host.state.ui.requestRender();
       await installPluginFromSource(host, selection.source, { successNotice: 'marketplace' });
       host.restoreEditor();
       return;
+    }
   }
 }
 

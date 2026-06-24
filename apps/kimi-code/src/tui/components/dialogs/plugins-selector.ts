@@ -289,6 +289,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
   private activeTabIndex: number;
   private selectedIndex = 0;
   private market: MarketState = { status: 'idle' };
+  private installing: string | undefined;
 
   constructor(opts: PluginsPanelOptions) {
     super();
@@ -321,6 +322,11 @@ export class PluginsPanelComponent extends Container implements Focusable {
 
   setMarketplaceError(message: string): void {
     this.market = { status: 'error', message };
+  }
+
+  setInstalling(label: string): void {
+    this.installing = label;
+    this.invalidate();
   }
 
   private get activeTab(): (typeof PLUGINS_PANEL_TABS)[number] {
@@ -464,6 +470,9 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   override render(width: number): string[] {
+    if (this.installing !== undefined) {
+      return this.renderInstalling(width);
+    }
     const colors = currentTheme.palette;
     const tab = this.activeTab.id;
     const hint =
@@ -613,6 +622,19 @@ export class PluginsPanelComponent extends Container implements Focusable {
     lines.push(mutedHintLine(' Install from a GitHub URL (or zip URL / local path):', colors));
     lines.push('');
     lines.push(...renderUrlInputBox(this.customInput, this.focused, width, colors));
+  }
+
+  private renderInstalling(width: number): string[] {
+    const colors = currentTheme.palette;
+    const lines = [
+      chalk.hex(colors.primary)('─'.repeat(width)),
+      chalk.hex(colors.primary).bold(' Plugins'),
+      '',
+      chalk.hex(colors.textMuted)(`  Installing ${this.installing} from marketplace…`),
+      '',
+      chalk.hex(colors.primary)('─'.repeat(width)),
+    ];
+    return lines.map((line) => truncateToWidth(line, width, ELLIPSIS));
   }
 }
 
