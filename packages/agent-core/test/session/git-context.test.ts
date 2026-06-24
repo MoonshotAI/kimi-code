@@ -30,7 +30,11 @@ function gitKaos(script: GitScript): Kaos {
   return createFakeKaos({
     exec: async (...args: string[]): Promise<KaosProcess> => {
       const subcommand = args[3] ?? '';
-      const scripted = script[subcommand];
+      // Match the full git invocation first (e.g. `rev-parse --abbrev-ref
+      // HEAD`) so two commands sharing a subcommand (both `rev-parse`) can be
+      // scripted distinctly; fall back to the bare subcommand.
+      const full = args.slice(3).join(' ');
+      const scripted = script[full] ?? script[subcommand];
       if (scripted === undefined) return fakeProcess('', 1);
       return fakeProcess(scripted.stdout, scripted.exitCode ?? 0, scripted.stderr ?? '');
     },
@@ -71,7 +75,7 @@ describe('collectGitContext', () => {
     const kaos = gitKaos({
       'rev-parse': { stdout: 'true' },
       remote: { stdout: 'https://github.com/acme/widgets.git' },
-      branch: { stdout: 'main' },
+      'rev-parse --abbrev-ref HEAD': { stdout: 'main' },
       status: { stdout: ' M src/a.ts\n?? src/b.ts' },
       log: { stdout: 'abc123 first commit\ndef456 second commit' },
     });
@@ -95,7 +99,7 @@ describe('collectGitContext', () => {
     const kaos = gitKaos({
       'rev-parse': { stdout: 'true' },
       remote: { stdout: '' },
-      branch: { stdout: '' },
+      'rev-parse --abbrev-ref HEAD': { stdout: '' },
       status: { stdout: dirty },
       log: { stdout: '' },
     });
@@ -115,7 +119,7 @@ describe('collectGitContext', () => {
     const kaos = gitKaos({
       'rev-parse': { stdout: 'true' },
       remote: { stdout: 'git@internal.corp:secret/repo.git' },
-      branch: { stdout: 'main' },
+      'rev-parse --abbrev-ref HEAD': { stdout: 'main' },
       status: { stdout: '' },
       log: { stdout: '' },
     });
@@ -132,7 +136,7 @@ describe('collectGitContext', () => {
     const kaos = gitKaos({
       'rev-parse': { stdout: 'true' },
       remote: { stdout: '', exitCode: 2, stderr: "error: No such remote 'origin'" },
-      branch: { stdout: 'main' },
+      'rev-parse --abbrev-ref HEAD': { stdout: 'main' },
       status: { stdout: ' M src/a.ts' },
       log: { stdout: 'abc123 first commit' },
     });
@@ -150,7 +154,7 @@ describe('collectGitContext', () => {
     const kaos = gitKaos({
       'rev-parse': { stdout: 'true' },
       remote: { stdout: 'https://github.com/acme/widgets.git' },
-      branch: { stdout: 'main' },
+      'rev-parse --abbrev-ref HEAD': { stdout: 'main' },
       status: { stdout: '' },
       log: {
         stdout: '',
@@ -165,6 +169,22 @@ describe('collectGitContext', () => {
     expect(block).toContain('Remote: https://github.com/acme/widgets.git');
     expect(block).toContain('Project: acme/widgets');
     expect(block).not.toContain('Recent commits:');
+  });
+
+  it('omits the Branch section in detached HEAD state', async () => {
+    const kaos = gitKaos({
+      'rev-parse': { stdout: 'true' },
+      'rev-parse --abbrev-ref HEAD': { stdout: 'HEAD' },
+      remote: { stdout: 'https://github.com/acme/widgets.git' },
+      status: { stdout: '' },
+      log: { stdout: 'abc123 first commit' },
+    });
+
+    const block = await collectGitContext(kaos, '/project');
+
+    expect(block).not.toContain('Branch:');
+    expect(block).toContain('Remote: https://github.com/acme/widgets.git');
+    expect(block).toContain('Recent commits:');
   });
 
   it('treats a hanging git command as a failure (timeout)', async () => {

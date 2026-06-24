@@ -70,15 +70,20 @@ export async function collectGitContext(kaos: Kaos, cwd: string): Promise<string
 
   // Step 2: collect context in parallel. Probes split into two classes:
   //
-  //   - fatal (`status`, `branch`): if either fails, drop the whole block. A
+  //   - fatal (`status`, branch): if either fails, drop the whole block. A
   //     missing `status` would make a dirty tree look clean, and a non-zero
-  //     `branch` exit means git itself is broken (detached HEAD is exit 0).
+  //     branch exit means git itself is broken.
   //   - optional (`remote`, `log`): a missing `origin` remote or a repo with
   //     no commits yet are normal states, not collection failures. Log at
   //     debug and leave that section empty rather than dropping the block.
+  //
+  // Branch is read via `rev-parse --abbrev-ref HEAD` rather than
+  // `branch --show-current`: the latter was only added in Git 2.22, so it
+  // fails (exit 129) on older Git even in a valid repository. `rev-parse`
+  // prints `HEAD` in detached-HEAD state, which is filtered out below.
   const commandArgs = [
     ['remote', 'get-url', 'origin'],
-    ['branch', '--show-current'],
+    ['rev-parse', '--abbrev-ref', 'HEAD'],
     ['status', '--porcelain'],
     ['log', '-3', '--format=%h %s'],
   ] as const;
@@ -122,7 +127,7 @@ export async function collectGitContext(kaos: Kaos, cwd: string): Promise<string
     }
   }
 
-  if (branchName) sections.push(`Branch: ${branchName}`);
+  if (branchName && branchName !== 'HEAD') sections.push(`Branch: ${branchName}`);
 
   const dirtyLines = dirtyRaw.split('\n').filter((line) => line.trim().length > 0);
   if (dirtyLines.length > 0) {
