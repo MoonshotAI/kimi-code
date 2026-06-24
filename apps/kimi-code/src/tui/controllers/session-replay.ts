@@ -10,6 +10,7 @@ import type {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { ToolCallComponent } from '../components/messages/tool-call';
+import { currentTheme } from '../theme';
 import type { TodoItem } from '../components/chrome/todo-panel';
 import type {
   AppState,
@@ -21,6 +22,7 @@ import { formatErrorMessage, isTodoItemShape } from '../utils/event-payload';
 import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
 import { buildGoalCompletionMessage } from '../utils/goal-completion';
+import { formatBashOutputForDisplay } from '../utils/shell-output';
 import {
   appStateFromResumeAgent,
   backgroundOrigin,
@@ -55,6 +57,14 @@ export interface SessionReplayHost {
   setAppState(patch: Partial<AppState>): void;
   showError(msg: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
+}
+
+function extractBashTag(
+  text: string,
+  tag: 'bash-input' | 'bash-stdout' | 'bash-stderr',
+): string | undefined {
+  const match = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(text);
+  return match?.[1];
 }
 
 export class SessionReplayRenderer {
@@ -247,6 +257,26 @@ export class SessionReplayRenderer {
       return;
     }
     if (message.origin?.kind === 'injection') {
+      return;
+    }
+    if (message.origin?.kind === 'shell_command') {
+      // A `!` command, replayed from records. Unwrap the XML tags back into the
+      // same `! cmd` + output view the live editor produced. (Must NOT fall into
+      // the `injection` branch above — that returns without rendering.)
+      this.flushAssistant(context);
+      const text = contentPartsToText(message.content);
+      if (message.origin.phase === 'input') {
+        const cmd = (extractBashTag(text, 'bash-input') ?? text).trim();
+        this.advanceTurn(context);
+        this.host.appendTranscriptEntry(
+          replayEntry(context, 'user', currentTheme.fg('shellMode', `! ${cmd}`), 'plain'),
+        );
+      } else {
+        const stdout = (extractBashTag(text, 'bash-stdout') ?? '').trim();
+        const stderr = (extractBashTag(text, 'bash-stderr') ?? '').trim();
+        const out = formatBashOutputForDisplay(stdout, stderr, message.origin.isError);
+        this.host.appendTranscriptEntry(replayEntry(context, 'status', out, 'plain'));
+      }
       return;
     }
     if (message.origin?.kind === 'cron_job') {

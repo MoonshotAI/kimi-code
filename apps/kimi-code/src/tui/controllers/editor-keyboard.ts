@@ -33,9 +33,11 @@ export interface EditorKeyboardHost {
   toggleToolOutputExpansion(): void;
   toggleTodoPanelExpansion(): void;
   detachCurrentForegroundTask(): void;
+  cancelRunningShellCommand(): void;
   hideSessionPicker(): void;
   stop(exitCode?: number): Promise<void>;
   handlePlanToggle(next: boolean): void;
+  handleInputModeChange(mode: 'prompt' | 'bash'): void;
   clearQueuedMessages(): void;
   setExternalEditorRunning(running: boolean): void;
 }
@@ -147,6 +149,10 @@ export class EditorKeyboardController {
       host.handlePlanToggle(next);
     };
 
+    editor.onInputModeChange = (mode) => {
+      host.handleInputModeChange(mode);
+    };
+
     editor.onOpenExternalEditor = () => {
       host.track('shortcut_editor');
       void this.openExternalEditor();
@@ -194,6 +200,8 @@ export class EditorKeyboardController {
     };
 
     editor.onCtrlB = (): boolean => {
+      // Shell command execution is treated as a streaming phase ('shell'), so
+      // this gate already covers it; only idle + not-compacting falls through.
       if (host.state.appState.streamingPhase === 'idle' || host.state.appState.isCompacting) {
         return false;
       }
@@ -255,6 +263,9 @@ export class EditorKeyboardController {
   }
 
   private cancelCurrentStream(): void {
+    // Cancel any running `!` shell command (treated as a streaming phase) in
+    // addition to the agent turn, so Esc / Ctrl+C interrupts it too.
+    this.host.cancelRunningShellCommand();
     void this.host.session?.cancel();
   }
 

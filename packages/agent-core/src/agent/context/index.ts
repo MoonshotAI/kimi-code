@@ -65,6 +65,21 @@ export class ContextMemory {
     });
   }
 
+  /**
+   * Inject a user-invisible message and immediately send it to the model by
+   * launching/steering a turn. The content is used as-is (no wrapper tag), so
+   * callers can pass raw tool-result-style text or wrap it themselves. The
+   * message is skipped on replay / transcript (so the user never sees it) but
+   * is included in the context sent to the model. Use this for events the
+   * model must react to right away without surfacing a user-visible message.
+   */
+  injectAndNotify(content: string, origin?: PromptOrigin): void {
+    this.agent.turn.steer(
+      [{ type: 'text', text: content }],
+      origin ?? { kind: 'injection', variant: 'system_reminder' },
+    );
+  }
+
   appendLocalCommandStdout(content: string): void {
     const text = `<local-command-stdout>\n${content.trim()}\n</local-command-stdout>`;
     this.appendMessage({
@@ -72,6 +87,33 @@ export class ContextMemory {
       content: [{ type: 'text', text }],
       toolCalls: [],
       origin: { kind: 'injection', variant: 'local-command-stdout' },
+    });
+  }
+
+  // User-initiated `!` shell command. Unlike `injection` (which is skipped on
+  // replay), `shell_command` origin is replayed and rendered, so resumed
+  // sessions still show the command and its output. The XML tags carry the
+  // semantics to the model; the origin drives UI/replay routing.
+  appendBashInput(command: string): void {
+    const text = `<bash-input>\n${command}\n</bash-input>`;
+    this.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+      origin: { kind: 'shell_command', phase: 'input' },
+    });
+  }
+
+  appendBashOutput(stdout: string, stderr: string, isError?: boolean): void {
+    const text = `<bash-stdout>${stdout}</bash-stdout><bash-stderr>${stderr}</bash-stderr>`;
+    this.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text }],
+      toolCalls: [],
+      origin:
+        isError === true
+          ? { kind: 'shell_command', phase: 'output', isError: true }
+          : { kind: 'shell_command', phase: 'output' },
     });
   }
 

@@ -1,10 +1,14 @@
+import { Readable, type Writable } from 'node:stream';
+
+import type { KaosProcess } from '@moonshot-ai/kaos';
 import type { Message } from '@moonshot-ai/kosong';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderNotificationXml } from '../../src/agent/context/notification-xml';
 import { project } from '../../src/agent/context/projector';
 import type { ContextMessage } from '../../src/agent/context/types';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
+import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { testAgent } from './harness/agent';
 
 describe('Agent context', () => {
@@ -52,6 +56,65 @@ describe('Agent context', () => {
       { role: 'tool', origin: undefined },
     ]);
     expect(ctx.agent.context.messages.some((message) => 'origin' in message)).toBe(false);
+  });
+
+  it('records bash input/output as shell_command origin with tagged content', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.context.appendBashInput('ls -la');
+    ctx.agent.context.appendBashOutput('file1\nfile2', '');
+
+    expect(ctx.agent.context.history.map(({ role, origin }) => ({ role, origin }))).toEqual([
+      { role: 'user', origin: { kind: 'shell_command', phase: 'input' } },
+      { role: 'user', origin: { kind: 'shell_command', phase: 'output' } },
+    ]);
+
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    expect(textOf(ctx.agent.context.history[0]!)).toContain('<bash-input>');
+    expect(textOf(ctx.agent.context.history[0]!)).toContain('ls -la');
+    expect(textOf(ctx.agent.context.history[1]!)).toBe(
+      '<bash-stdout>file1\nfile2</bash-stdout><bash-stderr></bash-stderr>',
+    );
+    // origin must not leak into the LLM projection
+    expect(ctx.agent.context.messages.some((message) => 'origin' in message)).toBe(false);
+  });
+
+  it('runs a shell command via the Bash tool and records its output', async () => {
+    const fakeProcess = (stdout: string): KaosProcess => {
+      const out = Readable.from([stdout]);
+      const err = Readable.from([]);
+      return {
+        stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+        stdout: out,
+        stderr: err,
+        pid: 1,
+        exitCode: 0,
+        wait: vi.fn(async () => 0),
+        kill: vi.fn(async () => {}),
+        dispose: vi.fn(async () => {
+          out.destroy();
+          err.destroy();
+        }),
+      };
+    };
+    const kaos = createFakeKaos({
+      execWithEnv: vi.fn().mockImplementation(async () => fakeProcess('hello\n')),
+    });
+    const ctx = testAgent({ kaos });
+    ctx.configure();
+
+    await ctx.agent.tools.runShellCommand('echo hello');
+
+    expect(ctx.agent.context.history.map(({ role, origin }) => ({ role, origin }))).toEqual([
+      { role: 'user', origin: { kind: 'shell_command', phase: 'input' } },
+      { role: 'user', origin: { kind: 'shell_command', phase: 'output' } },
+    ]);
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    expect(textOf(ctx.agent.context.history[0]!)).toContain('echo hello');
+    expect(textOf(ctx.agent.context.history[1]!)).toContain('<bash-stdout>hello');
   });
 
   it('renders tool error and empty-output status as model-visible text', () => {

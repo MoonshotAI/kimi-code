@@ -134,6 +134,10 @@ export class CustomEditor extends Editor {
   public onUpArrowEmpty?: () => boolean;
   public onDownArrowEmpty?: () => boolean;
   public onShiftTab?: () => void;
+  /** 'bash' when entering a `!` shell command. The `!` is never part of the
+   *  text buffer — it is a separate mode + prompt symbol (see handleInput). */
+  public inputMode: 'prompt' | 'bash' = 'prompt';
+  public onInputModeChange?: (mode: 'prompt' | 'bash') => void;
   public connectedAbove = false;
   public borderHighlighted = false;
   /**
@@ -247,7 +251,12 @@ export class CustomEditor extends Editor {
     }
     const firstContent = lines[firstContentIdx];
     if (firstContent !== undefined) {
-      const withPrompt = injectPromptSymbol(firstContent);
+      const isBash = this.inputMode === 'bash';
+      const withPrompt = injectPromptSymbol(
+        firstContent,
+        isBash ? '!' : '>',
+        isBash ? (s) => this.borderColor(s) : undefined,
+      );
       if (withPrompt !== undefined) {
         lines[firstContentIdx] = withPrompt;
       }
@@ -375,6 +384,19 @@ export class CustomEditor extends Editor {
       this.onUndo?.();
     }
 
+    // Exit bash mode: Backspace/Escape on an empty `!` prompt returns to prompt
+    // mode. Because the `!` is not in the buffer, "deleting" it is really
+    // "delete on empty bash input".
+    if (
+      this.inputMode === 'bash' &&
+      this.getText().length === 0 &&
+      (matchesKey(normalized, Key.escape) || matchesKey(normalized, Key.backspace))
+    ) {
+      this.inputMode = 'prompt';
+      this.onInputModeChange?.('prompt');
+      return;
+    }
+
     const newlineInput = getNewlineInput(normalized);
     if (newlineInput !== undefined) {
       this.onInsertNewline?.();
@@ -408,6 +430,15 @@ export class CustomEditor extends Editor {
     // trigger pi-tui's built-in file completion. When the dropdown is open,
     // fall through so pi-tui can still accept the selected item with Tab.
     if (matchesKey(normalized, Key.tab) && !this.isShowingAutocomplete()) {
+      return;
+    }
+
+    // Enter bash mode: typing `!` at the start of an empty prompt. The `!` is
+    // not inserted into the buffer — it becomes the mode + prompt symbol, so the
+    // cursor never has to skip over it and submit never has to strip it.
+    if (this.inputMode === 'prompt' && normalized === '!' && this.getText().length === 0) {
+      this.inputMode = 'bash';
+      this.onInputModeChange?.('bash');
       return;
     }
 
@@ -593,12 +624,17 @@ function truncateHint(hint: string, maxLen: number): string {
  * default foreground colour renders the symbol. Returns `undefined` if the
  * line is too short or doesn't begin with the expected padding.
  */
-export function injectPromptSymbol(line: string): string | undefined {
+export function injectPromptSymbol(
+  line: string,
+  symbol = '>',
+  paint?: (s: string) => string,
+): string | undefined {
   if (line.length < 4) return undefined;
   for (let i = 0; i < 4; i++) {
     if (line[i] !== ' ') return undefined;
   }
-  return '  > ' + line.slice(4);
+  const rendered = paint ? paint(symbol) : symbol;
+  return '  ' + rendered + ' ' + line.slice(4);
 }
 
 /**
