@@ -25,7 +25,7 @@ against the current implementation under `packages/agent-core/src/agent`.
 - [x] Handle loop events: `step.begin`, streamed content, tool calls, tool results, and `step.end`.
 - [x] Insert loop-generated assistant and tool messages into context without requiring context history to be ordered.
 - [x] Add resume handling for interrupted tool calls.
-- [ ] Add matched-tail message removal for stop-hook cleanup in the service that owns that cleanup.
+- [x] Add matched-tail message removal for stop-hook cleanup in the service that owns that cleanup.
 
 ## ContextProjector
 
@@ -83,10 +83,10 @@ against the current implementation under `packages/agent-core/src/agent`.
 
 ## ToolRegistry / ToolExecutor
 
-- [ ] Finish builtin tool initialization in `AgentRuntime`; task/file/web tools are initialized there now, remaining old-Agent-bound tools are tracked in `TODO2.md`.
-- [ ] Implement user tool registration, records, and RPC execution outside `IToolRegistry`.
-- [ ] Implement MCP tool registration, status watching, auth tools, collisions, and qualified names outside `IToolRegistry`.
-- [ ] Track active tools and profile gating outside `IToolRegistry`.
+- [x] Finish builtin tool initialization in `AgentRuntime`; task/file/web tools are initialized there now, remaining old-Agent-bound tools are tracked in `TODO2.md`.
+- [x] Implement user tool registration, records, and RPC execution outside `IToolRegistry`.
+- [x] Implement MCP tool registration, status watching, auth tools, collisions, and qualified names outside `IToolRegistry`.
+- [x] Track active tools and profile gating outside `IToolRegistry`.
 - [x] Emit tool list updates.
 - [x] Preserve tool source and tool info metadata.
 - [x] Implement tool store behavior in `ToolStoreService`.
