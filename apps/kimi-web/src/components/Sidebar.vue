@@ -8,7 +8,7 @@ import { useI18n } from 'vue-i18n';
 import { serverEndpointLabel } from '../api/config';
 import { copyTextToClipboard } from '../lib/clipboard';
 import { loadCollapsedWorkspaces, saveCollapsedWorkspaces } from '../lib/storage';
-import { moveInOrder } from '../lib/workspaceOrder';
+import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
@@ -117,11 +117,13 @@ function toggleCollapse(id: string): void {
 // Workspace drag-to-reorder
 // ---------------------------------------------------------------------------
 // The header of each group is the drag handle (see WorkspaceGroup). We track
-// which group is being dragged and which one is the current drop target (for a
-// visual insertion marker), then on drop we emit the new id order upward — the
-// parent persists it and the computed `groups` re-sorts.
+// which group is being dragged and where the insertion marker sits (before or
+// after the group under the pointer), then on drop we emit the new id order
+// upward — the parent persists it and the computed `groups` re-sorts. Using the
+// pointer's position within the target (top half = before, bottom half = after)
+// is what lets a workspace be dropped at the very bottom of the list.
 const draggingWsId = ref<string | null>(null);
-const dragOverWsId = ref<string | null>(null);
+const dragOver = ref<{ id: string; position: DropPosition } | null>(null);
 
 function onWsDragstart(id: string): void {
   draggingWsId.value = id;
@@ -129,22 +131,33 @@ function onWsDragstart(id: string): void {
 
 function onWsDragend(): void {
   draggingWsId.value = null;
-  dragOverWsId.value = null;
+  dragOver.value = null;
+}
+
+function dropPosition(event: DragEvent): DropPosition {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
 }
 
 function onGroupDragOver(event: DragEvent, targetId: string): void {
   if (draggingWsId.value === null || draggingWsId.value === targetId) return;
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-  dragOverWsId.value = targetId;
+  dragOver.value = { id: targetId, position: dropPosition(event) };
 }
 
 function onGroupDrop(targetId: string): void {
   const fromId = draggingWsId.value;
-  dragOverWsId.value = null;
+  const position = dragOver.value?.id === targetId ? dragOver.value.position : 'before';
+  dragOver.value = null;
   draggingWsId.value = null;
   if (!fromId || fromId === targetId) return;
-  const next = moveInOrder(props.groups.map((g) => g.workspace.id), fromId, targetId);
+  const next = moveInOrder(
+    props.groups.map((g) => g.workspace.id),
+    fromId,
+    targetId,
+    position,
+  );
   emit('reorderWorkspaces', next);
 }
 
@@ -570,7 +583,10 @@ function blinkOnce(): void {
             v-for="g in groups"
             :key="g.workspace.id"
             class="ws-drop-target"
-            :class="{ 'drop-before': dragOverWsId === g.workspace.id }"
+            :class="{
+              'drop-before': dragOver?.id === g.workspace.id && dragOver.position === 'before',
+              'drop-after': dragOver?.id === g.workspace.id && dragOver.position === 'after',
+            }"
             @dragover="onGroupDragOver($event, g.workspace.id)"
             @drop="onGroupDrop(g.workspace.id)"
           >
@@ -886,9 +902,11 @@ function blinkOnce(): void {
 }
 .sessions::-webkit-scrollbar-thumb:hover { background: var(--bd); }
 
-/* Workspace drag-to-reorder: a line at the top of the group under the cursor
-   marks where the dragged workspace will land. Inset shadow avoids layout shift. */
+/* Workspace drag-to-reorder: a line at the top (drop-before) or bottom
+   (drop-after) of the group under the cursor marks where the dragged workspace
+   will land. Inset shadows avoid layout shift. */
 .ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--blue); }
+.ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--blue); }
 
 .empty {
   padding: 24px 12px;

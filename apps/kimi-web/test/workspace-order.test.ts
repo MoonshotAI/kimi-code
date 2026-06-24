@@ -64,19 +64,31 @@ describe('sortByWorkspaceOrder', () => {
 });
 
 describe('moveInOrder', () => {
-  // The drop indicator is a line at the *top* of the target ("insert before"),
-  // so the result must always place fromId immediately before toId.
+  // The drop indicator is a line at the top (before) or bottom (after) of the
+  // target, so the result must place fromId immediately next to toId.
   it('moves an item down so it lands before the target', () => {
-    expect(moveInOrder(['a', 'b', 'c', 'd'], 'a', 'c')).toEqual(['b', 'a', 'c', 'd']);
+    expect(moveInOrder(['a', 'b', 'c', 'd'], 'a', 'c', 'before')).toEqual(['b', 'a', 'c', 'd']);
   });
 
   it('moves an item up so it lands before the target', () => {
-    expect(moveInOrder(['a', 'b', 'c', 'd'], 'd', 'b')).toEqual(['a', 'd', 'b', 'c']);
+    expect(moveInOrder(['a', 'b', 'c', 'd'], 'd', 'b', 'before')).toEqual(['a', 'd', 'b', 'c']);
   });
 
-  it('is a no-op when dropping on the adjacent item in the indicator direction', () => {
-    // "before b" keeps a above b; to move a below b you drop onto c instead.
-    expect(moveInOrder(['a', 'b', 'c'], 'a', 'b')).toEqual(['a', 'b', 'c']);
+  it('inserts after the target when position is "after"', () => {
+    expect(moveInOrder(['a', 'b', 'c', 'd'], 'a', 'c', 'after')).toEqual(['b', 'c', 'a', 'd']);
+  });
+
+  it('can move an item to the very bottom by dropping after the last item', () => {
+    expect(moveInOrder(['A', 'B', 'C'], 'A', 'C', 'after')).toEqual(['B', 'C', 'A']);
+  });
+
+  it('swaps with the adjacent item when dropping after it', () => {
+    expect(moveInOrder(['a', 'b', 'c'], 'a', 'b', 'after')).toEqual(['b', 'a', 'c']);
+  });
+
+  it('is a no-op when dropping before the adjacent item in the indicator direction', () => {
+    // "before b" keeps a above b; to move a below b you drop after b instead.
+    expect(moveInOrder(['a', 'b', 'c'], 'a', 'b', 'before')).toEqual(['a', 'b', 'c']);
   });
 
   it('is a no-op when from === to', () => {

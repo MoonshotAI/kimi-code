@@ -35,20 +35,29 @@ export function sortByWorkspaceOrder<T extends { id: string }>(items: T[], order
   return items.toSorted((a, b) => (index.get(a.id) ?? -1) - (index.get(b.id) ?? -1));
 }
 
+export type DropPosition = 'before' | 'after';
+
 /**
- * Move `fromId` so it lands immediately before `toId` — matching the
- * "drop-before" insertion marker shown in the sidebar. Returns the original
- * array unchanged when either id is missing or they are the same. After the
- * source is removed, a downward move shifts the target left by one, so the
- * insertion index is adjusted to keep the result "before the target".
+ * Move `fromId` so it lands immediately before or after `toId` — matching the
+ * insertion marker shown in the sidebar (a line at the top of the target for
+ * "before", at the bottom for "after"). Returns the original array unchanged
+ * when either id is missing or they are the same. After the source is removed,
+ * a downward move shifts the target left by one, so the target index is
+ * rebased before applying the position.
  */
-export function moveInOrder(order: string[], fromId: string, toId: string): string[] {
+export function moveInOrder(
+  order: string[],
+  fromId: string,
+  toId: string,
+  position: DropPosition = 'before',
+): string[] {
   const fromIdx = order.indexOf(fromId);
   const toIdx = order.indexOf(toId);
   if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return order;
   const next = [...order];
   next.splice(fromIdx, 1);
-  const insertIdx = fromIdx < toIdx ? toIdx - 1 : toIdx;
+  const shiftedToIdx = fromIdx < toIdx ? toIdx - 1 : toIdx;
+  const insertIdx = position === 'before' ? shiftedToIdx : shiftedToIdx + 1;
   next.splice(insertIdx, 0, fromId);
   return next;
 }
