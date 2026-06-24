@@ -1924,6 +1924,7 @@ const workspaceState = useWorkspaceState(rawState, {
   refreshSessionStatus,
   persistSessionProfile,
   mergedWorkspaces,
+  workspacesView,
   status,
   workspaceIdForSession,
   savePermissionToStorage,
