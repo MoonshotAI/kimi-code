@@ -200,6 +200,7 @@ export class Session {
     this.mcp = new McpConnectionManager({
       oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
       log: this.log,
+      stdioCwd: options.kaos.getcwd(),
     });
     this.mcp.onStatusChange((entry) => {
       this.onMcpServerStatusChange(entry);
