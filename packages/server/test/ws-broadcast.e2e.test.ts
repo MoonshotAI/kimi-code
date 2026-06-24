@@ -384,6 +384,37 @@ describe('WS broadcast + per-session seq (W5.2)', () => {
     a.ws.close();
     b.ws.close();
   });
+
+  it('session.meta.updated is broadcast to all connections regardless of subscription', async () => {
+    const r = await spawn();
+    const a = await openConn(wsUrl(r.address));
+    const b = await openConn(wsUrl(r.address));
+    // `a` is subscribed to the session; `b` is not. A title change (e.g. a
+    // rename by another client) must still reach `b` so its session list
+    // stays in sync.
+    await helloAndSubscribe(a, 'A', 'sid_meta');
+    await helloAndSubscribe(b, 'B', 'sid_other');
+
+    r.services.invokeFunction((acc) =>
+      acc.get(IEventService).publish({
+        type: 'session.meta.updated',
+        agentId: 'main',
+        sessionId: 'sid_meta',
+        title: 'Renamed',
+        patch: { title: 'Renamed', isCustomTitle: true },
+      } as unknown as Event),
+    );
+
+    const evA = await receiveType(a, 'session.meta.updated', 1000);
+    const evB = await receiveType(b, 'session.meta.updated', 1000);
+    expect(evA.session_id).toBe('sid_meta');
+    expect(evB.session_id).toBe('sid_meta');
+    expect(evA.seq).toBe(1);
+    expect(evB.seq).toBe(1);
+
+    a.ws.close();
+    b.ws.close();
+  });
 });
 
 /** Spin until `cond()` returns true or 2s elapses. */

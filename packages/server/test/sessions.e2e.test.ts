@@ -446,6 +446,37 @@ describe('POST /api/v1/sessions/{session_id}/profile — update profile', () => 
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(40401);
   });
+
+  it('broadcasts session.meta.updated to clients not subscribed to the session on rename', async () => {
+    const r = await bootDaemon();
+    const { ws, received } = await openSessionListListener(r);
+    const cwd = join(tmpDir, 'workspace-profile-rename-broadcast');
+    const created = envelopeOf<{ id: string }>(
+      (
+        await appOf(r).inject({
+          method: 'POST',
+          url: '/api/v1/sessions',
+          payload: { metadata: { cwd } },
+        })
+      ).json(),
+    ).data!;
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${created.id}/profile`,
+      payload: { title: 'Renamed' },
+    });
+    expect(envelopeOf<unknown>(res.json()).code).toBe(0);
+
+    const frame = await waitFor(received, (f) => f['type'] === 'session.meta.updated');
+    expect(frame['session_id']).toBe(created.id);
+    expect(frame['payload']).toMatchObject({
+      title: 'Renamed',
+      patch: { title: 'Renamed', isCustomTitle: true },
+    });
+
+    ws.close();
+  });
 });
 
 describe('POST /api/v1/sessions/{session_id}:fork — fork', () => {
