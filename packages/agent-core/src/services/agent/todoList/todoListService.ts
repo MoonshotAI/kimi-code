@@ -38,7 +38,7 @@ export class TodoListService extends Disposable implements ITodoListService {
     );
   }
 
-  getTodos(): readonly TodoItem[] {
+  private getTodos(): readonly TodoItem[] {
     return readTodoItems(this.toolStore.data()[TODO_STORE_KEY]);
   }
 

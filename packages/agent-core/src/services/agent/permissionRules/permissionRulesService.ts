@@ -64,11 +64,6 @@ export class PermissionRulesService extends Disposable implements IPermissionRul
     ];
   }
 
-  setInitialRules(rules: readonly PermissionRule[]): void {
-    this.localRules = [...rules];
-    this.emitRulesChanged();
-  }
-
   addRules(rules: readonly PermissionRule[]): void {
     if (rules.length === 0) return;
     this.wireRecord.append({ type: 'permission.rules.add', rules: [...rules] });

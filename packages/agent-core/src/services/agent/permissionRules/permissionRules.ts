@@ -23,7 +23,6 @@ export interface IPermissionRulesService {
   readonly rules: readonly PermissionRule[];
   readonly sessionApprovalRulePatterns: readonly string[];
 
-  setInitialRules(rules: readonly PermissionRule[]): void;
   addRules(rules: readonly PermissionRule[]): void;
   recordApprovalResult(record: PermissionApprovalResultRecord): void;
 
