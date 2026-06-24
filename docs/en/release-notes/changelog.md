@@ -6,6 +6,47 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.19.2 (2026-06-24)
+
+### Features
+
+- Keep drag-and-drop workspace reordering in the web sidebar, with sort order persisted locally; sessions now also float to the top of their group as soon as a new message arrives.
+- Add an Alt+S shortcut in the model picker to switch the model for the current session only, without saving it as the default.
+- Add a Ctrl+T shortcut to expand and collapse a truncated todo list.
+- Add `-c` as a shorthand for `--continue`.
+
+### Bug Fixes
+
+- Fix yolo mode in the web app auto-approving plan reviews and sensitive file access.
+- Fix resume not realigning a tool call that was interrupted mid-history.
+- Fix the composer's ↑/↓ input-history recall doing nothing right after the first message of a new session.
+- Fix stale rows occasionally leaving duplicate input boxes after tall content shrinks.
+- Fix inline images being rendered as broken escape sequences in the transcript.
+- Fix code blocks nested inside list items rendering blank in the web chat after a turn finishes generating.
+- Fix the Tab key unexpectedly opening the file completion list.
+- Fix clipboard copy actions in the web UI when served over plain HTTP.
+- Fix the web question prompt missing the free-text Other option.
+- Fix web chat stop actions so stale prompt ids fall back to cancelling the active session.
+
+### Polish
+
+- Read large text files in bounded memory and read tail lines without scanning whole files.
+- Show the command in running Bash tool cards and allow expanding it with Ctrl+O before the result arrives.
+- Allow the web sidebar and detail panel to be resized up to the available viewport width, keeping their resize handles reachable on narrow windows.
+- Show subcommand suggestions after Tab-completing a slash command name.
+- Show a transient footer hint when an image is detected in the clipboard, displaying the platform-appropriate paste shortcut.
+- Persist the collapsed state of workspace groups in the web sidebar across page reloads.
+- Add a development-mode indicator to the web sidebar for local development.
+- Optimize the loading tips display.
+
+### Refactors
+
+- Reorganize the web app's components into area subdirectories (chat/settings/dialogs/mobile) and refresh the component path comments.
+- Extract several composer pieces into reusable composables.
+- Extract pure turn-rendering helpers out of the chat pane into their own module.
+- Extract the beta conversation outline (table of contents) into its own component.
+- Extract the workspace group rendering out of the sidebar into its own component.
+
 ## 0.19.1 (2026-06-23)
 
 ### Bug Fixes

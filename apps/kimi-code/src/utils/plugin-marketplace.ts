@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,11 +76,21 @@ export interface LoadPluginMarketplaceOptions {
 export async function loadPluginMarketplace(
   options: LoadPluginMarketplaceOptions,
 ): Promise<PluginMarketplace> {
+  const configuredSource = options.source ?? process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV];
   const location = resolveMarketplaceLocation(
-    options.source ?? process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] ?? KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+    configuredSource ?? KIMI_CODE_PLUGIN_MARKETPLACE_URL,
     options.workDir,
   );
-  const raw = await readMarketplaceText(location, options.fetchImpl ?? fetch);
+  let raw: string;
+  try {
+    raw = await readMarketplaceText(location, options.fetchImpl ?? fetch);
+  } catch (error) {
+    const fallback =
+      configuredSource === undefined ? await getSourceCheckoutMarketplaceLocation() : undefined;
+    if (fallback === undefined) throw error;
+    raw = await readMarketplaceText(fallback, options.fetchImpl ?? fetch);
+    return parsePluginMarketplace(raw, fallback);
+  }
   return parsePluginMarketplace(raw, location);
 }
 
@@ -124,6 +134,14 @@ function resolveMarketplaceLocation(source: string, workDir: string): Marketplac
   return { raw: trimmed, kind: 'local', resolved: resolveLocalPath(trimmed, workDir) };
 }
 
+async function getSourceCheckoutMarketplaceLocation(): Promise<MarketplaceLocation | undefined> {
+  const sourceDir = dirname(fileURLToPath(import.meta.url));
+  const marketplacePath = resolve(sourceDir, '../../../../plugins/marketplace.json');
+  const info = await stat(marketplacePath).catch(() => undefined);
+  if (info?.isFile() !== true) return undefined;
+  return { raw: marketplacePath, kind: 'local', resolved: marketplacePath };
+}
+
 async function readMarketplaceText(
   location: MarketplaceLocation,
   fetchImpl: typeof fetch,
@@ -147,6 +165,7 @@ function parseMarketplaceEntry(
     throw new TypeError(`Plugin marketplace entry ${index + 1} must be an object.`);
   }
   const id = requiredString(value, 'id', index);
+  validateMarketplaceEntryType(value, id);
   const source = stringField(value, 'source') ??
     stringField(value, 'url') ??
     stringField(value, 'downloadUrl');
@@ -163,6 +182,19 @@ function parseMarketplaceEntry(
     homepage: stringField(value, 'homepage') ?? stringField(value, 'websiteURL'),
     keywords: stringArrayField(value, 'keywords'),
   };
+}
+
+function validateMarketplaceEntryType(value: Record<string, unknown>, id: string): void {
+  const raw = value['type'];
+  if (raw === undefined) return;
+  if (typeof raw !== 'string') {
+    throw new TypeError(`Plugin marketplace entry ${id} "type" must be a string.`);
+  }
+  const type = raw.trim();
+  if (type === 'plugin' || type === 'managed' || type === 'guide') return;
+  throw new Error(
+    `Plugin marketplace entry ${id} "type" must be "plugin". Legacy aliases "managed" and "guide" are also accepted.`,
+  );
 }
 
 function parseMarketplaceTier(

@@ -25,7 +25,13 @@ import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
-import type { ActivityState, ConversationStatus, DiffViewLine, PermissionMode } from '../../types';
+import type {
+  ActivityState,
+  ConversationStatus,
+  DiffViewLine,
+  PermissionMode,
+  WorkspaceView,
+} from '../../types';
 import type { ExtendedState, PromptAttachment } from '../useKimiWebClient';
 import type { UseModelProviderState } from './useModelProviderState';
 import type { UseSideChat } from './useSideChat';
@@ -79,6 +85,8 @@ export interface UseWorkspaceStateDeps {
   refreshSessionStatus: (sessionId: string) => Promise<void>;
   persistSessionProfile: (patch: PersistSessionProfilePatch) => void;
   mergedWorkspaces: ComputedRef<AppWorkspace[]>;
+  /** Sidebar-facing workspaces in the user's (dragged) display order. */
+  workspacesView: ComputedRef<WorkspaceView[]>;
   status: ComputedRef<ConversationStatus>;
   workspaceIdForSession: (s: { workspaceId?: string; cwd: string }) => string;
   savePermissionToStorage: (mode: PermissionMode) => void;
@@ -121,6 +129,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     refreshSessionStatus,
     persistSessionProfile,
     mergedWorkspaces,
+    workspacesView,
     status,
     workspaceIdForSession,
     savePermissionToStorage,
@@ -446,7 +455,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const removingActiveWorkspace =
       rawState.activeWorkspaceId === event.workspaceId || rawState.activeWorkspaceId === root;
     if (removingActiveWorkspace) {
-      const nextWorkspace = mergedWorkspaces.value[0]?.id ?? null;
+      const nextWorkspace = workspacesView.value[0]?.id ?? null;
       rawState.activeWorkspaceId = nextWorkspace;
       if (nextWorkspace) saveActiveWorkspaceToStorage(nextWorkspace);
       else {
@@ -1297,7 +1306,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
     rawState.workspaces = rawState.workspaces.filter((w) => w.id !== id && w.root !== root);
     if (removingActiveWorkspace || activeSessionInRemovedWorkspace) {
-      const nextWorkspace = mergedWorkspaces.value[0]?.id ?? null;
+      const nextWorkspace = workspacesView.value[0]?.id ?? null;
       rawState.activeWorkspaceId = nextWorkspace;
       if (nextWorkspace) saveActiveWorkspaceToStorage(nextWorkspace);
       else {
