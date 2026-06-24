@@ -106,6 +106,7 @@ interface ManagedTask {
  * reads the persisted log when available.
  */
 const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
+const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
 
 const SIGTERM_GRACE_MS = 5_000;
 const USER_INTERRUPT_REASON = 'Interrupted by user';
@@ -666,7 +667,10 @@ export class BackgroundManager {
     if (this.deliveredNotificationKeys.has(key)) return;
 
     this.scheduledNotificationKeys.add(key);
-    const output = await this.getOutputSnapshot(info.taskId, 0);
+    let output = await this.getOutputSnapshot(info.taskId, 0);
+    if (!output.fullOutputAvailable) {
+      output = await this.getOutputSnapshot(info.taskId, NOTIFICATION_FALLBACK_PREVIEW_BYTES);
+    }
     if (this.isTerminalNotificationSuppressed(info.taskId)) return undefined;
     const notification: BackgroundTaskNotification = {
       id: origin.notificationId,
@@ -860,8 +864,11 @@ export class BackgroundManager {
 function backgroundTaskNotificationChildren(
   output: BackgroundTaskOutputSnapshot,
 ): readonly string[] | undefined {
-  if (!output.fullOutputAvailable || output.outputPath === undefined) return undefined;
-  return [renderOutputFileBlock(output.outputPath, output.outputSizeBytes)];
+  if (output.fullOutputAvailable && output.outputPath !== undefined) {
+    return [renderOutputFileBlock(output.outputPath, output.outputSizeBytes)];
+  }
+  if (output.preview.length === 0) return undefined;
+  return [renderOutputPreviewBlock(output)];
 }
 
 function renderOutputFileBlock(outputPath: string, outputSizeBytes: number): string {
@@ -869,6 +876,17 @@ function renderOutputFileBlock(outputPath: string, outputSizeBytes: number): str
     `<output-file path="${escapeXmlAttr(outputPath)}" bytes="${String(outputSizeBytes)}">`,
     `Read the output file to retrieve the result: ${escapeXml(outputPath)}`,
     '</output-file>',
+  ].join('\n');
+}
+
+function renderOutputPreviewBlock(output: BackgroundTaskOutputSnapshot): string {
+  return [
+    `<output-preview bytes="${String(output.previewBytes)}" total_bytes="${String(output.outputSizeBytes)}" truncated="${String(output.truncated)}">`,
+    output.truncated
+      ? `Showing the last ${String(output.previewBytes)} bytes. No persisted full output is available.`
+      : 'No persisted full output is available; this preview is the currently buffered task output.',
+    escapeXml(output.preview),
+    '</output-preview>',
   ].join('\n');
 }
 

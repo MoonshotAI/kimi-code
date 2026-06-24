@@ -256,7 +256,8 @@ describe('BackgroundManager — notification delivery', () => {
     });
     const text = (content as Array<{ text: string }>)[0]!.text;
     expect(text).toContain('Background agent completed');
-    expect(text).not.toContain('final subagent summary');
+    expect(text).toContain('final subagent summary');
+    expect(text).toContain('<output-preview');
     expect(text).not.toContain('<output-file');
   });
 
@@ -279,6 +280,25 @@ describe('BackgroundManager — notification delivery', () => {
     const text = (content as Array<{ text: string }>)[0]!.text;
     expect(text).toContain('Background process completed');
     expect(text).toContain('shell task completed.');
+  });
+
+  it('uses a bounded output preview when no persisted task output exists', async () => {
+    const { agent, manager } = createBackgroundManager();
+    const output = `early-output-marker\n${'x'.repeat(4_000)}\nfinal subagent line`;
+    const taskId = manager.registerTask(agentTask(Promise.resolve({ result: output }), 'agent task'));
+
+    await manager.wait(taskId);
+
+    await vi.waitFor(() => {
+      expect(agent.turn.steer).toHaveBeenCalledTimes(1);
+    });
+    const [content] = agent.turn.steer.mock.calls[0]!;
+    const text = (content as Array<{ text: string }>)[0]!.text;
+    expect(text).toContain('<output-preview');
+    expect(text).toContain('truncated="true"');
+    expect(text).toContain('final subagent line');
+    expect(text).not.toContain('early-output-marker');
+    expect(text).not.toContain('<output-file');
   });
 
   it('steers stopped process task notifications into the turn flow', async () => {
