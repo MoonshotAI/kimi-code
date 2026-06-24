@@ -70,6 +70,10 @@ export interface WorkspaceView {
 export interface WorkspaceGroup {
   workspace: WorkspaceView;
   sessions: Session[];
+  /** True when the server has more sessions in this workspace than are loaded. */
+  hasMore: boolean;
+  /** True while the next page of sessions is being fetched for this workspace. */
+  loadingMore: boolean;
 }
 
 /** Sidebar session-list scope: only the active workspace, or all workspaces. */

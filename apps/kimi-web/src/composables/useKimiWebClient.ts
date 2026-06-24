@@ -313,6 +313,12 @@ export interface ExtendedState extends KimiClientState {
   messagesHasMoreBySession: Record<string, boolean>;
   /** True when the last older-message fetch failed for a session. */
   messagesLoadMoreErrorBySession: Record<string, boolean>;
+  /** Whether the server has more sessions than currently loaded, per workspace. */
+  sessionsHasMoreByWorkspace: Record<string, boolean>;
+  /** True while the next page of sessions is being fetched for a workspace. */
+  sessionsLoadingMoreByWorkspace: Record<string, boolean>;
+  /** True once every session has been loaded (after a search-triggered full drain). */
+  sessionsFullyLoaded: boolean;
 }
 
 const rawState: ExtendedState = reactive({
@@ -349,6 +355,9 @@ const rawState: ExtendedState = reactive({
   messagesLoadingMoreBySession: {},
   messagesHasMoreBySession: {},
   messagesLoadMoreErrorBySession: {},
+  sessionsHasMoreByWorkspace: {},
+  sessionsLoadingMoreByWorkspace: {},
+  sessionsFullyLoaded: false,
 });
 
 // ---------------------------------------------------------------------------
@@ -1680,12 +1689,11 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
   const result: AppWorkspace[] = [];
   for (const root of [...realRoots, ...derivedRoots]) {
     const w = byRoot.get(root)!;
-    // Match count by either id or root (derived id === root). Once sessions
-    // have loaded, trust the live local count (0 when no sessions remain) rather
-    // than the daemon's sessionCount, which historically counted archived
-    // sessions and would keep a workspace looking non-empty after its last
-    // session was archived.
-    const count = counts.get(w.id) ?? counts.get(w.root) ?? (rawState.loading ? w.sessionCount : 0);
+    // Trust the daemon's session_count (active sessions only) as the workspace
+    // total: sessions are now paged per workspace, so the local loaded count is
+    // a lower bound, not the total. The loaded count is kept as a floor so a
+    // workspace never reports fewer sessions than we actually hold in memory.
+    const count = Math.max(w.sessionCount, counts.get(w.id) ?? counts.get(w.root) ?? 0);
     let branch = w.branch;
     if (!branch && activeGit && activeRoot === w.root) branch = activeGit.branch;
     result.push({ ...w, sessionCount: count, branch });
@@ -1803,6 +1811,8 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
   return workspacesView.value.map((w) => ({
     workspace: w,
     sessions: byId.get(w.id) ?? [],
+    hasMore: rawState.sessionsHasMoreByWorkspace[w.id] ?? false,
+    loadingMore: rawState.sessionsLoadingMoreByWorkspace[w.id] ?? false,
   }));
 });
 
@@ -2109,6 +2119,8 @@ export function useKimiWebClient() {
 
     // Workspace actions
     loadWorkspaces: workspaceState.loadWorkspaces,
+    loadMoreSessions: workspaceState.loadMoreSessions,
+    loadAllSessions: workspaceState.loadAllSessions,
     selectWorkspace: workspaceState.selectWorkspace,
     openWorkspace: workspaceState.openWorkspace,
     openWorkspaceDraft: workspaceState.openWorkspaceDraft,

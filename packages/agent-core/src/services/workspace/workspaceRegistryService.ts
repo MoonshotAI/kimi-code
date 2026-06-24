@@ -3,10 +3,11 @@
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import type { Stats } from 'node:fs';
+import type { Dirent, Stats } from 'node:fs';
 
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
 import { encodeWorkDirKey } from '../../session/store';
+import { readSessionIndex } from '../../session/store/session-index';
 import { IEnvironmentService } from '../environment/environment';
 import { IEventService } from '../event/event';
 
@@ -43,6 +44,7 @@ type WorkspaceRegistryEvent =
 export class WorkspaceRegistryService extends Disposable implements IWorkspaceRegistry {
   readonly _serviceBrand: undefined;
 
+  private readonly homeDir: string;
   private readonly sessionsDir: string;
   private readonly registryPath: string;
   private opQueue: Promise<unknown> = Promise.resolve();
@@ -53,11 +55,16 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     @IEventService private readonly eventService: IEventService,
   ) {
     super();
+    this.homeDir = env.homeDir;
     this.sessionsDir = join(env.homeDir, 'sessions');
     this.registryPath = join(env.homeDir, WORKSPACE_REGISTRY_FILE);
   }
 
   async list(): Promise<Workspace[]> {
+    // Surface cwds that have sessions but were never registered (e.g. sessions
+    // created with cwd only) by registering them idempotently first, so the
+    // sidebar can page sessions per workspace without a full global walk.
+    await this.registerDerivedWorkspaces();
     const file = await this.runExclusive(() => this.readRegistry());
     const hydrated = await Promise.all(
       Object.entries(file.workspaces).map(([workspaceId, entry]) =>
@@ -65,6 +72,52 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       ),
     );
     return hydrated.sort((a, b) => (b.last_opened_at < a.last_opened_at ? -1 : 1));
+  }
+
+  /**
+   * Register cwds that own sessions but are absent from the registry.
+   *
+   * `GET /sessions?workspace_id=` resolves the id through this registry, so a
+   * workspace that only exists as a session bucket (created with cwd only) must
+   * be registered before the web UI can page its sessions. Scanning the buckets
+   * and recovering each root from the session index lets `list()` return them
+   * without a full global session walk. Registration is idempotent and
+   * self-heals: once written, the bucket becomes a normal registered workspace.
+   */
+  private async registerDerivedWorkspaces(): Promise<void> {
+    let dirents: Dirent[];
+    try {
+      dirents = await fsp.readdir(this.sessionsDir, { withFileTypes: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw err;
+    }
+
+    const file = await this.runExclusive(() => this.readRegistry());
+    const registered = new Set(Object.keys(file.workspaces));
+    const missing = dirents.filter((d) => d.isDirectory() && !registered.has(d.name));
+    if (missing.length === 0) return;
+
+    // Recover each bucket's root from the session index: the bucket dir name is
+    // encodeWorkDirKey(root), and the index maps sessionId -> workDir.
+    const index = await readSessionIndex(this.homeDir, this.sessionsDir);
+    const rootByKey = new Map<string, string>();
+    for (const entry of index.values()) {
+      rootByKey.set(encodeWorkDirKey(entry.workDir), entry.workDir);
+    }
+
+    for (const d of missing) {
+      const root = rootByKey.get(d.name);
+      if (root === undefined) continue;
+      try {
+        await this.createOrTouch(root);
+      } catch (err) {
+        // The project root may have been deleted while its sessions remain on
+        // disk; skip it so a stale bucket cannot break listing.
+        if (err instanceof WorkspaceRootNotFoundError) continue;
+        throw err;
+      }
+    }
   }
 
   async get(workspaceId: string): Promise<Workspace> {

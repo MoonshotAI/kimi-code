@@ -7,7 +7,7 @@
 <script setup lang="ts">
 import { computed, type ComponentPublicInstance, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { Session, WorkspaceGroup, WorkspaceView } from '../types';
+import type { WorkspaceGroup, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
 
 const { t } = useI18n();
@@ -26,8 +26,6 @@ const props = defineProps<{
   /** True while this group is the active drag source (drag-to-reorder). */
   dragging: boolean;
   isCollapsed: (id: string) => boolean;
-  isExpanded: (id: string) => boolean;
-  visibleSessions: (sessions: Session[], expanded: boolean, activeId?: string) => Session[];
 }>();
 
 const emit = defineEmits<{
@@ -39,7 +37,7 @@ const emit = defineEmits<{
   renameSession: [id: string, title: string];
   archiveSession: [id: string];
   forkSession: [id: string];
-  toggleExpand: [workspaceId: string];
+  loadMore: [workspaceId: string];
   confirmRename: [];
   cancelRename: [];
   updateRenameValue: [value: string];
@@ -157,7 +155,7 @@ function onHeaderDragStart(event: DragEvent): void {
     </div>
     <div v-show="!isCollapsed(group.workspace.id)" class="group-sessions">
       <SessionRow
-        v-for="s in visibleSessions(group.sessions, isExpanded(group.workspace.id), activeId)"
+        v-for="s in group.sessions"
         :key="s.id"
         :session="s"
         :active="s.id === activeId"
@@ -170,11 +168,16 @@ function onHeaderDragStart(event: DragEvent): void {
         @fork="emit('forkSession', $event)"
       />
       <button
-        v-if="!isExpanded(group.workspace.id) && visibleSessions(group.sessions, false, activeId).length < group.sessions.length"
+        v-if="group.hasMore || group.loadingMore"
         class="show-more"
-        @click.stop="emit('toggleExpand', group.workspace.id)"
+        :disabled="group.loadingMore"
+        @click.stop="emit('loadMore', group.workspace.id)"
       >
-        {{ t('sidebar.showMore', { count: group.sessions.length - visibleSessions(group.sessions, false, activeId).length }) }}
+        {{
+          group.loadingMore
+            ? t('sidebar.loadingMore')
+            : t('sidebar.showMore', { count: Math.max(0, group.workspace.sessionCount - group.sessions.length) })
+        }}
       </button>
       <div v-if="group.sessions.length === 0" class="group-empty">{{ t('sidebar.noSessions') }}</div>
     </div>

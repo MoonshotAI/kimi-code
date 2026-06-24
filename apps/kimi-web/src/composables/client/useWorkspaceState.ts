@@ -285,6 +285,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   // Backend max page size for GET /sessions. Bigger pages mean fewer round-trips
   // when draining the full session list.
   const SESSION_PAGE_SIZE = 100;
+  // Sessions fetched per workspace on first load — keeps the initial request
+  // count at (number of workspaces) and each response small.
+  const SESSIONS_INITIAL_PAGE_SIZE = 10;
+  // Sessions fetched per "load more" click within a workspace.
+  const SESSIONS_LOAD_MORE_SIZE = 30;
 
   /** Drain every page of sessions, newest first. A single global walk (instead of
    *  per-workspace) so sessions whose cwd is not a registered workspace root are
@@ -300,6 +305,113 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       beforeId = page.items[page.items.length - 1]!.id;
     }
     return items;
+  }
+
+  /** Fetch the first page of sessions for every known workspace concurrently.
+   *  Returns the merged, recency-sorted list and seeds per-workspace hasMore. */
+  async function loadInitialSessionsByWorkspace(): Promise<AppSession[]> {
+    const api = getKimiWebApi();
+    const workspaces = rawState.workspaces;
+    if (workspaces.length === 0) {
+      rawState.sessionsHasMoreByWorkspace = {};
+      rawState.sessionsFullyLoaded = false;
+      return [];
+    }
+    const pages = await Promise.all(
+      workspaces.map((w) =>
+        api
+          .listSessions({ workspaceId: w.id, pageSize: SESSIONS_INITIAL_PAGE_SIZE })
+          .then((page) => ({ workspaceId: w.id, page }))
+          .catch(() => ({
+            workspaceId: w.id,
+            page: { items: [] as AppSession[], hasMore: false },
+          })),
+      ),
+    );
+    const loaded: AppSession[] = [];
+    const hasMore: Record<string, boolean> = {};
+    for (const { workspaceId, page } of pages) {
+      loaded.push(...page.items);
+      const total =
+        workspaces.find((w) => w.id === workspaceId)?.sessionCount ?? page.items.length;
+      hasMore[workspaceId] = page.hasMore || page.items.length < total;
+    }
+    rawState.sessionsHasMoreByWorkspace = hasMore;
+    rawState.sessionsFullyLoaded = false;
+    // Keep rawState.sessions newest-first for readers that pick sessions[0]
+    // (e.g. auto-selecting the most recent session on first load).
+    loaded.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    return loaded;
+  }
+
+  /** Id (cursor) of the oldest currently-loaded session in a workspace, used as
+   *  `before_id` to fetch the next-older page. */
+  function oldestLoadedSessionId(workspaceId: string): string | undefined {
+    let oldest: AppSession | undefined;
+    for (const s of rawState.sessions) {
+      if (workspaceIdForSession(s) !== workspaceId) continue;
+      if (
+        oldest === undefined ||
+        new Date(s.updatedAt).getTime() < new Date(oldest.updatedAt).getTime()
+      ) {
+        oldest = s;
+      }
+    }
+    return oldest?.id;
+  }
+
+  /** Fetch the next page of sessions for a workspace (the "load more" button). */
+  async function loadMoreSessions(workspaceId: string): Promise<void> {
+    if (rawState.sessionsLoadingMoreByWorkspace[workspaceId]) return;
+    if (rawState.sessionsHasMoreByWorkspace[workspaceId] === false) return;
+    const beforeId = oldestLoadedSessionId(workspaceId);
+    if (beforeId === undefined) return;
+    rawState.sessionsLoadingMoreByWorkspace = {
+      ...rawState.sessionsLoadingMoreByWorkspace,
+      [workspaceId]: true,
+    };
+    try {
+      const page = await getKimiWebApi().listSessions({
+        workspaceId,
+        pageSize: SESSIONS_LOAD_MORE_SIZE,
+        beforeId,
+      });
+      // Append de-duped against the latest list so a concurrently added/removed
+      // session is respected.
+      const existing = new Set(rawState.sessions.map((s) => s.id));
+      const fresh = page.items.filter((s) => !existing.has(s.id));
+      if (fresh.length > 0) setSessions([...rawState.sessions, ...fresh]);
+      const loadedCount = rawState.sessions.filter(
+        (s) => workspaceIdForSession(s) === workspaceId,
+      ).length;
+      const total =
+        rawState.workspaces.find((w) => w.id === workspaceId)?.sessionCount ?? loadedCount;
+      rawState.sessionsHasMoreByWorkspace = {
+        ...rawState.sessionsHasMoreByWorkspace,
+        [workspaceId]: page.hasMore || loadedCount < total,
+      };
+    } catch (err) {
+      pushOperationFailure('loadMoreSessions', err);
+    } finally {
+      rawState.sessionsLoadingMoreByWorkspace = {
+        ...rawState.sessionsLoadingMoreByWorkspace,
+        [workspaceId]: false,
+      };
+    }
+  }
+
+  /** Drain every session via a single global walk so client-side search covers
+   *  all sessions, not just the first page per workspace. Triggered lazily on
+   *  first search; a no-op once the full list is loaded. */
+  async function loadAllSessions(): Promise<void> {
+    if (rawState.sessionsFullyLoaded) return;
+    const sessions = await listAllSessionsGlobal().catch(() => null);
+    if (sessions === null) return;
+    setSessions(sessions);
+    rawState.sessionsFullyLoaded = true;
+    const cleared: Record<string, boolean> = {};
+    for (const w of rawState.workspaces) cleared[w.id] = false;
+    rawState.sessionsHasMoreByWorkspace = cleared;
   }
 
   async function load(): Promise<void> {
@@ -320,13 +432,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       await checkAuth();
       await loadConfig();
 
-      // Drain every session via a single global walk so sessions whose cwd is not
-      // a registered workspace root are still reachable after a refresh.
-      const sessions = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
-      setSessions(sessions);
-
-      // Load workspaces (real if available, else derived from session cwds).
+      // Load workspaces first (registered + derived, each with a session_count),
+      // then fetch only the first page of sessions per workspace. This replaces
+      // the old full global walk: the sidebar now truncates by loading, not by
+      // hiding already-fetched rows.
       await loadWorkspaces();
+      const sessions = await loadInitialSessionsByWorkspace();
+      setSessions(sessions);
 
       // First load: pick the workspace of the most-recent session, unless the
       // user already has a persisted active workspace that still exists.
@@ -1599,6 +1711,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     listAllSessionsGlobal,
     load,
     loadWorkspaces,
+    loadMoreSessions,
+    loadAllSessions,
     selectWorkspace,
     openWorkspace,
     upsertWorkspacePreserveOrder,
