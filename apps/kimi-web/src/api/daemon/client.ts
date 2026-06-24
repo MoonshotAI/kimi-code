@@ -74,6 +74,8 @@ import type {
   WireProviderRefreshResult,
   WireSession,
   WireSessionAbortResult,
+  WireSessionWarning,
+  WireSessionWarningsResponse,
   WireSessionRuntimeStatus,
   WireSessionSnapshot,
   WireWorkspace,
@@ -392,6 +394,13 @@ export class DaemonKimiWebApi implements KimiWebApi {
       maxContextTokens: data.max_context_tokens ?? 0,
       contextUsage: data.context_usage ?? 0,
     };
+  }
+
+  async getSessionWarnings(sessionId: string): Promise<WireSessionWarning[]> {
+    const data = await this.http.get<WireSessionWarningsResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/warnings`,
+    );
+    return data.warnings ?? [];
   }
 
   async archiveSession(sessionId: string): Promise<{ archived: true }> {

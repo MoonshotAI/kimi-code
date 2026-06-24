@@ -9,6 +9,7 @@
     "build": "pnpm -r run build",
     "build:packages": "pnpm -r --filter './packages/*' run build",
     "dev:cli": "pnpm -C apps/kimi-code run dev",
+    "dev:cli:marketplace": "KIMI_CODE_DEV_MARKETPLACE_URL=https://code.kimi.com/kimi-code/plugins/marketplace.json pnpm -C apps/kimi-code run dev",
     "dev:web": "pnpm -C apps/kimi-web run dev",
     "dev:server": "pnpm -C apps/kimi-code run dev:server",
     "build:plugin-marketplace": "pnpm -C apps/kimi-code run build:plugin-marketplace",

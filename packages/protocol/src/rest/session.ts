@@ -110,6 +110,18 @@ export const sessionStatusResponseSchema = z.object({
 });
 export type SessionStatusResponse = z.infer<typeof sessionStatusResponseSchema>;
 
+export const sessionWarningSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  severity: z.enum(['info', 'warning', 'error']),
+});
+export type SessionWarning = z.infer<typeof sessionWarningSchema>;
+
+export const sessionWarningsResponseSchema = z.object({
+  warnings: z.array(sessionWarningSchema),
+});
+export type SessionWarningsResponse = z.infer<typeof sessionWarningsResponseSchema>;
+
 export const compactSessionRequestSchema = z.preprocess(
   (value) => value === undefined ? {} : value,
   z.object({

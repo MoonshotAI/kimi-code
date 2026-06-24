@@ -13,6 +13,7 @@ import {
   pageResponseSchema,
   sessionAbortResponseSchema,
   sessionSchema,
+  sessionWarningsResponseSchema,
   sessionStatusResponseSchema,
   sessionStatusSchema,
   startBtwSessionResponseSchema,
@@ -574,6 +575,37 @@ export function registerSessionsRoutes(
     },
   );
   app.get(statusRoute.path, statusRoute.options, statusRoute.handler as Parameters<SessionRouteHost['get']>[2]);
+
+  const sessionWarningsRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions/{session_id}/warnings',
+      params: sessionIdParamSchema,
+      success: { data: sessionWarningsResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+      },
+      description: 'Get session-level warnings (e.g. oversized AGENTS.md)',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      try {
+        const { session_id } = req.params;
+        const warnings = await ix.invokeFunction((a) =>
+          a.get(ISessionService).getSessionWarnings(session_id),
+        );
+        reply.send(okEnvelope({ warnings }, req.id));
+      } catch (err) {
+        sendMappedError(reply, req.id, err);
+      }
+    },
+  );
+  app.get(
+    sessionWarningsRoute.path,
+    sessionWarningsRoute.options,
+    sessionWarningsRoute.handler as Parameters<SessionRouteHost['get']>[2],
+  );
 
 }
 

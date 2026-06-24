@@ -257,6 +257,8 @@ describe('BackgroundManager — notification delivery', () => {
     const text = (content as Array<{ text: string }>)[0]!.text;
     expect(text).toContain('Background agent completed');
     expect(text).toContain('final subagent summary');
+    expect(text).toContain('<output-preview');
+    expect(text).not.toContain('<output-file');
   });
 
   it('steers completed process task notifications into the turn flow', async () => {
@@ -278,6 +280,25 @@ describe('BackgroundManager — notification delivery', () => {
     const text = (content as Array<{ text: string }>)[0]!.text;
     expect(text).toContain('Background process completed');
     expect(text).toContain('shell task completed.');
+  });
+
+  it('uses a bounded output preview when no persisted task output exists', async () => {
+    const { agent, manager } = createBackgroundManager();
+    const output = `early-output-marker\n${'x'.repeat(4_000)}\nfinal subagent line`;
+    const taskId = manager.registerTask(agentTask(Promise.resolve({ result: output }), 'agent task'));
+
+    await manager.wait(taskId);
+
+    await vi.waitFor(() => {
+      expect(agent.turn.steer).toHaveBeenCalledTimes(1);
+    });
+    const [content] = agent.turn.steer.mock.calls[0]!;
+    const text = (content as Array<{ text: string }>)[0]!.text;
+    expect(text).toContain('<output-preview');
+    expect(text).toContain('truncated="true"');
+    expect(text).toContain('final subagent line');
+    expect(text).not.toContain('early-output-marker');
+    expect(text).not.toContain('<output-file');
   });
 
   it('steers stopped process task notifications into the turn flow', async () => {
@@ -325,7 +346,9 @@ describe('BackgroundManager — notification delivery', () => {
       });
       const text = (content as Array<{ text: string }>)[0]!.text;
       expect(text).toContain('Background agent completed');
-      expect(text).toContain('restored subagent summary');
+      expect(text).not.toContain('restored subagent summary');
+      expect(text).toContain('<output-file');
+      expect(text).toContain(persistence.taskOutputFile('agent-done0000'));
     } finally {
       await rm(sessionDir, { recursive: true, force: true });
     }
@@ -355,13 +378,15 @@ describe('BackgroundManager — notification delivery', () => {
       });
       const text = (content as Array<{ text: string }>)[0]!.text;
       expect(text).toContain('Background process completed');
-      expect(text).toContain('restored shell output');
+      expect(text).not.toContain('restored shell output');
+      expect(text).toContain('<output-file');
+      expect(text).toContain(persistence.taskOutputFile('bash-done0000'));
     } finally {
       await rm(sessionDir, { recursive: true, force: true });
     }
   });
 
-  it('reads only a bounded output tail for restored process task notifications', async () => {
+  it('references persisted output without reading a tail for restored process notifications', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-bash-tail-'));
     try {
       const taskId = 'bash-large000';
@@ -381,10 +406,12 @@ describe('BackgroundManager — notification delivery', () => {
       });
       expect(readOutputSpy).not.toHaveBeenCalled();
       expect(snapshotSpy).toHaveBeenCalledWith(taskId, expect.any(Number));
-      expect(snapshotSpy.mock.calls[0]![1]).toBeLessThan(largeOutput.length);
+      expect(snapshotSpy.mock.calls[0]![1]).toBe(0);
       const [content] = agent.context.appendUserMessage.mock.calls[0]!;
       const text = (content as Array<{ text: string }>)[0]!.text;
-      expect(text).toContain('final output line');
+      expect(text).toContain('<output-file');
+      expect(text).toContain(persistence.taskOutputFile(taskId));
+      expect(text).not.toContain('final output line');
       expect(text).not.toContain('early-output-marker');
     } finally {
       await rm(sessionDir, { recursive: true, force: true });

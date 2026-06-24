@@ -5,32 +5,32 @@ import {
   isWaylandSession,
   isWSL,
   parseTargetList,
-  runCommand,
+  runCommandAsync,
   safeAvailableFormats,
-  type RunCommand,
+  type RunCommandAsync,
 } from './clipboard-common';
 import { clipboard, type ClipboardModule } from './clipboard-native';
 
 const DEFAULT_POWERSHELL_TIMEOUT_MS = 2000;
 
-function hasImageViaWlPaste(run: RunCommand): boolean {
-  const list = run('wl-paste', ['--list-types'], { timeoutMs: DEFAULT_LIST_TIMEOUT_MS });
+async function hasImageViaWlPaste(run: RunCommandAsync): Promise<boolean> {
+  const list = await run('wl-paste', ['--list-types'], { timeoutMs: DEFAULT_LIST_TIMEOUT_MS });
   if (!list.ok) return false;
   return parseTargetList(list.stdout).some((t) => isSupportedImageMimeType(t));
 }
 
-function hasImageViaXclip(run: RunCommand): boolean {
-  const targets = run('xclip', ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], {
+async function hasImageViaXclip(run: RunCommandAsync): Promise<boolean> {
+  const targets = await run('xclip', ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], {
     timeoutMs: DEFAULT_LIST_TIMEOUT_MS,
   });
   if (!targets.ok) return false;
   return parseTargetList(targets.stdout).some((t) => isSupportedImageMimeType(t));
 }
 
-function hasImageViaPowerShell(run: RunCommand): boolean {
+async function hasImageViaPowerShell(run: RunCommandAsync): Promise<boolean> {
   const script =
     "Add-Type -AssemblyName System.Windows.Forms; $img = [System.Windows.Forms.Clipboard]::GetImage(); ($img -ne $null)";
-  const result = run('powershell.exe', ['-NoProfile', '-Command', script], {
+  const result = await run('powershell.exe', ['-NoProfile', '-Command', script], {
     timeoutMs: DEFAULT_POWERSHELL_TIMEOUT_MS,
   });
   if (!result.ok) return false;
@@ -58,12 +58,12 @@ export async function clipboardHasImage(options?: {
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   clipboard?: ClipboardModule | null;
-  runCommand?: RunCommand;
+  runCommand?: RunCommandAsync;
 }): Promise<boolean> {
   const env = options?.env ?? process.env;
   const platform = options?.platform ?? process.platform;
   const clip = options?.clipboard ?? clipboard;
-  const run = options?.runCommand ?? runCommand;
+  const run = options?.runCommand ?? runCommandAsync;
 
   if (env['TERMUX_VERSION'] !== undefined) return false;
 
@@ -71,19 +71,19 @@ export async function clipboardHasImage(options?: {
     const wayland = isWaylandSession(env);
     const wsl = isWSL(env);
 
-    let xclipResult: boolean | undefined;
-    const xclipHasImage = (): boolean => {
+    let xclipResult: Promise<boolean> | undefined;
+    const xclipHasImage = (): Promise<boolean> => {
       xclipResult ??= hasImageViaXclip(run);
       return xclipResult;
     };
 
     if (wayland || wsl) {
-      if (hasImageViaWlPaste(run)) return true;
-      if (xclipHasImage()) return true;
+      if (await hasImageViaWlPaste(run)) return true;
+      if (await xclipHasImage()) return true;
     }
-    if (wsl && hasImageViaPowerShell(run)) return true;
+    if (wsl && (await hasImageViaPowerShell(run))) return true;
     if (!wayland) {
-      if (xclipHasImage()) return true;
+      if (await xclipHasImage()) return true;
       if (await hasImageViaNative(clip)) return true;
     }
     return false;

@@ -42,6 +42,7 @@ type RuntimeMcpClient = StdioMcpClient | HttpMcpClient | SseMcpClient;
 
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
+  readonly stdioCwd?: string;
   /**
    * Optional OAuth orchestrator. When provided, remote servers without a
    * static bearer token participate in the OAuth-via-synthetic-tool flow:
@@ -331,7 +332,7 @@ export class McpConnectionManager {
   private createClient(config: McpServerConfig, name: string): RuntimeMcpClient {
     const toolCallTimeoutMs = config.toolTimeoutMs;
     if (config.transport === 'stdio') {
-      return new StdioMcpClient(config, { toolCallTimeoutMs });
+      return new StdioMcpClient(config, { toolCallTimeoutMs, defaultCwd: this.options.stdioCwd });
     }
     if (config.transport === 'sse') {
       return new SseMcpClient(config, {

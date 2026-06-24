@@ -329,7 +329,6 @@ export function toAppQuestionRequest(wire: WireQuestionRequest): AppQuestionRequ
     turnId: wire.turn_id,
     toolCallId: wire.tool_call_id,
     questions: wire.questions.map(toAppQuestionItem),
-    expiresAt: wire.expires_at,
     createdAt: wire.created_at,
   };
 }
@@ -643,13 +642,6 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         sessionId: w.session_id,
         questionId: w.payload.question_id,
         dismissedAt: w.payload.dismissed_at,
-      };
-
-    case 'event.question.expired':
-      return {
-        type: 'questionExpired',
-        sessionId: w.session_id,
-        questionId: w.payload.question_id,
       };
 
     // ----- Background tasks -----
