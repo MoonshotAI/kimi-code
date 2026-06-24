@@ -2,13 +2,12 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
+import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import { testAgent } from './harness';
 import { InMemoryWireRecordPersistence } from '../../../src/services/agent';
 import { SessionSkillRegistry, type SkillCatalog, type SkillDefinition } from '../../../src/skill';
-import { SkillTool } from '../../../src/tools/builtin/collaboration/skill-tool';
-import { executeTool } from '../../tools/fixtures/execute-tool';
 import { testKaos } from '../../fixtures/test-kaos';
 
 function makeSkill(name: string, metadata: SkillDefinition['metadata'] = {}): SkillDefinition {
@@ -43,7 +42,7 @@ describe('ToolManager SkillTool registration', () => {
     expect(ctx.tools.resolve('Skill')).toBeUndefined();
   });
 
-  it.skip('exposes Skill when at least one inline skill is model-invocable', () => {
+  it('exposes Skill when at least one inline skill is model-invocable', () => {
     const skills = new SessionSkillRegistry();
     skills.register(makeSkill('review'));
     skills.register(makeSkill('flow-only', { type: 'flow' }));
@@ -55,10 +54,13 @@ describe('ToolManager SkillTool registration', () => {
     const skillTool = ctx.tools.resolve('Skill');
 
     expect(skillInfo).toMatchObject({ name: 'Skill', active: true, source: 'builtin' });
-    expect(skillTool).toBeInstanceOf(SkillTool);
+    expect(skillTool).toMatchObject({
+      name: 'Skill',
+      description: expect.stringContaining('Invoke a registered skill'),
+    });
   });
 
-  it.skip('accepts a structural skill registry implementation', () => {
+  it('accepts a structural skill registry implementation', () => {
     const skill = makeSkill('review');
     const skills: SkillCatalog = {
       getSkill: (name) => (name === skill.name ? skill : undefined),
@@ -73,10 +75,10 @@ describe('ToolManager SkillTool registration', () => {
     ctx.configure({ tools: ['Skill'] });
 
     expect(skills.getSkillRoots()).toEqual(['/skills/review']);
-    expect(ctx.tools.resolve('Skill')).toBeInstanceOf(SkillTool);
+    expect(ctx.tools.resolve('Skill')).toMatchObject({ name: 'Skill' });
   });
 
-  it.skip('persists model-invoked inline skill reminders through agent wire', async () => {
+  it('persists model-invoked inline skill reminders through agent wire', async () => {
     const skills = new SessionSkillRegistry();
     skills.register(makeSkill('review'));
     const wireRecords: any[] = [];
@@ -86,20 +88,29 @@ describe('ToolManager SkillTool registration', () => {
     const ctx = testAgent({ skills, persistence });
     ctx.configure({ tools: ['Skill'] });
 
-    const skillTool = ctx.tools.resolve('Skill');
-    if (!(skillTool instanceof SkillTool)) {
-      throw new Error('Expected SkillTool to be active');
-    }
+    const skillCall: ToolCall = {
+      type: 'function',
+      id: 'call_skill',
+      name: 'Skill',
+      arguments: '{"skill":"review"}',
+    };
+    ctx.mockNextResponse({ type: 'text', text: 'I will load the review skill.' }, skillCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Review skill loaded.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Review this change' }] });
+    await ctx.untilTurnEnd();
 
-    const result = await executeTool(skillTool, {
-      turnId: '0',
-      toolCallId: 'call_skill',
-      args: { skill: 'review' },
-      signal: new AbortController().signal,
-    });
-
-    expect(result.output).toContain('loaded inline');
-    expect(wireRecords.find((record) => record.type === 'context.splice')).toMatchObject({
+    const skillSplice = wireRecords.find(
+      (record) =>
+        record.type === 'context.splice' &&
+        record.messages?.some((message: any) =>
+          message.content?.some(
+            (part: any) =>
+              part.type === 'text' &&
+              part.text.includes('<kimi-skill-loaded name="review"'),
+          ),
+        ),
+    );
+    expect(skillSplice).toMatchObject({
       type: 'context.splice',
       messages: [
         expect.objectContaining({
@@ -116,15 +127,27 @@ describe('ToolManager SkillTool registration', () => {
               ].join('\n'),
             },
           ],
-          origin: {
+          origin: expect.objectContaining({
             kind: 'skill_activation',
             skillName: 'review',
             trigger: 'model-tool',
-          },
+          }),
         }),
       ],
     });
+    expect(wireRecords.find((record) => record.type === 'skill.activate')).toMatchObject({
+      type: 'skill.activate',
+      origin: {
+        kind: 'skill_activation',
+        skillName: 'review',
+        trigger: 'model-tool',
+      },
+    });
     expect(ctx.context.getHistory().at(-1)).toMatchObject({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Review skill loaded.' }],
+    });
+    expect(ctx.context.getHistory().at(-2)).toMatchObject({
       role: 'user',
       origin: {
         kind: 'skill_activation',
@@ -133,7 +156,7 @@ describe('ToolManager SkillTool registration', () => {
     });
   });
 
-  it.skip('exposes session skills after the main agent is created', async () => {
+  it('exposes session skills after the main agent is created', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'kimi-core-skill-tool-refresh-'));
     try {
       const homeDir = join(tmp, 'home');
@@ -161,7 +184,7 @@ describe('ToolManager SkillTool registration', () => {
       });
       ctx.configure({ tools: ['Skill'] });
 
-      expect(ctx.tools.resolve('Skill')).toBeInstanceOf(SkillTool);
+      expect(ctx.tools.resolve('Skill')).toMatchObject({ name: 'Skill' });
     } finally {
       await rm(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
     }

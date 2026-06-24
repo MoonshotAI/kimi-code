@@ -42,6 +42,12 @@ const GOAL_CANCELLED_REMINDER = [
   'Handle the next user request normally unless the user starts or resumes a goal.',
 ].join(' ');
 
+const GOAL_FORK_CLEARED_REMINDER = [
+  'This fork does not have a current goal.',
+  'Ignore earlier active-goal reminders from the source session.',
+  'Handle requests normally unless the user starts a new goal.',
+].join(' ');
+
 export interface GoalServiceOptions {
   readonly enabled?: boolean | (() => boolean);
   readonly injection?: GoalInjectionOptions;
@@ -83,6 +89,11 @@ export class GoalService extends Disposable implements IGoalService {
         },
         dynamicInjector,
       ),
+    );
+    this._register(
+      wireRecord.register('forked', (record) => {
+        this.restoreForked(record);
+      }),
     );
     this._register(
       wireRecord.register('goal.create', (record) => {
@@ -390,6 +401,13 @@ export class GoalService extends Disposable implements IGoalService {
 
   private restoreClear(): void {
     this.state = undefined;
+  }
+
+  private restoreForked(_record: WireRecord<'forked'>): void {
+    const hadGoal = this.state !== undefined;
+    this.state = undefined;
+    if (!hadGoal) return;
+    this.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, 'goal_fork_cleared');
   }
 
   private clearInternal(

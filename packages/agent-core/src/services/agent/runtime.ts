@@ -127,9 +127,8 @@ import {
 } from './replayBuilder/replayBuilder';
 import { ReplayBuilderService } from './replayBuilder/replayBuilderService';
 import { IAgentRPCService } from './rpc/rpc';
-import {
-  IAgentSkillService,
-} from './skill/skill';
+import { IAgentSkillService } from './skill/skill';
+import { ModelSkillTool } from './skill/modelSkillTool';
 import { AgentSkillService } from './skill/skillService';
 import {
   ISubagentHost,
@@ -277,6 +276,11 @@ export class AgentRuntime extends Disposable {
       accessor.get(IPermissionModeService).mode;
       // oxlint-disable-next-line no-unused-expressions
       accessor.get(IPlanModeService).isActive;
+      // Force-construct UserToolService so its wireRecord handlers
+      // (tools.register_user_tool / tools.unregister_user_tool) are
+      // registered before records are replayed below.
+      // oxlint-disable-next-line no-unused-expressions
+      accessor.get(IUserToolService).register;
       // Force-construct PermissionRulesService so its wireRecord handlers
       // (permission.rules.add / permission.record_approval_result) are
       // registered before records are replayed below. accessor.get() alone
@@ -284,6 +288,8 @@ export class AgentRuntime extends Disposable {
       // member is what actually instantiates the service.
       // oxlint-disable-next-line no-unused-expressions
       accessor.get(IPermissionRulesService).rules;
+      // Force-construct GoalService so goal.* and forked restore handlers are registered.
+      accessor.get(IGoalService).getGoal();
     });
     const replayBuilder = this.get(IReplayBuilderService);
     replayBuilder.postRestoring = true;
@@ -410,7 +416,7 @@ function initializeRuntimeBuiltinTools(
   options: AgentRuntimeOptions,
 ): void {
   // Plan/todo/cron/swarm/MCP/user tools are registered by their owning services.
-  // Agent/media/goal/question/skill tools still depend on unmigrated old-Agent paths.
+  // Agent/media/goal/question tools still depend on unmigrated old-Agent paths.
   const registry = getService(instantiation, IToolRegistry);
   const background = getService(instantiation, IBackgroundService);
   const profile = getService(instantiation, IProfileService);
@@ -451,6 +457,9 @@ function initializeRuntimeBuiltinTools(
   }
   if (toolServices?.urlFetcher !== undefined) {
     registry.register(new FetchURLTool(toolServices.urlFetcher));
+  }
+  if ((options.skills?.listInvocableSkills().length ?? 0) > 0) {
+    registry.register(new ModelSkillTool(getService(instantiation, IAgentSkillService)));
   }
 }
 

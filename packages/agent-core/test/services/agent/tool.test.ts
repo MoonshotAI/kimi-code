@@ -343,6 +343,7 @@ describe('Agent tools', () => {
         assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "moon" }
         tool[call_lookup]: text "moon-result"
     `);
+    await ctx.expectResumeMatches();
 
     await ctx.rpc.unregisterTool({ name: 'Lookup' });
     ctx.mockNextResponse({ type: 'text', text: 'No lookup tool is available.' });

@@ -23,6 +23,7 @@ export interface IGoalService {
 
 declare module '../types' {
   interface WireRecordMap {
+    forked: {};
     'goal.create': {
       goalId: string;
       objective: string;

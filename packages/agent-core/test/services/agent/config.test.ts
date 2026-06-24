@@ -244,6 +244,7 @@ describe('Agent config', () => {
         assistant: text "Still using the original turn config."
         user: text "Start a fresh turn"
     `);
+    await ctx.expectResumeMatches();
   });
 });
 

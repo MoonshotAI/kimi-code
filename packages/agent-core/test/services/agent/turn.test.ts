@@ -308,7 +308,7 @@ describe('Agent turn flow', () => {
     await ctx.expectResumeMatches();
   });
 
-  it.skip('keeps manual swarm mode active after a turn completes normally', async () => {
+  it('keeps manual swarm mode active after a turn completes normally', async () => {
     const ctx = testAgent();
     ctx.configure();
     ctx.mockNextResponse({ type: 'text', text: 'swarm done' });
@@ -322,7 +322,7 @@ describe('Agent turn flow', () => {
     await ctx.expectResumeMatches();
   });
 
-  it.skip('exits task swarm mode after a turn completes normally', async () => {
+  it('exits task swarm mode after a turn completes normally', async () => {
     const ctx = testAgent();
     ctx.configure();
     ctx.mockNextResponse({ type: 'text', text: 'swarm done' });
@@ -352,7 +352,7 @@ describe('Agent turn flow', () => {
     await ctx.expectResumeMatches();
   });
 
-  it.skip('exits task swarm mode when the swarm turn fails', async () => {
+  it('exits task swarm mode when the swarm turn fails', async () => {
     const ctx = testAgent();
     ctx.configure();
 
@@ -364,7 +364,7 @@ describe('Agent turn flow', () => {
     expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBeGreaterThan(-1);
   });
 
-  it.skip('exits task swarm mode when the user cancels the swarm turn', async () => {
+  it('exits task swarm mode when the user cancels the swarm turn', async () => {
     const ctx = testAgent({ generate: abortableGenerate });
     ctx.configure();
 
@@ -379,7 +379,7 @@ describe('Agent turn flow', () => {
     expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBeGreaterThan(-1);
   });
 
-  it.skip('enters silent swarm mode when the agent calls AgentSwarm', async () => {
+  it('enters silent swarm mode when the agent calls AgentSwarm', async () => {
     const runQueued = vi.fn(async <T>(
       tasks: readonly QueuedSubagentTask<T>[],
     ): Promise<Array<QueuedSubagentRunResult<T>>> => {

@@ -193,7 +193,7 @@ describe('AgentRecords persistence metadata', () => {
     await expect(records.restore()).rejects.toThrow('Missing wire migration for version 0.9');
   });
 
-  it.skip('restores goal.* records during replay', async () => {
+  it('restores goal.* records during replay', async () => {
     const persistence = new InMemoryWireRecordPersistence([
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
       {
@@ -234,7 +234,7 @@ describe('AgentRecords persistence metadata', () => {
     ]);
   });
 
-  it.skip('restores forked records as fork boundaries that clear copied goals', async () => {
+  it('restores forked records as fork boundaries that clear copied goals', async () => {
     const persistence = new InMemoryWireRecordPersistence([
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
       {
@@ -257,7 +257,7 @@ describe('AgentRecords persistence metadata', () => {
     expect(JSON.stringify(reminder?.content)).toContain('This fork does not have a current goal.');
   });
 
-  it.skip('keeps goals created after the forked boundary', async () => {
+  it('keeps goals created after the forked boundary', async () => {
     const persistence = new InMemoryWireRecordPersistence([
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
       {

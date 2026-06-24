@@ -343,6 +343,7 @@ export {
   IAgentSkillService,
   type AgentSkillServiceOptions,
   type AgentSkillServiceOptions as SkillOptions,
+  type ModelSkillActivationInput,
   type SkillActivationInput,
 } from './skill/skill';
 export {

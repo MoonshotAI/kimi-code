@@ -154,4 +154,5 @@ it('runs an agent turn through registered tool approval and execution', async ()
       assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "moon" }
       tool[call_lookup]: text "lookup-result"
   `);
+  await ctx.expectResumeMatches();
 });

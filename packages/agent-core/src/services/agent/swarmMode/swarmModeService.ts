@@ -50,11 +50,12 @@ export class SwarmModeService extends Disposable implements ISwarmMode {
     );
     if (turnRunner !== undefined) {
       this._register(
-        turnRunner.hooks.onEnded.register('swarm-mode-auto-exit', async (_ctx, next) => {
-          await next();
+        turnRunner.hooks.onEnded.register('swarm-mode-auto-exit', (_ctx, next) => {
+          const done = next();
           if (this.shouldAutoExit) {
             this.exit();
           }
+          return done;
         }),
       );
     }
@@ -144,14 +145,12 @@ export class SwarmModeService extends Disposable implements ISwarmMode {
 
   private removeLastSwarmReminder(): boolean {
     const history = this.context.getHistory();
-    for (let index = history.length - 1; index >= 0; index--) {
-      const message = history[index];
-      if (message?.origin?.kind !== 'injection') continue;
-      if (message.origin.variant !== 'swarm_mode') continue;
-      this.context.spliceHistory(index, 1);
-      return true;
-    }
-    return false;
+    const lastIndex = history.length - 1;
+    const last = history[lastIndex];
+    if (last?.origin?.kind !== 'injection') return false;
+    if (last.origin.variant !== 'swarm_mode') return false;
+    this.context.spliceHistory(lastIndex, 1);
+    return true;
   }
 }
 

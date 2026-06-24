@@ -1102,8 +1102,13 @@ describe('Agent resume', () => {
     await ctx.expectResumeMatches();
   });
 
-  it.skip('rebuilds goal completion replay cards without adding model-visible context', async () => {
+  it('rebuilds goal completion replay cards without adding model-visible context', async () => {
     const persistence = new RecordingAgentPersistence([
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
       {
         type: 'goal.create',
         goalId: 'goal-1',
