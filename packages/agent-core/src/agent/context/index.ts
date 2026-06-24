@@ -175,6 +175,26 @@ export class ContextMemory {
         tokensAfter: result.tokensAfter,
       },
     });
+    const retained = this._history.slice(result.compactedCount);
+    // Defensive: the retained suffix must never begin with a tool result. A
+    // tool result always follows its owning assistant `tool_calls`, so a
+    // leading tool result means that assistant was folded into the summary —
+    // i.e. the split index landed inside a (parallel) tool batch. This happens
+    // when `compactedCount` was computed against a different history than the
+    // one it is applied to: notably on resume, where a parallel tool batch that
+    // was still in flight when the count was computed is fully materialized on
+    // replay, so the recorded index now falls between sibling results. Sending
+    // such an orphan makes the provider reject every subsequent turn with
+    // `tool_call_id not found`, permanently bricking the session. Drop the
+    // orphaned leading tool results — the summary already covers their call.
+    let firstKept = 0;
+    while (retained[firstKept]?.role === 'tool') firstKept += 1;
+    if (firstKept > 0) {
+      this.agent.log.warn('compaction dropped orphaned leading tool results', {
+        droppedCount: firstKept,
+        compactedCount: result.compactedCount,
+      });
+    }
     this._history = [
       {
         role: 'assistant',
@@ -182,7 +202,7 @@ export class ContextMemory {
         toolCalls: [],
         origin: { kind: 'compaction_summary' },
       },
-      ...this._history.slice(result.compactedCount),
+      ...retained.slice(firstKept),
     ];
     this.openSteps.clear();
     this.flushDeferredMessagesIfToolExchangeClosed();
