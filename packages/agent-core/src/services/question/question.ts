@@ -66,7 +66,10 @@ export interface IQuestionService {
    * Resolves with the in-process `QuestionResult` (null = no handler / fully
    * dismissed). Concrete impls own timeout policy.
    */
-  request(req: InProcessQuestionRequest & { sessionId: string; agentId: string }): Promise<QuestionResult>;
+  request(
+    req: InProcessQuestionRequest & { sessionId: string; agentId: string },
+    options?: { signal?: AbortSignal },
+  ): Promise<QuestionResult>;
 
   /**
    * Called by the answer-side (REST handler / TUI / mock) to settle a pending
@@ -104,8 +107,6 @@ export interface QuestionToBrokerRequestParams {
   readonly sessionId: string;
   /** `createdAt` ISO string; broker passes `new Date().toISOString()`. */
   readonly createdAt: string;
-  /** `expiresAt` ISO string; broker computes `createdAt + 60s`. */
-  readonly expiresAt: string;
 }
 
 /**
@@ -161,7 +162,6 @@ export function toBrokerRequest(
     session_id: params.sessionId,
     questions: req.questions.map((q, i) => buildItem(q, i)),
     created_at: params.createdAt,
-    expires_at: params.expiresAt,
   };
   if (req.turnId !== undefined) out.turn_id = req.turnId;
   if (req.toolCallId !== undefined) out.tool_call_id = req.toolCallId;

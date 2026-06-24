@@ -37,7 +37,6 @@ interface QuestionRequestedPayload {
     options: Array<{ id: string; label: string }>;
   }>;
   created_at: string;
-  expires_at: string;
 }
 
 async function main() {
