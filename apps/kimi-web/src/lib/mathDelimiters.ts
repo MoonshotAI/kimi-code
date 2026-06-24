@@ -25,6 +25,10 @@
 const FENCED_CODE_RE = /(^[ \t]{0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^[ \t]{0,3}\2[ \t]*(?=\n|$))/gm;
 const INLINE_CODE_RE = /(`+)(?=[^`])[\s\S]*?\1/g;
 const BLOCK_MATH_RE = /\$\$[\s\S]*?\$\$/g;
+// A 4-space / tab indented line is a Markdown indented code block; protect
+// each such line so its dollars are not rewritten (code renders backslashes
+// literally, so `\$HOME` would show instead of `$HOME`).
+const INDENTED_CODE_RE = /^(?: {4}|\t)[^\n]*/gm;
 const PLACEHOLDER_RE = /\u0000(\d+)\u0000/g;
 const ASCII_ALNUM = /[A-Za-z0-9]/;
 
@@ -36,13 +40,22 @@ function protect(src: string): { text: string; protected: string[] } {
     return `\u0000${stash.length - 1}\u0000`;
   };
   let text = src.replace(FENCED_CODE_RE, save);
+  text = text.replace(INDENTED_CODE_RE, save);
   text = text.replace(INLINE_CODE_RE, save);
   text = text.replace(BLOCK_MATH_RE, save);
   return { text, protected: stash };
 }
 
 function restore(text: string, stash: string[]): string {
-  return text.replace(PLACEHOLDER_RE, (_, n) => stash[Number(n)] ?? '');
+  // Protected regions can nest (e.g. inline code that looks like display math,
+  // or an indented line containing a code span), so a single pass may leave
+  // placeholders inside a just-restored region. Repeat until stable.
+  let prev = '';
+  while (prev !== text) {
+    prev = text;
+    text = text.replace(PLACEHOLDER_RE, (_, n) => stash[Number(n)] ?? '');
+  }
+  return text;
 }
 
 /** A `$` at `i` can open inline math: tight on the right, bounded on the left. */

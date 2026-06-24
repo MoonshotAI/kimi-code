@@ -148,6 +148,15 @@ describe('escapeProseDollars', () => {
     expect(escapeProseDollars(fenced)).toBe(fenced);
   });
 
+  it('does not touch dollars inside indented code blocks', () => {
+    // A 4-space indented line is a code block; the dollar must stay literal.
+    expect(escapeProseDollars('    echo $HOME')).toBe('    echo $HOME');
+    const block = 'before\n\n    echo $HOME\n    echo $PATH\n\nafter';
+    expect(escapeProseDollars(block)).toBe(block);
+    // Tab-indented code is protected too.
+    expect(escapeProseDollars('\techo $HOME')).toBe('\techo $HOME');
+  });
+
   it('does not double-escape already-escaped dollars', () => {
     expect(escapeProseDollars('literal \\$5 here')).toBe('literal \\$5 here');
   });
