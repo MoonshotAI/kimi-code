@@ -2,12 +2,12 @@
 // Minimal server-transport credential store for the Web UI.
 //
 // The local server now requires a bearer credential on every non-bypass API
-// and WebSocket call (per-start token, or the KIMI_CODE_PASSWORD password).
-// The Web UI obtains that credential in one of two ways:
+// and WebSocket call (the persistent server token, or the KIMI_CODE_PASSWORD
+// password). The Web UI obtains that credential in one of two ways:
 //   1. From the URL fragment (`#token=<...>`) that `kimi web` appends when it
 //      opens the browser — read once at boot, then scrubbed from the URL so it
 //      does not linger in history or screenshots.
-//   2. From a password the user types into the ServerAuthDialog modal.
+//   2. From a token the user types into the ServerAuthDialog modal.
 //
 // The credential is held in memory and mirrored to sessionStorage so a page
 // refresh keeps working without re-prompting (sessionStorage is tab-scoped and

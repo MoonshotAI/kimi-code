@@ -1,13 +1,14 @@
 <!-- apps/kimi-web/src/components/ServerAuthDialog.vue -->
-<!-- Minimal password prompt shown when the Web UI has no server-transport
+<!-- Minimal token prompt shown when the Web UI has no server-transport
      credential, or when the server rejects it (HTTP 401). On submit we store
-     the password as the bearer credential and reload so every REST/WS call
-     picks it up. Light only, monospace-forward, Kimi blue #1565C0, no emoji. -->
+     the token as the bearer credential and reload so every REST/WS call picks
+     it up. The overlay is fully opaque so it covers the whole page (nothing
+     underneath shows through). Light only, Kimi blue #1565C0, no emoji. -->
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
 import { setCredential } from '../api/daemon/serverAuth';
 
-const password = ref('');
+const credential = ref('');
 const inputRef = ref<HTMLInputElement | null>(null);
 const submitting = ref(false);
 
@@ -16,7 +17,7 @@ onMounted(() => {
 });
 
 function submit(): void {
-  const value = password.value;
+  const value = credential.value;
   if (!value || submitting.value) return;
   submitting.value = true;
   setCredential(value);
@@ -35,25 +36,25 @@ function onKeydown(e: KeyboardEvent): void {
 <template>
   <div class="server-auth-overlay" role="dialog" aria-modal="true" aria-labelledby="server-auth-title">
     <div class="server-auth-card">
-      <h1 id="server-auth-title" class="server-auth-title">Server password required</h1>
+      <h1 id="server-auth-title" class="server-auth-title">Server token required</h1>
       <p class="server-auth-hint">
-        This server is protected. Enter the password set via
-        <code>KIMI_CODE_PASSWORD</code> when the server was started.
+        This server is protected. Enter the bearer token printed when the server
+        started (or the password set via <code>KIMI_CODE_PASSWORD</code>).
       </p>
       <input
         ref="inputRef"
-        v-model="password"
+        v-model="credential"
         type="password"
         class="server-auth-input"
         autocomplete="current-password"
-        placeholder="Password"
+        placeholder="Token"
         :disabled="submitting"
         @keydown="onKeydown"
       />
       <button
         type="button"
         class="server-auth-button"
-        :disabled="!password || submitting"
+        :disabled="!credential || submitting"
         @click="submit"
       >
         {{ submitting ? 'Connecting…' : 'Connect' }}
@@ -70,7 +71,9 @@ function onKeydown(e: KeyboardEvent): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
+  /* Fully opaque so the dialog covers the whole page — nothing underneath
+     (e.g. the login page) shows through. */
+  background: var(--bg, #ffffff);
   font-family: 'Inter', system-ui, sans-serif;
 }
 
