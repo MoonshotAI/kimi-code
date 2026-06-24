@@ -1423,6 +1423,30 @@ command = "vim"
     expect(session.cancelCompaction).toHaveBeenCalledTimes(1);
   });
 
+  it('clears editor text before cancelling compaction on Ctrl-C', async () => {
+    const { driver, session } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        trigger: 'manual',
+      } as Event,
+      vi.fn(),
+    );
+    driver.state.editor.setText('draft while compacting');
+
+    driver.state.editor.onCtrlC?.();
+
+    expect(driver.state.editor.getText()).toBe('');
+    expect(session.cancelCompaction).not.toHaveBeenCalled();
+    expect(driver.state.appState.isCompacting).toBe(true);
+
+    driver.state.editor.onCtrlC?.();
+
+    expect(session.cancelCompaction).toHaveBeenCalledTimes(1);
+  });
+
   it('dispatches the next queued message after compaction is cancelled', async () => {
     vi.useFakeTimers();
     try {

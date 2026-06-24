@@ -72,6 +72,9 @@ export class EditorKeyboardController {
 
       if (host.state.appState.isCompacting) {
         this.clearPendingExit();
+
+        if (this.clearEditorTextIfPresent()) return;
+
         this.cancelCurrentCompaction();
         return;
       }
@@ -88,10 +91,7 @@ export class EditorKeyboardController {
       if (host.state.appState.streamingPhase !== 'idle') {
         this.clearPendingExit();
 
-        if (editor.getText().length > 0) {
-          editor.setText('');
-          return;
-        }
+        if (this.clearEditorTextIfPresent()) return;
 
         this.cancelCurrentStream();
         return;
@@ -252,6 +252,13 @@ export class EditorKeyboardController {
 
     this.pendingExit = { kind, timer };
     this.host.state.ui.requestRender();
+  }
+
+  private clearEditorTextIfPresent(): boolean {
+    const editor = this.host.state.editor;
+    if (editor.getText().length === 0) return false;
+    editor.setText('');
+    return true;
   }
 
   private cancelCurrentStream(): void {
