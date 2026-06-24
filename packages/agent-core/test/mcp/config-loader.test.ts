@@ -81,10 +81,12 @@ describe('loadMcpServers', () => {
     expect(servers['shared']).toEqual({
       transport: 'stdio',
       command: 'shared-project',
+      cwd,
     });
     expect(servers['userOnly']).toEqual({
       transport: 'stdio',
       command: 'user-only',
+      cwd,
     });
     expect(servers['local']).toEqual({
       transport: 'http',
@@ -129,9 +131,10 @@ describe('loadMcpServers', () => {
     expect(servers['shared']).toEqual({
       transport: 'stdio',
       command: 'shared-project',
+      cwd,
     });
     expect(servers['rootOnly']).toEqual({ transport: 'stdio', command: 'root-only', cwd: repoRoot });
-    expect(servers['userOnly']).toEqual({ transport: 'stdio', command: 'user-only' });
+    expect(servers['userOnly']).toEqual({ transport: 'stdio', command: 'user-only', cwd });
     expect(servers['projectOnly']).toEqual({ transport: 'http', url: 'https://mcp.example.com' });
   });
 
@@ -225,6 +228,7 @@ describe('loadMcpServers', () => {
       transport: 'stdio',
       command: 'npx',
       args: ['-y', '@modelcontextprotocol/server-github'],
+      cwd,
     });
   });
 
@@ -275,7 +279,7 @@ describe('loadMcpServers', () => {
     process.env['KIMI_CODE_HOME'] = home;
     try {
       const servers = await loadMcpServers({ cwd });
-      expect(servers['from_env']).toEqual({ transport: 'stdio', command: 'env-cmd' });
+      expect(servers['from_env']).toEqual({ transport: 'stdio', command: 'env-cmd', cwd });
     } finally {
       if (saved === undefined) delete process.env['KIMI_CODE_HOME'];
       else process.env['KIMI_CODE_HOME'] = saved;
