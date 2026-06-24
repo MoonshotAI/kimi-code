@@ -166,16 +166,14 @@ export async function handleRunCommand(
     await startServerDaemon(parsed);
     return;
   }
-  const startedAt = Date.now();
   // Resolve the persistent token once: it is printed in the ready banner and
   // rides in the opened Web UI URL's `#token=` fragment (M5.5). Falls back to
   // the plain origin / no token line when unavailable.
   const writeReady = (origin: string): void => {
-    const readyMs = Date.now() - startedAt;
     const token = deps.resolveToken?.();
     deps.stdout.write(
       parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-        ? formatReadyBanner(origin, readyMs, parsed.host, {
+        ? formatReadyBanner(origin, parsed.host, {
             token,
             networkAddresses: deps.networkAddresses,
           })
@@ -388,7 +386,6 @@ interface FormatReadyBannerOptions {
 
 function formatReadyBanner(
   origin: string,
-  readyMs: number,
   host: string,
   opts: FormatReadyBannerOptions = {},
 ): string {
@@ -411,11 +408,12 @@ function formatReadyBanner(
   const logo = ['▐█▛█▛█▌', '▐█████▌'] as const;
   const lines: string[] = [
     '',
-    `  ${primary(logo[0])}  ${title('Kimi server ready')}`,
+    `  ${primary(logo[0])}  ${title('Kimi server ready')}  ${dim(getVersion())}`,
     `  ${primary(logo[1])}  ${dim('Local web UI is available from this machine.')}`,
     '',
   ];
 
+  // Access links.
   for (const { label: text, url: href } of accessUrlLines(
     host,
     port,
@@ -431,10 +429,10 @@ function formatReadyBanner(
     lines.push(`  ${label('Token:    ')}${opts.token}`);
     lines.push('');
   }
+
+  // Auxiliary controls last.
   lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
   lines.push(`  ${label('Stop:     ')}${muted('kimi server kill')}`);
-  lines.push(`  ${label('Ready:    ')}${muted(`${String(Math.max(0, readyMs))} ms`)}`);
-  lines.push(`  ${label('Version:  ')}${muted(getVersion())}`);
   lines.push('');
   return lines.join('\n');
 }

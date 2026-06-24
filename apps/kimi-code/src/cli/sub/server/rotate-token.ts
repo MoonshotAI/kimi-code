@@ -25,12 +25,13 @@ export function registerRotateTokenCommand(server: Command): void {
     .action(async () => {
       try {
         const token = await rotateServerToken(getDataDir());
-        // Set the token off with whitespace rather than color so it is easy to
-        // spot without being highlighted.
-        process.stdout.write(`${chalk.bold('New server token:')} ${token}\n\n`);
         process.stdout.write(
           'The previous token is now invalid. A running server picks up the new token automatically.\n',
         );
+
+        // Token in the middle: indented and set off by blank lines (no color
+        // highlight), so it is easy to spot without dominating the output.
+        process.stdout.write(`\n  ${chalk.bold('New server token:')} ${token}\n\n`);
 
         // Re-print the access links with the new token so the user can
         // reconnect immediately. When a server is running its bind host/port
@@ -38,7 +39,6 @@ export function registerRotateTokenCommand(server: Command): void {
         const lock = getLiveLock();
         if (lock !== undefined) {
           const host = lock.host ?? DEFAULT_SERVER_HOST;
-          process.stdout.write('\n');
           for (const { label, url: href } of accessUrlLines(host, lock.port, token)) {
             // De-emphasize the `#token=…` fragment so the host/port stands out.
             const [base, frag] = splitTokenFragment(href);

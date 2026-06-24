@@ -367,8 +367,11 @@ describe('`kimi server run` background start', () => {
     expect(plain).toContain('off');
     expect(plain).toContain('Stop:');
     expect(plain).toContain('kimi server kill');
-    expect(plain).toContain('Ready:');
-    expect(plain).toContain('Version:');
+    // Version sits on the title line; no separate Ready:/Version: rows and no
+    // startup-time metric.
+    expect(plain).not.toContain('Ready:');
+    expect(plain).not.toContain('Version:');
+    expect(plain).not.toContain(' ms');
     // No bordered panel (the token URL must print in full for copying), but
     // the Kimi sprite stays next to the title.
     expect(plain).not.toContain('╭');
@@ -377,6 +380,10 @@ describe('`kimi server run` background start', () => {
     expect(plain).toContain('▐█████▌');
     expect(plain).not.toContain('➜');
     expect(plain).not.toContain('Kimi server:');
+
+    // Title is above the URLs; Logs/Stop are at the bottom.
+    expect(plain.indexOf('Kimi server ready')).toBeLessThan(plain.indexOf('Local:'));
+    expect(plain.indexOf('Logs:')).toBeLessThan(plain.indexOf('Stop:'));
   });
 
   it('uses the TUI dark palette for the ready banner', async () => {
@@ -1390,6 +1397,13 @@ describe('`kimi server rotate-token`', () => {
     const token = readFileSync(join(dir, 'server.token'), 'utf8').trim();
     expect(stdout).toContain('New server token');
     expect(stdout).toContain(`http://127.0.0.1:58627/#token=${token}`);
+    // Token line sits between the note and the links.
+    expect(stdout.indexOf('picks up the new token')).toBeLessThan(
+      stdout.indexOf('New server token'),
+    );
+    expect(stdout.indexOf('New server token')).toBeLessThan(
+      stdout.indexOf(`http://127.0.0.1:58627/#token=${token}`),
+    );
   });
 });
 
