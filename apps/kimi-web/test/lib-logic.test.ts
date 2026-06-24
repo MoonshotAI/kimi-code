@@ -157,6 +157,14 @@ describe('escapeProseDollars', () => {
     expect(escapeProseDollars('\techo $HOME')).toBe('\techo $HOME');
   });
 
+  it('does not treat a 4-space list continuation as an indented code block', () => {
+    // Inside a list item a 4-space indent is continuation prose (code under a
+    // list marker needs deeper indentation), so the price range is escaped.
+    expect(escapeProseDollars('- total\n    costs $5 and $10')).toBe(
+      '- total\n    costs \\$5 and \\$10',
+    );
+  });
+
   it('does not double-escape already-escaped dollars', () => {
     expect(escapeProseDollars('literal \\$5 here')).toBe('literal \\$5 here');
   });

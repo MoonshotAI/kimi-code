@@ -25,10 +25,15 @@
 const FENCED_CODE_RE = /(^[ \t]{0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^[ \t]{0,3}\2[ \t]*(?=\n|$))/gm;
 const INLINE_CODE_RE = /(`+)(?=[^`])[\s\S]*?\1/g;
 const BLOCK_MATH_RE = /\$\$[\s\S]*?\$\$/g;
-// A 4-space / tab indented line is a Markdown indented code block; protect
-// each such line so its dollars are not rewritten (code renders backslashes
-// literally, so `\$HOME` would show instead of `$HOME`).
-const INDENTED_CODE_RE = /^(?: {4}|\t)[^\n]*/gm;
+// An indented code block is a run of 4-space / tab indented lines that
+// follows a blank line (or the start of the text). The blank-line guard is
+// what separates it from a 4-space list-continuation line (e.g.
+// `- total\n    costs $5 and $10`), which Markdown treats as normal prose,
+// not code — so those must NOT be protected and their dollars still get
+// escaped. Code inside a list needs deeper indentation, which this matches
+// too once a blank line precedes it.
+const INDENTED_CODE_RE =
+  /(?:^|\n[ \t]*\n)((?: {4}|\t)[^\n]*(?:\n(?:[ \t]*\n)*(?: {4}|\t)[^\n]*)*)/g;
 const PLACEHOLDER_RE = /\u0000(\d+)\u0000/g;
 const ASCII_ALNUM = /[A-Za-z0-9]/;
 
