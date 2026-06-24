@@ -1655,6 +1655,16 @@ describe('KimiTUI startup', () => {
         ).toBe(true);
       });
 
+      // writeBannerDisplayState runs after renderBanner; on Windows the atomic
+      // write can lag behind the render, so wait for the state to land before
+      // asserting it.
+      await vi.waitFor(
+        async () => {
+          const state = await readBannerDisplayState();
+          expect(state.shown['once-banner']?.lastShownAt).toBeDefined();
+        },
+        { timeout: 5000 },
+      );
       await expect(readBannerDisplayState()).resolves.toMatchObject({
         version: 1,
         shown: {

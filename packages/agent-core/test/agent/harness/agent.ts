@@ -974,7 +974,7 @@ function createResumeNoSideEffectKaos(initialCwd: string): Kaos {
   return {
     name: 'resume-no-side-effects',
     osEnv: TEST_OS_ENV,
-    pathClass: () => 'posix',
+    pathClass: () => (process.platform === 'win32' ? 'win32' : 'posix'),
     normpath: (p: string) => p,
     gethome: () => '/home/test',
     getcwd: () => cwd,
