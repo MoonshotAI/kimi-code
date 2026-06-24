@@ -25,7 +25,7 @@ describe('clipboardHasImage', () => {
 
   it('returns false on macOS when native clipboard reports no image', async () => {
     const clip = fakeClipboard({ hasImage: vi.fn(() => false) });
-    const runCommand = vi.fn(() => ({ stdout: Buffer.alloc(0), ok: false }));
+    const runCommand = vi.fn(async () => ({ stdout: Buffer.alloc(0), ok: false }));
     const result = await clipboardHasImage({ platform: 'darwin', clipboard: clip, runCommand });
     expect(result).toBe(false);
     expect(runCommand).not.toHaveBeenCalledWith('osascript', expect.anything(), expect.anything());
@@ -52,7 +52,7 @@ describe('clipboardHasImage', () => {
   });
 
   it('detects image on Wayland via wl-paste list-types', async () => {
-    const runCommand = vi.fn((command: string, args: string[]) => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
       if (command === 'wl-paste' && args[0] === '--list-types') {
         return { stdout: Buffer.from('text/plain\nimage/png\n'), ok: true };
       }
@@ -63,7 +63,7 @@ describe('clipboardHasImage', () => {
   });
 
   it('returns false on Wayland when target list contains unsupported MIME types', async () => {
-    const runCommand = vi.fn((command: string, args: string[]) => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
       if (command === 'wl-paste' && args[0] === '--list-types') {
         return { stdout: Buffer.from('text/plain\nimage/bmp\n'), ok: true };
       }
@@ -80,7 +80,7 @@ describe('clipboardHasImage', () => {
   });
 
   it('falls back to xclip on Wayland when wl-paste reports no image', async () => {
-    const runCommand = vi.fn((command: string, args: string[]) => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
       if (command === 'wl-paste' && args[0] === '--list-types') {
         return { stdout: Buffer.from('text/plain\n'), ok: true };
       }
@@ -99,7 +99,7 @@ describe('clipboardHasImage', () => {
   });
 
   it('detects image on X11 via xclip TARGETS', async () => {
-    const runCommand = vi.fn((command: string, args: string[]) => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
       if (command === 'xclip' && args.includes('TARGETS')) {
         return { stdout: Buffer.from('TARGETS\nimage/jpeg\n'), ok: true };
       }
@@ -110,7 +110,7 @@ describe('clipboardHasImage', () => {
   });
 
   it('returns false on X11 when target list contains unsupported MIME types', async () => {
-    const runCommand = vi.fn((command: string, args: string[]) => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
       if (command === 'xclip' && args.includes('TARGETS')) {
         return { stdout: Buffer.from('TARGETS\nimage/tiff\n'), ok: true };
       }
@@ -122,7 +122,7 @@ describe('clipboardHasImage', () => {
   });
 
   it('returns false on X11 when target list is empty', async () => {
-    const runCommand = vi.fn((command: string, args: string[]) => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
       if (command === 'xclip' && args.includes('TARGETS')) {
         return { stdout: Buffer.from('TARGETS\n'), ok: true };
       }
@@ -135,20 +135,20 @@ describe('clipboardHasImage', () => {
 
   it('falls back to native hasImage on Linux X11 when xclip fails', async () => {
     const clip = fakeClipboard({ hasImage: vi.fn(() => true) });
-    const runCommand = vi.fn(() => ({ stdout: Buffer.alloc(0), ok: false }));
+    const runCommand = vi.fn(async () => ({ stdout: Buffer.alloc(0), ok: false }));
     const result = await clipboardHasImage({ platform: 'linux', env: {}, clipboard: clip, runCommand });
     expect(result).toBe(true);
   });
 
   it('returns false on Linux X11 when xclip and native both fail', async () => {
     const clip = fakeClipboard({ hasImage: vi.fn(() => false) });
-    const runCommand = vi.fn(() => ({ stdout: Buffer.alloc(0), ok: false }));
+    const runCommand = vi.fn(async () => ({ stdout: Buffer.alloc(0), ok: false }));
     const result = await clipboardHasImage({ platform: 'linux', env: {}, clipboard: clip, runCommand });
     expect(result).toBe(false);
   });
 
   it('detects WSL via WSL_DISTRO_NAME and checks PowerShell', async () => {
-    const runCommand = vi.fn((command: string) => {
+    const runCommand = vi.fn(async (command: string) => {
       if (command === 'powershell.exe') {
         return { stdout: Buffer.from('True\n'), ok: true };
       }
@@ -163,7 +163,7 @@ describe('clipboardHasImage', () => {
   });
 
   it('detects WSL via WSLENV and checks PowerShell', async () => {
-    const runCommand = vi.fn((command: string) => {
+    const runCommand = vi.fn(async (command: string) => {
       if (command === 'powershell.exe') {
         return { stdout: Buffer.from('True\n'), ok: true };
       }
@@ -178,7 +178,7 @@ describe('clipboardHasImage', () => {
   });
 
   it('returns false on Linux when runCommand fails for all fallbacks', async () => {
-    const runCommand = vi.fn(() => ({ stdout: Buffer.alloc(0), ok: false }));
+    const runCommand = vi.fn(async () => ({ stdout: Buffer.alloc(0), ok: false }));
     const clip = fakeClipboard({ hasImage: vi.fn(() => false) });
     const result = await clipboardHasImage({ platform: 'linux', env: {}, runCommand, clipboard: clip });
     expect(result).toBe(false);
@@ -186,7 +186,7 @@ describe('clipboardHasImage', () => {
 
   it('detects image on Windows via native clipboard', async () => {
     const clip = fakeClipboard({ hasImage: vi.fn(() => true) });
-    const runCommand = vi.fn(() => ({ stdout: Buffer.alloc(0), ok: false }));
+    const runCommand = vi.fn(async () => ({ stdout: Buffer.alloc(0), ok: false }));
     const result = await clipboardHasImage({ platform: 'win32', clipboard: clip, runCommand });
     expect(result).toBe(true);
     expect(runCommand).not.toHaveBeenCalledWith('powershell.exe', expect.anything(), expect.anything());
@@ -194,7 +194,7 @@ describe('clipboardHasImage', () => {
 
   it('returns false on Windows when native clipboard reports no image', async () => {
     const clip = fakeClipboard({ hasImage: vi.fn(() => false) });
-    const runCommand = vi.fn((command: string) => {
+    const runCommand = vi.fn(async (command: string) => {
       if (command === 'powershell.exe') {
         return { stdout: Buffer.from('True\n'), ok: true };
       }
