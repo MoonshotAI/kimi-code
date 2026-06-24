@@ -22,7 +22,6 @@ export async function budgetToolResultForModel(
   const text = persistableToolResultText(options.result.output);
   if (text === undefined || text.length <= TOOL_RESULT_MAX_CHARS) return options.result;
   if (options.result.truncated === true) return options.result;
-  if (text.includes('\n[Full output saved]\n')) return options.result;
   if (options.homedir === undefined) return options.result;
 
   const outputPath = await saveToolResult(
