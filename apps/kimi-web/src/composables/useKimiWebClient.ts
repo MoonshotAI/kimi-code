@@ -1739,7 +1739,9 @@ const workspacesView = computed<WorkspaceView[]>(() => {
 /** The active workspace id, falling back to the first available workspace. */
 const activeWorkspaceId = computed<string | null>(() => {
   const id = rawState.activeWorkspaceId;
-  const list = mergedWorkspaces.value;
+  // Use the reordered list (not the raw daemon order) so the default/fallback
+  // workspace matches the first group the user actually sees in the sidebar.
+  const list = workspacesView.value;
   if (id && list.some((w) => w.id === id)) return id;
   return list[0]?.id ?? null;
 });
