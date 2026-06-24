@@ -161,7 +161,7 @@ describe('startServer — lock + healthz smoke', () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  it('retries on port+1 and updates the lock when the requested port is held by a third party', async () => {
+  it('retries to a higher port and updates the lock when the requested port is held by a third party', async () => {
     // Occupy the requested port with a raw TCP server (a "third-party" process
     // from the server's point of view — it does NOT hold the lock).
     const { port, next } = await allocateAdjacentFreePair();
@@ -179,10 +179,17 @@ describe('startServer — lock + healthz smoke', () => {
       });
       running.push(r);
 
-      // Bound to the next port, and the lock advertises it so status/kill/ps work.
-      expect(r.address).toBe(`http://127.0.0.1:${String(next)}`);
+      // The server must bind to a higher port because `port` is occupied.
+      // The exact port can be `next` or higher: in a concurrent test run another
+      // listener may grab `next` before the server does. The +1 retry strategy is
+      // covered by unit tests for listenWithPortRetry.
+      expect(r.address).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      const actualPort = Number(new URL(r.address).port);
+      expect(actualPort).toBeGreaterThanOrEqual(next);
+
+      // The lock advertises the real bound port so status/kill/ps work.
       const stored = JSON.parse(readFileSync(thirdPartyLockPath, 'utf8')) as LockContents;
-      expect(stored.port).toBe(next);
+      expect(stored.port).toBe(actualPort);
     } finally {
       await closeNetServer(occupant);
     }

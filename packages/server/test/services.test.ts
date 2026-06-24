@@ -1,5 +1,6 @@
 
 
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,7 +8,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { InstantiationService, ServiceCollection, EventService, FsWatcherService, IApprovalService, IEventService, ILogService, IQuestionService, type ApprovalResponse, type QuestionResult, type FsWatcherServiceOptions, type IEnvironmentService, type ILogService as ILoggerT, type ISessionService } from '@moonshot-ai/agent-core';
+import { InstantiationService, ServiceCollection, EventService, FsWatcherService, IApprovalService, IEventService, ILogService, IQuestionService, type ApprovalResponse, type FsWatcherServiceOptions, type IEnvironmentService, type ILogService as ILoggerT, type ISessionService, type QuestionResult, type FsChangedFrame } from '@moonshot-ai/agent-core';
 import type { Event } from '@moonshot-ai/protocol';
 
 import { ApprovalService } from '#/services/approval/approvalService';
@@ -105,7 +106,7 @@ function captureThrown(fn: () => void): unknown {
   }
 }
 
-class FakeWatcher {
+class FakeWatcher extends EventEmitter {
   readonly added: string[][] = [];
   readonly unwatched: string[][] = [];
   readonly unwatchErrors = new Map<string, Error>();
@@ -121,10 +122,6 @@ class FakeWatcher {
     this.unwatched.push(items);
     const error = items.map((path) => this.unwatchErrors.get(path)).find(Boolean);
     if (error) throw error;
-    return this;
-  }
-
-  on(): this {
     return this;
   }
 
@@ -514,6 +511,37 @@ describe('FsWatcherService', () => {
     expect(watcher.unwatched).toEqual([[paths[0]!], [paths[1]!]]);
     expect(service.watchedPaths('conn', 'sid')).toEqual([paths[2]!]);
     expect(watcher.closeCalls).toBe(0);
+    service.dispose();
+  });
+
+  it('truncates when more than maxChangesPerWindow changes arrive in one debounce window', async () => {
+    const watcher = new FakeWatcher();
+    const sent: FsChangedFrame[] = [];
+    const service = new FsWatcherService(
+      { resolve: () => ({ send: (frame: FsChangedFrame) => sent.push(frame) }) },
+      {
+        watcherFactory: () => watcher as unknown as TestFsWatcher,
+        debounceMs: 10,
+        maxChangesPerWindow: 50,
+      },
+      testLogger,
+      {} as ISessionService,
+    );
+
+    service.addPaths('sid', 'conn', ['/workspace']);
+    service.bindSessionCwd('sid', '/workspace');
+
+    for (let i = 0; i < 60; i++) {
+      watcher.emit('all', 'add', `/workspace/f${i}.txt`);
+    }
+
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(sent.length).toBe(1);
+    expect(sent[0].type).toBe('event.fs.changed');
+    expect(sent[0].payload.truncated).toBe(true);
+    expect(sent[0].payload.count).toBe(60);
+
     service.dispose();
   });
 });
