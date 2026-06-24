@@ -17,7 +17,7 @@
       "description": "Planning, TDD, debugging, and delivery workflows for coding agents.",
       "homepage": "https://github.com/obra/superpowers",
       "keywords": ["skills", "planning", "tdd", "debugging", "code-review"],
-      "source": "https://github.com/obra/superpowers/releases/tag/v6.0.3"
+      "source": "https://github.com/obra/superpowers"
     }
   ]
 }

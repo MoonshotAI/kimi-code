@@ -81,17 +81,32 @@ export async function loadPluginMarketplace(
     configuredSource ?? KIMI_CODE_PLUGIN_MARKETPLACE_URL,
     options.workDir,
   );
+  const fetchImpl = options.fetchImpl ?? fetch;
   let raw: string;
   try {
-    raw = await readMarketplaceText(location, options.fetchImpl ?? fetch);
+    raw = await readMarketplaceText(location, fetchImpl);
   } catch (error) {
     const fallback =
       configuredSource === undefined ? await getSourceCheckoutMarketplaceLocation() : undefined;
     if (fallback === undefined) throw error;
-    raw = await readMarketplaceText(fallback, options.fetchImpl ?? fetch);
-    return parsePluginMarketplace(raw, fallback);
+    raw = await readMarketplaceText(fallback, fetchImpl);
+    return withLatestVersions(parsePluginMarketplace(raw, fallback), fetchImpl);
   }
-  return parsePluginMarketplace(raw, location);
+  return withLatestVersions(parsePluginMarketplace(raw, location), fetchImpl);
+}
+
+async function withLatestVersions(
+  marketplace: PluginMarketplace,
+  fetchImpl: typeof fetch,
+): Promise<PluginMarketplace> {
+  const plugins = await Promise.all(
+    marketplace.plugins.map(async (entry) => {
+      if (entry.version !== undefined) return entry;
+      const latest = await resolveLatestGithubRelease(entry.source, fetchImpl);
+      return latest === undefined ? entry : { ...entry, version: latest };
+    }),
+  );
+  return { ...marketplace, plugins };
 }
 
 export function parsePluginMarketplace(raw: string, location: MarketplaceLocation): PluginMarketplace {
@@ -271,6 +286,67 @@ function deriveVersionFromGithubSource(source: string): string | undefined {
   }
   const candidate = decoded.replace(/^v/i, '');
   return valid(candidate) !== null ? candidate : undefined;
+}
+
+async function resolveLatestGithubRelease(
+  source: string,
+  fetchImpl: typeof fetch,
+): Promise<string | undefined> {
+  const repo = parseGithubRepo(source);
+  if (repo === undefined) return undefined;
+  try {
+    const tag = await fetchLatestReleaseTag(repo.owner, repo.repo, fetchImpl);
+    if (tag === undefined) return undefined;
+    const candidate = tag.replace(/^v/i, '');
+    return valid(candidate) !== null ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseGithubRepo(source: string): { owner: string; repo: string } | undefined {
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return undefined;
+  }
+  if (url.hostname !== 'github.com' && url.hostname !== 'www.github.com') return undefined;
+  // Only bare repo URLs (/<owner>/<repo>) qualify — URLs with a ref tail are
+  // already handled by deriveVersionFromGithubSource.
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (segments.length !== 2) return undefined;
+  const [owner, repo] = segments;
+  return { owner: owner!, repo: repo! };
+}
+
+async function fetchLatestReleaseTag(
+  owner: string,
+  repo: string,
+  fetchImpl: typeof fetch,
+): Promise<string | undefined> {
+  // Avoid api.github.com: its anonymous quota is shared with the user's browser
+  // and other tools, and a first-time lookup failing because something else
+  // burned the budget is unacceptable. The /releases/latest UI route 302s to
+  // the tag and is not part of the API quota.
+  const url = `https://github.com/${owner}/${repo}/releases/latest`;
+  const resp = await fetchImpl(url, { redirect: 'manual' });
+  if (resp.status === 404) return undefined;
+  if (resp.status !== 301 && resp.status !== 302) {
+    throw new Error(
+      `Could not look up latest release of ${owner}/${repo}: HTTP ${resp.status} (${url}).`,
+    );
+  }
+  const location = resp.headers.get('location');
+  if (location === null) return undefined;
+  const match = /\/releases\/tag\/([^/?#]+)/.exec(location);
+  const tag = match?.[1];
+  if (tag === undefined) return undefined;
+  try {
+    return decodeURIComponent(tag);
+  } catch {
+    return tag;
+  }
 }
 
 function resolveLocalPath(input: string, workDir: string): string {

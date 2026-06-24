@@ -53,12 +53,6 @@ export async function buildPluginMarketplaceCdn({ pluginsRoot, outDir }) {
       // Stamp the version from the plugin's real manifest so "latest" stays truthful.
       const version = await readPluginManifestVersion(resolveInsideRoot(pluginsRoot, entry.source));
       if (version !== undefined) stamped = { ...stamped, version };
-    } else if (stamped.version === undefined) {
-      // For a pinned GitHub source, derive the version from the URL so older CLIs
-      // (which only read the explicit catalog version and cannot derive it
-      // themselves) still surface update badges against the published catalog.
-      const derived = deriveVersionFromGithubSource(result.source);
-      if (derived !== undefined) stamped = { ...stamped, version: derived };
     }
     plugins.push(stamped);
     if (result.archive !== undefined) archives.push(result.archive);
@@ -205,43 +199,6 @@ function isLocalRelativeSource(source) {
     !trimmed.startsWith('~/') &&
     trimmed !== '~'
   );
-}
-
-/**
- * Derive a semver-shaped version from a pinned GitHub source URL. Mirrors the
- * CLI-side `deriveVersionFromGithubSource` in
- * `apps/kimi-code/src/utils/plugin-marketplace.ts` — keep the two in sync so
- * the catalog version stamped here matches what the CLI would derive itself.
- *
- * Only refs shaped like semver (`v6.0.3`, `6.0.3`, `6.0.3-rc.1`) are accepted;
- * bare repo URLs, branch names and commit SHAs yield `undefined`.
- */
-function deriveVersionFromGithubSource(source) {
-  let url;
-  try {
-    url = new URL(source);
-  } catch {
-    return undefined;
-  }
-  if (url.hostname !== 'github.com' && url.hostname !== 'www.github.com') {
-    return undefined;
-  }
-  // Pathname shape: /<owner>/<repo>/<tail...>. Recognized tails:
-  //   releases/tag/<tag>
-  //   tree/<ref>
-  //   commit/<sha>
-  const [, , kind, a, b] = url.pathname.split('/').filter(Boolean);
-  const ref =
-    kind === 'releases' && a === 'tag' ? b : kind === 'tree' || kind === 'commit' ? a : undefined;
-  if (ref === undefined) return undefined;
-  let decoded;
-  try {
-    decoded = decodeURIComponent(ref);
-  } catch {
-    decoded = ref;
-  }
-  const candidate = decoded.replace(/^v/i, '');
-  return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(candidate) ? candidate : undefined;
 }
 
 function withZipExtension(source) {
