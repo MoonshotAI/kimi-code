@@ -272,7 +272,6 @@ export interface AppQuestionRequest {
   turnId?: number;
   toolCallId?: string;
   questions: QuestionItem[];
-  expiresAt: string;
   createdAt: string;
 }
 
@@ -415,7 +414,6 @@ export type AppEvent =
   | { type: 'questionRequested'; sessionId: string; question: AppQuestionRequest }
   | { type: 'questionAnswered'; sessionId: string; questionId: string; resolvedAt: string }
   | { type: 'questionDismissed'; sessionId: string; questionId: string; dismissedAt: string }
-  | { type: 'questionExpired'; sessionId: string; questionId: string }
   | { type: 'taskCreated'; sessionId: string; task: AppTask }
   | { type: 'taskProgress'; sessionId: string; taskId: string; outputChunk: string; stream: 'stdout' | 'stderr' }
   | { type: 'taskCompleted'; sessionId: string; taskId: string; status: AppTaskStatus; outputPreview?: string; outputBytes?: number }

@@ -180,6 +180,60 @@ describe('plugins selector dialogs', () => {
     expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'superpowers' });
   });
 
+  it('Enter on an installed plugin with an available update installs it', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'superpowers' }),
+    });
+  });
+
+  it('Enter on an up-to-date installed plugin opens details', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '5.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'superpowers' });
+  });
+
+  it('I on an installed plugin opens details even when an update is available', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    panel.handleInput('i');
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'superpowers' });
+  });
+
   it('renders the inline plugin hint on the installed row', () => {
     const datasource = { ...superpowers, id: 'kimi-datasource', displayName: 'Kimi Datasource', skillCount: 1 };
     const { panel } = makePanel({
@@ -211,6 +265,13 @@ describe('plugins selector dialogs', () => {
       kind: 'install',
       entry: expect.objectContaining({ id: 'superpowers' }),
     });
+  });
+
+  it('renders an installing state while an install is in progress', () => {
+    const { panel } = makePanel({ installed: [superpowers] });
+    panel.setInstalling('Superpowers');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Installing Superpowers from marketplace');
   });
 
   it('keeps a valid selection if ↓ is pressed while the catalog is loading', () => {
@@ -251,6 +312,32 @@ describe('plugins selector dialogs', () => {
     panel.setMarketplace(entries, '/tmp/marketplace.json');
     const out = strip(renderRaw(panel));
     expect(out).toContain('Superpowers  update 4.0.0 → 5.0.0');
+  });
+
+  it('shows an update badge on the Installed tab when the marketplace version is newer', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Superpowers  enabled  update 4.0.0 → 5.0.0');
+  });
+
+  it('does not show an update badge on the Installed tab before the marketplace loads', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const { panel } = makePanel({ installed });
+    // The marketplace has not been loaded yet, so the badge stays hidden rather
+    // than guessing.
+    const out = strip(renderRaw(panel));
+    expect(out).not.toContain('update');
   });
 
   it('shows installed · v<version> when the installed plugin is up to date', () => {

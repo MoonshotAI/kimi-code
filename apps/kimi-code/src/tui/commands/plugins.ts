@@ -167,22 +167,28 @@ async function showPluginsPicker(
       // Each branch of the handler either mounts the next view or restores the
       // editor itself, so do not pre-restore here — that would flash the editor
       // for in-place actions like toggling a plugin.
-      void handlePluginsPanelSelection(host, selection).catch((error: unknown) => {
+      void handlePluginsPanelSelection(host, panel, selection).catch((error: unknown) => {
         host.showError(`/plugins failed: ${formatErrorMessage(error)}`);
       });
     },
     onCancel: () => {
       host.restoreEditor();
     },
-    // The Official/Third-party tabs fetch their catalog lazily so /plugins
-    // opens instantly and Installed/Custom keep working even when the
-    // marketplace is unreachable.
+    // Every tab except Custom needs the catalog: Official/Third-party list it,
+    // and Installed uses it to show update badges. The Installed/Custom tabs
+    // keep working even when the marketplace is unreachable (badges simply stay
+    // hidden until data arrives).
     onRequestMarketplace: () => {
       void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
     },
   });
   host.mountEditorReplacement(panel);
-  if (options?.initialTab === 'official' || options?.initialTab === 'third-party') {
+  // Kick off the catalog fetch for any tab that needs it: Installed uses it for
+  // update badges, Official/Third-party list it. Custom never reads the catalog,
+  // so skip the fetch there. Done here (after `panel` is initialized) rather
+  // than inside the component constructor, because the callback above closes
+  // over `panel`.
+  if (options?.initialTab !== 'custom') {
     panel.setMarketplaceLoading();
     void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
   }
@@ -287,6 +293,7 @@ async function applyPluginEnabled(
 
 async function handlePluginsPanelSelection(
   host: SlashCommandHost,
+  panel: PluginsPanelComponent,
   selection: PluginsPanelSelection,
 ): Promise<void> {
   switch (selection.kind) {
@@ -320,18 +327,35 @@ async function handlePluginsPanelSelection(
       await showPluginsPicker(host, { initialTab: 'installed' });
       return;
     case 'install': {
-      host.showStatus(`Installing or updating ${selection.entry.displayName} from marketplace...`);
-      await installPluginFromSource(host, selection.entry.source, { successNotice: 'marketplace' });
+      panel.setInstalling(selection.entry.displayName);
+      host.state.ui.requestRender();
+      try {
+        await installPluginFromSource(host, selection.entry.source);
+      } catch (error) {
+        panel.clearInstalling();
+        host.state.ui.requestRender();
+        host.showError(`Failed to install ${selection.entry.displayName}: ${formatErrorMessage(error)}`);
+        return;
+      }
       // Close the panel after installing so the success notice and the
       // "/reload or /new" / post-install tip are visible in the transcript.
       host.restoreEditor();
       return;
     }
-    case 'install-source':
-      host.showStatus(`Installing plugin from ${truncateForStatus(selection.source)}…`);
-      await installPluginFromSource(host, selection.source, { successNotice: 'marketplace' });
+    case 'install-source': {
+      panel.setInstalling(truncateForStatus(selection.source));
+      host.state.ui.requestRender();
+      try {
+        await installPluginFromSource(host, selection.source);
+      } catch (error) {
+        panel.clearInstalling();
+        host.state.ui.requestRender();
+        host.showError(`Failed to install from ${truncateForStatus(selection.source)}: ${formatErrorMessage(error)}`);
+        return;
+      }
       host.restoreEditor();
       return;
+    }
   }
 }
 
@@ -362,7 +386,8 @@ async function handlePluginMcpSelection(
 
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   await host.requireSession().removePlugin(id);
-  host.showStatus(`Removed ${id}. Run /reload or /new to apply plugin changes.`);
+  host.showStatus(`Removed ${id}.`);
+  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
 
 async function renderPluginsList(
@@ -394,25 +419,21 @@ async function renderPluginInfo(host: SlashCommandHost, id: string): Promise<voi
 async function installPluginFromSource(
   host: SlashCommandHost,
   source: string,
-  options?: {
-    readonly successNotice?: 'marketplace';
-  },
 ): Promise<void> {
   const session = host.requireSession();
   const beforeList = await session.listPlugins();
   const summary = await session.installPlugin(
     resolvePluginInstallSource(source, host.state.appState.workDir),
   );
-  showPluginInstallResult(host, beforeList, summary, options);
+  showPluginInstallResult(host, beforeList, summary);
 }
+
+const PLUGIN_RELOAD_HINT = 'Run /new or /reload to apply plugin changes.';
 
 function showPluginInstallResult(
   host: SlashCommandHost,
   beforeList: readonly PluginSummary[],
   summary: PluginSummary,
-  options?: {
-    readonly successNotice?: 'marketplace';
-  },
 ): void {
   const previous = beforeList.find((entry) => entry.id === summary.id);
   const serverWord = summary.mcpServerCount === 1 ? 'server' : 'servers';
@@ -421,15 +442,8 @@ function showPluginInstallResult(
       ? ` Declares ${summary.mcpServerCount} MCP ${serverWord}; enabled by default and configurable from /plugins.`
       : '';
   const action = describeInstallAction(previous, summary);
-  host.showStatus(
-    `${action} (${summary.id}).${mcpHint} Run /new or /reload to apply plugin changes.`,
-  );
-  if (options?.successNotice === 'marketplace') {
-    host.showNotice(
-      `Installed or updated ${summary.displayName}`,
-      `Marketplace install or update succeeded for ${summary.id}. Run /new or /reload to apply plugin changes.`,
-    );
-  }
+  host.showStatus(`${action} (${summary.id}).${mcpHint}`);
+  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
 
 function describeInstallAction(

@@ -59,7 +59,9 @@ describe('background notification → main agent (real Agent instance)', () => {
     expect(flatHistoryText).toContain('<notification');
     expect(flatHistoryText).toContain('task.completed');
     expect(flatHistoryText).toContain(taskId);
+    expect(flatHistoryText).toContain('idle-state repro completed');
     expect(flatHistoryText).toContain('background agent finished its job');
+    expect(flatHistoryText).toContain('<output-preview');
   });
 
   it('BUSY: completed bg agent during an active turn is flushed before the next LLM call', async () => {
@@ -121,7 +123,9 @@ describe('background notification → main agent (real Agent instance)', () => {
     expect(flatContext).toContain('<notification');
     expect(flatContext).toContain('task.completed');
     expect(flatContext).toContain(taskId);
+    expect(flatContext).toContain('busy-state repro completed');
     expect(flatContext).toContain('busy-state bg result');
+    expect(flatContext).toContain('<output-preview');
   });
 
   it('IDLE × N: a GROUP of bg agents completes — all notifications should reach the LLM', async () => {
@@ -166,9 +170,13 @@ describe('background notification → main agent (real Agent instance)', () => {
     for (const id of taskIds) {
       expect(flatHistoryText).toContain(id);
     }
+    expect(flatHistoryText).toContain('group-1 completed');
+    expect(flatHistoryText).toContain('group-2 completed');
+    expect(flatHistoryText).toContain('group-3 completed');
     expect(flatHistoryText).toContain('bg #1 result');
     expect(flatHistoryText).toContain('bg #2 result');
     expect(flatHistoryText).toContain('bg #3 result');
+    expect(flatHistoryText).toContain('<output-preview');
   });
 
   it('RACE: bg completion fires AFTER LLM returns but BEFORE activeTurn is cleared', async () => {
@@ -225,7 +233,9 @@ describe('background notification → main agent (real Agent instance)', () => {
     const flatHistoryText = JSON.stringify(lastCall.history);
     expect(flatHistoryText).toContain('<notification');
     expect(flatHistoryText).toContain(taskId);
+    expect(flatHistoryText).toContain('race-after-turn completed');
     expect(flatHistoryText).toContain('post-turn bg result');
+    expect(flatHistoryText).toContain('<output-preview');
   });
 
   it('RESUME: terminal bg tasks discovered on reconcile are SILENTLY injected (no auto-turn)', async () => {
@@ -298,7 +308,9 @@ describe('background notification → main agent (real Agent instance)', () => {
 
       // Both notifications are in context, waiting for the user.
       const flatContext = JSON.stringify(ctx.agent.context.data());
-      expect(flatContext).toContain('previous bash output');
+      expect(flatContext).toContain('<output-file');
+      expect(flatContext).toContain(backgroundPersistence.taskOutputFile('bash-prev0000'));
+      expect(flatContext).not.toContain('previous bash output');
       expect(flatContext).toMatch(/task\.completed/);
       expect(flatContext).toMatch(/task\.lost/);
     } finally {

@@ -289,6 +289,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
   private activeTabIndex: number;
   private selectedIndex = 0;
   private market: MarketState = { status: 'idle' };
+  private installing: string | undefined;
 
   constructor(opts: PluginsPanelOptions) {
     super();
@@ -323,6 +324,16 @@ export class PluginsPanelComponent extends Container implements Focusable {
     this.market = { status: 'error', message };
   }
 
+  setInstalling(label: string): void {
+    this.installing = label;
+    this.invalidate();
+  }
+
+  clearInstalling(): void {
+    this.installing = undefined;
+    this.invalidate();
+  }
+
   private get activeTab(): (typeof PLUGINS_PANEL_TABS)[number] {
     return PLUGINS_PANEL_TABS[this.activeTabIndex]!;
   }
@@ -351,7 +362,9 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private requestMarketplaceIfNeeded(): void {
-    if (this.market.status === 'idle' && this.activeTab.id !== 'installed' && this.activeTab.id !== 'custom') {
+    // The Installed tab also needs the catalog to render update badges; only the
+    // Custom tab (manual URL entry) can skip the fetch entirely.
+    if (this.market.status === 'idle' && this.activeTab.id !== 'custom') {
       this.market = { status: 'loading' };
       this.opts.onRequestMarketplace?.();
     }
@@ -423,6 +436,16 @@ export class PluginsPanelComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.enter)) {
+      if (plugin === undefined) return;
+      const update = this.installedUpdateStatus(plugin);
+      if (update !== undefined) {
+        this.opts.onSelect({ kind: 'install', entry: update.entry });
+      } else {
+        this.opts.onSelect({ kind: 'details', id: plugin.id });
+      }
+      return;
+    }
+    if (ch === 'i' || ch === 'I') {
       if (plugin !== undefined) this.opts.onSelect({ kind: 'details', id: plugin.id });
     }
   }
@@ -452,11 +475,14 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   override render(width: number): string[] {
+    if (this.installing !== undefined) {
+      return this.renderInstalling(width);
+    }
     const colors = currentTheme.palette;
     const tab = this.activeTab.id;
     const hint =
       tab === 'installed'
-        ? ' Tab switch · Space toggle · D remove · M MCP · Enter details · R reload · Esc cancel'
+        ? this.installedHint()
         : tab === 'custom'
           ? ' Tab switch · Enter install · Esc cancel'
           : ' Tab switch · ↑↓ navigate · Enter open/install · Esc cancel';
@@ -497,6 +523,23 @@ export class PluginsPanelComponent extends Container implements Focusable {
     lines.push(mutedHintLine(` ${installed.length} installed`, colors));
   }
 
+  private installedHint(): string {
+    const plugin = this.opts.installed[this.selectedIndex];
+    const hasUpdate = plugin !== undefined && this.installedUpdateStatus(plugin) !== undefined;
+    const enter = hasUpdate ? 'Enter update' : 'Enter details';
+    return ` Tab switch · Space toggle · D remove · M MCP · ${enter} · I details · R reload · Esc cancel`;
+  }
+
+  private installedUpdateStatus(
+    plugin: PluginSummary,
+  ): { entry: PluginMarketplaceEntry; local: string; latest: string } | undefined {
+    if (this.market.status !== 'loaded') return undefined;
+    const entry = this.market.entries.find((e) => e.id === plugin.id);
+    if (entry === undefined) return undefined;
+    const status = computeUpdateStatus(entry.version, plugin.version, true);
+    return status.kind === 'update' ? { entry, local: status.local, latest: status.latest } : undefined;
+  }
+
   private renderInstalledRow(plugin: PluginSummary, index: number, width: number): string[] {
     const colors = currentTheme.palette;
     const selected = index === this.selectedIndex;
@@ -504,9 +547,14 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
     const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
     const status = pluginStatus(plugin);
+    const update = this.installedUpdateStatus(plugin);
     let line = prefix + labelStyle(plugin.displayName);
     if (status !== undefined) {
       line += '  ' + statusStyle({ kind: 'plugin', value: '', label: '', description: '', status }, colors)(status);
+    }
+    if (update !== undefined) {
+      const badge = `update ${update.local} → ${update.latest}`;
+      line += '  ' + marketplaceStatusStyle(badge, colors)(badge);
     }
     if (this.opts.pluginHint?.id === plugin.id) {
       line += '  ' + chalk.hex(colors.warning)(this.opts.pluginHint.text);
@@ -579,6 +627,19 @@ export class PluginsPanelComponent extends Container implements Focusable {
     lines.push(mutedHintLine(' Install from a GitHub URL (or zip URL / local path):', colors));
     lines.push('');
     lines.push(...renderUrlInputBox(this.customInput, this.focused, width, colors));
+  }
+
+  private renderInstalling(width: number): string[] {
+    const colors = currentTheme.palette;
+    const lines = [
+      chalk.hex(colors.primary)('─'.repeat(width)),
+      chalk.hex(colors.primary).bold(' Plugins'),
+      '',
+      chalk.hex(colors.textMuted)(`  Installing ${this.installing} from marketplace…`),
+      '',
+      chalk.hex(colors.primary)('─'.repeat(width)),
+    ];
+    return lines.map((line) => truncateToWidth(line, width, ELLIPSIS));
   }
 }
 

@@ -48,7 +48,6 @@ describe('question-adapter · toBrokerRequest (in-process → protocol)', () => 
       questionId: '01J_QUESTION',
       sessionId: 'sess_x',
       createdAt: '2026-06-04T10:30:00.000Z',
-      expiresAt: '2026-06-04T10:31:00.000Z',
     });
 
     expect(protoReq.question_id).toBe('01J_QUESTION');
@@ -91,7 +90,6 @@ describe('question-adapter · toBrokerRequest (in-process → protocol)', () => 
       questionId: 'q',
       sessionId: 's',
       createdAt: '2026-06-04T10:30:00.000Z',
-      expiresAt: '2026-06-04T10:31:00.000Z',
     });
     expect(protoReq.turn_id).toBeUndefined();
     expect(protoReq.tool_call_id).toBeUndefined();

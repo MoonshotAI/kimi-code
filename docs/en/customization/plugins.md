@@ -15,7 +15,8 @@ Run `/plugins` in the TUI to open the plugin manager. It is a single panel with 
 | `D` | Remove the selected installed plugin (Installed tab) |
 | `M` | Manage MCP servers for the selected plugin (Installed tab) |
 | `R` | Reload `installed.json` and all manifests (Installed tab) |
-| `Enter` | Installed tab: view plugin details · Official/Third-party tab: install or update · Custom tab: install |
+| `Enter` | Installed tab: install the available update, or view details if up to date · Official/Third-party tab: install or update · Custom tab: install |
+| `I` | View plugin details (Installed tab) |
 | `Esc` | Go back or cancel |
 
 You can also use slash commands directly:
@@ -34,7 +35,7 @@ You can also use slash commands directly:
 | `/plugins mcp enable <id> <server>` | Enable an MCP server declared by a plugin |
 | `/plugins mcp disable <id> <server>` | Disable an MCP server declared by a plugin |
 
-The **Official** and **Third-party** tabs list marketplace plugins by tier; the **Custom** tab installs from a URL. Marketplace catalogs load when you switch to those tabs. Each install shows a trust badge: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else).
+The **Installed** tab lists your installed plugins and shows an update badge when a newer version is available in the marketplace. The **Official** and **Third-party** tabs list marketplace plugins by tier; the **Custom** tab installs from a URL. Marketplace catalogs load automatically when needed. Each install shows a trust badge: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else).
 
 ### Installing from GitHub
 
