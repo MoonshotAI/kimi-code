@@ -427,6 +427,12 @@ export class BackgroundManager {
     return this.toInfo(entry);
   }
 
+  persistOutput(taskId: string): void {
+    const entry = this.tasks.get(taskId);
+    if (entry === undefined) return;
+    this.startOutputPersist(entry);
+  }
+
   /** Stop a running task. SIGTERM → 5s grace → SIGKILL. */
   async stop(taskId: string, reason?: string): Promise<BackgroundTaskInfo | undefined> {
     const entry = this.tasks.get(taskId);
