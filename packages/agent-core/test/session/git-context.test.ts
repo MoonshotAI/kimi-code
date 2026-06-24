@@ -75,7 +75,7 @@ describe('collectGitContext', () => {
     const kaos = gitKaos({
       'rev-parse': { stdout: 'true' },
       remote: { stdout: 'https://github.com/acme/widgets.git' },
-      'rev-parse --abbrev-ref HEAD': { stdout: 'main' },
+      'symbolic-ref --short HEAD': { stdout: 'main' },
       status: { stdout: ' M src/a.ts\n?? src/b.ts' },
       log: { stdout: 'abc123 first commit\ndef456 second commit' },
     });
@@ -99,7 +99,7 @@ describe('collectGitContext', () => {
     const kaos = gitKaos({
       'rev-parse': { stdout: 'true' },
       remote: { stdout: '' },
-      'rev-parse --abbrev-ref HEAD': { stdout: '' },
+      'symbolic-ref --short HEAD': { stdout: '' },
       status: { stdout: dirty },
       log: { stdout: '' },
     });
@@ -119,7 +119,7 @@ describe('collectGitContext', () => {
     const kaos = gitKaos({
       'rev-parse': { stdout: 'true' },
       remote: { stdout: 'git@internal.corp:secret/repo.git' },
-      'rev-parse --abbrev-ref HEAD': { stdout: 'main' },
+      'symbolic-ref --short HEAD': { stdout: 'main' },
       status: { stdout: '' },
       log: { stdout: '' },
     });
@@ -136,7 +136,7 @@ describe('collectGitContext', () => {
     const kaos = gitKaos({
       'rev-parse': { stdout: 'true' },
       remote: { stdout: '', exitCode: 2, stderr: "error: No such remote 'origin'" },
-      'rev-parse --abbrev-ref HEAD': { stdout: 'main' },
+      'symbolic-ref --short HEAD': { stdout: 'main' },
       status: { stdout: ' M src/a.ts' },
       log: { stdout: 'abc123 first commit' },
     });
@@ -154,7 +154,7 @@ describe('collectGitContext', () => {
     const kaos = gitKaos({
       'rev-parse': { stdout: 'true' },
       remote: { stdout: 'https://github.com/acme/widgets.git' },
-      'rev-parse --abbrev-ref HEAD': { stdout: 'main' },
+      'symbolic-ref --short HEAD': { stdout: 'main' },
       status: { stdout: '' },
       log: {
         stdout: '',
@@ -174,7 +174,11 @@ describe('collectGitContext', () => {
   it('omits the Branch section in detached HEAD state', async () => {
     const kaos = gitKaos({
       'rev-parse': { stdout: 'true' },
-      'rev-parse --abbrev-ref HEAD': { stdout: 'HEAD' },
+      'symbolic-ref --short HEAD': {
+        stdout: '',
+        exitCode: 128,
+        stderr: 'fatal: ref HEAD is not a symbolic ref',
+      },
       remote: { stdout: 'https://github.com/acme/widgets.git' },
       status: { stdout: '' },
       log: { stdout: 'abc123 first commit' },

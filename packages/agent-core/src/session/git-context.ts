@@ -3,13 +3,11 @@
  *
  * `collectGitContext` produces a `<git-context>` block that is prepended to a
  * fresh explore subagent's prompt so it can orient itself in the repository
- * before searching. The block is all-or-nothing for the probes that can
- * mislead: if `git status` or `git branch` fails, the whole block is dropped
- * (and logged) rather than showing a partial snapshot — e.g. a timed-out
- * `git status` would make a dirty tree look clean. Optional probes — the
- * `origin` remote and recent commits — degrade to an empty section when
- * unavailable, since a missing remote or no commits yet are normal repo
- * states. The only explicit state surfaced to the subagent is
+ * before searching. Every git probe is best-effort: probes fail in perfectly
+ * normal states (no `origin` remote, no commits yet, detached HEAD, older
+ * Git), so a failed probe is logged and its section omitted rather than
+ * dropping the whole block. The block is omitted entirely only when nothing
+ * useful was collected. The one explicit state surfaced to the subagent is
  * `reason="not-a-repo"`, so it doesn't waste turns probing git history in a
  * non-repo directory. Remote URLs are sanitized so internal infrastructure
  * is not surfaced to the model.
@@ -68,22 +66,18 @@ export async function collectGitContext(kaos: Kaos, cwd: string): Promise<string
     return '';
   }
 
-  // Step 2: collect context in parallel. Probes split into two classes:
+  // Step 2: collect context in parallel. Every probe is optional — git
+  // probes fail in perfectly normal states (no `origin` remote, no commits
+  // yet, detached HEAD, older Git), so a failed probe never aborts the
+  // collection. Each failure is logged and its section is simply omitted; if
+  // nothing useful is collected, the block is dropped entirely below.
   //
-  //   - fatal (`status`, branch): if either fails, drop the whole block. A
-  //     missing `status` would make a dirty tree look clean, and a non-zero
-  //     branch exit means git itself is broken.
-  //   - optional (`remote`, `log`): a missing `origin` remote or a repo with
-  //     no commits yet are normal states, not collection failures. Log at
-  //     debug and leave that section empty rather than dropping the block.
-  //
-  // Branch is read via `rev-parse --abbrev-ref HEAD` rather than
-  // `branch --show-current`: the latter was only added in Git 2.22, so it
-  // fails (exit 129) on older Git even in a valid repository. `rev-parse`
-  // prints `HEAD` in detached-HEAD state, which is filtered out below.
+  // Branch is read via `symbolic-ref --short HEAD`, which works in unborn
+  // repositories and on older Git; it fails in detached-HEAD state, in which
+  // case the Branch section is just omitted.
   const commandArgs = [
     ['remote', 'get-url', 'origin'],
-    ['rev-parse', '--abbrev-ref', 'HEAD'],
+    ['symbolic-ref', '--short', 'HEAD'],
     ['status', '--porcelain'],
     ['log', '-3', '--format=%h %s'],
   ] as const;
@@ -91,22 +85,8 @@ export async function collectGitContext(kaos: Kaos, cwd: string): Promise<string
     commandArgs.map(async (args) => ({ args, result: await runGit(kaos, cwd, args) })),
   )) as unknown as [TaggedGitResult, TaggedGitResult, TaggedGitResult, TaggedGitResult];
 
-  const fatal = [branch, status].filter(({ result }) => !result.ok);
-  if (fatal.length > 0) {
-    for (const { args, result } of fatal) {
-      if (!result.ok) logGitFailure(cwd, args, result);
-    }
-    return '';
-  }
-
-  for (const { args, result } of [remote, gitLog]) {
-    if (!result.ok) {
-      log.debug('git context optional probe unavailable', {
-        cwd,
-        command: `git ${args.join(' ')}`,
-        reason: result.kind,
-      });
-    }
+  for (const { args, result } of [remote, branch, status, gitLog]) {
+    if (!result.ok) logGitFailure(cwd, args, result);
   }
 
   const remoteUrl = stdoutOf(remote.result);
@@ -127,7 +107,7 @@ export async function collectGitContext(kaos: Kaos, cwd: string): Promise<string
     }
   }
 
-  if (branchName && branchName !== 'HEAD') sections.push(`Branch: ${branchName}`);
+  if (branchName) sections.push(`Branch: ${branchName}`);
 
   const dirtyLines = dirtyRaw.split('\n').filter((line) => line.trim().length > 0);
   if (dirtyLines.length > 0) {
