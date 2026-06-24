@@ -5,6 +5,7 @@
      Dev tooling: labels are intentionally not localized. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
+import { copyTextToClipboard } from '../lib/clipboard';
 import {
   clearTrace,
   downloadTraceLog,
@@ -121,13 +122,10 @@ function entryJson(e: TraceEntry): string {
 }
 
 async function copyEntry(e: TraceEntry): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(entryJson(e));
-    copiedId.value = e.id;
-    setTimeout(() => { if (copiedId.value === e.id) copiedId.value = null; }, 1500);
-  } catch {
-    // clipboard unavailable
-  }
+  const ok = await copyTextToClipboard(entryJson(e));
+  if (!ok) return;
+  copiedId.value = e.id;
+  setTimeout(() => { if (copiedId.value === e.id) copiedId.value = null; }, 1500);
 }
 
 function exportJsonl(): void {

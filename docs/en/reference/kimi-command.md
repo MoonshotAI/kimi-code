@@ -16,7 +16,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--version` | `-V` | Print the version number and exit |
 | `--help` | `-h` | Show help information and exit |
 | `--session [id]` | `-S` | Resume a session. With an ID, opens that session directly; without an ID, enters an interactive selector |
-| `--continue` | `-C` | Continue the most recent session in the current working directory, without specifying an ID manually |
+| `--continue` | `-c` | Continue the most recent session in the current working directory, without specifying an ID manually |
 | `--model <model>` | `-m` | Specify a model alias for this launch. When omitted, new sessions use `default_model` from the config file |
 | `--prompt <prompt>` | `-p` | Run a single prompt non-interactively and stream the Assistant output to stdout. This mode does not open the TUI |
 | `--output-format <format>` | | Set the non-interactive output format; supports `text` and `stream-json`. Can only be used with `--prompt`; defaults to `text` |

@@ -24,9 +24,8 @@ import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-mo
 import { UndoSelectorComponent } from '#/tui/components/dialogs/undo-selector';
 import {
   PluginMcpSelectorComponent,
-  PluginMarketplaceSelectorComponent,
   PluginRemoveConfirmComponent,
-  PluginsOverviewSelectorComponent,
+  PluginsPanelComponent,
 } from '#/tui/components/dialogs/plugins-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
@@ -42,8 +41,6 @@ vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
   return { ...actual, promptFeedbackInput: vi.fn() };
 });
-
-vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
@@ -173,12 +170,14 @@ function makeSession(overrides: Record<string, unknown> = {}) {
       mcpServerCount: 0,
       enabledMcpServerCount: 0,
       hasErrors: false,
+      source: 'local-path',
     })),
     setPluginEnabled: vi.fn(async () => {}),
     setPluginMcpServerEnabled: vi.fn(async () => {}),
     removePlugin: vi.fn(async () => {}),
     reloadPlugins: vi.fn(async () => ({ added: [], removed: [], errors: [] })),
     reloadSession: vi.fn(async () => ({})),
+    activateSkill: vi.fn(async () => {}),
     getPluginInfo: vi.fn(async (id: string) => ({
       id,
       displayName: id,
@@ -3089,6 +3088,7 @@ command = "vim"
         plugins: [
           {
             id: 'kimi-datasource',
+            tier: 'official',
             displayName: 'Kimi Datasource',
             description: 'Datasource plugin',
             source: './kimi-datasource',
@@ -3104,12 +3104,14 @@ command = "vim"
     driver.handleUserInput('/plugins marketplace');
 
     await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-        PluginMarketplaceSelectorComponent,
-      );
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
     });
-    const picker = driver.state.editorContainer.children[0] as PluginMarketplaceSelectorComponent;
-    picker.handleInput('\r');
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    // Official loads its catalog lazily; wait for the entry to render before install.
+    await vi.waitFor(() => {
+      expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
+    });
+    panel.handleInput('\r');
 
     await vi.waitFor(() => {
       expect(session.installPlugin).toHaveBeenCalledWith(join(marketplaceDir, 'kimi-datasource'));
@@ -3119,6 +3121,31 @@ command = "vim"
       expect(transcript).toContain('Installing or updating Kimi Datasource from marketplace...');
       expect(transcript).toContain('Installed or updated Demo');
     });
+    // Installing closes the panel so the success notice / reload tip is visible.
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBe(driver.state.editor);
+    });
+  });
+
+  it('removes a plugin record without auto-running any cleanup skill', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins remove kimi-webbridge');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginRemoveConfirmComponent,
+      );
+    });
+    const confirm = driver.state.editorContainer.children[0] as PluginRemoveConfirmComponent;
+    confirm.handleInput('\u001B[B');
+    confirm.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.removePlugin).toHaveBeenCalledWith('kimi-webbridge');
+    });
+    expect(session.activateSkill).not.toHaveBeenCalled();
   });
 
   it('installs default marketplace entries through plain install', async () => {
@@ -3141,12 +3168,13 @@ command = "vim"
       driver.handleUserInput('/plugins marketplace');
 
       await vi.waitFor(() => {
-        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-          PluginMarketplaceSelectorComponent,
-        );
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
       });
-      const picker = driver.state.editorContainer.children[0] as PluginMarketplaceSelectorComponent;
-      picker.handleInput('\r');
+      const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+      await vi.waitFor(() => {
+        expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
+      });
+      panel.handleInput('\r');
 
       await vi.waitFor(() => {
         expect(session.installPlugin).toHaveBeenCalledWith(
@@ -3159,7 +3187,41 @@ command = "vim"
     }
   });
 
-  it('toggles plugins from the overview with space', async () => {
+  it('shows an inline Official error when the marketplace is unreachable, keeping the panel open', async () => {
+    const originalFetch = globalThis.fetch;
+    process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] = 'https://example.test/marketplace.json';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('fetch failed');
+      }),
+    );
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    try {
+      driver.handleUserInput('/plugins');
+
+      // The panel opens immediately on the Installed tab — no marketplace fetch.
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
+      });
+      const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+      panel.handleInput('\t'); // → Official, which lazily (and unsuccessfully) loads
+
+      await vi.waitFor(() => {
+        expect(stripSgr(panel.render(120).join('\n'))).toContain(
+          'Marketplace unavailable: fetch failed',
+        );
+      });
+      // The panel stays mounted; the failure does not close /plugins.
+      expect(driver.state.editorContainer.children[0]).toBe(panel);
+    } finally {
+      vi.stubGlobal('fetch', originalFetch);
+    }
+  });
+
+  it('toggles plugins from the Installed tab with space', async () => {
     let enabled = true;
     const session = makeSession({
       listPlugins: vi.fn(async () => [
@@ -3173,6 +3235,7 @@ command = "vim"
           mcpServerCount: 0,
           enabledMcpServerCount: 0,
           hasErrors: false,
+          source: 'local-path',
         },
       ]),
       setPluginEnabled: vi.fn(async (_id: string, nextEnabled: boolean) => {
@@ -3184,31 +3247,25 @@ command = "vim"
     driver.handleUserInput('/plugins');
 
     await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-        PluginsOverviewSelectorComponent,
-      );
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
     });
-    const overview = driver.state.editorContainer.children[0] as PluginsOverviewSelectorComponent;
-    overview.handleInput(' ');
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    panel.handleInput(' ');
 
-    // Toggling refreshes the picker in place: it must not flash back to the
-    // editor between the keypress and the refreshed picker mounting.
-    expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-      PluginsOverviewSelectorComponent,
-    );
+    // Toggling refreshes the panel in place: it must not flash back to the
+    // editor between the keypress and the refreshed panel mounting.
+    expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
 
     await vi.waitFor(() => {
       expect(session.setPluginEnabled).toHaveBeenCalledWith('demo', false);
     });
-    // The picker stays mounted the whole time (no editor flash), so wait for the
-    // refreshed render rather than for an instance swap.
     await vi.waitFor(() => {
       const refreshed = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-      expect(refreshed).toContain('❯ Demo  disabled  require run /new or /reload to apply');
+      expect(refreshed).toContain('❯ Demo  disabled  run /reload or /new to apply');
     });
-    const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).not.toContain('Space enable');
-    expect(stripSgr(renderTranscript(driver))).not.toContain('Disabled demo. Run /new or /reload to apply.');
+    expect(stripSgr(renderTranscript(driver))).not.toContain(
+      'Disabled demo. Run /reload or /new to apply.',
+    );
   });
 
   it('toggles plugin MCP servers from the overview MCP picker', async () => {
@@ -3272,12 +3329,10 @@ command = "vim"
     driver.handleUserInput('/plugins');
 
     await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-        PluginsOverviewSelectorComponent,
-      );
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
     });
-    const overview = driver.state.editorContainer.children[0] as PluginsOverviewSelectorComponent;
-    overview.handleInput('m');
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    panel.handleInput('m');
 
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
@@ -3299,9 +3354,9 @@ command = "vim"
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginMcpSelectorComponent);
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).toContain('❯ data  disabled  require run /new or /reload to apply');
+    expect(out).toContain('❯ data  disabled  run /reload or /new to apply');
     expect(stripSgr(renderTranscript(driver))).not.toContain(
-      'Disabled MCP server data for kimi-datasource. Run /new or /reload to apply.',
+      'Disabled MCP server data for kimi-datasource. Run /reload or /new to apply.',
     );
   });
 
@@ -3407,6 +3462,51 @@ command = "vim"
         defaultThinking: true,
       });
     });
+    expect(driver.state.appState.model).toBe('turbo');
+    expect(driver.state.appState.thinking).toBe(true);
+  });
+
+  it('applies /model selection to the session only on Alt+S without persisting', async () => {
+    const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+          turbo: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-turbo',
+            maxContextSize: 100,
+            displayName: 'Kimi Turbo',
+            capabilities: ['thinking'],
+          },
+        },
+        defaultModel: 'k2',
+        defaultThinking: false,
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model turbo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0];
+    // /model turbo preselects turbo; Alt+S applies it to the current session only.
+    (picker as TabbedModelSelectorComponent).handleInput(`${ESC}s`);
+
+    await vi.waitFor(() => {
+      expect(session.setModel).toHaveBeenCalledWith('turbo');
+      expect(session.setThinking).toHaveBeenCalledWith('on');
+    });
+    expect(setConfig).not.toHaveBeenCalled();
     expect(driver.state.appState.model).toBe('turbo');
     expect(driver.state.appState.thinking).toBe(true);
   });

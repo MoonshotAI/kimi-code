@@ -183,6 +183,18 @@ function formatModelSkill(skill: SkillDefinition): readonly string[] {
   return lines;
 }
 
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
 function truncate(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value;
+  if (value.length <= max) return value;
+  // Reserve one code unit for the trailing ellipsis and walk whole grapheme
+  // clusters so we never split a surrogate pair or combining sequence.
+  let length = 0;
+  let result = '';
+  for (const { segment } of graphemeSegmenter.segment(value)) {
+    if (length + segment.length > max - 1) break;
+    result += segment;
+    length += segment.length;
+  }
+  return `${result}…`;
 }

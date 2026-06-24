@@ -5,6 +5,7 @@
 import { nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../types';
+import { copyTextToClipboard } from '../lib/clipboard';
 
 const { t } = useI18n();
 
@@ -84,11 +85,17 @@ function cancelRename(): void {
 
 // Copy session ID
 const copiedId = ref(false);
-function copySessionId(): void {
-  navigator.clipboard.writeText(props.session.id).then(() => {
-    copiedId.value = true;
-    setTimeout(() => { copiedId.value = false; }, 1200);
-  }).catch(() => {/* ignore */});
+const copyFailed = ref(false);
+async function copySessionId(): Promise<void> {
+  const ok = await copyTextToClipboard(props.session.id);
+  copiedId.value = ok;
+  copyFailed.value = !ok;
+  // Keep the menu open briefly so the result text is visible, then close.
+  setTimeout(() => {
+    copiedId.value = false;
+    copyFailed.value = false;
+    closeMenu();
+  }, 1500);
 }
 
 // Fork this session into a new child session
@@ -212,8 +219,14 @@ defineExpose({ closeMenu, cancelArchive });
 
     <!-- Kebab dropdown -->
     <div ref="menuRef" v-if="menuOpen" class="menu" @click.stop>
-      <button class="menu-item copy-id" @click.stop="copySessionId">
-        {{ copiedId ? '已复制 ✓' : '复制 Session ID ⧉' }}
+      <button class="menu-item copy-id" :class="{ failed: copyFailed }" @click.stop="copySessionId">
+        {{
+          copyFailed
+            ? t('sidebar.copyFailed')
+            : copiedId
+              ? t('sidebar.copied')
+              : t('sidebar.copySessionId')
+        }}
       </button>
       <div class="menu-divider" />
       <button class="menu-item" @click.stop="startRename">{{ t('sidebar.rename') }}</button>
@@ -375,6 +388,7 @@ defineExpose({ closeMenu, cancelArchive });
 }
 .menu-item:hover { background: var(--panel2); }
 .menu-item.archive { color: var(--err); }
+.menu-item.failed { color: var(--err); }
 
 .menu-divider {
   height: 1px;

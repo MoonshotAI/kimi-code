@@ -31,6 +31,7 @@ export interface EditorKeyboardHost {
   updateEditorBorderHighlight(text?: string): void;
   updateQueueDisplay(): void;
   toggleToolOutputExpansion(): void;
+  toggleTodoPanelExpansion(): void;
   detachCurrentForegroundTask(): void;
   hideSessionPicker(): void;
   stop(exitCode?: number): Promise<void>;
@@ -154,6 +155,16 @@ export class EditorKeyboardController {
     editor.onToggleToolExpand = () => {
       host.track('shortcut_expand');
       host.toggleToolOutputExpansion();
+    };
+
+    editor.onToggleTodoExpand = (): boolean => {
+      if (!host.state.todoPanel.hasOverflow()) return false;
+      // Disarm a pending double-press exit confirmation so expanding the
+      // todo list in between two Ctrl-C presses does not accidentally exit.
+      this.clearPendingExit();
+      host.track('shortcut_todo_expand');
+      host.toggleTodoPanelExpansion();
+      return true;
     };
 
     editor.onCtrlS = () => {

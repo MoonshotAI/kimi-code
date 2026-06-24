@@ -350,6 +350,14 @@ export function reduceAppEvent(
     // -------------------------------------------------------------------------
     case 'messageCreated': {
       const sid = event.message.sessionId;
+      // A new message is activity on the session: bump its recency so it floats
+      // to the top of its workspace group in the sidebar immediately. The daemon
+      // does not always broadcast a fresh `session.updated` for message activity,
+      // so we rely on the message's own timestamp (and never move it backwards).
+      const createdAt = event.message.createdAt;
+      next.sessions = next.sessions.map((s) =>
+        s.id === sid && createdAt > s.updatedAt ? { ...s, updatedAt: createdAt } : s,
+      );
       const msgs = next.messagesBySession[sid] ?? [];
       const exists = msgs.some((m) => m.id === event.message.id);
       if (!exists) {

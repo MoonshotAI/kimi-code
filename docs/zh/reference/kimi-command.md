@@ -16,7 +16,7 @@ kimi <subcommand> [options]
 | `--version` | `-V` | 打印版本号并退出 |
 | `--help` | `-h` | 显示帮助信息并退出 |
 | `--session [id]` | `-S` | 恢复一个会话。带 ID 时直接打开指定会话；不带 ID 时进入交互式选择器 |
-| `--continue` | `-C` | 继续当前工作目录下最近一次的会话，无需手动指定 ID |
+| `--continue` | `-c` | 继续当前工作目录下最近一次的会话，无需手动指定 ID |
 | `--model <model>` | `-m` | 为本次启动指定模型别名。省略时新会话使用配置文件中的 `default_model` |
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式不会打开 TUI |
 | `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用，默认 `text` |

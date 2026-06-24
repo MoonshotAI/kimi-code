@@ -155,6 +155,10 @@ describe('CLI options parsing', () => {
       expect(parse(['-C']).continue).toBe(true);
     });
 
+    it('-c is an alias for --continue', () => {
+      expect(parse(['-c']).continue).toBe(true);
+    });
+
     it('--continue and --session combined raises a conflict', () => {
       const opts = parse(['--continue', '--session', 'abc123']);
       expect(() => validateOptions(opts)).toThrow(OptionConflictError);

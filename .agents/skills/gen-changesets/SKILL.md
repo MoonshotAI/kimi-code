@@ -44,9 +44,11 @@ Format:
 
 | Level | When to use |
 |---|---|
-| `patch` | Bug fixes; build/package fixes; internal refactors that do not change behavior; wording tweaks; small dependency upgrades |
-| `minor` | New backwards-compatible features or capabilities |
+| `patch` | Bug fixes; build/package fixes; internal refactors that do not change behavior; wording tweaks; small dependency upgrades; small improvements to existing features with limited user-facing impact (e.g. a new keyboard shortcut, a flag alias, a minor UX tweak) |
+| `minor` | A substantial new user-facing feature, such as a new slash command, a new built-in tool, or a new mode |
 | `major` | Breaking changes: incompatible config changes, renamed or removed commands/arguments, behavior semantics changes, and similar |
+
+When in doubt between `patch` and `minor`: if the change improves an existing feature and the user-facing impact is small, choose `patch` even when the change is technically "new". Reserve `minor` for a substantial new capability that introduces something users could not do before.
 
 ### Major Rule
 

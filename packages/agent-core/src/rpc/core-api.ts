@@ -19,6 +19,7 @@ import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
 import type { ContentPart } from '@moonshot-ai/kosong';
+import type { SessionWarning } from '@moonshot-ai/protocol';
 
 import type { PluginInfo, PluginSummary, ReloadSummary } from '#/plugin';
 import type { UsageStatus } from './events';
@@ -387,6 +388,7 @@ export interface SessionAPI extends AgentAPIWithId {
   getMcpStartupMetrics: (payload: EmptyPayload) => McpStartupMetrics;
   reconnectMcpServer: (payload: ReconnectMcpServerPayload) => void;
   generateAgentsMd: (payload: EmptyPayload) => void;
+  getSessionWarnings: (payload: EmptyPayload) => readonly SessionWarning[];
   addAdditionalDir: (payload: AddAdditionalDirPayload) => AddAdditionalDirResult;
 }
 

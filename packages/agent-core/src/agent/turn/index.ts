@@ -40,6 +40,7 @@ import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
+import { budgetToolResultForModel } from './tool-result-budget';
 
 interface ActiveTurn {
   readonly turnId: number;
@@ -747,7 +748,12 @@ export class TurnFlow {
                   toolOutput: isError === true ? undefined : toolOutputText(output).slice(0, 2000),
                 },
               });
-              return finalResult;
+              return budgetToolResultForModel({
+                homedir: this.agent.homedir,
+                toolName: ctx.toolCall.name,
+                toolCallId: ctx.toolCall.id,
+                result: finalResult,
+              });
             },
           },
         });

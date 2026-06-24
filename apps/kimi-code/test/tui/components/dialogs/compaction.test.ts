@@ -27,6 +27,34 @@ describe('CompactionComponent', () => {
     }
   });
 
+  it('renders a tip suffix while compacting', () => {
+    const component = new CompactionComponent(undefined, undefined, 'ctrl+s: steer mid-turn');
+
+    try {
+      const lines = component.render(120).map(strip);
+      const text = lines.join('\n');
+
+      expect(text).toContain('Compacting context... · Tip: ctrl+s: steer mid-turn');
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('does not render a tip after compaction completes', () => {
+    const component = new CompactionComponent(undefined, undefined, 'ctrl+s: steer mid-turn');
+
+    try {
+      component.markDone(1000, 500);
+      const lines = component.render(120).map(strip);
+      const text = lines.join('\n');
+
+      expect(text).toContain('Compaction complete');
+      expect(text).not.toContain('Tip:');
+    } finally {
+      component.dispose();
+    }
+  });
+
   it('renders a cancelled terminal state', () => {
     const component = new CompactionComponent();
 
