@@ -2,18 +2,20 @@ import { describe, expect, it, vi } from 'vitest';
 import chalk from 'chalk';
 
 import {
+  PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
   PluginRemoveConfirmComponent,
   PluginsPanelComponent,
+  type PluginInstallTrustConfirmResult,
   type PluginMcpSelection,
   type PluginRemoveConfirmResult,
   type PluginsPanelSelection,
 } from '#/tui/components/dialogs/plugins-selector';
 import { currentTheme } from '#/tui/theme';
 import { darkColors, lightColors } from '#/tui/theme/colors';
-import { pluginTrustLabel } from '#/tui/utils/plugin-source-label';
+import { isOfficialPluginSource, pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 
-const ANSI_SGR = /\u001b\[[0-9;]*m/g;
+const ANSI_SGR = /\u001B\[[0-9;]*m/g;
 
 function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '').replaceAll('\u276F', '?');
@@ -35,6 +37,12 @@ function renderRaw(component: { render(width: number): string[] }, width = 120):
 
 function dangerShortcut(text: string): string {
   return withAnsiColors(() => chalk.hex(darkColors.error).bold(text));
+}
+
+function warningMark(): string {
+  // Opening ANSI escape for the warning color; the install-trust notice is the
+  // only element in that dialog using it, so its presence confirms the tone.
+  return withAnsiColors(() => chalk.hex(darkColors.warning)('\u0001').split('\u0001')[0]!);
 }
 
 const superpowers = {
@@ -130,6 +138,20 @@ describe('plugins selector dialogs', () => {
       source: 'local-path',
       originalSource: 'https://code.kimi.com/kimi-code/plugins/official/local',
     })).toBe('third-party');
+  });
+
+  it('treats only the official Kimi CDN path as a trusted install source', () => {
+    expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip')).toBe(true);
+    // Curated and other Kimi CDN paths are not "official" for the install gate.
+    expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
+    expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/foo.zip')).toBe(false);
+    // Non-Kimi hosts, non-https schemes, local paths, and GitHub sources are unofficial.
+    expect(isOfficialPluginSource('https://example.test/kimi-code/plugins/official/x.zip')).toBe(false);
+    expect(isOfficialPluginSource('http://code.kimi.com/kimi-code/plugins/official/x.zip')).toBe(false);
+    expect(isOfficialPluginSource('./plugins/kimi-datasource')).toBe(false);
+    expect(isOfficialPluginSource('/abs/path/to/plugin')).toBe(false);
+    expect(isOfficialPluginSource('github.com/owner/repo')).toBe(false);
+    expect(isOfficialPluginSource('not a url')).toBe(false);
   });
 
   it('opens on the Installed tab with the four panel tabs', () => {
@@ -278,7 +300,7 @@ describe('plugins selector dialogs', () => {
     const { panel, onSelect } = makePanel({ initialTab: 'third-party' });
     // Catalog still loading (entries empty); pressing ↓ must not drive the
     // selection negative, or the later Enter would read entries[-1].
-    panel.handleInput('\u001b[B'); // ↓
+    panel.handleInput('\u001B[B'); // ↓
     panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
     panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
@@ -461,11 +483,56 @@ describe('plugins selector dialogs', () => {
       },
     });
 
-    picker.handleInput('\u001b[B');
+    picker.handleInput('\u001B[B');
     const raw = renderRaw(picker);
     expect(strip(raw)).toContain('Enter/Space select');
     // The destructive option label keeps its danger styling (error + bold).
     expect(raw).toContain(dangerShortcut('Remove plugin'));
+
+    picker.handleInput('\r');
+
+    expect(results).toEqual([{ kind: 'confirm' }]);
+  });
+
+  it('defaults the third-party install trust prompt to exit', () => {
+    const results: PluginInstallTrustConfirmResult[] = [];
+    const picker = new PluginInstallTrustConfirmComponent({
+      label: 'Superpowers',
+      onDone: (result) => {
+        results.push(result);
+      },
+    });
+
+    const raw = renderRaw(picker);
+    const out = raw.split('\n').map(strip);
+    expect(out).toContain(' Install third-party plugin Superpowers?');
+    expect(out).toContain('  ? Exit');
+    expect(out).toContain('    Cancel the installation.');
+    expect(out).toContain('    Install this third-party plugin anyway.');
+    // The warning explains why confirmation is required and uses the
+    // design-system warning color rather than muted/default text.
+    expect(out.some((line) => line.includes('Kimi has not reviewed'))).toBe(true);
+    expect(out.some((line) => line.includes('trust the source'))).toBe(true);
+    expect(raw).toContain(warningMark());
+
+    picker.handleInput('\r');
+    expect(results).toEqual([{ kind: 'cancel' }]);
+  });
+
+  it('installs a third-party plugin only after switching to trust', () => {
+    const results: PluginInstallTrustConfirmResult[] = [];
+    const picker = new PluginInstallTrustConfirmComponent({
+      label: 'Superpowers',
+      onDone: (result) => {
+        results.push(result);
+      },
+    });
+
+    picker.handleInput('\u001B[B');
+    const raw = renderRaw(picker);
+    expect(strip(raw)).toContain('Enter/Space select');
+    // The opt-in option keeps its danger styling (error + bold).
+    expect(raw).toContain(dangerShortcut('Trust and install'));
 
     picker.handleInput('\r');
 
