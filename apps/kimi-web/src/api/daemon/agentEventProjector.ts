@@ -26,6 +26,7 @@ import type {
   AppTask,
 } from '../types';
 import { i18n } from '../../i18n';
+import { toolLabel, toolSummary } from '../../lib/toolMeta';
 import { toAppMessageContent } from './mappers';
 import type { WireMessageContent } from './wire';
 
@@ -212,22 +213,14 @@ function patchSubagent(
   return next;
 }
 
-function shortJson(value: unknown): string {
-  if (value === undefined || value === null) return '';
-  try {
-    const text = typeof value === 'string' ? value : JSON.stringify(value);
-    return text.length > 120 ? `${text.slice(0, 117)}...` : text;
-  } catch {
-    return '';
-  }
-}
-
-function subagentProgressText(rawType: string, payload: Record<string, unknown>): string | null {
-  if (rawType === 'turn.step.started') return 'Started a step';
+export function subagentProgressText(rawType: string, payload: Record<string, unknown>): string | null {
+  // "Started a step" fires on every step and adds no information — the phase
+  // badge already shows the subagent is working, so skip it to cut the noise.
+  if (rawType === 'turn.step.started') return null;
   if (rawType === 'tool.use' || rawType === 'tool.call.started') {
     const name = stringField(payload, 'name') ?? stringField(payload, 'toolName') ?? 'tool';
-    const args = shortJson(payload['args'] ?? payload['input']);
-    return args ? `Calling ${name}: ${args}` : `Calling ${name}`;
+    const summary = toolArgSummary(name, payload['args'] ?? payload['input']);
+    return summary ? `Calling ${toolLabel(name)}: ${summary}` : `Calling ${toolLabel(name)}`;
   }
   if (rawType === 'tool.progress') {
     const update = payload['update'];
@@ -242,9 +235,17 @@ function subagentProgressText(rawType: string, payload: Record<string, unknown>)
   }
   if (rawType === 'tool.result') {
     const name = stringField(payload, 'name') ?? stringField(payload, 'toolName') ?? stringField(payload, 'toolCallId') ?? 'tool';
-    return `Finished ${name}`;
+    return `Finished ${toolLabel(name)}`;
   }
   return null;
+}
+
+/** A concise, human-readable summary of a tool call's arguments for progress
+ *  lines (e.g. a file path or shell command), instead of the full JSON blob. */
+function toolArgSummary(name: string, args: unknown): string {
+  if (args === undefined || args === null) return '';
+  const arg = typeof args === 'string' ? args : JSON.stringify(args);
+  return toolSummary(name, arg);
 }
 
 function projectSubagentProgress(
