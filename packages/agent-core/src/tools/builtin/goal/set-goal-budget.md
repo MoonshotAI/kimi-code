@@ -14,7 +14,7 @@ For example, "2 hours and 3 minutes" can be set as `value: 123, unit: "minutes"`
 
 A time budget must be between 1 second and 24 hours — the tool rejects anything shorter or
 longer, telling the user it is not a reasonable goal budget. Turn and token budgets are not
-bounded this way; they must be positive and are rounded up to a whole number (minimum 1).
+bounded this way; they must be positive and are rounded to the nearest whole number (minimum 1).
 
 Supported units:
 

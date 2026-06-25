@@ -573,6 +573,9 @@ describe('background tool descriptions', () => {
     // terminal_reason can also be `failed` (task-output.ts terminalReason), not
     // just timed_out / stopped — the description must enumerate it.
     expect(description).toContain('`failed`');
+    // ...but a plain non-zero command exit carries no terminal_reason/stop_reason —
+    // the description must point the model at exit_code for that common failure.
+    expect(description).toContain('exit_code');
   });
 
   it('TaskList description mentions active_only default, read-only, and plan-mode safety', () => {

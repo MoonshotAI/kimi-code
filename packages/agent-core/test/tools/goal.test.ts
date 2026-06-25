@@ -156,8 +156,10 @@ describe('SetGoalBudgetTool', () => {
     // set-goal-budget.ts rejects time budgets < 1s or > 24h (MIN/MAX_REASONABLE_TIME_BUDGET_MS).
     expect(description).toContain('1 second');
     expect(description).toContain('24 hours');
-    // turn/token budgets are floored (Math.max(1, round)), not rejected at <1.
-    expect(description).toContain('rounded up');
+    // turn/token budgets are floored at 1 and rounded to the nearest whole number
+    // (Math.max(1, Math.round(value))) — the description must not claim "rounded up".
+    expect(description).toContain('rounded to the nearest whole number');
+    expect(description).not.toContain('rounded up');
   });
 
   it('advertises an object parameter schema for OpenAI-compatible providers', () => {
