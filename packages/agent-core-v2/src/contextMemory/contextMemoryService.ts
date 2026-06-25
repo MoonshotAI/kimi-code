@@ -1,12 +1,12 @@
 import { Disposable, registerSingleton, SyncDescriptor } from "#/_base/di";
 import { estimateTokensForMessages } from "#/_base/utils/tokens";
-import { OrderedHookSlot } from '../hooks';
-import { IReplayBuilderService } from '../replayBuilder/replayBuilder';
-import type { ContextMessage, WireRecord } from '../types';
-import { IWireRecord } from '../wireRecord/wireRecord';
+import { OrderedHookSlot } from '#/hooks';
+import { IReplayBuilderService } from '#/replayBuilder/replayBuilder';
+import type { ContextMessage, WireRecord } from '#/types';
+import { IWireRecord } from '#/wireRecord/wireRecord';
 import { IContextMemory } from './contextMemory';
 
-declare module '../types' {
+declare module '#/types' {
   interface WireRecordMap {
     'context.splice': {
       start: number;

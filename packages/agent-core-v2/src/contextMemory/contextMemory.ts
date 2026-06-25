@@ -1,7 +1,7 @@
 import { createDecorator } from "#/_base/di";
 
-import type { Hooks } from '../hooks';
-import type { ContextMessage } from '../types';
+import type { Hooks } from '#/hooks';
+import type { ContextMessage } from '#/types';
 
 export interface IContextMemory {
   getHistory(): readonly ContextMessage[];
