@@ -74,7 +74,7 @@ export interface ColorPalette {
 
   // ── Shell mode ──
   /** Shell mode (`!`): the `!` prompt symbol, bash-mode editor border, and the
-   *  echoed `! command` line. Its own hue (magenta/rose), distinct from
+   *  echoed `$ command` line. Its own hue (magenta/rose), distinct from
    *  plan-mode (primary) and the user role (roleUser). */
   shellMode: string;
 }

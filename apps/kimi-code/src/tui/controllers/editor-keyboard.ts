@@ -176,18 +176,23 @@ export class EditorKeyboardController {
     editor.onCtrlS = () => {
       if (host.state.appState.streamingPhase === 'idle' || host.state.appState.isCompacting) return;
       const text = editor.getText().trim();
-      const queuedTexts = host.state.queuedMessages.map((m) => m.text);
-      host.clearQueuedMessages();
+      const editorIsBash = editor.inputMode === 'bash';
+
+      // Bash commands (`! …`) are not steerable: keep them queued so they run
+      // after the current task instead of being injected into the turn as text.
+      const queued = host.state.queuedMessages;
+      const steerable = queued.filter((m) => m.mode !== 'bash');
+      host.state.queuedMessages = queued.filter((m) => m.mode === 'bash');
 
       const parts: string[] = [];
-      for (const q of queuedTexts) {
-        const trimmed = q.trim();
+      for (const m of steerable) {
+        const trimmed = m.text.trim();
         if (trimmed.length > 0) parts.push(trimmed);
       }
-      if (text.length > 0) parts.push(text);
+      if (!editorIsBash && text.length > 0) parts.push(text);
 
       if (parts.length > 0) {
-        editor.setText('');
+        if (!editorIsBash) editor.setText('');
         const session = host.session;
         if (host.state.appState.model.trim().length === 0 || session === undefined) {
           host.showError(LLM_NOT_SET_MESSAGE);

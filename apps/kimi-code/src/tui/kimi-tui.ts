@@ -845,7 +845,11 @@ export class KimiTUI {
       this.showError('Cannot send input while session history is replaying.');
       return;
     }
-    void this.persistInputHistory(text);
+    // Shell commands (`! …`) are not prompts — keep them out of input history
+    // so ↑ recall never surfaces a bare command stripped of its `!`.
+    if (!wasBashMode) {
+      void this.persistInputHistory(text);
+    }
     if (wasBashMode) {
       // Only one foreground action at a time: queue the shell command while
       // another shell command is running or an agent turn is in progress.
@@ -867,14 +871,14 @@ export class KimiTUI {
       this.showError('No active session for shell command.');
       return;
     }
-    // Echo the command locally (bash-input), like claude-code's `! cmd`. The
-    // agent also records it for resume; this is the live view.
+    // Echo the command locally (bash-input) with a `$` prompt. The agent also
+    // records it for resume; this is the live view.
     this.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'user',
       turnId: undefined,
       renderMode: 'plain',
-      content: currentTheme.fg('shellMode', `! ${command}`),
+      content: currentTheme.fg('shellMode', `$ ${command}`),
     });
     // Create the live output entry up front. ShellRunComponent owns its own
     // rendering (running card → final view) and is mutated in place as output

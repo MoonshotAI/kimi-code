@@ -261,7 +261,7 @@ export class SessionReplayRenderer {
     }
     if (message.origin?.kind === 'shell_command') {
       // A `!` command, replayed from records. Unwrap the XML tags back into the
-      // same `! cmd` + output view the live editor produced. (Must NOT fall into
+      // same `$ cmd` + output view the live editor produced. (Must NOT fall into
       // the `injection` branch above — that returns without rendering.)
       this.flushAssistant(context);
       const text = contentPartsToText(message.content);
@@ -269,7 +269,7 @@ export class SessionReplayRenderer {
         const cmd = (extractBashTag(text, 'bash-input') ?? text).trim();
         this.advanceTurn(context);
         this.host.appendTranscriptEntry(
-          replayEntry(context, 'user', currentTheme.fg('shellMode', `! ${cmd}`), 'plain'),
+          replayEntry(context, 'user', currentTheme.fg('shellMode', `$ ${cmd}`), 'plain'),
         );
       } else {
         const stdout = (extractBashTag(text, 'bash-stdout') ?? '').trim();
