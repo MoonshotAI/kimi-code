@@ -73,6 +73,11 @@ describe('buildDiffLines', () => {
     const big = Array.from({ length: 2000 }, (_, i) => `line${i}`).join('\n');
     expect(buildDiffLines(big, `${big}\nextra`)).toBeNull();
   });
+
+  it('returns null when one side is huge even though the matrix is small', () => {
+    const huge = Array.from({ length: 6000 }, (_, i) => `line${i}`).join('\n');
+    expect(buildDiffLines('one line', huge)).toBeNull();
+  });
 });
 
 describe('buildEditDiffLines', () => {

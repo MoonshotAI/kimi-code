@@ -13,6 +13,13 @@ import type { DiffViewLine } from '../types';
  */
 const MAX_DIFF_CELLS = 1_000_000;
 
+/**
+ * Cap on either side's line count. The output has at most n + m rows, so this
+ * bounds the result array for asymmetric edits (e.g. one line replaced by a
+ * hundred thousand) that the matrix-size cap alone would let through.
+ */
+const MAX_DIFF_ROWS = 5000;
+
 function splitLines(s: string): string[] {
   if (s === '') return [];
   const lines = s.split('\n');
@@ -42,6 +49,7 @@ export function buildDiffLines(before: string, after: string): DiffViewLine[] | 
   const n = oldLines.length;
   const m = newLines.length;
   if (n === 0 && m === 0) return [];
+  if (n > MAX_DIFF_ROWS || m > MAX_DIFF_ROWS) return null;
   if ((n + 1) * (m + 1) > MAX_DIFF_CELLS) return null;
 
   const dp: number[][] = Array.from({ length: n + 1 }, () => Array.from({ length: m + 1 }, () => 0));
