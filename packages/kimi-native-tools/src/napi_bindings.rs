@@ -283,3 +283,12 @@ use crate::file_type::{self, ImageDimensions};
 pub fn native_sniff_image_dimensions(data: Vec<u8>) -> Option<ImageDimensions> {
     file_type::sniff_image_dimensions(&data)
 }
+
+/// Check if a path points to a credentials-bearing file.
+///
+/// Case-insensitive matching: `.env.local` is flagged but `.env.example`
+/// is exempted, `id_rsa.bak` is flagged while `id_rsafoo` is not.
+#[napi]
+pub fn native_is_sensitive_file(path: String) -> bool {
+    file_type::is_sensitive_file(&path)
+}

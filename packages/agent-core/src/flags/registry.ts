@@ -24,7 +24,7 @@ export const FLAG_DEFINITIONS = [
     id: 'native_tools',
     title: 'Native tools',
     description: 'Use Rust-native implementations for Read, Write, Edit, Grep, Glob and Bash tools.',
-    env: 'KIMI_CODE_NATIVE_TOOLS',
+    env: 'KIMI_CODE_EXPERIMENTAL_NATIVE_TOOLS',
     default: true,
     surface: 'core',
   },

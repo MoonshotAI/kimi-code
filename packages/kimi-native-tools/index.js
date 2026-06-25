@@ -234,6 +234,16 @@ function nativeSniffImageDimensions(data) {
   return binding.nativeSniffImageDimensions(data);
 }
 
+/**
+ * Check if a path points to a credentials-bearing file.
+ *
+ * @param {string} path - File path to check.
+ * @returns {boolean} True if the file is sensitive (credentials, keys, .env).
+ */
+function nativeIsSensitiveFile(path) {
+  return binding.nativeIsSensitiveFile(path);
+}
+
 // ============================================================================
 // Bash tool
 // ============================================================================
@@ -274,6 +284,7 @@ module.exports = {
   nativeGlob,
   nativeListDirectory,
   nativeSniffImageDimensions,
+  nativeIsSensitiveFile,
   nativeBash,
 
   // Constants

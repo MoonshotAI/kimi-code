@@ -88,3 +88,23 @@ jobs:
         run: pnpm --filter @moonshot-ai/vis-server run typecheck
       - name: Typecheck vis-web
         run: pnpm --filter @moonshot-ai/vis-web run typecheck
+
+  native-tools:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/kimi-native-tools
+
+      - name: Cargo test
+        working-directory: packages/kimi-native-tools
+        run: cargo test
+
+      - name: Cargo build (release)
+        working-directory: packages/kimi-native-tools
+        run: cargo build --release

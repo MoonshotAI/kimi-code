@@ -9,6 +9,21 @@
 
 import { basename } from 'pathe';
 
+let nativeFn: ((path: string) => boolean) | undefined | null;
+
+function getNative(): ((path: string) => boolean) | undefined {
+  if (nativeFn === null) return undefined;
+  if (nativeFn !== undefined) return nativeFn;
+  try {
+    const mod = require('@moonshot-ai/kimi-native-tools');
+    nativeFn = typeof mod?.nativeIsSensitiveFile === 'function' ? mod.nativeIsSensitiveFile : null;
+    return nativeFn ?? undefined;
+  } catch {
+    nativeFn = null;
+    return undefined;
+  }
+}
+
 const SENSITIVE_BASENAMES = new Set<string>([
   '.env',
   'id_rsa',
@@ -46,6 +61,9 @@ function comparable(path: string): string {
 }
 
 export function isSensitiveFile(path: string): boolean {
+  const fn = getNative();
+  if (fn !== undefined) return fn(path);
+
   const name = basename(path);
   const comparableName = comparable(name);
   const comparablePath = comparable(path);

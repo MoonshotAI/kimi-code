@@ -2,7 +2,7 @@
  * Native tool adapters — wraps Rust native tools to implement the
  * ExecutableTool interface used by the agent loop.
  *
- * Feature flag: set `KIMI_CODE_NATIVE_TOOLS=0` to disable native tools.
+ * Feature flag: set `KIMI_CODE_EXPERIMENTAL_NATIVE_TOOLS=0` to disable native tools.
  * When disabled or when the native module fails to load,
  * the TypeScript originals are used as fallback.
  */

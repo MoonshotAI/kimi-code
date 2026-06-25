@@ -108,9 +108,14 @@ export function isRetryableGenerateError(error: unknown): boolean {
   return false;
 }
 
+export const PROVIDER_OVERLOAD_MESSAGE_PATTERN =
+  /\b(?:engine\s*busy|overloaded|too\s+(?:many|much)\s+(?:load|traffic)|server\s+(?:busy|overloaded))\b/i;
+export const PROVIDER_RATE_LIMIT_MESSAGE_PATTERN =
+  /\b(?:rate[ _-]?limit(?:ed)?|too\s+many\s+requests|quota\s+exceeded)\b/i;
+
 const RETRYABLE_PROVIDER_MESSAGE_PATTERNS: readonly RegExp[] = [
-  /\b(?:engine\s*busy|overloaded|too\s+(?:many|much)\s+(?:load|traffic)|server\s+(?:busy|overloaded))\b/i,
-  /\b(?:rate[ _-]?limit(?:ed)?|too\s+many\s+requests|quota\s+exceeded)\b/i,
+  PROVIDER_OVERLOAD_MESSAGE_PATTERN,
+  PROVIDER_RATE_LIMIT_MESSAGE_PATTERN,
 ];
 
 function isRetryableProviderMessage(message: string): boolean {

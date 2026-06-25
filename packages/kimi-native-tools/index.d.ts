@@ -101,6 +101,7 @@ export declare function nativeGrep(pattern: string, options?: NativeGrepOptions)
 export declare function nativeGlob(pattern: string, options?: NativeGlobOptions): NativeGlobResult;
 export declare function nativeListDirectory(options?: NativeListDirectoryOptions): NativeListDirectoryResult;
 export declare function nativeSniffImageDimensions(data: Buffer | Uint8Array): NativeSniffImageDimensionsResult | null;
+export declare function nativeIsSensitiveFile(path: string): boolean;
 export declare function nativeBash(command: string, options?: NativeBashOptions): NativeBashResult;
 
 export declare const READ_MAX_LINES: number;

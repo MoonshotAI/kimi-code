@@ -3,6 +3,8 @@ import {
   APITimeoutError,
   APIStatusError,
   ChatProviderError,
+  PROVIDER_OVERLOAD_MESSAGE_PATTERN,
+  PROVIDER_RATE_LIMIT_MESSAGE_PATTERN,
   normalizeAPIStatusError,
 } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
@@ -579,19 +581,11 @@ function classifyAnthropicSdkError(message: string): ChatProviderError {
   const lower = message.toLowerCase();
   // Provider-side overload / transient failures — map to 503 so the
   // retry loop picks them up automatically.
-  if (
-    /\b(?:engine\s*busy|overloaded|too\s+(?:many|much)\s+(?:load|traffic)|server\s+(?:busy|overloaded))\b/i.test(
-      lower,
-    )
-  ) {
+  if (PROVIDER_OVERLOAD_MESSAGE_PATTERN.test(lower)) {
     return new APIStatusError(503, `Anthropic error: ${message}`, null);
   }
   // Rate-limit patterns that arrive without a 429 status code.
-  if (
-    /\b(?:rate[ _-]?limit(?:ed)?|too\s+many\s+requests|quota\s+exceeded)\b/i.test(
-      lower,
-    )
-  ) {
+  if (PROVIDER_RATE_LIMIT_MESSAGE_PATTERN.test(lower)) {
     return new APIStatusError(429, `Anthropic error: ${message}`, null);
   }
   return new ChatProviderError(`Anthropic error: ${message}`);
