@@ -6,6 +6,7 @@ use crate::bash::{self, BashConfig, BashResult, DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S
 use crate::edit::{self, EditResult};
 use crate::glob::{self, GlobConfig, GlobResult, MAX_MATCHES};
 use crate::grep::{self, GrepConfig, GrepResult, OutputMode, DEFAULT_HEAD_LIMIT};
+use crate::list_directory::{self, ListDirectoryConfig, ListDirectoryResult};
 use crate::read::{self, ReadConfig, ReadResult, MAX_BYTES, MAX_LINE_LENGTH, MAX_LINES};
 use crate::write::{self, WriteMode, WriteResult};
 use napi_derive::napi;
@@ -247,3 +248,23 @@ pub const BASH_DEFAULT_TIMEOUT: u32 = DEFAULT_TIMEOUT_S as u32;
 /// Maximum timeout for bash commands (seconds).
 #[napi]
 pub const BASH_MAX_TIMEOUT: u32 = MAX_TIMEOUT_S as u32;
+
+// ============================================================================
+// List Directory tool
+// ============================================================================
+
+/// Generate a compact 2-level directory tree listing.
+///
+/// @param path - Directory to list. Defaults to current directory.
+/// @param collapse_hidden_dirs - If true, skip listing children of hidden directories.
+/// @returns ListDirectoryResult with output string and optional error.
+#[napi]
+pub fn native_list_directory(
+    path: Option<String>,
+    collapse_hidden_dirs: Option<bool>,
+) -> ListDirectoryResult {
+    list_directory::list_directory(&ListDirectoryConfig {
+        path,
+        collapse_hidden_dirs: collapse_hidden_dirs.unwrap_or(false),
+    })
+}

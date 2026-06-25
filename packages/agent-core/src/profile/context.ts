@@ -4,6 +4,7 @@ import type { Kaos } from '@moonshot-ai/kaos';
 
 import { normalizeAdditionalDirs } from '../config';
 import { listDirectory } from '../tools/support/list-directory';
+import { nativeListDirectory } from '../tools/builtin/native-tools';
 import type { SystemPromptContext } from './types';
 
 // Soft budget for the combined AGENTS.md content injected into the system
@@ -33,7 +34,9 @@ export async function prepareSystemPromptContext(
 ): Promise<PreparedSystemPromptContext> {
   const additionalDirs = normalizeAdditionalDirs(options?.additionalDirs ?? []);
   const [cwdListing, agentsMdResult, additionalDirsInfo] = await Promise.all([
-    listDirectory(kaos, undefined, { collapseHiddenDirs: true }),
+    nativeListDirectory(kaos, undefined, { collapseHiddenDirs: true }).then(
+      (result) => result ?? listDirectory(kaos, undefined, { collapseHiddenDirs: true }),
+    ),
     loadAgentsMdForRoots(kaos, brandHome, [kaos.getcwd()]),
     loadAdditionalDirsInfo(kaos, additionalDirs),
   ]);
@@ -120,7 +123,7 @@ async function loadAdditionalDirsInfo(
 ): Promise<string> {
   const sections = await Promise.all(
     additionalDirs.map(async (dir) => {
-      const listing = await listDirectory(kaos.withCwd(dir));
+      const listing = (await nativeListDirectory(kaos, dir)) ?? (await listDirectory(kaos.withCwd(dir)));
       return `### ${dir}\n${listing}`;
     }),
   );

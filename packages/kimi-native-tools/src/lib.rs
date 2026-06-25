@@ -6,6 +6,7 @@ mod file_type;
 mod glob;
 mod grep;
 mod line_endings;
+mod list_directory;
 mod napi_bindings;
 mod read;
 mod write;

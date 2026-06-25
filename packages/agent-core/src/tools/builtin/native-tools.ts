@@ -509,3 +509,42 @@ export class NativeBashTool extends BashTool {
     };
   }
 }
+
+// ============================================================================
+// ListDirectory adapter (standalone function, not a BuiltinTool)
+// ============================================================================
+
+export interface NativeListDirectoryOptions {
+  collapseHiddenDirs?: boolean;
+}
+
+/**
+ * Try the native Rust list_directory implementation first.
+ * Falls back to the TS implementation if the native module is unavailable.
+ *
+ * @param kaos - Kaos instance (used by TS fallback only).
+ * @param workDir - Directory to list. Defaults to kaos.getcwd().
+ * @param options - Options (collapseHiddenDirs).
+ * @returns The directory tree listing string.
+ */
+export async function nativeListDirectory(
+  kaos: Kaos,
+  workDir?: string,
+  options?: NativeListDirectoryOptions,
+): Promise<string | undefined> {
+  try {
+    const mod = getNativeModule();
+    if (!mod) return undefined;
+    const fn = mod['nativeListDirectory'] as
+      | ((opts: { path?: string; collapseHiddenDirs?: boolean }) => { output: string; error?: string })
+      | undefined;
+    if (typeof fn !== 'function') return undefined;
+
+    const effectiveDir = workDir ?? kaos.getcwd();
+    const result = fn({ path: effectiveDir, collapseHiddenDirs: options?.collapseHiddenDirs });
+    if (result.error) return undefined; // fall back to TS on error
+    return result.output;
+  } catch {
+    return undefined; // native module unavailable or binary mismatch — fall back to TS
+  }
+}

@@ -202,6 +202,25 @@ function nativeGlob(pattern, options = {}) {
 }
 
 // ============================================================================
+// List Directory tool
+// ============================================================================
+
+/**
+ * Generate a compact 2-level directory tree listing.
+ *
+ * @param {object} [options] - List directory options.
+ * @param {string} [options.path] - Directory to list. Defaults to current directory.
+ * @param {boolean} [options.collapseHiddenDirs] - If true, skip listing children of hidden directories.
+ * @returns {{ output: string, error?: string }}
+ */
+function nativeListDirectory(options = {}) {
+  return binding.nativeListDirectory(
+    options.path ?? null,
+    options.collapseHiddenDirs ?? null,
+  );
+}
+
+// ============================================================================
 // Bash tool
 // ============================================================================
 
@@ -239,6 +258,7 @@ module.exports = {
   nativeEdit,
   nativeGrep,
   nativeGlob,
+  nativeListDirectory,
   nativeBash,
 
   // Constants

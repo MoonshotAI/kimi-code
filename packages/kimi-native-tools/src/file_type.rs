@@ -142,6 +142,102 @@ const SENSITIVE_DOT_VARIANT_SUFFIXES: &[&str] = &[
     ".bak", ".backup", ".copy", ".disabled", ".key", ".old", ".orig", ".pem", ".save", ".tmp",
 ];
 
+/// Image dimensions (width × height in pixels).
+#[derive(Debug, Clone, Copy)]
+pub struct ImageDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Best-effort pixel-dimension reader for common raster formats.
+///
+/// Inspects only the fixed region near the start of the file where each
+/// format records its dimensions (the IHDR/DIB header, the RIFF chunk
+/// after the `WEBP` tag, or the first JPEG SOFn segment). Returns `None`
+/// for formats whose dimensions are not locatable from that region, or
+/// when the supplied buffer is too short to cover it.
+///
+/// Mirrors `sniffImageDimensions` in `support/file-type.ts`.
+pub fn sniff_image_dimensions(data: &[u8]) -> Option<ImageDimensions> {
+    // PNG — IHDR is the first chunk; width/height are big-endian uint32
+    // at offsets 16 and 20.
+    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) && data.len() >= 24 {
+        let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+        let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+        return Some(ImageDimensions { width, height });
+    }
+
+    // GIF — logical-screen width/height are little-endian uint16 at
+    // offsets 6 and 8.
+    if (data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a")) && data.len() >= 10 {
+        let width = u16::from_le_bytes([data[6], data[7]]) as u32;
+        let height = u16::from_le_bytes([data[8], data[9]]) as u32;
+        return Some(ImageDimensions { width, height });
+    }
+
+    // BMP — DIB header width/height are little-endian int32 at offsets 18
+    // and 22 (height may be negative for top-down bitmaps).
+    if data.starts_with(b"BM") && data.len() >= 26 {
+        let width = i32::from_le_bytes([data[18], data[19], data[20], data[21]]) as u32;
+        let height_raw = i32::from_le_bytes([data[22], data[23], data[24], data[25]]);
+        let height = height_raw.unsigned_abs();
+        return Some(ImageDimensions { width, height });
+    }
+
+    // WEBP — RIFF container; VP8/VP8L/VP8X each store dimensions
+    // differently in the chunk that follows the 'WEBP' tag.
+    if data.starts_with(b"RIFF") && data.len() >= 30 {
+        let four_cc = &data[12..16];
+        if four_cc == b"VP8 " {
+            let width = (u16::from_le_bytes([data[26], data[27]]) & 0x3fff) as u32;
+            let height = (u16::from_le_bytes([data[28], data[29]]) & 0x3fff) as u32;
+            return Some(ImageDimensions { width, height });
+        }
+        if four_cc == b"VP8L" && data.len() >= 25 {
+            let bits = u32::from_le_bytes([data[21], data[22], data[23], data[24]]);
+            let width = (bits & 0x3fff) + 1;
+            let height = ((bits >> 14) & 0x3fff) + 1;
+            return Some(ImageDimensions { width, height });
+        }
+        if four_cc == b"VP8X" {
+            let width = 1 + data[24] as u32 + ((data[25] as u32) << 8) + ((data[26] as u32) << 16);
+            let height = 1 + data[27] as u32 + ((data[28] as u32) << 8) + ((data[29] as u32) << 16);
+            return Some(ImageDimensions { width, height });
+        }
+    }
+
+    // JPEG — scan segment markers for a Start-Of-Frame (SOFn) marker,
+    // whose payload carries height/width as big-endian uint16.
+    if data.starts_with(&[0xFF, 0xD8]) {
+        let mut offset = 2usize;
+        while offset + 9 < data.len() {
+            if data[offset] != 0xFF {
+                offset += 1;
+                continue;
+            }
+            let marker = data[offset + 1];
+            // SOFn markers carry frame dimensions; skip SOF4/SOF8/SOF12 (0xc4/0xc8/0xcc).
+            if (0xC0..=0xCF).contains(&marker) && marker != 0xC4 && marker != 0xC8 && marker != 0xCC {
+                let height = u16::from_be_bytes([data[offset + 5], data[offset + 6]]) as u32;
+                let width = u16::from_be_bytes([data[offset + 7], data[offset + 8]]) as u32;
+                return Some(ImageDimensions { width, height });
+            }
+            // Standalone markers (RSTn, SOI, EOI) carry no length field.
+            if marker == 0xD8 || marker == 0xD9 || (0xD0..=0xD7).contains(&marker) {
+                offset += 2;
+                continue;
+            }
+            let segment_length = u16::from_be_bytes([data[offset + 2], data[offset + 3]]) as usize;
+            if segment_length < 2 {
+                break;
+            }
+            offset += 2 + segment_length;
+        }
+    }
+
+    None
+}
+
 /// Returns true when the supplied path points at a credentials-bearing
 /// file. Matching is case-insensitive and pattern-aware: `.env.local` is
 /// flagged but `.env.example` is exempted, and `id_rsa.bak` is flagged

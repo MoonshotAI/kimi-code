@@ -65,6 +65,16 @@ export interface NativeGlobResult {
   truncated: boolean;
 }
 
+export interface NativeListDirectoryOptions {
+  path?: string;
+  collapseHiddenDirs?: boolean;
+}
+
+export interface NativeListDirectoryResult {
+  output: string;
+  error?: string;
+}
+
 export interface NativeBashOptions {
   cwd?: string;
   timeout?: number;
@@ -84,6 +94,7 @@ export declare function nativeWrite(path: string, content: string, options?: Nat
 export declare function nativeEdit(path: string, oldString: string, newString: string, options?: NativeEditOptions): NativeEditResult;
 export declare function nativeGrep(pattern: string, options?: NativeGrepOptions): NativeGrepResult;
 export declare function nativeGlob(pattern: string, options?: NativeGlobOptions): NativeGlobResult;
+export declare function nativeListDirectory(options?: NativeListDirectoryOptions): NativeListDirectoryResult;
 export declare function nativeBash(command: string, options?: NativeBashOptions): NativeBashResult;
 
 export declare const READ_MAX_LINES: number;
