@@ -64,6 +64,16 @@ After producing a plan the agent pauses for your review — you can approve it, 
 YOLO mode skips confirmation for file writes and command execution. Only use it in working directories you trust.
 :::
 
+### Shell mode
+
+Shell mode lets you run terminal commands without leaving the conversation. The command output is written into the conversation context, so the agent can see the results in later turns.
+
+- Enter: type `!` in an empty input box, or paste a command that starts with `!`.
+- Exit: press `Backspace` or `Esc` in an empty input box; submitting a command also returns you to normal mode automatically.
+- Run in background: while a command is running, press `Ctrl+B` to move it to a background task.
+
+In shell mode the input box shows a `!` prompt on the left and the border turns violet. For example, you can run `!gh auth login` to sign in to the GitHub CLI without opening a new terminal, so Kimi can use `gh` afterward.
+
 ## During streaming output
 
 The input box remains usable while the agent is thinking or calling tools, and supports the following extra actions:

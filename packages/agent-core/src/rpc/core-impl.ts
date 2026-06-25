@@ -57,6 +57,7 @@ import type {
   BeginCompactionPayload,
   CancelPayload,
   CancelPlanPayload,
+  CancelShellCommandPayload,
   CloseSessionPayload,
   ConfigDiagnostics,
   CoreAPI,
@@ -83,6 +84,7 @@ import type {
   PluginInfo,
   PluginSummary,
   PromptPayload,
+  RunShellCommandPayload,
   ReconnectMcpServerPayload,
   RegisterToolPayload,
   ReloadSessionPayload,
@@ -574,6 +576,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
     return this.sessionApi(sessionId).prompt(payload);
+  }
+
+  runShellCommand({ sessionId, ...payload }: SessionAgentPayload<RunShellCommandPayload>) {
+    return this.sessionApi(sessionId).runShellCommand(payload);
+  }
+
+  cancelShellCommand({ sessionId, ...payload }: SessionAgentPayload<CancelShellCommandPayload>) {
+    return this.sessionApi(sessionId).cancelShellCommand(payload);
   }
 
   steer({ sessionId, ...payload }: SessionAgentPayload<SteerPayload>) {

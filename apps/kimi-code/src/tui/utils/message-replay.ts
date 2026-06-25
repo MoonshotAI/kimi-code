@@ -135,7 +135,7 @@ export function replayEntry(
   kind: TranscriptEntry['kind'],
   content: string,
   renderMode: TranscriptEntry['renderMode'],
-  extras: { detail?: string } = {},
+  extras: { detail?: string; bullet?: string } = {},
 ): TranscriptEntry {
   return {
     id: nextTranscriptId(),
@@ -144,6 +144,7 @@ export function replayEntry(
     renderMode,
     content,
     detail: extras.detail,
+    bullet: extras.bullet,
   };
 }
 
@@ -250,6 +251,9 @@ function isReplayUserTurnRecord(record: AgentReplayRecord): boolean {
       return true;
     case 'skill_activation':
       return message.origin.trigger === 'user-slash';
+    case 'shell_command':
+      // A `!` command's input is a user-turn anchor; its output is not.
+      return message.origin.phase === 'input';
     case 'background_task':
     case 'compaction_summary':
     case 'cron_job':

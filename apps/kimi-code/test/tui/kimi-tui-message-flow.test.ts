@@ -62,6 +62,7 @@ interface MessageDriver {
   init(): Promise<boolean>;
   handleUserInput(text: string): void;
   persistInputHistory(text: string): Promise<void>;
+  sendQueuedMessage(session: unknown, item: QueuedMessage): void;
   getCurrentSessionId(): string;
 }
 
@@ -1240,6 +1241,149 @@ command = "vim"
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('queues bash input with mode bash while a turn is streaming', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('ls');
+
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'ls', agentId: 'main', mode: 'bash' },
+    ]);
+  });
+
+  it('dispatches a queued bash item to runShellCommand instead of prompt', async () => {
+    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
+    const session = makeSession({ runShellCommand });
+    const { driver } = await makeDriver(session);
+
+    driver.sendQueuedMessage(session, { text: 'ls', mode: 'bash' });
+    await Promise.resolve();
+
+    expect(runShellCommand).toHaveBeenCalledWith(
+      'ls',
+      expect.objectContaining({ commandId: expect.any(String) }),
+    );
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('does not persist bash input to input history', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('ls');
+
+    expect(driver.persistInputHistory).not.toHaveBeenCalled();
+  });
+
+  it('persists normal input to input history', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('hello');
+
+    expect(driver.persistInputHistory).toHaveBeenCalledWith('hello');
+  });
+
+  it('does not steer queued bash commands, keeping them queued', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [
+      { text: 'ls', agentId: 'main', mode: 'bash' },
+      { text: 'focus on tests', agentId: 'main' },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).toHaveBeenCalledWith('focus on tests');
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'ls', agentId: 'main', mode: 'bash' },
+    ]);
+  });
+
+  it('does not steer while a shell command is running', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'shell';
+    driver.state.queuedMessages = [{ text: 'summarize the output', agentId: 'main' }];
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'summarize the output', agentId: 'main' },
+    ]);
+  });
+
+  it('does not steer the editor draft while it is in bash mode', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.inputMode = 'bash';
+    driver.state.editor.setText('ls');
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.editor.getText()).toBe('ls');
+  });
+
+  it('recalls a queued bash command back into bash mode on Up', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{ text: 'ls', agentId: 'main', mode: 'bash' }];
+    // After a bash command is queued the editor is reset to prompt mode.
+    driver.state.editor.inputMode = 'prompt';
+    driver.state.appState.inputMode = 'prompt';
+
+    const handled = driver.state.editor.onUpArrowEmpty?.();
+
+    expect(handled).toBe(true);
+    expect(driver.state.editor.getText()).toBe('ls');
+    expect(driver.state.editor.inputMode).toBe('bash');
+    expect(driver.state.appState.inputMode).toBe('bash');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('recalls a queued prompt message in prompt mode on Up', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{ text: 'hello', agentId: 'main' }];
+    driver.state.editor.inputMode = 'bash';
+    driver.state.appState.inputMode = 'bash';
+
+    const handled = driver.state.editor.onUpArrowEmpty?.();
+
+    expect(handled).toBe(true);
+    expect(driver.state.editor.getText()).toBe('hello');
+    expect(driver.state.editor.inputMode).toBe('prompt');
+    expect(driver.state.appState.inputMode).toBe('prompt');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('echoes a bash command with a $ prompt in the transcript', async () => {
+    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
+    const session = makeSession({ runShellCommand });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('ls');
+    await Promise.resolve();
+
+    const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('$ ls');
+    expect(transcript).not.toContain('! ls');
   });
 
   it('renders cron fired events as distinct transcript entries', async () => {

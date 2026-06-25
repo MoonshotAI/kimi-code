@@ -162,6 +162,29 @@ export interface SessionSummary {
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
 }
+export interface RunShellCommandPayload {
+  readonly command: string;
+  /**
+   * TUI-generated correlation id echoed back on every `shell.output` live event
+   * so the client can route chunks to the matching entry and drop stale events
+   * from a prior run. Optional for callers that don't stream.
+   */
+  readonly commandId?: string;
+}
+export interface ShellCommandResult {
+  readonly stdout: string;
+  readonly stderr: string;
+  /** True when the command failed (non-zero exit / timeout / killed) — used by
+   *  the TUI to render stderr in red only for actual failures, not warnings. */
+  readonly isError?: boolean;
+  /** True when the command was detached to the background (ctrl+b) instead of
+   *  completing in the foreground. The TUI uses this to skip the normal final
+   *  render (the backgrounding path owns the UI + model notification). */
+  readonly backgrounded?: boolean;
+}
+export interface CancelShellCommandPayload {
+  readonly commandId: string;
+}
 export interface SteerPayload {
   readonly input: readonly ContentPart[];
 }
@@ -339,6 +362,8 @@ export interface RemoveKimiProviderPayload {
 
 export interface AgentAPI {
   prompt: (payload: PromptPayload) => void;
+  runShellCommand: (payload: RunShellCommandPayload) => Promise<ShellCommandResult>;
+  cancelShellCommand: (payload: CancelShellCommandPayload) => void;
   steer: (payload: SteerPayload) => void;
   cancel: (payload: CancelPayload) => void;
   undoHistory: (payload: UndoHistoryPayload) => void;

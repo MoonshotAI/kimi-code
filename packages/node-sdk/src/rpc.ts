@@ -230,6 +230,31 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async runShellCommand(input: {
+    sessionId: string;
+    command: string;
+    commandId?: string;
+  }): Promise<{ stdout: string; stderr: string; isError?: boolean; backgrounded?: boolean }> {
+    const agentId = this.interactiveAgentId;
+    const rpc = await this.getRpc();
+    return rpc.runShellCommand({
+      sessionId: input.sessionId,
+      agentId,
+      command: input.command,
+      commandId: input.commandId,
+    });
+  }
+
+  async cancelShellCommand(input: { sessionId: string; commandId: string }): Promise<void> {
+    const agentId = this.interactiveAgentId;
+    const rpc = await this.getRpc();
+    return rpc.cancelShellCommand({
+      sessionId: input.sessionId,
+      agentId,
+      commandId: input.commandId,
+    });
+  }
+
   async steer(input: SessionPromptRpcInput): Promise<void> {
     const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
