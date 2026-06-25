@@ -174,17 +174,22 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     const root = await this.runExclusive(async () => {
       const file = await this.readRegistry();
       const existing = file.workspaces[workspaceId];
-      if (existing === undefined) {
-        throw new WorkspaceNotFoundError(workspaceId);
+      let root: string;
+      if (existing !== undefined) {
+        delete file.workspaces[workspaceId];
+        root = existing.root;
+      } else {
+        // Derived workspace: not in the file but a valid list result.
+        // Tombstone it so list() stops surfacing it.
+        const derived = await this.findDerivedWorkDir(workspaceId);
+        if (derived === undefined) throw new WorkspaceNotFoundError(workspaceId);
+        root = derived;
       }
-      delete file.workspaces[workspaceId];
-      // Tombstone so derived workspaces (computed from the surviving session
-      // bucket) do not resurrect this workspace on the next list().
       if (!file.deleted_workspace_ids.includes(workspaceId)) {
         file.deleted_workspace_ids.push(workspaceId);
       }
       await this.writeRegistry(file);
-      return existing.root;
+      return root;
     });
     this.publishWorkspace({
       type: 'event.workspace.deleted',
@@ -202,11 +207,19 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
 
     // Not registered — may be a derived workspace id, which is the session
     // bucket key (encodeWorkDirKey(workDir)). Resolve it from the index.
+    const derived = await this.findDerivedWorkDir(workspaceId);
+    if (derived !== undefined) return derived;
+    throw new WorkspaceNotFoundError(workspaceId);
+  }
+
+  /** Look up a derived workspace's workDir from the session index, or undefined
+   *  if the id is not a known derived bucket. */
+  private async findDerivedWorkDir(workspaceId: string): Promise<string | undefined> {
     const index = await readSessionIndex(this.homeDir, this.sessionsDir);
     for (const e of index.values()) {
       if (encodeWorkDirKey(e.workDir) === workspaceId) return e.workDir;
     }
-    throw new WorkspaceNotFoundError(workspaceId);
+    return undefined;
   }
 
   private async hydrate(

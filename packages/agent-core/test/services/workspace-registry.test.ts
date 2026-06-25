@@ -196,4 +196,17 @@ describe('WorkspaceRegistryService', () => {
     const list = await ctx.registry.list();
     expect(list.map((w) => w.root)).not.toContain(root);
   });
+
+  it('tombstones a derived workspace on delete so it stays removed', async () => {
+    const root = await makeProjectRoot('derived-del');
+    // Derived (cwd-only, never registered) workspace with an active session.
+    await seedSessionBucket(root, 'sess-ddel-1');
+    const derivedId = encodeWorkDirKey(root);
+
+    expect((await ctx.registry.list()).map((w) => w.id)).toContain(derivedId);
+
+    await ctx.registry.delete(derivedId);
+
+    expect((await ctx.registry.list()).map((w) => w.id)).not.toContain(derivedId);
+  });
 });
