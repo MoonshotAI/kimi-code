@@ -127,7 +127,7 @@ describe('HookEngine', () => {
       {
         event: 'PreToolUse',
         matcher: 'ReadFile',
-        command: "echo 'blocked' >&2; exit 2",
+        command: 'node -e "process.stderr.write(\'blocked\'); process.exit(2)"',
         timeout: 5,
       },
     ]);

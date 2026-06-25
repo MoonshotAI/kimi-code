@@ -422,7 +422,7 @@ describe('KimiHarness.createSession transport link', () => {
       expect(summariesById).toHaveLength(1);
       expect(summariesById[0]).toMatchObject({
         id: session.id,
-        workDir,
+        workDir: toPosix(workDir),
       });
       await expect(harness.listSessions({ sessionId: 'ses_missing' })).resolves.toEqual([]);
     } finally {

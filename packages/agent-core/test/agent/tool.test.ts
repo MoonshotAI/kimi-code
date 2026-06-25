@@ -19,7 +19,7 @@ describe('Agent tools', () => {
         {
           event: 'PreToolUse',
           matcher: 'Bash',
-          command: "echo 'blocked by PreToolUse' >&2; exit 2",
+          command: 'node -e "process.stderr.write(\'blocked by PreToolUse\'); process.exit(2)"',
         },
         {
           event: 'PostToolUseFailure',

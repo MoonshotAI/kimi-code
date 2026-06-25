@@ -99,7 +99,11 @@ describe.skipIf(process.platform !== 'win32')('LocalKaos cmd.exe', () => {
     const statInfo = await fsStat(filePath);
     expect(statInfo.isFile()).toBe(true);
 
-    const read = await runCmd(kaos, `type "${filePath}"`);
+    // The path contains no spaces (tmpDir is under the 8.3 short-name temp
+    // dir), so pass it unquoted: wrapping it in `"…"` would make Node's
+    // Windows arg-quoting escape the inner quotes to `\"`, which cmd.exe
+    // does not unescape — leaving `type` looking for a literal `\"…\"`.
+    const read = await runCmd(kaos, `type ${filePath}`);
     expect(read.exitCode).toBe(0);
     expect(read.stdout).toBe('Test content\r\n');
     expect(read.stderr).toBe('');

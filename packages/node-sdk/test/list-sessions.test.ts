@@ -70,7 +70,7 @@ describe('SessionStore.list', () => {
     const indexRaw = await readFile(sessionIndexPath(homeDir), 'utf-8');
     expect(indexRaw).toContain('"sessionId":"ses_list_full"');
     expect(indexRaw).toContain(summary.sessionDir);
-    expect(indexRaw).toContain(`"workDir":"${workDir}"`);
+    expect(indexRaw).toContain(`"workDir":"${normalizeWorkDir(workDir)}"`);
   });
 
   it('forks a session directory, rewrites metadata, and drops reserved goal state', async () => {

@@ -1,6 +1,7 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { KaosFileExistsError } from '#/errors';
 import { LocalKaos } from '#/local';
@@ -941,26 +942,14 @@ describe('LocalProcess.kill safety', () => {
       const kaos = await LocalKaos.create();
       const tmp = await realpath(await mkdtemp(join(tmpdir(), 'kaos-killtree-')));
       try {
-        const pidFile = join(tmp, 'grandchild.pid').replaceAll('\\', '\\\\');
-        // Parent: spawns a child that spawns a grandchild (long-running).
-        // The grandchild writes its own pid to a file so the test can
-        // later check if it's still alive.
-        const code = `
-          const { spawn } = require('node:child_process');
-          const child = spawn(process.execPath, ['-e', \`
-            const { spawn } = require('node:child_process');
-            const { writeFileSync } = require('node:fs');
-            const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)']);
-            writeFileSync('${pidFile}', String(g.pid));
-            setInterval(() => {}, 1000);
-          \`], { stdio: 'inherit' });
-          setInterval(() => {}, 1000);
-        `;
-        const proc = await kaos.exec('node', '-e', code);
-
-        // Wait for grandchild pid to be written.
-        const { stat, readFile } = await import('node:fs/promises');
+        // Run the parent → child → grandchild chain from a real script file
+        // (see test/fixtures/killtree.cjs) with the pidfile path passed via
+        // argv. Inline multi-line `node -e` strings get mangled on Windows by
+        // Node's arg-quoting and by JS string escapes, so the pidfile was
+        // never written and the test read ENOENT.
         const pidPath = join(tmp, 'grandchild.pid');
+        const scriptPath = fileURLToPath(new URL('./fixtures/killtree.cjs', import.meta.url));
+        const proc = await kaos.exec('node', scriptPath, pidPath);
         const start = Date.now();
         while (Date.now() - start < 5000) {
           try {

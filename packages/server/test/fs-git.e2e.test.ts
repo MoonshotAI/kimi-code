@@ -37,8 +37,11 @@ afterEach(async () => {
 
   }
   server = undefined;
-  rmSync(tmpDir, { recursive: true, force: true });
-  rmSync(bridgeHome, { recursive: true, force: true });
+  // On Windows the git/gh child processes spawned during a test can outlive
+  // `server.close()` by a tick and keep the temp workspace as their cwd,
+  // which makes rmSync fail with EPERM. Retry briefly to ride out the lock.
+  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  rmSync(bridgeHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 async function bootDaemon(): Promise<RunningServer> {
@@ -146,7 +149,9 @@ describe('POST /api/v1/sessions/{sid}/fs:git_status (W11.2)', () => {
     // Clean tree → no line stats.
     expect(env.data!.additions).toBe(0);
     expect(env.data!.deletions).toBe(0);
-  });
+    // First server-booting test in the file: on Windows, cold module load
+    // plus the `git`/`gh` child-process spawns can exceed the default 5s.
+  }, 20_000);
 
   it('dirty repo: aggregate additions/deletions vs HEAD', async () => {
     initRepo();
