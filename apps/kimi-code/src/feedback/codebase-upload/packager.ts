@@ -85,7 +85,11 @@ export async function packageBundle(
           size: file.size,
           mtimeMs: file.mtimeMs,
         }));
-  return packageEntries([...codebaseEntries, ...sessionEntries], archivePath);
+  const entries = [...codebaseEntries, ...sessionEntries];
+  if (entries.length === 0) {
+    throw new Error('Cannot package an empty feedback bundle.');
+  }
+  return packageEntries(entries, archivePath);
 }
 
 async function packageEntries(

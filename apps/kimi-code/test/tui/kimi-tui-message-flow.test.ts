@@ -577,6 +577,53 @@ command = "vim"
     expect(harness.auth.submitFeedback).toHaveBeenCalledOnce();
   });
 
+  it('uploads session logs when codebase scanning fails but the session directory is available', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(scanCodebase).mockReset();
+    vi.mocked(packageCurrentBundle).mockReset();
+    vi.mocked(uploadPackagedCodebase).mockReset();
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' } as any]);
+    const archive = {
+      path: '/tmp/fake-archive.zip',
+      size: 4,
+      sha256: 'hash-123',
+      fingerprint: 'fp-123',
+      fileCount: 1,
+    };
+    vi.mocked(scanCodebase).mockRejectedValueOnce(new Error('scan failed'));
+    vi.mocked(packageCurrentBundle).mockResolvedValueOnce(archive);
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(packageCurrentBundle).toHaveBeenCalledWith({ codebase: undefined, sessionDir: '/tmp/session-a' });
+    expect(uploadPackagedCodebase).toHaveBeenCalledWith(
+      expect.any(Object),
+      archive,
+      3,
+      { filename: 'feedback-bundle.zip' },
+    );
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 3');
+    expect(transcript).not.toContain('attachment upload failed');
+  });
+
   it('tells the user when feedback is sent but codebase packaging fails', async () => {
     const { driver, harness } = await makeDriver(
       makeSession(),

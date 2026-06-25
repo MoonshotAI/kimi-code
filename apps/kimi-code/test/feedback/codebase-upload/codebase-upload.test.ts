@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { scanCodebase, packageSessionFiles, uploadPackagedCodebase } from '../../../src/feedback/codebase-upload';
+import { scanCodebase, packageBundle, packageSessionFiles, uploadPackagedCodebase } from '../../../src/feedback/codebase-upload';
 
 const execFileAsync = promisify(execFile);
 
@@ -188,6 +188,17 @@ describe('packageSessionFiles', () => {
       expect(archive.sha256).toMatch(/^[0-9a-f]{64}$/);
     } finally {
       await rm(sessionDir, { recursive: true, force: true });
+      await rm(archivePath, { force: true });
+    }
+  });
+});
+
+describe('packageBundle', () => {
+  it('rejects empty bundles instead of uploading an empty archive', async () => {
+    const archivePath = join(tmpdir(), 'feedback-empty-bundle.zip');
+    try {
+      await expect(packageBundle({}, archivePath)).rejects.toThrow(/empty/i);
+    } finally {
       await rm(archivePath, { force: true });
     }
   });
