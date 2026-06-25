@@ -38,6 +38,8 @@ import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
+import type { FsWatcherServiceOptions } from '@moonshot-ai/agent-core';
+
 import {
   IRestGateway,
   startServer,
@@ -72,7 +74,9 @@ afterEach(async () => {
   rmSync(bridgeHome, { recursive: true, force: true });
 });
 
-async function bootDaemon(): Promise<RunningServer> {
+async function bootDaemon(
+  fsWatcherOptions?: FsWatcherServiceOptions,
+): Promise<RunningServer> {
   server = await startServer({
     host: '127.0.0.1',
     port: 0,
@@ -80,6 +84,7 @@ async function bootDaemon(): Promise<RunningServer> {
     logger: pino({ level: 'silent' }),
     coreProcessOptions: { homeDir: bridgeHome },
     wsGatewayOptions: { pingIntervalMs: 5_000, pongTimeoutMs: 5_000 },
+    fsWatcherOptions,
   });
   return server;
 }
@@ -255,8 +260,9 @@ describe('WS fs watch (W12 / Chain 14)', () => {
     conn.ws.close();
   });
 
-  it('AC #2: burst > 500 changes inside 200ms window → truncated:true', async () => {
-    const r = await bootDaemon();
+  it('AC #2: burst over the watcher window limit → truncated:true', async () => {
+    const maxChangesPerWindow = 0;
+    const r = await bootDaemon({ maxChangesPerWindow });
     const sid = await createSession(r);
     const conn = await openConn(wsUrl(r.address));
     await helloAndSubscribe(conn, 'A', sid);
@@ -273,11 +279,13 @@ describe('WS fs watch (W12 / Chain 14)', () => {
 
     await sleep(WATCH_SETTLE_MS);
 
-    // Slam 600 files into a fresh dir; chokidar emits >500 add events well
-    // inside one 200ms window.
+    // Use a zero test-only limit so this e2e checks WebSocket delivery of the
+    // truncation frame without depending on many filesystem events landing in
+    // one OS watcher batch under full-suite load. The default 500-change limit
+    // is covered deterministically in FsWatcherService unit tests.
     const burstDir = join(workspace, 'burst');
     mkdirSync(burstDir, { recursive: true });
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < 5; i++) {
       writeFileSync(join(burstDir, `f${i}.txt`), `x${i}`);
     }
 
@@ -295,14 +303,14 @@ describe('WS fs watch (W12 / Chain 14)', () => {
       if (frame.type !== 'event.fs.changed') continue;
       const payload = frame.payload as { truncated?: boolean; count?: number };
       if (payload.truncated === true) {
-        expect(payload.count).toBeGreaterThan(500);
+        expect(payload.count).toBeGreaterThan(maxChangesPerWindow);
         sawTruncated = true;
         break;
       }
     }
     expect(sawTruncated).toBe(true);
     conn.ws.close();
-  });
+  }, 10_000);
 
   it('AC #3: two clients on disjoint paths receive only their own changes', async () => {
     const r = await bootDaemon();

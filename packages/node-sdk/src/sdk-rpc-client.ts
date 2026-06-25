@@ -1,5 +1,6 @@
 import {
   createRPC,
+  createServicesCoreAdapter,
   ensureConfigFile,
   getRootLogger,
   KimiCore,
@@ -11,6 +12,7 @@ import {
   type OAuthTokenProviderResolver,
   type RPCMethods,
   type SDKAPI,
+  type ServicesCoreAdapter,
   type TelemetryClient,
 } from '@moonshot-ai/agent-core';
 import type { Kaos } from '@moonshot-ai/kaos';
@@ -28,6 +30,8 @@ import type {
   ResumedSessionSummary,
   SessionSummary,
 } from '#/types';
+
+const SERVICES_CORE_ENV = 'KIMI_CODE_EXPERIMENTAL_SERVICES_CORE';
 
 export interface SDKRpcClientOptions {
   readonly homeDir?: string;
@@ -48,6 +52,7 @@ export class SDKRpcClient extends SDKRpcClientBase {
   readonly core: KimiCore;
 
   private readonly ready: Promise<RPCMethods<CoreAPI>>;
+  private readonly servicesCore: Promise<ServicesCoreAdapter | undefined>;
 
   constructor(options: SDKRpcClientOptions = {}) {
     super();
@@ -79,7 +84,30 @@ export class SDKRpcClient extends SDKRpcClientBase {
       telemetry: this.telemetry,
       appVersion: this.identity?.version,
     });
-    this.ready = sdkRpc(new ClientAPI(this));
+    const sdkApi = new ClientAPI(this);
+    const legacyReady = sdkRpc(sdkApi);
+    this.servicesCore = Promise.resolve().then(() => {
+      if (!useServicesCore()) return undefined;
+      return createServicesCoreAdapter({
+        coreProcessOptions: {
+          kimiRequestHeaders: this.createKimiRequestHeaders(),
+          resolveOAuthTokenProvider:
+            options.resolveOAuthTokenProvider ?? this.auth.resolveOAuthTokenProvider,
+          skillDirs: options.skillDirs,
+          telemetry: this.telemetry,
+          appVersion: this.identity?.version,
+          identity: this.identity,
+        },
+        sdk: sdkApi,
+        homeDir: this.homeDir,
+        configPath: this.configPath,
+      });
+    });
+    this.ready = this.servicesCore.then(async (servicesCore) => {
+      if (servicesCore === undefined) return legacyReady;
+      await servicesCore.ready();
+      return servicesCore.rpc;
+    });
   }
 
   async ensureConfigFile(): Promise<void> {
@@ -87,6 +115,8 @@ export class SDKRpcClient extends SDKRpcClientBase {
   }
 
   async close(): Promise<void> {
+    const servicesCore = await this.servicesCore.catch(() => undefined);
+    servicesCore?.dispose();
     try {
       await getRootLogger().flush();
     } catch {
@@ -126,6 +156,11 @@ export class SDKRpcClient extends SDKRpcClientBase {
       ...this.identity,
     });
   }
+}
+
+function useServicesCore(): boolean {
+  const value = process.env[SERVICES_CORE_ENV]?.trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
 }
 
 export function createKimiHarness(options: KimiHarnessOptions): KimiHarness {

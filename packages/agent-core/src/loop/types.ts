@@ -206,6 +206,13 @@ export interface RecordStepUsageResult {
   readonly stopTurn?: boolean | undefined;
 }
 
+export interface RecordStepUsageContext {
+  readonly turnId: string;
+  readonly stepNumber: number;
+  readonly stepUuid: string;
+  readonly toolCallCount: number;
+}
+
 export interface ShouldContinueAfterStopResult {
   readonly continue: boolean;
 }

@@ -339,7 +339,7 @@ describe('MessageService', () => {
     expect(resumeOrder!).toBeLessThan(getContextOrder!);
   });
 
-  it('maps resumeSession failure to SessionNotFoundError (wire-compat 40401)', async () => {
+  it('propagates resumeSession failures instead of hiding runtime errors', async () => {
     const sessions = [mkSummary()];
     const rpc: Partial<CoreRPC> = {
       listSessions: vi.fn().mockResolvedValue(sessions),
@@ -353,9 +353,7 @@ describe('MessageService', () => {
       _serviceBrand: undefined,
     };
     const failingImpl = new MessageService(failingBridge);
-    await expect(failingImpl.list(SESSION_ID, {})).rejects.toBeInstanceOf(
-      SessionNotFoundError,
-    );
+    await expect(failingImpl.list(SESSION_ID, {})).rejects.toThrow('state.json corrupted');
     failingImpl.dispose();
   });
 });

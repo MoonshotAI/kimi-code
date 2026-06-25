@@ -4,12 +4,13 @@
 
 import { z } from 'zod';
 
-import type { BackgroundManager, BackgroundTaskInfo } from '../../agent/background';
+import type { BackgroundTaskInfo } from '../../agent/background';
 import type { BuiltinTool } from '../../agent/tool';
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import { matchesGlobRuleSubject } from '../support/rule-match';
 import { formatPlainObject } from './format';
+import type { BackgroundTaskManager } from './manager';
 import TASK_LIST_DESCRIPTION from './task-list.md?raw';
 
 // ── Input schema ─────────────────────────────────────────────────────
@@ -34,7 +35,7 @@ export type TaskListInput = z.Infer<typeof TaskListInputSchema>;
 
 // ── Implementation ───────────────────────────────────────────────────
 
-function formatTaskList(tasks: BackgroundTaskInfo[], activeOnly: boolean): string {
+function formatTaskList(tasks: readonly BackgroundTaskInfo[], activeOnly: boolean): string {
   // `active_only=false` mixes in terminal/lost tasks, so the count is no
   // longer purely "active" — use a neutral label to avoid mislabeling them.
   const label = activeOnly ? 'active_background_tasks' : 'background_tasks';
@@ -48,7 +49,7 @@ export class TaskListTool implements BuiltinTool<TaskListInput> {
   readonly description = TASK_LIST_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskListInputSchema);
 
-  constructor(private readonly manager: BackgroundManager) {}
+  constructor(private readonly manager: BackgroundTaskManager) {}
 
   resolveExecution(args: TaskListInput): ToolExecution {
     const listScope = (args.active_only ?? true) ? 'active' : 'all';

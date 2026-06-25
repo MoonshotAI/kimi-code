@@ -1,0 +1,35 @@
+import type { ResolvedToolExecutionHookContext } from '../../../../loop';
+import type {
+  PermissionPolicy,
+  PermissionPolicyResult,
+} from '../permissionPolicy';
+
+const DEFAULT_APPROVE_TOOLS = new Set([
+  'Read',
+  'Grep',
+  'Glob',
+  'ReadMediaFile',
+  'SetTodoList',
+  'TodoList',
+  'TaskList',
+  'TaskOutput',
+  'CronList',
+  'WebSearch',
+  'FetchURL',
+  'Agent',
+  'AskUserQuestion',
+  'Skill',
+  'GetGoal',
+  'SetGoalBudget',
+  'UpdateGoal',
+]);
+
+export class DefaultToolApprovePermissionPolicyService implements PermissionPolicy {
+  readonly name = 'default-tool-approve';
+
+  evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
+    return DEFAULT_APPROVE_TOOLS.has(context.toolCall.name)
+      ? { kind: 'approve' }
+      : undefined;
+  }
+}

@@ -1,7 +1,7 @@
 /**
  * `TaskService` (Chain 8 / P1.8, W9.2) unit tests.
  *
- * Hermetic: mocks `ICoreProcessService` with an in-memory `rpc` proxy. Coverage:
+ * Hermetic: mocks `IAgentRuntimeService` with in-memory session/task state. Coverage:
  *   - kind mapping (process/agent/question → bash/subagent/tool)
  *   - status mapping (running/completed/failed/timed_out/killed/lost → wire)
  *   - timestamp synthesis (created_at = started_at from startedAt; completed_at
@@ -16,13 +16,12 @@ import { describe, expect, it } from 'vitest';
 
 import type {
   BackgroundTaskInfo,
-  CoreRPC,
   SessionSummary,
   StopBackgroundPayload,
 } from '../../src';
 
 import {
-  type ICoreProcessService,
+  type IAgentRuntimeService,
   SessionNotFoundError,
   TaskAlreadyFinishedError,
   TaskNotFoundError,
@@ -37,31 +36,37 @@ interface FakeState {
   stopCalls: Array<StopBackgroundPayload & { sessionId: string; agentId: string }>;
 }
 
-function makeBridge(state: FakeState): ICoreProcessService {
-  const rpc: Partial<CoreRPC> = {
-    listSessions: async () => state.sessions,
-    getBackground: async (p: { sessionId: string; agentId: string; activeOnly?: boolean }) =>
-      state.tasksBySession.get(p.sessionId) ?? [],
-    getBackgroundOutput: async (p: { sessionId: string; agentId: string; taskId: string; tail?: number }) => {
-      const output = state.outputByTaskId.get(p.taskId);
-      if (output === undefined) return '';
-      if (p.tail !== undefined && output.length > p.tail) {
-        return output.slice(-p.tail);
-      }
-      return output;
-    },
-    stopBackground: async (
-      p: StopBackgroundPayload & { sessionId: string; agentId: string },
-    ) => {
-      state.stopCalls.push(p);
-    },
+function makeAgentRuntimes(state: FakeState): IAgentRuntimeService {
+  const getRPC: IAgentRuntimeService['getRPC'] = async (sessionId, agentId = 'main') => {
+    if (!state.sessions.some((session) => session.id === sessionId)) return undefined;
+    return {
+      getBackground: async (_p: { activeOnly?: boolean } = {}) =>
+        state.tasksBySession.get(sessionId) ?? [],
+      getBackgroundOutput: async (p: { taskId: string; tail?: number }) => {
+        const output = state.outputByTaskId.get(p.taskId);
+        if (output === undefined) return '';
+        if (p.tail !== undefined && output.length > p.tail) {
+          return output.slice(-p.tail);
+        }
+        return output;
+      },
+      stopBackground: async (p: StopBackgroundPayload) => {
+        state.stopCalls.push({ ...p, sessionId, agentId });
+      },
+    } as unknown as Awaited<ReturnType<IAgentRuntimeService['requireRPC']>>;
   };
+
   return {
-    rpc: rpc as CoreRPC,
-    ready: async () => undefined,
-    dispose: () => undefined,
+    getSessionSummary: async (sessionId) =>
+      state.sessions.find((session) => session.id === sessionId),
+    getRPC,
+    requireRPC: async (sessionId, agentId) => {
+      const rpc = await getRPC(sessionId, agentId);
+      if (rpc !== undefined) return rpc;
+      throw new Error(`missing session ${sessionId}`);
+    },
     _serviceBrand: undefined,
-  };
+  } as IAgentRuntimeService;
 }
 
 function session(id: string): SessionSummary {
@@ -161,7 +166,7 @@ describe('toProtocolTask adapter', () => {
 
 describe('TaskService.list', () => {
   it('throws SessionNotFoundError on unknown session', async () => {
-    const svc = new TaskService(makeBridge(fresh()));
+    const svc = new TaskService(makeAgentRuntimes(fresh()));
     await expect(svc.list('unknown', {})).rejects.toBeInstanceOf(SessionNotFoundError);
   });
 
@@ -169,7 +174,7 @@ describe('TaskService.list', () => {
     const state = fresh();
     state.sessions.push(session('s1'));
     state.tasksBySession.set('s1', [bashTask('t1', 'running'), bashTask('t2', 'completed', 1_001_000)]);
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     const out = await svc.list('s1', {});
     expect(out).toHaveLength(2);
     expect(out[0]!.status).toBe('running');
@@ -184,7 +189,7 @@ describe('TaskService.list', () => {
       bashTask('t2', 'completed', 1_001_000),
       bashTask('t3', 'killed', 1_002_000), // → 'cancelled'
     ]);
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     expect((await svc.list('s1', { status: 'running' })).map((t) => t.id)).toEqual(['t1']);
     expect((await svc.list('s1', { status: 'cancelled' })).map((t) => t.id)).toEqual(['t3']);
   });
@@ -195,7 +200,7 @@ describe('TaskService.get', () => {
     const state = fresh();
     state.sessions.push(session('s1'));
     state.tasksBySession.set('s1', []);
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     await expect(svc.get('s1', 'nope')).rejects.toBeInstanceOf(TaskNotFoundError);
   });
 
@@ -203,7 +208,7 @@ describe('TaskService.get', () => {
     const state = fresh();
     state.sessions.push(session('s1'));
     state.tasksBySession.set('s1', [bashTask('t1', 'running')]);
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     const task = await svc.get('s1', 't1');
     expect(task.id).toBe('t1');
   });
@@ -213,7 +218,7 @@ describe('TaskService.get', () => {
     state.sessions.push(session('s1'));
     state.tasksBySession.set('s1', [bashTask('t1', 'running')]);
     state.outputByTaskId.set('t1', 'hello\nworld');
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     const task = await svc.get('s1', 't1', { withOutput: true });
     expect(task.output_preview).toBe('hello\nworld');
     expect(task.output_bytes).toBeGreaterThan(0);
@@ -224,7 +229,7 @@ describe('TaskService.get', () => {
     state.sessions.push(session('s1'));
     state.tasksBySession.set('s1', [bashTask('t1', 'running')]);
     state.outputByTaskId.set('t1', 'hello\nworld');
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     const task = await svc.get('s1', 't1');
     expect(task.output_preview).toBeUndefined();
     expect(task.output_bytes).toBeUndefined();
@@ -235,7 +240,7 @@ describe('TaskService.get', () => {
     state.sessions.push(session('s1'));
     state.tasksBySession.set('s1', [bashTask('t1', 'running')]);
     state.outputByTaskId.set('t1', '0123456789');
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     const task = await svc.get('s1', 't1', { withOutput: true, outputBytes: 4 });
     expect(task.output_preview).toBe('6789');
   });
@@ -244,7 +249,7 @@ describe('TaskService.get', () => {
     const state = fresh();
     state.sessions.push(session('s1'));
     state.tasksBySession.set('s1', [bashTask('t1', 'running')]);
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     const task = await svc.get('s1', 't1', { withOutput: true });
     expect(task.output_preview).toBeUndefined();
     expect(task.id).toBe('t1');
@@ -256,7 +261,7 @@ describe('TaskService.cancel', () => {
     const state = fresh();
     state.sessions.push(session('s1'));
     state.tasksBySession.set('s1', []);
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     await expect(svc.cancel('s1', 'nope')).rejects.toBeInstanceOf(TaskNotFoundError);
   });
 
@@ -264,7 +269,7 @@ describe('TaskService.cancel', () => {
     const state = fresh();
     state.sessions.push(session('s1'));
     state.tasksBySession.set('s1', [bashTask('t1', 'completed', 1_001_000)]);
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     await expect(svc.cancel('s1', 't1')).rejects.toBeInstanceOf(TaskAlreadyFinishedError);
   });
 
@@ -272,7 +277,7 @@ describe('TaskService.cancel', () => {
     const state = fresh();
     state.sessions.push(session('s1'));
     state.tasksBySession.set('s1', [bashTask('t1', 'failed', 1_001_000)]);
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     await expect(svc.cancel('s1', 't1')).rejects.toBeInstanceOf(TaskAlreadyFinishedError);
   });
 
@@ -280,15 +285,15 @@ describe('TaskService.cancel', () => {
     const state = fresh();
     state.sessions.push(session('s1'));
     state.tasksBySession.set('s1', [bashTask('t1', 'killed', 1_001_000)]);
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     await expect(svc.cancel('s1', 't1')).rejects.toBeInstanceOf(TaskAlreadyFinishedError);
   });
 
-  it('calls bridge.rpc.stopBackground({taskId}) for a running task', async () => {
+  it('calls agent runtime stopBackground({taskId}) for a running task', async () => {
     const state = fresh();
     state.sessions.push(session('s1'));
     state.tasksBySession.set('s1', [bashTask('t1', 'running')]);
-    const svc = new TaskService(makeBridge(state));
+    const svc = new TaskService(makeAgentRuntimes(state));
     const result = await svc.cancel('s1', 't1');
     expect(result).toEqual({ cancelled: true });
     expect(state.stopCalls).toHaveLength(1);

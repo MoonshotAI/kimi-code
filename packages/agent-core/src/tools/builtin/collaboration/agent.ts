@@ -100,6 +100,11 @@ export type AgentToolOutput = z.infer<typeof AgentToolOutputSchema>;
 const BACKGROUND_AGENT_UNAVAILABLE =
   'Background agent execution is not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.';
 
+type AgentToolBackgroundManager = Pick<
+  BackgroundManager,
+  'registerTask' | 'waitForForegroundRelease' | 'getTask' | 'readOutput'
+>;
+
 // ── AgentTool class ──────────────────────────────────────────────────
 
 export class AgentTool implements BuiltinTool<AgentToolInput> {
@@ -108,7 +113,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentToolInputSchema);
   constructor(
     private readonly subagentHost: SessionSubagentHost,
-    private readonly backgroundManager: BackgroundManager,
+    private readonly backgroundManager: AgentToolBackgroundManager,
     subagents?: ResolvedAgentProfile['subagents'] | undefined,
     options?: {
       log?: Logger;

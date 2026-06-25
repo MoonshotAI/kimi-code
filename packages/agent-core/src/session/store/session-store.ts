@@ -7,7 +7,13 @@ import { ErrorCodes, KimiError } from '#/errors';
 import type { SessionIndexEntry } from '#/session/store/session-index';
 import { appendSessionIndexEntry, readSessionIndex } from '#/session/store/session-index';
 import { encodeWorkDirKey, normalizeWorkDir } from '#/session/store/workdir-key';
-import type { JsonObject, ListSessionsPayload, SessionSummary } from '#/rpc/core-api';
+import type {
+  JsonObject,
+  ListSessionsPayload,
+  SessionMetadataPatch,
+  SessionSummary,
+} from '#/rpc/core-api';
+import type { SessionMeta } from '#/session';
 import { FileSystemAgentRecordPersistence, type AgentRecordOf } from '../../agent/records';
 
 const SessionSummaryStateSchema = z.object({
@@ -120,48 +126,46 @@ export class SessionStore {
     if (normalized.length === 0) {
       throw new KimiError(ErrorCodes.SESSION_TITLE_EMPTY, 'Session title cannot be empty');
     }
-    const entry = await this.findExistingSessionEntry(id);
-    const statePath = join(entry.sessionDir, 'state.json');
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(await readFile(statePath, 'utf-8')) as unknown;
-    } catch (error) {
-      throw new KimiError(ErrorCodes.SESSION_STATE_NOT_FOUND, `Session "${id}" state.json was not found`, {
-        cause: error,
-      });
-    }
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, `Session "${id}" state.json is invalid`);
-    }
+    const { entry, state } = await this.readStateRecord(id);
+    const now = new Date().toISOString();
     const next: Record<string, unknown> = {
-      ...(parsed as Record<string, unknown>),
+      ...state,
       title: normalized,
       isCustomTitle: true,
+      updatedAt: now,
     };
-    await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+    await writeSessionStateRecord(entry.sessionDir, next);
+  }
+
+  async updateMetadata(id: string, metadata: SessionMetadataPatch): Promise<void> {
+    const { entry, state } = await this.readStateRecord(id);
+    const agents = isRecord(state['agents']) ? state['agents'] : {};
+    const next: Record<string, unknown> = {
+      ...state,
+      ...metadata,
+      agents,
+    };
+    await writeSessionStateRecord(entry.sessionDir, next);
+  }
+
+  async getMetadata(id: string): Promise<SessionMeta> {
+    const { state } = await this.readStateRecord(id);
+    const agents = isRecord(state['agents']) ? state['agents'] : {};
+    return {
+      ...state,
+      agents,
+    } as unknown as SessionMeta;
   }
 
   async archive(id: string): Promise<SessionSummary> {
-    const entry = await this.findExistingSessionEntry(id);
-    const statePath = join(entry.sessionDir, 'state.json');
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(await readFile(statePath, 'utf-8')) as unknown;
-    } catch (error) {
-      throw new KimiError(ErrorCodes.SESSION_STATE_NOT_FOUND, `Session "${id}" state.json was not found`, {
-        cause: error,
-      });
-    }
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, `Session "${id}" state.json is invalid`);
-    }
+    const { entry, state } = await this.readStateRecord(id);
     const now = new Date().toISOString();
     const next: Record<string, unknown> = {
-      ...(parsed as Record<string, unknown>),
+      ...state,
       archived: true,
       updatedAt: now,
     };
-    await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+    await writeSessionStateRecord(entry.sessionDir, next);
     return this.summaryFromDir(id, entry.sessionDir, entry.workDir);
   }
 
@@ -272,6 +276,25 @@ export class SessionStore {
     });
   }
 
+  private async readStateRecord(
+    id: string,
+  ): Promise<{ readonly entry: SessionIndexEntry; readonly state: Record<string, unknown> }> {
+    const entry = await this.findExistingSessionEntry(id);
+    const statePath = join(entry.sessionDir, 'state.json');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readFile(statePath, 'utf-8')) as unknown;
+    } catch (error) {
+      throw new KimiError(ErrorCodes.SESSION_STATE_NOT_FOUND, `Session "${id}" state.json was not found`, {
+        cause: error,
+      });
+    }
+    if (!isRecord(parsed)) {
+      throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, `Session "${id}" state.json is invalid`);
+    }
+    return { entry, state: parsed };
+  }
+
   private async writeForkedState(
     input: ForkSessionRecordInput,
     sourceDir: string,
@@ -360,6 +383,13 @@ async function dropForkedSessionFiles(sessionDir: string): Promise<void> {
   await Promise.all(
     FORKED_SESSION_DROPPED_FILES.map((fileName) => rm(join(sessionDir, fileName), { force: true })),
   );
+}
+
+async function writeSessionStateRecord(
+  sessionDir: string,
+  state: Record<string, unknown>,
+): Promise<void> {
+  await writeFile(join(sessionDir, 'state.json'), `${JSON.stringify(state, null, 2)}\n`, 'utf-8');
 }
 
 async function appendForkedMarkers(state: Record<string, unknown>): Promise<void> {

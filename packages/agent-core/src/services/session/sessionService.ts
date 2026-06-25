@@ -1,7 +1,6 @@
-import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, IInstantiationService, registerSingleton, SyncDescriptor } from '../../di';
 import { Emitter } from '../../base/common/event';
 import { ErrorCodes, KimiError } from '../../errors';
-import type { AgentContextData, ContextMessage } from '../../agent/context';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '../../rpc';
 import type { SessionMeta } from '../../session';
 import {
@@ -25,9 +24,14 @@ import {
 import { IApprovalService } from '../approval/approval';
 import { ICoreProcessService } from '../coreProcess/coreProcess';
 import { IEventService } from '../event/event';
-import { toProtocolMessage } from '../message/message';
+import { toProtocolMessage, type ContextMessage } from '../message/message';
 import { IPromptService, type AgentStatePatch } from '../prompt/prompt';
 import { IQuestionService } from '../question/question';
+import {
+  IAgentRuntimeService,
+  toAgentRuntimeService,
+  type AgentRuntimeServiceSource,
+} from '../agentRuntime/agentRuntime';
 import {
   ISessionService,
   SessionNotFoundError,
@@ -42,6 +46,11 @@ const MAX_PAGE_SIZE = 100;
 const DEFAULT_UNDO_MESSAGE_PAGE_SIZE = 50;
 const MAX_UNDO_MESSAGE_PAGE_SIZE = 100;
 const CHILD_SESSION_KIND = 'child';
+
+interface AgentContextData {
+  readonly history: readonly ContextMessage[];
+  readonly tokenCount: number;
+}
 
 function asJsonObject(value: Record<string, unknown>): JsonObject {
   return value as unknown as JsonObject;
@@ -106,6 +115,7 @@ export class SessionService extends Disposable implements ISessionService {
   private readonly _activeTurns = new Set<string>();
   private readonly _abortedTurns = new Set<string>();
   private _promptService: IPromptService | undefined;
+  private readonly agentRuntimes: IAgentRuntimeService;
 
   constructor(
     @ICoreProcessService private readonly core: ICoreProcessService,
@@ -113,8 +123,10 @@ export class SessionService extends Disposable implements ISessionService {
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IApprovalService private readonly approvalService: IApprovalService,
     @IQuestionService private readonly questionService: IQuestionService,
+    @IAgentRuntimeService agentRuntimes?: AgentRuntimeServiceSource,
   ) {
     super();
+    this.agentRuntimes = toAgentRuntimeService(agentRuntimes ?? core);
     this._register(
       this.eventService.onDidPublish((event) => {
         this._handleBusEvent(event);
@@ -235,18 +247,13 @@ export class SessionService extends Disposable implements ISessionService {
       throw new Error('SessionService.create: metadata.cwd is required');
     }
     const metadataForCore = asJsonObject(input.metadata as Record<string, unknown>);
-    const summary = await this.core.rpc.createSession({
+    const summary = await this.agentRuntimes.createSession({
       workDir: input.metadata.cwd,
+      title: input.title,
       metadata: metadataForCore,
       model: input.agent_config?.model,
       client: options?.client,
     });
-    if (input.title !== undefined) {
-      try {
-        await this.core.rpc.renameSession({ sessionId: summary.id, title: input.title });
-      } catch {
-      }
-    }
     const meta = await this.tryGetMeta(summary.id);
     const session = this._patchSessionStatus(toProtocolSession(summary, meta));
     this.emitCreated(session);
@@ -353,11 +360,12 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   async fork(id: string, input: SessionFork): Promise<Session> {
-    const source = await this.get(id);
+    const sourceSummary = await this.requireSummary(id);
+    const source = toProtocolSession(sourceSummary, await this.tryGetMeta(id));
     const title = input.title ?? `Fork: ${source.title || source.id}`;
     const metadata = input.metadata === undefined ? undefined : asJsonObject(input.metadata);
-    const summary = await this.core.rpc.forkSession({
-      sessionId: id,
+    const summary = await this.agentRuntimes.forkSession({
+      sourceId: id,
       title,
       metadata,
     });
@@ -413,15 +421,16 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   async createChild(id: string, input: SessionChildCreate): Promise<Session> {
-    const parent = await this.get(id);
+    const parentSummary = await this.requireSummary(id);
+    const parent = toProtocolSession(parentSummary, await this.tryGetMeta(id));
     const title = input.title ?? `Child: ${parent.title || parent.id}`;
     const metadata = asJsonObject({
       ...input.metadata,
       parent_session_id: id,
       child_session_kind: CHILD_SESSION_KIND,
     });
-    const summary = await this.core.rpc.forkSession({
-      sessionId: id,
+    const summary = await this.agentRuntimes.forkSession({
+      sourceId: id,
       title,
       metadata,
     });
@@ -442,17 +451,15 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   async getStatus(id: string): Promise<SessionStatusResponse> {
-    const all = await this.core.rpc.listSessions({});
-    const summary = all.find((s) => s.id === id);
-    if (summary === undefined) {
-      throw new SessionNotFoundError(id);
-    }
+    await this.requireSummary(id);
+    const rpc = await this.agentRuntimes.requireRPC(id, 'main');
 
-    const [config, context, permission, plan] = await Promise.all([
-      this.core.rpc.getConfig({ sessionId: id, agentId: 'main' }),
-      this.core.rpc.getContext({ sessionId: id, agentId: 'main' }),
-      this.core.rpc.getPermission({ sessionId: id, agentId: 'main' }),
-      this.core.rpc.getPlan({ sessionId: id, agentId: 'main' }),
+    const [config, context, permission, plan, swarmMode] = await Promise.all([
+      rpc.getConfig({}),
+      rpc.getContext({}),
+      rpc.getPermission({}),
+      rpc.getPlan({}),
+      rpc.getSwarmMode({}),
     ]);
 
     const maxContextTokens = config.modelCapabilities?.max_context_tokens ?? 0;
@@ -467,7 +474,7 @@ export class SessionService extends Disposable implements ISessionService {
       thinking_level: config.thinkingLevel,
       permission: permission.mode,
       plan_mode: plan !== null,
-      swarm_mode: agentState?.swarmMode ?? false,
+      swarm_mode: agentState?.swarmMode ?? swarmMode,
       context_tokens: contextTokens,
       max_context_tokens: maxContextTokens,
       context_usage: contextUsage,
@@ -492,21 +499,11 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   async compact(id: string, input: CompactSessionRequest): Promise<CompactSessionResponse> {
-    const all = await this.core.rpc.listSessions({});
-    const summary = all.find((s) => s.id === id);
-    if (summary === undefined) {
-      throw new SessionNotFoundError(id);
-    }
-
-    // beginCompaction only sees sessions loaded in core memory — resume first
-    // (mirrors undo) so compacting a freshly-opened session doesn't throw
-    // SESSION_NOT_FOUND.
-    await this.core.rpc.resumeSession({ sessionId: id });
+    await this.requireSummary(id);
+    const rpc = await this.agentRuntimes.requireRPC(id, 'main');
 
     const instruction = normalizeOptionalString(input.instruction);
-    await this.core.rpc.beginCompaction({
-      sessionId: id,
-      agentId: 'main',
+    await rpc.beginCompaction({
       instruction,
     });
     return {};
@@ -514,16 +511,14 @@ export class SessionService extends Disposable implements ISessionService {
 
   async undo(id: string, input: UndoSessionRequest): Promise<UndoSessionResponse> {
     const summary = await this.requireSummary(id);
-    await this.core.rpc.resumeSession({ sessionId: id });
-    const before = await this.core.rpc.getContext({ sessionId: id, agentId: 'main' });
+    const rpc = await this.agentRuntimes.requireRPC(id, 'main');
+    const before = await rpc.getContext({});
     if (!canUndoHistory(before.history, input.count)) {
       throw new SessionUndoUnavailableError(id);
     }
 
     try {
-      await this.core.rpc.undoHistory({
-        sessionId: id,
-        agentId: 'main',
+      await rpc.undoHistory({
         count: input.count,
       });
     } catch (error) {
@@ -533,7 +528,7 @@ export class SessionService extends Disposable implements ISessionService {
       throw error;
     }
 
-    const after = await this.core.rpc.getContext({ sessionId: id, agentId: 'main' });
+    const after = await rpc.getContext({});
     return {
       messages: pageContextMessages(id, summary.createdAt, after, input.page_size),
       status: await this.getStatus(id),
@@ -555,8 +550,7 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   private async requireSummary(id: string): Promise<SessionSummary> {
-    const all = await this.core.rpc.listSessions({});
-    const summary = all.find((s) => s.id === id);
+    const summary = await this.agentRuntimes.getSessionSummary(id);
     if (summary === undefined) {
       throw new SessionNotFoundError(id);
     }
@@ -578,4 +572,7 @@ export class SessionService extends Disposable implements ISessionService {
   }
 }
 
-registerSingleton(ISessionService, SessionService, InstantiationType.Delayed);
+registerSingleton(
+  ISessionService,
+  new SyncDescriptor(SessionService, [], true),
+);

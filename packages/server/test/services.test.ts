@@ -109,6 +109,7 @@ class FakeWatcher {
   readonly added: string[][] = [];
   readonly unwatched: string[][] = [];
   readonly unwatchErrors = new Map<string, Error>();
+  private readonly handlers = new Map<string, Array<(...args: unknown[]) => void>>();
   closeCalls = 0;
 
   add(paths: string | string[]): this {
@@ -124,8 +125,17 @@ class FakeWatcher {
     return this;
   }
 
-  on(): this {
+  on(event: string, handler: (...args: unknown[]) => void): this {
+    const handlers = this.handlers.get(event) ?? [];
+    handlers.push(handler);
+    this.handlers.set(event, handlers);
     return this;
+  }
+
+  emit(event: string, ...args: unknown[]): void {
+    for (const handler of this.handlers.get(event) ?? []) {
+      handler(...args);
+    }
   }
 
   async close(): Promise<void> {
@@ -515,6 +525,50 @@ describe('FsWatcherService', () => {
     expect(service.watchedPaths('conn', 'sid')).toEqual([paths[2]!]);
     expect(watcher.closeCalls).toBe(0);
     service.dispose();
+  });
+
+  it('truncates change windows after the configured maximum', async () => {
+    vi.useFakeTimers();
+    const watcher = new FakeWatcher();
+    const conn = fakeConn('conn');
+    const service = new FsWatcherService(
+      { resolve: (connectionId) => (connectionId === conn.id ? conn : undefined) },
+      {
+        debounceMs: 50,
+        maxChangesPerWindow: 500,
+        watcherFactory: () => watcher as unknown as TestFsWatcher,
+      },
+      testLogger,
+      {} as ISessionService,
+    );
+
+    try {
+      service.addPaths('sid', conn.id, ['/workspace']);
+      for (let i = 0; i < 501; i++) {
+        watcher.emit('all', 'add', `/workspace/file-${String(i)}.txt`);
+      }
+
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(conn.sent).toHaveLength(1);
+      const frame = conn.sent[0] as {
+        payload: {
+          changes: unknown[];
+          coalesced_window_ms: number;
+          truncated?: boolean;
+          count?: number;
+        };
+      };
+      expect(frame.payload).toMatchObject({
+        changes: [],
+        coalesced_window_ms: 50,
+        truncated: true,
+        count: 501,
+      });
+    } finally {
+      service.dispose();
+      vi.useRealTimers();
+    }
   });
 });
 

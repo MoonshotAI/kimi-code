@@ -26,3 +26,21 @@ export interface CronTask {
   readonly recurring?: boolean;
   readonly lastFiredAt?: number;
 }
+
+export type CronTaskInit = Omit<CronTask, 'id' | 'createdAt'>;
+
+export interface CronToolManager {
+  readonly store: {
+    list(): readonly CronTask[];
+  };
+  readonly clocks: {
+    wallNow(): number;
+  };
+
+  addTask(init: CronTaskInit): CronTask;
+  removeTasks(ids: readonly string[]): readonly string[];
+  isStale(task: CronTask): boolean;
+  getNextFireForTask(taskId: string): number | null;
+  emitScheduled(task: CronTask): void;
+  emitDeleted(taskId: string): void;
+}

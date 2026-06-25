@@ -43,7 +43,6 @@
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../agent/tool';
-import type { CronManager } from '../../agent/cron';
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import {
@@ -51,7 +50,7 @@ import {
   parseCronExpression,
 } from './cron-expr';
 import { formatLocalIsoWithOffset } from './time-format';
-import type { CronTask } from './types';
+import type { CronTask, CronToolManager } from './types';
 import CRON_LIST_DESCRIPTION from './cron-list.md?raw';
 
 // ── Input schema ─────────────────────────────────────────────────────
@@ -92,7 +91,7 @@ export class CronListTool implements BuiltinTool<CronListInput> {
     CronListInputSchema,
   );
 
-  constructor(private readonly manager: CronManager) {}
+  constructor(private readonly manager: CronToolManager) {}
 
   resolveExecution(_args: CronListInput): ToolExecution {
     return {

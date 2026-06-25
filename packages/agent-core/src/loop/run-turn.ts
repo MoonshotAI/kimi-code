@@ -24,6 +24,7 @@ import type {
   LoopHooks,
   LoopMessageBuilder,
   RecordStepUsageResult,
+  RecordStepUsageContext,
   LoopTerminalStepStopReason,
   LoopTurnStopReason,
   TurnResult,
@@ -41,7 +42,10 @@ export interface RunTurnInput {
   readonly maxSteps?: number | undefined;
   readonly maxRetryAttempts?: number;
   readonly recordStepUsage?:
-    | ((usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>)
+    | ((
+        usage: TokenUsage,
+        context: RecordStepUsageContext,
+      ) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>)
     | undefined;
 }
 
@@ -66,9 +70,10 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
   let activeStep: number | undefined;
   const recordStepUsage = async (
     stepUsage: TokenUsage,
+    context: RecordStepUsageContext,
   ): Promise<RecordStepUsageResult | void> => {
     usage = addUsage(usage, stepUsage);
-    return hostRecordStepUsage?.(stepUsage);
+    return hostRecordStepUsage?.(stepUsage, context);
   };
 
   try {

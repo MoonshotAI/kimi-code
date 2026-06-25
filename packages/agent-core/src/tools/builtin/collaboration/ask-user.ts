@@ -13,8 +13,8 @@
 
 import { z } from 'zod';
 
-import type { Agent } from '../../../agent';
 import { QuestionBackgroundTask } from '../../../agent/background';
+import type { BackgroundTask } from '../../../agent/background/task';
 import type { BuiltinTool } from '../../../agent/tool';
 import { ErrorCodes, KimiError } from '../../../errors';
 import { errorMessage, isAbortError } from '../../../loop/errors';
@@ -22,6 +22,7 @@ import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from 
 import type {
   QuestionAnswers,
   QuestionAnswerMethod,
+  QuestionRequest,
   QuestionResponse,
   QuestionResult,
 } from '../../../rpc';
@@ -58,12 +59,12 @@ const QuestionItemSchema = z.object({
 });
 
 export interface AskUserQuestionInput {
-  background?: boolean;
-  questions: Array<{
-    question: string;
-    header: string;
-    options: Array<{ label: string; description: string }>;
-    multi_select: boolean;
+  readonly background?: boolean;
+  readonly questions: ReadonlyArray<{
+    readonly question: string;
+    readonly header?: string;
+    readonly options: ReadonlyArray<{ readonly label: string; readonly description?: string }>;
+    readonly multi_select?: boolean;
   }>;
 }
 
@@ -94,12 +95,36 @@ const QUESTION_UNSUPPORTED_FAILURE_MESSAGE =
 
 // ── Implementation ───────────────────────────────────────────────────
 
+export interface AskUserQuestionBackground {
+  registerTask(task: BackgroundTask): string;
+  getTask(taskId: string): { readonly status?: string } | undefined;
+}
+
+export interface AskUserQuestionTelemetry {
+  track(event: string, properties?: Readonly<Record<string, TelemetryPropertyValue>>): void;
+}
+
+export interface AskUserQuestionToolHost {
+  readonly requestQuestion?: (
+    request: QuestionRequest,
+    options: { readonly signal?: AbortSignal },
+  ) => Promise<QuestionResult>;
+  readonly rpc?: {
+    readonly requestQuestion?: (
+      request: QuestionRequest,
+      options: { readonly signal?: AbortSignal },
+    ) => Promise<QuestionResult>;
+  };
+  readonly background?: AskUserQuestionBackground;
+  readonly telemetry?: AskUserQuestionTelemetry;
+}
+
 export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
   readonly name = 'AskUserQuestion' as const;
   readonly description: string;
   readonly parameters: Record<string, unknown>;
 
-  constructor(private readonly agent: Agent) {
+  constructor(private readonly host: AskUserQuestionToolHost) {
     this.description = `${DESCRIPTION}- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.`;
     this.parameters = toInputJsonSchema(this.inputSchema());
   }
@@ -142,19 +167,24 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       turnId,
     }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId'>,
   ): Promise<ExecutableToolResult> {
+    const requestQuestion = this.requestQuestion();
+    if (requestQuestion === undefined) {
+      return unsupportedQuestionResult();
+    }
+
     try {
-      const result = await this.agent.rpc!.requestQuestion!(
+      const result = await requestQuestion(
         {
           turnId: numericTurnId(turnId),
           toolCallId,
           questions: args.questions.map((q) => ({
             question: q.question,
-            header: q.header,
+            header: q.header ?? '',
             options: q.options.map((o) => ({
               label: o.label,
-              description: o.description,
+              description: o.description ?? '',
             })),
-            multiSelect: q.multi_select,
+            multiSelect: q.multi_select ?? false,
           })),
         },
         { signal },
@@ -162,7 +192,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
 
       const normalized = normalizeQuestionResult(result);
       if (normalized === null || Object.keys(normalized.answers).length === 0) {
-        this.agent.telemetry.track('question_dismissed');
+        this.host.telemetry?.track('question_dismissed');
         return dismissedQuestionResult();
       }
 
@@ -170,7 +200,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
         answered: Object.keys(normalized.answers).length,
       };
       if (normalized.method !== undefined) properties['method'] = normalized.method;
-      this.agent.telemetry.track('question_answered', properties);
+      this.host.telemetry?.track('question_answered', properties);
       return {
         isError: false,
         output: JSON.stringify({ answers: normalized.answers }),
@@ -179,10 +209,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       if (isAbortError(error) || signal.aborted) throw error;
 
       if (error instanceof KimiError && error.code === ErrorCodes.NOT_IMPLEMENTED) {
-        return {
-          isError: true,
-          output: QUESTION_UNSUPPORTED_FAILURE_MESSAGE,
-        };
+        return unsupportedQuestionResult();
       }
 
       return dismissedQuestionResult();
@@ -200,7 +227,13 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     if (signal.aborted) {
       signal.throwIfAborted();
     }
-    const backgroundManager = this.agent.background;
+    const backgroundManager = this.host.background;
+    if (backgroundManager === undefined) {
+      return {
+        isError: true,
+        output: 'Background question tasks are not available.',
+      };
+    }
 
     const description = questionDescription(args.questions);
     let taskId: string;
@@ -237,6 +270,22 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       message: `Started ${taskId}`,
     };
   }
+
+  private requestQuestion():
+    | ((
+        request: QuestionRequest,
+        options: { readonly signal?: AbortSignal },
+      ) => Promise<QuestionResult>)
+    | undefined {
+    return this.host.requestQuestion ?? this.host.rpc?.requestQuestion;
+  }
+}
+
+function unsupportedQuestionResult(): ExecutableToolResult {
+  return {
+    isError: true,
+    output: QUESTION_UNSUPPORTED_FAILURE_MESSAGE,
+  };
 }
 
 function dismissedQuestionResult(): ExecutableToolResult {

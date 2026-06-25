@@ -26,7 +26,6 @@
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../agent/tool';
-import type { CronManager } from '../../agent/cron';
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import { literalRulePattern } from '../support/rule-match';
@@ -42,6 +41,7 @@ import {
   oneShotJitteredNextCronRunMs,
 } from './jitter';
 import { formatLocalIsoWithOffset } from './time-format';
+import type { CronToolManager } from './types';
 import CRON_CREATE_DESCRIPTION from './cron-create.md?raw';
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -120,7 +120,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
     CronCreateInputSchema,
   );
 
-  constructor(private readonly manager: CronManager) {}
+  constructor(private readonly manager: CronToolManager) {}
 
   resolveExecution(args: CronCreateInput): ToolExecution {
     // 1. Global killswitch — checked first so a flipped env stops all

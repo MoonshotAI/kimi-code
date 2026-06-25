@@ -28,6 +28,9 @@ const TEMPLATED = new Set([
   'tools/builtin/file/read-media.md',
   'tools/builtin/shell/bash.md',
   'tools/builtin/collaboration/skill-tool.md',
+  'services/agent/goalMode/injection/goal-active-reminder.md',
+  'services/agent/goalMode/injection/goal-blocked-reminder.md',
+  'services/agent/goalMode/injection/goal-paused-reminder.md',
 ]);
 
 const STATIC_PLACEHOLDER_PROTOCOL_FILES = new Set([

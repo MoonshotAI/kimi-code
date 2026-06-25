@@ -39,9 +39,9 @@
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../agent/tool';
-import type { CronManager } from '../../agent/cron';
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
+import type { CronToolManager } from './types';
 import CRON_DELETE_DESCRIPTION from './cron-delete.md?raw';
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ export class CronDeleteTool implements BuiltinTool<CronDeleteInput> {
     CronDeleteInputSchema,
   );
 
-  constructor(private readonly manager: CronManager) {}
+  constructor(private readonly manager: CronToolManager) {}
 
   resolveExecution(args: CronDeleteInput): ToolExecution {
     // Format check up front. The store would reject the lookup anyway,

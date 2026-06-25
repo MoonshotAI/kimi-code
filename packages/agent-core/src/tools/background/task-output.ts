@@ -16,7 +16,6 @@ import { z } from 'zod';
 
 import type { BuiltinTool } from '../../agent/tool';
 import {
-  type BackgroundManager,
   isBackgroundTaskTerminal,
   type BackgroundTaskInfo,
   type BackgroundTaskOutputSnapshot,
@@ -26,6 +25,7 @@ import type { ExecutableToolResult, ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import { matchesGlobRuleSubject } from '../support/rule-match';
 import { formatPlainObject } from './format';
+import type { BackgroundTaskManager } from './manager';
 import TASK_OUTPUT_DESCRIPTION from './task-output.md?raw';
 
 /**
@@ -99,7 +99,7 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
   readonly description: string = TASK_OUTPUT_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskOutputInputSchema);
 
-  constructor(private readonly manager: BackgroundManager) {}
+  constructor(private readonly manager: BackgroundTaskManager) {}
 
   resolveExecution(args: TaskOutputInput): ToolExecution {
     return {

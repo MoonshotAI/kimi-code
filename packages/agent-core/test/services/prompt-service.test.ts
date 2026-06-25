@@ -562,8 +562,8 @@ describe('PromptService.submit', () => {
       sessionId: SID,
       agentId: 'main',
     } as unknown as Event);
-    await Promise.resolve();
 
+    await vi.waitFor(() => expect(record.promptCalls).toHaveLength(2));
     expect(record.promptCalls).toHaveLength(2);
     expect(record.promptCalls[1]).toEqual({
       sessionId: SID,

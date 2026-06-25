@@ -23,9 +23,10 @@ import {
   listMcpServersResponseSchema,
   listToolsResponseSchema,
 } from '@moonshot-ai/protocol';
+import { IMcpService, McpServerNotFoundError } from '@moonshot-ai/agent-core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IRestGateway, startServer, type RunningServer } from '../src';
+import { IRestGateway, startServer, type RunningServer, type ServerStartOptions } from '../src';
 
 let tmpDir: string;
 let lockPath: string;
@@ -49,13 +50,16 @@ afterEach(async () => {
   rmSync(bridgeHome, { recursive: true, force: true });
 });
 
-async function bootDaemon(): Promise<RunningServer> {
+async function bootDaemon(
+  serviceOverrides?: ServerStartOptions['serviceOverrides'],
+): Promise<RunningServer> {
   server = await startServer({
     host: '127.0.0.1',
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
     coreProcessOptions: { homeDir: bridgeHome },
+    serviceOverrides,
   });
   return server;
 }
@@ -98,6 +102,17 @@ async function createSession(r: RunningServer): Promise<string> {
     throw new Error(`create session failed: ${JSON.stringify(env)}`);
   }
   return env.data.id;
+}
+
+function createMcpServiceOverride(
+  overrides: Partial<IMcpService> = {},
+): IMcpService {
+  return {
+    _serviceBrand: undefined,
+    list: async () => [],
+    restart: async () => ({ restarting: true }),
+    ...overrides,
+  };
 }
 
 describe('GET /api/v1/tools', () => {
@@ -151,15 +166,37 @@ describe('GET /api/v1/tools', () => {
 });
 
 describe('GET /api/v1/mcp/servers', () => {
-  it('returns an envelope with {servers: McpServer[]} (typically empty in sandboxed home)', async () => {
-    const r = await bootDaemon();
-    await createSession(r);
+  it('returns an envelope with {servers: McpServer[]} from the MCP service', async () => {
+    const r = await bootDaemon([
+      [
+        IMcpService,
+        createMcpServiceOverride({
+          list: async () => [
+            {
+              id: 'lark',
+              name: 'lark',
+              status: 'connected',
+              transport: 'stdio',
+              tool_count: 2,
+            },
+          ],
+        }),
+      ],
+    ]);
     const res = await appOf(r).inject({ method: 'GET', url: '/api/v1/mcp/servers' });
     expect(res.statusCode).toBe(200);
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(0);
     const parsed = listMcpServersResponseSchema.parse(env.data);
-    expect(Array.isArray(parsed.servers)).toBe(true);
+    expect(parsed.servers).toEqual([
+      {
+        id: 'lark',
+        name: 'lark',
+        status: 'connected',
+        transport: 'stdio',
+        tool_count: 2,
+      },
+    ]);
   });
 
   it('returns 200 with empty list even before any session is created', async () => {
@@ -175,8 +212,16 @@ describe('GET /api/v1/mcp/servers', () => {
 
 describe('POST /api/v1/mcp/servers/{id}:restart', () => {
   it('returns 40408 mcp.server_not_found for an unknown server id', async () => {
-    const r = await bootDaemon();
-    await createSession(r);
+    const r = await bootDaemon([
+      [
+        IMcpService,
+        createMcpServiceOverride({
+          restart: async (serverId) => {
+            throw new McpServerNotFoundError(serverId);
+          },
+        }),
+      ],
+    ]);
     const res = await appOf(r).inject({
       method: 'POST',
       url: '/api/v1/mcp/servers/does-not-exist:restart',

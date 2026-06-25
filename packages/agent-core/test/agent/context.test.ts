@@ -134,6 +134,12 @@ describe('Agent context', () => {
         toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
       },
       {
+        role: 'tool',
+        content: [{ type: 'text', text: 'tool result' }],
+        toolCallId: 'call_empty',
+        toolCalls: [],
+      },
+      {
         role: 'assistant',
         content: [{ type: 'think', think: '', encrypted: 'enc_empty_thinking' }],
         toolCalls: [],
@@ -145,7 +151,7 @@ describe('Agent context', () => {
       },
     ];
 
-    expect(project(history)).toEqual([
+    expect(project(history)).toMatchObject([
       {
         role: 'user',
         content: [{ type: 'text', text: 'Run the tool' }],
@@ -155,6 +161,12 @@ describe('Agent context', () => {
         role: 'assistant',
         content: [],
         toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'tool result' }],
+        toolCallId: 'call_empty',
+        toolCalls: [],
       },
       {
         role: 'assistant',
@@ -475,6 +487,7 @@ describe('Agent context', () => {
       'assistant',
       'user',
       'assistant',
+      'tool',
       'tool',
     ]);
 

@@ -197,6 +197,7 @@ function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
     }),
     getPermission: vi.fn().mockResolvedValue({ mode: 'manual' }),
     getPlan: vi.fn().mockResolvedValue(null),
+    getSwarmMode: vi.fn().mockResolvedValue(false),
   };
   return {
     rpc: rpc as CoreRPC,

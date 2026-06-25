@@ -34,18 +34,15 @@ vi.mock('@moonshot-ai/kimi-code-oauth', () => ({
   KIMI_CODE_PROVIDER_NAME: 'managed:kimi-code',
 }));
 
-vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
-  return {
-    ...actual,
-    resolveKimiHome: mocks.resolveKimiHome,
-    resolveConfigPath: mocks.resolveConfigPath,
-    loadRuntimeConfigSafe: mocks.loadRuntimeConfigSafe,
-    KimiAuthFacade: vi.fn(function () {
-      return { getCachedAccessToken: mocks.getCachedAccessToken };
-    }),
-  };
-});
+vi.mock('@moonshot-ai/kimi-code-sdk', () => ({
+  ErrorCodes: { AUTH_LOGIN_REQUIRED: 'auth.login_required' },
+  resolveKimiHome: mocks.resolveKimiHome,
+  resolveConfigPath: mocks.resolveConfigPath,
+  loadRuntimeConfigSafe: mocks.loadRuntimeConfigSafe,
+  KimiAuthFacade: vi.fn(function () {
+    return { getCachedAccessToken: mocks.getCachedAccessToken };
+  }),
+}));
 
 describe('initializeServerTelemetry', () => {
   beforeEach(() => {

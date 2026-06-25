@@ -54,8 +54,11 @@ export interface SkippedSkill {
 
 export interface SkillCatalog {
   getSkill(name: string): SkillDefinition | undefined;
-  listSkills(): readonly SkillDefinition[];
+  getPluginSkill(pluginId: string, name: string): SkillDefinition | undefined;
+  renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string;
   listInvocableSkills(): readonly SkillDefinition[];
+  getSkillRoots(): readonly string[];
+  getModelSkillListing(): string;
 }
 
 export function normalizeSkillName(name: string): string {

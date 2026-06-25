@@ -20,19 +20,26 @@ import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { ToolStore } from '../../store';
 import DESCRIPTION from './todo-list.md?raw';
+import TODO_LIST_WRITE_REMINDER from './todo-list-write-reminder.md?raw';
 
 // ── TODO state shape ─────────────────────────────────────────────────
 
 export const TODO_LIST_TOOL_NAME = 'TodoList' as const;
 export const TODO_STORE_KEY = 'todo';
-const TODO_LIST_WRITE_REMINDER =
-  'Ensure that you continue to use the todo list to track progress. Mark tasks done immediately after finishing them, and keep exactly one task in_progress when work is underway.';
 
 export type TodoStatus = 'pending' | 'in_progress' | 'done';
 
 export interface TodoItem {
   readonly title: string;
   readonly status: TodoStatus;
+}
+
+export function readTodoItems(raw: unknown): readonly TodoItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isTodoItem).map((todo) => ({
+    title: todo.title,
+    status: todo.status,
+  }));
 }
 
 declare module '../../store' {
@@ -89,6 +96,16 @@ function statusMarker(status: TodoStatus): string {
   }
 }
 
+function isTodoItem(value: unknown): value is TodoItem {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record['title'] === 'string' && isTodoStatus(record['status']);
+}
+
+function isTodoStatus(value: unknown): value is TodoStatus {
+  return value === 'pending' || value === 'in_progress' || value === 'done';
+}
+
 export class TodoListTool implements BuiltinTool<TodoListInput> {
   readonly name = TODO_LIST_TOOL_NAME;
   readonly description: string = DESCRIPTION;
@@ -119,7 +136,7 @@ export class TodoListTool implements BuiltinTool<TodoListInput> {
         const output =
           stored.length === 0
             ? 'Todo list cleared.'
-            : `Todo list updated.\n${renderTodoList(stored)}\n\n${TODO_LIST_WRITE_REMINDER}`;
+            : `Todo list updated.\n${renderTodoList(stored)}\n\n${TODO_LIST_WRITE_REMINDER.trim()}`;
         return { isError: false, output };
       },
     };

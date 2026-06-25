@@ -15,27 +15,31 @@
  * history length WOULD be from the file's records; anything beyond it in the
  * real `getContext().history` is the unflushed tail and gets appended.
  *
- * Fallback: any transcript read/parse failure degrades to the previous
- * behavior (live context history) instead of failing the endpoint.
+ * When live context is needed, it must come from `IAgentRuntimeService`.
  */
 
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, registerSingleton, SyncDescriptor } from '../../di';
 import type { SessionSummary } from '../../rpc';
 import type {
   Message,
   PageResponse,
 } from '@moonshot-ai/protocol';
 
-import { ICoreProcessService } from '../coreProcess/coreProcess';
+import {
+  IAgentRuntimeService,
+  toAgentRuntimeService,
+  type AgentRuntimeServiceSource,
+} from '../agentRuntime/agentRuntime';
 import { SessionNotFoundError } from '../session/session';
 import {
   IMessageService,
   MessageNotFoundError,
   parseMessageId,
   toProtocolMessage,
+  type ContextMessage,
   type MessageListQuery,
 } from './message';
 import {
@@ -61,9 +65,13 @@ export class MessageService extends Disposable implements IMessageService {
   readonly _serviceBrand: undefined;
 
   private readonly transcriptCache = new Map<string, TranscriptCacheEntry>();
+  private readonly agentRuntimes: IAgentRuntimeService;
 
-  constructor(@ICoreProcessService private readonly core: ICoreProcessService) {
+  constructor(
+    @IAgentRuntimeService agentRuntimes: AgentRuntimeServiceSource,
+  ) {
     super();
+    this.agentRuntimes = toAgentRuntimeService(agentRuntimes);
   }
 
   async list(sid: string, query: MessageListQuery): Promise<PageResponse<Message>> {
@@ -121,8 +129,7 @@ export class MessageService extends Disposable implements IMessageService {
    * base). Throws `SessionNotFoundError` (→ 40401) on miss.
    */
   private async _requireSession(sid: string): Promise<SessionSummary> {
-    const all = await this.core.rpc.listSessions({});
-    const summary = all.find((s) => s.id === sid);
+    const summary = await this.agentRuntimes.getSessionSummary(sid);
     if (summary === undefined) {
       throw new SessionNotFoundError(sid);
     }
@@ -156,30 +163,26 @@ export class MessageService extends Disposable implements IMessageService {
     sid: string,
     summary: SessionSummary,
   ): Promise<readonly TranscriptEntry[]> {
-    await this._resumeSession(sid);
     const transcript = await this._readTranscriptCached(sid, summary.sessionDir);
-    const context = await this.core.rpc.getContext({
-      sessionId: sid,
-      agentId: MAIN_AGENT_ID,
-    });
+    const history = await this._getLiveHistory(sid);
     if (transcript === undefined) {
-      return context.history.map((message) => ({ message }));
+      return history.map((message) => ({ message }));
     }
-    if (context.history.length <= transcript.foldedLength) {
+    if (history.length <= transcript.foldedLength) {
       return transcript.entries;
     }
-    const liveTail: TranscriptEntry[] = context.history
+    const liveTail: TranscriptEntry[] = history
       .slice(transcript.foldedLength)
       .map((message) => ({ message }));
     return [...transcript.entries, ...liveTail];
   }
 
-  private async _resumeSession(sid: string): Promise<void> {
-    try {
-      await this.core.rpc.resumeSession({ sessionId: sid });
-    } catch {
+  private async _getLiveHistory(sid: string): Promise<readonly ContextMessage[]> {
+    const rpc = await this.agentRuntimes.getRPC(sid, MAIN_AGENT_ID);
+    if (rpc === undefined) {
       throw new SessionNotFoundError(sid);
     }
+    return (await rpc.getContext({})).history;
   }
 
   /**
@@ -219,4 +222,7 @@ export class MessageService extends Disposable implements IMessageService {
 // Self-register under the global singleton registry. All ctor deps are
 // `@I…`-injected; `staticArguments = []`. `supportsDelayedInstantiation =
 // false` preserves current reverse-dispose semantics.
-registerSingleton(IMessageService, MessageService, InstantiationType.Delayed);
+registerSingleton(
+  IMessageService,
+  new SyncDescriptor(MessageService, [], true),
+);

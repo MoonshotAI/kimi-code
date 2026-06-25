@@ -21,8 +21,8 @@
  *   - `TaskAlreadyFinishedError` (→ 40904) when the task has reached a
  *     terminal status (completed/failed/cancelled/timed_out/killed/lost).
  *
- * **Anti-corruption**: imports `@moonshot-ai/agent-core` only for the
- * `createDecorator` value and the `BackgroundTaskInfo` type.
+ * **Anti-corruption**: runtime calls go through `ICoreProcessService.rpc`; this
+ * adapter keeps only the structural task fields it needs.
  *
  * Reference table (task kind + status):
  *
@@ -39,14 +39,23 @@
  */
 
 import { createDecorator } from '../../di';
-import type { BackgroundTaskInfo } from '../../agent/background';
 import type { BackgroundTask, BackgroundTaskKind, BackgroundTaskStatus } from '@moonshot-ai/protocol';
 
 // ---------------------------------------------------------------------------
 // Adapter helpers (moved from adapter/task-adapter.ts)
 // ---------------------------------------------------------------------------
 
-function mapKind(k: BackgroundTaskInfo['kind']): BackgroundTaskKind {
+export type CoreBackgroundTaskInfo = {
+  readonly kind: 'process' | 'agent' | 'question';
+  readonly taskId: string;
+  readonly description: string;
+  readonly status: 'running' | 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
+  readonly startedAt: number;
+  readonly endedAt?: number | null;
+  readonly command?: string;
+};
+
+function mapKind(k: CoreBackgroundTaskInfo['kind']): BackgroundTaskKind {
   switch (k) {
     case 'process':
       return 'bash';
@@ -60,7 +69,7 @@ function mapKind(k: BackgroundTaskInfo['kind']): BackgroundTaskKind {
   }
 }
 
-function mapStatus(s: BackgroundTaskInfo['status']): BackgroundTaskStatus {
+function mapStatus(s: CoreBackgroundTaskInfo['status']): BackgroundTaskStatus {
   switch (s) {
     case 'running':
       return 'running';
@@ -102,7 +111,7 @@ export interface GetTaskOptions {
 
 export function toProtocolTask(
   sessionId: string,
-  info: BackgroundTaskInfo,
+  info: CoreBackgroundTaskInfo,
   output?: TaskOutputSnapshot,
 ): BackgroundTask {
   const status = mapStatus(info.status);

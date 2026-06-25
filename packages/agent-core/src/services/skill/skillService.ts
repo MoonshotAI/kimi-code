@@ -6,7 +6,10 @@ import { Disposable, InstantiationType, registerSingleton } from '../../di';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { SkillDescriptor } from '@moonshot-ai/protocol';
 
-import { ICoreProcessService } from '../coreProcess/coreProcess';
+import {
+  IAgentRuntimeService,
+} from '../agentRuntime/agentRuntime';
+import type { ISessionRPCService } from '../agent/rpc/rpc';
 import { SessionNotFoundError } from '../session/session';
 import {
   ISkillService,
@@ -21,21 +24,23 @@ const MAIN_AGENT_ID = 'main';
 export class SkillService extends Disposable implements ISkillService {
   readonly _serviceBrand: undefined;
 
-  constructor(@ICoreProcessService private readonly core: ICoreProcessService) {
+  private readonly agentRuntimes: IAgentRuntimeService;
+
+  constructor(@IAgentRuntimeService agentRuntimes: IAgentRuntimeService) {
     super();
+    this.agentRuntimes = agentRuntimes;
   }
 
   async list(sessionId: string): Promise<readonly SkillDescriptor[]> {
-    await this._requireLoadedSession(sessionId);
-    const raw = await this.core.rpc.listSkills({ sessionId });
+    const rpc = await this.requireSessionRPC(sessionId);
+    const raw = await rpc.listSkills({});
     return raw.map(toProtocolSkill);
   }
 
   async activate(sessionId: string, skillName: string, args?: string): Promise<void> {
-    await this._requireLoadedSession(sessionId);
+    const rpc = await this.requireSessionRPC(sessionId);
     try {
-      await this.core.rpc.activateSkill({
-        sessionId,
+      await rpc.activateSkill({
         agentId: MAIN_AGENT_ID,
         name: skillName,
         args,
@@ -53,18 +58,12 @@ export class SkillService extends Disposable implements ISkillService {
     }
   }
 
-  /**
-   * Validate the session exists, then make sure it is loaded into the active
-   * session map (idempotent when already loaded) so the SessionAPI dispatch
-   * below cannot miss after a daemon restart. Same pattern as
-   * `PromptService.submit` / `SessionService.undo`.
-   */
-  private async _requireLoadedSession(sessionId: string): Promise<void> {
-    const all = await this.core.rpc.listSessions({});
-    if (!all.some((s) => s.id === sessionId)) {
+  private async requireSessionRPC(sessionId: string): Promise<ISessionRPCService> {
+    const summary = await this.agentRuntimes.getSessionSummary(sessionId);
+    if (summary === undefined) {
       throw new SessionNotFoundError(sessionId);
     }
-    await this.core.rpc.resumeSession({ sessionId });
+    return this.agentRuntimes.requireSessionRPC(sessionId);
   }
 }
 

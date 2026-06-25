@@ -226,6 +226,9 @@ async function flushBackgroundInstall(): Promise<void> {
 
 describe('runUpdatePreflight', () => {
   beforeEach(() => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
+    vi.stubEnv('KIMI_CODE_NO_AUTO_UPDATE', '');
+    vi.stubEnv('KIMI_CLI_NO_AUTO_UPDATE', '');
     mocks.readUpdateInstallState.mockResolvedValue(emptyUpdateInstallState());
     mocks.writeUpdateInstallState.mockResolvedValue(undefined);
     mocks.loadTuiConfig.mockResolvedValue(tuiConfig());

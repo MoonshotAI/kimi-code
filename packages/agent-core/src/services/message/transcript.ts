@@ -42,9 +42,8 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AgentRecord } from '../../agent/records';
-import type { ContextMessage } from '../../agent/context';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
+import type { ContextMessage } from './message';
 
 type ContentPart = ContextMessage['content'][number];
 
@@ -91,12 +90,54 @@ interface MutableEntry {
   time?: number | undefined;
 }
 
+type AppendMessageWireRecord = {
+  readonly type: 'context.append_message';
+  readonly message: ContextMessage;
+} & TimedWireRecord;
+
+type AppendLoopEventWireRecord = {
+  readonly type: 'context.append_loop_event';
+  readonly event: LoopRecordedEvent;
+} & TimedWireRecord;
+
+type ApplyCompactionWireRecord = {
+  readonly type: 'context.apply_compaction';
+  readonly summary: string;
+  readonly compactedCount: number;
+} & TimedWireRecord;
+
+type UndoWireRecord = {
+  readonly type: 'context.undo';
+  readonly count: number;
+} & TimedWireRecord;
+
+type ClearWireRecord = {
+  readonly type: 'context.clear';
+} & TimedWireRecord;
+
+type WireTranscriptRecord =
+  | AppendMessageWireRecord
+  | AppendLoopEventWireRecord
+  | ApplyCompactionWireRecord
+  | UndoWireRecord
+  | ClearWireRecord;
+
+interface TimedWireRecord {
+  readonly time?: number;
+}
+
+type UnknownWireRecord = {
+  readonly type: string;
+} & TimedWireRecord;
+
+export type WireRecordLike = WireTranscriptRecord | UnknownWireRecord;
+
 /**
  * Reduce wire records into the full transcript. Pure (no I/O); exported for
  * tests. Unknown or non-context records are ignored — only `context.*`
  * records mutate history in agent-core, every other mutation path logs one.
  */
-export function reduceWireRecords(records: Iterable<AgentRecord>): {
+export function reduceWireRecords(records: Iterable<WireRecordLike>): {
   entries: TranscriptEntry[];
   foldedLength: number;
 } {
@@ -223,9 +264,10 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
   for (const record of records) {
     switch (record.type) {
       case 'context.append_message': {
+        const typed = record as AppendMessageWireRecord;
         const entry: MutableEntry = {
-          message: record.message as MutableMessage,
-          time: record.time,
+          message: typed.message as MutableMessage,
+          time: typed.time,
         };
         if (pendingToolResultIds.size > 0) {
           deferred.push(entry);
@@ -234,31 +276,36 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
         }
         break;
       }
-      case 'context.append_loop_event':
-        applyLoopEvent(record.event, record.time);
+      case 'context.append_loop_event': {
+        const typed = record as AppendLoopEventWireRecord;
+        applyLoopEvent(typed.event, typed.time);
         break;
+      }
       case 'context.apply_compaction': {
+        const typed = record as ApplyCompactionWireRecord;
         // ContextMemory drops history[0..compactedCount] and prepends the
         // summary; we keep the prefix and insert the summary at the fold
         // point so the transcript shows both.
-        const tailLength = Math.max(0, foldedLength - record.compactedCount);
+        const tailLength = Math.max(0, foldedLength - typed.compactedCount);
         transcript.splice(Math.max(0, transcript.length - tailLength), 0, {
           message: {
             role: 'assistant',
-            content: [{ type: 'text', text: record.summary }],
+            content: [{ type: 'text', text: typed.summary }],
             toolCalls: [],
             origin: { kind: 'compaction_summary' },
           },
-          time: record.time,
+          time: typed.time,
         });
         foldedLength = tailLength + 1;
         openSteps.clear();
         flushDeferredIfToolExchangeClosed();
         break;
       }
-      case 'context.undo':
-        applyUndo(record.count);
+      case 'context.undo': {
+        const typed = record as UndoWireRecord;
+        applyUndo(typed.count);
         break;
+      }
       case 'context.clear':
         clearFloor = transcript.length;
         foldedLength = 0;
@@ -319,16 +366,16 @@ function toolResultContent(result: ExecutableToolResult): ContentPart[] {
  * matching `FileSystemAgentRecordPersistence.read`; corruption anywhere else
  * throws so the caller can fall back to the live context view.
  */
-export async function readWireRecords(wirePath: string): Promise<AgentRecord[]> {
+export async function readWireRecords(wirePath: string): Promise<WireRecordLike[]> {
   const raw = await readFile(wirePath, 'utf8');
   const lines = raw.split('\n');
-  const records: AgentRecord[] = [];
+  const records: WireRecordLike[] = [];
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i]!;
     if (line.endsWith('\r')) line = line.slice(0, -1);
     if (line.length === 0) continue;
     try {
-      records.push(JSON.parse(line) as AgentRecord);
+      records.push(JSON.parse(line) as WireRecordLike);
     } catch (parseError) {
       if (i === lines.length - 1) break;
       throw new Error(

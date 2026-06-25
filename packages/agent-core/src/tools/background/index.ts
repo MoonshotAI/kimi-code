@@ -8,3 +8,8 @@ export { TaskOutputTool, TaskOutputInputSchema } from './task-output';
 export type { TaskOutputInput } from './task-output';
 export { TaskStopTool, TaskStopInputSchema } from './task-stop';
 export type { TaskStopInput } from './task-stop';
+export type {
+  BackgroundTaskLauncher,
+  BackgroundTaskManager,
+  BackgroundTaskRegistrar,
+} from './manager';

@@ -179,10 +179,14 @@ describe('startServer — lock + healthz smoke', () => {
       });
       running.push(r);
 
-      // Bound to the next port, and the lock advertises it so status/kill/ps work.
-      expect(r.address).toBe(`http://127.0.0.1:${String(next)}`);
+      // Bound to a retried port, and the lock advertises the actual port so
+      // status/kill/ps work. In the full suite another worker can occupy
+      // `next` after our probe, so assert the integration contract instead of
+      // the exact retry slot; listenWithPortRetry has exact port+1 unit coverage.
+      const actualPort = Number(new URL(r.address).port);
+      expect(actualPort).toBeGreaterThanOrEqual(next);
       const stored = JSON.parse(readFileSync(thirdPartyLockPath, 'utf8')) as LockContents;
-      expect(stored.port).toBe(next);
+      expect(stored.port).toBe(actualPort);
     } finally {
       await closeNetServer(occupant);
     }

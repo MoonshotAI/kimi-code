@@ -21,6 +21,7 @@ import type {
   LoopHooks,
   LoopMessageBuilder,
   LoopStepStopReason,
+  RecordStepUsageContext,
   RecordStepUsageResult,
 } from './types';
 
@@ -40,7 +41,10 @@ export interface ExecuteLoopStepDeps {
   readonly log?: Logger | undefined;
   readonly currentStep: number;
   readonly maxRetryAttempts?: number;
-  readonly recordUsage: (usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>;
+  readonly recordUsage: (
+    usage: TokenUsage,
+    context: RecordStepUsageContext,
+  ) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>;
 }
 
 export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
@@ -121,7 +125,12 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     log,
   });
   const usage = response.usage;
-  const usageResult = await recordUsage(usage);
+  const usageResult = await recordUsage(usage, {
+    turnId,
+    stepNumber: currentStep,
+    stepUuid,
+    toolCallCount: response.toolCalls.length,
+  });
   const stopTurnAfterUsage = usageResult?.stopTurn === true;
   const stopReason = deriveStepStopReason(response);
 

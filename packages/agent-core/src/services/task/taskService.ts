@@ -2,10 +2,15 @@
  * `TaskService` — implementation of `ITaskService`.
  */
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, registerSingleton, SyncDescriptor } from '../../di';
 import type { BackgroundTask } from '@moonshot-ai/protocol';
 
-import { ICoreProcessService } from '../coreProcess/coreProcess';
+import type { BackgroundTaskInfo } from '../../agent/background';
+import {
+  IAgentRuntimeService,
+  toAgentRuntimeService,
+  type AgentRuntimeServiceSource,
+} from '../agentRuntime/agentRuntime';
 import { SessionNotFoundError } from '../session/session';
 import {
   ITaskService,
@@ -22,9 +27,13 @@ const DEFAULT_TASK_OUTPUT_PREVIEW_BYTES = 32 * 1024;
 
 export class TaskService extends Disposable implements ITaskService {
   readonly _serviceBrand: undefined;
+  private readonly agentRuntimes: IAgentRuntimeService;
 
-  constructor(@ICoreProcessService private readonly core: ICoreProcessService) {
+  constructor(
+    @IAgentRuntimeService agentRuntimes: AgentRuntimeServiceSource,
+  ) {
     super();
+    this.agentRuntimes = toAgentRuntimeService(agentRuntimes);
   }
 
   async list(sessionId: string, query: TaskListQuery): Promise<readonly BackgroundTask[]> {
@@ -53,9 +62,8 @@ export class TaskService extends Disposable implements ITaskService {
     if (options?.withOutput) {
       const tailBytes = options.outputBytes ?? DEFAULT_TASK_OUTPUT_PREVIEW_BYTES;
       try {
-        const preview = await this.core.rpc.getBackgroundOutput({
-          sessionId,
-          agentId: MAIN_AGENT_ID,
+        const rpc = await this.agentRuntimes.requireRPC(sessionId, MAIN_AGENT_ID);
+        const preview = await rpc.getBackgroundOutput({
           taskId,
           tail: tailBytes,
         });
@@ -84,31 +92,25 @@ export class TaskService extends Disposable implements ITaskService {
     if (isTerminalStatus(wireStatus)) {
       throw new TaskAlreadyFinishedError(sessionId, taskId, wireStatus);
     }
-    await this.core.rpc.stopBackground({
-      sessionId,
-      agentId: MAIN_AGENT_ID,
-      taskId,
-    });
+    const rpc = await this.agentRuntimes.requireRPC(sessionId, MAIN_AGENT_ID);
+    await rpc.stopBackground({ taskId });
     return { cancelled: true };
   }
 
   // --- internals ------------------------------------------------------------
 
   private async _requireSession(sessionId: string): Promise<void> {
-    const all = await this.core.rpc.listSessions({});
-    if (!all.some((s) => s.id === sessionId)) {
+    if ((await this.agentRuntimes.getSessionSummary(sessionId)) === undefined) {
       throw new SessionNotFoundError(sessionId);
     }
   }
 
   private async _getAllRaw(
     sessionId: string,
-  ): Promise<ReadonlyArray<Awaited<ReturnType<typeof this.core.rpc.getBackground>>[number]>> {
+  ): Promise<readonly BackgroundTaskInfo[]> {
     try {
-      return await this.core.rpc.getBackground({
-        sessionId,
-        agentId: MAIN_AGENT_ID,
-      });
+      const rpc = await this.agentRuntimes.requireRPC(sessionId, MAIN_AGENT_ID);
+      return await rpc.getBackground({});
     } catch {
       // Session not loaded; treat as empty.
       return [];
@@ -119,4 +121,7 @@ export class TaskService extends Disposable implements ITaskService {
 // Self-register under the global singleton registry. All ctor deps are
 // `@I…`-injected; `staticArguments = []`. `supportsDelayedInstantiation =
 // false` preserves current reverse-dispose semantics.
-registerSingleton(ITaskService, TaskService, InstantiationType.Delayed);
+registerSingleton(
+  ITaskService,
+  new SyncDescriptor(TaskService, [], true),
+);

@@ -1,3 +1,5 @@
+import './agent';
+
 export { BridgeClientAPI } from './coreProcess/coreProcessClient';
 export type { CoreProcessClientDeps } from './coreProcess/coreProcessClient';
 export {
@@ -5,6 +7,11 @@ export {
   type CoreProcessServiceOptions,
 } from './coreProcess/coreProcess';
 export { CoreProcessService } from './coreProcess/coreProcessService';
+export { createServicesCoreAdapter } from './coreApi/coreApiService';
+export type {
+  ServicesCoreAdapter,
+  ServicesCoreAdapterOptions,
+} from './coreApi/coreApi';
 
 export { IEventService } from './event/event';
 export { EventService } from './event/eventService';
@@ -132,6 +139,15 @@ export type { SessionClientTelemetry, SessionCreateOptions, SessionListQuery } f
 export { SessionService } from './session/sessionService';
 
 export {
+  AgentRuntimeTodoError,
+  IAgentRuntimeService,
+} from './agentRuntime/agentRuntime';
+export {
+  AgentRuntimeService,
+  type AgentRuntimeServiceOptions,
+} from './agentRuntime/agentRuntimeService';
+
+export {
   IMessageService,
   MessageNotFoundError,
   deriveMessageId,
@@ -145,7 +161,11 @@ export {
   readWireTranscript,
   reduceWireRecords,
 } from './message/transcript';
-export type { TranscriptEntry, WireTranscript } from './message/transcript';
+export type {
+  TranscriptEntry,
+  WireRecordLike,
+  WireTranscript,
+} from './message/transcript';
 
 export {
   IPromptService,

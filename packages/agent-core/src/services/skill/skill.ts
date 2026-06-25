@@ -1,15 +1,14 @@
 /**
  * `ISkillService` — daemon-facing skill surface.
  *
- * Wraps `ICoreProcessService.rpc.{listSkills, activateSkill}` and adapts the
- * agent-core `SkillSummary` shape (camelCase) into the wire `SkillDescriptor`
+ * Wraps `IAgentRuntimeService` skill RPC and adapts the agent-core
+ * `SkillSummary` shape (camelCase) into the wire `SkillDescriptor`
  * (snake_case). The adapter helper (`toProtocolSkill`) is co-located here.
  *
  * **CoreAPI surface used**:
- *   - `core.rpc.listSkills({sessionId}) => readonly SkillSummary[]`
- *     (packages/agent-core/src/rpc/core-api.ts:347, SessionAPI).
- *   - `core.rpc.activateSkill({sessionId, agentId, name, args})`
- *     (line 324, AgentAPI) — renders the skill prompt and starts a turn with a
+ *   - `agentRuntime.requireSessionRPC(sessionId).listSkills({}) => readonly SkillSummary[]`.
+ *   - `agentRuntime.requireSessionRPC(sessionId).activateSkill({agentId, name, args})`
+ *     — renders the skill prompt and starts a turn with a
  *     `skill_activation` origin (trigger 'user-slash'), mirroring the TUI's
  *     slash-command path. It does NOT go through `IPromptService`, so no
  *     `prompt_id` is minted; clients observe progress via `skill.activated` +
@@ -17,8 +16,9 @@
  *
  * **Session scoping**: the skill registry is per-session (project skills are
  * discovered from the session cwd), so both methods are session-scoped and the
- * impl resumes the session before dispatching — sessions that exist on disk
- * but are not in the active map after a daemon restart still resolve.
+ * impl resolves the session's services/agent runtime before dispatching —
+ * sessions that exist on disk but are not cached after a daemon restart still
+ * resolve.
  *
  * **Error model**:
  *   - `SkillSessionNotFoundError` is NOT defined here — the impl throws the

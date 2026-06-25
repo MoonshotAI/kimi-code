@@ -37,6 +37,7 @@ export function createServerServiceCollection(
   const { server, app, pinoLogger, envService } = input;
 
   const snapshotConfig = loadSnapshotConfig();
+  const coreProcessOptions = server.coreProcessOptions ?? {};
 
   const services = new ServiceCollection(
     ...getSingletonServiceDescriptors(),
@@ -60,8 +61,23 @@ export function createServerServiceCollection(
     new SyncDescriptor(WSGateway, [server.wsGatewayOptions ?? {}], false),
   );
   services.set(
+    Services.IAgentRuntimeService,
+    new SyncDescriptor(
+      Services.AgentRuntimeService,
+      [
+        {
+          telemetry: coreProcessOptions.telemetry,
+          kimiRequestHeaders: coreProcessOptions.kimiRequestHeaders,
+          identity: coreProcessOptions.identity,
+          skillDirs: coreProcessOptions.skillDirs,
+        } satisfies Services.AgentRuntimeServiceOptions,
+      ],
+      true,
+    ),
+  );
+  services.set(
     Services.ICoreProcessService,
-    new SyncDescriptor(Services.CoreProcessService, [server.coreProcessOptions ?? {}], false),
+    new SyncDescriptor(Services.CoreProcessService, [coreProcessOptions], false),
   );
 
   for (const [id, override] of server.serviceOverrides ?? []) {

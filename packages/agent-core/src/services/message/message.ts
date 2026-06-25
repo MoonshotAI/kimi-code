@@ -1,9 +1,9 @@
 /**
  * `IMessageService` — daemon-facing message history interface.
  *
- * Wraps `ICoreProcessService.rpc.getContext({sessionId, agentId})` and adapts
- * agent-core's `ContextMessage` history shape (kosong `Message` + origin) to
- * the protocol's SCHEMAS.md §3 `Message` discriminated-by-content union.
+ * Adapts agent-core's `ContextMessage` history shape (kosong `Message` +
+ * origin) to the protocol's SCHEMAS.md §3 `Message`
+ * discriminated-by-content union.
  *
  * Endpoint mapping (REST.md §3.4):
  *   GET  /v1/sessions/{sid}/messages         → list(sid, ListMessagesQuery)
@@ -44,7 +44,7 @@
  */
 
 import { createDecorator } from '../../di';
-import type { ContextMessage } from '../../agent/context';
+import type { ContextMessage as AgentContextMessage } from '../../agent/context';
 import type {
   CursorQuery,
   Message,
@@ -53,6 +53,8 @@ import type {
   PageResponse,
   ToolUseContent,
 } from '@moonshot-ai/protocol';
+
+export type ContextMessage = AgentContextMessage;
 
 /**
  * Listing query — `before_id`/`after_id` + `page_size` mutex is enforced
