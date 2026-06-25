@@ -2,14 +2,15 @@
  * Native tool adapters — wraps Rust native tools to implement the
  * ExecutableTool interface used by the agent loop.
  *
- * Feature flag: set `KIMI_NATIVE_TOOLS=1` environment variable to
- * enable native tools. When disabled or when the native module fails
- * to load, the TypeScript originals are used as fallback.
+ * Feature flag: set `KIMI_CODE_EXPERIMENTAL_NATIVE_TOOLS=1` environment variable
+ * to enable native tools. When disabled or when the native module fails to load,
+ * the TypeScript originals are used as fallback.
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
 import { z } from 'zod';
 
+import { flags } from '../../flags';
 import type { BuiltinTool } from '../../agent/tool';
 import type { ToolExecution } from '../../loop/types';
 import { ToolAccesses } from '../../loop/tool-access';
@@ -24,7 +25,7 @@ function getNativeModule(): Record<string, unknown> | undefined {
   if (nativeModule !== undefined) return nativeModule;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    nativeModule = require('../../../../kimi-native-tools');
+    nativeModule = require('@moonshot-ai/kimi-native-tools');
     return nativeModule;
   } catch {
     return undefined;
@@ -32,7 +33,7 @@ function getNativeModule(): Record<string, unknown> | undefined {
 }
 
 export function isNativeToolsEnabled(): boolean {
-  return process.env['KIMI_NATIVE_TOOLS'] === '1';
+  return flags.enabled('native_tools');
 }
 
 export function tryLoadNative(): Record<string, unknown> | undefined {

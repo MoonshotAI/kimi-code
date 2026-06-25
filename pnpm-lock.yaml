@@ -320,6 +320,9 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
+      '@moonshot-ai/kimi-native-tools':
+        specifier: workspace:^
+        version: link:../kimi-native-tools
       '@moonshot-ai/kosong':
         specifier: workspace:^
         version: link:../kosong

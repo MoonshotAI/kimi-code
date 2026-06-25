@@ -28,7 +28,7 @@
     "@napi-rs/cli": "^3.0.0"
   },
   "engines": {
-    "node": ">= 16"
+    "node": ">= 24.15.0"
   },
   "files": [
     "index.js",
