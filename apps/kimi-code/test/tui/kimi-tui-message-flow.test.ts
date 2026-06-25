@@ -43,6 +43,11 @@ vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   return { ...actual, promptFeedbackInput: vi.fn() };
 });
 
+// /feedback falls back to opening GitHub Issues in a browser when not signed in
+// or when submission fails — stub it out so the test suite never spawns a
+// browser window.
+vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
+
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
 
