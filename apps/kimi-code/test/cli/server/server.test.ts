@@ -370,7 +370,7 @@ describe('`kimi server run` background start', () => {
     // so it shows a Local URL plus the "network disabled" hint, NOT real
     // Network addresses (which would be misleading since nothing binds them).
     expect(plain).toContain('http://127.0.0.1:58627/#token=tok');
-    expect(plain).toContain('use --host 0.0.0.0 to enable');
+    expect(plain).toContain('use --host to enable');
     expect(plain).not.toContain('Network:  http');
   });
 
@@ -403,7 +403,7 @@ describe('`kimi server run` background start', () => {
     expect(plain).toContain('http://127.0.0.1:58627/');
     // Loopback bind shows a Network hint for enabling network access.
     expect(plain).toContain('Network:');
-    expect(plain).toContain('use --host 0.0.0.0 to enable');
+    expect(plain).toContain('use --host to enable');
     expect(plain).toContain('Logs:');
     expect(plain).toContain('off');
     expect(plain).toContain('Stop:');
@@ -577,12 +577,18 @@ function listenOnce(host: string, port: number): Promise<Server> {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.once('error', reject);
-    server.listen({ host, port }, () => resolve(server));
+    server.listen({ host, port }, () => {
+      resolve(server);
+    });
   });
 }
 
 function closeServer(server: Server): Promise<void> {
-  return new Promise((resolve) => server.close(() => resolve()));
+  return new Promise((resolve) => {
+    server.close(() => {
+      resolve();
+    });
+  });
 }
 
 async function allocateFreePort(host = '127.0.0.1'): Promise<number> {
@@ -661,12 +667,32 @@ describe('--host threading (M6.2)', () => {
 });
 
 describe('default bind (M6.3)', () => {
-  it('defaults host to 0.0.0.0 and insecureNoTls to true when no flags are passed', async () => {
+  it('defaults host to 127.0.0.1 and insecureNoTls to true when no flags are passed', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let parsed: unknown;
 
     await handleRunCommand(
       { port: '58627' },
+      {
+        startServerBackground: async (options) => {
+          parsed = options;
+          return { origin: 'http://127.0.0.1:58627' };
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(parsed).toMatchObject({ host: '127.0.0.1', insecureNoTls: true });
+  });
+
+  it('treats a bare --host as the default LAN host', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let parsed: unknown;
+
+    await handleRunCommand(
+      { port: '58627', host: true },
       {
         startServerBackground: async (options) => {
           parsed = options;
@@ -997,7 +1023,9 @@ describe('ensureDaemon surfaces boot failures via early exit', () => {
       unref: vi.fn(),
       once: vi.fn((event: string, cb: (...a: unknown[]) => void) => {
         if (event === 'exit') {
-          setTimeout(() => cb(1, null), 5);
+          setTimeout(() => {
+            cb(1, null);
+          }, 5);
         }
         return fakeChild;
       }),

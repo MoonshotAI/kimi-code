@@ -1783,7 +1783,9 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
 
   // Order: real workspaces in listWorkspaces order, then derived workspaces
   // sorted by root path so the order is stable (not tied to session activity).
-  const realRoots = rawState.workspaces.map((w) => w.root);
+  // Hidden roots must be excluded here too — `byRoot` skips them, so a hidden
+  // real workspace would otherwise make `byRoot.get(root)` return undefined.
+  const realRoots = rawState.workspaces.filter((w) => !hidden.has(w.root)).map((w) => w.root);
   const derivedRoots = [...byRoot.keys()].filter((r) => !realRoots.includes(r));
   derivedRoots.sort((a, b) => a.localeCompare(b));
 

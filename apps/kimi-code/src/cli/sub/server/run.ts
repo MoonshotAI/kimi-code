@@ -36,6 +36,7 @@ import { ensureDaemon, type EnsureDaemonResult } from './daemon';
 import { type NetworkAddress } from './networks';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
+  DEFAULT_LAN_HOST,
   DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
   parseServerOptions,
@@ -111,13 +112,12 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
       String(DEFAULT_SERVER_PORT),
     )
     .option(
-      '--host <host>',
-      `Bind host (default ${DEFAULT_SERVER_HOST}, all interfaces). Use 127.0.0.1 to restrict to this machine only. The bearer token is printed at startup.`,
-      String(DEFAULT_SERVER_HOST),
+      '--host [host]',
+      `Bind host. Omit to bind ${DEFAULT_SERVER_HOST} (this machine only); pass --host to bind ${DEFAULT_LAN_HOST} (all interfaces), or --host <host> for a specific host. The bearer token is printed at startup.`,
     )
     .option(
       '--insecure-no-tls',
-      'Allow a non-loopback bind without a TLS-terminating reverse proxy. Defaults to true (the default bind is 0.0.0.0); use a tunnel or reverse proxy in production.',
+      'Allow a non-loopback bind without a TLS-terminating reverse proxy. Defaults to true; only relevant for non-loopback binds.',
       true,
     )
     .option(
@@ -208,7 +208,9 @@ export async function handleRunCommand(
   if (opts.foreground === true) {
     const run = deps.startServerForeground ?? startServerForeground;
     await run(parsed, {
-      onReady: (origin) => writeReady({ origin, reused: false, host: parsed.host }),
+      onReady: (origin) => {
+        writeReady({ origin, reused: false, host: parsed.host });
+      },
     });
     return;
   }
@@ -455,7 +457,7 @@ function formatReadyBanner(
   }
   // On a loopback bind there is no network URL; show how to enable one.
   if (isLoopbackHost(host)) {
-    lines.push(`  ${label('Network:  ')}${muted('off')}${dim('  use --host 0.0.0.0 to enable')}`);
+    lines.push(`  ${label('Network:  ')}${muted('off')}${dim('  use --host to enable')}`);
   }
   if (opts.token !== undefined) {
     // Set the token off with surrounding whitespace rather than color, so it is
