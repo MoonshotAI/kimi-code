@@ -332,9 +332,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const hasMore: Record<string, boolean> = {};
     for (const { workspaceId, page } of pages) {
       loaded.push(...page.items);
-      const total =
-        workspaces.find((w) => w.id === workspaceId)?.sessionCount ?? page.items.length;
-      hasMore[workspaceId] = page.hasMore || page.items.length < total;
+      // Trust the server's hasMore — the per-workspace session_count is only a
+      // (possibly stale) label total, not an authority on whether more pages exist.
+      hasMore[workspaceId] = page.hasMore;
     }
     rawState.sessionsHasMoreByWorkspace = hasMore;
     rawState.sessionsFullyLoaded = false;
@@ -381,14 +381,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const existing = new Set(rawState.sessions.map((s) => s.id));
       const fresh = page.items.filter((s) => !existing.has(s.id));
       if (fresh.length > 0) setSessions([...rawState.sessions, ...fresh]);
-      const loadedCount = rawState.sessions.filter(
-        (s) => workspaceIdForSession(s) === workspaceId,
-      ).length;
-      const total =
-        rawState.workspaces.find((w) => w.id === workspaceId)?.sessionCount ?? loadedCount;
+      // Trust the server's hasMore. Deriving it from the workspace session_count
+      // is unsafe: archive/delete only removes the local session and leaves the
+      // count stale, which would keep hasMore true and re-fetch empty pages.
       rawState.sessionsHasMoreByWorkspace = {
         ...rawState.sessionsHasMoreByWorkspace,
-        [workspaceId]: page.hasMore || loadedCount < total,
+        [workspaceId]: page.hasMore,
       };
     } catch (err) {
       pushOperationFailure('loadMoreSessions', err);
