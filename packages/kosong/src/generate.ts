@@ -169,6 +169,9 @@ export async function generate(
       pendingPart = part;
     }
   }
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer);
+  }
 
   await throwIfAborted(options?.signal, stream);
   options?.onStreamEnd?.();
