@@ -137,6 +137,7 @@ function makeSessionService(sessions: Map<string, Session>): ISessionService {
     getStatus: async () => {
       throw new Error('not implemented');
     },
+    getSessionWarnings: async () => [],
     compact: async () => {
       throw new Error('not implemented');
     },

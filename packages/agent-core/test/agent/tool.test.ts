@@ -1,6 +1,11 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
+import { budgetToolResultForModel } from '../../src/agent/turn/tool-result-budget';
 import { HookEngine } from '../../src/session/hooks';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
@@ -372,6 +377,111 @@ describe('Agent tools', () => {
     `);
     await ctx.expectResumeMatches();
   });
+
+  it('persists oversized registered tool results before adding them to model context', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'tool-result-overflow-'));
+    try {
+      const lookupCall: ToolCall = {
+        type: 'function',
+        id: 'call_lookup',
+        name: 'Lookup',
+        arguments: '{"query":"moon"}',
+      };
+      const largeOutput = `${'x'.repeat(60_000)}tail survives`;
+      const ctx = testAgent({ homedir: sessionDir });
+      ctx.configure();
+      await ctx.rpc.setPermission({ mode: 'auto' });
+      await ctx.rpc.registerTool({
+        name: 'Lookup',
+        description: 'Look up a short test value.',
+        parameters: { type: 'object', properties: {} },
+      });
+
+      ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
+      await ctx.untilToolCall({ output: largeOutput });
+
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+      await ctx.untilTurnEnd();
+
+      const toolText = ctx.compactHistory().find((message) => message.role === 'tool')?.text ?? '';
+      const outputPath = /^output_path: (.+)$/m.exec(toolText)?.[1];
+      expect(toolText).toContain('Tool output exceeded 50000 characters');
+      expect(toolText).not.toContain('tail survives');
+      expect(outputPath).toBeTruthy();
+      expect(readFileSync(outputPath!, 'utf8')).toBe(largeOutput);
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not overwrite saved oversized tool results with repeated call IDs', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'tool-result-overflow-'));
+    try {
+      const firstOutput = `${'a'.repeat(60_000)}first tail`;
+      const secondOutput = `${'b'.repeat(60_000)}second tail`;
+
+      const first = await budgetToolResultForModel({
+        homedir: sessionDir,
+        toolName: 'Lookup',
+        toolCallId: 'call_lookup',
+        result: { output: firstOutput },
+      });
+      const second = await budgetToolResultForModel({
+        homedir: sessionDir,
+        toolName: 'Lookup',
+        toolCallId: 'call_lookup',
+        result: { output: secondOutput },
+      });
+
+      const firstPath = savedOutputPath(first.output);
+      const secondPath = savedOutputPath(second.output);
+      expect(firstPath).not.toBe(secondPath);
+      expect(readFileSync(firstPath, 'utf8')).toBe(firstOutput);
+      expect(readFileSync(secondPath, 'utf8')).toBe(secondOutput);
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps oversized tool results intact when no session directory is available', async () => {
+    const largeOutput = `${'x'.repeat(60_000)}tail survives`;
+    const result = { output: largeOutput };
+
+    const budgeted = await budgetToolResultForModel({
+      toolName: 'Lookup',
+      toolCallId: 'call_lookup',
+      result,
+    });
+
+    expect(budgeted).toBe(result);
+    expect(budgeted.output).toBe(largeOutput);
+  });
+
+  it('does not save already-truncated tool result previews as full output', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'tool-result-overflow-'));
+    try {
+      const largeOutput = `${'x'.repeat(60_000)}[...truncated]`;
+      const result = {
+        output: largeOutput,
+        truncated: true,
+      };
+
+      const budgeted = await budgetToolResultForModel({
+        homedir: sessionDir,
+        toolName: 'Lookup',
+        toolCallId: 'call_lookup',
+        result,
+      });
+
+      expect(budgeted).toBe(result);
+      expect(budgeted.output).toBe(largeOutput);
+      expect(budgeted.output).not.toContain('output_path:');
+      expect(existsSync(join(sessionDir, 'tool-results'))).toBe(false);
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function bashCall(): ToolCall {
@@ -394,6 +504,13 @@ function agentCall(): ToolCall {
         subagent_type: 'coder',
       }),
   };
+}
+
+function savedOutputPath(output: unknown): string {
+  expect(typeof output).toBe('string');
+  const outputPath = /^output_path: (.+)$/m.exec(output as string)?.[1];
+  expect(outputPath).toBeTruthy();
+  return outputPath!;
 }
 
 function hookErrorMessageAssertCommand(expected: string): string {

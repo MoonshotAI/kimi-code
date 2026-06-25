@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough, Readable, type Writable } from 'node:stream';
 
 import type { Environment, KaosProcess } from '@moonshot-ai/kaos';
@@ -991,6 +994,33 @@ describe('BashTool', () => {
     expect(result.output).toContain('[...truncated]');
     expect(result.output).toContain('Output is truncated');
     expect((result as { message?: string }).message).toContain('Output is truncated');
+  });
+
+  it('saves full foreground output when the inline result is truncated', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'bash-truncated-'));
+    try {
+      const fullOutput = `${'short line\n'.repeat(6_000)}tail survives\n`;
+      const { manager } = createBackgroundManager({ sessionDir });
+      const tool = bashTool(
+        createFakeKaos({
+          execWithEnv: vi.fn().mockResolvedValue(processWithOutput({ stdout: fullOutput })),
+          osEnv: posixEnv,
+        }),
+        '/workspace',
+        manager,
+      );
+
+      const result = await executeTool(tool, context({ command: 'flood', timeout: 60 }));
+      const output = result.output as string;
+      const outputPath = /^output_path: (.+)$/m.exec(output)?.[1];
+
+      expect(output).toContain('[...truncated]');
+      expect(output).toContain('task_id: bash-');
+      expect(outputPath).toBeTruthy();
+      expect(readFileSync(outputPath!, 'utf8')).toBe(fullOutput);
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
   });
 
   it('marks the truncated output buffer with a "[...truncated]" sentinel at the cut point', async () => {

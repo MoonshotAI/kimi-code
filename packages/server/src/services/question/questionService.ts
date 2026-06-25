@@ -12,36 +12,31 @@ import type {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _typeAnchor: typeof IQuestionService = IQuestionService;
 
-export const QUESTION_DEFAULT_TIMEOUT_MS = 60_000;
-
 export const QUESTION_RECENTLY_RESOLVED_CAP = 1024;
-
-export class QuestionExpiredError extends Error {
-  constructor(public readonly questionId: string, timeoutMs: number) {
-    super(`question ${questionId} expired after ${timeoutMs}ms`);
-    this.name = 'QuestionExpiredError';
-  }
-}
 
 class PendingQuestion implements IDisposable {
   private _settled = false;
+  private _abortCleanup: (() => void) | undefined;
 
   constructor(
     readonly questionId: string,
     readonly sessionId: string,
     readonly toolCallId: string | undefined,
     readonly createdAt: string,
-    readonly expiresAt: string,
     readonly protocolRequest: ProtocolQuestionRequest,
     private readonly _resolveFn: (r: QuestionResult) => void,
     private readonly _rejectFn: (e: Error) => void,
-    private readonly _timer: NodeJS.Timeout,
   ) {}
+
+  setAbortCleanup(cleanup: () => void): void {
+    this._abortCleanup = cleanup;
+  }
 
   markSettled(): void {
     if (this._settled) return;
     this._settled = true;
-    clearTimeout(this._timer);
+    this._abortCleanup?.();
+    this._abortCleanup = undefined;
   }
 
   resolve(r: QuestionResult): void {
@@ -55,9 +50,10 @@ class PendingQuestion implements IDisposable {
   dispose(): void {
     if (this._settled) return;
     this._settled = true;
-    clearTimeout(this._timer);
+    this._abortCleanup?.();
+    this._abortCleanup = undefined;
     try {
-      this._rejectFn(new Error('server shutting down'));
+      this.reject(new Error('server shutting down'));
     } catch {
 
     }
@@ -70,7 +66,6 @@ export class QuestionService extends Disposable implements IQuestionService {
   private readonly _pending: DisposableMap<string, PendingQuestion>;
 
   private readonly _recentlyResolved = new Set<string>();
-  private _timeoutMs = QUESTION_DEFAULT_TIMEOUT_MS;
   private readonly _recentlyResolvedCap = QUESTION_RECENTLY_RESOLVED_CAP;
 
   constructor(
@@ -83,6 +78,7 @@ export class QuestionService extends Disposable implements IQuestionService {
 
   async request(
     req: QuestionRequest & { sessionId: string; agentId: string },
+    options?: { signal?: AbortSignal },
   ): Promise<QuestionResult> {
     if (this._store.isDisposed) {
       throw new Error('question service disposed');
@@ -90,13 +86,11 @@ export class QuestionService extends Disposable implements IQuestionService {
 
     const questionId = ulid();
     const createdAt = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + this._timeoutMs).toISOString();
 
     const protocolRequest = questionToBrokerRequest(req, {
       questionId,
       sessionId: req.sessionId,
       createdAt,
-      expiresAt,
     });
 
     const event: Event = {
@@ -119,22 +113,29 @@ export class QuestionService extends Disposable implements IQuestionService {
     );
 
     return new Promise<QuestionResult>((resolve, reject) => {
-      const timer = setTimeout(() => this._expire(questionId), this._timeoutMs);
-      timer.unref?.();
-      this._pending.set(
+      const pending = new PendingQuestion(
         questionId,
-        new PendingQuestion(
-          questionId,
-          req.sessionId,
-          req.toolCallId,
-          createdAt,
-          expiresAt,
-          protocolRequest,
-          resolve,
-          reject,
-          timer,
-        ),
+        req.sessionId,
+        req.toolCallId,
+        createdAt,
+        protocolRequest,
+        resolve,
+        reject,
       );
+      this._pending.set(questionId, pending);
+
+      // When the agent's turn is aborted, the broker entry must be settled so
+      // listPending()/session status don't stay stuck in awaiting_question.
+      const signal = options?.signal;
+      if (signal !== undefined) {
+        if (signal.aborted) {
+          this.dismiss(questionId);
+        } else {
+          const onAbort = () => this.dismiss(questionId);
+          signal.addEventListener('abort', onAbort, { once: true });
+          pending.setAbortCleanup(() => signal.removeEventListener('abort', onAbort));
+        }
+      }
     });
   }
 
@@ -212,28 +213,6 @@ export class QuestionService extends Disposable implements IQuestionService {
     const p = this._pending.get(questionId);
     if (!p) return undefined;
     return { sessionId: p.sessionId, toolCallId: p.toolCallId };
-  }
-
-  _setTimeoutMsForTests(ms: number): void {
-    this._timeoutMs = ms;
-  }
-
-  private _expire(questionId: string): void {
-    const p = this._pending.get(questionId);
-    if (!p) return;
-    p.markSettled();
-    this._pending.deleteAndLeak(questionId);
-    this.markResolved(p.questionId);
-
-    const expiredEvent: Event = {
-      type: 'event.question.expired',
-      sessionId: p.sessionId,
-      agentId: 'main',
-      question_id: p.questionId,
-    } as unknown as Event;
-    this.eventService.publish(expiredEvent);
-
-    p.reject(new QuestionExpiredError(p.questionId, this._timeoutMs));
   }
 
   override dispose(): void {

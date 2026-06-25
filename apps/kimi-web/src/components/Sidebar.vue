@@ -5,11 +5,21 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { serverEndpointLabel } from '../api/config';
+import { copyTextToClipboard } from '../lib/clipboard';
+import { loadCollapsedWorkspaces, saveCollapsedWorkspaces } from '../lib/storage';
+import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 
 const { t } = useI18n();
+
+// Dev-only affordance: when the page is served by the Vite dev server, the
+// logo turns yellow and the backend host:port is appended to the title —
+// handy for telling several dev tabs apart. In production this is all inert.
+const isDev = import.meta.env.DEV;
+const endpoint = isDev ? serverEndpointLabel() : '';
 
 const props = withDefaults(
   defineProps<{
@@ -47,6 +57,7 @@ const emit = defineEmits<{
   fork: [id: string];
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
+  reorderWorkspaces: [ids: string[]];
   openSettings: [];
   collapse: [];
 }>();
@@ -81,7 +92,7 @@ function onSelectResult(sessionId: string): void {
 // ---------------------------------------------------------------------------
 // Collapse groups
 // ---------------------------------------------------------------------------
-const collapsedIds = ref<Set<string>>(new Set());
+const collapsedIds = ref<Set<string>>(new Set(loadCollapsedWorkspaces()));
 
 function isCollapsed(id: string): boolean {
   return collapsedIds.value.has(id);
@@ -99,6 +110,55 @@ function toggleCollapse(id: string): void {
     next.add(id);
   }
   collapsedIds.value = next;
+  saveCollapsedWorkspaces(next);
+}
+
+// ---------------------------------------------------------------------------
+// Workspace drag-to-reorder
+// ---------------------------------------------------------------------------
+// The header of each group is the drag handle (see WorkspaceGroup). We track
+// which group is being dragged and where the insertion marker sits (before or
+// after the group under the pointer), then on drop we emit the new id order
+// upward — the parent persists it and the computed `groups` re-sorts. Using the
+// pointer's position within the target (top half = before, bottom half = after)
+// is what lets a workspace be dropped at the very bottom of the list.
+const draggingWsId = ref<string | null>(null);
+const dragOver = ref<{ id: string; position: DropPosition } | null>(null);
+
+function onWsDragstart(id: string): void {
+  draggingWsId.value = id;
+}
+
+function onWsDragend(): void {
+  draggingWsId.value = null;
+  dragOver.value = null;
+}
+
+function dropPosition(event: DragEvent): DropPosition {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+}
+
+function onGroupDragOver(event: DragEvent, targetId: string): void {
+  if (draggingWsId.value === null || draggingWsId.value === targetId) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  dragOver.value = { id: targetId, position: dropPosition(event) };
+}
+
+function onGroupDrop(targetId: string): void {
+  const fromId = draggingWsId.value;
+  const position = dragOver.value?.id === targetId ? dragOver.value.position : 'before';
+  dragOver.value = null;
+  draggingWsId.value = null;
+  if (!fromId || fromId === targetId) return;
+  const next = moveInOrder(
+    props.groups.map((g) => g.workspace.id),
+    fromId,
+    targetId,
+    position,
+  );
+  emit('reorderWorkspaces', next);
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +302,7 @@ function closeGhMenu(): void {
 
 function copyPathFromMenu(): void {
   if (ghMenuTarget.value) {
-    void navigator.clipboard.writeText(ghMenuTarget.value.root);
+    void copyTextToClipboard(ghMenuTarget.value.root);
   }
   closeGhMenu();
 }
@@ -345,7 +405,7 @@ function closeWsMenu(): void {
 }
 
 function copyWsPath(ws: WorkspaceView): void {
-  void navigator.clipboard.writeText(ws.root);
+  void copyTextToClipboard(ws.root);
   closeWsMenu();
 }
 
@@ -395,7 +455,7 @@ function blinkOnce(): void {
       <!-- Header: logo + settings (no hard border — flows into workspace list) -->
       <div class="ch">
         <div class="ch-brand">
-          <svg ref="logoRef" class="ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="blinkOnce">
+          <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="blinkOnce">
             <defs>
               <mask id="kimiEyes" maskUnits="userSpaceOnUse">
                 <rect x="0" y="0" width="32" height="22" fill="#fff" />
@@ -407,7 +467,7 @@ function blinkOnce(): void {
             </defs>
             <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#kimiEyes)" />
           </svg>
-          <span class="ch-name">Kimi Code</span>
+          <span class="ch-name">Kimi Code<span v-if="isDev" class="ch-endpoint"> · {{ endpoint }}</span></span>
         </div>
         <button
           type="button"
@@ -519,35 +579,48 @@ function blinkOnce(): void {
         </div>
 
         <template v-else>
-          <WorkspaceGroup
+          <div
             v-for="g in groups"
             :key="g.workspace.id"
-            :group="g"
-            :active-workspace-id="activeWorkspaceId"
-            :active-id="activeId"
-            :selected-ids="selectedIds"
-            :renaming-id="renamingId"
-            :rename-value="renameValue"
-            :rename-input-ref="getRenameInputRef()"
-            :pending-by-session="pendingBySession"
-            :unread-by-session="unreadBySession"
-            :ws-menu-open-id="wsMenuOpenId"
-            :is-collapsed="isCollapsed"
-            :is-expanded="isExpanded"
-            :visible-sessions="visibleSessions"
-            @group-click="handleGhClick"
-            @group-contextmenu="openGhMenu"
-            @toggle-ws-menu="toggleWsMenu"
-            @create-in-workspace="(id) => emit('createInWorkspace', id)"
-            @select-session="onSelectSession"
-            @rename-session="(id, title) => emit('rename', id, title)"
-            @archive-session="(id) => emit('archive', id)"
-            @fork-session="(id) => emit('fork', id)"
-            @toggle-expand="toggleExpand"
-            @confirm-rename="confirmRenameWorkspace"
-            @cancel-rename="cancelRenameWorkspace"
-            @update-rename-value="onUpdateRenameValue"
-          />
+            class="ws-drop-target"
+            :class="{
+              'drop-before': dragOver?.id === g.workspace.id && dragOver.position === 'before',
+              'drop-after': dragOver?.id === g.workspace.id && dragOver.position === 'after',
+            }"
+            @dragover="onGroupDragOver($event, g.workspace.id)"
+            @drop="onGroupDrop(g.workspace.id)"
+          >
+            <WorkspaceGroup
+              :group="g"
+              :active-workspace-id="activeWorkspaceId"
+              :active-id="activeId"
+              :selected-ids="selectedIds"
+              :renaming-id="renamingId"
+              :rename-value="renameValue"
+              :rename-input-ref="getRenameInputRef()"
+              :pending-by-session="pendingBySession"
+              :unread-by-session="unreadBySession"
+              :ws-menu-open-id="wsMenuOpenId"
+              :dragging="draggingWsId === g.workspace.id"
+              :is-collapsed="isCollapsed"
+              :is-expanded="isExpanded"
+              :visible-sessions="visibleSessions"
+              @group-click="handleGhClick"
+              @group-contextmenu="openGhMenu"
+              @toggle-ws-menu="toggleWsMenu"
+              @create-in-workspace="(id) => emit('createInWorkspace', id)"
+              @select-session="onSelectSession"
+              @rename-session="(id, title) => emit('rename', id, title)"
+              @archive-session="(id) => emit('archive', id)"
+              @fork-session="(id) => emit('fork', id)"
+              @toggle-expand="toggleExpand"
+              @confirm-rename="confirmRenameWorkspace"
+              @cancel-rename="cancelRenameWorkspace"
+              @update-rename-value="onUpdateRenameValue"
+              @ws-dragstart="onWsDragstart"
+              @ws-dragend="onWsDragend"
+            />
+          </div>
         </template>
       </div>
     </div>
@@ -645,6 +718,12 @@ function blinkOnce(): void {
 .ch-logo:hover {
   transform: scale(1.08);
 }
+/* Dev-only: tint the mark yellow so a `pnpm dev:web` tab is obvious at a
+   glance. `--logo` is read by the mark's `fill`; overriding it on the svg
+   recolors just this instance. */
+.ch-logo.is-dev {
+  --logo: #f5b301;
+}
 .ch-brand {
   display: flex;
   align-items: center;
@@ -661,6 +740,14 @@ function blinkOnce(): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Dev-only: backend host:port appended to the title. Kept secondary so the
+   product name still leads. */
+.ch-endpoint {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: calc(var(--ui-font-size) - 1px);
 }
 
 /* In narrow sidebars the product name drops out so the logo keeps its fixed
@@ -814,6 +901,12 @@ function blinkOnce(): void {
   border-radius: 2px;
 }
 .sessions::-webkit-scrollbar-thumb:hover { background: var(--bd); }
+
+/* Workspace drag-to-reorder: a line at the top (drop-before) or bottom
+   (drop-after) of the group under the cursor marks where the dragged workspace
+   will land. Inset shadows avoid layout shift. */
+.ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--blue); }
+.ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--blue); }
 
 .empty {
   padding: 24px 12px;

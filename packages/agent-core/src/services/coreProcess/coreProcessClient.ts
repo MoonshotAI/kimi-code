@@ -53,8 +53,9 @@ export class BridgeClientAPI implements SDKAPI {
 
   async requestQuestion(
     request: QuestionRequest & { sessionId: string; agentId: string },
+    options?: { signal?: AbortSignal },
   ): Promise<QuestionResult> {
-    return this.deps.questionService.request(request);
+    return this.deps.questionService.request(request, options);
   }
 
   async toolCall(

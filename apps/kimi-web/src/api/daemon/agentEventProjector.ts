@@ -1280,7 +1280,6 @@ const PROTOCOL_EVENT_NAMES = new Set([
   'question.requested',
   'question.answered',
   'question.dismissed',
-  'question.expired',
   // Background tasks (projected)
   'task.created',
   'task.progress',

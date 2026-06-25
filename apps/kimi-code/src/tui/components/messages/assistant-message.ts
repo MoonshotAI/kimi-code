@@ -12,9 +12,16 @@ import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 
+type AssistantMarkdownOptions = {
+  transient?: boolean;
+};
+
 export class AssistantMessageComponent implements Component {
   private contentContainer: Container;
+  private markdown: Markdown | undefined;
+  private markdownTransient = false;
   private lastText = '';
+  private lastTransient = false;
   private showBullet: boolean;
 
   constructor(showBullet: boolean = true) {
@@ -26,25 +33,49 @@ export class AssistantMessageComponent implements Component {
     this.showBullet = show;
   }
 
-  updateContent(text: string): void {
-    const displayText = text;
-    if (displayText === this.lastText) return;
+  updateContent(text: string, opts?: AssistantMarkdownOptions): void {
+    const displayText = text.trim();
+    const transient = opts?.transient === true;
+
+    if (displayText === this.lastText && transient === this.lastTransient) return;
+
     this.lastText = displayText;
-    this.contentContainer.clear();
-    if (displayText.trim().length > 0) {
-      this.contentContainer.addChild(new Markdown(displayText.trim(), 0, 0, createMarkdownTheme()));
+    this.lastTransient = transient;
+
+    if (displayText.length === 0) {
+      this.contentContainer.clear();
+      this.markdown = undefined;
+      this.markdownTransient = false;
+      return;
     }
+
+    if (this.markdown === undefined || this.markdownTransient !== transient) {
+      this.contentContainer.clear();
+      this.markdown = new Markdown(displayText, 0, 0, createMarkdownTheme({ transient }));
+      this.markdownTransient = transient;
+      this.contentContainer.addChild(this.markdown);
+      return;
+    }
+
+    this.markdown.setText(displayText);
   }
 
   invalidate(): void {
     // Markdown caches ANSI colour codes keyed on (text, width).  When the
     // theme changes the cached strings contain stale colours, so we rebuild
-    // the Markdown child with the new theme.
+    // the Markdown child with the new theme while preserving transient mode.
     this.contentContainer.clear();
+    this.markdown = undefined;
+
     if (this.lastText.trim().length > 0) {
-      this.contentContainer.addChild(
-        new Markdown(this.lastText.trim(), 0, 0, createMarkdownTheme()),
+      this.markdown = new Markdown(
+        this.lastText.trim(),
+        0,
+        0,
+        createMarkdownTheme({ transient: this.lastTransient }),
       );
+      this.markdownTransient = this.lastTransient;
+      this.contentContainer.addChild(this.markdown);
     }
   }
 

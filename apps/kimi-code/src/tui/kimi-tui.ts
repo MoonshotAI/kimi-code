@@ -94,6 +94,7 @@ import { CHROME_GUTTER } from './constant/rendering';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
 import { AuthFlowController } from './controllers/auth-flow';
 import { BtwPanelController } from './controllers/btw-panel';
+import { ClipboardImageHintController } from './controllers/clipboard-image-hint';
 import { EditorKeyboardController } from './controllers/editor-keyboard';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import { SessionReplayRenderer } from './controllers/session-replay';
@@ -239,6 +240,7 @@ export class KimiTUI {
   aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
+  private clipboardImageHintController: ClipboardImageHintController | undefined;
   private uninstallRainbowDance: () => void;
   private signalCleanupHandlers: Array<() => void> = [];
   private isShuttingDown = false;
@@ -515,8 +517,21 @@ export class KimiTUI {
 
   private startEventLoop(): void {
     this.state.ui.start();
+    this.startClipboardImageHintController();
     this.terminalFocusTrackingDispose = installTerminalFocusTracking(this.state);
     this.refreshTerminalThemeTracking();
+  }
+
+  private startClipboardImageHintController(): void {
+    this.clipboardImageHintController = new ClipboardImageHintController({
+      ui: this.state.ui,
+      footer: this.state.footer,
+      getModelSupportsImage: () => this.supportsCurrentModelCapability('image_in'),
+      requestRender: () => {
+        this.state.ui.requestRender();
+      },
+    });
+    this.clipboardImageHintController.start();
   }
 
   private startBackgroundFdAutocomplete(): void {
@@ -569,12 +584,26 @@ export class KimiTUI {
     }
     if (this.session !== undefined) {
       this.sessionEventHandler.startSubscription();
+      void this.showSessionWarnings(this.session);
     }
     void this.fetchSessions();
     if (this.session !== undefined) {
       this.updateTerminalTitle();
     }
     void this.refreshSkillCommands(this.session);
+  }
+
+  private async showSessionWarnings(session: Session): Promise<void> {
+    try {
+      const warnings = await session.getSessionWarnings();
+      if (this.session !== session) return;
+      for (const warning of warnings) {
+        const severity = warning.severity === 'error' ? 'error' : 'warning';
+        this.showStatus(`Warning: ${warning.message}`, severity);
+      }
+    } catch {
+      // Best-effort: startup must not block on warning retrieval.
+    }
   }
 
   private async showTmuxKeyboardWarningIfNeeded(): Promise<void> {
@@ -765,6 +794,8 @@ export class KimiTUI {
 
   private disposeTerminalTracking(): void {
     this.stopTerminalThemeTracking();
+    this.clipboardImageHintController?.stop();
+    this.clipboardImageHintController = undefined;
     this.terminalFocusTrackingDispose?.();
     this.terminalFocusTrackingDispose = undefined;
   }
@@ -1365,6 +1396,7 @@ export class KimiTUI {
       this.showStatus(`Warning: ${resumeState.warning}`, 'warning');
     }
     this.showStatus(statusMessage);
+    void this.showSessionWarnings(session);
   }
 
   async reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void> {
@@ -1393,6 +1425,7 @@ export class KimiTUI {
       this.showStatus(`Warning: ${resumeState.warning}`, 'warning');
     }
     this.showStatus(statusMessage);
+    void this.showSessionWarnings(session);
   }
 
   async createNewSession(): Promise<void> {
@@ -1430,6 +1463,7 @@ export class KimiTUI {
     this.sessionEventHandler.startSubscription();
     this.clearTranscriptAndRedraw();
     this.showStatus(`Started a new session (${session.id}).`);
+    void this.showSessionWarnings(session);
     void this.showConfigWarningsIfAny();
   }
 
