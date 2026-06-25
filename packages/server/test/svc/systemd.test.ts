@@ -149,8 +149,8 @@ describe('systemd manager — install', () => {
     expect(result.unitPath).toBe(unitPath);
     expect(existsSync(unitPath)).toBe(true);
     const text = readFileSync(unitPath, 'utf8');
-    expect(text).toContain('ExecStart=/usr/local/bin/kimi server run --port 58627 --log-level info');
-    expect(text).not.toContain('--host');
+    expect(text).toContain('ExecStart=/usr/local/bin/kimi server run --port 58627 --log-level info --host 127.0.0.1');
+    expect(text).toContain('--host 127.0.0.1');
 
     expect(calls.length).toBe(3);
     expect(calls[0]?.args).toEqual(['show-environment']);

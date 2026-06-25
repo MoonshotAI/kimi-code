@@ -379,7 +379,7 @@ describe('`kimi server run` background start', () => {
     let stdout = '';
 
     await handleRunCommand(
-      { port: '58627' },
+      { port: '58627', host: '127.0.0.1' },
       {
         startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
         openUrl: vi.fn(),
@@ -435,7 +435,7 @@ describe('`kimi server run` background start', () => {
 
     try {
       await handleRunCommand(
-        { port: '58627' },
+        { port: '58627', host: '127.0.0.1' },
         {
           startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
           openUrl: vi.fn(),
@@ -506,7 +506,7 @@ describe('`kimi server run --foreground`', () => {
     const openUrl = vi.fn();
 
     await handleRunCommand(
-      { port: '58627', foreground: true, open: true },
+      { port: '58627', host: '127.0.0.1', foreground: true, open: true },
       {
         startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
         startServerForeground: async (options, hooks) => {
@@ -657,6 +657,28 @@ describe('--host threading (M6.2)', () => {
     );
 
     expect(foregroundOptions).toMatchObject({ host: '0.0.0.0' });
+  });
+});
+
+describe('default bind (M6.3)', () => {
+  it('defaults host to 0.0.0.0 and insecureNoTls to true when no flags are passed', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let parsed: unknown;
+
+    await handleRunCommand(
+      { port: '58627' },
+      {
+        startServerBackground: async (options) => {
+          parsed = options;
+          return { origin: 'http://0.0.0.0:58627' };
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(parsed).toMatchObject({ host: '0.0.0.0', insecureNoTls: true });
   });
 });
 

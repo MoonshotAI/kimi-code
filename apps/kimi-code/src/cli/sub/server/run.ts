@@ -112,13 +112,13 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
     )
     .option(
       '--host <host>',
-      `Bind host (default ${DEFAULT_SERVER_HOST}). Use 0.0.0.0 to listen on all interfaces (requires --insecure-no-tls unless behind a TLS proxy). The bearer token is printed at startup.`,
+      `Bind host (default ${DEFAULT_SERVER_HOST}, all interfaces). Use 127.0.0.1 to restrict to this machine only. The bearer token is printed at startup.`,
       String(DEFAULT_SERVER_HOST),
     )
     .option(
       '--insecure-no-tls',
-      'Allow a non-loopback bind without a TLS-terminating reverse proxy. Required to bind beyond 127.0.0.1; use a tunnel or reverse proxy in production.',
-      false,
+      'Allow a non-loopback bind without a TLS-terminating reverse proxy. Defaults to true (the default bind is 0.0.0.0); use a tunnel or reverse proxy in production.',
+      true,
     )
     .option(
       '--allow-remote-shutdown',
