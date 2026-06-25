@@ -42,6 +42,10 @@ function rowClass(line: DiffViewLine): string {
   font-size: var(--ui-font-size);
   line-height: 1.5;
   -webkit-overflow-scrolling: touch;
+  /* Grow to the longest line so every row can fill one uniform width — this
+     keeps add/del backgrounds continuous across the whole horizontal scroll. */
+  width: max-content;
+  min-width: 100%;
 }
 
 .dl {
@@ -49,11 +53,9 @@ function rowClass(line: DiffViewLine): string {
   align-items: flex-start;
   min-height: 18px;
   white-space: pre;
-  /* Size each row to its content so the add/del background paints across the
-     whole line. Without this, the row is only as wide as the viewport and the
-     background stops where the text overflows horizontally. */
-  width: max-content;
-  min-width: 100%;
+  /* Fill the (uniform) width of .diff-lines so the add/del background paints
+     end-to-end, even for a short line sitting next to a long one. */
+  width: 100%;
 }
 
 .dl-gutter {
@@ -79,8 +81,8 @@ function rowClass(line: DiffViewLine): string {
 }
 
 .dl-text {
-  /* Do not shrink: the row is sized to its content (see .dl width: max-content)
-     so the text keeps its full width and the background covers it. */
+  /* Do not shrink: the container is sized to the longest line (see .diff-lines
+     width: max-content), so the text keeps its full width and rows line up. */
   flex: none;
   padding-right: 14px;
   white-space: pre;
