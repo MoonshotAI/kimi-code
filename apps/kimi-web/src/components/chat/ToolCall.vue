@@ -220,7 +220,7 @@ function openMediaPreview(): void {
       <!-- When expanded, the command/summary moves here (and is hidden from the
            header) so it shows exactly once. -->
       <div v-if="summaryFull()" class="bb-summary">{{ summaryFull() }}</div>
-      <template v-if="editDiff">
+      <template v-if="editDiff && tool.status !== 'error'">
         <div v-if="editDiff.length > 0" class="bb-diff"><DiffLines :lines="editDiff" /></div>
         <div v-else class="bb-empty">No changes.</div>
       </template>
