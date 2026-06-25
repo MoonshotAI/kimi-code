@@ -218,7 +218,7 @@ export async function handleRunCommand(
 
 function formatReuseNotice(origin: string): string {
   return (
-    `${chalk.yellow('A server is already running')} at ${origin} — ` +
+    `${chalk.hex(darkColors.warning)('A server is already running')} at ${origin} — ` +
     `the options from this command were not applied. ` +
     `Run ${chalk.bold('kimi server kill')} first to bind a new host/port.\n`
   );
