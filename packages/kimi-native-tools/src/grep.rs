@@ -203,7 +203,7 @@ pub fn grep_search(config: &GrepConfig) -> GrepResult {
 
     // Collect results — use parallel walker for multi-file searches.
     // This mirrors ripgrep's internal approach (same `ignore` crate).
-    let file_matches: Mutex<Vec<(PathBuf, usize)>> = Mutex::new(Vec::new());
+    let file_matches: Mutex<Vec<(PathBuf, usize, std::time::SystemTime)>> = Mutex::new(Vec::new());
     let filtered_sensitive: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let timed_out = AtomicBool::new(false);
     let deadline = config
@@ -295,7 +295,10 @@ pub fn grep_search(config: &GrepConfig) -> GrepResult {
             }
 
             if match_count > 0 {
-                file_matches.lock().unwrap().push((path.to_path_buf(), match_count));
+                let mtime = fs::metadata(path)
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                file_matches.lock().unwrap().push((path.to_path_buf(), match_count, mtime));
             }
 
             ignore::WalkState::Continue
@@ -303,17 +306,17 @@ pub fn grep_search(config: &GrepConfig) -> GrepResult {
     });
 
     let timed_out = timed_out.load(Ordering::Relaxed);
-    let mut file_matches: Vec<(PathBuf, usize)> = file_matches.into_inner().unwrap();
+    let mut file_matches: Vec<(PathBuf, usize, std::time::SystemTime)> = file_matches.into_inner().unwrap();
     let filtered_sensitive = filtered_sensitive.into_inner().unwrap();
-    let total_matches: usize = file_matches.iter().map(|(_, c)| c).sum();
+    let total_matches: usize = file_matches.iter().map(|(_, c, _)| c).sum();
 
-    file_matches.sort_by_key(|(path, _)| std::cmp::Reverse(fs::metadata(path).and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH)));
+    file_matches.sort_by_key(|(_, _, mtime)| std::cmp::Reverse(*mtime));
 
     let content = if needs_full_content {
         // Re-read matched files and collect line-level content.
         let mut line_matches: Vec<MatchEntry> = Vec::new();
         let mut output_bytes: usize = 0;
-        for (path, _) in &file_matches {
+        for (path, _, _) in &file_matches {
             let content = match fs::read_to_string(path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -364,13 +367,13 @@ pub fn grep_search(config: &GrepConfig) -> GrepResult {
                     .iter()
                     .skip(config.offset)
                     .take(config.head_limit)
-                    .map(|(p, _)| relativize(p, &search_path))
+                    .map(|(p, _, _)| relativize(p, &search_path))
                     .collect();
                 files.join("\n")
             }
             OutputMode::CountMatches => {
                 let mut lines = Vec::new();
-                for (path, count) in &file_matches {
+                for (path, count, _) in &file_matches {
                     lines.push(format!("{}:{}", relativize(path, &search_path), count));
                 }
                 lines.join("\n")
