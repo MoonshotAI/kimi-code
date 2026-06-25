@@ -131,4 +131,21 @@ describe('reduceAppEvent taskProgress', () => {
     const twice = reduceAppEvent(once, event, { sessionId: 's1', seq: 2 });
     expect(twice.tasksBySession['s1']?.[0]?.outputLines).toEqual(['same']);
   });
+
+  it('caps accumulated output for non-subagent (background) tasks', () => {
+    const bash: AppTask = { ...makeSubagentTask('b1', 's1'), kind: 'bash' };
+    const state = { ...createInitialState(), tasksBySession: { 's1': [bash] } };
+    let next = state;
+    for (let i = 0; i < 60; i++) {
+      next = reduceAppEvent(
+        next,
+        { type: 'taskProgress', sessionId: 's1', taskId: 'b1', outputChunk: `line ${i}`, stream: 'stdout' },
+        { sessionId: 's1', seq: i + 1 },
+      );
+    }
+    const lines = next.tasksBySession['s1']?.[0]?.outputLines;
+    expect(lines).toHaveLength(40);
+    expect(lines?.[0]).toBe('line 20');
+    expect(lines?.at(-1)).toBe('line 59');
+  });
 });

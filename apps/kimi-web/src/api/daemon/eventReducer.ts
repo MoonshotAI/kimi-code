@@ -26,6 +26,11 @@ import { i18n } from '../../i18n';
 
 const OPTIMISTIC_USER_MESSAGE_METADATA_KEY = 'kimiWeb.optimisticUserMessage';
 
+/** Tail cap for accumulated output of non-subagent (bash / background tool)
+ *  tasks, whose stdout can be noisy and unbounded. Subagent progress is kept
+ *  in full (small synthesized lines). */
+const MAX_BACKGROUND_OUTPUT_LINES = 40;
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -534,11 +539,13 @@ export function reduceAppEvent(
         if (t.id !== event.taskId) return t;
         const outputLines = t.outputLines ?? [];
         if (outputLines.at(-1) === event.outputChunk) return t;
+        const lines = [...outputLines, event.outputChunk];
         return {
           ...t,
-          // Accumulate the full progress so the subagent panel can show the
-          // entire process, not just the most recent handful of lines.
-          outputLines: [...outputLines, event.outputChunk],
+          // Keep subagent progress in full (small synthesized lines) so the
+          // panel shows the whole process; cap background bash/tool output,
+          // which can grow without bound.
+          outputLines: t.kind === 'subagent' ? lines : lines.slice(-MAX_BACKGROUND_OUTPUT_LINES),
         };
       });
       break;

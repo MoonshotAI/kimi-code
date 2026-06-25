@@ -227,12 +227,12 @@ export function subagentProgressText(rawType: string, payload: Record<string, un
     const update = payload['update'];
     if (update && typeof update === 'object') {
       const text = stringField(update as Record<string, unknown>, 'text');
-      if (text) return text;
+      if (text) return capProgressText(text);
       const message = stringField(update as Record<string, unknown>, 'message');
-      if (message) return message;
+      if (message) return capProgressText(message);
     }
     const message = stringField(payload, 'message');
-    if (message) return message;
+    if (message) return capProgressText(message);
   }
   if (rawType === 'tool.result') {
     const name = stringField(payload, 'name') ?? stringField(payload, 'toolName') ?? stringField(payload, 'toolCallId') ?? 'tool';
@@ -245,6 +245,13 @@ export function subagentProgressText(rawType: string, payload: Record<string, un
  *  `tool.result` events (e.g. `Read_0` → `Read`) so the label resolves. */
 function cleanToolName(name: string): string {
   return name.replace(/_\d+$/, '');
+}
+
+/** Cap a progress text chunk so a single huge tool output (e.g. a big command
+ *  result) cannot dominate the panel. */
+const MAX_PROGRESS_TEXT = 2000;
+function capProgressText(text: string): string {
+  return text.length > MAX_PROGRESS_TEXT ? `${text.slice(0, MAX_PROGRESS_TEXT)}…` : text;
 }
 
 /** A concise, human-readable summary of a tool call's arguments for progress

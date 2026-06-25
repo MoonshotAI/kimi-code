@@ -32,6 +32,14 @@ describe('subagentProgressText', () => {
     expect(subagentProgressText('tool.progress', { update: { text: 'working…' } })).toBe('working…');
   });
 
+  it('caps a long tool.progress text', () => {
+    const long = 'x'.repeat(3000);
+    const text = subagentProgressText('tool.progress', { update: { text: long } });
+    expect(text).not.toBeNull();
+    expect(text!.length).toBeLessThan(long.length);
+    expect(text!.endsWith('…')).toBe(true);
+  });
+
   it('returns null for unknown event types', () => {
     expect(subagentProgressText('turn.delta', {})).toBeNull();
   });
