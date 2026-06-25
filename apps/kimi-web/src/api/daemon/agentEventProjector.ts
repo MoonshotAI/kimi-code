@@ -219,8 +219,9 @@ export function subagentProgressText(rawType: string, payload: Record<string, un
   if (rawType === 'turn.step.started') return null;
   if (rawType === 'tool.use' || rawType === 'tool.call.started') {
     const name = stringField(payload, 'name') ?? stringField(payload, 'toolName') ?? 'tool';
+    const label = toolLabel(cleanToolName(name));
     const summary = toolArgSummary(name, payload['args'] ?? payload['input']);
-    return summary ? `Calling ${toolLabel(name)}: ${summary}` : `Calling ${toolLabel(name)}`;
+    return summary ? `Calling ${label}: ${summary}` : `Calling ${label}`;
   }
   if (rawType === 'tool.progress') {
     const update = payload['update'];
@@ -235,9 +236,15 @@ export function subagentProgressText(rawType: string, payload: Record<string, un
   }
   if (rawType === 'tool.result') {
     const name = stringField(payload, 'name') ?? stringField(payload, 'toolName') ?? stringField(payload, 'toolCallId') ?? 'tool';
-    return `Finished ${toolLabel(name)}`;
+    return `Finished ${toolLabel(cleanToolName(name))}`;
   }
   return null;
+}
+
+/** Strip a trailing `_N` index that some subagents append to tool names in
+ *  `tool.result` events (e.g. `Read_0` → `Read`) so the label resolves. */
+function cleanToolName(name: string): string {
+  return name.replace(/_\d+$/, '');
 }
 
 /** A concise, human-readable summary of a tool call's arguments for progress

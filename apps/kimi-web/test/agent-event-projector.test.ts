@@ -22,6 +22,12 @@ describe('subagentProgressText', () => {
     expect(subagentProgressText('tool.result', { name: 'read' })).toContain('Finished');
   });
 
+  it('strips a trailing numeric index from tool.result names', () => {
+    const text = subagentProgressText('tool.result', { name: 'Read_0' });
+    expect(text).toContain('Finished');
+    expect(text).not.toContain('Read_0');
+  });
+
   it('returns tool.progress update text', () => {
     expect(subagentProgressText('tool.progress', { update: { text: 'working…' } })).toBe('working…');
   });
