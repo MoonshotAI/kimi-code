@@ -1323,6 +1323,39 @@ command = "vim"
     expect(driver.state.editor.getText()).toBe('ls');
   });
 
+  it('recalls a queued bash command back into bash mode on Up', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{ text: 'ls', agentId: 'main', mode: 'bash' }];
+    // After a bash command is queued the editor is reset to prompt mode.
+    driver.state.editor.inputMode = 'prompt';
+    driver.state.appState.inputMode = 'prompt';
+
+    const handled = driver.state.editor.onUpArrowEmpty?.();
+
+    expect(handled).toBe(true);
+    expect(driver.state.editor.getText()).toBe('ls');
+    expect(driver.state.editor.inputMode).toBe('bash');
+    expect(driver.state.appState.inputMode).toBe('bash');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('recalls a queued prompt message in prompt mode on Up', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{ text: 'hello', agentId: 'main' }];
+    driver.state.editor.inputMode = 'bash';
+    driver.state.appState.inputMode = 'bash';
+
+    const handled = driver.state.editor.onUpArrowEmpty?.();
+
+    expect(handled).toBe(true);
+    expect(driver.state.editor.getText()).toBe('hello');
+    expect(driver.state.editor.inputMode).toBe('prompt');
+    expect(driver.state.appState.inputMode).toBe('prompt');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
   it('echoes a bash command with a $ prompt in the transcript', async () => {
     const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
     const session = makeSession({ runShellCommand });

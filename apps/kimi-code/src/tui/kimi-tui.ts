@@ -1059,11 +1059,11 @@ export class KimiTUI {
     }
   }
 
-  recallLastQueued(): string | undefined {
+  recallLastQueued(): QueuedMessage | undefined {
     if (this.state.queuedMessages.length === 0) return undefined;
     const last = this.state.queuedMessages.at(-1)!;
     this.state.queuedMessages = this.state.queuedMessages.slice(0, -1);
-    return last.text;
+    return last;
   }
 
   // =========================================================================

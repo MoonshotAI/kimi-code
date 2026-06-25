@@ -13,7 +13,7 @@ import {
 } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { ImageAttachmentStore } from '../utils/image-attachment-store';
-import type { PendingExit } from '../types';
+import type { PendingExit, QueuedMessage } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
 
@@ -25,7 +25,7 @@ export interface EditorKeyboardHost {
   handleUserInput(text: string): void;
   readonly btwPanelController: BtwPanelController;
   steerMessage(session: Session, input: string[]): void;
-  recallLastQueued(): string | undefined;
+  recallLastQueued(): QueuedMessage | undefined;
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
@@ -232,7 +232,14 @@ export class EditorKeyboardController {
       if (host.state.appState.streamingPhase === 'idle' && !host.state.appState.isCompacting) return false;
       const recalled = host.recallLastQueued();
       if (recalled !== undefined) {
-        editor.setText(recalled);
+        editor.setText(recalled.text);
+        // Restore the queued item's mode so a recalled `!` command runs as a
+        // shell command again instead of being submitted as a normal prompt.
+        const mode = recalled.mode ?? 'prompt';
+        if (editor.inputMode !== mode) {
+          editor.inputMode = mode;
+          editor.onInputModeChange?.(mode);
+        }
         host.updateQueueDisplay();
         host.state.ui.requestRender();
         return true;
