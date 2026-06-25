@@ -23,6 +23,17 @@ let bridgeHome: string;
 let workspace: string;
 let server: RunningServer | undefined;
 
+function rmSyncRobust(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 60, retryDelay: 250 });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (process.platform !== 'win32' || (code !== 'EPERM' && code !== 'EBUSY')) throw err;
+    // Best-effort on Windows: a child process may still hold the cwd after
+    // server.close(); the OS reclaims the temp dir later.
+  }
+}
+
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'kimi-server-fs-git-test-'));
   lockPath = join(tmpDir, 'lock');
@@ -41,10 +52,12 @@ afterEach(async () => {
   // On Windows the git/gh child processes and the session core process spawned
   // during a test can outlive `server.close()` (their disposal is not fully
   // awaited) and keep the temp workspace as their cwd, which makes rmSync fail
-  // with EPERM. Retry generously to ride out the asynchronous teardown.
-  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 250 });
-  rmSync(bridgeHome, { recursive: true, force: true, maxRetries: 40, retryDelay: 250 });
-}, 15_000);
+  // with EPERM. Retry generously to ride out the asynchronous teardown, and if
+  // the cwd is still locked, swallow the error — temp dirs are reclaimed by the
+  // OS and a cleanup hiccup must not fail an otherwise-passing test.
+  rmSyncRobust(tmpDir);
+  rmSyncRobust(bridgeHome);
+}, 20_000);
 
 async function bootDaemon(): Promise<RunningServer> {
   server = await startServer({
