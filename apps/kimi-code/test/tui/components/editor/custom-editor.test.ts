@@ -580,3 +580,54 @@ describe('CustomEditor bash mode border label', () => {
     expect(top).toHaveLength(width);
   });
 });
+
+describe('CustomEditor bash mode via paste', () => {
+  const PASTE_START = '\u001B[200~';
+  const PASTE_END = '\u001B[201~';
+
+  it('enters bash mode and strips the leading ! when !cmd is pasted into an empty prompt', () => {
+    const editor = makeEditor();
+    const modes: Array<'prompt' | 'bash'> = [];
+    editor.onInputModeChange = (mode) => modes.push(mode);
+
+    editor.handleInput(`${PASTE_START}!ls${PASTE_END}`);
+
+    expect(editor.inputMode).toBe('bash');
+    expect(editor.getText()).toBe('ls');
+    expect(modes).toEqual(['bash']);
+  });
+
+  it('enters bash mode on a bare pasted ! with an empty buffer', () => {
+    const editor = makeEditor();
+    editor.handleInput(`${PASTE_START}!${PASTE_END}`);
+
+    expect(editor.inputMode).toBe('bash');
+    expect(editor.getText()).toBe('');
+  });
+
+  it('does not enter bash mode when pasting !cmd into a non-empty prompt', () => {
+    const editor = makeEditor();
+    editor.handleInput('hello');
+    editor.handleInput(`${PASTE_START}!ls${PASTE_END}`);
+
+    expect(editor.inputMode).toBe('prompt');
+    expect(editor.getText()).toContain('hello');
+    expect(editor.getText()).toContain('!ls');
+  });
+
+  it('does not enter bash mode for a pasted command without a leading !', () => {
+    const editor = makeEditor();
+    editor.handleInput(`${PASTE_START}ls${PASTE_END}`);
+
+    expect(editor.inputMode).toBe('prompt');
+    expect(editor.getText()).toBe('ls');
+  });
+
+  it('keeps the typed ! behaviour (bash mode, empty buffer)', () => {
+    const editor = makeEditor();
+    editor.handleInput('!');
+
+    expect(editor.inputMode).toBe('bash');
+    expect(editor.getText()).toBe('');
+  });
+});

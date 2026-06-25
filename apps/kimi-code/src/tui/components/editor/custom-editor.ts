@@ -444,7 +444,19 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    const emptyPromptBeforeInput = this.inputMode === 'prompt' && this.getText().length === 0;
     super.handleInput(normalized);
+
+    // Enter bash mode when `!...` is pasted into an empty prompt. The typed path
+    // above handles the single `!` keystroke; this catches bracketed / Ctrl-V
+    // pastes whose content starts with `!`. Strip the leading `!` so the buffer
+    // holds only the command, exactly like the typed path.
+    if (emptyPromptBeforeInput && this.inputMode === 'prompt' && this.getText().startsWith('!')) {
+      this.inputMode = 'bash';
+      this.onInputModeChange?.('bash');
+      this.setText(this.getText().slice(1));
+    }
+
     this.reopenAutocompleteAfterInput();
   }
 
