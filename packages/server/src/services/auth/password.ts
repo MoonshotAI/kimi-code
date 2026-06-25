@@ -1,4 +1,6 @@
-import { compare, hash } from 'bcryptjs';
+import bcrypt from 'bcryptjs';
+
+const { compare, hash } = bcrypt;
 
 const BCRYPT_COST = 12;
 
