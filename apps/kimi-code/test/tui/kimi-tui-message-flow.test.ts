@@ -23,6 +23,7 @@ import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector'
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
 import { UndoSelectorComponent } from '#/tui/components/dialogs/undo-selector';
 import {
+  PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
   PluginRemoveConfirmComponent,
   PluginsPanelComponent,
@@ -3092,15 +3093,44 @@ command = "vim"
     expect(session.installPlugin).not.toHaveBeenCalled();
   });
 
-  it('installs from a positional source on /plugins install', async () => {
+  it('installs from a positional source on /plugins install after trusting it', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
 
     driver.handleUserInput('/plugins install ./plugins/kimi-datasource');
 
     await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginInstallTrustConfirmComponent,
+      );
+    });
+    const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
+    confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
+    confirm.handleInput('\r');
+
+    await vi.waitFor(() => {
       expect(session.installPlugin).toHaveBeenCalledWith('/tmp/proj-a/plugins/kimi-datasource');
     });
+  });
+
+  it('does not install when the third-party trust prompt is dismissed', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins install ./plugins/kimi-datasource');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginInstallTrustConfirmComponent,
+      );
+    });
+    const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
+    confirm.handleInput('\r'); // default option is "Exit"
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBe(driver.state.editor);
+    });
+    expect(session.installPlugin).not.toHaveBeenCalled();
   });
 
   it('loads a local plugin marketplace file and installs from it', async () => {
@@ -3115,7 +3145,7 @@ command = "vim"
             tier: 'official',
             displayName: 'Kimi Datasource',
             description: 'Datasource plugin',
-            source: './kimi-datasource',
+            source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
           },
         ],
       }),
@@ -3138,7 +3168,9 @@ command = "vim"
     panel.handleInput('\r');
 
     await vi.waitFor(() => {
-      expect(session.installPlugin).toHaveBeenCalledWith(join(marketplaceDir, 'kimi-datasource'));
+      expect(session.installPlugin).toHaveBeenCalledWith(
+        'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+      );
     });
     await vi.waitFor(() => {
       const transcript = stripSgr(renderTranscript(driver));
@@ -3162,7 +3194,7 @@ command = "vim"
             id: 'kimi-datasource',
             tier: 'official',
             displayName: 'Kimi Datasource',
-            source: './kimi-datasource',
+            source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
           },
         ],
       }),
@@ -3192,6 +3224,103 @@ command = "vim"
       const rendered = stripSgr(panel.render(120).join('\n'));
       expect(rendered).toContain('Kimi Datasource');
       expect(rendered).not.toContain('Installing');
+    });
+  });
+
+  it('prompts for trust before installing a third-party marketplace entry', async () => {
+    const marketplaceDir = await makeTempHome();
+    const marketplacePath = join(marketplaceDir, 'marketplace.json');
+    await writeFile(
+      marketplacePath,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'superpowers',
+            tier: 'curated',
+            displayName: 'Superpowers',
+            description: 'Curated plugin',
+            source: './superpowers',
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    // Passing the marketplace path opens the panel directly on the Third-party tab.
+    driver.handleUserInput(`/plugins marketplace ${marketplacePath}`);
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
+    });
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    await vi.waitFor(() => {
+      expect(stripSgr(panel.render(120).join('\n'))).toContain('Superpowers');
+    });
+    panel.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginInstallTrustConfirmComponent,
+      );
+    });
+    const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
+    confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
+    confirm.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.installPlugin).toHaveBeenCalledWith(join(marketplaceDir, 'superpowers'));
+    });
+  });
+
+  it('restores the panel when a third-party marketplace install fails', async () => {
+    const marketplaceDir = await makeTempHome();
+    const marketplacePath = join(marketplaceDir, 'marketplace.json');
+    await writeFile(
+      marketplacePath,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'superpowers',
+            tier: 'curated',
+            displayName: 'Superpowers',
+            source: './superpowers',
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const installPlugin = vi.fn(async () => {
+      throw new Error('install failed');
+    });
+    const session = makeSession({ installPlugin });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput(`/plugins marketplace ${marketplacePath}`);
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
+    });
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    await vi.waitFor(() => {
+      expect(stripSgr(panel.render(120).join('\n'))).toContain('Superpowers');
+    });
+    panel.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginInstallTrustConfirmComponent,
+      );
+    });
+    const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
+    confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
+    confirm.handleInput('\r');
+
+    // The failed install must return the user to the marketplace panel so they
+    // can retry, rather than dropping them back at the editor.
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBe(panel);
     });
   });
 

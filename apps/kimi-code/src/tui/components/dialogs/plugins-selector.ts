@@ -24,6 +24,8 @@ const MCP_SERVER_PREFIX = 'mcp:';
 
 const REMOVE_CONFIRM_CANCEL = 'cancel';
 const REMOVE_CONFIRM_REMOVE = 'remove';
+const INSTALL_TRUST_EXIT = 'exit';
+const INSTALL_TRUST_TRUST = 'trust';
 const ELLIPSIS = '…';
 
 interface PluginsOverviewItem {
@@ -185,6 +187,55 @@ export class PluginRemoveConfirmComponent extends ChoicePickerComponent {
       ],
       onSelect: (value) => {
         opts.onDone(value === REMOVE_CONFIRM_REMOVE ? { kind: 'confirm' } : { kind: 'cancel' });
+      },
+      onCancel: () => {
+        opts.onDone({ kind: 'cancel' });
+      },
+    });
+  }
+}
+
+export type PluginInstallTrustConfirmResult =
+  | { readonly kind: 'confirm' }
+  | { readonly kind: 'cancel' };
+
+export interface PluginInstallTrustConfirmOptions {
+  /** Plugin display name or source, shown in the title for identification. */
+  readonly label: string;
+  readonly onDone: (result: PluginInstallTrustConfirmResult) => void;
+}
+
+/**
+ * Confirmation shown before installing a third-party (unofficial) plugin.
+ * Defaults to "Exit" so the user must explicitly switch to "Trust and install"
+ * to proceed with a plugin that Kimi has not reviewed.
+ */
+export class PluginInstallTrustConfirmComponent extends ChoicePickerComponent {
+  constructor(opts: PluginInstallTrustConfirmOptions) {
+    super({
+      title: `Install third-party plugin ${opts.label}?`,
+      hint: '↑↓ navigate · Enter/Space select · ←/Esc cancel',
+      formatHint: mutedHintLine,
+      notice:
+        '⚠️ This is a third-party plugin that Kimi has not reviewed. It can bundle MCP servers, ' +
+        'skills, or files that run code and access your workspace. Install it only if you ' +
+        'trust the source.',
+      noticeTone: 'warning',
+      options: [
+        {
+          value: INSTALL_TRUST_EXIT,
+          label: 'Exit',
+          description: 'Cancel the installation.',
+        },
+        {
+          value: INSTALL_TRUST_TRUST,
+          label: 'Trust and install',
+          tone: 'danger',
+          description: 'Install this third-party plugin anyway.',
+        },
+      ],
+      onSelect: (value) => {
+        opts.onDone(value === INSTALL_TRUST_TRUST ? { kind: 'confirm' } : { kind: 'cancel' });
       },
       onCancel: () => {
         opts.onDone({ kind: 'cancel' });

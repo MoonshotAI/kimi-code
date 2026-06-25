@@ -31,6 +31,7 @@ import {
   startServer,
   type RunningServer,
 } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 import { rawDataToString } from '../src/ws/rawData';
 
 let tmpDir: string;
@@ -52,12 +53,15 @@ afterEach(async () => {
       // ignore
     }
   }
-  rmSync(tmpDir, { recursive: true, force: true });
-  rmSync(bridgeHome, { recursive: true, force: true });
+  // The server's core process may still flush files into the sandboxed home
+  // briefly after close(), so retry removals to ride out EBUSY/ENOTEMPTY races.
+  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  rmSync(bridgeHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 });
 
 async function spawn(): Promise<RunningServer> {
   const r = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -91,7 +95,7 @@ interface Conn {
 
 function openConn(url: string): Promise<Conn> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, ['kimi-code.bearer.test-token']);
     const queue: WsFrame[] = [];
     const waiters: Array<(frame: WsFrame) => void> = [];
     ws.on('message', (data) => {
@@ -378,6 +382,37 @@ describe('WS broadcast + per-session seq (W5.2)', () => {
     const evB = await receiveType(b, 'event.session.status_changed', 1000);
     expect(evA.session_id).toBe('sid_a');
     expect(evB.session_id).toBe('sid_a');
+    expect(evA.seq).toBe(1);
+    expect(evB.seq).toBe(1);
+
+    a.ws.close();
+    b.ws.close();
+  });
+
+  it('session.meta.updated is broadcast to all connections regardless of subscription', async () => {
+    const r = await spawn();
+    const a = await openConn(wsUrl(r.address));
+    const b = await openConn(wsUrl(r.address));
+    // `a` is subscribed to the session; `b` is not. A title change (e.g. a
+    // rename by another client) must still reach `b` so its session list
+    // stays in sync.
+    await helloAndSubscribe(a, 'A', 'sid_meta');
+    await helloAndSubscribe(b, 'B', 'sid_other');
+
+    r.services.invokeFunction((acc) =>
+      acc.get(IEventService).publish({
+        type: 'session.meta.updated',
+        agentId: 'main',
+        sessionId: 'sid_meta',
+        title: 'Renamed',
+        patch: { title: 'Renamed', isCustomTitle: true },
+      } as unknown as Event),
+    );
+
+    const evA = await receiveType(a, 'session.meta.updated', 1000);
+    const evB = await receiveType(b, 'session.meta.updated', 1000);
+    expect(evA.session_id).toBe('sid_meta');
+    expect(evB.session_id).toBe('sid_meta');
     expect(evA.seq).toBe(1);
     expect(evB.seq).toBe(1);
 

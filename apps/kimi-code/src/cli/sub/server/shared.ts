@@ -5,11 +5,17 @@
  * `run`, `web`, and `status` all use.
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import type { ServerLogLevel } from '@moonshot-ai/server';
 
 export const DEFAULT_SERVER_HOST = '127.0.0.1';
 export const DEFAULT_SERVER_PORT = 58627;
 export const DEFAULT_SERVER_ORIGIN = serverOrigin(DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT);
+
+/** Filename (under KIMI_CODE_HOME) of the persistent server bearer token. */
+export const SERVER_TOKEN_FILE = 'server.token';
 
 export const DEFAULT_LOG_LEVEL: ServerLogLevel = 'info';
 export const DEFAULT_FOREGROUND_LOG_LEVEL: ServerLogLevel = 'silent';
@@ -36,6 +42,12 @@ export interface ParsedServerOptions {
   port: number;
   logLevel: ServerLogLevel;
   debugEndpoints: boolean;
+  /** Allow a non-loopback bind without a TLS-terminating reverse proxy. */
+  insecureNoTls: boolean;
+  /** Allow `POST /api/v1/shutdown` on a non-loopback bind. */
+  allowRemoteShutdown: boolean;
+  /** Allow PTY `/api/v1/terminals/*` routes on a non-loopback bind. */
+  allowRemoteTerminals: boolean;
   /** Internal: run as an idle-exiting background daemon instead of foreground. */
   daemon: boolean;
   /** Internal: idle-shutdown grace in ms (daemon mode only). */
@@ -47,6 +59,12 @@ export interface ServerCliOptions {
   port?: string;
   logLevel?: string;
   debugEndpoints?: boolean;
+  /** Allow a non-loopback bind without TLS (`--insecure-no-tls`). */
+  insecureNoTls?: boolean;
+  /** Allow remote shutdown on a non-loopback bind (`--allow-remote-shutdown`). */
+  allowRemoteShutdown?: boolean;
+  /** Allow remote terminals on a non-loopback bind (`--allow-remote-terminals`). */
+  allowRemoteTerminals?: boolean;
   /** Internal flag set by the daemon spawner (`kimi web`). */
   daemon?: boolean;
   /** Internal flag set by the daemon spawner / tests. */
@@ -59,6 +77,9 @@ export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions 
     port: parsePort(opts.port, '--port', DEFAULT_SERVER_PORT),
     logLevel: parseLogLevel(opts.logLevel ?? DEFAULT_FOREGROUND_LOG_LEVEL),
     debugEndpoints: opts.debugEndpoints === true,
+    insecureNoTls: opts.insecureNoTls === true,
+    allowRemoteShutdown: opts.allowRemoteShutdown === true,
+    allowRemoteTerminals: opts.allowRemoteTerminals === true,
     daemon: opts.daemon === true,
     idleGraceMs: parseIdleGraceMs(opts.idleGraceMs),
   };
@@ -173,4 +194,42 @@ export async function ensureServerWebReady(origin: string): Promise<void> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Read the persistent bearer token for the server.
+ *
+ * The server writes `<homeDir>/server.token` (0600) on first boot and reuses
+ * it across restarts (ROADMAP M5.1); CLI commands that hit a gated REST route
+ * read it back here and send it as `Authorization: Bearer <token>`. `homeDir`
+ * is the CLI's own KIMI_CODE_HOME resolution (`getDataDir()`).
+ *
+ * Throws a clear error when the file is missing/unreadable — the usual cause
+ * is a server that has never been started (no token file yet), or an older
+ * build that predates token auth.
+ */
+export function resolveServerToken(homeDir: string): string {
+  const tokenPath = join(homeDir, SERVER_TOKEN_FILE);
+  try {
+    return readFileSync(tokenPath, 'utf8').trim();
+  } catch (error) {
+    throw new Error(
+      `unable to read server token at ${tokenPath}; has the server been started at least once?`,
+      { cause: error },
+    );
+  }
+}
+
+/** Best-effort token read: returns `undefined` instead of throwing. */
+export function tryResolveServerToken(homeDir: string): string | undefined {
+  try {
+    return resolveServerToken(homeDir);
+  } catch {
+    return undefined;
+  }
+}
+
+/** An `Authorization: Bearer <token>` header bag for `fetch`. */
+export function authHeaders(token: string): { Authorization: string } {
+  return { Authorization: `Bearer ${token}` };
 }
