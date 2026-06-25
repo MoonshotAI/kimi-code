@@ -1,61 +1,51 @@
-/**
- * `turn` domain (L4) — drives the turn lifecycle.
- *
- * Defines the public contract of a turn: the `ITurnService` used by upper layers
- * to start, steer, retry, and cancel a turn and to observe its events, the
- * per-turn `ITurnContext`, and the `ILoopRunner` that runs the turn loop.
- * `ITurnService` is Agent-scoped; `ILoopRunner` is Turn-scoped.
- */
+import { createDecorator } from "#/_base/di";
+import type { ContextMessage, PromptOrigin } from '#/context';
 
-import type { Event } from '#/_base/event';
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { Hooks } from '#/hooks';
 
-export interface TurnStartEvent {
-  readonly turnId: string;
-}
-export interface TurnToolEvent {
-  readonly turnId: string;
-  readonly toolCallId: string;
-  readonly toolName: string;
-}
-export interface TurnStepEvent {
-  readonly turnId: string;
-  readonly step: number;
-}
-export interface TurnEndEvent {
-  readonly turnId: string;
-  readonly reason: string;
+
+export interface TurnResult {
+  readonly reason: 'completed' | 'cancelled' | 'failed' | 'filtered';
+  readonly error?: unknown;
 }
 
-export interface ITurnService {
-  readonly _serviceBrand: undefined;
-  readonly onWillStartTurn: Event<TurnStartEvent>;
-  readonly onWillExecuteTool: Event<TurnToolEvent>;
-  readonly onDidFinalizeTool: Event<TurnToolEvent>;
-  readonly onDidEndStep: Event<TurnStepEvent>;
-  readonly onDidEndTurn: Event<TurnEndEvent>;
-  readonly hasActiveTurn: boolean;
-  readonly currentId: string | undefined;
-  prompt(input: string): Promise<void>;
-  steer(content: string, origin?: string): void;
-  retry(): Promise<void>;
-  cancel(reason?: string): void;
+export interface Turn {
+  readonly id: number;
+  readonly abortController: AbortController;
+  readonly ready: Promise<void>;
+  readonly result: Promise<TurnResult>;
 }
 
-export const ITurnService: ServiceIdentifier<ITurnService> =
-  createDecorator<ITurnService>('turnService');
-
-export interface ITurnContext {
-  readonly turnId: string;
+export interface TurnStepContext {
+  readonly turn: Turn;
+  continueTurn: boolean;
 }
 
-export const ITurnContext: ServiceIdentifier<ITurnContext> =
-  createDecorator<ITurnContext>('turnContext');
-
-export interface ILoopRunner {
-  readonly _serviceBrand: undefined;
-  run(): Promise<void>;
+export interface TurnRunContext {
+  readonly turn: Turn;
+  readonly origin: PromptOrigin;
+  readonly promptMessage?: ContextMessage;
+  result?: TurnResult;
 }
 
-export const ILoopRunner: ServiceIdentifier<ILoopRunner> =
-  createDecorator<ILoopRunner>('loopRunner');
+export interface TurnEndedContext {
+  readonly turn: Turn;
+  readonly result: TurnResult;
+}
+
+
+export interface ITurnRunner {
+  launch(origin: PromptOrigin): Turn;
+  getActiveTurn(): Turn | undefined;
+  cancel(turnId?: number, reason?: unknown): void;
+
+  readonly hooks: Hooks<{
+    onLaunched: { turn: Turn };
+    onEnded: TurnEndedContext;
+    beforeStep: TurnStepContext;
+    afterStep: TurnStepContext;
+  }>;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ITurnRunner = createDecorator<ITurnRunner>('agentTurnRunnerService');
