@@ -319,6 +319,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // from session cwds, instead of rendering a blank sidebar.
       const fallback = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
       rawState.sessionsHasMoreByWorkspace = {};
+      rawState.sessionsCursorByWorkspace = {};
       rawState.sessionsFullyLoaded = true;
       return fallback;
     }
@@ -335,13 +336,20 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     );
     const loaded: AppSession[] = [];
     const hasMore: Record<string, boolean> = {};
+    const cursors: Record<string, string | undefined> = {};
     for (const { workspaceId, page } of pages) {
       loaded.push(...page.items);
       // Trust the server's hasMore — the per-workspace session_count is only a
       // (possibly stale) label total, not an authority on whether more pages exist.
       hasMore[workspaceId] = page.hasMore;
+      // Cursor = oldest session of this page (pages are newest-first). Tracked
+      // separately from the loaded set so a deep-linked older session appended
+      // out of band cannot shift the cursor and skip intervening sessions.
+      cursors[workspaceId] =
+        page.items.length > 0 ? page.items[page.items.length - 1]!.id : undefined;
     }
     rawState.sessionsHasMoreByWorkspace = hasMore;
+    rawState.sessionsCursorByWorkspace = cursors;
     rawState.sessionsFullyLoaded = false;
     // Keep rawState.sessions newest-first for readers that pick sessions[0]
     // (e.g. auto-selecting the most recent session on first load).
@@ -349,27 +357,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     return loaded;
   }
 
-  /** Id (cursor) of the oldest currently-loaded session in a workspace, used as
-   *  `before_id` to fetch the next-older page. */
-  function oldestLoadedSessionId(workspaceId: string): string | undefined {
-    let oldest: AppSession | undefined;
-    for (const s of rawState.sessions) {
-      if (workspaceIdForSession(s) !== workspaceId) continue;
-      if (
-        oldest === undefined ||
-        new Date(s.updatedAt).getTime() < new Date(oldest.updatedAt).getTime()
-      ) {
-        oldest = s;
-      }
-    }
-    return oldest?.id;
-  }
-
   /** Fetch the next page of sessions for a workspace (the "load more" button). */
   async function loadMoreSessions(workspaceId: string): Promise<void> {
     if (rawState.sessionsLoadingMoreByWorkspace[workspaceId]) return;
     if (rawState.sessionsHasMoreByWorkspace[workspaceId] === false) return;
-    const beforeId = oldestLoadedSessionId(workspaceId);
+    const beforeId = rawState.sessionsCursorByWorkspace[workspaceId];
     if (beforeId === undefined) return;
     rawState.sessionsLoadingMoreByWorkspace = {
       ...rawState.sessionsLoadingMoreByWorkspace,
@@ -386,6 +378,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const existing = new Set(rawState.sessions.map((s) => s.id));
       const fresh = page.items.filter((s) => !existing.has(s.id));
       if (fresh.length > 0) setSessions([...rawState.sessions, ...fresh]);
+      // Advance the cursor to the end of the page we just fetched.
+      rawState.sessionsCursorByWorkspace = {
+        ...rawState.sessionsCursorByWorkspace,
+        [workspaceId]:
+          page.items.length > 0 ? page.items[page.items.length - 1]!.id : beforeId,
+      };
       // Trust the server's hasMore. Deriving it from the workspace session_count
       // is unsafe: archive/delete only removes the local session and leaves the
       // count stale, which would keep hasMore true and re-fetch empty pages.

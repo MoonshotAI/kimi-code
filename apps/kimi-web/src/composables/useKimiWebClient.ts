@@ -317,6 +317,10 @@ export interface ExtendedState extends KimiClientState {
   sessionsHasMoreByWorkspace: Record<string, boolean>;
   /** True while the next page of sessions is being fetched for a workspace. */
   sessionsLoadingMoreByWorkspace: Record<string, boolean>;
+  /** Paging cursor (`before_id`) for the next session page, per workspace. Tracks
+   *  the end of the last fetched page so a deep-linked older session appended
+   *  out of band does not shift the cursor and skip intervening sessions. */
+  sessionsCursorByWorkspace: Record<string, string | undefined>;
   /** True once every session has been loaded (after a search-triggered full drain). */
   sessionsFullyLoaded: boolean;
 }
@@ -357,6 +361,7 @@ const rawState: ExtendedState = reactive({
   messagesLoadMoreErrorBySession: {},
   sessionsHasMoreByWorkspace: {},
   sessionsLoadingMoreByWorkspace: {},
+  sessionsCursorByWorkspace: {},
   sessionsFullyLoaded: false,
 });
 
