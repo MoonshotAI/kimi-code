@@ -1,8 +1,10 @@
 <!-- apps/kimi-web/src/components/chat/ToolCall.vue -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import type { ToolCall, ToolMedia } from '../../types';
-import { toolLabel, toolGlyph, toolChip, toolSummary } from '../../lib/toolMeta';
+import type { DiffViewLine, ToolCall, ToolMedia } from '../../types';
+import { normalizeToolName, toolLabel, toolGlyph, toolChip, toolSummary } from '../../lib/toolMeta';
+import DiffLines from './DiffLines.vue';
+import { buildDiffLines, diffStats } from '../../lib/diffLines';
 
 const props = withDefaults(
   defineProps<{
@@ -19,7 +21,7 @@ const emit = defineEmits<{
 }>();
 const isRunningBash = computed(() => props.tool.status === 'running' && /^bash$/i.test(props.tool.name));
 const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
-const canExpand = computed(() => hasOutput.value || isRunningBash.value);
+const canExpand = computed(() => hasOutput.value || isRunningBash.value || editDiff.value !== null);
 const open = ref(props.tool.defaultExpanded === true && canExpand.value);
 
 function toggle() {
@@ -42,16 +44,56 @@ const glyph = () => toolGlyph(props.tool.name);
 const summary = () => toolSummary(props.tool.name, props.tool.arg);
 // Expanded body has room to wrap → show the full, un-clipped summary (no `…`).
 const summaryFull = () => toolSummary(props.tool.name, props.tool.arg, true);
-const chip = () => toolChip({
-  name: props.tool.name,
-  arg: props.tool.arg,
-  output: props.tool.output,
-  timing: props.tool.timing,
-  status: props.tool.status,
-});
+const chip = () => {
+  const diff = editDiff.value;
+  if (diff && props.tool.status !== 'error') {
+    const { added, removed } = diffStats(diff);
+    if (added || removed) return `+${added} −${removed}`;
+  }
+  return toolChip({
+    name: props.tool.name,
+    arg: props.tool.arg,
+    output: props.tool.output,
+    timing: props.tool.timing,
+    status: props.tool.status,
+  });
+};
 
 const isError = () => props.tool.status === 'error';
 const media = computed(() => (props.tool.status === 'ok' ? props.tool.media : undefined));
+
+/** Parse the JSON-stringified tool input into a record, or null. */
+function parseToolArg(arg: string): Record<string, unknown> | null {
+  const s = arg.trim();
+  if (!s.startsWith('{')) return null;
+  try {
+    const v = JSON.parse(s);
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * For Edit / Write tools, build a line-by-line diff from the tool input so it
+ * can be rendered inline. Returns null for any other tool or when the input
+ * doesn't carry the expected fields.
+ */
+const editDiff = computed<DiffViewLine[] | null>(() => {
+  const kind = normalizeToolName(props.tool.name);
+  if (kind !== 'edit' && kind !== 'write') return null;
+  const d = parseToolArg(props.tool.arg);
+  if (!d) return null;
+  if (kind === 'edit') {
+    const before = typeof d.old_string === 'string' ? d.old_string : undefined;
+    const after = typeof d.new_string === 'string' ? d.new_string : undefined;
+    if (before === undefined || after === undefined) return null;
+    return buildDiffLines(before, after);
+  }
+  const content = typeof d.content === 'string' ? d.content : undefined;
+  if (content === undefined) return null;
+  return buildDiffLines('', content);
+});
 
 function basename(path: string): string {
   return path.split(/[\\/]+/).pop() || path;
@@ -151,8 +193,14 @@ function openMediaPreview(): void {
       <!-- When expanded, the command/summary moves here (and is hidden from the
            header) so it shows exactly once. -->
       <div v-if="summaryFull()" class="bb-summary">{{ summaryFull() }}</div>
-      <div v-if="!hasOutput" class="bb-empty">Waiting for output…</div>
-      <div v-for="(line, i) in tool.output ?? []" :key="i">{{ line }}</div>
+      <template v-if="editDiff">
+        <div v-if="editDiff.length > 0" class="bb-diff"><DiffLines :lines="editDiff" /></div>
+        <div v-else class="bb-empty">No changes.</div>
+      </template>
+      <template v-else>
+        <div v-if="!hasOutput" class="bb-empty">Waiting for output…</div>
+        <div v-for="(line, i) in tool.output ?? []" :key="i">{{ line }}</div>
+      </template>
     </div>
   </div>
 </template>
@@ -315,6 +363,13 @@ function openMediaPreview(): void {
 .bb-empty {
   color: var(--muted);
   font-style: italic;
+}
+/* Inline edit/write diff: scroll horizontally for long lines so the card
+   width stays intact, and bleed to the card edges (counter the .bb padding)
+   so the gutter lines up cleanly. */
+.bb-diff {
+  overflow-x: auto;
+  margin: 0 -11px;
 }
 /* Mobile bubble layout: no left gutter indent, softer corners (prototype .tool). */
 .box.mob {

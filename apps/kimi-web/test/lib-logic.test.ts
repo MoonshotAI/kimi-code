@@ -5,6 +5,7 @@ import {
   parseFilePathLinkCandidate,
 } from '../src/lib/filePathLinks';
 import { parseDiff } from '../src/lib/parseDiff';
+import { buildDiffLines } from '../src/lib/diffLines';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 
@@ -36,6 +37,35 @@ describe('parseDiff', () => {
       { type: 'del', text: '-- old comment', oldNo: 5 },
       { type: 'add', text: '++ new comment', newNo: 5 },
     ]);
+  });
+});
+
+describe('buildDiffLines', () => {
+  it('lines up context, deletions and additions with old/new line numbers', () => {
+    const before = 'a\nb\nc';
+    const after = 'a\nB\nc\nd';
+    expect(buildDiffLines(before, after)).toEqual([
+      { type: 'context', text: 'a', oldNo: 1, newNo: 1 },
+      { type: 'del', text: 'b', oldNo: 2 },
+      { type: 'add', text: 'B', newNo: 2 },
+      { type: 'context', text: 'c', oldNo: 3, newNo: 3 },
+      { type: 'add', text: 'd', newNo: 4 },
+    ]);
+  });
+
+  it('treats an empty before as an all-addition write', () => {
+    expect(buildDiffLines('', 'x\ny')).toEqual([
+      { type: 'add', text: 'x', newNo: 1 },
+      { type: 'add', text: 'y', newNo: 2 },
+    ]);
+  });
+
+  it('returns all context for identical texts and empty for two empties', () => {
+    expect(buildDiffLines('a\nb', 'a\nb')).toEqual([
+      { type: 'context', text: 'a', oldNo: 1, newNo: 1 },
+      { type: 'context', text: 'b', oldNo: 2, newNo: 2 },
+    ]);
+    expect(buildDiffLines('', '')).toEqual([]);
   });
 });
 
