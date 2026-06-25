@@ -160,6 +160,9 @@ function buildTemplateVars(
     KIMI_WORK_DIR_LS: context.cwdListing ?? '',
     KIMI_AGENTS_MD: context.agentsMd ?? '',
     KIMI_SKILLS: tools.includes('Skill') ? skills : '',
+    HAS_AGENT: tools.includes('Agent') ? 'yes' : '',
+    HAS_TASKLIST: tools.includes('TaskList') ? 'yes' : '',
+    HAS_TODOLIST: tools.includes('TodoList') ? 'yes' : '',
     KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
     ROLE_ADDITIONAL:
       context.roleAdditional ?? promptVars['ROLE_ADDITIONAL'] ?? promptVars['roleAdditional'] ?? '',
