@@ -123,7 +123,7 @@ import {
   type TUIStartupOptions,
   type TUIStartupState,
 } from './types';
-import { isExpandable } from './utils/component-capabilities';
+import { hasDispose, isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
@@ -1771,6 +1771,12 @@ export class KimiTUI {
     this.streamingUI.resetLiveText();
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
+    // Dispose disposable children (e.g. ShellRunComponent's 1s timer) before
+    // dropping them, so a /clear or session switch can't leak intervals that
+    // keep firing requestRender on a removed component.
+    for (const child of this.state.transcriptContainer.children) {
+      if (hasDispose(child)) child.dispose();
+    }
     this.state.transcriptContainer.clear();
     this.btwPanelController.clear();
     this.clearTerminalInlineImages();

@@ -2,10 +2,16 @@ import { Container, Text } from '@earendil-works/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 
-import { formatBashOutputForDisplay, stripAnsi } from '#/tui/utils/shell-output';
+import { formatBashOutputForDisplay, sanitizeShellOutput } from '#/tui/utils/shell-output';
 
 const RUNNING_TAIL_LINES = 5;
 const TIMER_INTERVAL_MS = 1000;
+// Cap the live running buffer so a command that spews output for minutes can't
+// grow memory without bound or make every render re-strip a multi-MB string.
+// Only affects the transient running tail; the final view uses the full
+// captured stdout/stderr passed to finish().
+const MAX_COMBINED_CHARS = 256 * 1024;
+const KEEP_COMBINED_CHARS = 64 * 1024;
 
 /**
  * Live view for a user-initiated `!` shell command. Two phases:
@@ -16,12 +22,16 @@ const TIMER_INTERVAL_MS = 1000;
  *    so warnings are grey rather than red while the command works.
  *  - finished: the standard `formatBashOutputForDisplay` view (stderr red only
  *    on failure), the timer stopped and the running chrome removed.
+ *
+ * Hardened so a misbehaving command can never crash the TUI: the running
+ * buffer is capped, and every render/render-request path swallows errors.
  */
 export class ShellRunComponent extends Container {
   private readonly textComponent: Text;
   private combined = '';
   private running = true;
   private backgrounded = false;
+  private disposed = false;
   private finalStdout = '';
   private finalStderr = '';
   private finalIsError?: boolean;
@@ -36,13 +46,16 @@ export class ShellRunComponent extends Container {
   }
 
   append(text: string): void {
-    if (!this.running || text.length === 0) return;
+    if (this.disposed || !this.running || text.length === 0) return;
     this.combined += text;
+    if (this.combined.length > MAX_COMBINED_CHARS) {
+      this.combined = this.combined.slice(-KEEP_COMBINED_CHARS);
+    }
     this.flush();
   }
 
   finish(stdout: string, stderr: string, isError?: boolean): void {
-    if (!this.running) return;
+    if (this.disposed || !this.running) return;
     this.running = false;
     this.finalStdout = stdout;
     this.finalStderr = stderr;
@@ -52,7 +65,7 @@ export class ShellRunComponent extends Container {
   }
 
   finishBackgrounded(): void {
-    if (!this.running) return;
+    if (this.disposed || !this.running) return;
     this.running = false;
     this.backgrounded = true;
     this.clearTimer();
@@ -60,6 +73,7 @@ export class ShellRunComponent extends Container {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.clearTimer();
   }
 
@@ -69,8 +83,14 @@ export class ShellRunComponent extends Container {
   }
 
   private flush(): void {
-    this.textComponent.setText(this.renderText());
-    this.requestRender();
+    if (this.disposed) return;
+    try {
+      this.textComponent.setText(this.renderText());
+      this.requestRender();
+    } catch {
+      // Never let a render/render-request error escape into a timer or event
+      // handler — an uncaught exception there can take down the whole TUI.
+    }
   }
 
   private clearTimer(): void {
@@ -81,30 +101,34 @@ export class ShellRunComponent extends Container {
   }
 
   private renderText(): string {
-    if (this.backgrounded) {
-      return `  ${currentTheme.fg('textDim', 'Moved to background.')}`;
+    try {
+      if (this.backgrounded) {
+        return `  ${currentTheme.fg('textDim', 'Moved to background.')}`;
+      }
+      if (!this.running) {
+        return formatBashOutputForDisplay(this.finalStdout, this.finalStderr, this.finalIsError)
+          .split('\n')
+          .map((line) => `  ${line}`)
+          .join('\n');
+      }
+      const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
+      const dim = (s: string): string => currentTheme.fg('textDim', s);
+      const trimmed = sanitizeShellOutput(this.combined).trimEnd();
+      let body: string;
+      let extra = 0;
+      if (trimmed.length === 0) {
+        body = `  ${dim('Running…')}`;
+      } else {
+        const lines = trimmed.split('\n');
+        const tail = lines.slice(-RUNNING_TAIL_LINES);
+        extra = Math.max(0, lines.length - RUNNING_TAIL_LINES);
+        body = tail.map((line) => `  ${dim(line)}`).join('\n');
+      }
+      const timing = `  ${dim(`${extra > 0 ? `+${extra} lines ` : ''}(${elapsed}s)`)}`;
+      const hint = `  ${dim('(ctrl+b to run in background)')}`;
+      return `${body}\n${timing}\n${hint}`;
+    } catch {
+      return '  (output unavailable)';
     }
-    if (!this.running) {
-      return formatBashOutputForDisplay(this.finalStdout, this.finalStderr, this.finalIsError)
-        .split('\n')
-        .map((line) => `  ${line}`)
-        .join('\n');
-    }
-    const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
-    const dim = (s: string): string => currentTheme.fg('textDim', s);
-    const trimmed = stripAnsi(this.combined).trimEnd();
-    let body: string;
-    let extra = 0;
-    if (trimmed.length === 0) {
-      body = `  ${dim('Running…')}`;
-    } else {
-      const lines = trimmed.split('\n');
-      const tail = lines.slice(-RUNNING_TAIL_LINES);
-      extra = Math.max(0, lines.length - RUNNING_TAIL_LINES);
-      body = tail.map((line) => `  ${dim(line)}`).join('\n');
-    }
-    const timing = `  ${dim(`${extra > 0 ? `+${extra} lines ` : ''}(${elapsed}s)`)}`;
-    const hint = `  ${dim('(ctrl+b to run in background)')}`;
-    return `${body}\n${timing}\n${hint}`;
   }
 }
