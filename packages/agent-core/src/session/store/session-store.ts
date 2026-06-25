@@ -163,9 +163,11 @@ export class SessionStore {
     if (!isRecord(parsed)) {
       throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, `Session "${id}" state.json is invalid`);
     }
+    const now = new Date().toISOString();
     const next: Record<string, unknown> = {
       ...parsed,
       archived,
+      updatedAt: now,
     };
     await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
     await appendSessionIndexEntry(this.homeDir, {
@@ -181,26 +183,26 @@ export class SessionStore {
     const workDir =
       options.workDir === undefined ? undefined : normalizeRequiredWorkDir(options.workDir);
     const sessionId = normalizeOptionalSessionId(options.sessionId);
-    const includeArchived = options.includeArchived === true;
+    const includeArchive = options.includeArchive === true;
 
     if (workDir !== undefined) {
       if (sessionId !== undefined) {
-        const local = await this.summaryFromWorkDirSession(sessionId, workDir, includeArchived);
+        const local = await this.summaryFromWorkDirSession(sessionId, workDir, includeArchive);
         if (local !== undefined) return [local];
-        return this.listSessionId(sessionId);
+        return this.listSessionId(sessionId, includeArchive);
       }
-      return this.listWorkDir(workDir, includeArchived);
+      return this.listWorkDir(workDir, includeArchive);
     }
 
     if (sessionId !== undefined) {
-      return this.listSessionId(sessionId);
+      return this.listSessionId(sessionId, includeArchive);
     }
-    return this.listAll(includeArchived);
+    return this.listAll(includeArchive);
   }
 
   private async listWorkDir(
     workDir: string,
-    includeArchived: boolean,
+    includeArchive: boolean,
   ): Promise<readonly SessionSummary[]> {
     const bucketDir = join(this.sessionsDir, encodeWorkDirKey(workDir));
     let entries;
@@ -217,16 +219,21 @@ export class SessionStore {
       if (!isSafeSessionId(id)) continue;
       const dir = join(bucketDir, id);
       const summary = await this.summaryFromDir(id, dir, workDir);
-      if (summary.archived && !includeArchived) continue;
+      if (!includeArchive && summary.archived === true) continue;
       sessions.push(summary);
     }
     sessions.sort(compareSessionSummary);
     return sessions;
   }
 
-  private async listSessionId(sessionId: string): Promise<readonly SessionSummary[]> {
+  private async listSessionId(
+    sessionId: string,
+    includeArchive: boolean,
+  ): Promise<readonly SessionSummary[]> {
     try {
-      return [await this.get(sessionId)];
+      const summary = await this.get(sessionId);
+      if (!includeArchive && summary.archived === true) return [];
+      return [summary];
     } catch (error) {
       if (error instanceof KimiError && error.code === ErrorCodes.SESSION_NOT_FOUND) {
         return [];
@@ -235,15 +242,15 @@ export class SessionStore {
     }
   }
 
-  private async listAll(
-    includeArchived: boolean,
-  ): Promise<readonly SessionSummary[]> {
+  private async listAll(includeArchive: boolean): Promise<readonly SessionSummary[]> {
     const index = await readSessionIndex(this.homeDir, this.sessionsDir);
     const sessions: SessionSummary[] = [];
     for (const entry of index.values()) {
       if (!(await isDirectory(entry.sessionDir))) continue;
-      if (entry.archived && !includeArchived) continue;
-      sessions.push(await this.summaryFromDir(entry.sessionId, entry.sessionDir, entry.workDir));
+      if (!includeArchive && entry.archived === true) continue;
+      const summary = await this.summaryFromDir(entry.sessionId, entry.sessionDir, entry.workDir);
+      if (!includeArchive && summary.archived === true) continue;
+      sessions.push(summary);
     }
     sessions.sort(compareSessionSummary);
     return sessions;
@@ -252,13 +259,13 @@ export class SessionStore {
   private async summaryFromWorkDirSession(
     sessionId: string,
     workDir: string,
-    includeArchived: boolean,
+    includeArchive: boolean,
   ): Promise<SessionSummary | undefined> {
     if (!isSafeSessionId(sessionId)) return undefined;
     const sessionDir = this.sessionDirFor({ id: sessionId, workDir });
     if (!(await isDirectory(sessionDir))) return undefined;
     const summary = await this.summaryFromDir(sessionId, sessionDir, workDir);
-    if (summary.archived && !includeArchived) return undefined;
+    if (!includeArchive && summary.archived === true) return undefined;
     return summary;
   }
 
@@ -344,9 +351,9 @@ export class SessionStore {
         wireInfo?.mtimeMs ?? 0,
         agentsWireMtime ?? 0,
       ),
+      archived: state?.archived === true,
       title: titleFromState(state),
       lastPrompt: state?.lastPrompt,
-      archived: state?.archived === true,
       metadata: metadataFromState(state),
     };
   }

@@ -387,4 +387,23 @@ micro_compaction = false
     expect(session.getResumeState()?.agents['main']).toBeDefined();
     await expect(session.getStatus()).resolves.toMatchObject({ model: 'kimi-for-coding' });
   });
+
+  it('forwards forcePluginSessionStartReminder to the active session reload', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = join(homeDir, 'work');
+    const configPath = join(homeDir, 'config.toml');
+    await writeFile(configPath, COMPLETE_TOML, 'utf-8');
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const session = await harness.createSession({
+      id: 'session-sdk-reload-forward',
+      workDir,
+      model: 'kimi-for-coding',
+    });
+
+    const reloadSpy = vi.spyOn(session, 'reloadSession').mockResolvedValue({} as never);
+
+    await harness.reloadSession({ id: session.id, forcePluginSessionStartReminder: true });
+
+    expect(reloadSpy).toHaveBeenCalledWith({ forcePluginSessionStartReminder: true });
+  });
 });

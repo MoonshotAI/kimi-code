@@ -1,6 +1,7 @@
 export {
   DeviceCodeExpiredError,
   DeviceCodeTimeoutError,
+  OAuthConnectionError,
   OAuthError,
   OAuthUnauthorizedError,
   RetryableRefreshError,

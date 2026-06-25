@@ -99,6 +99,7 @@ export function selectVisibleTodos(todos: readonly TodoItem[]): VisibleTodos {
 
 export class TodoPanelComponent implements Component {
   private todos: readonly TodoItem[] = [];
+  private expanded = false;
 
   setTodos(todos: readonly TodoItem[]): void {
     this.todos = todos.map((t) => ({ title: t.title, status: t.status }));
@@ -110,10 +111,24 @@ export class TodoPanelComponent implements Component {
 
   clear(): void {
     this.todos = [];
+    this.expanded = false;
   }
 
   isEmpty(): boolean {
     return this.todos.length === 0;
+  }
+
+  /** True when the list exceeds the collapsed cap, i.e. there is something to expand. */
+  hasOverflow(): boolean {
+    return this.todos.length > MAX_VISIBLE;
+  }
+
+  setExpanded(expanded: boolean): void {
+    this.expanded = expanded;
+  }
+
+  toggleExpanded(): void {
+    this.expanded = !this.expanded;
   }
 
   invalidate(): void {}
@@ -121,16 +136,28 @@ export class TodoPanelComponent implements Component {
   render(width: number): string[] {
     if (this.todos.length === 0) return [];
     const c = currentTheme.palette;
-    const { rows, hidden } = selectVisibleTodos(this.todos);
     const lines: string[] = [
       chalk.hex(c.border)('─'.repeat(width)),
-      chalk.hex(c.primary).bold(' Todo'),
+      chalk.hex(c.primary).bold('  Todo'),
     ];
-    for (const todo of rows) {
-      lines.push(renderRow(todo, c));
-    }
-    if (hidden > 0) {
-      lines.push(chalk.hex(c.textDim)(`  … +${hidden} more`));
+
+    if (this.expanded) {
+      for (const todo of this.todos) {
+        lines.push(renderRow(todo, c));
+      }
+      if (this.todos.length > MAX_VISIBLE) {
+        lines.push(
+          chalk.hex(c.textDim)(`  all ${String(this.todos.length)} items · ctrl+t to collapse`),
+        );
+      }
+    } else {
+      const { rows, hidden } = selectVisibleTodos(this.todos);
+      for (const todo of rows) {
+        lines.push(renderRow(todo, c));
+      }
+      if (hidden > 0) {
+        lines.push(chalk.hex(c.textDim)(`  … +${hidden} more · ctrl+t to expand`));
+      }
     }
 
     return lines.map((line) => truncateToWidth(line, width));

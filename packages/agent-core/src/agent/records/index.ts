@@ -89,6 +89,15 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       return;
     case 'context.append_loop_event':
       agent.context.appendLoopEvent(input.event);
+      // Advance the turn counter past internally-driven turns (goal
+      // continuations, steer-launched turns) that allocate a turnId without a
+      // `turn.prompt` record. Their loop events still carry the real turnId.
+      if ('turnId' in input.event) {
+        const restoredTurnId = Number.parseInt(input.event.turnId, 10);
+        if (!Number.isNaN(restoredTurnId)) {
+          agent.turn.observeRestoredTurnId(restoredTurnId);
+        }
+      }
       return;
     case 'context.clear':
       agent.context.clear();

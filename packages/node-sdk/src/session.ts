@@ -9,6 +9,8 @@ import {
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
+  AddAdditionalDirOptions,
+  AddAdditionalDirResult,
   BackgroundTaskInfo,
   CompactOptions,
   CreateGoalInput,
@@ -20,6 +22,7 @@ import type {
   PluginInfo,
   PluginSummary,
   PromptInput,
+  ReloadSessionOptions,
   ReloadSummary,
   ResumedSessionState,
   ResumedSessionSummary,
@@ -66,9 +69,12 @@ export class Session {
     return this.resumeState;
   }
 
-  async reloadSession(): Promise<ResumedSessionSummary> {
+  async reloadSession(options?: ReloadSessionOptions): Promise<ResumedSessionSummary> {
     this.ensureOpen();
-    const summary = await this.rpc.reloadSession({ sessionId: this.id });
+    const summary = await this.rpc.reloadSession({
+      sessionId: this.id,
+      forcePluginSessionStartReminder: options?.forcePluginSessionStartReminder,
+    });
     this.summary = summary;
     this.resumeState = resumeStateFromSummary(summary);
     return summary;
@@ -101,6 +107,27 @@ export class Session {
     });
   }
 
+  /** Execute a user-initiated `!` shell command (silent — does not prompt the
+   *  model). Resolves with the command's stdout/stderr for immediate display.
+   *  Pass `commandId` to receive live `shell.output` events for this command. */
+  async runShellCommand(
+    command: string,
+    options?: { commandId?: string },
+  ): Promise<{ stdout: string; stderr: string; isError?: boolean; backgrounded?: boolean }> {
+    this.ensureOpen();
+    return this.rpc.runShellCommand({
+      sessionId: this.id,
+      command,
+      commandId: options?.commandId,
+    });
+  }
+
+  /** Cancel a running `!` shell command by its commandId (e.g. on Esc / Ctrl+C). */
+  async cancelShellCommand(commandId: string): Promise<void> {
+    this.ensureOpen();
+    return this.rpc.cancelShellCommand({ sessionId: this.id, commandId });
+  }
+
   async steer(input: string | PromptInput): Promise<void> {
     this.ensureOpen();
     await this.rpc.steer({
@@ -120,6 +147,30 @@ export class Session {
   async init(): Promise<void> {
     this.ensureOpen();
     await this.rpc.generateAgentsMd({ sessionId: this.id });
+  }
+
+  async getSessionWarnings() {
+    this.ensureOpen();
+    return this.rpc.getSessionWarnings({ sessionId: this.id });
+  }
+
+  async addAdditionalDir(
+    path: string,
+    options?: AddAdditionalDirOptions,
+  ): Promise<AddAdditionalDirResult> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      path,
+      'Additional directory cannot be empty',
+      ErrorCodes.REQUEST_INVALID,
+    );
+    const result = await this.rpc.addAdditionalDir({
+      id: this.id,
+      path: normalized,
+      persist: options?.persist ?? true,
+    });
+    this.summary = { ...this.requireSummary(), additionalDirs: result.additionalDirs };
+    return result;
   }
 
   async startBtw(): Promise<string> {
@@ -314,6 +365,23 @@ export class Session {
     });
   }
 
+  /**
+   * Detach a running foreground task so the current tool call can return while
+   * the task continues under background-task management.
+   */
+  async detachBackgroundTask(taskId: string): Promise<BackgroundTaskInfo | undefined> {
+    this.ensureOpen();
+    const trimmedTaskId = normalizeRequiredString(
+      taskId,
+      'Task id cannot be empty',
+      ErrorCodes.BACKGROUND_TASK_ID_EMPTY,
+    );
+    return this.rpc.detachBackgroundTask({
+      sessionId: this.id,
+      taskId: trimmedTaskId,
+    });
+  }
+
   // --- Goal lifecycle ---------------------------------------------------
   // Deterministic user/host control surface. There is intentionally no
   // `updateGoal`: the goal's terminal status is decided by the model via the
@@ -444,6 +512,13 @@ export class Session {
     if (this.closed) {
       throw new KimiError(ErrorCodes.SESSION_CLOSED, 'Session is closed');
     }
+  }
+
+  private requireSummary(): SessionSummary {
+    if (this.summary === undefined) {
+      throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, 'Session summary is unavailable');
+    }
+    return this.summary;
   }
 }
 

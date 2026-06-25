@@ -1417,6 +1417,53 @@ describe('Session.createAgent', () => {
     expect(child.agent.config.systemPrompt).not.toContain(`cwd=${sessionWorkDir}`);
   });
 
+  it('passes session additional dirs to main and child agents', async () => {
+    const extraDir = '/extra/work';
+    const directories = new Set(['/workspace', extraDir]);
+    const files = new Map([
+      [join(extraDir, 'AGENTS.md'), 'extra agents instructions'],
+      [join(extraDir, 'extra-file.ts'), 'export const extra = 1;'],
+    ]);
+    const session = new Session({
+      id: 'test-subagent-additional-dirs',
+      kaos: createFakeKaos({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeText: vi.fn().mockResolvedValue(0),
+        stat: vi.fn(async (path: string) => {
+          if (directories.has(path)) return stat('dir');
+          if (files.has(path)) return stat('file');
+          throw new Error(`ENOENT ${path}`);
+        }),
+        iterdir: async function* (path: string) {
+          if (path === extraDir) {
+            yield join(extraDir, 'AGENTS.md');
+            yield join(extraDir, 'extra-file.ts');
+          }
+        },
+        readText: vi.fn(async (path: string) => {
+          const content = files.get(path);
+          if (content === undefined) throw new Error(`ENOENT ${path}`);
+          return content;
+        }),
+      }),
+      homedir: '/tmp/kimi-session',
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+      additionalDirs: [extraDir],
+    });
+
+    const main = await session.createMain();
+    const child = await session.createAgent(
+      { type: 'sub' },
+      { profile: contextProfile(), parentAgentId: 'main' },
+    );
+
+    expect(main.getAdditionalDirs()).toEqual([extraDir]);
+    expect(child.agent.getAdditionalDirs()).toEqual([extraDir]);
+    expect(child.agent.config.systemPrompt).toContain(`additional=### ${extraDir}`);
+    expect(child.agent.config.systemPrompt).toContain('extra-file.ts');
+  });
+
   it('allocates the next unused generated agent id', async () => {
     const session = new Session({
       id: 'test-subagent-agent-id',
@@ -1525,6 +1572,7 @@ function contextProfile(): ResolvedAgentProfile {
         `cwd=${context.cwd}`,
         `listing=${context.cwdListing ?? ''}`,
         `agents=${context.agentsMd ?? ''}`,
+        `additional=${context.additionalDirsInfo ?? ''}`,
       ].join('\n'),
     tools: [],
   };

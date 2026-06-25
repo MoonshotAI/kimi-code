@@ -37,6 +37,8 @@ export interface ChoicePickerOptions {
   readonly hint?: string;
   readonly formatHint?: (text: string) => string;
   readonly notice?: string;
+  /** Color tone for the notice line. Defaults to 'success'. */
+  readonly noticeTone?: 'success' | 'warning';
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
   /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
@@ -129,15 +131,26 @@ export class ChoicePickerComponent extends Container implements Focusable {
 
     const titleSuffix =
       searchable && view.query.length === 0 ? currentTheme.fg('textMuted', '  (type to search)') : '';
+    const hintLines = hint.split(/\r?\n/);
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
       currentTheme.boldFg('primary', ` ${this.opts.title}`) + titleSuffix,
-      this.opts.formatHint === undefined
-        ? currentTheme.fg('textMuted', ` ${hint}`)
-        : this.opts.formatHint(` ${hint}`),
     ];
+    for (const hintLine of hintLines) {
+      lines.push(
+        this.opts.formatHint === undefined
+          ? currentTheme.fg('textMuted', ` ${hintLine}`)
+          : this.opts.formatHint(` ${hintLine}`),
+      );
+    }
     if (this.opts.notice !== undefined) {
-      lines.push(currentTheme.fg('success', ` ${this.opts.notice}`));
+      const tone = this.opts.noticeTone ?? 'success';
+      const noticeWidth = Math.max(1, width - 1);
+      for (const noticeLine of this.opts.notice.split(/\r?\n/)) {
+        for (const wrapped of wrapDescription(noticeLine, noticeWidth)) {
+          lines.push(currentTheme.fg(tone, ` ${wrapped}`));
+        }
+      }
     }
     lines.push('');
     if (searchable && view.query.length > 0) {

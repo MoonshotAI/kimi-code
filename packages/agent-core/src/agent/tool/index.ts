@@ -4,7 +4,7 @@ import picomatch from 'picomatch';
 
 import type { Agent } from '..';
 import { makeErrorPayload } from '../../errors';
-import type { ExecutableTool } from '../../loop';
+import type { ExecutableTool, ToolUpdate } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
 import type { McpConnectionManager, McpServerEntry } from '../../mcp';
 import { mcpResultToExecutableOutput } from '../../mcp/output';
@@ -24,6 +24,9 @@ import type {
 
 export * from './types';
 
+/** Foreground timeout (seconds) for a user-initiated `!` shell command. */
+const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
+
 interface McpToolEntry {
   readonly tool: ExecutableTool;
   readonly serverName: string;
@@ -41,6 +44,10 @@ export class ToolManager {
   private mcpAccessPatterns: string[] = [];
   protected readonly store: Partial<ToolStoreData> = {};
   private mcpToolStatusUnsubscribe: (() => void) | undefined;
+
+  /** Abort controllers for in-flight `!` shell commands, keyed by commandId so
+   *  the TUI can cancel (Esc / Ctrl+C) a running command. */
+  private readonly shellCommandControllers = new Map<string, AbortController>();
 
   constructor(protected readonly agent: Agent) {
     this.attachMcpTools();
@@ -81,6 +88,99 @@ export class ToolManager {
       value,
     });
     this.store[key] = value;
+  }
+
+  /**
+   * Execute a user-initiated `!` shell command. Reuses the builtin Bash tool
+   * (same kaos / cwd / BackgroundManager as the agent), recording the command
+   * and its output as `shell_command`-origin messages. It does NOT start a turn
+   * — the model is not prompted (parity with claude-code's `shouldQuery: false`).
+   */
+  async runShellCommand(
+    command: string,
+    commandId?: string,
+  ): Promise<{ stdout: string; stderr: string; isError?: boolean; backgrounded?: boolean }> {
+    this.agent.context.appendBashInput(command);
+    const bash = this.builtinTools.get('Bash');
+    if (bash === undefined) {
+      const error = 'Bash tool is not available.';
+      this.agent.context.appendBashOutput('', error);
+      return { stdout: '', stderr: error, isError: true };
+    }
+    let stdout = '';
+    let stderr = '';
+    let isError: boolean | undefined;
+    const controller = new AbortController();
+    if (commandId !== undefined) this.shellCommandControllers.set(commandId, controller);
+    try {
+      const execution = await bash.resolveExecution({ command, timeout: SHELL_FOREGROUND_TIMEOUT_S });
+      if (!('execute' in execution)) {
+        const output =
+          typeof execution.output === 'string' ? execution.output : 'Command failed.';
+        this.agent.context.appendBashOutput('', output);
+        return { stdout: '', stderr: output, isError: true };
+      }
+      const result = await execution.execute({
+        turnId: '',
+        toolCallId: 'shell-command',
+        signal: controller.signal,
+        onUpdate: (update: ToolUpdate) => {
+          if (update.kind === 'stdout') stdout += update.text ?? '';
+          else if (update.kind === 'stderr') stderr += update.text ?? '';
+          else return;
+          // Stream the chunk live to the TUI. Transient event — the final
+          // output is still recorded once below for resume.
+          if (commandId !== undefined) {
+            this.agent.emitEvent({ type: 'shell.output', commandId, update });
+          }
+        },
+        onForegroundTaskStart: (taskId: string) => {
+          // Surface the background-task id so the TUI can detach (ctrl+b) it.
+          if (commandId !== undefined) {
+            this.agent.emitEvent({ type: 'shell.started', commandId, taskId });
+          }
+        },
+      });
+      isError = result.isError === true;
+
+      // Detached to background (ctrl+b): the BashTool returns the background
+      // metadata (task_id / status / output path) — the same payload a normal
+      // foreground Bash call returns as its tool result when backgrounded.
+      // Inject it as a user-invisible message and immediately send it to the
+      // model (mirrors the background-task completion notification, but hidden).
+      if (typeof result.output === 'string' && result.output.startsWith('task_id: ')) {
+        this.agent.context.injectAndNotify(result.output, {
+          kind: 'injection',
+          variant: 'shell_command_backgrounded',
+        });
+        return { stdout: result.output, stderr: '', isError: false, backgrounded: true };
+      }
+
+      // When the command fails with no captured stdout/stderr, the failure
+      // reason lives in result.output (non-zero exit with no output, timeout,
+      // spawn failure). Surface it as stderr so the TUI and replay show what
+      // went wrong instead of "(no output)".
+      if (
+        isError &&
+        stdout.length === 0 &&
+        stderr.length === 0 &&
+        typeof result.output === 'string' &&
+        result.output.length > 0
+      ) {
+        stderr = result.output;
+      }
+    } catch (error) {
+      stderr += error instanceof Error ? error.message : String(error);
+      isError = true;
+    } finally {
+      if (commandId !== undefined) this.shellCommandControllers.delete(commandId);
+    }
+    this.agent.context.appendBashOutput(stdout, stderr, isError);
+    return { stdout, stderr, isError };
+  }
+
+  cancelShellCommand(commandId: string): void {
+    this.shellCommandControllers.get(commandId)?.abort();
   }
 
   registerUserTool(input: UserToolRegistration): void {
@@ -367,7 +467,7 @@ export class ToolManager {
     const workspace = extendWorkspaceWithSkillRoots(
       {
         workspaceDir: cwd,
-        additionalDirs: [],
+        additionalDirs: this.agent.getAdditionalDirs(),
       },
       this.agent.skills?.registry.getSkillRoots() ?? [],
     );
@@ -408,9 +508,10 @@ export class ToolManager {
         this.agent.subagentHost &&
           new b.AgentTool(
             this.agent.subagentHost,
-            allowBackground ? background : undefined,
+            background,
             DEFAULT_AGENT_PROFILES['agent']?.subagents,
             {
+              allowBackground,
               log: this.agent.log,
             },
           ),

@@ -412,7 +412,6 @@ async function startGoal(
   if (options.beforeSend !== undefined && !(await options.beforeSend())) {
     return false;
   }
-  host.track('goal_create', { replace: parsed.replace });
   host.state.transcriptContainer.addChild(new GoalSetMessageComponent());
   host.state.ui.requestRender();
   if (options.sendInput !== undefined) {

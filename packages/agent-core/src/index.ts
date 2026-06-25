@@ -81,3 +81,29 @@ export type {
   ExecutableToolSuccessResult,
   ExecutableToolErrorResult,
 } from './loop/types';
+
+// ─── Dependency injection container ────────────────────────────────────────
+export * from './di';
+
+// ─── Base — Event<T> / Emitter<T> ──────────────────────────────────────────
+// NOTE: only `Emitter` is re-exported from the top-level barrel — the new
+// VSCode-style `Event<T>` symbol collides with `./rpc`'s `Event` (agent-core
+// protocol Event union, exported via `export * from './rpc'` above). Callers
+// that need the emitter `Event<T>` type import it from the explicit sub-path
+// `@moonshot-ai/agent-core/base/common/event` (declared in `package.json`
+// `exports`). This keeps the existing top-level `Event` semantics stable for
+// consumers like `services/src/event/event.ts` while letting new code reach
+// for the emitter type without naming clashes.
+export { Emitter } from './base/common/event';
+
+// ─── In-process services (merged from @moonshot-ai/services) ─────────────────
+// Re-exports the `IXxxService` contracts, default `XxxService` implementations,
+// `toProtocol*` translators and error classes. Importing this barrel triggers
+// the `registerSingleton(...)` side-effects at the bottom of each `*Service.ts`,
+// populating the DI registry consumed by `getSingletonServiceDescriptors()`.
+//
+// NOTE: `ApprovalRequest` / `ApprovalResponse` / `QuestionRequest` /
+// `QuestionResult` are intentionally NOT re-exported here — they are the
+// canonical protocol shapes already exported via `./rpc` (`rpc/sdk-api.ts`),
+// and re-exporting them again would collide (TS2308).
+export * from './services';

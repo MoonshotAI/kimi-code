@@ -23,6 +23,7 @@ import {
   type Session,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import { turnEndReasonToStopReason } from '../src/events-map';
 import { AcpServer } from '../src/server';
 import { AUTHED_STATUS } from './_helpers/harness-stubs';
 
@@ -257,5 +258,30 @@ describe('AcpServer error mapping', () => {
     await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
     const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
     expect(response.stopReason).toBe('cancelled');
+  });
+
+  it('maps the filtered turn-end reason to ACP stopReason refusal', () => {
+    // ACP has a native `refusal` stop reason that matches a provider safety
+    // block; mapping filtered to anything else (e.g. end_turn) would let the
+    // client mistake the block for a clean turn.
+    expect(turnEndReasonToStopReason('filtered')).toBe('refusal');
+  });
+
+  it('resolves with refusal when turn.ended reason is filtered', async () => {
+    const sessionId = 'sess-filtered';
+    const { session, unsubscribeCount } = makeScriptedSession(sessionId, {
+      script: [
+        { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'filtered' } as Event,
+      ],
+    });
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(makeHarnessWithSession(session), c), agentStream);
+    const client = new ClientSideConnection(() => new StubClient(), clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
+    expect(response.stopReason).toBe('refusal');
+    expect(unsubscribeCount()).toBe(1);
   });
 });

@@ -1,11 +1,16 @@
 import { ErrorCodes, KimiError } from '#/errors';
+import type { SessionWarning } from '@moonshot-ai/protocol';
 import type {
   ActivateSkillPayload,
+  AddAdditionalDirPayload,
+  AddAdditionalDirResult,
   AgentAPI,
   BeginCompactionPayload,
   CancelPayload,
   CancelPlanPayload,
+  CancelShellCommandPayload,
   CreateGoalPayload,
+  DetachBackgroundPayload,
   EmptyPayload,
   EnterSwarmPayload,
   GetBackgroundOutputPayload,
@@ -13,6 +18,7 @@ import type {
   McpServerInfo,
   McpStartupMetrics,
   PromptPayload,
+  RunShellCommandPayload,
   ReconnectMcpServerPayload,
   RenameSessionPayload,
   RegisterToolPayload,
@@ -90,6 +96,13 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return this.session.generateAgentsMd();
   }
 
+  getSessionWarnings(_payload: EmptyPayload): Promise<readonly SessionWarning[]> {
+    return this.session.getSessionWarnings();
+  }
+
+  addAdditionalDir(payload: AddAdditionalDirPayload): Promise<AddAdditionalDirResult> {
+    return this.session.addAdditionalDir(payload.path, payload.persist);
+  }
 
   async prompt({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {
     if (agentId === 'main') {
@@ -100,6 +113,14 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async steer({ agentId, ...payload }: AgentScopedPayload<SteerPayload>) {
     return (await this.getAgent(agentId)).steer(payload);
+  }
+
+  async runShellCommand({ agentId, ...payload }: AgentScopedPayload<RunShellCommandPayload>) {
+    return (await this.getAgent(agentId)).runShellCommand(payload);
+  }
+
+  async cancelShellCommand({ agentId, ...payload }: AgentScopedPayload<CancelShellCommandPayload>) {
+    return (await this.getAgent(agentId)).cancelShellCommand(payload);
   }
 
   async cancel({ agentId, ...payload }: AgentScopedPayload<CancelPayload>) {
@@ -172,6 +193,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async stopBackground({ agentId, ...payload }: AgentScopedPayload<StopBackgroundPayload>) {
     return (await this.getAgent(agentId)).stopBackground(payload);
+  }
+
+  async detachBackground({ agentId, ...payload }: AgentScopedPayload<DetachBackgroundPayload>) {
+    return (await this.getAgent(agentId)).detachBackground(payload);
   }
 
   async clearContext({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {

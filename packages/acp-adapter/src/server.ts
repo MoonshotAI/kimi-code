@@ -288,6 +288,7 @@ export class AcpServer implements Agent {
       workDir: params.cwd,
       kaos: acpKaos,
       persistenceKaos,
+      sessionStartedProperties: { mode: 'new' },
       // @ts-expect-error — `mcpServers` is a kernel-side extension
       // (agent-core `CreateSessionPayload`) the SDK transparently
       // forwards via spread. See block comment above.
@@ -305,11 +306,6 @@ export class AcpServer implements Agent {
       currentThinkingEnabled,
     );
     this.sessions.set(session.id, acpSession);
-    // Telemetry breadcrumb so we can observe ACP adoption (number of
-    // sessions started via this surface, vs. TUI / SDK direct). The
-    // property set is deliberately minimal: `mode` distinguishes
-    // `newSession` from `loadSession`; no user content / PII.
-    this.trackSessionStarted(session.id, 'new');
     // Phase 14 (PLAN D11) advertises both the model and mode pickers as
     // a unified `configOptions: SessionConfigOption[]` surface. The
     // dedicated Phase 12 `modes:` field is gone — see
@@ -363,10 +359,8 @@ export class AcpServer implements Agent {
       cwd: params.cwd,
       sessionId: params.sessionId,
       mcpServers: params.mcpServers,
+      mode: 'load',
     });
-    // Same telemetry breadcrumb as `newSession`, but `mode: 'load'`
-    // so we can distinguish session creation from resumption. No PII.
-    this.trackSessionStarted(session.id, 'load');
     // Synchronously replay history — the response must not settle
     // until every historical `session/update` has been pushed,
     // otherwise the client would race the load completion against
@@ -401,11 +395,8 @@ export class AcpServer implements Agent {
       cwd: params.cwd,
       sessionId: params.sessionId,
       mcpServers: params.mcpServers,
+      mode: 'resume',
     });
-    // Telemetry breadcrumb — distinguishes resume from new/load so we
-    // can observe which clients adopt the lighter-weight resume
-    // surface vs the history-replaying load surface. No PII.
-    this.trackSessionStarted(session.id, 'resume');
     this.scheduleAvailableCommandsUpdate(session.id);
     return { configOptions };
   }
@@ -437,6 +428,7 @@ export class AcpServer implements Agent {
     cwd: string;
     sessionId: string;
     mcpServers?: ReadonlyArray<McpServer>;
+    mode: 'load' | 'resume';
   }): Promise<{
     session: Session;
     acpSession: AcpSession;
@@ -466,6 +458,7 @@ export class AcpServer implements Agent {
         id: params.sessionId,
         kaos: acpKaos,
         persistenceKaos,
+        sessionStartedProperties: { mode: params.mode },
         // @ts-expect-error — see block comment above; mcpServers is a
         // kernel-only field that the SDK forwards via spread.
         mcpServers,
@@ -786,8 +779,7 @@ export class AcpServer implements Agent {
    * throwing) — adapter-level unit tests routinely construct minimal
    * `KimiHarness` shapes that only stub `auth.status` + `createSession`.
    * Production callers always supply a real harness with both methods;
-   * the swallow-and-fallback path exists purely for test ergonomics
-   * (matches the `track?.bind(...)` pattern at `trackSessionStarted`).
+   * the swallow-and-fallback path exists purely for test ergonomics.
    *
    * Logged at `warn` when a fallback fires so a dev who forgot to set
    * `default_model = ...` sees a breadcrumb in the agent log.
@@ -867,7 +859,7 @@ export class AcpServer implements Agent {
    * Build a {@link TelemetryTrackFn} wrapper bound to the underlying
    * harness so the {@link AcpSession} (and its reverse-RPC bridges in
    * Phase 13) can emit PII-free breadcrumbs through the same
-   * `harness.track` channel `trackSessionStarted` uses. The wrapper
+   * `harness.track` channel. The wrapper
    * shape is required by the broader `Record<string, unknown>` properties
    * type {@link TelemetryTrackFn} uses — the harness's own `track` is
    * typed against the narrower `TelemetryProperties` (a
@@ -928,31 +920,6 @@ export class AcpServer implements Agent {
     }
   }
 
-  /**
-   * Emit the single ACP-adapter telemetry event.
-   *
-   * Wraps {@link KimiHarness.track} so a partial harness stub
-   * (common in unit tests — see `auth-gate.test.ts`, `session-new.test.ts`)
-   * cannot crash the request path. Production callers always supply a
-   * real harness with `.track`; the swallow-and-log fallback exists
-   * purely for test ergonomics.
-   *
-   * Property set is deliberately minimal: `sessionId` + `mode`. No
-   * user content, no IDE identity, no client capabilities — keeping
-   * the breadcrumb PII-free.
-   */
-  private trackSessionStarted(sessionId: string, mode: 'new' | 'load' | 'resume'): void {
-    const track = this.harness.track?.bind(this.harness);
-    if (typeof track !== 'function') return;
-    try {
-      track('acp_session_started', { sessionId, mode });
-    } catch (err) {
-      log.warn('acp: telemetry track failed', {
-        sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
 }
 
 /**

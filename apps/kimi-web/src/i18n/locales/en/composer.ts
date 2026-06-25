@@ -1,0 +1,23 @@
+export default {
+  placeholder: 'Type a message…',
+  send: 'Send ↵',
+  queueLabel: 'Queue',
+  editQueued: 'Edit (load back into the input)',
+  queuedImageOnly: 'image ×{n}',
+  queuedHasImage: 'Contains {n} image(s) — remove only, not editable',
+  remove: 'Remove',
+  removeNamed: 'Remove {name}',
+  uploading: 'Uploading',
+  uploadFailed: 'Upload failed',
+  attachImage: 'Attach image',
+  previewAttachment: 'Preview {name}',
+  interrupt: 'Interrupt',
+  interruptTitle: 'Interrupt current operation',
+  steerNow: 'Steer now ⌃S',
+  steerTitle: 'Inject into the running turn without waiting (Ctrl+S / ⌘S)',
+  emptyConversationTitle: 'Kimi Code',
+  emptyConversation: 'No messages yet — type below to start the conversation',
+  quickStartPlaceholder: 'Type a message to start a new conversation…',
+  thinkingSuffix: ' · thinking',
+
+} as const;

@@ -294,7 +294,11 @@ export class FullCompaction {
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
-          if (error instanceof APIContextOverflowError || error instanceof CompactionTruncatedError) {
+          if (
+            error instanceof APIContextOverflowError ||
+            error instanceof CompactionTruncatedError ||
+            error instanceof APIEmptyResponseError // e.g. think-only
+          ) {
             compactedCount = this.strategy.reduceCompactOnOverflow(messagesToCompact);
           }
           else if (!isRetryableGenerateError(error)) {
@@ -340,6 +344,7 @@ export class FullCompaction {
         compactedCount: result.compactedCount,
         retryCount,
         round,
+        thinkingLevel: this.agent.config.thinkingLevel,
         ...usage,
         ...data,
       });
@@ -353,6 +358,7 @@ export class FullCompaction {
         duration: Date.now() - startedAt,
         round,
         retryCount,
+        thinkingLevel: this.agent.config.thinkingLevel,
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
       if (isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;

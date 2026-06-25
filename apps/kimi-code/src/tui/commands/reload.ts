@@ -16,7 +16,7 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   const session = host.session;
 
   if (session !== undefined) {
-    await session.reloadSession();
+    await session.reloadSession({ forcePluginSessionStartReminder: true });
     await host.reloadCurrentSessionView(session, 'Session reloaded.');
   }
 

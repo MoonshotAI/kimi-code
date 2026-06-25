@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kimi-code",
-  "version": "0.16.0",
+  "version": "0.20.0",
   "description": "The Starting Point for Next-Gen Agents",
   "license": "MIT",
   "author": "Moonshot AI",
@@ -27,6 +27,7 @@
   },
   "files": [
     "dist",
+    "dist-web",
     "scripts/postinstall.mjs",
     "scripts/postinstall",
     "README.md"
@@ -34,6 +35,8 @@
   "type": "module",
   "imports": {
     "#/tui/theme": "./src/tui/theme/index.ts",
+    "#/cli/sub/server": "./src/cli/sub/server/index.ts",
+    "#/cli/sub/server/*": "./src/cli/sub/server/*.ts",
     "#/*": [
       "./src/*.ts",
       "./src/*/index.ts",
@@ -45,8 +48,8 @@
     "provenance": true
   },
   "scripts": {
+    "build": "pnpm -C ../kimi-web run build && tsdown && node scripts/copy-web-assets.mjs",
     "prebuild": "node scripts/build-vis-asset.mjs",
-    "build": "tsdown",
     "catalog:update": "node scripts/update-catalog.mjs --out dist/built-in-catalog.json",
     "smoke": "node scripts/smoke.mjs",
     "build:native:js": "node scripts/native/01-bundle.mjs",
@@ -58,6 +61,8 @@
     "test:native:smoke": "node scripts/native/smoke.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:cli-only": "tsx --import ../../build/register-raw-text-loader.mjs ./src/main.ts",
+    "dev:server": "tsx --tsconfig ./tsconfig.dev.json --import ../../build/register-raw-text-loader.mjs ./src/main.ts server run --foreground",
+    "dev:server:restart": "node scripts/dev-server-restart.mjs",
     "dev:plugin-marketplace": "node scripts/dev-plugin-marketplace-server.mjs",
     "build:plugin-marketplace": "node scripts/build-plugin-marketplace-cdn.mjs",
     "dev:prod": "node dist/main.mjs",
@@ -69,8 +74,9 @@
     "postinstall": "node scripts/postinstall.mjs"
   },
   "optionalDependencies": {
-    "@mariozechner/clipboard": "^0.3.2",
-    "koffi": "^2.16.0"
+    "@mariozechner/clipboard": "^0.3.9",
+    "koffi": "^2.16.0",
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@earendil-works/pi-tui": "^0.74.0",
@@ -78,7 +84,9 @@
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-sdk": "workspace:^",
     "@moonshot-ai/kimi-telemetry": "workspace:^",
+    "@moonshot-ai/kimi-web": "workspace:^",
     "@moonshot-ai/migration-legacy": "workspace:^",
+    "@moonshot-ai/server": "workspace:^",
     "@moonshot-ai/vis-server": "workspace:^",
     "@moonshot-ai/vis-web": "workspace:*",
     "@types/semver": "^7.7.0",

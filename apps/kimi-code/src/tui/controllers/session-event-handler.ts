@@ -106,6 +106,8 @@ export interface SessionEventHost {
   restoreEditor(): void;
   restoreInputText(text: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
+  handleShellOutput(event: { commandId: string; update: { kind: string; text?: string } }): void;
+  handleShellStarted(event: { commandId: string; taskId: string }): void;
   sendNormalUserInput(text: string): void;
   updateTerminalTitle(): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
@@ -242,6 +244,8 @@ export class SessionEventHandler {
       case 'turn.step.completed': this.handleStepCompleted(event); break;
       case 'turn.step.retrying': break;
       case 'tool.progress': this.handleToolProgress(event); break;
+      case 'shell.output': this.host.handleShellOutput(event); break;
+      case 'shell.started': this.host.handleShellStarted(event); break;
       case 'assistant.delta': this.handleAssistantDelta(event); break;
       case 'hook.result': this.handleHookResult(event); break;
       case 'thinking.delta': this.handleThinkingDelta(event); break;
@@ -325,6 +329,9 @@ export class SessionEventHandler {
     if (event.reason === 'cancelled') {
       this.markActiveAgentSwarmsCancelled();
     }
+    if (event.reason === 'filtered') {
+      this.host.showStatus('Turn stopped: provider safety policy blocked the response.', 'error');
+    }
     const todos = this.host.state.todoPanel.getTodos();
     if (todos.length > 0 && todos.every((t) => t.status === 'done')) {
       this.host.streamingUI.setTodoList([]);
@@ -356,6 +363,15 @@ export class SessionEventHandler {
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
     this.host.streamingUI.flushNow();
     this.maybeShowDebugTiming(event);
+
+    if (event.providerFinishReason === 'filtered') {
+      this.host.showNotice(
+        'Provider safety policy blocked the response.',
+        `The model output was filtered (${event.rawFinishReason ?? 'content_filter'}).`,
+      );
+      return;
+    }
+
     if (event.finishReason !== 'max_tokens') return;
 
     const truncatedCount = this.host.streamingUI.markStepTruncated(
@@ -986,6 +1002,9 @@ export class SessionEventHandler {
 
     if (event.type === 'background.task.started') {
       if (info.kind === 'agent') {
+        // A foreground subagent detached via Ctrl+B: flip its card to
+        // `◐ backgrounded` so it doesn't look like it completed.
+        this.host.streamingUI.markSubagentBackgrounded(info.agentId);
         this.syncBackgroundTaskBadge();
         this.host.tasksBrowserController.repaint();
         return;

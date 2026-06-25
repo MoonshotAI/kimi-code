@@ -1,0 +1,17 @@
+export default {
+  openSwitcher: 'Switch session / workspace',
+  openSettings: 'Session settings',
+  settingsTitle: 'Session settings',
+  sheetLabel: 'Sheet',
+  closeSheet: 'Close',
+  tapToCycle: 'tap to cycle',
+  running: 'running',
+  idle: 'idle',
+  sessionCount: '{n} sessions',
+  newSession: 'New session',
+  permManualSub: 'confirm every tool',
+  permAutoSub: 'auto-approve edits',
+  permYoloSub: 'auto-approve all',
+  planModeSub: 'Plan mode',
+  swarmModeSub: 'Swarm mode',
+} as const;

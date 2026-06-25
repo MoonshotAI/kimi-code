@@ -5,6 +5,8 @@
  * callers react appropriately:
  *  - `OAuthUnauthorizedError`: 401/403 from token endpoint → refresh_token
  *    or credentials are bad; drive user through `/login` again.
+ *  - `OAuthConnectionError`: transport-level OAuth request failure; callers
+ *    may retry the operation.
  *  - `DeviceCodeExpiredError`: device_code TTL ran out before user approved;
  *    restart the device flow.
  *  - `DeviceCodeTimeoutError`: local 15 min wall-clock budget exhausted
@@ -24,6 +26,13 @@ export class OAuthUnauthorizedError extends OAuthError {
   constructor(message: string) {
     super(message);
     this.name = 'OAuthUnauthorizedError';
+  }
+}
+
+export class OAuthConnectionError extends OAuthError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OAuthConnectionError';
   }
 }
 
