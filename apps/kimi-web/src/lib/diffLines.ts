@@ -10,7 +10,7 @@ function splitLines(s: string): string[] {
   const lines = s.split('\n');
   // A trailing newline produces a trailing empty element that is not a real
   // content line — drop exactly one of them.
-  if (lines[lines.length - 1] === '') lines.pop();
+  if (lines.at(-1) === '') lines.pop();
   return lines;
 }
 
@@ -32,7 +32,7 @@ export function buildDiffLines(before: string, after: string): DiffViewLine[] {
   const m = newLines.length;
   if (n === 0 && m === 0) return [];
 
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  const dp: number[][] = Array.from({ length: n + 1 }, () => Array.from({ length: m + 1 }, () => 0));
   for (let i = 1; i <= n; i++) {
     for (let j = 1; j <= m; j++) {
       dp[i]![j] =
