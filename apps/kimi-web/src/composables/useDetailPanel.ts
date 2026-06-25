@@ -253,6 +253,7 @@ export function useDetailPanel({
       (detailTarget.value !== 'thinking' || thinkingVisible.value) &&
       (detailTarget.value !== 'compaction' || compactionPanelVisible.value) &&
       (detailTarget.value !== 'agent' || agentPanelVisible.value) &&
+      (detailTarget.value !== 'toolDiff' || toolDiffVisible.value) &&
       (detailTarget.value !== 'btw' || btwVisible.value),
   );
 
