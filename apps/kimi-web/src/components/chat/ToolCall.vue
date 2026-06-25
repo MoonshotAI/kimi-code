@@ -1,7 +1,7 @@
 <!-- apps/kimi-web/src/components/chat/ToolCall.vue -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import type { DiffViewLine, ToolCall, ToolMedia } from '../../types';
+import type { DiffViewLine, FilePreviewRequest, ToolCall, ToolMedia } from '../../types';
 import { normalizeToolName, toolLabel, toolGlyph, toolChip, toolSummary } from '../../lib/toolMeta';
 import DiffLines from './DiffLines.vue';
 import { buildDiffLines, diffStats } from '../../lib/diffLines';
@@ -18,6 +18,7 @@ const props = withDefaults(
 );
 const emit = defineEmits<{
   openMedia: [media: ToolMedia];
+  openFile: [target: FilePreviewRequest];
 }>();
 const isRunningBash = computed(() => props.tool.status === 'running' && /^bash$/i.test(props.tool.name));
 const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
@@ -94,6 +95,25 @@ const editDiff = computed<DiffViewLine[] | null>(() => {
   if (content === undefined) return null;
   return buildDiffLines('', content);
 });
+
+// ExitPlanMode: expose the plan file as a clickable link (opens file preview).
+const isExitPlan = computed(() => props.tool.name === 'ExitPlanMode');
+const planPath = computed(() => (isExitPlan.value ? props.tool.planPath : undefined));
+const planBasename = computed(() => {
+  const p = planPath.value;
+  return p ? p.split(/[\\/]+/).pop() || p : '';
+});
+function openPlanFile(): void {
+  if (planPath.value) emit('openFile', { path: planPath.value });
+}
+
+// TEMP: plan-file preview link is hidden until the server can read files
+// outside the workspace. Plan files live under the session dir (not the cwd),
+// and the server's readFile is workspace-scoped, so the preview rejects them
+// with "outside workspace". The planPath wiring is kept in place; flip this
+// flag to re-enable the chip once a backend API can read the plan file.
+const enablePlanFileLink = false;
+const showPlanFileLink = computed(() => enablePlanFileLink && Boolean(planPath.value));
 
 function basename(path: string): string {
   return path.split(/[\\/]+/).pop() || path;
@@ -178,6 +198,13 @@ function openMediaPreview(): void {
            into the card body (below) so the header stays clean. -->
       <span v-if="!open" class="p" :title="summary()">{{ summary() }}</span>
       <span class="rt">
+        <button
+          v-if="showPlanFileLink"
+          class="plan-link"
+          type="button"
+          :title="planPath"
+          @click.stop="openPlanFile"
+        >📄 {{ planBasename }}</button>
         <span class="chip" v-if="chip()">{{ chip() }}</span>
         <span
           v-if="tool.status === 'running'"
@@ -326,6 +353,22 @@ function openMediaPreview(): void {
   color: var(--dim);
   font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
 }
+.plan-link {
+  appearance: none;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 6px;
+  color: var(--blue2);
+  font: inherit;
+  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
+  cursor: pointer;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-link:hover { background: var(--panel); color: var(--blue); border-color: var(--blue2); }
 .ok { color: var(--ok); font-weight: 700; }
 .er { color: var(--err); font-weight: 700; }
 .tm { color: var(--muted); }

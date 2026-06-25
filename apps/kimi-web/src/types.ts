@@ -90,6 +90,9 @@ export interface ToolCall {
   output?: string[]; // shown line by line when expanded
   media?: ToolMedia;
   defaultExpanded?: boolean;
+  /** Absolute path of the plan file (ExitPlanMode only) — rendered as a
+   *  clickable link that opens the plan in the file preview. */
+  planPath?: string;
 }
 
 export interface ToolMedia {
@@ -159,6 +162,12 @@ export type ApprovalBlock =
   | { kind: 'search'; query: string; scope?: string }
   | { kind: 'invocation'; kind2: string; name: string; description?: string }
   | { kind: 'todo'; items: { title: string; status: string }[] }
+  | {
+      kind: 'plan_review';
+      plan: string;
+      path?: string;
+      options?: { label: string; description?: string }[];
+    }
   | { kind: 'generic'; summary: string };
 
 export type TurnRole = 'user' | 'assistant' | 'compaction';
