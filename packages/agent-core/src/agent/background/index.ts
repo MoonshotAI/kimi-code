@@ -17,7 +17,8 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../..';
 import { errorMessage } from '../../loop/errors';
-import { timeoutOutcome } from '../../utils/promise';
+import { resettableTimeoutOutcome, timeoutOutcome, type ResettableTimeoutPromise } from '../../utils/promise';
+import { escapeXml, escapeXmlAttr } from '../../utils/xml-escape';
 import type { BackgroundTaskOrigin } from '../context';
 import { renderNotificationXml } from '../context/notification-xml';
 import { type BackgroundTaskPersistence } from './persist';
@@ -66,6 +67,8 @@ interface ManagedTask {
   endedAt: number | null;
   /** Foreground tool call release signal, present only for non-detached starts. */
   foregroundRelease?: ControlledPromise<ForegroundTaskReleaseReason>;
+  /** Resettable deadline timer; reset on detach to apply `detachTimeoutMs`. */
+  timeoutHandle?: ResettableTimeoutPromise<TerminalOutcome>;
   /** User/tool stop request. */
   readonly stop: ControlledPromise<StopRequest>;
   /** Resolved once manager has finalized the task. */
@@ -105,6 +108,7 @@ interface ManagedTask {
  * reads the persisted log when available.
  */
 const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
+const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
 
 const SIGTERM_GRACE_MS = 5_000;
 const USER_INTERRUPT_REASON = 'Interrupted by user';
@@ -157,7 +161,7 @@ type BackgroundTaskNotification = Record<string, unknown> & {
   readonly title: string;
   readonly severity: 'info' | 'warning';
   readonly body: string;
-  readonly tail_output: string;
+  readonly children?: readonly string[] | undefined;
 };
 
 interface BackgroundTaskNotificationContext {
@@ -165,8 +169,6 @@ interface BackgroundTaskNotificationContext {
   readonly origin: BackgroundTaskOrigin;
   readonly notification: BackgroundTaskNotification;
 }
-
-const NOTIFICATION_TAIL_BYTES = 3_000;
 
 export interface RegisterBackgroundTaskOptions {
   /**
@@ -176,6 +178,12 @@ export interface RegisterBackgroundTaskOptions {
   readonly detached?: boolean;
   /** Deadline owned by BackgroundManager. `0` and `undefined` do not arm a timer. */
   readonly timeoutMs?: number;
+  /**
+   * When set, detaching a foreground task resets its deadline to this value
+   * (counted from the detach moment). Lets a command started with a short
+   * foreground timeout run longer once it is moved to the background.
+   */
+  readonly detachTimeoutMs?: number;
   /** Foreground caller signal. Ignored for tasks created already detached. */
   readonly signal?: AbortSignal;
 }
@@ -264,6 +272,7 @@ export class BackgroundManager {
     const entryOptions: RegisterBackgroundTaskOptions = {
       detached,
       timeoutMs,
+      detachTimeoutMs: options.detachTimeoutMs,
       signal: detached ? undefined : options.signal,
     };
     this.assertCanRegister(detached);
@@ -413,6 +422,9 @@ export class BackgroundManager {
     if (foregroundRelease === undefined) return this.toInfo(entry);
 
     entry.foregroundRelease = undefined;
+    if (entry.options.detachTimeoutMs !== undefined) {
+      entry.timeoutHandle?.reset(entry.options.detachTimeoutMs);
+    }
     try {
       entry.task.onDetach?.();
     } catch {
@@ -425,6 +437,12 @@ export class BackgroundManager {
     this.emitTaskStarted(this.toInfo(entry));
     foregroundRelease.resolve('detached');
     return this.toInfo(entry);
+  }
+
+  persistOutput(taskId: string): void {
+    const entry = this.tasks.get(taskId);
+    if (entry === undefined) return;
+    this.startOutputPersist(entry);
   }
 
   /** Stop a running task. SIGTERM → 5s grace → SIGKILL. */
@@ -661,8 +679,10 @@ export class BackgroundManager {
     if (this.deliveredNotificationKeys.has(key)) return;
 
     this.scheduledNotificationKeys.add(key);
-    const tailOutput = (await this.getOutputSnapshot(info.taskId, NOTIFICATION_TAIL_BYTES))
-      .preview;
+    let output = await this.getOutputSnapshot(info.taskId, 0);
+    if (!output.fullOutputAvailable) {
+      output = await this.getOutputSnapshot(info.taskId, NOTIFICATION_FALLBACK_PREVIEW_BYTES);
+    }
     if (this.isTerminalNotificationSuppressed(info.taskId)) return undefined;
     const notification: BackgroundTaskNotification = {
       id: origin.notificationId,
@@ -674,7 +694,7 @@ export class BackgroundManager {
       title: `Background ${info.kind} ${info.status}`,
       severity: info.status === 'completed' ? 'info' : 'warning',
       body: buildBackgroundTaskNotificationBody(info),
-      tail_output: tailOutput,
+      children: backgroundTaskNotificationChildren(output),
     };
     const content = [
       {
@@ -736,13 +756,17 @@ export class BackgroundManager {
         });
       });
 
-    const timeout = timeoutOutcome(entry.options.timeoutMs, { kind: 'timeout' as const });
+    const timeout = resettableTimeoutOutcome(entry.options.timeoutMs, { kind: 'timeout' as const });
+    entry.timeoutHandle = timeout;
     const outcome = await Promise.race([
       worker.then((settlement): TerminalOutcome => ({ kind: 'worker', settlement })),
       timeout,
       entry.stop.then((request): TerminalOutcome => ({ kind: 'stop', request })),
       this.signalOutcome(entry),
-    ]).finally(() => timeout.clear());
+    ]).finally(() => {
+      timeout.clear();
+      entry.timeoutHandle = undefined;
+    });
     const settlement = await this.settlementForOutcome(entry, outcome, worker);
     await this.finalizeTask(entry, settlement);
   }
@@ -851,6 +875,35 @@ export class BackgroundManager {
     };
     return entry.task.toInfo(base);
   }
+}
+
+function backgroundTaskNotificationChildren(
+  output: BackgroundTaskOutputSnapshot,
+): readonly string[] | undefined {
+  if (output.fullOutputAvailable && output.outputPath !== undefined) {
+    return [renderOutputFileBlock(output.outputPath, output.outputSizeBytes)];
+  }
+  if (output.preview.length === 0) return undefined;
+  return [renderOutputPreviewBlock(output)];
+}
+
+function renderOutputFileBlock(outputPath: string, outputSizeBytes: number): string {
+  return [
+    `<output-file path="${escapeXmlAttr(outputPath)}" bytes="${String(outputSizeBytes)}">`,
+    `Read the output file to retrieve the result: ${escapeXml(outputPath)}`,
+    '</output-file>',
+  ].join('\n');
+}
+
+function renderOutputPreviewBlock(output: BackgroundTaskOutputSnapshot): string {
+  return [
+    `<output-preview bytes="${String(output.previewBytes)}" total_bytes="${String(output.outputSizeBytes)}" truncated="${String(output.truncated)}">`,
+    output.truncated
+      ? `Showing the last ${String(output.previewBytes)} bytes. No persisted full output is available.`
+      : 'No persisted full output is available; this preview is the currently buffered task output.',
+    escapeXml(output.preview),
+    '</output-preview>',
+  ].join('\n');
 }
 
 function notificationKey(origin: BackgroundTaskOrigin): string {

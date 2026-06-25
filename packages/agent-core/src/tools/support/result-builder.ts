@@ -45,6 +45,10 @@ export class ToolResultBuilder {
     return this.nCharsValue;
   }
 
+  get truncated(): boolean {
+    return this.truncationHappened;
+  }
+
   write(text: string): number {
     if (this.nCharsValue >= this.maxChars) {
       if (text.length > 0 && !this.truncationHappened) {

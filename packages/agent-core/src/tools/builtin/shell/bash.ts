@@ -31,7 +31,10 @@ import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '../../../l
 import { renderPrompt } from '../../../utils/render-prompt';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
-import { ToolResultBuilder } from '../../support/result-builder';
+import {
+  type ExecutableToolResultBuilderResult,
+  ToolResultBuilder,
+} from '../../support/result-builder';
 import bashDescriptionTemplate from './bash.md?raw';
 
 const MS_PER_SECOND = 1000;
@@ -185,7 +188,8 @@ export class BashTool implements BuiltinTool<BashInput> {
       },
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
-      execute: ({ signal, onUpdate }) => this.execution(args, signal, onUpdate),
+      execute: ({ signal, onUpdate, onForegroundTaskStart }) =>
+        this.execution(args, signal, onUpdate, onForegroundTaskStart),
     };
   }
 
@@ -220,6 +224,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     args: BashInput,
     signal: AbortSignal,
     onUpdate?: ((update: ToolUpdate) => void) | undefined,
+    onForegroundTaskStart?: ((taskId: string) => void) | undefined,
   ): Promise<ExecutableToolResult> {
     const validationError = this.validateRunRequest(args, signal);
     if (validationError !== undefined) return validationError;
@@ -248,12 +253,18 @@ export class BashTool implements BuiltinTool<BashInput> {
     closeProcessStdin(proc);
 
     let collectForegroundOutput = !startsInBackground;
+    let foregroundOutputPersisted = false;
+    let foregroundTaskId: string | undefined;
     const onProcessOutput = startsInBackground
       ? undefined
       : (kind: 'stdout' | 'stderr', text: string): void => {
           if (!collectForegroundOutput) return;
           onUpdate?.({ kind, text });
           builder.write(text);
+          if (!foregroundOutputPersisted && builder.truncated && foregroundTaskId !== undefined) {
+            this.backgroundManager.persistOutput(foregroundTaskId);
+            foregroundOutputPersisted = true;
+          }
         };
 
     let taskId: string;
@@ -263,9 +274,14 @@ export class BashTool implements BuiltinTool<BashInput> {
         {
           detached: startsInBackground,
           timeoutMs,
+          // Detaching (ctrl+b) moves a foreground command to the background;
+          // give it the background timeout so it is not still bounded by the
+          // shorter foreground deadline.
+          detachTimeoutMs: DEFAULT_BACKGROUND_TIMEOUT_S * MS_PER_SECOND,
           signal: startsInBackground ? undefined : signal,
         },
       );
+      foregroundTaskId = startsInBackground ? undefined : taskId;
     } catch (error) {
       collectForegroundOutput = false;
       await killSpawnedProcess(proc);
@@ -274,6 +290,10 @@ export class BashTool implements BuiltinTool<BashInput> {
         output: error instanceof Error ? error.message : String(error),
       };
     }
+
+    // Foreground `!` shell commands surface their task id so the TUI can detach
+    // (ctrl+b) this exact task. Background runs are already detached.
+    if (!startsInBackground) onForegroundTaskStart?.(taskId);
 
     if (startsInBackground) {
       return this.backgroundStartedResult(taskId, proc, description, {
@@ -299,7 +319,7 @@ export class BashTool implements BuiltinTool<BashInput> {
         );
       }
 
-      return this.foregroundCompletionResult(taskId, proc, builder, foregroundTimeoutMs);
+      return await this.foregroundCompletionResult(taskId, proc, builder, foregroundTimeoutMs);
     } finally {
       collectForegroundOutput = false;
     }
@@ -328,41 +348,56 @@ export class BashTool implements BuiltinTool<BashInput> {
     return undefined;
   }
 
-  private foregroundCompletionResult(
+  private async foregroundCompletionResult(
     taskId: string,
     proc: KaosProcess,
     builder: ToolResultBuilder,
     foregroundTimeoutMs: number,
-  ): ExecutableToolResult {
+  ): Promise<ExecutableToolResult> {
     const current = this.backgroundManager.getTask(taskId);
     const exitCode = current?.kind === 'process' ? current.exitCode : proc.exitCode;
+    let result: ExecutableToolResultBuilderResult;
     if (current?.status === 'timed_out') {
       const timeoutLabel = formatTimeoutLabel(foregroundTimeoutMs);
-      return builder.error(`Command killed by timeout (${timeoutLabel})`, {
+      result = builder.error(`Command killed by timeout (${timeoutLabel})`, {
         brief: `Killed by timeout (${timeoutLabel})`,
       });
-    }
-    if (current?.status === 'killed' && current.stopReason === USER_INTERRUPT_REASON) {
-      return builder.error(USER_INTERRUPT_REASON, { brief: USER_INTERRUPT_REASON });
-    }
-    if (
+    } else if (current?.status === 'killed' && current.stopReason === USER_INTERRUPT_REASON) {
+      result = builder.error(USER_INTERRUPT_REASON, { brief: USER_INTERRUPT_REASON });
+    } else if (
       (current?.status === 'failed' || current?.status === 'killed') &&
       current.stopReason !== undefined
     ) {
-      return builder.error(current.stopReason, { brief: current.stopReason });
+      result = builder.error(current.stopReason, { brief: current.stopReason });
+    } else if (exitCode === 0) {
+      result = builder.ok('Command executed successfully.');
+    } else {
+      if (builder.nChars === 0) builder.write(`Process exited with code ${String(exitCode)}`);
+      result = builder.error(`Command failed with exit code: ${String(exitCode)}.`, {
+        brief: `Failed with exit code: ${String(exitCode)}`,
+      });
     }
+    return this.addForegroundOutputReference(taskId, result);
+  }
 
-    const isError = exitCode !== 0;
-    if (isError && builder.nChars === 0) {
-      builder.write(`Process exited with code ${String(exitCode)}`);
-    }
+  private async addForegroundOutputReference(
+    taskId: string,
+    result: ExecutableToolResultBuilderResult,
+  ): Promise<ExecutableToolResult> {
+    if (!result.truncated) return result;
+    const output = await this.backgroundManager.getOutputSnapshot(taskId, 0);
+    if (!output.fullOutputAvailable || output.outputPath === undefined) return result;
 
-    if (!isError) {
-      return builder.ok('Command executed successfully.');
-    }
-    return builder.error(`Command failed with exit code: ${String(exitCode)}.`, {
-      brief: `Failed with exit code: ${String(exitCode)}`,
-    });
+    const taskOutputHint = this.allowBackground
+      ? `, or TaskOutput(task_id="${taskId}", block=false)`
+      : '';
+    const reference =
+      `\n\n[Full output saved]\n` +
+      `task_id: ${taskId}\n` +
+      `output_path: ${output.outputPath}\n` +
+      `output_size_bytes: ${String(output.outputSizeBytes)}\n` +
+      `next_step: Use Read with output_path to page through the full log${taskOutputHint}.`;
+    return { ...result, output: `${result.output}${reference}` };
   }
 
   private backgroundStartedResult(

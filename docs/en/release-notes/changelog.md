@@ -6,6 +6,88 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.20.0 (2026-06-26)
+
+### Features
+
+- Add shell mode to the TUI. Type `!` in the input box to enable it. For long-running commands, press Ctrl+B to move them to the background. For example, you can run `!gh auth login` to sign in to the GitHub CLI without opening a new terminal.
+- Add a `--host` CLI option so `kimi web --host` can expose the server to the internet, with hardened token authentication, rate limiting, and other security measures.
+- Render LaTeX display math (`$$…$$`) in the web UI.
+
+### Bug Fixes
+
+- Fix a startup crash on Linux caused by an unhandled native clipboard error.
+- Fix `kimi web` and `/web` failing to start the background server daemon on Windows with `spawn EFTYPE` when the CLI is installed via npm/pnpm or run from source. The official single-binary install script was not affected.
+- Fix the terminal window repeatedly losing focus on Linux Wayland, which broke IME input.
+- Stop auto-dismissing questions in the web UI after 60 seconds so they wait for the user's answer.
+- Fix explore subagents silently losing git context when git commands time out or the directory is not a repository.
+- Fix Ctrl-C during compaction so it clears a pending editor draft first instead of cancelling immediately.
+- Fix MCP server working directories when sessions are hosted by the web server.
+- Fix duplicate session snapshot reloads in the bundled web UI during resync.
+- Fix truncated skill descriptions missing an ellipsis in the model's skill listing.
+
+### Polish
+
+- Redesign `/plugins` as a single tabbed panel: **Installed** (manage installed plugins — toggle, remove, MCP, details, reload), **Official** (Kimi-maintained marketplace plugins), **Third-party** (marketplace plugins from other publishers), and **Custom** (install straight from a GitHub URL, zip URL, or local path). Use `Tab` / `Shift-Tab` to switch tabs.
+- Show a line-by-line diff when the agent edits or writes a file in the web chat.
+- Show the plan body and approach choices in the plan review card when exiting plan mode in the web UI.
+- Show the full accumulated progress of a subagent in its detail panel, with concise tool-call summaries instead of raw JSON.
+- `/reload` now refreshes the assistant's view of plugin skills, so plugin changes take effect in the current session instead of requiring a new one.
+- Replace silent AGENTS.md truncation with a visible warning in the TUI status bar and web UI.
+- Add a confirmation prompt before installing third-party plugins.
+- Show update badges on the `/plugins` Installed tab, where Enter now installs the available update and I opens plugin details.
+- Add a copy button to user messages in the web chat.
+- Preserve full tool output logs when previews are truncated and link background task completion notifications to saved output.
+- Sync session title changes across all connected clients in server mode.
+- Add Ctrl+U and Ctrl+D as page up and page down shortcuts in the task output viewer.
+- Add a hint to the per-turn step limit error pointing users to the `loop_control.max_steps_per_turn` config option.
+- Reduce streaming redraw cost for long assistant messages with code blocks.
+- Page the web session list per workspace so the first screen no longer fetches every session up front.
+- Keep the web session sidebar from re-rendering on every streaming token to improve rendering performance.
+- Create missing parent directories automatically when writing a file.
+- Improve the image paste hint.
+
+## 0.19.2 (2026-06-24)
+
+### Features
+
+- Keep drag-and-drop workspace reordering in the web sidebar, with sort order persisted locally; sessions now also float to the top of their group as soon as a new message arrives.
+- Add an Alt+S shortcut in the model picker to switch the model for the current session only, without saving it as the default.
+- Add a Ctrl+T shortcut to expand and collapse a truncated todo list.
+- Add `-c` as a shorthand for `--continue`.
+
+### Bug Fixes
+
+- Fix yolo mode in the web app auto-approving plan reviews and sensitive file access.
+- Fix resume not realigning a tool call that was interrupted mid-history.
+- Fix the composer's ↑/↓ input-history recall doing nothing right after the first message of a new session.
+- Fix stale rows occasionally leaving duplicate input boxes after tall content shrinks.
+- Fix inline images being rendered as broken escape sequences in the transcript.
+- Fix code blocks nested inside list items rendering blank in the web chat after a turn finishes generating.
+- Fix the Tab key unexpectedly opening the file completion list.
+- Fix clipboard copy actions in the web UI when served over plain HTTP.
+- Fix the web question prompt missing the free-text Other option.
+- Fix web chat stop actions so stale prompt ids fall back to cancelling the active session.
+
+### Polish
+
+- Read large text files in bounded memory and read tail lines without scanning whole files.
+- Show the command in running Bash tool cards and allow expanding it with Ctrl+O before the result arrives.
+- Allow the web sidebar and detail panel to be resized up to the available viewport width, keeping their resize handles reachable on narrow windows.
+- Show subcommand suggestions after Tab-completing a slash command name.
+- Show a transient footer hint when an image is detected in the clipboard, displaying the platform-appropriate paste shortcut.
+- Persist the collapsed state of workspace groups in the web sidebar across page reloads.
+- Add a development-mode indicator to the web sidebar for local development.
+- Optimize the loading tips display.
+
+### Refactors
+
+- Reorganize the web app's components into area subdirectories (chat/settings/dialogs/mobile) and refresh the component path comments.
+- Extract several composer pieces into reusable composables.
+- Extract pure turn-rendering helpers out of the chat pane into their own module.
+- Extract the beta conversation outline (table of contents) into its own component.
+- Extract the workspace group rendering out of the sidebar into its own component.
+
 ## 0.19.1 (2026-06-23)
 
 ### Bug Fixes

@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'pathe';
 import type { Kaos } from '@moonshot-ai/kaos';
+import type { SessionWarning } from '@moonshot-ai/protocol';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
@@ -9,6 +10,7 @@ import type { KimiConfig, SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentOptions, type AgentType } from '../agent';
+import { renderPluginSessionStartReminder } from '../agent/injection/plugin-session-start';
 import { HookEngine, type HookDef } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import {
@@ -169,6 +171,7 @@ export class Session {
     custom: {},
   };
   private writeMetadataPromise = Promise.resolve();
+  private agentsMdWarning: string | undefined;
 
   constructor(public readonly options: SessionOptions) {
     // Attach the per-session log sink up front so the constructor's
@@ -200,6 +203,7 @@ export class Session {
     this.mcp = new McpConnectionManager({
       oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
       log: this.log,
+      stdioCwd: options.kaos.getcwd(),
     });
     this.mcp.onStatusChange((entry) => {
       this.onMcpServerStatusChange(entry);
@@ -467,6 +471,49 @@ export class Session {
       { additionalDirs: this.additionalDirs },
     );
     agent.useProfile(profile, context);
+    const { agentsMdWarning } = context;
+    if (agentsMdWarning !== undefined) {
+      this.agentsMdWarning = agentsMdWarning;
+      log.warn('AGENTS.md exceeds recommended size', { message: agentsMdWarning });
+      agent.emitEvent({
+        type: 'warning',
+        message: agentsMdWarning,
+        code: 'agents-md-oversized',
+      });
+    }
+  }
+
+  async getSessionWarnings(): Promise<readonly SessionWarning[]> {
+    const warnings: SessionWarning[] = [];
+    const agentsMdWarning = await this.computeAgentsMdWarning();
+    if (agentsMdWarning !== undefined) {
+      warnings.push({
+        code: 'agents-md-oversized',
+        message: agentsMdWarning,
+        severity: 'warning',
+      });
+    }
+    return warnings;
+  }
+
+  private async computeAgentsMdWarning(): Promise<string | undefined> {
+    if (this.agentsMdWarning !== undefined) {
+      return this.agentsMdWarning;
+    }
+    // Resumed sessions skip bootstrap when their system prompt is already set, so
+    // the cached value may be missing; recompute on demand so the warning still
+    // surfaces for long-lived sessions.
+    try {
+      const context = await prepareSystemPromptContext(
+        this.systemContextKaos(this.toolKaos.getcwd()),
+        this.options.kimiHomeDir,
+        { additionalDirs: this.additionalDirs },
+      );
+      this.agentsMdWarning = context.agentsMdWarning;
+    } catch (error) {
+      log.warn('failed to compute AGENTS.md warning', { error });
+    }
+    return this.agentsMdWarning;
   }
 
   async generateAgentsMd(): Promise<void> {
@@ -497,6 +544,56 @@ export class Session {
         { cause: error },
       );
     }
+  }
+
+  /**
+   * Appends a fresh `<plugin_session_start>` system reminder to the main agent
+   * using the currently enabled plugins, then flushes records so the reminder is
+   * persisted and visible on the wire. Used by the explicit `/reload` flow after
+   * the session has been re-resumed with reloaded plugin state.
+   *
+   * When no plugin session start is currently resolvable but an earlier
+   * When no plugin session start is currently resolvable but the context may still
+   * carry stale plugin guidance — either an earlier `<plugin_session_start>`
+   * reminder, or a compaction summary that may have folded one in — appends a
+   * neutralizing reminder instead, so the model does not keep following stale
+   * plugin instructions and the turn-loop injector does not dedup against them.
+   */
+  async appendPluginSessionStartReminder(): Promise<void> {
+    await this.skillsReady;
+    const mainAgent = this.requireMainAgent();
+    const reminder = renderPluginSessionStartReminder({
+      sessionStarts: mainAgent.pluginSessionStarts,
+      registry: mainAgent.skills?.registry,
+      log: mainAgent.log,
+    });
+    if (reminder !== undefined) {
+      mainAgent.context.appendSystemReminder(
+        `${reminder}\n\nThis supersedes any earlier plugin_session_start reminder in this session.`,
+        { kind: 'injection', variant: 'plugin_session_start' },
+      );
+    } else if (this.shouldNeutralizePluginSessionStart(mainAgent)) {
+      mainAgent.context.appendSystemReminder(
+        'There are currently no active plugin session starts. This supersedes any earlier plugin_session_start reminder in this session.',
+        { kind: 'injection', variant: 'plugin_session_start' },
+      );
+    } else {
+      return;
+    }
+    await mainAgent.records.flush();
+  }
+
+  private shouldNeutralizePluginSessionStart(mainAgent: Agent): boolean {
+    return mainAgent.context.history.some((message) => {
+      const kind = message.origin?.kind;
+      if (kind === 'injection') {
+        return message.origin?.variant === 'plugin_session_start';
+      }
+      // A compaction summary replaces earlier messages (including any plugin
+      // session-start reminder) with a single summary that may still carry stale
+      // plugin guidance, so the origin-only check above is not sufficient.
+      return kind === 'compaction_summary';
+    });
   }
 
   get hasActiveTurn(): boolean {

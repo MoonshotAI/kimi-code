@@ -104,6 +104,7 @@ function createDeps(): UseWorkspaceStateDeps {
     refreshSessionStatus: vi.fn(),
     persistSessionProfile: vi.fn(),
     mergedWorkspaces: computed(() => []),
+    workspacesView: computed(() => []),
     status: computed(() => ({})),
     workspaceIdForSession: vi.fn(),
     savePermissionToStorage: vi.fn(),

@@ -1,5 +1,13 @@
 # @moonshot-ai/server
 
+## 0.2.1
+
+### Patch Changes
+
+- [#1085](https://github.com/MoonshotAI/kimi-code/pull/1085) [`f1fad72`](https://github.com/MoonshotAI/kimi-code/commit/f1fad7222ccd3f66c1cae6c5b9c009230227cd2f) - Reduce streaming latency by disabling Nagle's algorithm on WebSocket connections.
+
+- [#1081](https://github.com/MoonshotAI/kimi-code/pull/1081) [`8fc6aa5`](https://github.com/MoonshotAI/kimi-code/commit/8fc6aa5f6842aa78acf8f23912342b721efcf7a9) - Sync session title changes across all connected clients in server mode.
+
 ## 0.2.0
 
 ### Minor Changes

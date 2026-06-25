@@ -27,6 +27,7 @@ export default {
   daemon: '后台',
   noSessions: '暂无对话',
   showMore: '展开更多 ({count})',
+  loadingMore: '加载中…',
   collapseSidebar: '收起侧边栏',
   expandSidebar: '展开侧边栏',
   searchPlaceholder: '搜索会话',

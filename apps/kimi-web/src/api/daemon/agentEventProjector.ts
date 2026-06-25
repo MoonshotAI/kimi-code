@@ -26,6 +26,7 @@ import type {
   AppTask,
 } from '../types';
 import { i18n } from '../../i18n';
+import { toolLabel, toolSummary } from '../../lib/toolMeta';
 import { toAppMessageContent } from './mappers';
 import type { WireMessageContent } from './wire';
 
@@ -212,39 +213,52 @@ function patchSubagent(
   return next;
 }
 
-function shortJson(value: unknown): string {
-  if (value === undefined || value === null) return '';
-  try {
-    const text = typeof value === 'string' ? value : JSON.stringify(value);
-    return text.length > 120 ? `${text.slice(0, 117)}...` : text;
-  } catch {
-    return '';
-  }
-}
-
-function subagentProgressText(rawType: string, payload: Record<string, unknown>): string | null {
-  if (rawType === 'turn.step.started') return 'Started a step';
+export function subagentProgressText(rawType: string, payload: Record<string, unknown>): string | null {
+  // "Started a step" fires on every step and adds no information — the phase
+  // badge already shows the subagent is working, so skip it to cut the noise.
+  if (rawType === 'turn.step.started') return null;
   if (rawType === 'tool.use' || rawType === 'tool.call.started') {
     const name = stringField(payload, 'name') ?? stringField(payload, 'toolName') ?? 'tool';
-    const args = shortJson(payload['args'] ?? payload['input']);
-    return args ? `Calling ${name}: ${args}` : `Calling ${name}`;
+    const label = toolLabel(cleanToolName(name));
+    const summary = toolArgSummary(name, payload['args'] ?? payload['input']);
+    return summary ? `Calling ${label}: ${summary}` : `Calling ${label}`;
   }
   if (rawType === 'tool.progress') {
     const update = payload['update'];
     if (update && typeof update === 'object') {
       const text = stringField(update as Record<string, unknown>, 'text');
-      if (text) return text;
+      if (text) return capProgressText(text);
       const message = stringField(update as Record<string, unknown>, 'message');
-      if (message) return message;
+      if (message) return capProgressText(message);
     }
     const message = stringField(payload, 'message');
-    if (message) return message;
+    if (message) return capProgressText(message);
   }
-  if (rawType === 'tool.result') {
-    const name = stringField(payload, 'name') ?? stringField(payload, 'toolName') ?? stringField(payload, 'toolCallId') ?? 'tool';
-    return `Finished ${name}`;
-  }
+  // tool.result lines ("Finished X") add noise without much information — the
+  // next call or the final summary already implies completion — so skip them.
+  if (rawType === 'tool.result') return null;
   return null;
+}
+
+/** Strip a trailing `_N` index that some subagents append to tool names in
+ *  `tool.result` events (e.g. `Read_0` → `Read`) so the label resolves. */
+function cleanToolName(name: string): string {
+  return name.replace(/_\d+$/, '');
+}
+
+/** Cap a progress text chunk so a single huge tool output (e.g. a big command
+ *  result) cannot dominate the panel. */
+const MAX_PROGRESS_TEXT = 2000;
+function capProgressText(text: string): string {
+  return text.length > MAX_PROGRESS_TEXT ? `${text.slice(0, MAX_PROGRESS_TEXT)}…` : text;
+}
+
+/** A concise, human-readable summary of a tool call's arguments for progress
+ *  lines (e.g. a file path or shell command), instead of the full JSON blob. */
+function toolArgSummary(name: string, args: unknown): string {
+  if (args === undefined || args === null) return '';
+  const arg = typeof args === 'string' ? args : JSON.stringify(args);
+  return toolSummary(name, arg);
 }
 
 function projectSubagentProgress(
@@ -1280,7 +1294,6 @@ const PROTOCOL_EVENT_NAMES = new Set([
   'question.requested',
   'question.answered',
   'question.dismissed',
-  'question.expired',
   // Background tasks (projected)
   'task.created',
   'task.progress',

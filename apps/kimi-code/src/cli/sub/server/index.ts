@@ -17,6 +17,7 @@ import type { Command } from 'commander';
 import { registerPsCommand } from './ps';
 import { registerKillCommand } from './kill';
 import { buildRunCommand } from './run';
+import { registerRotateTokenCommand } from './rotate-token';
 import { registerWebAliasCommand } from './web-alias';
 
 export function registerServerCommand(program: Command): void {
@@ -32,6 +33,8 @@ export function registerServerCommand(program: Command): void {
   registerPsCommand(server);
 
   registerKillCommand(server);
+
+  registerRotateTokenCommand(server);
 
   // OS service-manager commands (`install/uninstall/start/stop/restart/status`)
   // are temporarily hidden — the product now favors the on-demand background

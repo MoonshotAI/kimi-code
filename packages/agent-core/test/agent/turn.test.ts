@@ -1208,6 +1208,7 @@ describe('Agent turn flow', () => {
           reason: 'failed',
           error: expect.objectContaining({
             code: 'loop.max_steps_exceeded',
+            message: expect.stringContaining('config.toml'),
             details: expect.objectContaining({
               maxSteps: 1,
             }),

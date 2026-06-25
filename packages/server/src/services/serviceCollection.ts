@@ -64,6 +64,12 @@ export function createServerServiceCollection(
     new SyncDescriptor(Services.CoreProcessService, [server.coreProcessOptions ?? {}], false),
   );
 
+  // `IAuthTokenService` (ROADMAP M2.1) is intentionally NOT registered here:
+  // its real instance needs an async-built `TokenStore` + `passwordHash` that
+  // are only available in `start.ts` (M5.1). It is therefore supplied via
+  // `server.serviceOverrides` (last-wins) — the same seam tests use to inject
+  // a fixed-token impl. A silent default would be a security hole, so the
+  // absence is deliberate: an unconfigured server has no auth token service.
   for (const [id, override] of server.serviceOverrides ?? []) {
     services.set(id, override);
   }

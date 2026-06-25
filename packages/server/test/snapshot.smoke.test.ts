@@ -22,6 +22,7 @@ import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { startServer, type RunningServer } from '../src';
+import { fixedTokenAuth, withAuth } from './helpers/serverHarness';
 
 let tmpDir: string;
 let bridgeHome: string;
@@ -48,6 +49,7 @@ async function boot(): Promise<{ baseUrl: string }> {
     host: '127.0.0.1',
     port: 0,
     lockPath: join(tmpDir, 'lock'),
+    serviceOverrides: [fixedTokenAuth()],
     logger: pino({ level: 'silent' }),
     coreProcessOptions: { homeDir: bridgeHome },
   });
@@ -55,11 +57,14 @@ async function boot(): Promise<{ baseUrl: string }> {
 }
 
 async function postSession(baseUrl: string): Promise<string> {
-  const res = await fetch(`${baseUrl}/api/v1/sessions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ metadata: { cwd: join(tmpDir, 'workspace') } }),
-  });
+  const res = await fetch(
+    `${baseUrl}/api/v1/sessions`,
+    withAuth({
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metadata: { cwd: join(tmpDir, 'workspace') } }),
+    }),
+  );
   const env = (await res.json()) as { code: number; data: { id: string } | null };
   if (env.code !== 0 || env.data === null) throw new Error(`createSession failed: ${JSON.stringify(env)}`);
   return env.data.id;
@@ -71,7 +76,7 @@ async function fetchSnapshot(baseUrl: string, sid: string): Promise<{
   ms: number;
 }> {
   const t0 = performance.now();
-  const res = await fetch(`${baseUrl}/api/v1/sessions/${sid}/snapshot`);
+  const res = await fetch(`${baseUrl}/api/v1/sessions/${sid}/snapshot`, withAuth());
   const envelope = (await res.json()) as { code: number; data: unknown };
   return { status: res.status, envelope, ms: performance.now() - t0 };
 }

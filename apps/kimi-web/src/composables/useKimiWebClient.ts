@@ -2,11 +2,23 @@
 // Vue state composable — the only place that imports both src/api/* and src/types.ts.
 // Components consume computed view props and call actions; they never touch the API or reducer.
 
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { i18n } from '../i18n';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
-import { loadUnread, safeGetString, safeRemove, safeSetString, saveUnread, STORAGE_KEYS } from '../lib/storage';
+import { reconcileWorkspaceOrder, sortByWorkspaceOrder } from '../lib/workspaceOrder';
+import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
+import {
+  loadUnread,
+  loadWorkspaceOrder,
+  safeGetString,
+  safeRemove,
+  safeSetString,
+  saveUnread,
+  saveWorkspaceOrder,
+  STORAGE_KEYS,
+} from '../lib/storage';
+import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
 import { useAppearance } from './client/useAppearance';
 import { useNotification } from './client/useNotification';
 import { useTaskPoller } from './client/useTaskPoller';
@@ -17,6 +29,7 @@ import { useWorkspaceState } from './client/useWorkspaceState';
 const appearance = useAppearance();
 const notification = useNotification();
 import type {
+  AppEvent,
   AppApprovalRequest,
   AppConfig,
   AppGoal,
@@ -303,6 +316,16 @@ export interface ExtendedState extends KimiClientState {
   messagesHasMoreBySession: Record<string, boolean>;
   /** True when the last older-message fetch failed for a session. */
   messagesLoadMoreErrorBySession: Record<string, boolean>;
+  /** Whether the server has more sessions than currently loaded, per workspace. */
+  sessionsHasMoreByWorkspace: Record<string, boolean>;
+  /** True while the next page of sessions is being fetched for a workspace. */
+  sessionsLoadingMoreByWorkspace: Record<string, boolean>;
+  /** Paging cursor (`before_id`) for the next session page, per workspace. Tracks
+   *  the end of the last fetched page so a deep-linked older session appended
+   *  out of band does not shift the cursor and skip intervening sessions. */
+  sessionsCursorByWorkspace: Record<string, string | undefined>;
+  /** True once every session has been loaded (after a search-triggered full drain). */
+  sessionsFullyLoaded: boolean;
 }
 
 const rawState: ExtendedState = reactive({
@@ -339,6 +362,10 @@ const rawState: ExtendedState = reactive({
   messagesLoadingMoreBySession: {},
   messagesHasMoreBySession: {},
   messagesLoadMoreErrorBySession: {},
+  sessionsHasMoreByWorkspace: {},
+  sessionsLoadingMoreByWorkspace: {},
+  sessionsCursorByWorkspace: {},
+  sessionsFullyLoaded: false,
 });
 
 // ---------------------------------------------------------------------------
@@ -452,6 +479,13 @@ function forgetSession(sessionId: string): void {
   // buffered event for this id would otherwise be reduced and recreate the very
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
+  // Drain the streaming-event batcher too. unsubscribe() stops future server
+  // frames, but events already queued for the next animation frame would
+  // otherwise survive and be reduced AFTER the maps below are cleared —
+  // recreating entries like messagesBySession[id] and lastSeqBySession[id].
+  // That would make hasLoadedMessages() treat the stale empty cache as
+  // authoritative and skip the next snapshot fetch for this id.
+  enqueueEvent.flush();
   removeSession(sessionId);
   removeSessionMessages(sessionId);
   delete rawState.approvalsBySession[sessionId];
@@ -612,6 +646,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     activeSessionId: rawState.activeSessionId,
     messagesBySession: rawState.messagesBySession,
     approvalsBySession: rawState.approvalsBySession,
+    planReviewByToolCallId: rawState.planReviewByToolCallId,
     questionsBySession: rawState.questionsBySession,
     tasksBySession: rawState.tasksBySession,
     goalBySession: rawState.goalBySession,
@@ -626,6 +661,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   setActiveSessionId(next.activeSessionId);
   setMessagesBySession(next.messagesBySession);
   rawState.approvalsBySession = next.approvalsBySession;
+  rawState.planReviewByToolCallId = next.planReviewByToolCallId;
   rawState.questionsBySession = next.questionsBySession;
   rawState.tasksBySession = next.tasksBySession;
   rawState.goalBySession = next.goalBySession;
@@ -647,6 +683,88 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     rawState.planMode = event.planMode;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Streaming event batching
+// ---------------------------------------------------------------------------
+//
+// High-frequency "append a chunk" events (assistant/agent deltas, tool/task
+// output) can arrive dozens to hundreds of times per second. Applying each one
+// synchronously triggers a full Vue re-render per event, which saturates the
+// main thread and makes the stream look janky (see messagesToTurns / Markdown).
+//
+// We coalesce those render-only events onto the next animation frame so Vue
+// commits a single render per frame. Lifecycle / control-flow events
+// (sessionStatusChanged, messageCreated, approval*, question*, ...) are applied
+// immediately: they are infrequent, and some (e.g. sessionStatusChanged idle)
+// drive turn-end cleanup that must not be delayed by a throttled rAF in a
+// background tab. Ordering is preserved by draining any pending render events
+// before applying an immediate event.
+
+type PendingEvent = { appEvent: AppEvent; meta: { sessionId: string; seq: number } };
+
+function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number }): void {
+  // meta carries wire-level seq/sessionId so the reducer can advance
+  // lastSeqBySession[sessionId] = seq. Compaction completion appends a
+  // persistent divider marker in the reducer (TUI parity: the scrollback
+  // is kept, only a marker line records the compaction).
+  applyEvent(appEvent, meta.sessionId, meta.seq);
+
+  const sideTarget = sideChat.sideChatTargetBySession.value[meta.sessionId];
+  if (sideTarget) {
+    const { agentId } = sideTarget;
+    const parentId = meta.sessionId;
+    if (appEvent.type === 'agentDelta' && appEvent.agentId === agentId) {
+      if (appEvent.delta.text) {
+        sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.delta.text);
+      }
+    } else if (appEvent.type === 'agentTurnEnded' && appEvent.agentId === agentId) {
+      sideChat.finishSideChatAgent(agentId, parentId);
+    } else if (appEvent.type === 'taskProgress' && appEvent.taskId === agentId) {
+      sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.outputChunk);
+    } else if (appEvent.type === 'taskCompleted' && appEvent.taskId === agentId) {
+      sideChat.finishSideChatAgent(agentId, parentId, appEvent.outputPreview);
+    }
+  }
+
+  // The daemon's prompt.submitted event is projected as a user messageCreated
+  // carrying the real prompt_id. When the HTTP submit response is lost
+  // (timeout / network error) this is the fallback that lets Stop work.
+  if (
+    appEvent.type === 'messageCreated' &&
+    appEvent.message.role === 'user' &&
+    appEvent.message.promptId !== undefined
+  ) {
+    const sid = appEvent.message.sessionId;
+    if (rawState.promptIdBySession[sid] !== appEvent.message.promptId) {
+      rawState.promptIdBySession = {
+        ...rawState.promptIdBySession,
+        [sid]: appEvent.message.promptId,
+      };
+    }
+  }
+
+  if (appEvent.type === 'assistantDelta' && meta.sessionId === rawState.activeSessionId) {
+    appearance.recordMoonDelta((appEvent.delta.text?.length ?? 0) + (appEvent.delta.thinking?.length ?? 0));
+  }
+
+  // Turn-end cleanup for the session the event belongs to — including
+  // sessions running in the background (see onSessionIdle).
+  // Turn-end: both 'idle' and 'aborted' mean the prompt is no longer in
+  // flight, so both must flush in-flight/queued state. (Awaiting-* is still
+  // in flight — it's waiting on the user — and must NOT flush.)
+  if (
+    appEvent.type === 'sessionStatusChanged' &&
+    (appEvent.status === 'idle' || appEvent.status === 'aborted')
+  ) {
+    onSessionIdle(appEvent.sessionId, appEvent.status);
+  }
+}
+
+const enqueueEvent = createEventBatcher<PendingEvent>(
+  ({ appEvent, meta }) => processEvent(appEvent, meta),
+  ({ appEvent }) => isRenderEvent(appEvent),
+);
 
 // ---------------------------------------------------------------------------
 // WS subscription (lazy, only when a session is selected)
@@ -675,82 +793,25 @@ function connectEventsIfNeeded(): void {
         return;
       }
 
-      // meta carries wire-level seq/sessionId so the reducer can advance
-      // lastSeqBySession[sessionId] = seq. Compaction completion appends a
-      // persistent divider marker in the reducer (TUI parity: the scrollback
-      // is kept, only a marker line records the compaction).
-      applyEvent(appEvent, meta.sessionId, meta.seq);
-
-      const sideTarget = sideChat.sideChatTargetBySession.value[meta.sessionId];
-      if (sideTarget) {
-        const { agentId } = sideTarget;
-        const parentId = meta.sessionId;
-        if (appEvent.type === 'agentDelta' && appEvent.agentId === agentId) {
-          if (appEvent.delta.text) {
-            sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.delta.text);
-          }
-        } else if (appEvent.type === 'agentTurnEnded' && appEvent.agentId === agentId) {
-          sideChat.finishSideChatAgent(agentId, parentId);
-        } else if (appEvent.type === 'taskProgress' && appEvent.taskId === agentId) {
-          sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.outputChunk);
-        } else if (appEvent.type === 'taskCompleted' && appEvent.taskId === agentId) {
-          sideChat.finishSideChatAgent(agentId, parentId, appEvent.outputPreview);
-        }
-      }
-
-      // The daemon's prompt.submitted event is projected as a user messageCreated
-      // carrying the real prompt_id. When the HTTP submit response is lost
-      // (timeout / network error) this is the fallback that lets Stop work.
-      if (
-        appEvent.type === 'messageCreated' &&
-        appEvent.message.role === 'user' &&
-        appEvent.message.promptId !== undefined
-      ) {
-        const sid = appEvent.message.sessionId;
-        if (rawState.promptIdBySession[sid] !== appEvent.message.promptId) {
-          rawState.promptIdBySession = {
-            ...rawState.promptIdBySession,
-            [sid]: appEvent.message.promptId,
-          };
-        }
-      }
-
-      if (appEvent.type === 'assistantDelta' && meta.sessionId === rawState.activeSessionId) {
-        appearance.recordMoonDelta((appEvent.delta.text?.length ?? 0) + (appEvent.delta.thinking?.length ?? 0));
-      }
-
-      // Turn-end cleanup for the session the event belongs to — including
-      // sessions running in the background (see onSessionIdle).
-      // Turn-end: both 'idle' and 'aborted' mean the prompt is no longer in
-      // flight, so both must flush in-flight/queued state. (Awaiting-* is still
-      // in flight — it's waiting on the user — and must NOT flush.)
-      if (
-        appEvent.type === 'sessionStatusChanged' &&
-        (appEvent.status === 'idle' || appEvent.status === 'aborted')
-      ) {
-        onSessionIdle(appEvent.sessionId, appEvent.status);
-      }
-
-      // Permission auto-approve: CLIENT-SIDE POLICY until the daemon exposes a
-      // permission endpoint. When permission is 'auto' or 'yolo' and an approval
-      // request arrives, immediately respond with 'approved'.
-      if (appEvent.type === 'approvalRequested') {
-        const perm = rawState.permission;
-        if (perm === 'auto' || perm === 'yolo') {
-          void workspaceState.respondApproval(appEvent.approval.approvalId, {
-            decision: 'approved',
-            scope: perm === 'yolo' ? 'session' : undefined,
-          });
-        }
-      }
+      // Coalesce high-frequency render events onto the next animation frame;
+      // everything else is applied immediately. See createEventBatcher /
+      // processEvent above.
+      enqueueEvent({ appEvent, meta });
     },
 
     onResync(sessionId: string, currentSeq: number, epoch?: string) {
+      // Flush streaming deltas already queued so they render on the
+      // pre-snapshot state (the snapshot is authoritative and will overwrite
+      // them). Stragglers that arrive during the snapshot fetch are drained
+      // again right before the snapshot write inside syncSessionFromSnapshot,
+      // so they are applied to the pre-snapshot array too rather than on top
+      // of the fresh snapshot (which would duplicate text / tool output).
+      enqueueEvent.flush();
       // The server-announced cursor is only a hint; the snapshot fetch
       // returns the authoritative {asOfSeq, epoch} and re-subscribes.
       if (epoch !== undefined) epochBySession[sessionId] = epoch;
       void currentSeq;
-      void syncSessionFromSnapshot(sessionId);
+      snapshotSyncRunner.request(sessionId);
     },
 
     onError(_code: number, msg: string, _fatal: boolean) {
@@ -942,10 +1003,33 @@ async function handleSessionNotFound(sessionId: string): Promise<void> {
   }
 }
 
+const sessionWarningsPulled = new Set<string>();
+
+async function pullSessionWarnings(sessionId: string): Promise<void> {
+  if (sessionWarningsPulled.has(sessionId)) return;
+  sessionWarningsPulled.add(sessionId);
+  try {
+    const warnings = await getKimiWebApi().getSessionWarnings(sessionId);
+    const label = i18n.global.t('warnings.noteLabel');
+    for (const warning of warnings) {
+      pushWarning(`${label}: ${warning.message}`);
+    }
+  } catch {
+    // best-effort: never block session sync on warning retrieval.
+  }
+}
+
 async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionResult> {
   try {
     const api = getKimiWebApi();
     const snap = await api.getSessionSnapshot(sessionId);
+
+    // Drain any queued streaming deltas before the snapshot replaces
+    // messagesBySession[sessionId]. The snapshot is authoritative (it already
+    // contains everything up to asOfSeq); applying stale queued deltas on top
+    // of it would duplicate text / tool output. Flushing here applies them to
+    // the pre-snapshot array, which the snapshot then overwrites.
+    enqueueEvent.flush();
 
     updateSession(sessionId, (s) => ({
       ...snap.session,
@@ -963,6 +1047,20 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       ...rawState.approvalsBySession,
       [sessionId]: snap.pendingApprovals,
     };
+    // Preserve plan_review paths from the snapshot so the ExitPlanMode tool
+    // card can link to the plan file even after a reload.
+    for (const a of snap.pendingApprovals) {
+      const display = a.display as { kind?: unknown; plan?: unknown; path?: unknown } | null | undefined;
+      if (display?.kind === 'plan_review' && typeof display.plan === 'string' && display.plan.length > 0) {
+        rawState.planReviewByToolCallId = {
+          ...rawState.planReviewByToolCallId,
+          [a.toolCallId]: {
+            plan: display.plan,
+            path: typeof display.path === 'string' ? display.path : undefined,
+          },
+        };
+      }
+    }
     rawState.questionsBySession = {
       ...rawState.questionsBySession,
       [sessionId]: snap.pendingQuestions,
@@ -980,6 +1078,7 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       eventConn.seedSnapshot(sessionId, snap);
       eventConn.subscribe(sessionId, { seq: snap.asOfSeq, epoch: snap.epoch });
     }
+    void pullSessionWarnings(sessionId);
     return 'ok';
   } catch (err) {
     if (isSessionNotFoundError(err)) {
@@ -995,6 +1094,8 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
   }
 }
 
+const snapshotSyncRunner = createCoalescedAsyncRunner(syncSessionFromSnapshot);
+
 function hasLoadedMessages(sessionId: string): boolean {
   return Object.prototype.hasOwnProperty.call(rawState.messagesBySession, sessionId);
 }
@@ -1002,6 +1103,11 @@ function hasLoadedMessages(sessionId: string): boolean {
 function subscribeToSessionEvents(sessionId: string): void {
   connectEventsIfNeeded();
   if (eventConn) {
+    // Apply any queued streaming deltas before re-subscribing so the transcript
+    // is current. (These deltas are volatile — never replayed by the server and
+    // they don't advance lastSeqBySession — but flushing here is cheap and
+    // future-proofs the cursor if the batching set ever changes.)
+    enqueueEvent.flush();
     const seq = rawState.lastSeqBySession[sessionId] ?? 0;
     const epoch = epochBySession[sessionId];
     eventConn.subscribe(sessionId, { seq, epoch });
@@ -1170,6 +1276,23 @@ function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
       };
     });
     return { kind: 'todo', items };
+  }
+
+  // plan_review — finalised plan presented at plan-mode exit
+  if (kind === 'plan_review') {
+    const plan = typeof d.plan === 'string' ? d.plan : '';
+    const path = typeof d.path === 'string' ? d.path : undefined;
+    const rawOptions = Array.isArray(d.options) ? d.options : [];
+    const options = rawOptions
+      .map((item: unknown): { label: string; description?: string } | null => {
+        const it = (item ?? {}) as Record<string, unknown>;
+        const label = typeof it.label === 'string' ? it.label : '';
+        if (!label) return null;
+        const description = typeof it.description === 'string' ? it.description : undefined;
+        return { label, description };
+      })
+      .filter((o): o is { label: string; description?: string } => o !== null);
+    return { kind: 'plan_review', plan, path, options: options.length > 0 ? options : undefined };
   }
 
   // Unknown daemon display.kind → 'generic' with summary = action
@@ -1364,6 +1487,7 @@ const turns = computed<ChatTurn[]>(() => {
     (fileId) => getKimiWebApi().getFileUrl(fileId),
     activity.value !== 'idle',
     activeAppTasks.value,
+    rawState.planReviewByToolCallId,
   );
 });
 
@@ -1659,19 +1783,24 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
 
   // Order: real workspaces in listWorkspaces order, then derived workspaces
   // sorted by root path so the order is stable (not tied to session activity).
-  const realRoots = rawState.workspaces.map((w) => w.root);
+  // Hidden roots must be excluded here too — `byRoot` skips them, so a hidden
+  // real workspace would otherwise make `byRoot.get(root)` return undefined.
+  const realRoots = rawState.workspaces.filter((w) => !hidden.has(w.root)).map((w) => w.root);
   const derivedRoots = [...byRoot.keys()].filter((r) => !realRoots.includes(r));
   derivedRoots.sort((a, b) => a.localeCompare(b));
 
   const result: AppWorkspace[] = [];
   for (const root of [...realRoots, ...derivedRoots]) {
     const w = byRoot.get(root)!;
-    // Match count by either id or root (derived id === root). Once sessions
-    // have loaded, trust the live local count (0 when no sessions remain) rather
-    // than the daemon's sessionCount, which historically counted archived
-    // sessions and would keep a workspace looking non-empty after its last
-    // session was archived.
-    const count = counts.get(w.id) ?? counts.get(w.root) ?? (rawState.loading ? w.sessionCount : 0);
+    // When a workspace's sessions are fully loaded (hasMore === false), the
+    // local count is exact — prefer it so archiving the last session drops the
+    // count to 0 immediately. While pages remain, the local count is only a
+    // lower bound, so keep the daemon session_count as a floor.
+    const localCount = counts.get(w.id) ?? counts.get(w.root) ?? 0;
+    const count =
+      rawState.sessionsHasMoreByWorkspace[w.id] === false
+        ? localCount
+        : Math.max(w.sessionCount, localCount);
     let branch = w.branch;
     if (!branch && activeGit && activeRoot === w.root) branch = activeGit.branch;
     result.push({ ...w, sessionCount: count, branch });
@@ -1679,22 +1808,59 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
   return result;
 });
 
-/** Sidebar-facing workspace list. */
-const workspacesView = computed<WorkspaceView[]>(() =>
-  mergedWorkspaces.value.map((w) => ({
+/**
+ * User-defined display order of workspace ids, persisted to localStorage. The
+ * sidebar stops following the daemon's recency-based order: once a workspace is
+ * known, its position is fixed until the user drags it elsewhere.
+ */
+const workspaceOrder = ref<string[]>(loadWorkspaceOrder());
+
+// Reconcile the persisted order with the set of currently-known workspaces:
+// drop ids that no longer exist, and prepend newly-seen ids (newest first,
+// matching "createdAt desc" — the closest signal we have without a real
+// workspace creation timestamp). Watched on the id *set* (joined) so a pure
+// daemon reorder of the same workspaces does not rewrite the user's order, and
+// a drag reorder (which also writes `workspaceOrder` but keeps the same id set)
+// does not re-trigger it.
+//
+// The watch also tracks `loading` and bails out while a load is in progress.
+// During `load()`, sessions (and thus derived workspaces) are set *before* the
+// real workspaces arrive, so a real workspace with no sessions is momentarily
+// absent from `mergedWorkspaces`. Without the loading guard the reconciler would
+// drop it as "deleted" and then, when it appears a tick later, re-add it at the
+// top — undoing the user's drag on refresh. Waiting until the load settles
+// means we always reconcile against the complete set.
+watch(
+  () => [mergedWorkspaces.value.map((w) => w.id).join('\0'), rawState.loading] as const,
+  ([idsKey, loading]) => {
+    if (loading) return;
+    const current = idsKey ? idsKey.split('\0') : [];
+    const next = reconcileWorkspaceOrder(current, workspaceOrder.value);
+    if (next === null) return;
+    workspaceOrder.value = next;
+    saveWorkspaceOrder(next);
+  },
+);
+
+/** Sidebar-facing workspace list, ordered by the persisted/dragged order. */
+const workspacesView = computed<WorkspaceView[]>(() => {
+  const views = mergedWorkspaces.value.map((w) => ({
     id: w.id,
     name: w.name,
     root: w.root,
     shortPath: shortenHome(w.root, rawState.fsHome),
     branch: w.branch,
     sessionCount: w.sessionCount,
-  })),
-);
+  }));
+  return sortByWorkspaceOrder(views, workspaceOrder.value);
+});
 
 /** The active workspace id, falling back to the first available workspace. */
 const activeWorkspaceId = computed<string | null>(() => {
   const id = rawState.activeWorkspaceId;
-  const list = mergedWorkspaces.value;
+  // Use the reordered list (not the raw daemon order) so the default/fallback
+  // workspace matches the first group the user actually sees in the sidebar.
+  const list = workspacesView.value;
   if (id && list.some((w) => w.id === id)) return id;
   return list[0]?.id ?? null;
 });
@@ -1752,8 +1918,20 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
   return workspacesView.value.map((w) => ({
     workspace: w,
     sessions: byId.get(w.id) ?? [],
+    hasMore: rawState.sessionsHasMoreByWorkspace[w.id] ?? false,
+    loadingMore: rawState.sessionsLoadingMoreByWorkspace[w.id] ?? false,
   }));
 });
+
+/**
+ * Replace the workspace display order (e.g. after a drag reorder in the
+ * sidebar) and persist it. The id set is unchanged, so the reconciliation
+ * watcher above will not fire — only the sort in `workspacesView` reacts.
+ */
+function reorderWorkspaces(ids: string[]): void {
+  workspaceOrder.value = ids;
+  saveWorkspaceOrder(ids);
+}
 
 /**
  * Per-session pending-attention count = pending approvals + pending questions.
@@ -1867,6 +2045,7 @@ const workspaceState = useWorkspaceState(rawState, {
   refreshSessionStatus,
   persistSessionProfile,
   mergedWorkspaces,
+  workspacesView,
   status,
   workspaceIdForSession,
   savePermissionToStorage,
@@ -2047,6 +2226,8 @@ export function useKimiWebClient() {
 
     // Workspace actions
     loadWorkspaces: workspaceState.loadWorkspaces,
+    loadMoreSessions: workspaceState.loadMoreSessions,
+    loadAllSessions: workspaceState.loadAllSessions,
     selectWorkspace: workspaceState.selectWorkspace,
     openWorkspace: workspaceState.openWorkspace,
     openWorkspaceDraft: workspaceState.openWorkspaceDraft,
@@ -2090,6 +2271,7 @@ export function useKimiWebClient() {
     renameSession: workspaceState.renameSession,
     renameWorkspace: workspaceState.renameWorkspace,
     deleteWorkspace: workspaceState.deleteWorkspace,
+    reorderWorkspaces,
     archiveSession: workspaceState.archiveSession,
     compact: workspaceState.compact,
     forkSession: workspaceState.forkSession,

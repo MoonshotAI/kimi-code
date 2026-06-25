@@ -3,10 +3,12 @@
      The old workspace rail and workspace tabs have been removed;
      workspace switching, folding and renaming all live in the group header. -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { serverEndpointLabel } from '../api/config';
 import { copyTextToClipboard } from '../lib/clipboard';
+import { loadCollapsedWorkspaces, saveCollapsedWorkspaces } from '../lib/storage';
+import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
@@ -55,6 +57,9 @@ const emit = defineEmits<{
   fork: [id: string];
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
+  reorderWorkspaces: [ids: string[]];
+  loadMoreSessions: [workspaceId: string];
+  loadAllSessions: [];
   openSettings: [];
   collapse: [];
 }>();
@@ -86,10 +91,16 @@ function onSelectResult(sessionId: string): void {
   onSelectSession(sessionId);
 }
 
+// Sessions are loaded per-workspace (first page only). The first time the user
+// searches, lazily drain the rest so the client-side filter covers everything.
+watch(isSearching, (active) => {
+  if (active) emit('loadAllSessions');
+});
+
 // ---------------------------------------------------------------------------
 // Collapse groups
 // ---------------------------------------------------------------------------
-const collapsedIds = ref<Set<string>>(new Set());
+const collapsedIds = ref<Set<string>>(new Set(loadCollapsedWorkspaces()));
 
 function isCollapsed(id: string): boolean {
   return collapsedIds.value.has(id);
@@ -97,47 +108,58 @@ function isCollapsed(id: string): boolean {
 
 function toggleCollapse(id: string): void {
   const next = new Set(collapsedIds.value);
-  if (next.has(id)) {
-    next.delete(id);
-    // Reset session expansion when workspace is expanded
-    const expandedNext = new Set(expandedWsIds.value);
-    expandedNext.delete(id);
-    expandedWsIds.value = expandedNext;
-  } else {
-    next.add(id);
-  }
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
   collapsedIds.value = next;
+  saveCollapsedWorkspaces(next);
 }
 
 // ---------------------------------------------------------------------------
-// Session list truncation per workspace
+// Workspace drag-to-reorder
 // ---------------------------------------------------------------------------
-const DEFAULT_VISIBLE_COUNT = 10;
+// The header of each group is the drag handle (see WorkspaceGroup). We track
+// which group is being dragged and where the insertion marker sits (before or
+// after the group under the pointer), then on drop we emit the new id order
+// upward — the parent persists it and the computed `groups` re-sorts. Using the
+// pointer's position within the target (top half = before, bottom half = after)
+// is what lets a workspace be dropped at the very bottom of the list.
+const draggingWsId = ref<string | null>(null);
+const dragOver = ref<{ id: string; position: DropPosition } | null>(null);
 
-/** workspace id → true = show all sessions */
-const expandedWsIds = ref<Set<string>>(new Set());
-
-function isExpanded(wsId: string): boolean {
-  return expandedWsIds.value.has(wsId);
+function onWsDragstart(id: string): void {
+  draggingWsId.value = id;
 }
 
-function toggleExpand(wsId: string): void {
-  const next = new Set(expandedWsIds.value);
-  if (next.has(wsId)) next.delete(wsId);
-  else next.add(wsId);
-  expandedWsIds.value = next;
+function onWsDragend(): void {
+  draggingWsId.value = null;
+  dragOver.value = null;
 }
 
-/** Show the most recent N sessions. If the active session is older than N,
-    replace the last slot with it so the highlight never disappears. */
-function visibleSessions(sessions: Session[], expanded: boolean, activeId?: string): Session[] {
-  if (expanded || sessions.length <= DEFAULT_VISIBLE_COUNT) return sessions;
-  const visible = sessions.slice(0, DEFAULT_VISIBLE_COUNT);
-  if (activeId && !visible.some((s) => s.id === activeId)) {
-    const active = sessions.find((s) => s.id === activeId);
-    if (active) visible[DEFAULT_VISIBLE_COUNT - 1] = active;
-  }
-  return visible;
+function dropPosition(event: DragEvent): DropPosition {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+}
+
+function onGroupDragOver(event: DragEvent, targetId: string): void {
+  if (draggingWsId.value === null || draggingWsId.value === targetId) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  dragOver.value = { id: targetId, position: dropPosition(event) };
+}
+
+function onGroupDrop(targetId: string): void {
+  const fromId = draggingWsId.value;
+  const position = dragOver.value?.id === targetId ? dragOver.value.position : 'before';
+  dragOver.value = null;
+  draggingWsId.value = null;
+  if (!fromId || fromId === targetId) return;
+  const next = moveInOrder(
+    props.groups.map((g) => g.workspace.id),
+    fromId,
+    targetId,
+    position,
+  );
+  emit('reorderWorkspaces', next);
 }
 
 // ---------------------------------------------------------------------------
@@ -527,35 +549,46 @@ function blinkOnce(): void {
         </div>
 
         <template v-else>
-          <WorkspaceGroup
+          <div
             v-for="g in groups"
             :key="g.workspace.id"
-            :group="g"
-            :active-workspace-id="activeWorkspaceId"
-            :active-id="activeId"
-            :selected-ids="selectedIds"
-            :renaming-id="renamingId"
-            :rename-value="renameValue"
-            :rename-input-ref="getRenameInputRef()"
-            :pending-by-session="pendingBySession"
-            :unread-by-session="unreadBySession"
-            :ws-menu-open-id="wsMenuOpenId"
-            :is-collapsed="isCollapsed"
-            :is-expanded="isExpanded"
-            :visible-sessions="visibleSessions"
-            @group-click="handleGhClick"
-            @group-contextmenu="openGhMenu"
-            @toggle-ws-menu="toggleWsMenu"
-            @create-in-workspace="(id) => emit('createInWorkspace', id)"
-            @select-session="onSelectSession"
-            @rename-session="(id, title) => emit('rename', id, title)"
-            @archive-session="(id) => emit('archive', id)"
-            @fork-session="(id) => emit('fork', id)"
-            @toggle-expand="toggleExpand"
-            @confirm-rename="confirmRenameWorkspace"
-            @cancel-rename="cancelRenameWorkspace"
-            @update-rename-value="onUpdateRenameValue"
-          />
+            class="ws-drop-target"
+            :class="{
+              'drop-before': dragOver?.id === g.workspace.id && dragOver.position === 'before',
+              'drop-after': dragOver?.id === g.workspace.id && dragOver.position === 'after',
+            }"
+            @dragover="onGroupDragOver($event, g.workspace.id)"
+            @drop="onGroupDrop(g.workspace.id)"
+          >
+            <WorkspaceGroup
+              :group="g"
+              :active-workspace-id="activeWorkspaceId"
+              :active-id="activeId"
+              :selected-ids="selectedIds"
+              :renaming-id="renamingId"
+              :rename-value="renameValue"
+              :rename-input-ref="getRenameInputRef()"
+              :pending-by-session="pendingBySession"
+              :unread-by-session="unreadBySession"
+              :ws-menu-open-id="wsMenuOpenId"
+              :dragging="draggingWsId === g.workspace.id"
+              :is-collapsed="isCollapsed"
+              @group-click="handleGhClick"
+              @group-contextmenu="openGhMenu"
+              @toggle-ws-menu="toggleWsMenu"
+              @create-in-workspace="(id) => emit('createInWorkspace', id)"
+              @select-session="onSelectSession"
+              @rename-session="(id, title) => emit('rename', id, title)"
+              @archive-session="(id) => emit('archive', id)"
+              @fork-session="(id) => emit('fork', id)"
+              @load-more="(id) => emit('loadMoreSessions', id)"
+              @confirm-rename="confirmRenameWorkspace"
+              @cancel-rename="cancelRenameWorkspace"
+              @update-rename-value="onUpdateRenameValue"
+              @ws-dragstart="onWsDragstart"
+              @ws-dragend="onWsDragend"
+            />
+          </div>
         </template>
       </div>
     </div>
@@ -836,6 +869,12 @@ function blinkOnce(): void {
   border-radius: 2px;
 }
 .sessions::-webkit-scrollbar-thumb:hover { background: var(--bd); }
+
+/* Workspace drag-to-reorder: a line at the top (drop-before) or bottom
+   (drop-after) of the group under the cursor marks where the dragged workspace
+   will land. Inset shadows avoid layout shift. */
+.ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--blue); }
+.ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--blue); }
 
 .empty {
   padding: 24px 12px;

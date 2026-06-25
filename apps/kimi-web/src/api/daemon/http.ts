@@ -4,6 +4,7 @@
 import { buildRestUrl } from '../config';
 import { DaemonApiError, DaemonNetworkError } from '../errors';
 import { traceRestFailure, traceRestRequest, traceRestResponse } from '../../debug/trace';
+import { getCredential, markAuthRequired } from './serverAuth';
 import type { WireEnvelope } from './wire';
 
 /** Per-request timeout. Without one, a hung connection (half-open TCP after a
@@ -13,6 +14,10 @@ import type { WireEnvelope } from './wire';
 const REQUEST_TIMEOUT_MS = 30_000;
 const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const BODY_PREVIEW_LIMIT = 500;
+
+// Server-transport auth failure envelope code (see packages/server
+// middleware/auth.ts AUTH_ERROR_CODE). Distinct from provider-auth 40110–40113.
+const SERVER_AUTH_UNAUTHORIZED_CODE = 40101;
 
 export interface DaemonHttpClientIdentity {
   readonly clientId: string;
@@ -155,6 +160,7 @@ export class DaemonHttpClient {
       envelopeRequestId: envelope.request_id,
       data: envelope.data,
     });
+    this.checkAuthRequired(response, envelope.code);
     if (envelope.code !== 0) {
       throw new DaemonApiError({
         code: envelope.code,
@@ -265,6 +271,8 @@ export class DaemonHttpClient {
       data: envelope.data,
     });
 
+    this.checkAuthRequired(response, envelope.code);
+
     // Unwrap: code 0 = success; allowed non-zero = return data; else throw
     if (envelope.code !== 0 && !allowCodes.includes(envelope.code)) {
       throw new DaemonApiError({
@@ -281,10 +289,23 @@ export class DaemonHttpClient {
   }
 
   private addClientHeaders(headers: Record<string, string>): void {
+    const credential = getCredential();
+    if (credential !== undefined) {
+      headers['Authorization'] = `Bearer ${credential}`;
+    }
     if (this.identity === undefined) return;
     headers['X-Kimi-Client-Id'] = this.identity.clientId;
     headers['X-Kimi-Client-Name'] = this.identity.clientName;
     headers['X-Kimi-Client-Version'] = this.identity.clientVersion;
     headers['X-Kimi-Client-Ui-Mode'] = this.identity.clientUiMode;
+  }
+
+  private checkAuthRequired(response: Response, envelopeCode: number): void {
+    if (
+      response.status === 401 ||
+      envelopeCode === SERVER_AUTH_UNAUTHORIZED_CODE
+    ) {
+      markAuthRequired();
+    }
   }
 }

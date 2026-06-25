@@ -45,7 +45,8 @@
         "diffRemovedStrong": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Diff removed lines (strong)" },
         "diffGutter": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Diff gutter color" },
         "diffMeta": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Diff meta color" },
-        "roleUser": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "User message accent" }
+        "roleUser": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "User message accent" },
+        "shellMode": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Shell mode (`!`) prompt, editor border, and the echoed `$ command` line" }
       },
       "additionalProperties": {
         "type": "string",

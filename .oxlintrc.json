@@ -150,7 +150,6 @@
     "node_modules/",
     "apps/*/scripts/",
     "docs/smoke-archive/",
-    "plugins/curated/superpowers/",
     "*.generated.ts"
   ]
 }

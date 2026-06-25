@@ -706,6 +706,34 @@ describe('BackgroundManager', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('resets the deadline to detachTimeoutMs when a foreground task is detached', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { manager } = createBackgroundManager();
+      const { proc } = pendingProcess();
+      const taskId = manager.registerTask(new ProcessBackgroundTask(proc, 'sleep 60', 'detach timeout'), {
+        detached: false,
+        timeoutMs: 1_000,
+        detachTimeoutMs: 5_000,
+      });
+
+      // Let the lifecycle arm its foreground timer, then detach at 500ms.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(manager.detach(taskId)?.detached).toBe(true);
+
+      // Past the original 1s deadline; the task is still running because detach
+      // reset the timer to 5s counted from the detach moment.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(manager.getTask(taskId)?.status).toBe('running');
+
+      // Past the 5s detach deadline (500 + 5000 = 5500ms).
+      await vi.advanceTimersByTimeAsync(4_500);
+      expect(manager.getTask(taskId)?.status).toBe('timed_out');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('returns undefined or empty output for unknown task ids', async () => {
     const { manager } = createBackgroundManager();
 
