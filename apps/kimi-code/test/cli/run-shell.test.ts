@@ -643,10 +643,15 @@ describe('runShell', () => {
           outputFormat: undefined,
           prompt: undefined,
           skillsDirs: [],
-          worktreePath: '/repo/.kimi/worktrees/wt',
-          parentRepoPath: '/repo',
         },
         '1.2.3-test',
+        {
+          worktree: {
+            worktreePath: '/repo/.kimi/worktrees/wt',
+            parentRepoPath: '/repo',
+            effectiveCwd: process.cwd(),
+          },
+        },
       );
       const [tui] = mocks.kimiTuiConstructor.mock.calls[0]!;
 

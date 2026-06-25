@@ -32,6 +32,7 @@ import { getInputHistoryFile } from '#/utils/paths';
 import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
 import { quoteShellArg } from '#/utils/shell-quote';
 
+import { resolveSessionMetadata } from './session-worktree';
 import { BannerProvider } from './banner/banner-provider';
 import { readBannerDisplayState, writeBannerDisplayState } from './banner/state';
 import {
@@ -158,6 +159,11 @@ export interface KimiTUIStartupInput {
   readonly migrationPlan?: MigrationPlan | null;
   /** When true, run only the migration screen, then exit (the `kimi migrate` command). */
   readonly migrateOnly?: boolean;
+  /**
+   * Session metadata to persist for new sessions; set when launched with
+   * `--worktree` so the worktree paths are carried on the session.
+   */
+  readonly sessionMetadata?: JsonObject;
 }
 
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
@@ -211,35 +217,6 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     mcpServersSummary: null,
     banner: undefined,
   };
-}
-
-function buildSessionMetadata(cliOptions: CLIOptions): JsonObject | undefined {
-  if (cliOptions.worktreePath === undefined || cliOptions.parentRepoPath === undefined) {
-    return undefined;
-  }
-  return {
-    worktreePath: cliOptions.worktreePath,
-    parentRepoPath: cliOptions.parentRepoPath,
-  };
-}
-
-// Recover the worktree metadata carried by an existing session so a replacement
-// session (e.g. from /new) stays in the same worktree context. Resuming a
-// worktree session via `-r <id>` carries no --worktree CLI flags, so
-// startup.metadata is undefined; without this the new session would lose its
-// worktreePath/parentRepoPath and agents/subagents would drop the worktree
-// system-prompt context. Mirrors the flat shape buildSessionMetadata produces.
-function worktreeMetadataFromSession(session: Session | undefined): JsonObject | undefined {
-  const metadata = session?.summary?.metadata;
-  if (metadata === undefined) {
-    return undefined;
-  }
-  const worktreePath = metadata['worktreePath'];
-  const parentRepoPath = metadata['parentRepoPath'];
-  if (typeof worktreePath !== 'string' || typeof parentRepoPath !== 'string') {
-    return undefined;
-  }
-  return { worktreePath, parentRepoPath };
 }
 
 interface SendMessageOptions {
@@ -328,7 +305,7 @@ export class KimiTUI {
         plan: startupInput.cliOptions.plan,
         model: startupInput.cliOptions.model,
         startupNotice: startupInput.startupNotice,
-        metadata: buildSessionMetadata(startupInput.cliOptions),
+        metadata: startupInput.sessionMetadata,
       },
     };
     this.options = tuiOptions;
@@ -1231,7 +1208,7 @@ export class KimiTUI {
         this.session === undefined ? undefined : this.state.appState.thinking ? 'on' : 'off',
       permission: this.state.appState.permissionMode,
       planMode: this.state.appState.planMode ? true : undefined,
-      metadata: this.options.startup.metadata ?? worktreeMetadataFromSession(this.session),
+      metadata: resolveSessionMetadata(this.options.startup.metadata, this.session),
     };
     if (this.state.appState.additionalDirs.length > 0) {
       options.additionalDirs = [...this.state.appState.additionalDirs];

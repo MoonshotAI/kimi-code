@@ -31,7 +31,8 @@ import {
 } from './goal-prompt';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
-import { quoteShellArg } from '#/utils/shell-quote';
+import { formatResumeCommand } from './resume-hint';
+import { metadataFromWorktree, type WorktreeRuntime } from './worktree-runtime';
 
 interface PromptOutput {
   readonly columns?: number | undefined;
@@ -42,6 +43,8 @@ interface PromptRunIO {
   readonly stdout?: PromptOutput;
   readonly stderr?: PromptOutput;
   readonly process?: PromptProcess;
+  /** The git worktree this prompt session runs in, when launched with --worktree. */
+  readonly worktree?: WorktreeRuntime;
 }
 
 interface PromptProcess {
@@ -64,6 +67,7 @@ export async function runPrompt(
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
   const promptProcess = io.process ?? process;
+  const worktree = io.worktree;
   const workDir = process.cwd();
   const telemetryBootstrap = createCliTelemetryBootstrap();
   const telemetryClient: TelemetryClient = {
@@ -124,6 +128,7 @@ export async function runPrompt(
         workDir,
         config.defaultModel,
         stderr,
+        worktree,
         (restorePermission) => {
           restorePromptSessionPermission = restorePermission;
         },
@@ -151,7 +156,7 @@ export async function runPrompt(
     } else {
       await runPromptTurn(session, opts.prompt!, outputFormat, stdout, stderr);
     }
-    writeResumeHint(session.id, outputFormat, stdout, stderr, opts.worktreePath !== undefined ? workDir : undefined);
+    writeResumeHint(session.id, outputFormat, stdout, stderr, worktree !== undefined ? workDir : undefined);
 
     withTelemetryContext({ sessionId: session.id }).track('exit', {
       duration_s: (Date.now() - startedAt) / 1000,
@@ -219,6 +224,7 @@ async function resolvePromptSession(
   workDir: string,
   defaultModel: string | undefined,
   stderr: PromptOutput,
+  worktree: WorktreeRuntime | undefined,
   setRestorePermission: (restorePermission: () => Promise<void>) => void,
 ): Promise<ResolvedPromptSession> {
   if (opts.session !== undefined) {
@@ -291,10 +297,7 @@ async function resolvePromptSession(
   }
 
   const model = requireConfiguredModel(opts.model, defaultModel);
-  const metadata =
-    opts.worktreePath !== undefined && opts.parentRepoPath !== undefined
-      ? { worktreePath: opts.worktreePath, parentRepoPath: opts.parentRepoPath }
-      : undefined;
+  const metadata = metadataFromWorktree(worktree);
   // Note: --prompt mode intentionally does not auto-remove the worktree on
   // exit. Unlike the TUI, a prompt session always produces at least a user
   // prompt and assistant response, so the "empty session" cleanup rule does
@@ -607,10 +610,7 @@ function writeResumeHint(
   stderr: PromptOutput,
   workDir?: string,
 ): void {
-  const command =
-    workDir !== undefined
-      ? `cd ${quoteShellArg(workDir)} && kimi -r ${sessionId}`
-      : `kimi -r ${sessionId}`;
+  const command = formatResumeCommand(sessionId, { cwd: workDir });
   const content = `To resume this session: ${command}`;
   if (outputFormat === 'stream-json') {
     const message: PromptJsonResumeMetaMessage = {

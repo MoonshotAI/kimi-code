@@ -600,16 +600,7 @@ command = "vim"
     const session = makeSession({ id: 'ses-1' });
     const nextSession = makeSession({ id: 'ses-2' });
     const { driver, harness } = await makeDriver(session, {}, {
-      cliOptions: {
-        session: undefined,
-        continue: false,
-        yolo: false,
-        auto: false,
-        plan: false,
-        model: undefined,
-        outputFormat: undefined,
-        prompt: undefined,
-        skillsDirs: [],
+      sessionMetadata: {
         worktreePath: '/repo/.kimi/worktrees/wt',
         parentRepoPath: '/repo',
       },

@@ -27,9 +27,12 @@ import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
 import { runShell } from './cli/run-shell';
-import { existsSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
-import { createWorktree, findGitRoot, removeWorktree, WorktreeError } from './utils/git/worktree';
+import {
+  cleanupEmptyWorktree,
+  prepareWorktreeRuntime,
+  type WorktreeRuntime,
+} from './cli/worktree-runtime';
+import { WorktreeError } from './utils/git/worktree';
 import { formatStartupError } from './cli/startup-error';
 import { runPluginNodeEntry } from './cli/sub/plugin-run-node';
 import { handleUpgrade } from './cli/sub/upgrade';
@@ -40,35 +43,6 @@ import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, PROCESS_NAME } from './constant/a
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
-
-function prepareWorktree(worktreeName: string): { worktreePath: string; parentRepoPath: string } {
-  const cwd = process.cwd();
-  const repoRoot = findGitRoot(cwd);
-  if (repoRoot === null) {
-    throw new WorktreeError('--worktree requires the working directory to be inside a git repository.');
-  }
-  const worktreePath = createWorktree(repoRoot, worktreeName || undefined);
-  const relativeCwd = relative(repoRoot, cwd);
-  const targetCwd =
-    relativeCwd.length > 0 && relativeCwd !== '.'
-      ? resolve(worktreePath, relativeCwd)
-      : worktreePath;
-
-  // If the caller was inside an ignored or untracked subdirectory, the
-  // mirrored path may not exist in the detached worktree. Fall back to the
-  // worktree root rather than fail after git has already registered the
-  // worktree.
-  const effectiveCwd = existsSync(targetCwd) ? targetCwd : worktreePath;
-  try {
-    process.chdir(effectiveCwd);
-  } catch (error) {
-    removeWorktree(repoRoot, worktreePath);
-    throw new WorktreeError(
-      `Failed to enter worktree directory: ${effectiveCwd}. The worktree has been removed.`,
-    );
-  }
-  return { worktreePath, parentRepoPath: repoRoot };
-}
 
 export async function handleMainCommand(opts: CLIOptions, version: string): Promise<void> {
   let validated: ReturnType<typeof validateOptions>;
@@ -90,11 +64,10 @@ export async function handleMainCommand(opts: CLIOptions, version: string): Prom
     process.exit(0);
   }
 
+  let worktree: WorktreeRuntime | undefined;
   if (opts.worktree !== undefined) {
     try {
-      const { worktreePath, parentRepoPath } = await prepareWorktree(opts.worktree);
-      opts.worktreePath = worktreePath;
-      opts.parentRepoPath = parentRepoPath;
+      worktree = prepareWorktreeRuntime(opts.worktree);
     } catch (error) {
       if (error instanceof WorktreeError) {
         process.stderr.write(`error: ${error.message}\n`);
@@ -106,27 +79,18 @@ export async function handleMainCommand(opts: CLIOptions, version: string): Prom
 
   try {
     if (validated.uiMode === 'print') {
-      await runPrompt(validated.options, version);
+      await runPrompt(validated.options, version, { worktree });
       return;
     }
 
-    await runShell(validated.options, version);
+    await runShell(validated.options, version, { worktree });
   } catch (error) {
     // If the shell runner failed during startup after we created a worktree,
     // the worktree is still empty (no session ran), so clean it up to avoid
     // leaks. Print mode intentionally leaves the worktree inspectable even on
     // failure, so we do not clean it up here.
-    if (
-      validated.uiMode !== 'print' &&
-      opts.worktreePath !== undefined &&
-      opts.parentRepoPath !== undefined
-    ) {
-      try {
-        removeWorktree(opts.parentRepoPath, opts.worktreePath);
-      } catch (cleanupError) {
-        // Best-effort cleanup only; do not let cleanup failures mask the original error.
-        log.warn('Failed to clean up git worktree after runner startup failed', cleanupError);
-      }
+    if (validated.uiMode !== 'print') {
+      cleanupEmptyWorktree(worktree);
     }
     throw error;
   }
