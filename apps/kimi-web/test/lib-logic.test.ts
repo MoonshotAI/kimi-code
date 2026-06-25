@@ -5,6 +5,7 @@ import {
   parseFilePathLinkCandidate,
 } from '../src/lib/filePathLinks';
 import { parseDiff } from '../src/lib/parseDiff';
+import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 
 describe('parseDiff', () => {
@@ -77,3 +78,50 @@ describe('toolMeta', () => {
   });
 });
 
+describe('createCoalescedAsyncRunner', () => {
+  it('reuses the in-flight promise for the same key', async () => {
+    let runs = 0;
+    let resolveRun!: () => void;
+    const runner = createCoalescedAsyncRunner(async (_key: string) => {
+      runs += 1;
+      await new Promise<void>((resolve) => {
+        resolveRun = resolve;
+      });
+      return runs;
+    });
+
+    const first = runner.run('session-a');
+    const second = runner.run('session-a');
+
+    expect(runs).toBe(1);
+    resolveRun();
+    await expect(Promise.all([first, second])).resolves.toEqual([1, 1]);
+    expect(runs).toBe(1);
+  });
+
+  it('queues at most one rerun requested while a run is in flight', async () => {
+    let runs = 0;
+    const resolvers: Array<() => void> = [];
+    const runner = createCoalescedAsyncRunner(async (_key: string) => {
+      runs += 1;
+      await new Promise<void>((resolve) => {
+        resolvers.push(resolve);
+      });
+      return runs;
+    });
+
+    const first = runner.run('session-a');
+    runner.request('session-a');
+    runner.request('session-a');
+    expect(runs).toBe(1);
+
+    resolvers[0]!();
+    await first;
+    await Promise.resolve();
+
+    expect(runs).toBe(2);
+    resolvers[1]!();
+    await Promise.resolve();
+    expect(runs).toBe(2);
+  });
+});
