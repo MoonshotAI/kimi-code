@@ -7,6 +7,7 @@ import { i18n } from '../i18n';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import { reconcileWorkspaceOrder, sortByWorkspaceOrder } from '../lib/workspaceOrder';
+import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
   loadWorkspaceOrder,
@@ -17,6 +18,7 @@ import {
   saveWorkspaceOrder,
   STORAGE_KEYS,
 } from '../lib/storage';
+import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
 import { useAppearance } from './client/useAppearance';
 import { useNotification } from './client/useNotification';
 import { useTaskPoller } from './client/useTaskPoller';
@@ -27,6 +29,7 @@ import { useWorkspaceState } from './client/useWorkspaceState';
 const appearance = useAppearance();
 const notification = useNotification();
 import type {
+  AppEvent,
   AppApprovalRequest,
   AppConfig,
   AppGoal,
@@ -462,6 +465,13 @@ function forgetSession(sessionId: string): void {
   // buffered event for this id would otherwise be reduced and recreate the very
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
+  // Drain the streaming-event batcher too. unsubscribe() stops future server
+  // frames, but events already queued for the next animation frame would
+  // otherwise survive and be reduced AFTER the maps below are cleared —
+  // recreating entries like messagesBySession[id] and lastSeqBySession[id].
+  // That would make hasLoadedMessages() treat the stale empty cache as
+  // authoritative and skip the next snapshot fetch for this id.
+  enqueueEvent.flush();
   removeSession(sessionId);
   removeSessionMessages(sessionId);
   delete rawState.approvalsBySession[sessionId];
@@ -659,6 +669,88 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
 }
 
 // ---------------------------------------------------------------------------
+// Streaming event batching
+// ---------------------------------------------------------------------------
+//
+// High-frequency "append a chunk" events (assistant/agent deltas, tool/task
+// output) can arrive dozens to hundreds of times per second. Applying each one
+// synchronously triggers a full Vue re-render per event, which saturates the
+// main thread and makes the stream look janky (see messagesToTurns / Markdown).
+//
+// We coalesce those render-only events onto the next animation frame so Vue
+// commits a single render per frame. Lifecycle / control-flow events
+// (sessionStatusChanged, messageCreated, approval*, question*, ...) are applied
+// immediately: they are infrequent, and some (e.g. sessionStatusChanged idle)
+// drive turn-end cleanup that must not be delayed by a throttled rAF in a
+// background tab. Ordering is preserved by draining any pending render events
+// before applying an immediate event.
+
+type PendingEvent = { appEvent: AppEvent; meta: { sessionId: string; seq: number } };
+
+function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number }): void {
+  // meta carries wire-level seq/sessionId so the reducer can advance
+  // lastSeqBySession[sessionId] = seq. Compaction completion appends a
+  // persistent divider marker in the reducer (TUI parity: the scrollback
+  // is kept, only a marker line records the compaction).
+  applyEvent(appEvent, meta.sessionId, meta.seq);
+
+  const sideTarget = sideChat.sideChatTargetBySession.value[meta.sessionId];
+  if (sideTarget) {
+    const { agentId } = sideTarget;
+    const parentId = meta.sessionId;
+    if (appEvent.type === 'agentDelta' && appEvent.agentId === agentId) {
+      if (appEvent.delta.text) {
+        sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.delta.text);
+      }
+    } else if (appEvent.type === 'agentTurnEnded' && appEvent.agentId === agentId) {
+      sideChat.finishSideChatAgent(agentId, parentId);
+    } else if (appEvent.type === 'taskProgress' && appEvent.taskId === agentId) {
+      sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.outputChunk);
+    } else if (appEvent.type === 'taskCompleted' && appEvent.taskId === agentId) {
+      sideChat.finishSideChatAgent(agentId, parentId, appEvent.outputPreview);
+    }
+  }
+
+  // The daemon's prompt.submitted event is projected as a user messageCreated
+  // carrying the real prompt_id. When the HTTP submit response is lost
+  // (timeout / network error) this is the fallback that lets Stop work.
+  if (
+    appEvent.type === 'messageCreated' &&
+    appEvent.message.role === 'user' &&
+    appEvent.message.promptId !== undefined
+  ) {
+    const sid = appEvent.message.sessionId;
+    if (rawState.promptIdBySession[sid] !== appEvent.message.promptId) {
+      rawState.promptIdBySession = {
+        ...rawState.promptIdBySession,
+        [sid]: appEvent.message.promptId,
+      };
+    }
+  }
+
+  if (appEvent.type === 'assistantDelta' && meta.sessionId === rawState.activeSessionId) {
+    appearance.recordMoonDelta((appEvent.delta.text?.length ?? 0) + (appEvent.delta.thinking?.length ?? 0));
+  }
+
+  // Turn-end cleanup for the session the event belongs to — including
+  // sessions running in the background (see onSessionIdle).
+  // Turn-end: both 'idle' and 'aborted' mean the prompt is no longer in
+  // flight, so both must flush in-flight/queued state. (Awaiting-* is still
+  // in flight — it's waiting on the user — and must NOT flush.)
+  if (
+    appEvent.type === 'sessionStatusChanged' &&
+    (appEvent.status === 'idle' || appEvent.status === 'aborted')
+  ) {
+    onSessionIdle(appEvent.sessionId, appEvent.status);
+  }
+}
+
+const enqueueEvent = createEventBatcher<PendingEvent>(
+  ({ appEvent, meta }) => processEvent(appEvent, meta),
+  ({ appEvent }) => isRenderEvent(appEvent),
+);
+
+// ---------------------------------------------------------------------------
 // WS subscription (lazy, only when a session is selected)
 // ---------------------------------------------------------------------------
 
@@ -685,69 +777,25 @@ function connectEventsIfNeeded(): void {
         return;
       }
 
-      // meta carries wire-level seq/sessionId so the reducer can advance
-      // lastSeqBySession[sessionId] = seq. Compaction completion appends a
-      // persistent divider marker in the reducer (TUI parity: the scrollback
-      // is kept, only a marker line records the compaction).
-      applyEvent(appEvent, meta.sessionId, meta.seq);
-
-      const sideTarget = sideChat.sideChatTargetBySession.value[meta.sessionId];
-      if (sideTarget) {
-        const { agentId } = sideTarget;
-        const parentId = meta.sessionId;
-        if (appEvent.type === 'agentDelta' && appEvent.agentId === agentId) {
-          if (appEvent.delta.text) {
-            sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.delta.text);
-          }
-        } else if (appEvent.type === 'agentTurnEnded' && appEvent.agentId === agentId) {
-          sideChat.finishSideChatAgent(agentId, parentId);
-        } else if (appEvent.type === 'taskProgress' && appEvent.taskId === agentId) {
-          sideChat.appendSideChatAssistantText(agentId, parentId, appEvent.outputChunk);
-        } else if (appEvent.type === 'taskCompleted' && appEvent.taskId === agentId) {
-          sideChat.finishSideChatAgent(agentId, parentId, appEvent.outputPreview);
-        }
-      }
-
-      // The daemon's prompt.submitted event is projected as a user messageCreated
-      // carrying the real prompt_id. When the HTTP submit response is lost
-      // (timeout / network error) this is the fallback that lets Stop work.
-      if (
-        appEvent.type === 'messageCreated' &&
-        appEvent.message.role === 'user' &&
-        appEvent.message.promptId !== undefined
-      ) {
-        const sid = appEvent.message.sessionId;
-        if (rawState.promptIdBySession[sid] !== appEvent.message.promptId) {
-          rawState.promptIdBySession = {
-            ...rawState.promptIdBySession,
-            [sid]: appEvent.message.promptId,
-          };
-        }
-      }
-
-      if (appEvent.type === 'assistantDelta' && meta.sessionId === rawState.activeSessionId) {
-        appearance.recordMoonDelta((appEvent.delta.text?.length ?? 0) + (appEvent.delta.thinking?.length ?? 0));
-      }
-
-      // Turn-end cleanup for the session the event belongs to — including
-      // sessions running in the background (see onSessionIdle).
-      // Turn-end: both 'idle' and 'aborted' mean the prompt is no longer in
-      // flight, so both must flush in-flight/queued state. (Awaiting-* is still
-      // in flight — it's waiting on the user — and must NOT flush.)
-      if (
-        appEvent.type === 'sessionStatusChanged' &&
-        (appEvent.status === 'idle' || appEvent.status === 'aborted')
-      ) {
-        onSessionIdle(appEvent.sessionId, appEvent.status);
-      }
+      // Coalesce high-frequency render events onto the next animation frame;
+      // everything else is applied immediately. See createEventBatcher /
+      // processEvent above.
+      enqueueEvent({ appEvent, meta });
     },
 
     onResync(sessionId: string, currentSeq: number, epoch?: string) {
+      // Flush streaming deltas already queued so they render on the
+      // pre-snapshot state (the snapshot is authoritative and will overwrite
+      // them). Stragglers that arrive during the snapshot fetch are drained
+      // again right before the snapshot write inside syncSessionFromSnapshot,
+      // so they are applied to the pre-snapshot array too rather than on top
+      // of the fresh snapshot (which would duplicate text / tool output).
+      enqueueEvent.flush();
       // The server-announced cursor is only a hint; the snapshot fetch
       // returns the authoritative {asOfSeq, epoch} and re-subscribes.
       if (epoch !== undefined) epochBySession[sessionId] = epoch;
       void currentSeq;
-      void syncSessionFromSnapshot(sessionId);
+      snapshotSyncRunner.request(sessionId);
     },
 
     onError(_code: number, msg: string, _fatal: boolean) {
@@ -960,6 +1008,13 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     const api = getKimiWebApi();
     const snap = await api.getSessionSnapshot(sessionId);
 
+    // Drain any queued streaming deltas before the snapshot replaces
+    // messagesBySession[sessionId]. The snapshot is authoritative (it already
+    // contains everything up to asOfSeq); applying stale queued deltas on top
+    // of it would duplicate text / tool output. Flushing here applies them to
+    // the pre-snapshot array, which the snapshot then overwrites.
+    enqueueEvent.flush();
+
     updateSession(sessionId, (s) => ({
       ...snap.session,
       model:
@@ -1009,6 +1064,8 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
   }
 }
 
+const snapshotSyncRunner = createCoalescedAsyncRunner(syncSessionFromSnapshot);
+
 function hasLoadedMessages(sessionId: string): boolean {
   return Object.prototype.hasOwnProperty.call(rawState.messagesBySession, sessionId);
 }
@@ -1016,6 +1073,11 @@ function hasLoadedMessages(sessionId: string): boolean {
 function subscribeToSessionEvents(sessionId: string): void {
   connectEventsIfNeeded();
   if (eventConn) {
+    // Apply any queued streaming deltas before re-subscribing so the transcript
+    // is current. (These deltas are volatile — never replayed by the server and
+    // they don't advance lastSeqBySession — but flushing here is cheap and
+    // future-proofs the cursor if the batching set ever changes.)
+    enqueueEvent.flush();
     const seq = rawState.lastSeqBySession[sessionId] ?? 0;
     const epoch = epochBySession[sessionId];
     eventConn.subscribe(sessionId, { seq, epoch });
