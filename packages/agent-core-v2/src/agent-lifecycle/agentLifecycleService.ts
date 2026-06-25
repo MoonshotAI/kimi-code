@@ -1,22 +1,30 @@
 /**
  * `agent-lifecycle` domain (L6) — `IAgentLifecycleService` implementation.
  *
- * Creates and tracks the session's agents as child scopes; persists records
- * through `records` and reads session context through `session-context`. Bound
- * at Session scope.
+ * Creates and tracks the session's agents as child scopes, acting as the agent
+ * composition root: wires the tool-call permission veto through `turn` and
+ * `permission`, persists records through `records`, and reads session context
+ * through `session-context`. Bound at Session scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import {
-  createScopedChildHandle,
   type IScopeHandle,
   LifecycleScope,
+  getScopedServiceDescriptors,
   registerScopedService,
 } from '#/_base/di/scope';
-import { IInstantiationService } from '#/_base/di/instantiation';
-import { ISessionMetaStore } from '#/records';
+import {
+  IInstantiationService,
+  type ServiceIdentifier,
+  type ServicesAccessor,
+} from '#/_base/di/instantiation';
+import { ServiceCollection } from '#/_base/di/serviceCollection';
+import { IPermissionService } from '#/permission/permission';
+import { ISessionMetaStore } from '#/records/records';
 import { ISessionContext } from '#/session-context/sessionContext';
+import { ITurnEvents } from '#/turn/turn';
 
 import { type CreateAgentOptions, IAgentLifecycleService } from './agentLifecycle';
 
@@ -36,13 +44,33 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   create(opts: CreateAgentOptions): Promise<IScopeHandle> {
     const agentId = opts.agentId ?? `agent-${nextAgentId++}`;
-    const handle = createScopedChildHandle(
-      this.instantiation,
-      LifecycleScope.Agent,
-      agentId,
-    );
+    const collection = new ServiceCollection();
+    for (const entry of getScopedServiceDescriptors(LifecycleScope.Agent)) {
+      collection.set(entry.id, entry.descriptor);
+    }
+    const child = this.instantiation.createChild(collection);
+    this.wireToolCallPermissionVeto(child);
+    const accessor: ServicesAccessor = {
+      get: <T>(id: ServiceIdentifier<T>): T => child.invokeFunction((a) => a.get(id)),
+    };
+    const handle: IScopeHandle = { id: agentId, kind: LifecycleScope.Agent, accessor };
     this.handles.set(agentId, handle);
     return Promise.resolve(handle);
+  }
+
+  private wireToolCallPermissionVeto(instantiation: IInstantiationService): void {
+    instantiation.invokeFunction((accessor) => {
+      const turnEvents = accessor.get(ITurnEvents);
+      const permission = accessor.get(IPermissionService);
+      turnEvents.onWillExecuteTool((event) => {
+        event.veto(
+          Promise.resolve(
+            permission.beforeToolCall({ toolName: event.toolName, args: event.args }),
+          ).then((decision) => decision === 'deny'),
+          'permission',
+        );
+      });
+    });
   }
 
   createMain(): Promise<IScopeHandle> {

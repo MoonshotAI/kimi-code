@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { type IScopeHandle, LifecycleScope } from '#/_base/di/scope';
-import { TestInstantiationService } from '#/_base/di/test';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/agent-lifecycle/agentLifecycle';
 import { ISessionActivity } from '#/session-activity/sessionActivity';
 import { SessionActivity } from '#/session-activity/sessionActivityService';
@@ -33,8 +33,11 @@ describe('SessionActivity', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.set(ISessionActivity, new SyncDescriptor(SessionActivity));
+    ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.define(ISessionActivity, SessionActivity);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

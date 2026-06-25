@@ -1,20 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentConfigService } from '#/config';
-import { IContextService } from '#/context';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IContextService } from '#/context/context';
 import { ContextService } from '#/context/contextService';
-import { IInjectionService } from '#/injection';
+import { IInjectionService } from '#/injection/injection';
 import { InjectionService } from '#/injection/injectionService';
-import { IKaosService } from '#/kaos';
-import { IPlanService } from '#/plan';
+import { IAgentKaos } from '#/kaos/kaos';
+import { IPlanService } from '#/plan/plan';
 import { PlanService } from '#/plan/planService';
-import { IAgentRecords } from '#/records';
-import { stubAgentRecords } from '../records/stubs';
-import { ITurnService } from '#/turn';
-import { stubTurn } from '../turn/stubs';
+import { ITurnService } from '#/turn/turn';
+import { registerConfigServices } from '../config/stubs';
+import { registerRecordsServices } from '../records/stubs';
+import { registerTurnServices } from '../turn/stubs';
 
 describe('PlanService', () => {
   let disposables: DisposableStore;
@@ -22,14 +21,15 @@ describe('PlanService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentRecords, stubAgentRecords());
-    ix.stub(IKaosService, {});
-    ix.stub(IAgentConfigService, {});
-    ix.stub(ITurnService, stubTurn());
-    ix.set(IContextService, new SyncDescriptor(ContextService));
-    ix.set(IInjectionService, new SyncDescriptor(InjectionService));
-    ix.set(IPlanService, new SyncDescriptor(PlanService));
+    ix = createServices(disposables, {
+      base: [registerRecordsServices, registerConfigServices, registerTurnServices],
+      additionalServices: (reg) => {
+        reg.definePartialInstance(IAgentKaos, {});
+        reg.define(IContextService, ContextService);
+        reg.define(IInjectionService, InjectionService);
+        reg.define(IPlanService, PlanService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

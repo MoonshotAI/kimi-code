@@ -1,16 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IConfigService } from '#/config';
-import { ILogService } from '#/log';
-import { IAgentRecords } from '#/records';
-import { ISkillRegistry, ISkillService } from '#/skill';
-import { ITurnService } from '#/turn';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { ISkillRegistry, ISkillService } from '#/skill/skill';
+import { ITurnService } from '#/turn/turn';
 import { stubTurn } from '../turn/stubs';
 
 import { SkillRegistry, SkillService } from '#/skill/skillService';
+import { registerConfigServices } from '../config/stubs';
+import { registerLogServices } from '../log/stubs';
+import { registerRecordsServices } from '../records/stubs';
 
 describe('SkillRegistry', () => {
   let disposables: DisposableStore;
@@ -18,10 +18,12 @@ describe('SkillRegistry', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IConfigService, {});
-    ix.stub(ILogService, {});
-    ix.set(ISkillRegistry, new SyncDescriptor(SkillRegistry));
+    ix = createServices(disposables, {
+      base: [registerConfigServices, registerLogServices],
+      additionalServices: (reg) => {
+        reg.define(ISkillRegistry, SkillRegistry);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 
@@ -40,12 +42,17 @@ describe('SkillService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IConfigService, {});
-    ix.stub(ILogService, {});
-    ix.stub(IAgentRecords, {});
-    ix.set(ISkillRegistry, new SyncDescriptor(SkillRegistry));
-    ix.set(ISkillService, new SyncDescriptor(SkillService));
+    ix = createServices(disposables, {
+      base: [
+        registerConfigServices,
+        registerLogServices,
+        registerRecordsServices,
+      ],
+      additionalServices: (reg) => {
+        reg.define(ISkillRegistry, SkillRegistry);
+        reg.define(ISkillService, SkillService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

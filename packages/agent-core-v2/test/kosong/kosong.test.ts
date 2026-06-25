@@ -1,17 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IConfigRegistry, IConfigService } from '#/config';
-import { IEnvironmentService } from '#/environment';
-import { stubEnvironment } from '../environment/stubs';
-import { IModelCatalogService, IProviderManager } from '#/kosong';
-import { ILogService } from '#/log';
-import { stubLog } from '../log/stubs';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IConfigService } from '#/config/config';
+import { IModelCatalogService, IProviderManager } from '#/kosong/kosong';
 
-import { ConfigRegistry, ConfigService } from '#/config/configService';
+import { ConfigService } from '#/config/configService';
 import { ModelCatalogService, ProviderManager } from '#/kosong/kosongService';
+import { registerConfigServices } from '../config/stubs';
+import { registerEnvironmentServices } from '../environment/stubs';
+import { registerLogServices } from '../log/stubs';
 
 describe('ModelCatalogService', () => {
   let disposables: DisposableStore;
@@ -20,12 +19,17 @@ describe('ModelCatalogService', () => {
 
   beforeEach(async () => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IConfigRegistry, new ConfigRegistry());
-    ix.stub(IEnvironmentService, stubEnvironment());
-    ix.stub(ILogService, stubLog());
-    ix.set(IConfigService, new SyncDescriptor(ConfigService));
-    ix.set(IModelCatalogService, new SyncDescriptor(ModelCatalogService));
+    ix = createServices(disposables, {
+      base: [
+        registerConfigServices,
+        registerEnvironmentServices,
+        registerLogServices,
+      ],
+      additionalServices: (reg) => {
+        reg.define(IConfigService, ConfigService);
+        reg.define(IModelCatalogService, ModelCatalogService);
+      },
+    });
     const config = ix.get(IConfigService);
     await config.set('kosong', {
       providers: [
@@ -63,13 +67,18 @@ describe('ProviderManager', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IConfigRegistry, new ConfigRegistry());
-    ix.stub(IEnvironmentService, stubEnvironment());
-    ix.stub(ILogService, stubLog());
-    ix.set(IConfigService, new SyncDescriptor(ConfigService));
-    ix.set(IModelCatalogService, new SyncDescriptor(ModelCatalogService));
-    ix.set(IProviderManager, new SyncDescriptor(ProviderManager));
+    ix = createServices(disposables, {
+      base: [
+        registerConfigServices,
+        registerEnvironmentServices,
+        registerLogServices,
+      ],
+      additionalServices: (reg) => {
+        reg.define(IConfigService, ConfigService);
+        reg.define(IModelCatalogService, ModelCatalogService);
+        reg.define(IProviderManager, ProviderManager);
+      },
+    });
     config = ix.get(IConfigService);
   });
   afterEach(() => disposables.dispose());

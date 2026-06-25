@@ -11,7 +11,7 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { ILogService } from '#/log';
+import { ILogService } from '#/log/log';
 
 import { ISessionKaosService } from './kaos';
 

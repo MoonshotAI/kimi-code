@@ -9,8 +9,8 @@ import { type Kaos, LocalKaos } from '@moonshot-ai/kaos';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { IEnvironmentService } from '#/environment';
-import { ILogService } from '#/log';
+import { IEnvironmentService } from '#/environment/environment';
+import { ILogService } from '#/log/log';
 
 import { type KaosFactoryOptions, IKaosFactory } from './kaos';
 

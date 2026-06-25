@@ -51,6 +51,15 @@ export class LinkedList<E> {
     };
   }
 
+  shift(): E | undefined {
+    if (this._first === Node.Undefined) {
+      return undefined;
+    }
+    const node = this._first as Node<E>;
+    this._remove(node);
+    return node.element;
+  }
+
   private _remove(node: Node<E>): void {
     if (node.prev !== Node.Undefined && node.next !== Node.Undefined) {
       const anchor = node.prev as Node<E>;

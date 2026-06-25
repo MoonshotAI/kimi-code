@@ -6,7 +6,11 @@ export {
   createServices,
   TestInstantiationService,
 } from './testInstantiationService';
-export type { ServiceIdCtorPair } from './testInstantiationService';
+export type {
+  CreateServicesOptions,
+  ServiceGroup,
+  ServiceRegistration,
+} from './testInstantiationService';
 
 import { type ServiceIdentifier } from './instantiation';
 import { createCoreScope, LifecycleScope, Scope, type ScopeSeed } from './scope';

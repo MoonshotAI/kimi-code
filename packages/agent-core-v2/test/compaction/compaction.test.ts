@@ -1,19 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
 import { CompactionService } from '#/compaction/compactionService';
-import { IAgentConfigService } from '#/config';
-import { IContextService } from '#/context';
+import { IContextService } from '#/context/context';
 import { ContextService } from '#/context/contextService';
-import { IInjectionService } from '#/injection';
+import { IInjectionService } from '#/injection/injection';
 import { InjectionService } from '#/injection/injectionService';
-import { IAgentRecords } from '#/records';
-import { stubAgentRecords } from '../records/stubs';
-import { ITelemetryService } from '#/telemetry';
-import { ITurnService } from '#/turn';
-import { stubTurn } from '../turn/stubs';
+import { ITurnService } from '#/turn/turn';
+import { registerConfigServices } from '../config/stubs';
+import { registerRecordsServices } from '../records/stubs';
+import { registerTelemetryServices } from '../telemetry/stubs';
+import { registerTurnServices } from '../turn/stubs';
 
 describe('CompactionService', () => {
   let disposables: DisposableStore;
@@ -21,13 +20,18 @@ describe('CompactionService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentRecords, stubAgentRecords());
-    ix.stub(IAgentConfigService, {});
-    ix.stub(ITelemetryService, {});
-    ix.stub(ITurnService, stubTurn());
-    ix.set(IContextService, new SyncDescriptor(ContextService));
-    ix.set(IInjectionService, new SyncDescriptor(InjectionService));
+    ix = createServices(disposables, {
+      base: [
+        registerRecordsServices,
+        registerConfigServices,
+        registerTelemetryServices,
+        registerTurnServices,
+      ],
+      additionalServices: (reg) => {
+        reg.define(IContextService, ContextService);
+        reg.define(IInjectionService, InjectionService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

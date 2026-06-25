@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { type IScopeHandle, LifecycleScope } from '#/_base/di/scope';
-import { TestInstantiationService } from '#/_base/di/test';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/agent-lifecycle/agentLifecycle';
 import { IRestGateway, IScopeRegistry } from '#/gateway';
 import { RestGateway, ScopeRegistry } from '#/gateway/gatewayService';
@@ -16,8 +16,11 @@ describe('ScopeRegistry', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.set(IScopeRegistry, new SyncDescriptor(ScopeRegistry));
+    ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.define(IScopeRegistry, ScopeRegistry);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 
@@ -34,7 +37,11 @@ describe('ScopeRegistry', () => {
 describe('RestGateway', () => {
   it('routes prompt to the agent turn service', async () => {
     const disposables = new DisposableStore();
-    const ix = disposables.add(new TestInstantiationService());
+    const ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.define(IRestGateway, RestGateway);
+      },
+    });
 
     const turn = stubTurn();
     const agentHandle: IScopeHandle = {
@@ -61,7 +68,6 @@ describe('RestGateway', () => {
       get: (id) => (id === 's1' ? sessionHandle : undefined),
       close: () => Promise.resolve(),
     });
-    ix.set(IRestGateway, new SyncDescriptor(RestGateway));
 
     const gw = ix.get(IRestGateway);
     await gw.prompt('s1', 'main', 'hello');

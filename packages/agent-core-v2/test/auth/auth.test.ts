@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IOAuthService } from '#/auth';
-import { IConfigService } from '#/config';
-import { IEnvironmentService } from '#/environment';
-import { ITelemetryService } from '#/telemetry';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IOAuthService } from '#/auth/auth';
 
 import { OAuthService } from '#/auth/authService';
+import { registerConfigServices } from '../config/stubs';
+import { registerEnvironmentServices } from '../environment/stubs';
+import { registerTelemetryServices } from '../telemetry/stubs';
 
 describe('OAuthService', () => {
   let disposables: DisposableStore;
@@ -16,11 +16,16 @@ describe('OAuthService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IConfigService, {});
-    ix.stub(IEnvironmentService, {});
-    ix.stub(ITelemetryService, {});
-    ix.set(IOAuthService, new SyncDescriptor(OAuthService));
+    ix = createServices(disposables, {
+      base: [
+        registerConfigServices,
+        registerEnvironmentServices,
+        registerTelemetryServices,
+      ],
+      additionalServices: (reg) => {
+        reg.define(IOAuthService, OAuthService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

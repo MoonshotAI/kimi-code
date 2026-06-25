@@ -2,17 +2,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { LocalKaos } from '@moonshot-ai/kaos';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IEnvironmentService } from '#/environment';
-import { ILogService } from '#/log';
-import { stubLog } from '../log/stubs';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
 
-import { IKaosService, IKaosFactory, ISessionKaosService } from '#/kaos';
+import { IKaosService, IKaosFactory, ISessionKaosService } from '#/kaos/kaos';
 import { AgentKaos } from '#/kaos/agentKaos';
 import { KaosFactory } from '#/kaos/kaosFactory';
 import { SessionKaosService } from '#/kaos/sessionKaosService';
+import { registerEnvironmentServices } from '../environment/stubs';
+import { registerLogServices } from '../log/stubs';
 
 describe('KaosFactory', () => {
   let disposables: DisposableStore;
@@ -20,10 +19,12 @@ describe('KaosFactory', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IEnvironmentService, {});
-    ix.stub(ILogService, stubLog());
-    ix.set(IKaosFactory, new SyncDescriptor(KaosFactory));
+    ix = createServices(disposables, {
+      base: [registerEnvironmentServices, registerLogServices],
+      additionalServices: (reg) => {
+        reg.define(IKaosFactory, KaosFactory);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 
@@ -53,9 +54,12 @@ describe('SessionKaosService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(ILogService, stubLog());
-    ix.set(ISessionKaosService, new SyncDescriptor(SessionKaosService));
+    ix = createServices(disposables, {
+      base: [registerLogServices],
+      additionalServices: (reg) => {
+        reg.define(ISessionKaosService, SessionKaosService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 
@@ -107,10 +111,13 @@ describe('AgentKaos', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(ILogService, stubLog());
-    ix.set(ISessionKaosService, new SyncDescriptor(SessionKaosService));
-    ix.set(IKaosService, new SyncDescriptor(AgentKaos));
+    ix = createServices(disposables, {
+      base: [registerLogServices],
+      additionalServices: (reg) => {
+        reg.define(ISessionKaosService, SessionKaosService);
+        reg.define(IKaosService, AgentKaos);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

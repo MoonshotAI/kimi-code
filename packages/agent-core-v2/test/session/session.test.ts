@@ -1,16 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { type IScopeHandle, LifecycleScope } from '#/_base/di/scope';
-import { TestInstantiationService } from '#/_base/di/test';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/agent-lifecycle/agentLifecycle';
-import { IEventService } from '#/event';
-import { ISessionMetaStore } from '#/records';
+import { IEventService } from '#/event/event';
 import { ISessionActivity } from '#/session-activity/sessionActivity';
-import { ISessionService } from '#/session';
+import { ISessionService } from '#/session/session';
 import { SessionService } from '#/session/sessionService';
+import { registerRecordsServices } from '../records/stubs';
 
 const handle: IScopeHandle = {
   id: 'main',
@@ -24,10 +24,13 @@ describe('SessionService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(ISessionMetaStore, {});
-    ix.stub(IEventService, {});
-    ix.set(ISessionService, new SyncDescriptor(SessionService));
+    ix = createServices(disposables, {
+      base: [registerRecordsServices],
+      additionalServices: (reg) => {
+        reg.definePartialInstance(IEventService, {});
+        reg.define(ISessionService, SessionService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

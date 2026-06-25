@@ -1,20 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentConfigService } from '#/config';
-import { IKaosService } from '#/kaos';
-import { ILLMService } from '#/kosong';
-import { IPermissionService } from '#/permission';
-import { IAgentRecords } from '#/records';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IKaosService } from '#/kaos/kaos';
 import {
   IToolDefinitionRegistry,
   IToolService,
   type ToolCallResult,
   type ToolDefinition,
-} from '#/tool';
+} from '#/tool/tool';
 import { ToolDefinitionRegistry, ToolService } from '#/tool/toolService';
+import { registerConfigServices } from '../config/stubs';
+import { registerKosongServices } from '../kosong/stubs';
+import { registerPermissionServices } from '../permission/stubs';
+import { registerRecordsServices } from '../records/stubs';
 
 const echoDef: ToolDefinition = {
   name: 'echo',
@@ -41,16 +41,21 @@ describe('ToolService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
     reg = new ToolDefinitionRegistry();
     reg.register(echoDef);
-    ix.set(IToolDefinitionRegistry, reg);
-    ix.stub(IAgentConfigService, {});
-    ix.stub(IAgentRecords, {});
-    ix.stub(IKaosService, {});
-    ix.stub(IPermissionService, {});
-    ix.stub(ILLMService, {});
-    ix.set(IToolService, new SyncDescriptor(ToolService));
+    ix = createServices(disposables, {
+      base: [
+        registerConfigServices,
+        registerRecordsServices,
+        registerPermissionServices,
+        registerKosongServices,
+      ],
+      additionalServices: (r) => {
+        r.defineInstance(IToolDefinitionRegistry, reg);
+        r.definePartialInstance(IKaosService, {});
+        r.define(IToolService, ToolService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

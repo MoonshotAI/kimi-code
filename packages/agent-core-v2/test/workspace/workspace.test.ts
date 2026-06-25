@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IKaosFactory } from '#/kaos';
-import { ILogService } from '#/log';
-import { stubLog } from '../log/stubs';
-import { IWorkspaceFsService, IWorkspaceRegistry } from '#/workspace';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IKaosFactory } from '#/kaos/kaos';
+import { IWorkspaceFsService, IWorkspaceRegistry } from '#/workspace/workspace';
 import { WorkspaceFsService, WorkspaceRegistry } from '#/workspace/workspaceService';
+import { registerLogServices } from '../log/stubs';
 
 describe('WorkspaceRegistry', () => {
   let disposables: DisposableStore;
@@ -15,10 +14,13 @@ describe('WorkspaceRegistry', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IKaosFactory, {});
-    ix.stub(ILogService, stubLog());
-    ix.set(IWorkspaceRegistry, new SyncDescriptor(WorkspaceRegistry));
+    ix = createServices(disposables, {
+      base: [registerLogServices],
+      additionalServices: (reg) => {
+        reg.definePartialInstance(IKaosFactory, {});
+        reg.define(IWorkspaceRegistry, WorkspaceRegistry);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 
@@ -37,11 +39,14 @@ describe('WorkspaceFsService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IKaosFactory, {});
-    ix.stub(ILogService, stubLog());
-    ix.set(IWorkspaceRegistry, new SyncDescriptor(WorkspaceRegistry));
-    ix.set(IWorkspaceFsService, new SyncDescriptor(WorkspaceFsService));
+    ix = createServices(disposables, {
+      base: [registerLogServices],
+      additionalServices: (reg) => {
+        reg.definePartialInstance(IKaosFactory, {});
+        reg.define(IWorkspaceRegistry, WorkspaceRegistry);
+        reg.define(IWorkspaceFsService, WorkspaceFsService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

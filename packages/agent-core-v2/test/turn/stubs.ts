@@ -6,13 +6,15 @@
  */
 
 import { Emitter, type Event } from '#/_base/event';
+import type { ServiceRegistration } from '#/_base/di/test';
+import { ITurnService } from '#/turn/turn';
 import type {
-  ITurnService,
   TurnEndEvent,
   TurnStartEvent,
   TurnStepEvent,
   TurnToolEvent,
-} from '#/turn';
+  TurnWillExecuteToolEvent,
+} from '#/turn/turn';
 
 const noneEvent = (<T>(): Event<T> => () => ({ dispose: () => {} }))();
 
@@ -43,7 +45,7 @@ export function stubTurn(options: StubTurnOptions = {}): StubTurn {
   return {
     _serviceBrand: undefined,
     onWillStartTurn: noneEvent as Event<TurnStartEvent>,
-    onWillExecuteTool: noneEvent as Event<TurnToolEvent>,
+    onWillExecuteTool: noneEvent as Event<TurnWillExecuteToolEvent>,
     onDidFinalizeTool: noneEvent as Event<TurnToolEvent>,
     onDidEndStep: endStep.event,
     onDidEndTurn: endTurn.event,
@@ -69,4 +71,13 @@ export function stubTurn(options: StubTurnOptions = {}): StubTurn {
     prompts,
     steered,
   };
+}
+
+/**
+ * Register the default `ITurnService` stub. Tests that need to inspect
+ * `prompts` / `steered` should create their own `stubTurn()` and register it
+ * via `additionalServices` instead.
+ */
+export function registerTurnServices(reg: ServiceRegistration): void {
+  reg.defineInstance(ITurnService, stubTurn());
 }

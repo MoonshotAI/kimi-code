@@ -1,19 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IKaosService } from '#/kaos';
+import { IKaosService } from '#/kaos/kaos';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IEnvironmentService } from '#/environment';
-import { stubEnvironment } from '../environment/stubs';
-import { ILogService } from '#/log';
-import { stubLog } from '../log/stubs';
-import { IAgentRecords } from '#/records';
-import { stubAgentRecords } from '../records/stubs';
-import { IAgentConfigService, IConfigRegistry, IConfigService } from '#/config';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IAgentConfigService, IConfigService } from '#/config/config';
 
 import { AgentConfigService, ConfigRegistry, ConfigService } from '#/config/configService';
+import { registerConfigServices } from '../config/stubs';
+import { registerEnvironmentServices } from '../environment/stubs';
+import { registerLogServices } from '../log/stubs';
+import { registerRecordsServices } from '../records/stubs';
 
 describe('ConfigRegistry', () => {
   it('registers and retrieves a section', () => {
@@ -45,11 +43,16 @@ describe('ConfigService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IConfigRegistry, new ConfigRegistry());
-    ix.stub(IEnvironmentService, stubEnvironment());
-    ix.stub(ILogService, stubLog());
-    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    ix = createServices(disposables, {
+      base: [
+        registerConfigServices,
+        registerEnvironmentServices,
+        registerLogServices,
+      ],
+      additionalServices: (reg) => {
+        reg.define(IConfigService, ConfigService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 
@@ -86,12 +89,15 @@ describe('AgentConfigService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
     agentSection = {};
-    ix.stub(IConfigService, { get: <T>() => agentSection as T });
-    ix.stub(IAgentRecords, stubAgentRecords());
-    ix.stub(IKaosService, agentKaos);
-    ix.set(IAgentConfigService, new SyncDescriptor(AgentConfigService));
+    ix = createServices(disposables, {
+      base: [registerRecordsServices],
+      additionalServices: (reg) => {
+        reg.definePartialInstance(IConfigService, { get: <T>() => agentSection as T });
+        reg.defineInstance(IKaosService, agentKaos);
+        reg.define(IAgentConfigService, AgentConfigService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

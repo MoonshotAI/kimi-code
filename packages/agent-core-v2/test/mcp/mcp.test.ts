@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IOAuthService } from '#/auth';
-import { IConfigService } from '#/config';
-import { ILogService } from '#/log';
-import { IMcpService } from '#/mcp';
-import { ITelemetryService } from '#/telemetry';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IOAuthService } from '#/auth/auth';
+import { IMcpService } from '#/mcp/mcp';
 
 import { McpService } from '#/mcp/mcpService';
+import { registerConfigServices } from '../config/stubs';
+import { registerLogServices } from '../log/stubs';
+import { registerTelemetryServices } from '../telemetry/stubs';
 
 describe('McpService', () => {
   let disposables: DisposableStore;
@@ -17,12 +17,17 @@ describe('McpService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IConfigService, {});
-    ix.stub(ILogService, {});
-    ix.stub(ITelemetryService, {});
-    ix.stub(IOAuthService, {});
-    ix.set(IMcpService, new SyncDescriptor(McpService));
+    ix = createServices(disposables, {
+      base: [
+        registerConfigServices,
+        registerLogServices,
+        registerTelemetryServices,
+      ],
+      additionalServices: (reg) => {
+        reg.definePartialInstance(IOAuthService, {});
+        reg.define(IMcpService, McpService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

@@ -1,21 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IConfigRegistry, IConfigService } from '#/config';
-import { ConfigRegistry, ConfigService } from '#/config/configService';
-import { IEnvironmentService } from '#/environment';
-import { stubEnvironment } from '../environment/stubs';
-import { IFlagService } from '#/flag';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IConfigRegistry, IConfigService } from '#/config/config';
+import { ConfigService } from '#/config/configService';
+import { IFlagService } from '#/flag/flag';
 import {
   EXPERIMENTAL_SECTION,
   FlagService,
   MASTER_ENV,
 } from '#/flag/flagService';
 import { FlagRegistry } from '#/flag/registry';
-import { ILogService } from '#/log';
-import { stubLog } from '../log/stubs';
+import { registerConfigServices } from '../config/stubs';
+import { registerEnvironmentServices } from '../environment/stubs';
+import { registerLogServices } from '../log/stubs';
 
 describe('FlagRegistry', () => {
   it('lists registered definitions and resolves by id', () => {
@@ -37,12 +36,17 @@ describe('FlagService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IEnvironmentService, stubEnvironment());
-    ix.stub(ILogService, stubLog());
-    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
-    ix.set(IConfigService, new SyncDescriptor(ConfigService));
-    ix.set(IFlagService, new SyncDescriptor(FlagService));
+    ix = createServices(disposables, {
+      base: [
+        registerConfigServices,
+        registerEnvironmentServices,
+        registerLogServices,
+      ],
+      additionalServices: (reg) => {
+        reg.define(IConfigService, ConfigService);
+        reg.define(IFlagService, FlagService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

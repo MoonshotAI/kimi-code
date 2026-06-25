@@ -1,5 +1,10 @@
 /**
- * `event` domain (L0) — `Event` / `Emitter` primitives and event combinators (`once` / `map` / `filter` / `any`).
+ * `event` domain (L0) — `Event` / `Emitter` primitives, the async
+ * `AsyncEmitter` / `IWaitUntil` participation primitive (for interceptable
+ * `onWill` events whose listeners register work via `waitUntil`), the
+ * `handleVetos` helper (for `onBefore*` veto events whose listeners answer
+ * with `veto(value, id)`), and event combinators (`once` / `map` / `filter`
+ * / `any`).
  */
 
 import { onUnexpectedError, safelyCallListener } from './errors/unexpectedError';
@@ -9,6 +14,7 @@ import {
   combinedDisposable,
   type IDisposable,
 } from './di/lifecycle';
+import { LinkedList } from './di/util/linkedList';
 
 export interface Event<T> {
   (
@@ -24,7 +30,7 @@ interface ListenerEntry<T> {
 }
 
 export class Emitter<T> {
-  private _listeners: Set<ListenerEntry<T>> | undefined;
+  protected _listeners: Set<ListenerEntry<T>> | undefined;
   private _disposed = false;
   private _event: Event<T> | undefined;
 
@@ -83,6 +89,100 @@ export class Emitter<T> {
   get isDisposed(): boolean {
     return this._disposed;
   }
+}
+
+export interface IWaitUntil {
+  readonly signal: AbortSignal;
+  waitUntil(thenable: Promise<unknown>): void;
+}
+
+export type IWaitUntilData<T> = Omit<T, 'waitUntil' | 'signal'>;
+
+export class AsyncEmitter<T extends IWaitUntil> extends Emitter<T> {
+  private _asyncDeliveryQueue?: LinkedList<[(event: T) => void, IWaitUntilData<T>]>;
+
+  async fireAsync(data: IWaitUntilData<T>, signal: AbortSignal): Promise<void> {
+    if (this.isDisposed || this._listeners === undefined) {
+      return;
+    }
+
+    this._asyncDeliveryQueue ??= new LinkedList();
+    for (const entry of this._listeners) {
+      this._asyncDeliveryQueue.push([
+        (event) => {
+          entry.listener.call(entry.thisArg, event);
+        },
+        data,
+      ]);
+    }
+
+    while (this._asyncDeliveryQueue.size > 0 && !signal.aborted) {
+      const [deliver, eventData] = this._asyncDeliveryQueue.shift()!;
+      const thenables: Promise<unknown>[] = [];
+
+      const event = {
+        ...eventData,
+        signal,
+        waitUntil: (p: Promise<unknown>): void => {
+          if (Object.isFrozen(thenables)) {
+            throw new Error('waitUntil can NOT be called asynchronously');
+          }
+          thenables.push(p);
+        },
+      } as T;
+
+      try {
+        deliver(event);
+      } catch (error) {
+        onUnexpectedError(error);
+        continue;
+      }
+
+      Object.freeze(thenables);
+      const settled = await Promise.allSettled(thenables);
+      for (const result of settled) {
+        if (result.status === 'rejected') {
+          onUnexpectedError(result.reason);
+        }
+      }
+    }
+  }
+}
+
+export function handleVetos(
+  vetos: (boolean | Promise<boolean>)[],
+  onError: (error: unknown) => void,
+): Promise<boolean> {
+  if (vetos.length === 0) {
+    return Promise.resolve(false);
+  }
+
+  const promises: Promise<void>[] = [];
+  let lazyValue = false;
+
+  for (const valueOrPromise of vetos) {
+    if (valueOrPromise === true) {
+      return Promise.resolve(true);
+    }
+    if (typeof valueOrPromise === 'boolean') {
+      continue;
+    }
+    promises.push(
+      valueOrPromise.then(
+        (value) => {
+          if (value) {
+            lazyValue = true;
+          }
+        },
+        (error) => {
+          onError(error);
+          lazyValue = true;
+        },
+      ),
+    );
+  }
+
+  return Promise.allSettled(promises).then(() => lazyValue);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-namespace

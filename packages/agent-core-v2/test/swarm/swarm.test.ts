@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentLifecycleService } from '#/agent-lifecycle/agentLifecycle';
-import { IPermissionService } from '#/permission';
-import { IAgentRecords } from '#/records';
-import { ISwarmService } from '#/swarm';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { ISwarmService } from '#/swarm/swarm';
 import { SwarmService } from '#/swarm/swarmService';
+import { registerAgentLifecycleServices } from '../agent-lifecycle/stubs';
+import { registerPermissionServices } from '../permission/stubs';
+import { registerRecordsServices } from '../records/stubs';
 
 describe('SwarmService', () => {
   let disposables: DisposableStore;
@@ -15,11 +15,16 @@ describe('SwarmService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentRecords, {});
-    ix.stub(IAgentLifecycleService, {});
-    ix.stub(IPermissionService, {});
-    ix.set(ISwarmService, new SyncDescriptor(SwarmService));
+    ix = createServices(disposables, {
+      base: [
+        registerRecordsServices,
+        registerAgentLifecycleServices,
+        registerPermissionServices,
+      ],
+      additionalServices: (reg) => {
+        reg.define(ISwarmService, SwarmService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

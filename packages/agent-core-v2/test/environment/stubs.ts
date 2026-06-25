@@ -6,7 +6,8 @@
  * `../environment/stubs`).
  */
 
-import type { IEnvironmentService } from '#/environment';
+import type { ServiceRegistration } from '#/_base/di/test';
+import { IEnvironmentService } from '#/environment/environment';
 
 /**
  * An `IEnvironmentService` rooted at the given home dir. `detect()` rejects
@@ -20,4 +21,9 @@ export function stubEnvironment(homeDir = '/tmp/kimi-home'): IEnvironmentService
     configPath: `${homeDir}/config.toml`,
     detect: () => Promise.reject(new Error('unused in test')),
   };
+}
+
+/** Register the default `IEnvironmentService` rooted at `/tmp/kimi-home`. */
+export function registerEnvironmentServices(reg: ServiceRegistration): void {
+  reg.defineInstance(IEnvironmentService, stubEnvironment());
 }

@@ -5,7 +5,8 @@
  * production tree. Import from a relative path (`./stubs` or `../records/stubs`).
  */
 
-import type { IAgentRecords } from '#/records';
+import type { ServiceRegistration } from '#/_base/di/test';
+import { IAgentRecords, ISessionMetaStore } from '#/records/records';
 
 /**
  * A no-op `IAgentRecords`: writes vanish, replay yields nothing, restore is a
@@ -22,4 +23,13 @@ export function stubAgentRecords(): IAgentRecords {
     },
     restore: () => Promise.resolve(),
   };
+}
+
+/**
+ * Register the default records collaborators: a no-op `IAgentRecords` and an
+ * empty `ISessionMetaStore` placeholder.
+ */
+export function registerRecordsServices(reg: ServiceRegistration): void {
+  reg.defineInstance(IAgentRecords, stubAgentRecords());
+  reg.definePartialInstance(ISessionMetaStore, {});
 }

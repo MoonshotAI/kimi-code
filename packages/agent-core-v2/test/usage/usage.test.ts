@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentRecords } from '#/records';
-import { ITelemetryService } from '#/telemetry';
-import { IUsageService } from '#/usage';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IUsageService } from '#/usage/usage';
 import { UsageService } from '#/usage/usageService';
+import { registerRecordsServices } from '../records/stubs';
+import { registerTelemetryServices } from '../telemetry/stubs';
 
 describe('UsageService', () => {
   let disposables: DisposableStore;
@@ -14,10 +14,12 @@ describe('UsageService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentRecords, { _serviceBrand: undefined });
-    ix.stub(ITelemetryService, { _serviceBrand: undefined });
-    ix.set(IUsageService, new SyncDescriptor(UsageService));
+    ix = createServices(disposables, {
+      base: [registerTelemetryServices, registerRecordsServices],
+      additionalServices: (reg) => {
+        reg.define(IUsageService, UsageService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

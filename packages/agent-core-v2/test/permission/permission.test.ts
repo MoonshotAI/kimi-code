@@ -1,23 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IApprovalService } from '#/approval';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IApprovalService } from '#/approval/approval';
 import { ApprovalService } from '#/approval/approvalService';
-import { IAgentConfigService } from '#/config';
-import { ILogService } from '#/log';
-import { stubLog } from '../log/stubs';
 import {
   IPermissionPolicyRegistry,
   IPermissionService,
-} from '#/permission';
+} from '#/permission/permission';
 import {
   PermissionPolicyRegistry,
   PermissionService,
 } from '#/permission/permissionService';
-import { IAgentRecords } from '#/records';
-import { stubAgentRecords } from '../records/stubs';
+import { registerConfigServices } from '../config/stubs';
+import { registerLogServices } from '../log/stubs';
+import { registerRecordsServices } from '../records/stubs';
 
 describe('PermissionPolicyRegistry', () => {
   it('returns the first non-undefined decision', () => {
@@ -40,13 +38,14 @@ describe('PermissionService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentConfigService, {});
-    ix.stub(IAgentRecords, stubAgentRecords());
-    ix.stub(ILogService, stubLog());
-    ix.set(IPermissionPolicyRegistry, new SyncDescriptor(PermissionPolicyRegistry));
-    ix.set(IApprovalService, new SyncDescriptor(ApprovalService));
-    ix.set(IPermissionService, new SyncDescriptor(PermissionService));
+    ix = createServices(disposables, {
+      base: [registerConfigServices, registerRecordsServices, registerLogServices],
+      additionalServices: (reg) => {
+        reg.define(IPermissionPolicyRegistry, PermissionPolicyRegistry);
+        reg.define(IApprovalService, ApprovalService);
+        reg.define(IPermissionService, PermissionService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

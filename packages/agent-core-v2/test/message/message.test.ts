@@ -1,14 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IContextService } from '#/context';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IContextService } from '#/context/context';
 import { ContextService } from '#/context/contextService';
-import { IMessageService } from '#/message';
+import { IMessageService } from '#/message/message';
 import { MessageService } from '#/message/messageService';
-import { IAgentRecords } from '#/records';
-import { stubAgentRecords } from '../records/stubs';
+import { registerRecordsServices } from '../records/stubs';
 
 describe('MessageService', () => {
   let disposables: DisposableStore;
@@ -16,12 +15,15 @@ describe('MessageService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    // Dependencies: real ContextService (itself backed by a stubbed IAgentRecords).
-    ix.stub(IAgentRecords, stubAgentRecords());
-    ix.set(IContextService, new SyncDescriptor(ContextService));
-    // System under test, registered by interface so the binding is exercised.
-    ix.set(IMessageService, new SyncDescriptor(MessageService));
+    ix = createServices(disposables, {
+      base: [registerRecordsServices],
+      additionalServices: (reg) => {
+        // Dependencies: real ContextService (itself backed by a stubbed IAgentRecords).
+        reg.define(IContextService, ContextService);
+        // System under test, registered by interface so the binding is exercised.
+        reg.define(IMessageService, MessageService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

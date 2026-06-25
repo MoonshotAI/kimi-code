@@ -1,21 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { type IScopeHandle, LifecycleScope } from '#/_base/di/scope';
-import { TestInstantiationService } from '#/_base/di/test';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/agent-lifecycle/agentLifecycle';
-import { ICronFireCoordinator, ICronService } from '#/cron';
+import { ICronFireCoordinator, ICronService } from '#/cron/cron';
 import { CronFireCoordinator, CronService } from '#/cron/cronService';
-import { IEnvironmentService } from '#/environment';
-import { stubEnvironment } from '../environment/stubs';
-import { ILogService } from '#/log';
-import { stubLog } from '../log/stubs';
-import { ISessionMetaStore } from '#/records';
 import { ISessionActivity } from '#/session-activity/sessionActivity';
-import { ISessionContext } from '#/session-context/sessionContext';
-import { ITelemetryService } from '#/telemetry';
+import { registerEnvironmentServices } from '../environment/stubs';
+import { registerLogServices } from '../log/stubs';
+import { registerRecordsServices } from '../records/stubs';
+import { registerSessionContextServices } from '../session-context/stubs';
+import { registerTelemetryServices } from '../telemetry/stubs';
 import { stubTurn } from '../turn/stubs';
 
 function activity(idle: boolean): ISessionActivity {
@@ -28,13 +26,18 @@ describe('CronService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(ISessionContext, {});
-    ix.stub(ITelemetryService, {});
-    ix.stub(ILogService, stubLog());
-    ix.stub(IEnvironmentService, stubEnvironment());
-    ix.stub(ISessionMetaStore, {});
-    ix.set(ICronService, new SyncDescriptor(CronService));
+    ix = createServices(disposables, {
+      base: [
+        registerSessionContextServices,
+        registerTelemetryServices,
+        registerLogServices,
+        registerEnvironmentServices,
+        registerRecordsServices,
+      ],
+      additionalServices: (reg) => {
+        reg.define(ICronService, CronService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 
@@ -76,15 +79,20 @@ describe('CronService', () => {
 describe('CronFireCoordinator', () => {
   it('steers the main agent on fire', async () => {
     const disposables = new DisposableStore();
-    const ix = disposables.add(new TestInstantiationService());
-    ix.stub(ISessionContext, {});
-    ix.stub(ITelemetryService, {});
-    ix.stub(ILogService, stubLog());
-    ix.stub(IEnvironmentService, stubEnvironment());
-    ix.stub(ISessionMetaStore, {});
-    ix.stub(ISessionActivity, activity(true));
-    ix.set(ICronService, new SyncDescriptor(CronService));
-    ix.set(ICronFireCoordinator, new SyncDescriptor(CronFireCoordinator));
+    const ix = createServices(disposables, {
+      base: [
+        registerSessionContextServices,
+        registerTelemetryServices,
+        registerLogServices,
+        registerEnvironmentServices,
+        registerRecordsServices,
+      ],
+      additionalServices: (reg) => {
+        reg.defineInstance(ISessionActivity, activity(true));
+        reg.define(ICronService, CronService);
+        reg.define(ICronFireCoordinator, CronFireCoordinator);
+      },
+    });
 
     const turn = stubTurn();
     const handle: IScopeHandle = {

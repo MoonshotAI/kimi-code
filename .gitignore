@@ -24,3 +24,4 @@ docker-compose.yml
 docs/superpowers/
 reports/
 .superpowers/
+plan/

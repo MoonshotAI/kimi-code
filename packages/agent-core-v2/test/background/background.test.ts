@@ -1,16 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentLifecycleService } from '#/agent-lifecycle/agentLifecycle';
-import { IBackgroundService } from '#/background';
-import { IKaosService } from '#/kaos';
-import { ILogService } from '#/log';
-import { IAgentRecords } from '#/records';
-import { ITelemetryService } from '#/telemetry';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IBackgroundService } from '#/background/background';
+import { IKaosService } from '#/kaos/kaos';
 
 import { BackgroundService } from '#/background/backgroundService';
+import { registerAgentLifecycleServices } from '../agent-lifecycle/stubs';
+import { registerLogServices } from '../log/stubs';
+import { registerRecordsServices } from '../records/stubs';
+import { registerTelemetryServices } from '../telemetry/stubs';
 
 describe('BackgroundService', () => {
   let disposables: DisposableStore;
@@ -18,13 +18,18 @@ describe('BackgroundService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IKaosService, {});
-    ix.stub(IAgentRecords, {});
-    ix.stub(ILogService, {});
-    ix.stub(ITelemetryService, {});
-    ix.stub(IAgentLifecycleService, {});
-    ix.set(IBackgroundService, new SyncDescriptor(BackgroundService));
+    ix = createServices(disposables, {
+      base: [
+        registerLogServices,
+        registerTelemetryServices,
+        registerRecordsServices,
+        registerAgentLifecycleServices,
+      ],
+      additionalServices: (reg) => {
+        reg.definePartialInstance(IKaosService, {});
+        reg.define(IBackgroundService, BackgroundService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

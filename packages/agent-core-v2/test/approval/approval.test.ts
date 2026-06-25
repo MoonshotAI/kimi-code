@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IApprovalService } from '#/approval';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IApprovalService } from '#/approval/approval';
 import { ApprovalService } from '#/approval/approvalService';
 
 describe('ApprovalService', () => {
@@ -12,8 +12,11 @@ describe('ApprovalService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.set(IApprovalService, new SyncDescriptor(ApprovalService));
+    ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.define(IApprovalService, ApprovalService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
-import { IConfigService } from '#/config';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IHookEngine } from '#/hooks';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IHookEngine } from '#/hooks/hooks';
 import { HookEngine } from '#/hooks/hookEngine';
-import { ILogService } from '#/log';
+import { registerConfigServices } from '../config/stubs';
+import { registerLogServices } from '../log/stubs';
 
 describe('HookEngine', () => {
   let disposables: DisposableStore;
@@ -14,10 +14,12 @@ describe('HookEngine', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IConfigService, { _serviceBrand: undefined });
-    ix.stub(ILogService, { _serviceBrand: undefined });
-    ix.set(IHookEngine, new SyncDescriptor(HookEngine));
+    ix = createServices(disposables, {
+      base: [registerConfigServices, registerLogServices],
+      additionalServices: (reg) => {
+        reg.define(IHookEngine, HookEngine);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

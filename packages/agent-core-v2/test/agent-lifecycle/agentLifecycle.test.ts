@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/agent-lifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/agent-lifecycle/agentLifecycleService';
-import { ISessionMetaStore } from '#/records';
-import { ISessionContext } from '#/session-context/sessionContext';
+import { registerRecordsServices } from '../records/stubs';
+import { registerSessionContextServices } from '../session-context/stubs';
 
 describe('AgentLifecycleService', () => {
   let disposables: DisposableStore;
@@ -14,10 +14,12 @@ describe('AgentLifecycleService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(ISessionContext, {});
-    ix.stub(ISessionMetaStore, {});
-    ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
+    ix = createServices(disposables, {
+      base: [registerSessionContextServices, registerRecordsServices],
+      additionalServices: (reg) => {
+        reg.define(IAgentLifecycleService, AgentLifecycleService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

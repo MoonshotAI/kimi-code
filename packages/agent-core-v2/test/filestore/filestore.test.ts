@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IFileStore } from '#/filestore';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IFileStore } from '#/filestore/filestore';
 import { FileStore } from '#/filestore/fileStoreService';
-import { IKaosFactory } from '#/kaos';
+import { IKaosFactory } from '#/kaos/kaos';
 
 describe('FileStore', () => {
   let disposables: DisposableStore;
@@ -13,9 +13,12 @@ describe('FileStore', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IKaosFactory, { _serviceBrand: undefined });
-    ix.set(IFileStore, new SyncDescriptor(FileStore));
+    ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.definePartialInstance(IKaosFactory, {});
+        reg.define(IFileStore, FileStore);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

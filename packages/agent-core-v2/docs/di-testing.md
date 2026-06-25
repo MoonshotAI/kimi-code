@@ -65,9 +65,10 @@ Reference: [`test/message/message.test.ts`](../test/message/message.test.ts).
 
 ```ts
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { registerRecordsServices } from '../records/stubs';
 
 describe('XxxService', () => {
   let disposables: DisposableStore;
@@ -75,14 +76,15 @@ describe('XxxService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-
-    // 1. Stub the collaborators, by interface.
-    ix.stub(IAgentRecords, stubAgentRecords());
-    ix.set(IContextService, new SyncDescriptor(ContextService)); // real dep
-
-    // 2. Register the system under test, by interface.
-    ix.set(IXxxService, new SyncDescriptor(XxxService));
+    ix = createServices(disposables, {
+      base: [registerRecordsServices],
+      additionalServices: (reg) => {
+        // 1. Real collaborator, registered by interface.
+        reg.define(IContextService, ContextService);
+        // 2. System under test, registered by interface.
+        reg.define(IXxxService, XxxService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 
@@ -94,7 +96,11 @@ describe('XxxService', () => {
 });
 ```
 
-Stubbing:
+`createServices` builds the container from domain **service groups** plus
+per-test overrides (see [Service groups](#service-groups)). Reach for
+`ix.stub(...)` / `ix.set(...)` directly only inside an `it` when a single test
+needs to swap a registration (for example, to inject a spy or a second
+instance). Stubbing:
 
 - whole service, partial object: `ix.stub(IId, { method() { return … } })`;
 - single method: `ix.stub(IId, 'method', value)` returns a sinon stub;
@@ -198,6 +204,66 @@ Conventions:
 If a stub is needed by two test files, it belongs in that domain's
 `test/<domain>/stubs.ts`.
 
+## Service groups
+
+Most unit tests stub the same handful of collaborators (`ILogService`,
+`IAgentRecords`, `IConfigService`, `ITelemetryService`, …). Rather than repeat
+`ix.stub(...)` lines in every `beforeEach`, each domain exports a
+`register*Services` function from its `stubs.ts` that registers the default test
+doubles for that domain:
+
+```ts
+// test/log/stubs.ts
+export function registerLogServices(reg: ServiceRegistration): void {
+  reg.defineInstance(ILogService, stubLog());
+}
+```
+
+`createServices(disposables, { base, additionalServices })` composes them:
+
+- `base` — an ordered list of service groups. Each group's registrations are
+  deduped (first writer wins), so groups supply safe defaults without
+  clobbering each other.
+- `additionalServices` — applied after `base`. Registrations here **overwrite**
+  any base default, so a test can swap a stub for a spy, register the system
+  under test, or supply a one-off collaborator.
+
+```ts
+ix = createServices(disposables, {
+  base: [registerLogServices, registerConfigServices, registerRecordsServices],
+  additionalServices: (reg) => {
+    reg.definePartialInstance(IAgentKaos, {});        // one-off collaborator
+    reg.define(IAgentRecords, spyRecords);             // override a base default
+    reg.define(IXxxService, XxxService);               // system under test
+  },
+});
+```
+
+`ServiceRegistration` offers three verbs:
+
+- `define(id, Ctor)` — lazy `SyncDescriptor`; the service is instantiated on
+  first resolve. Use for real collaborators and the system under test.
+- `defineInstance(id, instance)` — a fully-built instance (a fake such as
+  `stubLog()`, or `new ConfigRegistry()`).
+- `definePartialInstance(id, { ... })` — a partial mock; only the supplied
+  members are provided. Use for collaborators the test does not exercise.
+
+Conventions:
+
+- a group registers the domain's services **as dependencies** (a fake, or a `{}`
+  partial when no fake exists yet). When a service is the system under test,
+  the test registers the real implementation via `additionalServices` and does
+  not rely on the group's default for it;
+- keep groups small and domain-local. A service that is almost always the
+  system under test, or that every consumer configures differently, should not
+  have a group — register it inline via `additionalServices`;
+- import groups with a **relative path** (`../<domain>/stubs`), never from
+  `#/…`.
+
+`createServices` defaults to `strict: false` (missing dependencies warn rather
+than throw), matching `new TestInstantiationService()`. Pass `strict: true` to
+surface unregistered `@IService` dependencies.
+
 ## Declaring dependencies
 
 Always use `@IService` constructor decorators — in fixtures and in production
@@ -291,12 +357,14 @@ Most legacy tests build the SUT with `ix.createInstance(Impl)`. Converting one
 is mechanical:
 
 1. import the interface (`IX`) and the descriptor;
-2. add `ix.set(IX, new SyncDescriptor(Impl))` to `beforeEach`;
+2. register the SUT by interface — `reg.define(IX, Impl)` inside
+   `additionalServices` (or `ix.set(IX, new SyncDescriptor(Impl))`);
 3. replace `ix.createInstance(Impl)` with `ix.get(IX)`;
 4. drop the `disposables.add(...)` wrapper around the SUT and any trailing
    `svc.dispose()` — the container disposes it;
 5. replace any hand-rolled collaborator object with the domain's shared stub
-   (or add one to `test/<domain>/stubs.ts` if it does not exist);
+   or service group (or add one to `test/<domain>/stubs.ts` if it does not
+   exist);
 6. delete now-unused imports.
 
 Before / after:
@@ -305,7 +373,8 @@ Before / after:
 // before
 const svc = ix.createInstance(MessageService);
 
-// after
-ix.set(IMessageService, new SyncDescriptor(MessageService));   // in beforeEach
+// after — registration in beforeEach additionalServices
+reg.define(IMessageService, MessageService);
+// after — resolution in the test body
 const svc = ix.get(IMessageService);
 ```

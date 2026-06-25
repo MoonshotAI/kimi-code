@@ -292,45 +292,110 @@ interface SinonOptions {
   stub?: boolean;
 }
 
-export type ServiceIdCtorPair<T> = [
-  id: ServiceIdentifier<T>,
-  ctorOrInstance: T | AnyConstructor<T>,
-];
+/**
+ * Registration surface handed to a {@link ServiceGroup} or to
+ * `CreateServicesOptions.additionalServices`. Mirrors the three ways a test
+ * supplies a service: a lazy constructor, a full instance, or a partial mock.
+ */
+export interface ServiceRegistration {
+  /**
+   * Register a lazy `SyncDescriptor` for a service constructor. The service is
+   * instantiated only when first resolved from the container.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  define<T>(id: ServiceIdentifier<T>, ctor: new (...args: any[]) => T): void;
+  /** Register a fully-constructed instance. */
+  defineInstance<T>(id: ServiceIdentifier<T>, instance: T): void;
+  /**
+   * Register a partial instance (a mock). Only the supplied members need to be
+   * provided; the container returns it typed as `T`.
+   */
+  definePartialInstance<T>(id: ServiceIdentifier<T>, instance: Partial<T>): void;
+}
 
+/** A bundle of service registrations, typically one per domain. */
+export type ServiceGroup = (reg: ServiceRegistration) => void;
+
+export interface CreateServicesOptions {
+  /**
+   * Base service groups applied first, in order. Registrations are deduped
+   * (first writer wins) so groups can supply safe defaults without clobbering
+   * each other.
+   */
+  readonly base?: readonly ServiceGroup[];
+  /**
+   * Applied after `base`. Registrations here overwrite any base default, so a
+   * test can swap a stub for a spy, register the system under test, or supply a
+   * one-off collaborator.
+   */
+  readonly additionalServices?: (reg: ServiceRegistration) => void;
+  /**
+   * When `true`, resolving an unregistered service throws. Defaults to `false`
+   * to match `new TestInstantiationService()` (missing deps only warn), keeping
+   * migrated tests behavior-preserving.
+   */
+  readonly strict?: boolean;
+}
+
+/**
+ * Build a `TestInstantiationService` from domain service groups plus per-test
+ * overrides. The container is added to `disposables`; directly-registered
+ * instances are disposed with it.
+ */
 export function createServices(
   disposables: DisposableStore,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  services: ServiceIdCtorPair<any>[],
+  options: CreateServicesOptions = {},
 ): TestInstantiationService {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const serviceIdentifiers: ServiceIdentifier<any>[] = [];
   const serviceCollection = new ServiceCollection();
+  // Directly-registered instances are not constructed by the container, so the
+  // container will not dispose them — track their ids and dispose them below.
+  // Descriptor-created services are disposed by the container itself and are
+  // intentionally not tracked here (disposing them again would double-dispose).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const instanceIds = new Set<ServiceIdentifier<any>>();
 
-  const define = <T>(
+  const register = <T>(
     id: ServiceIdentifier<T>,
-    ctorOrInstance: T | AnyConstructor<T>,
+    value: T | Partial<T> | SyncDescriptor<T>,
+    isInstance: boolean,
+    overwrite: boolean,
   ): void => {
-    if (!serviceCollection.has(id)) {
-      if (typeof ctorOrInstance === 'function') {
-        serviceCollection.set(id, new SyncDescriptor(ctorOrInstance as AnyConstructor<T>));
-      } else {
-        serviceCollection.set(id, ctorOrInstance);
-      }
+    if (overwrite || !serviceCollection.has(id)) {
+      serviceCollection.set(id, value as T | SyncDescriptor<T>);
     }
-    serviceIdentifiers.push(id);
+    if (isInstance) {
+      instanceIds.add(id);
+    }
   };
 
-  for (const [id, ctorOrInstance] of services) {
-    define(id, ctorOrInstance);
+  const baseReg: ServiceRegistration = {
+    define: (id, ctor) => register(id, new SyncDescriptor(ctor), false, false),
+    defineInstance: (id, instance) => register(id, instance, true, false),
+    definePartialInstance: (id, instance) => register(id, instance, true, false),
+  };
+
+  for (const group of options.base ?? []) {
+    group(baseReg);
   }
 
-  const instantiationService = disposables.add(new TestInstantiationService(serviceCollection, true));
+  if (options.additionalServices) {
+    const overrideReg: ServiceRegistration = {
+      define: (id, ctor) => register(id, new SyncDescriptor(ctor), false, true),
+      defineInstance: (id, instance) => register(id, instance, true, true),
+      definePartialInstance: (id, instance) => register(id, instance, true, true),
+    };
+    options.additionalServices(overrideReg);
+  }
+
+  const instantiationService = disposables.add(
+    new TestInstantiationService(serviceCollection, options.strict ?? false),
+  );
   disposables.add(toDisposable(() => {
     const serviceDisposables: IDisposable[] = [];
-    for (const id of serviceIdentifiers) {
-      const instanceOrDescriptor = serviceCollection.get(id);
-      if (isDisposable(instanceOrDescriptor)) {
-        serviceDisposables.push(instanceOrDescriptor);
+    for (const id of instanceIds) {
+      const instance = serviceCollection.get(id);
+      if (isDisposable(instance)) {
+        serviceDisposables.push(instance);
       }
     }
     dispose(serviceDisposables);

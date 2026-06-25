@@ -1,20 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentLifecycleService } from '#/agent-lifecycle/agentLifecycle';
-import { IContextService } from '#/context';
-import { IInjectionService } from '#/injection';
-import { ILLMService } from '#/kosong';
-import { ILogService } from '#/log';
-import { IPermissionService } from '#/permission';
-import { ITelemetryService } from '#/telemetry';
-import { IToolService } from '#/tool';
-import { ILoopRunner } from '#/turn';
-import { IUsageService } from '#/usage';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { ILoopRunner, ITurnEvents } from '#/turn/turn';
+import { IUsageService } from '#/usage/usage';
 
 import { LoopRunner } from '#/turn/loopRunner';
+import { TurnEvents } from '#/turn/turnEvents';
 import { TurnService } from '#/turn/turnService';
+import { registerAgentLifecycleServices } from '../agent-lifecycle/stubs';
+import { registerContextServices } from '../context/stubs';
+import { registerInjectionServices } from '../injection/stubs';
+import { registerKosongServices } from '../kosong/stubs';
+import { registerLogServices } from '../log/stubs';
+import { registerPermissionServices } from '../permission/stubs';
+import { registerTelemetryServices } from '../telemetry/stubs';
 
 describe('TurnService', () => {
   let disposables: DisposableStore;
@@ -22,17 +23,22 @@ describe('TurnService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IContextService, {});
-    ix.stub(IToolService, {});
-    ix.stub(IPermissionService, {});
-    ix.stub(ILLMService, {});
-    ix.stub(IInjectionService, {});
-    ix.stub(IUsageService, {});
-    ix.stub(ITelemetryService, {});
-    ix.stub(ILogService, {});
-    ix.stub(IAgentLifecycleService, {});
-    ix.set(ILoopRunner, new LoopRunner());
+    ix = createServices(disposables, {
+      base: [
+        registerLogServices,
+        registerTelemetryServices,
+        registerAgentLifecycleServices,
+        registerPermissionServices,
+        registerContextServices,
+        registerInjectionServices,
+        registerKosongServices,
+      ],
+      additionalServices: (reg) => {
+        reg.defineInstance(ITurnEvents, new TurnEvents());
+        reg.definePartialInstance(IUsageService, {});
+        reg.defineInstance(ILoopRunner, new LoopRunner());
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

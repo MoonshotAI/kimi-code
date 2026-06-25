@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IContextService } from '#/context';
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IInjectionQueue, IInjectionService } from '#/injection';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IInjectionQueue, IInjectionService } from '#/injection/injection';
 import { InjectionQueue, InjectionService } from '#/injection/injectionService';
+import { registerContextServices } from '../context/stubs';
 
 describe('InjectionService', () => {
   let disposables: DisposableStore;
@@ -13,9 +13,12 @@ describe('InjectionService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IContextService, { _serviceBrand: undefined });
-    ix.set(IInjectionService, new SyncDescriptor(InjectionService));
+    ix = createServices(disposables, {
+      base: [registerContextServices],
+      additionalServices: (reg) => {
+        reg.define(IInjectionService, InjectionService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 
@@ -37,8 +40,11 @@ describe('InjectionQueue', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.set(IInjectionQueue, new SyncDescriptor(InjectionQueue));
+    ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.define(IInjectionQueue, InjectionQueue);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 

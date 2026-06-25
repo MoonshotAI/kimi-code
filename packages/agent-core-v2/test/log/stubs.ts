@@ -5,7 +5,9 @@
  * production tree. Import from a relative path (`./stubs` or `../log/stubs`).
  */
 
-import type { ILogger, ILogService } from '#/log';
+import type { ServiceRegistration } from '#/_base/di/test';
+import { ILogService } from '#/log/log';
+import type { ILogger } from '#/log/log';
 
 /** A no-op `ILogger`: every method is a no-op, `child()` returns itself. */
 export function stubLogger(): ILogger {
@@ -27,4 +29,9 @@ export function stubLog(): ILogService {
     level: 'info',
     setLevel: () => {},
   };
+}
+
+/** Register the default no-op `ILogService`. */
+export function registerLogServices(reg: ServiceRegistration): void {
+  reg.defineInstance(ILogService, stubLog());
 }

@@ -1,15 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
-import { IGoalService } from '#/goal';
-import { IInjectionService } from '#/injection';
-import { IAgentRecords } from '#/records';
-import { ITurnService } from '#/turn';
-import { stubTurn } from '../turn/stubs';
+import { createServices } from '#/_base/di/test';
+import type { TestInstantiationService } from '#/_base/di/test';
+import { IGoalService } from '#/goal/goal';
 
 import { GoalService } from '#/goal/goalService';
+import { registerInjectionServices } from '../injection/stubs';
+import { registerRecordsServices } from '../records/stubs';
+import { registerTurnServices } from '../turn/stubs';
 
 describe('GoalService', () => {
   let disposables: DisposableStore;
@@ -17,11 +16,12 @@ describe('GoalService', () => {
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentRecords, {});
-    ix.stub(ITurnService, stubTurn());
-    ix.stub(IInjectionService, {});
-    ix.set(IGoalService, new SyncDescriptor(GoalService));
+    ix = createServices(disposables, {
+      base: [registerRecordsServices, registerTurnServices, registerInjectionServices],
+      additionalServices: (reg) => {
+        reg.define(IGoalService, GoalService);
+      },
+    });
   });
   afterEach(() => disposables.dispose());
 
