@@ -1,24 +1,23 @@
 import { createDecorator } from "#/_base/di";
-import { BackgroundTaskPersistence } from '../../../agent/background/persist';
+import { BackgroundTaskPersistence } from './persist';
 import type {
   BackgroundTask,
   BackgroundTaskInfo,
   BackgroundTaskStatus,
-} from '../../../agent/background/task';
+} from './task';
 
-export { AgentBackgroundTask } from '../../../agent/background/agent-task';
-export { BackgroundManager as LegacyBackgroundManager } from '../../../agent/background';
-export type { AgentBackgroundTaskInfo } from '../../../agent/background/agent-task';
-export { ProcessBackgroundTask } from '../../../agent/background/process-task';
-export type { ProcessBackgroundTaskInfo } from '../../../agent/background/process-task';
-export { QuestionBackgroundTask } from '../../../agent/background/question-task';
-export type { QuestionBackgroundTaskInfo } from '../../../agent/background/question-task';
-export { BackgroundTaskPersistence } from '../../../agent/background/persist';
+export { AgentBackgroundTask } from './agent-task';
+export type { AgentBackgroundTaskInfo } from './agent-task';
+export { ProcessBackgroundTask } from './process-task';
+export type { ProcessBackgroundTaskInfo } from './process-task';
+export { QuestionBackgroundTask } from './question-task';
+export type { QuestionBackgroundTaskInfo } from './question-task';
+export { BackgroundTaskPersistence } from './persist';
 export type {
   BackgroundTask,
   BackgroundTaskInfo,
   BackgroundTaskStatus,
-} from '../../../agent/background/task';
+} from './task';
 
 export interface BackgroundServiceOptions {
   readonly persistence?: BackgroundTaskPersistence;

@@ -2,19 +2,19 @@ import { randomBytes } from 'node:crypto';
 
 import type { ContentPart } from '@moonshot-ai/kosong';
 
+import {
+  Disposable,
+  registerSingleton,
+  SyncDescriptor,
+} from "#/_base/di";
+import { escapeXml, escapeXmlAttr } from "#/_base/utils/xml-escape";
 import type { BackgroundTaskOrigin } from '../../../agent/context';
 import { renderNotificationXml } from '../../../agent/context/notification-xml';
 import {
   TERMINAL_STATUSES,
   type BackgroundTaskInfoBase,
   type BackgroundTaskSettlement,
-} from '../../../agent/background/task';
-import { escapeXml, escapeXmlAttr } from "#/_base/utils/xml-escape";
-import {
-  Disposable,
-  registerSingleton,
-  SyncDescriptor,
-} from "#/_base/di";
+} from './task';
 
 import { IContextMemory } from '../contextMemory/contextMemory';
 import { IEventBus } from '../eventBus/eventBus';
@@ -529,7 +529,7 @@ export class BackgroundService extends Disposable implements IBackgroundService 
     const info = this.toInfo(entry);
     entry.persistWriteQueue = entry.persistWriteQueue
       .then(() => persistence.writeTask(info))
-      .catch(() => {});
+      .catch(() => { });
     return entry.persistWriteQueue;
   }
 
@@ -556,7 +556,7 @@ export class BackgroundService extends Disposable implements IBackgroundService 
     if (persistence === undefined) return;
     entry.outputWriteQueue = entry.outputWriteQueue
       .then(() => persistence.appendTaskOutput(entry.taskId, chunk))
-      .catch(() => {});
+      .catch(() => { });
   }
 
   private startOutputPersist(entry: ManagedTask): void {
@@ -622,7 +622,7 @@ export class BackgroundService extends Disposable implements IBackgroundService 
     if (!this.isDetached(entry)) return;
     entry.terminalFired = true;
     const info = this.toInfo(entry);
-    void this.notifyBackgroundTask(info).catch(() => {});
+    void this.notifyBackgroundTask(info).catch(() => { });
     this.recordTaskTerminated(info);
   }
 
