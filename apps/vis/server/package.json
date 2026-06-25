@@ -34,7 +34,7 @@
     "@hono/node-server": "^1.13.7",
     "@moonshot-ai/agent-core": "workspace:^",
     "@moonshot-ai/kosong": "workspace:^",
-    "hono": "^4.7.7"
+    "hono": "^4.12.27"
   },
   "devDependencies": {
     "tsx": "^4.21.0",
