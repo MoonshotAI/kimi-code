@@ -163,6 +163,9 @@ importers:
       '@xterm/xterm':
         specifier: ^6.0.0
         version: 6.0.0
+      katex:
+        specifier: ^0.16.22
+        version: 0.16.47
       markstream-vue:
         specifier: 1.0.3
         version: 1.0.3(katex@0.16.47)(mermaid@11.15.0)(stream-markdown@0.0.16(react@19.2.5)(shiki@4.2.0)(vue@3.5.35(typescript@6.0.2)))(vue-i18n@11.4.5(vue@3.5.35(typescript@6.0.2)))(vue@3.5.35(typescript@6.0.2))
