@@ -92,4 +92,19 @@ describe('default agent profiles', () => {
       expect(prompt).toContain('refuse a fixed set of well-known secret files');
     }
   });
+
+  it('renders blast-radius and concrete-example guidance for root and subagents alike', () => {
+    // These additions live in shared, ungated sections, so the root agent AND every
+    // subagent that renders the coding guidelines must carry them verbatim.
+    for (const name of ['agent', 'coder', 'explore', 'plan']) {
+      const prompt = DEFAULT_AGENT_PROFILES[name]?.systemPrompt(promptContext) ?? '';
+      // Reversibility / blast-radius principle generalized beyond the git rule.
+      expect(prompt).toContain('reversibility and blast radius');
+      expect(prompt).toContain('A one-time approval covers that one action');
+      // Concrete one-line examples anchoring high-frequency abstract rules.
+      expect(prompt).toContain('locate the method in the code'); // ambiguous instruction -> edit code, not echo text
+      expect(prompt).toContain('update the related tests'); // preamble phrasing example
+      expect(prompt).toContain('premature abstraction'); // MINIMAL-changes counterexample
+    }
+  });
 });
