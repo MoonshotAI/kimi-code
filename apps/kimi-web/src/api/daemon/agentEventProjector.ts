@@ -234,10 +234,9 @@ export function subagentProgressText(rawType: string, payload: Record<string, un
     const message = stringField(payload, 'message');
     if (message) return capProgressText(message);
   }
-  if (rawType === 'tool.result') {
-    const name = stringField(payload, 'name') ?? stringField(payload, 'toolName') ?? stringField(payload, 'toolCallId') ?? 'tool';
-    return `Finished ${toolLabel(cleanToolName(name))}`;
-  }
+  // tool.result lines ("Finished X") add noise without much information — the
+  // next call or the final summary already implies completion — so skip them.
+  if (rawType === 'tool.result') return null;
   return null;
 }
 

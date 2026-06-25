@@ -18,14 +18,9 @@ describe('subagentProgressText', () => {
     expect(text).not.toContain('"command"');
   });
 
-  it('formats a tool result', () => {
-    expect(subagentProgressText('tool.result', { name: 'read' })).toContain('Finished');
-  });
-
-  it('strips a trailing numeric index from tool.result names', () => {
-    const text = subagentProgressText('tool.result', { name: 'Read_0' });
-    expect(text).toContain('Finished');
-    expect(text).not.toContain('Read_0');
+  it('drops tool.result lines as noise', () => {
+    expect(subagentProgressText('tool.result', { name: 'read' })).toBeNull();
+    expect(subagentProgressText('tool.result', { name: 'Read_0' })).toBeNull();
   });
 
   it('returns tool.progress update text', () => {
