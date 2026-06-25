@@ -37,7 +37,10 @@ import type { AgentEvent, TurnEndedEvent, TurnEndReason } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
 import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
-import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
+import {
+  renderUserPromptHookBlockResult,
+  renderUserPromptHookResultChunks,
+} from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
 import { budgetToolResultForModel } from './tool-result-budget';
@@ -46,7 +49,7 @@ interface ActiveTurn {
   readonly turnId: number;
   readonly controller: AbortController;
   readonly promise: Promise<TurnEndResult>;
-  readonly firstRequest: ControlledPromise<void>;
+  readonly firstRequest: ControlledPromise;
 }
 
 interface BufferedSteer {
@@ -603,19 +606,21 @@ export class TurnFlow {
       };
     }
 
-    const hookResult = renderUserPromptHookResult(promptHookResults);
-    if (hookResult === undefined) return undefined;
-
-    this.agent.context.appendUserMessage([{ type: 'text', text: hookResult.text }], {
-      kind: 'hook_result',
-      event: 'UserPromptSubmit',
-    });
-    this.agent.emitEvent({
-      type: 'hook.result',
-      turnId,
-      hookEvent: hookResult.event,
-      content: hookResult.message,
-    });
+    for (const hookResult of renderUserPromptHookResultChunks(promptHookResults)) {
+      const suppressTuiDisplay = hookResult.suppressTuiDisplay === true;
+      this.agent.context.appendUserMessage([{ type: 'text', text: hookResult.text }], {
+        kind: 'hook_result',
+        event: 'UserPromptSubmit',
+        ...(suppressTuiDisplay ? { suppressTuiDisplay: true } : {}),
+      });
+      if (suppressTuiDisplay) continue;
+      this.agent.emitEvent({
+        type: 'hook.result',
+        turnId,
+        hookEvent: hookResult.event,
+        content: hookResult.message,
+      });
+    }
     return undefined;
   }
 
@@ -808,6 +813,12 @@ export class TurnFlow {
         active.firstRequest.resolve();
         return;
       }
+      case 'step.begin':
+      case 'step.retrying':
+      case 'tool.progress':
+      case 'tool.result':
+      case 'turn.interrupted':
+        return;
       default:
         return;
     }

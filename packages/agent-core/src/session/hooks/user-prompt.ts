@@ -8,14 +8,21 @@ export interface RenderedHookResult {
   readonly event: string;
   readonly message: string;
   readonly text: string;
+  readonly suppressTuiDisplay?: boolean;
+}
+
+export interface RenderUserPromptHookResultOptions {
+  readonly suppressTuiDisplay?: boolean;
 }
 
 export function renderUserPromptHookResult(
   results: readonly HookResult[] | undefined,
+  options: RenderUserPromptHookResultOptions = {},
 ): RenderedHookResult | undefined {
   const messages =
     results
       ?.filter((result) => result.action !== 'block')
+      ?.filter((result) => matchesDisplayFilter(result, options.suppressTuiDisplay))
       ?.map(userPromptHookMessage)
       .filter(isNonEmptyString) ??
     [];
@@ -26,6 +33,33 @@ export function renderUserPromptHookResult(
     message: displayMessage,
     text: messages.map((message) => renderHookResult('UserPromptSubmit', message)).join('\n'),
   };
+}
+
+export function renderUserPromptHookResultChunks(
+  results: readonly HookResult[] | undefined,
+): readonly RenderedHookResult[] {
+  const rendered: RenderedHookResult[] = [];
+  let current: { suppressTuiDisplay: boolean; messages: string[] } | undefined;
+
+  for (const result of results ?? []) {
+    if (result.action === 'block') continue;
+    const message = userPromptHookMessage(result);
+    if (message === undefined) continue;
+    const suppressTuiDisplay = result.suppressTuiDisplay === true;
+
+    if (current === undefined || current.suppressTuiDisplay !== suppressTuiDisplay) {
+      if (current !== undefined) {
+        rendered.push(renderMessages(current.messages, current.suppressTuiDisplay));
+      }
+      current = { suppressTuiDisplay, messages: [] };
+    }
+    current.messages.push(message);
+  }
+
+  if (current !== undefined) {
+    rendered.push(renderMessages(current.messages, current.suppressTuiDisplay));
+  }
+  return rendered;
 }
 
 export function renderUserPromptHookBlockResult(
@@ -63,4 +97,22 @@ function userPromptHookMessage(result: HookResult): string | undefined {
 
 function isNonEmptyString(value: string | undefined): value is string {
   return value !== undefined && value.length > 0;
+}
+
+function renderMessages(messages: readonly string[], suppressTuiDisplay = false): RenderedHookResult {
+  const displayMessage = messages.join('\n\n');
+  return {
+    event: 'UserPromptSubmit',
+    message: displayMessage,
+    text: messages.map((message) => renderHookResult('UserPromptSubmit', message)).join('\n'),
+    suppressTuiDisplay: suppressTuiDisplay ? true : undefined,
+  };
+}
+
+function matchesDisplayFilter(
+  result: HookResult,
+  suppressTuiDisplay: boolean | undefined,
+): boolean {
+  if (suppressTuiDisplay === undefined) return true;
+  return (result.suppressTuiDisplay === true) === suppressTuiDisplay;
 }

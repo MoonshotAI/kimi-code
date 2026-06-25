@@ -87,7 +87,10 @@ export class HookEngine {
           timeout: hook.timeout ?? DEFAULT_HOOK_TIMEOUT_SECONDS,
           cwd: this.options.cwd === '' ? undefined : this.options.cwd,
           signal: args.signal,
-        }),
+        }).then((result) => ({
+          ...result,
+          suppressTuiDisplay: hook.suppressTuiDisplay === true,
+        })),
       ),
     );
     const { action, reason } = aggregateResults(event, results);

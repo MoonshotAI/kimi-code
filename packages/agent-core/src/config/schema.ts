@@ -114,6 +114,7 @@ export const HookDefSchema = z
     matcher: z.string().optional(),
     command: z.string().min(1),
     timeout: z.number().int().min(1).max(600).optional(),
+    suppressTuiDisplay: z.boolean().optional(),
   })
   .strict();
 

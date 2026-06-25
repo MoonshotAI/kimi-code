@@ -47,8 +47,9 @@ command = "terminal-notifier -title Kimi -message 'Task done'"
 | `matcher` | `string` | 否 | 用正则表达式（一种字符串匹配语法）过滤事件目标；不填则匹配全部 |
 | `command` | `string` | 是 | 触发时要运行的 Shell 命令 |
 | `timeout` | `integer` | 否 | 超时秒数，范围 1–600；默认 30 秒 |
+| `suppress_tui_display` | `boolean` | 否 | 对 `UserPromptSubmit` 的 allow 输出生效：把 hook 结果注入模型上下文，但不显示在终端 transcript 里 |
 
-`[[hooks]]` 只允许这四个字段，多写会导致配置文件加载失败。
+`[[hooks]]` 只允许这五个字段，多写会导致配置文件加载失败。
 
 **同一事件匹配多条规则时**，所有命中的 hook 并行运行；`command` 完全相同的多条规则只运行一次。
 
@@ -98,7 +99,7 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 
 | 事件 | Matcher 匹配的是 | 会触发阻断？ | 说明 |
 | --- | --- | --- | --- |
-| `UserPromptSubmit` | 用户提交的文本内容 | ✓ | 用户发送消息时触发；返回文本会附加到上下文；若阻断，本轮不调用模型 |
+| `UserPromptSubmit` | 用户提交的文本内容 | ✓ | 用户发送消息时触发；返回文本会附加到上下文；若阻断，本轮不调用模型。可以在 hook 上设置 `suppress_tui_display = true`，隐藏终端中的 allow 输出，同时仍注入上下文 |
 | `PreToolUse` | 工具名 | ✓ | 工具调用前触发（权限检查前）；阻断后工具不会执行 |
 | `Stop` | 空字符串 | ✓ | 模型准备结束本轮时触发；阻断后可追加一条消息让模型继续 |
 | `PostToolUse` | 工具名 | — | 工具成功执行后触发（观察用） |

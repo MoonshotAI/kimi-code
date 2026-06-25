@@ -103,6 +103,28 @@ describe('events / display re-exports', () => {
     expect(parsed.sessionId).toBe('sess_1');
   });
 
+  it('preserves hook-result display suppression in prompt origins', () => {
+    const parsed = eventSchema.parse({
+      type: 'turn.started',
+      agentId: 'agent_1',
+      sessionId: 'sess_1',
+      turnId: 1,
+      origin: {
+        kind: 'hook_result',
+        event: 'UserPromptSubmit',
+        suppressTuiDisplay: true,
+      },
+    });
+
+    expect(parsed.type).toBe('turn.started');
+    if (parsed.type !== 'turn.started') throw new Error('expected turn.started');
+    expect(parsed.origin).toEqual({
+      kind: 'hook_result',
+      event: 'UserPromptSubmit',
+      suppressTuiDisplay: true,
+    });
+  });
+
   it('validates prompt.submitted events', () => {
     const parsed = eventSchema.parse({
       type: 'prompt.submitted',

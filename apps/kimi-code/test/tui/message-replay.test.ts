@@ -990,6 +990,26 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('hook response 2');
   });
 
+  it('skips replayed hook results suppressed from TUI display', async () => {
+    const hookResult =
+      '<hook_result hook_event="UserPromptSubmit">\nhidden hook response\n</hook_result>';
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'prompt' }]),
+      message('user', [{ type: 'text', text: hookResult }], {
+        origin: {
+          kind: 'hook_result',
+          event: 'UserPromptSubmit',
+          suppressTuiDisplay: true,
+        },
+      }),
+    ]);
+
+    const transcript = driver.state.transcriptContainer.render(120).join('\n');
+
+    expect(transcript).not.toContain('UserPromptSubmit hook');
+    expect(transcript).not.toContain('hidden hook response');
+  });
+
   it('renders replayed compaction records as completed compaction blocks', async () => {
     const driver = await replayIntoDriver([
       message('user', [{ type: 'text', text: 'prompt before compaction' }]),
