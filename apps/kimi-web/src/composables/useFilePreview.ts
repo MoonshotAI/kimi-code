@@ -87,6 +87,17 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
   }
 
   async function openFilePreview(target: FilePreviewRequest): Promise<void> {
+    // Clicking the link for the already-open file toggles the panel closed.
+    const current = previewTarget.value;
+    if (
+      detailTarget.value === 'file' &&
+      current &&
+      current.path === target.path &&
+      current.line === target.line
+    ) {
+      closeFilePreview();
+      return;
+    }
     const requestSeq = ++previewRequestSeq;
     detailTarget.value = 'file';
     previewFile.value = null;

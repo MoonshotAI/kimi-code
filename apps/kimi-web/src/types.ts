@@ -185,6 +185,8 @@ export interface FilePreviewRequest {
  * shown instead.
  */
 export interface ToolDiffTarget {
+  /** Tool-call id; used so clicking the same card again toggles the panel closed. */
+  id: string;
   title: string;
   path?: string;
   lines: DiffViewLine[] | null;

@@ -115,6 +115,7 @@ const diffTarget = computed<ToolDiffTarget | null>(() => {
   const d = parseToolArg(props.tool.arg);
   const path = d && typeof d.path === 'string' ? d.path : undefined;
   return {
+    id: props.tool.id,
     title: toolLabel(props.tool.name),
     path,
     // On error the diff describes what was attempted, not what happened — show

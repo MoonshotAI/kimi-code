@@ -161,6 +161,10 @@ export function useDetailPanel({
   const toolDiffVisible = computed(() => toolDiffTarget.value !== null);
 
   function openToolDiff(target: ToolDiffTarget): void {
+    if (detailTarget.value === 'toolDiff' && toolDiffTarget.value?.id === target.id) {
+      closeToolDiff();
+      return;
+    }
     detailTarget.value = 'toolDiff';
     toolDiffTarget.value = target;
   }
@@ -177,6 +181,10 @@ export function useDetailPanel({
   const detailDiffPath = ref<string | null>(null);
 
   function openDiffDetail(): void {
+    if (detailTarget.value === 'diff') {
+      closeDiffDetail();
+      return;
+    }
     detailTarget.value = 'diff';
     detailDiffMode.value = 'list';
     detailDiffPath.value = null;
