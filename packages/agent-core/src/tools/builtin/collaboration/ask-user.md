@@ -17,4 +17,4 @@ Overusing this tool interrupts the user's flow. Only use it when the user's inpu
 - Each question should have 2-4 meaningful, distinct options
 - You can ask 1-4 questions at a time; group related questions to minimize interruptions
 - If you recommend a specific option, list it first and append "(Recommended)" to its label
-- The result is JSON with an `answers` object keyed by question; if `answers` is empty and a `note` says the user dismissed it, they declined to answer — proceed with your best judgment and do not re-ask the same question
+- The result is JSON with an `answers` object whose keys identify each answered question; if `answers` is empty and a `note` says the user dismissed it, they declined to answer — proceed with your best judgment and do not re-ask the same question
