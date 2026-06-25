@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -161,5 +161,26 @@ describe('WorkspaceRegistryService', () => {
 
     const list = await ctx.registry.list();
     expect(list.map((w) => w.root)).toContain(root);
+  });
+
+  it('registers a derived workspace under the symlink bucket key, not the realpath', async () => {
+    const realDir = await makeProjectRoot('real');
+    const linkParent = await mkdtemp(join(tmpdir(), 'kimi-ws-link-'));
+    tempRoots.push(linkParent);
+    const linkDir = join(linkParent, 'link');
+    await symlink(realDir, linkDir);
+
+    // Seed a session bucket keyed by the SYMLINK path (resolve, not realpath),
+    // matching how SessionStore keys cwd-only sessions created from a symlinked cwd.
+    await seedSessionBucket(linkDir, 'sess-symlink-1');
+
+    const list = await ctx.registry.list();
+    const symlinkId = encodeWorkDirKey(linkDir);
+    const derived = list.find((w) => w.id === symlinkId);
+
+    // The workspace must be registered with the bucket key so per-workspace
+    // session lookups read the same bucket the sessions live in.
+    expect(derived).toBeDefined();
+    expect(derived?.session_count).toBe(1);
   });
 });

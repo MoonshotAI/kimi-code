@@ -115,14 +115,19 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     for (const d of missing) {
       const root = rootByKey.get(d.name);
       if (root === undefined) continue;
+      // Verify the root still exists (skip stale buckets) without changing the
+      // key. Session buckets are keyed by normalizeWorkDir (resolve, not
+      // realpath), so register with the resolved root to keep the workspace id
+      // aligned with the bucket — otherwise a symlinked cwd would register a
+      // realpath id whose bucket lookup misses the actual sessions.
       try {
-        await this.createOrTouch(root);
+        await fsp.stat(root);
       } catch (err) {
-        // The project root may have been deleted while its sessions remain on
-        // disk; skip it so a stale bucket cannot break listing.
-        if (err instanceof WorkspaceRootNotFoundError) continue;
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT' || code === 'ENOTDIR') continue;
         throw err;
       }
+      await this.register(d.name, root);
     }
   }
 
@@ -148,7 +153,17 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       }
       throw err;
     }
-    const workspaceId = encodeWorkDirKey(realRoot);
+    return this.register(encodeWorkDirKey(realRoot), realRoot, name);
+  }
+
+  /** Register a workspace with an explicit id and root, without realpath-ing.
+   *  createOrTouch keys by realpath; derived registration keys by the resolved
+   *  session bucket (which must stay aligned with the on-disk bucket). */
+  private async register(
+    workspaceId: string,
+    root: string,
+    name?: string,
+  ): Promise<Workspace> {
     await fsp.mkdir(join(this.sessionsDir, workspaceId), { recursive: true, mode: 0o700 });
 
     const now = new Date().toISOString();
@@ -159,8 +174,8 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         existing !== undefined
           ? { ...existing, last_opened_at: now }
           : {
-              root: realRoot,
-              name: name ?? basename(realRoot),
+              root,
+              name: name ?? basename(root),
               created_at: now,
               last_opened_at: now,
             };
