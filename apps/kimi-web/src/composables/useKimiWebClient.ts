@@ -464,6 +464,13 @@ function forgetSession(sessionId: string): void {
   // buffered event for this id would otherwise be reduced and recreate the very
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
+  // Drain the streaming-event batcher too. unsubscribe() stops future server
+  // frames, but events already queued for the next animation frame would
+  // otherwise survive and be reduced AFTER the maps below are cleared —
+  // recreating entries like messagesBySession[id] and lastSeqBySession[id].
+  // That would make hasLoadedMessages() treat the stale empty cache as
+  // authoritative and skip the next snapshot fetch for this id.
+  enqueueEvent.flush();
   removeSession(sessionId);
   removeSessionMessages(sessionId);
   delete rawState.approvalsBySession[sessionId];
