@@ -879,6 +879,7 @@ export class KimiTUI {
       turnId: undefined,
       renderMode: 'plain',
       content: currentTheme.fg('shellMode', `$ ${command}`),
+      bullet: '',
     });
     // Create the live output entry up front. ShellRunComponent owns its own
     // rendering (running card → final view) and is mutated in place as output
@@ -1642,7 +1643,7 @@ export class KimiTUI {
         const images = entry.imageAttachmentIds
           ?.map((id) => this.imageStore.get(id))
           .filter((a): a is ImageAttachment => a?.kind === 'image');
-        return new UserMessageComponent(entry.content, images);
+        return new UserMessageComponent(entry.content, images, entry.bullet);
       }
       case 'skill_activation':
         return new SkillActivationComponent(

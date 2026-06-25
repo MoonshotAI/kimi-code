@@ -135,7 +135,7 @@ export function replayEntry(
   kind: TranscriptEntry['kind'],
   content: string,
   renderMode: TranscriptEntry['renderMode'],
-  extras: { detail?: string } = {},
+  extras: { detail?: string; bullet?: string } = {},
 ): TranscriptEntry {
   return {
     id: nextTranscriptId(),
@@ -144,6 +144,7 @@ export function replayEntry(
     renderMode,
     content,
     detail: extras.detail,
+    bullet: extras.bullet,
   };
 }
 

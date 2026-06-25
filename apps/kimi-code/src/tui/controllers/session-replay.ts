@@ -269,7 +269,9 @@ export class SessionReplayRenderer {
         const cmd = (extractBashTag(text, 'bash-input') ?? text).trim();
         this.advanceTurn(context);
         this.host.appendTranscriptEntry(
-          replayEntry(context, 'user', currentTheme.fg('shellMode', `$ ${cmd}`), 'plain'),
+          replayEntry(context, 'user', currentTheme.fg('shellMode', `$ ${cmd}`), 'plain', {
+            bullet: '',
+          }),
         );
       } else {
         const stdout = (extractBashTag(text, 'bash-stdout') ?? '').trim();
