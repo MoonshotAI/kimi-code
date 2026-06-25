@@ -74,7 +74,7 @@ export interface ColorPalette {
 
   // ── Shell mode ──
   /** Shell mode (`!`): the `!` prompt symbol, bash-mode editor border, and the
-   *  echoed `$ command` line. Its own hue (magenta/rose), distinct from
+   *  echoed `$ command` line. Its own hue (violet), distinct from
    *  plan-mode (primary) and the user role (roleUser). */
   shellMode: string;
 }
@@ -103,7 +103,7 @@ export const darkColors: ColorPalette = {
   diffMeta: '#888888',
 
   roleUser: '#FFCB6B',
-  shellMode: '#FF79C6',
+  shellMode: '#BD93F9',
 };
 
 export const lightColors: ColorPalette = {
@@ -130,7 +130,7 @@ export const lightColors: ColorPalette = {
   diffMeta: '#5F5F5F',
 
   roleUser: '#9A4A00',
-  shellMode: '#C2185B',
+  shellMode: '#7C3AED',
 };
 
 export type ResolvedTheme = 'dark' | 'light';
