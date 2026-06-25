@@ -1694,11 +1694,15 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
   const result: AppWorkspace[] = [];
   for (const root of [...realRoots, ...derivedRoots]) {
     const w = byRoot.get(root)!;
-    // Trust the daemon's session_count (active sessions only) as the workspace
-    // total: sessions are now paged per workspace, so the local loaded count is
-    // a lower bound, not the total. The loaded count is kept as a floor so a
-    // workspace never reports fewer sessions than we actually hold in memory.
-    const count = Math.max(w.sessionCount, counts.get(w.id) ?? counts.get(w.root) ?? 0);
+    // When a workspace's sessions are fully loaded (hasMore === false), the
+    // local count is exact — prefer it so archiving the last session drops the
+    // count to 0 immediately. While pages remain, the local count is only a
+    // lower bound, so keep the daemon session_count as a floor.
+    const localCount = counts.get(w.id) ?? counts.get(w.root) ?? 0;
+    const count =
+      rawState.sessionsHasMoreByWorkspace[w.id] === false
+        ? localCount
+        : Math.max(w.sessionCount, localCount);
     let branch = w.branch;
     if (!branch && activeGit && activeRoot === w.root) branch = activeGit.branch;
     result.push({ ...w, sessionCount: count, branch });
