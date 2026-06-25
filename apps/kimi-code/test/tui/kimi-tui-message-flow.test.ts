@@ -32,15 +32,40 @@ import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
 import {
+  packageCurrentBundle,
+  packageCurrentCodebase,
+  packageCurrentSession,
+  scanCodebase,
+  uploadPackagedCodebase,
+} from '../../src/feedback/codebase-upload';
+import {
+  promptFeedbackAttachment,
   promptFeedbackInput,
   runModelSelector,
+  type FeedbackPromptResult,
 } from '#/tui/commands/prompts';
 import type { QueuedMessage } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
-  return { ...actual, promptFeedbackInput: vi.fn() };
+  return {
+    ...actual,
+    promptFeedbackInput: vi.fn(),
+    promptFeedbackAttachment: vi.fn(),
+  };
+});
+
+vi.mock('../../src/feedback/codebase-upload', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/feedback/codebase-upload')>();
+  return {
+    ...actual,
+    scanCodebase: vi.fn().mockResolvedValue(undefined),
+    packageCurrentCodebase: vi.fn(),
+    packageCurrentBundle: vi.fn(),
+    packageCurrentSession: vi.fn(),
+    uploadPackagedCodebase: vi.fn(),
+  };
 });
 
 // /feedback falls back to opening GitHub Issues in a browser when not signed in
@@ -73,7 +98,7 @@ interface MessageDriver {
 
 interface FeedbackDriver extends MessageDriver {
   handleFeedbackCommand(): Promise<void>;
-  promptFeedbackInput(): Promise<string | undefined>;
+  promptFeedbackInput(): Promise<FeedbackPromptResult | undefined>;
 }
 
 interface ModelSelectorDriver extends MessageDriver {
@@ -234,8 +259,11 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       logout: vi.fn(),
       getManagedUsage: vi.fn(),
       submitFeedback: vi.fn(
-        async (): Promise<{ kind: 'ok' } | { kind: 'error'; status?: number; message: string }> => ({
+        async (): Promise<
+          { kind: 'ok'; feedbackId: number } | { kind: 'error'; status?: number; message: string }
+        > => ({
           kind: 'ok',
+          feedbackId: 3,
         }),
       ),
     },
@@ -472,8 +500,9 @@ command = "vim"
       },
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    vi.mocked(promptFeedbackInput).mockImplementation(async () => 'useful feedback');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok' });
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
     harness.track.mockClear();
 
     await handleFeedbackCommand(feedbackDriver as any);
@@ -487,6 +516,149 @@ command = "vim"
       }),
     );
     expect(harness.track).toHaveBeenCalledWith('feedback_submitted', undefined);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 3');
+  });
+
+  it('waits for the codebase upload to finish before returning', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+
+    vi.mocked(scanCodebase).mockResolvedValueOnce({
+      root: '/tmp/proj-a',
+      files: [{ path: 'keep.ts', size: 4 }],
+      fingerprint: 'fp-123',
+      usedGitIgnore: false,
+    } as any);
+    vi.mocked(packageCurrentBundle).mockResolvedValueOnce({
+      path: '/tmp/fake-archive.zip',
+      size: 4,
+      sha256: 'hash-123',
+      fingerprint: 'fp-123',
+      fileCount: 1,
+    });
+
+    let resolveUpload!: () => void;
+    vi.mocked(uploadPackagedCodebase).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveUpload = resolve; }),
+    );
+
+    let settled = false;
+    const command = handleFeedbackCommand(feedbackDriver as any).then(() => {
+      settled = true;
+    });
+
+    // The command reaches the upload and blocks on it; it must not return
+    // while the upload is still in flight.
+    await vi.waitFor(() => {
+      expect(uploadPackagedCodebase).toHaveBeenCalledOnce();
+    });
+    expect(settled).toBe(false);
+
+    resolveUpload();
+    await command;
+    expect(settled).toBe(true);
+    expect(harness.auth.submitFeedback).toHaveBeenCalledOnce();
+  });
+
+  it('tells the user when feedback is sent but codebase packaging fails', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(scanCodebase).mockReset();
+    vi.mocked(packageCurrentBundle).mockReset();
+    vi.mocked(uploadPackagedCodebase).mockReset();
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+
+    vi.mocked(scanCodebase).mockResolvedValueOnce({
+      root: '/tmp/proj-a',
+      files: [{ path: 'keep.ts', size: 4 }],
+      fingerprint: 'fp-123',
+      usedGitIgnore: false,
+    } as any);
+    vi.mocked(packageCurrentBundle).mockRejectedValueOnce(new Error('zip failed'));
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    const calls = harness.auth.submitFeedback.mock.calls as unknown as Array<[Record<string, unknown>]>;
+    expect(calls[0]?.[0]).not.toHaveProperty('info');
+    expect(uploadPackagedCodebase).not.toHaveBeenCalled();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 3');
+    expect(transcript).toContain('attachment upload failed');
+  });
+
+  it('tells the user when the codebase upload fails', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+
+    vi.mocked(scanCodebase).mockResolvedValueOnce({
+      root: '/tmp/proj-a',
+      files: [{ path: 'keep.ts', size: 4 }],
+      fingerprint: 'fp-123',
+      usedGitIgnore: false,
+    } as any);
+    vi.mocked(packageCurrentBundle).mockResolvedValueOnce({
+      path: '/tmp/fake-archive.zip',
+      size: 4,
+      sha256: 'hash-123',
+      fingerprint: 'fp-123',
+      fileCount: 1,
+    });
+    vi.mocked(uploadPackagedCodebase).mockRejectedValueOnce(new Error('upload failed'));
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(harness.auth.submitFeedback).toHaveBeenCalledOnce();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 3');
+    expect(transcript).toContain('attachment upload failed');
   });
 
   it('shows feedback API error messages without replacing them with HTTP status text', async () => {
@@ -505,7 +677,8 @@ command = "vim"
       },
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    vi.mocked(promptFeedbackInput).mockImplementation(async () => 'useful feedback');
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
     harness.auth.submitFeedback.mockResolvedValueOnce({
       kind: 'error',
       status: 500,

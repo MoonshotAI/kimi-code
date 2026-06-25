@@ -1,4 +1,6 @@
+import { appendFile, mkdir } from 'node:fs/promises';
 import { release as osRelease, type as osType } from 'node:os';
+import { join } from 'node:path';
 
 import type { McpServerInfo, SessionStatus, SessionUsage } from '@moonshot-ai/kimi-code-sdk';
 
@@ -12,19 +14,37 @@ import {
   FEEDBACK_STATUS_NOT_SIGNED_IN,
   FEEDBACK_STATUS_SUBMITTING,
   FEEDBACK_STATUS_SUCCESS,
+  FEEDBACK_STATUS_UPLOADING,
+  FEEDBACK_STATUS_UPLOAD_FAILED,
   FEEDBACK_TELEMETRY_EVENT,
+  feedbackIdLine,
   feedbackSessionLine,
   withFeedbackVersionPrefix,
 } from '../constant/feedback';
 import { isManagedUsageProvider } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { getLogDir } from '#/utils/paths';
+import {
+  packageCurrentBundle,
+  packageCurrentSession,
+  removePackagedCodebaseArchive,
+  scanCodebase,
+  uploadPackagedCodebase,
+  BUNDLE_ARCHIVE_FILENAME,
+  SESSION_ARCHIVE_FILENAME,
+  type FeedbackCodebaseArchive,
+  type FeedbackCodebaseScanResult,
+  type FeedbackUploadUrlApi,
+} from '../../feedback/codebase-upload';
 import { openUrl } from '#/utils/open-url';
-import { promptFeedbackInput } from './prompts';
+import { promptFeedbackAttachment, promptFeedbackInput, type FeedbackAttachmentLevel } from './prompts';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
 // Feedback
 // ---------------------------------------------------------------------------
+
+const CODEBASE_SCAN_TIMEOUT_MS = 3000;
 
 export async function handleFeedbackCommand(host: SlashCommandHost): Promise<void> {
   const fallback = (reason: string): void => {
@@ -39,30 +59,146 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     return;
   }
 
-  const content = await promptFeedbackInput(host);
-  if (content === undefined) {
+  // Stage 1: collect the free-form feedback text.
+  const input = await promptFeedbackInput(host);
+  if (input === undefined) {
     host.showStatus(FEEDBACK_STATUS_CANCELLED);
     return;
   }
 
+  // Stage 2: ask whether to attach diagnostics (logs / codebase).
+  const level = await promptFeedbackAttachment(host);
+  if (level === undefined) {
+    host.showStatus(FEEDBACK_STATUS_CANCELLED);
+    return;
+  }
+
+  const version = withFeedbackVersionPrefix(host.state.appState.version);
   const spinner = host.showLoginProgressSpinner(FEEDBACK_STATUS_SUBMITTING);
   const res = await host.harness.auth.submitFeedback({
-    content,
+    content: input.value,
     sessionId: host.state.appState.sessionId,
-    version: withFeedbackVersionPrefix(host.state.appState.version),
+    version,
     os: `${osType()} ${osRelease()}`,
     model: host.state.appState.model.length > 0 ? host.state.appState.model : null,
   });
 
-  if (res.kind === 'ok') {
-    spinner.stop({ ok: true, label: FEEDBACK_STATUS_SUCCESS });
-    host.showStatus(feedbackSessionLine(host.state.appState.sessionId));
-    host.track(FEEDBACK_TELEMETRY_EVENT);
+  if (res.kind !== 'ok') {
+    spinner.stop({ ok: false, label: res.message });
+    fallback(FEEDBACK_STATUS_FALLBACK);
     return;
   }
 
-  spinner.stop({ ok: false, label: res.message });
-  fallback(FEEDBACK_STATUS_FALLBACK);
+  // Await the upload before returning so the command cannot outlive the
+  // upload task; the spinner stays up for the whole submit + upload cycle
+  // so the outcome is deterministic.
+  let uploadFailed = false;
+  if (level !== 'none') {
+    spinner.setLabel(FEEDBACK_STATUS_UPLOADING);
+    try {
+      await uploadFeedbackAttachment(host, level, res.feedbackId);
+    } catch (error) {
+      uploadFailed = true;
+      await logFeedbackUploadError(error);
+    }
+  }
+
+  spinner.stop({ ok: true, label: FEEDBACK_STATUS_SUCCESS });
+  host.showStatus(feedbackSessionLine(host.state.appState.sessionId));
+  host.showStatus(feedbackIdLine(res.feedbackId));
+  host.track(FEEDBACK_TELEMETRY_EVENT);
+  if (uploadFailed) {
+    host.showStatus(FEEDBACK_STATUS_UPLOAD_FAILED);
+  }
+}
+
+async function uploadFeedbackAttachment(
+  host: SlashCommandHost,
+  level: Exclude<FeedbackAttachmentLevel, 'none'>,
+  feedbackId: number,
+): Promise<void> {
+  const api = createFeedbackUploadApi(host);
+  let archive: FeedbackCodebaseArchive | undefined;
+  try {
+    if (level === 'logs') {
+      const sessionDir = await resolveCurrentSessionDir(host);
+      if (sessionDir === undefined) {
+        throw new Error('cannot locate the current session directory');
+      }
+      archive = await packageCurrentSession(sessionDir);
+      await uploadPackagedCodebase(api, archive, feedbackId, { filename: SESSION_ARCHIVE_FILENAME });
+    } else {
+      const [sessionDir, scan] = await Promise.all([
+        resolveCurrentSessionDir(host),
+        scanCodebaseForFeedback(host.state.appState.workDir),
+      ]);
+      archive = await packageCurrentBundle({ codebase: scan, sessionDir });
+      await uploadPackagedCodebase(api, archive, feedbackId, { filename: BUNDLE_ARCHIVE_FILENAME });
+    }
+  } finally {
+    if (archive !== undefined) {
+      await removePackagedCodebaseArchive(archive).catch(() => {});
+    }
+  }
+}
+
+async function resolveCurrentSessionDir(host: SlashCommandHost): Promise<string | undefined> {
+  try {
+    const sessions = await host.harness.listSessions({ workDir: host.state.appState.workDir });
+    return sessions.find((session) => session.id === host.state.appState.sessionId)?.sessionDir;
+  } catch {
+    return undefined;
+  }
+}
+
+async function scanCodebaseForFeedback(workDir: string): Promise<FeedbackCodebaseScanResult | undefined> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, CODEBASE_SCAN_TIMEOUT_MS);
+  try {
+    return await scanCodebase(workDir, { signal: controller.signal });
+  } catch (error) {
+    await logFeedbackUploadError(error);
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function logFeedbackUploadError(error: unknown): Promise<void> {
+  try {
+    const logDir = getLogDir();
+    await mkdir(logDir, { recursive: true });
+    const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    await appendFile(join(logDir, 'feedback-upload.log'), `${new Date().toISOString()} ${message}\n`);
+  } catch {
+    // best-effort logging only
+  }
+}
+
+function createFeedbackUploadApi(host: SlashCommandHost): FeedbackUploadUrlApi {
+  return {
+    async createUploadUrl(input) {
+      const res = await host.harness.auth.createFeedbackUploadUrl(input);
+      if (res.kind !== 'ok') throw new Error(res.message);
+      return {
+        uploadId: res.upload_id,
+        parts: res.parts.map((part) => ({
+          partNumber: part.part_number,
+          url: part.url,
+          size: part.size,
+        })),
+      };
+    },
+    async completeUpload(input) {
+      const res = await host.harness.auth.completeFeedbackUpload({
+        uploadId: input.uploadId,
+        parts: input.parts.map((part) => ({ partNumber: part.partNumber, etag: part.etag })),
+      });
+      if (res.kind !== 'ok') throw new Error(res.message);
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

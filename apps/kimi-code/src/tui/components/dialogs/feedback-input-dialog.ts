@@ -5,6 +5,10 @@
  * Geometry mirrors `DeviceCodeBox` so the chrome stays consistent with
  * the OAuth login flow. The box embeds a `pi-tui` Input for the actual
  * text entry; cursor visibility tracks the dialog's `focused` flag.
+ *
+ * This is stage 1 of the feedback flow: it collects the free-form text
+ * only. Whether to attach diagnostic logs / codebase is decided in a
+ * follow-up stage (see `promptFeedbackAttachment`).
  */
 
 import {
@@ -83,7 +87,15 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
     const footerLine = truncateToWidth(footerStyled, innerWidth, '…');
     const inputLine = this.input.render(innerWidth)[0] ?? '> ';
 
-    const contentLines: string[] = [titleLine, '', subtitleLine, '', inputLine, '', footerLine];
+    const contentLines: string[] = [
+      titleLine,
+      '',
+      subtitleLine,
+      '',
+      inputLine,
+      '',
+      footerLine,
+    ];
 
     if (safeWidth < 4) {
       return ['', ...contentLines.map((line) => truncateToWidth(line, safeWidth, '…'))];
