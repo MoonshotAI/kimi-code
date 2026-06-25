@@ -316,6 +316,16 @@ export interface ExtendedState extends KimiClientState {
   messagesHasMoreBySession: Record<string, boolean>;
   /** True when the last older-message fetch failed for a session. */
   messagesLoadMoreErrorBySession: Record<string, boolean>;
+  /** Whether the server has more sessions than currently loaded, per workspace. */
+  sessionsHasMoreByWorkspace: Record<string, boolean>;
+  /** True while the next page of sessions is being fetched for a workspace. */
+  sessionsLoadingMoreByWorkspace: Record<string, boolean>;
+  /** Paging cursor (`before_id`) for the next session page, per workspace. Tracks
+   *  the end of the last fetched page so a deep-linked older session appended
+   *  out of band does not shift the cursor and skip intervening sessions. */
+  sessionsCursorByWorkspace: Record<string, string | undefined>;
+  /** True once every session has been loaded (after a search-triggered full drain). */
+  sessionsFullyLoaded: boolean;
 }
 
 const rawState: ExtendedState = reactive({
@@ -352,6 +362,10 @@ const rawState: ExtendedState = reactive({
   messagesLoadingMoreBySession: {},
   messagesHasMoreBySession: {},
   messagesLoadMoreErrorBySession: {},
+  sessionsHasMoreByWorkspace: {},
+  sessionsLoadingMoreByWorkspace: {},
+  sessionsCursorByWorkspace: {},
+  sessionsFullyLoaded: false,
 });
 
 // ---------------------------------------------------------------------------
@@ -1742,12 +1756,15 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
   const result: AppWorkspace[] = [];
   for (const root of [...realRoots, ...derivedRoots]) {
     const w = byRoot.get(root)!;
-    // Match count by either id or root (derived id === root). Once sessions
-    // have loaded, trust the live local count (0 when no sessions remain) rather
-    // than the daemon's sessionCount, which historically counted archived
-    // sessions and would keep a workspace looking non-empty after its last
-    // session was archived.
-    const count = counts.get(w.id) ?? counts.get(w.root) ?? (rawState.loading ? w.sessionCount : 0);
+    // When a workspace's sessions are fully loaded (hasMore === false), the
+    // local count is exact — prefer it so archiving the last session drops the
+    // count to 0 immediately. While pages remain, the local count is only a
+    // lower bound, so keep the daemon session_count as a floor.
+    const localCount = counts.get(w.id) ?? counts.get(w.root) ?? 0;
+    const count =
+      rawState.sessionsHasMoreByWorkspace[w.id] === false
+        ? localCount
+        : Math.max(w.sessionCount, localCount);
     let branch = w.branch;
     if (!branch && activeGit && activeRoot === w.root) branch = activeGit.branch;
     result.push({ ...w, sessionCount: count, branch });
@@ -1865,6 +1882,8 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
   return workspacesView.value.map((w) => ({
     workspace: w,
     sessions: byId.get(w.id) ?? [],
+    hasMore: rawState.sessionsHasMoreByWorkspace[w.id] ?? false,
+    loadingMore: rawState.sessionsLoadingMoreByWorkspace[w.id] ?? false,
   }));
 });
 
@@ -2171,6 +2190,8 @@ export function useKimiWebClient() {
 
     // Workspace actions
     loadWorkspaces: workspaceState.loadWorkspaces,
+    loadMoreSessions: workspaceState.loadMoreSessions,
+    loadAllSessions: workspaceState.loadAllSessions,
     selectWorkspace: workspaceState.selectWorkspace,
     openWorkspace: workspaceState.openWorkspace,
     openWorkspaceDraft: workspaceState.openWorkspaceDraft,

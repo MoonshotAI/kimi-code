@@ -562,6 +562,8 @@ function openPr(url: string): void {
         @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
         @delete-workspace="(id) => client.deleteWorkspace(id)"
         @reorder-workspaces="client.reorderWorkspaces($event)"
+        @load-more-sessions="(id) => void client.loadMoreSessions(id)"
+        @load-all-sessions="void client.loadAllSessions()"
         @select-workspaces="handleSelectWorkspaces"
         @open-settings="showSettings = true"
         @collapse="toggleSidebarCollapse"
@@ -899,6 +901,7 @@ function openPr(url: string): void {
       @rename="(id, title) => client.renameSession(id, title)"
       @archive="(id) => client.archiveSession(id)"
       @delete-workspace="(id) => client.deleteWorkspace(id)"
+      @load-more="(id) => void client.loadMoreSessions(id)"
     />
 
     <!-- Mobile settings bottom-sheet: session controls + app prefs + auth -->
