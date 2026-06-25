@@ -37,12 +37,13 @@ afterEach(async () => {
 
   }
   server = undefined;
-  // On Windows the git/gh child processes spawned during a test can outlive
-  // `server.close()` by a tick and keep the temp workspace as their cwd,
-  // which makes rmSync fail with EPERM. Retry briefly to ride out the lock.
-  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-  rmSync(bridgeHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-});
+  // On Windows the git/gh child processes and the session core process spawned
+  // during a test can outlive `server.close()` (their disposal is not fully
+  // awaited) and keep the temp workspace as their cwd, which makes rmSync fail
+  // with EPERM. Retry generously to ride out the asynchronous teardown.
+  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 250 });
+  rmSync(bridgeHome, { recursive: true, force: true, maxRetries: 40, retryDelay: 250 });
+}, 15_000);
 
 async function bootDaemon(): Promise<RunningServer> {
   server = await startServer({
