@@ -152,6 +152,20 @@ export class ToolManager {
         });
         return { stdout: result.output, stderr: '', isError: false, backgrounded: true };
       }
+
+      // When the command fails with no captured stdout/stderr, the failure
+      // reason lives in result.output (non-zero exit with no output, timeout,
+      // spawn failure). Surface it as stderr so the TUI and replay show what
+      // went wrong instead of "(no output)".
+      if (
+        isError &&
+        stdout.length === 0 &&
+        stderr.length === 0 &&
+        typeof result.output === 'string' &&
+        result.output.length > 0
+      ) {
+        stderr = result.output;
+      }
     } catch (error) {
       stderr += error instanceof Error ? error.message : String(error);
       isError = true;

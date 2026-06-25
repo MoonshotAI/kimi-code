@@ -117,6 +117,41 @@ describe('Agent context', () => {
     expect(textOf(ctx.agent.context.history[1]!)).toContain('<bash-stdout>hello');
   });
 
+  it('surfaces the failure reason when a shell command fails with no output', async () => {
+    const fakeProcess = (exitCode: number): KaosProcess => {
+      const out = Readable.from([]);
+      const err = Readable.from([]);
+      return {
+        stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+        stdout: out,
+        stderr: err,
+        pid: 1,
+        exitCode,
+        wait: vi.fn(async () => exitCode),
+        kill: vi.fn(async () => {}),
+        dispose: vi.fn(async () => {
+          out.destroy();
+          err.destroy();
+        }),
+      };
+    };
+    const kaos = createFakeKaos({
+      execWithEnv: vi.fn().mockImplementation(async () => fakeProcess(1)),
+    });
+    const ctx = testAgent({ kaos });
+    ctx.configure();
+
+    const result = await ctx.agent.tools.runShellCommand('false');
+
+    expect(result.isError).toBe(true);
+    expect(result.stderr).toContain('exit code');
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    const output = ctx.agent.context.history.at(-1)!;
+    expect(textOf(output)).toContain('<bash-stderr>');
+    expect(textOf(output)).toContain('exit code');
+  });
+
   it('renders tool error and empty-output status as model-visible text', () => {
     const ctx = testAgent();
     ctx.configure();
