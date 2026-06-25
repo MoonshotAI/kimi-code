@@ -1,9 +1,10 @@
 <!-- apps/kimi-web/src/components/chat/ApprovalCard.vue -->
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ApprovalBlock } from '../../types';
 import type { ApprovalDecision } from '../../api/types';
+import Markdown from './Markdown.vue';
 
 const props = defineProps<{
   block: ApprovalBlock;
@@ -11,10 +12,22 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  decide: [response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string }];
+  decide: [response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string; selectedLabel?: string }];
 }>();
 
 const { t } = useI18n();
+
+interface PlanReviewView {
+  plan: string;
+  path?: string;
+  options: { label: string; description?: string }[];
+}
+
+const planReview = computed<PlanReviewView | null>(() => {
+  const b = props.block;
+  if (b.kind !== 'plan_review') return null;
+  return { plan: b.plan, path: b.path, options: b.options ?? [] };
+});
 
 // Temporarily collapse to a thin bar so the approval stops covering the chat
 // while the user reads. The decision buttons + body return on expand.
@@ -24,7 +37,7 @@ const minimized = ref(false);
 // Title by kind
 // ---------------------------------------------------------------------------
 
-const titleKinds = ['shell', 'diff', 'file', 'fileop', 'url', 'search', 'invocation', 'todo', 'generic'];
+const titleKinds = ['shell', 'diff', 'file', 'fileop', 'url', 'search', 'invocation', 'todo', 'plan_review', 'generic'];
 
 function title(): string {
   const kind = titleKinds.includes(props.block.kind) ? props.block.kind : 'generic';
@@ -48,7 +61,12 @@ function openFeedback(): void {
 
 function submitFeedback(): void {
   const fb = feedbackText.value.trim();
-  emit('decide', { decision: 'rejected', feedback: fb || undefined });
+  if (planReview.value) {
+    // Revise: keep plan mode active and pass optional feedback to the agent.
+    emit('decide', { decision: 'rejected', selectedLabel: 'Revise', feedback: fb || undefined });
+  } else {
+    emit('decide', { decision: 'rejected', feedback: fb || undefined });
+  }
   feedbackOpen.value = false;
   feedbackText.value = '';
 }
@@ -76,8 +94,16 @@ function approve(): void { emit('decide', { decision: 'approved' }); }
 function approveSession(): void { emit('decide', { decision: 'approved', scope: 'session' }); }
 function reject(): void { emit('decide', { decision: 'rejected' }); }
 
+// plan_review actions
+function approvePlan(): void { emit('decide', { decision: 'approved' }); }
+function approveOption(label: string): void { emit('decide', { decision: 'approved', selectedLabel: label }); }
+function revisePlan(): void { openFeedback(); }
+function rejectAndExitPlan(): void { emit('decide', { decision: 'rejected', selectedLabel: 'Reject and Exit' }); }
+
 // ---------------------------------------------------------------------------
-// Number key shortcuts: 1=approve, 2=session, 3=reject, 4=feedback
+// Number key shortcuts. Generic cards: 1=approve, 2=session, 3=reject,
+// 4=feedback. Plan review cards: 1/2/3 map to the offered approaches (or
+// approve / revise / reject-and-exit when no approaches are offered).
 // Guard: do not fire when a textarea/input is focused
 // ---------------------------------------------------------------------------
 
@@ -86,6 +112,19 @@ function handleKeydown(e: KeyboardEvent): void {
   if (tag === 'input' || tag === 'textarea') return;
   // Hidden actions shouldn't fire from number keys while minimized.
   if (minimized.value) return;
+  const pr = planReview.value;
+  if (pr) {
+    if (pr.options.length === 0) {
+      if (e.key === '1') { e.preventDefault(); approvePlan(); }
+      else if (e.key === '2') { e.preventDefault(); revisePlan(); }
+      else if (e.key === '3') { e.preventDefault(); rejectAndExitPlan(); }
+      return;
+    }
+    if (e.key === '1' && pr.options[0]) { e.preventDefault(); approveOption(pr.options[0].label); }
+    else if (e.key === '2' && pr.options[1]) { e.preventDefault(); approveOption(pr.options[1].label); }
+    else if (e.key === '3' && pr.options[2]) { e.preventDefault(); approveOption(pr.options[2].label); }
+    return;
+  }
   if (e.key === '1') { e.preventDefault(); approve(); }
   else if (e.key === '2') { e.preventDefault(); approveSession(); }
   else if (e.key === '3') { e.preventDefault(); reject(); }
@@ -124,6 +163,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 
     <!-- Body + actions collapse when minimized -->
     <template v-if="!minimized">
+    <!-- plan_review: plan file path on the header's second line -->
+    <div v-if="block.kind === 'plan_review' && block.path" class="ah-path" :title="block.path">{{ block.path }}</div>
     <!-- Body by kind -->
 
     <!-- diff -->
@@ -187,6 +228,11 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
       </div>
     </div>
 
+    <!-- plan_review -->
+    <div v-else-if="block.kind === 'plan_review'" class="body-plan">
+      <Markdown :text="block.plan" />
+    </div>
+
     <!-- generic -->
     <div v-else class="body-generic">
       <span class="gen-text">{{ block.summary }}</span>
@@ -205,8 +251,24 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
       <div class="feedback-hint">{{ t('approval.feedbackHint') }}</div>
     </div>
 
-    <!-- Actions row -->
-    <div class="abtn">
+    <!-- plan_review actions -->
+    <div v-if="planReview" class="plan-actions">
+      <template v-if="planReview.options.length > 0">
+        <div
+          v-for="(opt, i) in planReview.options"
+          :key="i"
+          class="kbtn pri"
+          :title="opt.description"
+          @click="approveOption(opt.label)"
+        >{{ opt.label }}<span class="k">[{{ i + 1 }}]</span></div>
+      </template>
+      <div v-else class="kbtn pri" @click="approvePlan">{{ t('approval.approvePlan') }}<span class="k">[1]</span></div>
+      <div class="kbtn" @click="revisePlan">{{ t('approval.revise') }}<span v-if="planReview.options.length === 0" class="k">[2]</span></div>
+      <div class="kbtn danger" @click="rejectAndExitPlan">{{ t('approval.rejectAndExit') }}<span v-if="planReview.options.length === 0" class="k">[3]</span></div>
+    </div>
+
+    <!-- default actions row -->
+    <div v-else class="abtn">
       <div class="kbtn pri" @click="approve">{{ t('approval.approve') }}<span class="k">[1]</span></div>
       <div class="kbtn" @click="approveSession">{{ t('approval.approveSession') }}<span class="k">[2]</span></div>
       <div class="kbtn" @click="reject">{{ t('approval.reject') }}<span class="k">[3]</span></div>
@@ -224,7 +286,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   border-radius: 3px;
 }
 
-/* Header */
+/* Header — single row: title + truncating path on the left, APPROVAL REQUIRED
+   badge + minimize button pinned to the right (never wrap onto a second line). */
 .ah {
   padding: 7px 10px;
   background: var(--soft);
@@ -234,10 +297,22 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   font-size: var(--ui-font-size);
   border-bottom: 1px solid var(--bd);
   border-radius: 3px 3px 0 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
-.akind { color: var(--blue2); font-weight: 700; white-space: nowrap; }
-.apath { color: var(--text); font-family: var(--mono); font-size: calc(var(--ui-font-size) - 2.5px); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.akind { color: var(--blue2); font-weight: 700; white-space: nowrap; flex: none; }
+.apath { color: var(--text); font-family: var(--mono); font-size: calc(var(--ui-font-size) - 2.5px); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Header second line — full-width plan file path, below the title row. */
+.ah-path {
+  padding: 4px 10px 6px;
+  background: var(--soft);
+  border-bottom: 1px solid var(--bd);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: calc(var(--ui-font-size) - 3px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .abadge {
   font-size: max(9px, calc(var(--ui-font-size) - 4px));
   color: var(--muted);
@@ -248,6 +323,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 }
 .aw {
   margin-left: auto;
+  flex: none;
   color: var(--blue2);
   border: 1px solid var(--bd);
   padding: 1px 7px;
@@ -364,6 +440,10 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 /* Generic */
 .body-generic { padding: 10px 12px; font-size: calc(var(--ui-font-size) - 1.5px); color: var(--text); word-break: break-word; }
 
+/* Plan review — Markdown body, capped at half the viewport height with scroll
+   for longer plans. */
+.body-plan { padding: 4px 12px 10px; max-height: 50vh; overflow-y: auto; }
+
 /* Feedback */
 .feedback-wrap {
   padding: 8px 12px;
@@ -410,6 +490,11 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 .k { color: var(--faint); margin-left: 6px; font-size: max(9px, calc(var(--ui-font-size) - 4px)); }
 .kbtn.pri .k { color: color-mix(in srgb, var(--bg) 60%, transparent); }
 
+/* Plan review actions — wraps on desktop so several approach buttons fit. */
+.plan-actions { display: flex; flex-wrap: wrap; border-top: 1px solid var(--line); }
+.plan-actions .kbtn.danger { color: var(--err); }
+.plan-actions .kbtn.danger:hover { background: color-mix(in srgb, var(--err) 8%, var(--bg)); }
+
 /* =========================================================================
    MOBILE (≤640px): the card spans the full chat column (no 33px left gutter),
    inner previews scroll horizontally instead of overflowing the page, and the
@@ -439,7 +524,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   /* Actions → full-width stacked rows, each a tall ≥44px tap target. The
      primary Approve sits on top; the rest stack below, separated by hairlines.
      Stacking (vs. a cramped 4-up row) keeps every label legible at 360px. */
-  .abtn { flex-direction: column; }
+  .abtn,
+  .plan-actions { flex-direction: column; }
   .kbtn {
     min-height: 46px;
     display: flex;

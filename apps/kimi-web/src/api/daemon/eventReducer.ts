@@ -43,6 +43,10 @@ export interface KimiClientState {
   activeSessionId?: string;
   messagesBySession: Record<string, AppMessage[]>;
   approvalsBySession: Record<string, AppApprovalRequest[]>;
+  /** Preserved `plan_review` displays keyed by toolCallId. Plan content survives
+   *  approval resolution so the ExitPlanMode tool card can keep rendering the
+   *  plan (approved / rejected / revised) instead of losing it. */
+  planReviewByToolCallId: Record<string, { plan: string; path?: string }>;
   questionsBySession: Record<string, AppQuestionRequest[]>;
   tasksBySession: Record<string, AppTask[]>;
   goalBySession: Record<string, AppGoal>;
@@ -58,6 +62,7 @@ export function createInitialState(): KimiClientState {
     activeSessionId: undefined,
     messagesBySession: {},
     approvalsBySession: {},
+    planReviewByToolCallId: {},
     questionsBySession: {},
     tasksBySession: {},
     goalBySession: {},
@@ -77,6 +82,7 @@ function cloneState(s: KimiClientState): KimiClientState {
     sessions: [...s.sessions],
     messagesBySession: { ...s.messagesBySession },
     approvalsBySession: { ...s.approvalsBySession },
+    planReviewByToolCallId: { ...s.planReviewByToolCallId },
     questionsBySession: { ...s.questionsBySession },
     tasksBySession: { ...s.tasksBySession },
     goalBySession: { ...s.goalBySession },
@@ -350,6 +356,14 @@ export function reduceAppEvent(
     // -------------------------------------------------------------------------
     case 'messageCreated': {
       const sid = event.message.sessionId;
+      // A new message is activity on the session: bump its recency so it floats
+      // to the top of its workspace group in the sidebar immediately. The daemon
+      // does not always broadcast a fresh `session.updated` for message activity,
+      // so we rely on the message's own timestamp (and never move it backwards).
+      const createdAt = event.message.createdAt;
+      next.sessions = next.sessions.map((s) =>
+        s.id === sid && createdAt > s.updatedAt ? { ...s, updatedAt: createdAt } : s,
+      );
       const msgs = next.messagesBySession[sid] ?? [];
       const exists = msgs.some((m) => m.id === event.message.id);
       if (!exists) {
@@ -446,6 +460,21 @@ export function reduceAppEvent(
       if (!exists) {
         next.approvalsBySession[sid] = [...list, event.approval];
       }
+      // Preserve a plan_review display so the plan stays visible in the
+      // ExitPlanMode tool card after the approval resolves.
+      const display = event.approval.display as
+        | { kind?: unknown; plan?: unknown; path?: unknown }
+        | null
+        | undefined;
+      if (display?.kind === 'plan_review' && typeof display.plan === 'string' && display.plan.length > 0) {
+        next.planReviewByToolCallId = {
+          ...next.planReviewByToolCallId,
+          [event.approval.toolCallId]: {
+            plan: display.plan,
+            path: typeof display.path === 'string' ? display.path : undefined,
+          },
+        };
+      }
       break;
     }
 
@@ -472,8 +501,7 @@ export function reduceAppEvent(
 
     // -------------------------------------------------------------------------
     case 'questionAnswered':
-    case 'questionDismissed':
-    case 'questionExpired': {
+    case 'questionDismissed': {
       const sid = event.sessionId;
       const qid = event.questionId;
       const list = next.questionsBySession[sid] ?? [];

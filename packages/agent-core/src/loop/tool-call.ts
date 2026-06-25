@@ -671,7 +671,12 @@ function normalizeToolResult(r: ExecutableToolResult): ExecutableToolResult {
       output = textJoined.length > 0 ? textJoined : TOOL_OUTPUT_EMPTY;
     }
   }
-  return r.isError === true ? { output, isError: true } : { output };
+  if (r.isError === true) {
+    return r.truncated === true
+      ? { output, isError: true, truncated: true }
+      : { output, isError: true };
+  }
+  return r.truncated === true ? { output, truncated: true } : { output };
 }
 
 function makeToolResult(

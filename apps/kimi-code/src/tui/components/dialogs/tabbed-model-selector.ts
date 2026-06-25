@@ -19,11 +19,11 @@ import {
   Key,
   matchesKey,
   truncateToWidth,
-  visibleWidth,
   type Focusable,
 } from '@earendil-works/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
+import { renderTabStrip } from '#/tui/utils/tab-strip';
 
 import {
   ModelSelectorComponent,
@@ -103,7 +103,12 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
     // Layout: divider, title, hint, blank, tab strip, blank, then the model
     // list. The inner selector's blank line (inner[3]) separates the hint from
     // the tab strip; an extra blank separates the tabs from their list.
-    const stripLine = this.renderTabStrip(width);
+    const stripLine = renderTabStrip({
+      labels: this.tabs.map((tab) => tab.label),
+      activeIndex: this.activeIndex,
+      width,
+      colors: currentTheme.palette,
+    });
     const out: string[] = [
       inner[0] ?? '',
       inner[1] ?? '',
@@ -128,81 +133,6 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
       const tab = this.tabs[i]!;
       tab.selector.focused = this.focused && i === this.activeIndex;
     }
-  }
-
-  /** Style a tab segment. The active tab is filled with the brand background
-   * (matching the AskUserQuestion dialog); inactive tabs are muted. Both have
-   * the same visible width so switching never shifts the layout. */
-  private styleTab(label: string, isActive: boolean): string {
-    const cell = ` ${label} `;
-    return isActive
-      ? currentTheme.bg('primary', currentTheme.boldFg('text', cell))
-      : currentTheme.fg('textMuted', cell);
-  }
-
-  private renderTabStrip(width: number): string {
-    const segments: string[] = [];
-    for (let i = 0; i < this.tabs.length; i++) {
-      const tab = this.tabs[i]!;
-      segments.push(this.styleTab(tab.label, i === this.activeIndex));
-    }
-
-    // If everything fits with a leading space, show the whole strip. The
-    // provider-switch hint lives in the inner selector's hint line, not here.
-    const totalSegmentWidth = segments.reduce((sum, s) => sum + visibleWidth(s), 0);
-    if (1 + totalSegmentWidth <= width) {
-      return ' ' + segments.join(' ');
-    }
-
-    // Scrolling needed. Find the widest window that contains activeIndex.
-    const segmentWidths = segments.map((s) => visibleWidth(s));
-    let start = this.activeIndex;
-    let end = this.activeIndex + 1;
-    let contentWidth = segmentWidths[this.activeIndex]!;
-
-    const fits = (s: number, e: number, cw: number): boolean => {
-      const needLeft = s > 0;
-      const needRight = e < segments.length;
-      const frameWidth = (needLeft ? 2 : 1) + (needRight ? 2 : 0);
-      return cw + frameWidth <= width;
-    };
-
-    while (true) {
-      const leftW = start > 0 ? segmentWidths[start - 1]! : Infinity;
-      const rightW = end < segments.length ? segmentWidths[end]! : Infinity;
-      if (leftW === Infinity && rightW === Infinity) break;
-
-      if (leftW <= rightW) {
-        if (fits(start - 1, end, contentWidth + leftW)) {
-          contentWidth += leftW;
-          start--;
-        } else if (fits(start, end + 1, contentWidth + rightW)) {
-          contentWidth += rightW;
-          end++;
-        } else {
-          break;
-        }
-      } else {
-        if (fits(start, end + 1, contentWidth + rightW)) {
-          contentWidth += rightW;
-          end++;
-        } else if (fits(start - 1, end, contentWidth + leftW)) {
-          contentWidth += leftW;
-          start--;
-        } else {
-          break;
-        }
-      }
-    }
-
-    const hasLeft = start > 0;
-    const hasRight = end < segments.length;
-    let strip = hasLeft ? currentTheme.fg('textMuted', '< ') : ' ';
-    strip += segments.slice(start, end).join(' ');
-    if (hasRight) {
-      strip += currentTheme.fg('textMuted', ' >');
-    }
-    return strip;
   }
 }
 

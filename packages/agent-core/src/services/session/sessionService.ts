@@ -17,6 +17,7 @@ import {
   type SessionStatus,
   type SessionStatusResponse,
   type SessionUpdate,
+  type SessionWarning,
   type UndoSessionRequest,
   type UndoSessionResponse,
 } from '@moonshot-ai/protocol';
@@ -222,8 +223,7 @@ export class SessionService extends Disposable implements ISessionService {
       case 'event.approval.expired':
       case 'event.question.requested':
       case 'event.question.answered':
-      case 'event.question.dismissed':
-      case 'event.question.expired': {
+      case 'event.question.dismissed': {
         this._emitStatusChanged(sessionId);
         break;
       }
@@ -472,6 +472,23 @@ export class SessionService extends Disposable implements ISessionService {
       max_context_tokens: maxContextTokens,
       context_usage: contextUsage,
     };
+  }
+
+  async getSessionWarnings(id: string): Promise<readonly SessionWarning[]> {
+    const all = await this.core.rpc.listSessions({});
+    if (!all.some((s) => s.id === id)) {
+      throw new SessionNotFoundError(id);
+    }
+    try {
+      await this.core.rpc.resumeSession({ sessionId: id });
+    } catch {
+      // best-effort: the session may already be loaded in core memory.
+    }
+    try {
+      return await this.core.rpc.getSessionWarnings({ sessionId: id });
+    } catch {
+      return [];
+    }
   }
 
   async compact(id: string, input: CompactSessionRequest): Promise<CompactSessionResponse> {

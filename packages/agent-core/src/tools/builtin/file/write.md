@@ -1,6 +1,6 @@
 Create, append to, or replace a file entirely.
 
-- The parent directory must already exist.
+- Missing parent directories are created automatically (like `mkdir(parents=True, exist_ok=True)`).
 - Mode defaults to overwrite; append adds content at EOF without adding a newline.
 - Write is NOT ALLOWED for incremental changes to existing files, including trivial, one-line, quick, or cosmetic edits. Use Edit instead.
 - Use Write only when the file does not exist, you intend a complete replacement, or the new contents have little continuity with the old contents.

@@ -16,8 +16,8 @@
  * foreground runner so it can share the same bootstrap helpers.
  */
 
-import { spawn } from 'node:child_process';
-import { appendFileSync, closeSync, mkdirSync, openSync } from 'node:fs';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -44,18 +44,32 @@ const POLL_INTERVAL_MS = 200;
 const DEFAULT_DAEMON_LOG_LEVEL = 'info';
 
 export interface EnsureDaemonOptions {
+  /** Bind host for the spawned daemon (default `127.0.0.1`). */
+  host?: string;
   /** Preferred port; on conflict a free port is chosen automatically. */
   port?: number;
   /** Pino log level for the spawned daemon (defaults to `info`). */
   logLevel?: string;
   /** Mount `/api/v1/debug/*` routes on the spawned daemon. */
   debugEndpoints?: boolean;
+  /** Allow a non-loopback bind without a TLS-terminating reverse proxy. */
+  insecureNoTls?: boolean;
+  /** Keep `POST /api/v1/shutdown` enabled on a non-loopback bind. */
+  allowRemoteShutdown?: boolean;
+  /** Keep the PTY `/api/v1/terminals/*` routes enabled on a non-loopback bind. */
+  allowRemoteTerminals?: boolean;
   /** Idle-shutdown grace in ms for the spawned daemon (daemon mode only). */
   idleGraceMs?: number;
 }
 
 export interface EnsureDaemonResult {
   readonly origin: string;
+  /** True when an already-running daemon was reused (no new server started). */
+  readonly reused: boolean;
+  /** Bind host the running daemon is actually listening on (from the lock). */
+  readonly host: string;
+  /** Port the running daemon is actually listening on (from the lock). */
+  readonly port: number;
 }
 
 /** Path of the daemon log file (shared with the OS-service log location). */
@@ -178,13 +192,17 @@ export function resolveDaemonProgram(
 }
 
 interface SpawnDaemonChildOptions {
+  host?: string;
   port: number;
   logLevel: string;
   debugEndpoints?: boolean;
+  insecureNoTls?: boolean;
+  allowRemoteShutdown?: boolean;
+  allowRemoteTerminals?: boolean;
   idleGraceMs?: number;
 }
 
-export function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
+export function spawnDaemonChild(options: SpawnDaemonChildOptions): ChildProcess {
   const program = resolveDaemonProgram();
   const logPath = daemonLogPath();
   const logDir = dirname(logPath);
@@ -198,15 +216,34 @@ export function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
     '--log-level',
     options.logLevel,
   ];
+  if (options.host !== undefined) {
+    args.push('--host', options.host);
+  }
   if (options.debugEndpoints === true) {
     args.push('--debug-endpoints');
+  }
+  if (options.insecureNoTls === true) {
+    args.push('--insecure-no-tls');
+  }
+  if (options.allowRemoteShutdown === true) {
+    args.push('--allow-remote-shutdown');
+  }
+  if (options.allowRemoteTerminals === true) {
+    args.push('--allow-remote-terminals');
   }
   if (options.idleGraceMs !== undefined) {
     args.push('--idle-grace-ms', String(options.idleGraceMs));
   }
+  // On Windows `.mjs` files are not executable PE binaries, so we must run
+  // the script through the Node binary rather than spawning it directly. In
+  // SEA mode or when re-spawning from an already-running daemon, `program` is
+  // `process.execPath` itself, so no script argument is needed.
+  const execPath = process.execPath;
+  const spawnArgs = program === execPath ? args : [program, ...args];
+
   const logFd = openSync(logPath, 'a');
   try {
-    const child = spawn(program, args, {
+    const child = spawn(execPath, spawnArgs, {
       detached: true,
       // Run from the server log directory instead of inheriting the caller's
       // cwd, so the long-lived daemon does not pin the directory it was
@@ -226,6 +263,7 @@ export function spawnDaemonChild(options: SpawnDaemonChildOptions): void {
       }
     });
     child.unref();
+    return child;
   } finally {
     // `spawn` dups the fd into the child; the parent must not keep it open.
     closeSync(logFd);
@@ -244,6 +282,7 @@ function sleep(ms: number): Promise<void> {
  * detached process after this returns.
  */
 export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<EnsureDaemonResult> {
+  const host = options.host ?? DEFAULT_SERVER_HOST;
   const preferred = options.port ?? DEFAULT_SERVER_PORT;
   const logLevel = options.logLevel ?? DEFAULT_DAEMON_LOG_LEVEL;
 
@@ -252,7 +291,12 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
   if (existing) {
     const origin = serverOrigin(lockConnectHost(existing), existing.port);
     if (await waitForServerHealthy(origin, REUSE_HEALTH_TIMEOUT_MS)) {
-      return { origin };
+      return {
+        origin,
+        reused: true,
+        host: existing.host ?? DEFAULT_SERVER_HOST,
+        port: existing.port,
+      };
     }
     // Live pid but not responding (wedged or mid-boot failure). Fall through
     // and spawn: if it is truly wedged our child loses the lock race and we
@@ -260,12 +304,31 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
   }
 
   // 2. No reusable daemon — pick a free port and spawn one detached.
-  const port = await resolveDaemonPort(DEFAULT_SERVER_HOST, preferred);
-  spawnDaemonChild({
+  const port = await resolveDaemonPort(host, preferred);
+  const child = spawnDaemonChild({
+    host,
     port,
     logLevel,
     debugEndpoints: options.debugEndpoints,
+    insecureNoTls: options.insecureNoTls,
+    allowRemoteShutdown: options.allowRemoteShutdown,
+    allowRemoteTerminals: options.allowRemoteTerminals,
     idleGraceMs: options.idleGraceMs,
+  });
+
+  // Watch for an early exit so a boot failure (e.g. the non-loopback TLS gate,
+  // a config error, or a lost lock race with no other daemon to fall back to)
+  // surfaces the real error immediately instead of waiting out the full spawn
+  // timeout. The exit code/signal plus a tail of the daemon log is what tells
+  // the operator *why* it failed.
+  let childExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  child.once('exit', (code, signal) => {
+    childExit = { code, signal };
+  });
+  child.once('error', () => {
+    // Spawn failure (ENOENT etc.) is already recorded in the log by
+    // spawnDaemonChild; treat it as an early exit here.
+    childExit = { code: -1, signal: null };
   });
 
   // 3. Wait until some live daemon (ours, or a racer that won the lock) is up.
@@ -275,14 +338,53 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
     if (live) {
       const origin = serverOrigin(lockConnectHost(live), live.port);
       if (await isServerHealthy(origin, 500)) {
-        return { origin };
+        return {
+          origin,
+          reused: false,
+          host: live.host ?? DEFAULT_SERVER_HOST,
+          port: live.port,
+        };
       }
+    }
+    if (childExit !== undefined && !live) {
+      // Our child exited and no other live daemon holds the lock to fall back
+      // to — this is a real boot failure, not a lost race.
+      throw new Error(formatDaemonBootFailure(childExit, daemonLogPath()));
     }
     await sleep(POLL_INTERVAL_MS);
   }
 
   throw new Error(
-    `Kimi server daemon failed to start within ${String(SPAWN_TIMEOUT_MS)}ms. ` +
-      `Check the log for details: ${daemonLogPath()}`,
+    `Kimi server daemon failed to start within ${String(SPAWN_TIMEOUT_MS)}ms.\n\n` +
+      formatLogTail(daemonLogPath()),
   );
+}
+
+function formatDaemonBootFailure(
+  exit: { code: number | null; signal: NodeJS.Signals | null },
+  logPath: string,
+): string {
+  const reason =
+    exit.signal === null
+      ? `exited with code ${String(exit.code)}`
+      : `was terminated by signal ${exit.signal}`;
+  return `Kimi server daemon ${reason} during startup.\n\n${formatLogTail(logPath)}`;
+}
+
+function formatLogTail(logPath: string): string {
+  const tail = tailFile(logPath, 30);
+  if (tail.length === 0) {
+    return `Check the log for details: ${logPath}`;
+  }
+  return `Last log lines (${logPath}):\n${tail}`;
+}
+
+function tailFile(filePath: string, maxLines: number): string {
+  try {
+    const content = readFileSync(filePath, 'utf8');
+    const lines = content.split('\n').filter((line) => line.length > 0);
+    return lines.slice(-maxLines).join('\n');
+  } catch {
+    return '';
+  }
 }

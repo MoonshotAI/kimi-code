@@ -78,6 +78,12 @@ export interface ExecutableToolSuccessResult {
    * this to the user.
    */
   readonly message?: string | undefined;
+  /**
+   * True when the tool has already returned a partial result because it
+   * truncated, paged, or otherwise dropped original output. Later generic
+   * budgeting must not treat the visible output as complete source text.
+   */
+  readonly truncated?: boolean | undefined;
 }
 
 export interface ExecutableToolErrorResult {
@@ -87,6 +93,8 @@ export interface ExecutableToolErrorResult {
   readonly message?: string | undefined;
   /** See {@link ExecutableToolSuccessResult.stopTurn}. */
   readonly stopTurn?: boolean | undefined;
+  /** See {@link ExecutableToolSuccessResult.truncated}. */
+  readonly truncated?: boolean | undefined;
 }
 
 export type ExecutableToolResult = ExecutableToolSuccessResult | ExecutableToolErrorResult;

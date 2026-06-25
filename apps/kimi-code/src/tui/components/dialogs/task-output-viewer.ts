@@ -125,11 +125,20 @@ export class TaskOutputViewer extends Container implements Focusable {
       this.scrollBy(1);
       return;
     }
-    if (matchesKey(data, Key.pageUp) || k === ' ' || data === '\u0002' /* C-b */) {
+    if (
+      matchesKey(data, Key.pageUp) ||
+      matchesKey(data, Key.ctrl('u')) ||
+      k === ' ' ||
+      data === '\u0002' /* C-b */
+    ) {
       this.scrollBy(-Math.max(1, visible - 1));
       return;
     }
-    if (matchesKey(data, Key.pageDown) || data === '\u0006' /* C-f */) {
+    if (
+      matchesKey(data, Key.pageDown) ||
+      matchesKey(data, Key.ctrl('d')) ||
+      data === '\u0006' /* C-f */
+    ) {
       this.scrollBy(Math.max(1, visible - 1));
       return;
     }
@@ -240,7 +249,7 @@ export class TaskOutputViewer extends Container implements Focusable {
     );
     const keys =
       `${key('↑↓')} ${dim('line')}  ` +
-      `${key('PgUp/PgDn')} ${dim('page')}  ` +
+      `${key('PgUp/PgDn/Ctrl+U/D')} ${dim('page')}  ` +
       `${key('g/G')} ${dim('top/bot')}  ` +
       `${key('Q/Esc')} ${dim('cancel')}`;
     const left = ` ${keys}`;
