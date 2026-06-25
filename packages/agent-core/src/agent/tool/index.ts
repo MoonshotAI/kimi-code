@@ -25,7 +25,7 @@ import type {
 export * from './types';
 
 /** Foreground timeout (seconds) for a user-initiated `!` shell command. */
-const SHELL_FOREGROUND_TIMEOUT_S = 3 * 60;
+const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
 
 interface McpToolEntry {
   readonly tool: ExecutableTool;
