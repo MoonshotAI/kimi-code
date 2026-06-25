@@ -127,6 +127,10 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         if (code === 'ENOENT' || code === 'ENOTDIR') continue;
         throw err;
       }
+      // Skip buckets that only contain archived sessions — otherwise a plain
+      // GET /workspaces would surface an empty group for a cwd that the old
+      // session-derived fallback kept hidden.
+      if ((await countActiveSessions(join(this.sessionsDir, d.name))) === 0) continue;
       await this.register(d.name, root);
     }
   }

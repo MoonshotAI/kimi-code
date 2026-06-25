@@ -77,13 +77,17 @@ describe('WorkspaceRegistryService', () => {
     return realpath(root);
   }
 
-  async function seedSessionBucket(root: string, sessionId: string): Promise<void> {
+  async function seedSessionBucket(
+    root: string,
+    sessionId: string,
+    opts?: { archived?: boolean },
+  ): Promise<void> {
     const key = encodeWorkDirKey(root);
     const sessionDir = join(ctx.homeDir, 'sessions', key, sessionId);
     await mkdir(sessionDir, { recursive: true });
     await writeFile(
       join(sessionDir, 'state.json'),
-      JSON.stringify({ archived: false }),
+      JSON.stringify({ archived: opts?.archived === true }),
       'utf-8',
     );
     await appendSessionIndexEntry(ctx.homeDir, {
@@ -182,5 +186,13 @@ describe('WorkspaceRegistryService', () => {
     // session lookups read the same bucket the sessions live in.
     expect(derived).toBeDefined();
     expect(derived?.session_count).toBe(1);
+  });
+
+  it('does not register a derived bucket that only has archived sessions', async () => {
+    const root = await makeProjectRoot('archived');
+    await seedSessionBucket(root, 'sess-archived-1', { archived: true });
+
+    const list = await ctx.registry.list();
+    expect(list.map((w) => w.root)).not.toContain(root);
   });
 });
