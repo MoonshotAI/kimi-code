@@ -320,6 +320,10 @@ async function installFromPanel(
     if (official) {
       panel.clearInstalling();
       host.state.ui.requestRender();
+    } else {
+      // The trust prompt replaced the panel; re-mount it so the user can retry
+      // instead of being dropped back at the editor.
+      host.mountEditorReplacement(panel);
     }
     host.showError(`Failed to install ${label}: ${formatErrorMessage(error)}`);
     return;
@@ -395,7 +399,7 @@ async function handlePluginsPanelSelection(
         panel,
         selection.entry.source,
         selection.entry.displayName,
-        selection.entry.tier === 'official',
+        isOfficialPluginSource(selection.entry.source),
       );
       return;
     case 'install-source':
