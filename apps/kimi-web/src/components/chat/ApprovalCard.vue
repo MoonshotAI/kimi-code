@@ -263,8 +263,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
         >{{ opt.label }}<span class="k">[{{ i + 1 }}]</span></div>
       </template>
       <div v-else class="kbtn pri" @click="approvePlan">{{ t('approval.approvePlan') }}<span class="k">[1]</span></div>
-      <div class="kbtn" @click="revisePlan">{{ t('approval.revise') }}<span class="k">[2]</span></div>
-      <div class="kbtn danger" @click="rejectAndExitPlan">{{ t('approval.rejectAndExit') }}<span class="k">[3]</span></div>
+      <div class="kbtn" @click="revisePlan">{{ t('approval.revise') }}<span v-if="planReview.options.length === 0" class="k">[2]</span></div>
+      <div class="kbtn danger" @click="rejectAndExitPlan">{{ t('approval.rejectAndExit') }}<span v-if="planReview.options.length === 0" class="k">[3]</span></div>
     </div>
 
     <!-- default actions row -->
