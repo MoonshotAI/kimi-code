@@ -168,7 +168,8 @@ pub fn read_file(config: &ReadConfig) -> ReadResult {
     if line_offset < 0 {
         let tail_count = (-line_offset) as usize;
         let tail_count = tail_count.min(MAX_LINES);
-        read_tail_streaming(path, scan.total_lines, tail_count, config.n_lines, scan.line_ending_style)
+        // Single-pass: scan + tail read in one file traversal.
+        scan_and_read_tail(path, tail_count, config.n_lines)
     } else {
         let start_line = line_offset as usize;
         let max_lines = config.n_lines.unwrap_or(MAX_LINES as u32) as usize;
@@ -181,7 +182,6 @@ pub fn read_file(config: &ReadConfig) -> ReadResult {
 struct TextScanResult {
     total_lines: usize,
     has_nul: bool,
-    line_ending_style: LineEndingStyle,
 }
 
 fn scan_text_file(path: &Path) -> io::Result<TextScanResult> {
@@ -237,7 +237,6 @@ fn scan_text_file(path: &Path) -> io::Result<TextScanResult> {
     Ok(TextScanResult {
         total_lines,
         has_nul,
-        line_ending_style: flags.style(),
     })
 }
 
@@ -382,45 +381,87 @@ fn scan_and_read_forward(
     }
 }
 
-fn read_tail_streaming(
+/// Single-pass scan + tail read: reads the file once, keeping the last N lines
+/// in a ring buffer while simultaneously detecting line endings and NUL bytes.
+fn scan_and_read_tail(
     path: &Path,
-    total_lines: usize,
     tail_count: usize,
     n_lines: Option<u32>,
-    line_ending_style: LineEndingStyle,
 ) -> ReadResult {
     let effective_limit = n_lines
         .map(|n| (n as usize).min(MAX_LINES))
         .unwrap_or(tail_count.min(MAX_LINES));
     let keep = tail_count.min(MAX_LINES).max(effective_limit);
+
     let file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) => {
+        Ok(f) => f,
+        Err(e) => {
             return ReadResult {
                 content: String::new(),
                 line_count: 0,
-                error: Some(error.to_string()),
+                error: Some(e.to_string()),
             };
         }
     };
-    let reader = BufReader::new(file);
+
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    let mut total_lines = 0usize;
+    let mut has_nul = false;
+    let mut flags = LineEndingFlags::default();
     let mut ring: VecDeque<(usize, String)> = VecDeque::new();
 
-    for (index, line) in reader.lines().enumerate() {
-        let line = match line {
-            Ok(line) => line,
-            Err(error) => {
+    loop {
+        line.clear();
+        let bytes_read = match reader.read_line(&mut line) {
+            Ok(n) => n,
+            Err(e) => {
                 return ReadResult {
                     content: String::new(),
                     line_count: total_lines as i32,
-                    error: Some(error.to_string()),
+                    error: Some(e.to_string()),
                 };
             }
         };
-        ring.push_back((index + 1, line));
+        if bytes_read == 0 {
+            break;
+        }
+
+        if line.as_bytes().contains(&0) {
+            has_nul = true;
+        }
+
+        // Track line endings.
+        if line.ends_with("\r\n") {
+            flags.feed_crlf();
+        } else if line.ends_with('\n') {
+            flags.feed(b'\n');
+        } else if line.ends_with('\r') {
+            flags.feed(b'\r');
+        }
+
+        total_lines += 1;
+        let raw = strip_trailing_lf(&line).to_string();
+        ring.push_back((total_lines, raw));
         while ring.len() > keep {
             ring.pop_front();
         }
+    }
+
+    if has_nul {
+        return ReadResult {
+            content: String::new(),
+            line_count: 0,
+            error: Some(not_readable_message(&path.to_string_lossy())),
+        };
+    }
+
+    if total_lines == 0 {
+        return ReadResult {
+            content: String::new(),
+            line_count: 0,
+            error: None,
+        };
     }
 
     let mut entries: Vec<(usize, String)> = ring.into_iter().collect();
@@ -429,6 +470,7 @@ fn read_tail_streaming(
         entries = entries.into_iter().skip(skip).collect();
     }
 
+    let line_ending_style = flags.style();
     let mut rendered = Vec::new();
     let mut total_bytes = 0usize;
     let mut truncated_line_numbers = Vec::new();
@@ -458,7 +500,6 @@ fn read_tail_streaming(
         line_ending_style,
         requested_lines,
     );
-
     let content = finish_output(&rendered, &message);
 
     ReadResult {
