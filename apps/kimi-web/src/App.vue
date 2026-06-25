@@ -901,6 +901,7 @@ function openPr(url: string): void {
       @rename="(id, title) => client.renameSession(id, title)"
       @archive="(id) => client.archiveSession(id)"
       @delete-workspace="(id) => client.deleteWorkspace(id)"
+      @load-more="(id) => void client.loadMoreSessions(id)"
     />
 
     <!-- Mobile settings bottom-sheet: session controls + app prefs + auth -->

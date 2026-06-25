@@ -40,6 +40,7 @@ const emit = defineEmits<{
   archive: [id: string];
   /** NOTE: needs `@delete-workspace="client.deleteWorkspace($event)"` wiring in App.vue. */
   deleteWorkspace: [workspaceId: string];
+  loadMore: [workspaceId: string];
 }>();
 
 function close(): void {
@@ -77,15 +78,8 @@ function isCollapsed(id: string): boolean {
 
 function toggleCollapse(id: string): void {
   const next = new Set(collapsedIds.value);
-  if (next.has(id)) {
-    next.delete(id);
-    // Reset session expansion when the workspace is expanded (desktop parity)
-    const expandedNext = new Set(expandedWsIds.value);
-    expandedNext.delete(id);
-    expandedWsIds.value = expandedNext;
-  } else {
-    next.add(id);
-  }
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
   collapsedIds.value = next;
   // Tapping a header also dismisses any open row/workspace menu.
   menuFor.value = null;
@@ -94,47 +88,6 @@ function toggleCollapse(id: string): void {
 
 function wsAttention(id: string): number {
   return props.attentionByWorkspace[id] ?? 0;
-}
-
-// ---------------------------------------------------------------------------
-// Session list truncation per workspace (desktop sidebar parity):
-// default visible = union of (first 5) and (updated within 5 days), and the
-// active session is always kept visible.
-// ---------------------------------------------------------------------------
-const DEFAULT_VISIBLE_COUNT = 5;
-const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
-
-/** workspace id → true = show all sessions */
-const expandedWsIds = ref<Set<string>>(new Set());
-
-function isExpanded(wsId: string): boolean {
-  return expandedWsIds.value.has(wsId);
-}
-
-function toggleExpand(wsId: string): void {
-  const next = new Set(expandedWsIds.value);
-  if (next.has(wsId)) next.delete(wsId);
-  else next.add(wsId);
-  expandedWsIds.value = next;
-}
-
-function visibleSessions(sessions: Session[], expanded: boolean, activeId?: string): Session[] {
-  if (expanded || sessions.length <= DEFAULT_VISIBLE_COUNT) return sessions;
-  const now = Date.now();
-  const cutoff = now - FIVE_DAYS_MS;
-  const recent5 = sessions.slice(0, DEFAULT_VISIBLE_COUNT);
-  const recent5Ids = new Set(recent5.map((s) => s.id));
-  const within5Days = sessions.filter((s) => {
-    if (recent5Ids.has(s.id)) return false;
-    const ts = s.updatedAt ? Date.parse(s.updatedAt) : 0;
-    return ts > cutoff;
-  });
-  const visible = [...recent5, ...within5Days];
-  if (activeId && !visible.some((s) => s.id === activeId)) {
-    const active = sessions.find((s) => s.id === activeId);
-    if (active) visible.push(active);
-  }
-  return visible;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +265,7 @@ onUnmounted(() => {
         <div v-show="!isCollapsed(g.workspace.id)">
           <div v-if="g.sessions.length === 0" class="mempty small">{{ t('sidebar.noSessions') }}</div>
           <div
-            v-for="s in visibleSessions(g.sessions, isExpanded(g.workspace.id), activeId)"
+            v-for="s in g.sessions"
             :key="s.id"
             class="srow"
             :class="{ cur: s.id === activeId }"
@@ -345,12 +298,17 @@ onUnmounted(() => {
             </div>
           </div>
           <button
-            v-if="!isExpanded(g.workspace.id) && visibleSessions(g.sessions, false, activeId).length < g.sessions.length"
+            v-if="g.hasMore || g.loadingMore"
             type="button"
             class="mshow-more"
-            @click.stop="toggleExpand(g.workspace.id)"
+            :disabled="g.loadingMore"
+            @click.stop="emit('loadMore', g.workspace.id)"
           >
-            {{ t('sidebar.showMore', { count: g.sessions.length - visibleSessions(g.sessions, false, activeId).length }) }}
+            {{
+              g.loadingMore
+                ? t('sidebar.loadingMore')
+                : t('sidebar.showMore', { count: Math.max(0, g.workspace.sessionCount - g.sessions.length) })
+            }}
           </button>
         </div>
       </div>
