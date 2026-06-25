@@ -14,6 +14,7 @@ import { randomBytes } from 'node:crypto';
 
 import { createControlledPromise, type ControlledPromise } from '@antfu/utils';
 import type { ContentPart } from '@moonshot-ai/kosong';
+import type { KaosProcess } from '@moonshot-ai/kaos';
 
 import type { Agent } from '../..';
 import { errorMessage } from '../../loop/errors';
@@ -22,6 +23,8 @@ import { escapeXml, escapeXmlAttr } from '../../utils/xml-escape';
 import type { BackgroundTaskOrigin } from '../context';
 import { renderNotificationXml } from '../context/notification-xml';
 import { type BackgroundTaskPersistence } from './persist';
+import { MonitorBackgroundTask } from './monitor-task';
+import type { MonitorEmit } from './monitor-task';
 import {
   TERMINAL_STATUSES,
   type BackgroundTask,
@@ -48,6 +51,8 @@ export { ProcessBackgroundTask } from './process-task';
 export type { ProcessBackgroundTaskInfo } from './process-task';
 export { QuestionBackgroundTask } from './question-task';
 export type { QuestionBackgroundTaskInfo } from './question-task';
+export { MonitorBackgroundTask } from './monitor-task';
+export type { MonitorBackgroundTaskInfo } from './task';
 export { BackgroundTaskPersistence } from './persist';
 export type {
   BackgroundTaskInfo,
@@ -154,7 +159,7 @@ type BackgroundTaskNotification = Record<string, unknown> & {
   readonly id: string;
   readonly category: 'task';
   readonly type: string;
-  readonly source_kind: 'background_task';
+  readonly source_kind: 'background_task' | 'monitor';
   readonly source_id: string;
   /** Subagent id accepted by Agent(resume=...). Omitted for process tasks. */
   readonly agent_id?: string | undefined;
@@ -213,6 +218,7 @@ export class BackgroundManager {
 
   private readonly scheduledNotificationKeys = new Set<string>();
   private readonly deliveredNotificationKeys = new Set<string>();
+  private readonly monitorSeqCounters = new Map<string, number>();
 
   constructor(
     private readonly agent: Agent,
@@ -264,6 +270,24 @@ export class BackgroundManager {
 
   private isDetached(entry: ManagedTask): boolean {
     return entry.foregroundRelease === undefined;
+  }
+
+  registerMonitorTask(
+    proc: KaosProcess,
+    command: string,
+    description: string,
+    options: RegisterBackgroundTaskOptions = {},
+  ): string {
+    const taskIdHolder: { taskId: string } = { taskId: '' };
+    const emit: MonitorEmit = (lines, severity) => {
+      this.monitorNotify(taskIdHolder.taskId, description, lines, severity);
+    };
+    const taskId = this.registerTask(
+      new MonitorBackgroundTask(proc, command, description, emit, {}, options.timeoutMs),
+      options,
+    );
+    taskIdHolder.taskId = taskId;
+    return taskId;
   }
 
   registerTask(task: BackgroundTask, options: RegisterBackgroundTaskOptions = {}): string {
@@ -654,6 +678,41 @@ export class BackgroundManager {
     if (context === undefined) return;
     this.agent.turn.steer(context.content, context.origin);
     this.fireNotificationHook(context.notification);
+  }
+
+  private nextMonitorSeq(taskId: string): number {
+    const next = (this.monitorSeqCounters.get(taskId) ?? 0) + 1;
+    this.monitorSeqCounters.set(taskId, next);
+    return next;
+  }
+
+  private monitorNotify(
+    taskId: string,
+    description: string,
+    lines: string[],
+    severity: 'info' | 'warning' = 'info',
+  ): void {
+    const body = lines.join('\n');
+    const notification: BackgroundTaskNotification = {
+      id: `monitor:${taskId}:${this.nextMonitorSeq(taskId)}`,
+      category: 'task',
+      type: 'monitor_line',
+      source_kind: 'monitor',
+      source_id: taskId,
+      title: description,
+      severity,
+      body,
+      tail_output: '',
+    };
+    const text = renderNotificationXml(notification);
+    const origin: BackgroundTaskOrigin = {
+      kind: 'background_task',
+      taskId,
+      status: 'running',
+      notificationId: `monitor:${taskId}`,
+    };
+    this.agent.turn.steer([{ type: 'text', text }], origin);
+    this.fireNotificationHook(notification);
   }
 
   private async restoreBackgroundTaskNotification(info: BackgroundTaskInfo): Promise<void> {

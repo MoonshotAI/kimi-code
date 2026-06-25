@@ -57,6 +57,11 @@ function mapKind(k: BackgroundTaskInfo['kind']): BackgroundTaskKind {
       // tool-spawned flows (Loop runs them as part of `Question` tool
       // execution), so 'tool' is the closest spec literal.
       return 'tool';
+    case 'monitor':
+      // 'monitor' is a first-class wire kind (added to backgroundTaskKindSchema),
+      // so emit it directly — REST clients can then distinguish Monitor tasks
+      // from generic tool/question tasks.
+      return 'monitor';
   }
 }
 
