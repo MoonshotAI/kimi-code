@@ -49,6 +49,11 @@ function rowClass(line: DiffViewLine): string {
   align-items: flex-start;
   min-height: 18px;
   white-space: pre;
+  /* Size each row to its content so the add/del background paints across the
+     whole line. Without this, the row is only as wide as the viewport and the
+     background stops where the text overflows horizontally. */
+  width: max-content;
+  min-width: 100%;
 }
 
 .dl-gutter {
@@ -74,11 +79,12 @@ function rowClass(line: DiffViewLine): string {
 }
 
 .dl-text {
-  flex: 1;
+  /* Do not shrink: the row is sized to its content (see .dl width: max-content)
+     so the text keeps its full width and the background covers it. */
+  flex: none;
   padding-right: 14px;
   white-space: pre;
   color: var(--text);
-  min-width: 0;
 }
 
 /* Added / removed lines: a faint background plus a left accent bar mark the
