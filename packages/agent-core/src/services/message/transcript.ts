@@ -45,6 +45,11 @@ import path from 'node:path';
 import type { AgentRecord } from '../../agent/records';
 import type { ContextMessage } from '../../agent/context';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
+import {
+  COMPACT_USER_MESSAGE_MAX_TOKENS,
+  collectCompactableUserMessages,
+  selectRecentUserMessages,
+} from '../../agent/compaction';
 
 type ContentPart = ContextMessage['content'][number];
 
@@ -238,20 +243,24 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
         applyLoopEvent(record.event, record.time);
         break;
       case 'context.apply_compaction': {
-        // ContextMemory drops history[0..compactedCount] and prepends the
-        // summary; we keep the prefix and insert the summary at the fold
-        // point so the transcript shows both.
-        const tailLength = Math.max(0, foldedLength - record.compactedCount);
-        transcript.splice(Math.max(0, transcript.length - tailLength), 0, {
+        // Mirrors ContextMemory.applyCompaction: the live context becomes the
+        // most recent user messages followed by a user-role summary. The
+        // transcript keeps the full history and appends the summary marker;
+        // foldedLength tracks the post-compaction live context length.
+        const keptUserMessages = selectRecentUserMessages(
+          collectCompactableUserMessages(transcript.map((entry) => entry.message)),
+          COMPACT_USER_MESSAGE_MAX_TOKENS,
+        );
+        transcript.push({
           message: {
-            role: 'assistant',
+            role: 'user',
             content: [{ type: 'text', text: record.summary }],
             toolCalls: [],
             origin: { kind: 'compaction_summary' },
           },
           time: record.time,
         });
-        foldedLength = tailLength + 1;
+        foldedLength = keptUserMessages.length + 1;
         openSteps.clear();
         flushDeferredIfToolExchangeClosed();
         break;

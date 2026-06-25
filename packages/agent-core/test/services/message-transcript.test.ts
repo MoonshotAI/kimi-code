@@ -92,27 +92,27 @@ describe('reduceWireRecords', () => {
     expect(foldedLength).toBe(2);
   });
 
-  it('compaction keeps the prefix and inserts the summary at the fold point', () => {
+  it('compaction keeps the prefix and appends the user-role summary', () => {
     const { entries, foldedLength } = reduceWireRecords([
       appendMessage(userMessage('u1')),
       ...assistantStep('s1', 'a1'),
       appendMessage(userMessage('u2')),
       ...assistantStep('s2', 'a2'),
-      // folded history is [u1, a1, u2, a2]; compact the first 3, keep a2.
-      compaction('SUM', 3),
+      compaction('SUM', 4),
       appendMessage(userMessage('u3')),
     ]);
     expect(entries.map((e) => textOf(e.message))).toEqual([
       'u1',
       'a1',
       'u2',
-      'SUM',
       'a2',
+      'SUM',
       'u3',
     ]);
-    expect(entries[3]!.message.origin).toEqual({ kind: 'compaction_summary' });
-    // live folded view would be [SUM, a2, u3]
-    expect(foldedLength).toBe(3);
+    expect(entries[4]!.message.origin).toEqual({ kind: 'compaction_summary' });
+    expect(entries[4]!.message.role).toBe('user');
+    // live folded view would be [u1, u2, SUM, u3]
+    expect(foldedLength).toBe(4);
   });
 
   it('handles repeated compactions', () => {
@@ -120,11 +120,11 @@ describe('reduceWireRecords', () => {
       appendMessage(userMessage('u1')),
       compaction('S1', 1),
       appendMessage(userMessage('u2')),
-      // folded = [S1, u2]; compact both.
-      compaction('S2', 2),
+      compaction('S2', 3),
     ]);
     expect(entries.map((e) => textOf(e.message))).toEqual(['u1', 'S1', 'u2', 'S2']);
-    expect(foldedLength).toBe(1);
+    // live folded view would be [u1, u2, S2]
+    expect(foldedLength).toBe(3);
   });
 
   it('undo removes through the last real user prompt and skips injections', () => {
@@ -433,18 +433,15 @@ describe('MessageService over a compacted wire log', () => {
       records.map((r) => JSON.stringify(r)).join('\n') + '\n',
       'utf8',
     );
-    // What getContext would return after the fold.
+    // What getContext would return after the fold: kept user messages + summary.
     liveHistory = [
+      userMessage('u1'),
+      userMessage('u2'),
       {
-        role: 'assistant',
+        role: 'user',
         content: [{ type: 'text', text: 'SUM' }],
         toolCalls: [],
         origin: { kind: 'compaction_summary' },
-      } as ContextMessage,
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'a2' }],
-        toolCalls: [],
       } as ContextMessage,
     ];
     const rpc: Partial<CoreRPC> = {
@@ -473,8 +470,8 @@ describe('MessageService over a compacted wire log', () => {
     const asc = [...page.items].reverse();
     expect(
       asc.map((m) => (m.content[0] as { text?: string }).text ?? '[non-text]'),
-    ).toEqual(['u1', 'a1', 'u2', 'SUM', 'a2']);
-    expect(asc[3]!.metadata).toEqual({ origin: { kind: 'compaction_summary' } });
+    ).toEqual(['u1', 'a1', 'u2', 'a2', 'SUM']);
+    expect(asc[4]!.metadata).toEqual({ origin: { kind: 'compaction_summary' } });
   });
 
   it('uses wire record times for created_at, strictly increasing', async () => {
@@ -495,7 +492,7 @@ describe('MessageService over a compacted wire log', () => {
     const asc = [...page.items].reverse();
     expect(
       asc.map((m) => (m.content[0] as { text?: string }).text ?? '[non-text]'),
-    ).toEqual(['u1', 'a1', 'u2', 'SUM', 'a2', 'u3-live']);
+    ).toEqual(['u1', 'a1', 'u2', 'a2', 'SUM', 'u3-live']);
   });
 
   it('get() resolves ids against the same full transcript', async () => {
@@ -511,8 +508,9 @@ describe('MessageService over a compacted wire log', () => {
     const page = await impl.list(SESSION_ID, { page_size: 100 });
     const asc = [...page.items].reverse();
     expect(asc.map((m) => (m.content[0] as { text?: string }).text)).toEqual([
+      'u1',
+      'u2',
       'SUM',
-      'a2',
     ]);
   });
 
@@ -530,6 +528,6 @@ describe('MessageService over a compacted wire log', () => {
     const asc = [...page.items].reverse();
     expect(
       asc.map((m) => (m.content[0] as { text?: string }).text ?? '[non-text]'),
-    ).toEqual(['u1', 'a1', 'u2', 'SUM', 'a2', 'u3']);
+    ).toEqual(['u1', 'a1', 'u2', 'a2', 'SUM', 'u3']);
   });
 });

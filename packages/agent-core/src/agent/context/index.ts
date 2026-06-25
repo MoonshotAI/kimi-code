@@ -4,7 +4,12 @@ import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
 import { estimateTokensForMessages } from '../../utils/tokens';
-import type { CompactionResult } from '../compaction';
+import {
+  COMPACT_USER_MESSAGE_MAX_TOKENS,
+  collectCompactableUserMessages,
+  selectRecentUserMessages,
+  type CompactionResult,
+} from '../compaction';
 import { project, trimTrailingOpenToolExchange } from './projector';
 import {
   USER_PROMPT_ORIGIN,
@@ -175,17 +180,24 @@ export class ContextMemory {
         tokensAfter: result.tokensAfter,
       },
     });
+    const keptUserMessages = selectRecentUserMessages(
+      collectCompactableUserMessages(this._history),
+      COMPACT_USER_MESSAGE_MAX_TOKENS,
+    );
     this._history = [
+      ...keptUserMessages,
       {
-        role: 'assistant',
+        role: 'user',
         content: [{ type: 'text', text: result.summary }],
         toolCalls: [],
         origin: { kind: 'compaction_summary' },
       },
-      ...this._history.slice(result.compactedCount),
     ];
     this.openSteps.clear();
-    this.flushDeferredMessagesIfToolExchangeClosed();
+    this.pendingToolResultIds.clear();
+    // Drop deferred messages (mostly injections/system reminders) instead of
+    // flushing them: initial context is rebuilt every turn.
+    this.deferredMessages = [];
     this._tokenCount = result.tokensAfter;
     this.tokenCountCoveredMessageCount = this._history.length;
     this.agent.microCompaction.reset();
