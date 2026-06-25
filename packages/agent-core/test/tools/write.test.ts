@@ -26,6 +26,9 @@ describe('WriteTool', () => {
     // Spontaneous doc/README creation is a known anti-pattern; pin the guard.
     expect(tool.description).toContain('documentation files');
     expect(tool.description).toContain('README');
+    // ...but the plan-mode plan file is a `.md` the model is told to Write, so the
+    // ban must carve it out (plan/index.ts writes plans/<id>.md via Write).
+    expect(tool.description.toLowerCase()).toContain('plan-mode plan file');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
