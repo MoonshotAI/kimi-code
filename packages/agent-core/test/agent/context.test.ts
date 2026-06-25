@@ -488,6 +488,7 @@ describe('Agent context', () => {
       'user',
       'assistant',
       'tool',
+      'tool',
     ]);
 
     ctx.dispatch({

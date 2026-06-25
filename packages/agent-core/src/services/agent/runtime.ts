@@ -300,7 +300,7 @@ export class AgentRuntime extends Disposable {
       // (tools.register_user_tool / tools.unregister_user_tool) are
       // registered before records are replayed below.
       // oxlint-disable-next-line no-unused-expressions
-      accessor.get(IUserToolService).register;
+      accessor.get(IUserToolService);
       // Force-construct PermissionRulesService so its wireRecord handlers
       // (permission.rules.add / permission.record_approval_result) are
       // registered before records are replayed below. accessor.get() alone
@@ -859,7 +859,7 @@ function configureUserToolService(
           executeUserTool: options.userTool?.executeUserTool,
         } satisfies UserToolServiceOptions,
       ],
-      true,
+      false,
     ),
   );
 }

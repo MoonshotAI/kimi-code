@@ -126,4 +126,4 @@ function toExecutableToolResult(result: ToolResult): ExecutableToolResult {
   };
 }
 
-registerSingleton(IUserToolService, new SyncDescriptor(UserToolService, [{}], true));
+registerSingleton(IUserToolService, new SyncDescriptor(UserToolService, [{}], false));

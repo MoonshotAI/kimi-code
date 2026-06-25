@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { project } from '../../../src/agent/context/projector';
+import { project, trimTrailingOpenToolExchange } from '../../../src/agent/context/projector';
 import type { ContextMessage } from '../../../src/agent/context/types';
 
 // Unit tests for how the projector normalizes tool exchanges: results are
@@ -167,5 +167,22 @@ describe('projector tool-exchange normalization', () => {
       toolCalls: [],
     };
     expect(project([message])).toHaveLength(1);
+  });
+
+  it('trims a trailing exchange closed only by synthetic interrupted results', () => {
+    const projected = project([user('go'), assistant('', ['c1', 'c2']), toolResult('c1', 'one')]);
+    expect(trimTrailingOpenToolExchange(projected).map((message) => message.role)).toEqual([
+      'user',
+    ]);
+  });
+
+  it('keeps a trailing exchange closed by real tool results', () => {
+    const projected = project([
+      user('go'),
+      assistant('', ['c1', 'c2']),
+      toolResult('c1', 'one'),
+      toolResult('c2', 'two'),
+    ]);
+    expect(trimTrailingOpenToolExchange(projected)).toEqual(projected);
   });
 });

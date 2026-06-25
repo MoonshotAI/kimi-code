@@ -239,9 +239,20 @@ export function trimTrailingOpenToolExchange(history: readonly Message[]): Messa
   const trailingToolCallIds = new Set(
     history
       .slice(lastNonToolIndex + 1)
+      .filter((message) => !isInterruptedToolResult(message))
       .map((message) => message.toolCallId)
       .filter((toolCallId): toolCallId is string => typeof toolCallId === 'string'),
   );
   const closed = assistant.toolCalls.every((toolCall) => trailingToolCallIds.has(toolCall.id));
   return closed ? [...history] : history.slice(0, lastNonToolIndex);
+}
+
+function isInterruptedToolResult(message: Message): boolean {
+  const content = message.content[0];
+  return (
+    message.role === 'tool' &&
+    message.content.length === 1 &&
+    content?.type === 'text' &&
+    content.text === `${TOOL_INTERRUPTED_STATUS}\n${TOOL_INTERRUPTED_OUTPUT}`
+  );
 }
