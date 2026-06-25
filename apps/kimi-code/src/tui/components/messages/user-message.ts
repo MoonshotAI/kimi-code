@@ -8,11 +8,14 @@ import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';
 import { USER_MESSAGE_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 export class UserMessageComponent implements Component {
   private text: string;
   private spacerComponent: Spacer;
   private imageThumbnails: ImageThumbnail[];
+
+  private renderCache: { width: number; lines: string[] } | undefined;
 
   constructor(text: string, images?: ImageAttachment[]) {
     this.text = text;
@@ -20,7 +23,12 @@ export class UserMessageComponent implements Component {
     this.imageThumbnails = images?.map((img) => new ImageThumbnail(img)) ?? [];
   }
 
+  private markRenderDirty(): void {
+    this.renderCache = undefined;
+  }
+
   invalidate(): void {
+    this.markRenderDirty();
     for (const img of this.imageThumbnails) {
       img.invalidate?.();
     }
@@ -29,6 +37,14 @@ export class UserMessageComponent implements Component {
   render(width: number): string[] {
     const safeWidth = Math.max(0, width);
     if (safeWidth <= 0) return [''];
+
+    if (
+      isRenderCacheEnabled() &&
+      this.renderCache !== undefined &&
+      this.renderCache.width === safeWidth
+    ) {
+      return this.renderCache.lines;
+    }
 
     const bullet = currentTheme.boldFg('roleUser', USER_MESSAGE_BULLET);
     const bulletWidth = visibleWidth(bullet);
@@ -41,7 +57,8 @@ export class UserMessageComponent implements Component {
       lines.push(line);
     }
 
-    // Text — re-dye on every render so theme switches are reflected
+    // Text is re-dyed from the current theme; invalidate() (theme change) clears
+    // the render cache so the new colours are picked up on the next render.
     const coloredText = currentTheme.boldFg('roleUser', this.text);
     const textLines = new Text(coloredText, 0, 0).render(contentWidth);
     for (let i = 0; i < textLines.length; i++) {
@@ -57,7 +74,7 @@ export class UserMessageComponent implements Component {
       }
     }
 
-    return lines.map((line) => {
+    const rendered = lines.map((line) => {
       // Inline image sequences (Kitty / iTerm2) carry their own placement
       // information and have zero visible width, but pi-tui's truncateToWidth
       // treats the embedded base64 payload as visible text and would chop the
@@ -66,6 +83,10 @@ export class UserMessageComponent implements Component {
       if (isImageLine(line)) return line;
       return truncateToWidth(line, safeWidth, '…');
     });
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width: safeWidth, lines: rendered };
+    }
+    return rendered;
   }
 }
 
