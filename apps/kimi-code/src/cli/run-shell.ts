@@ -2,9 +2,6 @@ import { execSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { removeWorktree } from '#/utils/git/worktree';
-import { quoteShellArg } from '#/utils/shell-quote';
-
 import {
   createKimiHarness,
   flushDiagnosticLogsSync,
@@ -34,11 +31,17 @@ import { restoreTerminalModes } from '#/utils/terminal-restore';
 import type { CLIOptions } from './options';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
+import { formatResumeCommand } from './resume-hint';
+import {
+  cleanupEmptyWorktree,
+  metadataFromWorktree,
+  type WorktreeRuntime,
+} from './worktree-runtime';
 
 export async function runShell(
   opts: CLIOptions,
   version: string,
-  runOptions: { readonly migrateOnly?: boolean } = {},
+  runOptions: { readonly migrateOnly?: boolean; readonly worktree?: WorktreeRuntime } = {},
 ): Promise<void> {
   const startedAt = Date.now();
   const configStartedAt = startedAt;
@@ -104,6 +107,7 @@ export async function runShell(
     configWarning = combineStartupNotice(configWarning, warning);
   }
   const configMs = Date.now() - configStartedAt;
+  const worktree = runOptions.worktree;
   const tui = new KimiTUI(harness, {
     cliOptions: opts,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
@@ -113,6 +117,7 @@ export async function runShell(
     startupNotice: configWarning,
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
+    sessionMetadata: metadataFromWorktree(worktree),
   });
 
   initializeCliTelemetry({
@@ -209,13 +214,8 @@ export async function runShell(
     // Clean up the git worktree for empty sessions so abandoned worktrees
     // do not accumulate. Use the lifetime flag so `/new` does not delete a
     // worktree that held an earlier session.
-    if (!hasContent && opts.worktreePath !== undefined && opts.parentRepoPath !== undefined) {
-      try {
-        removeWorktree(opts.parentRepoPath, opts.worktreePath);
-      } catch (cleanupError) {
-        // Best-effort cleanup only; do not let cleanup failures prevent a clean exit.
-        log.warn('Failed to clean up git worktree on exit', cleanupError);
-      }
+    if (!hasContent) {
+      cleanupEmptyWorktree(worktree);
     }
 
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
@@ -223,10 +223,9 @@ export async function runShell(
     process.stdout.write(`${gutter}Bye!\n`);
     const hints: string[] = [];
     if (sessionId !== '' && hasContent) {
-      const resumeCommand =
-        opts.worktreePath !== undefined
-          ? `cd ${quoteShellArg(process.cwd())} && kimi -r ${sessionId}`
-          : `kimi -r ${sessionId}`;
+      const resumeCommand = formatResumeCommand(sessionId, {
+        cwd: worktree !== undefined ? process.cwd() : undefined,
+      });
       hints.push(`${gutter}To resume this session: ${resumeCommand}`);
     }
     if (tui.exitOpenUrl !== undefined) {

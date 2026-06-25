@@ -10,7 +10,7 @@
  */
 
 import type { PromptOutputFormat } from './options';
-import { quoteShellArg } from '#/utils/shell-quote';
+import { formatResumeCommand } from './resume-hint';
 
 /**
  * Structural hook-result shape the renderer reads. Both the v1 SDK
@@ -394,10 +394,7 @@ export function writeResumeHint(
   stderr: PromptOutput,
   workDir?: string,
 ): void {
-  const command =
-    workDir !== undefined
-      ? `cd ${quoteShellArg(workDir)} && kimi -r ${sessionId}`
-      : `kimi -r ${sessionId}`;
+  const command = formatResumeCommand(sessionId, { cwd: workDir });
   const content = `To resume this session: ${command}`;
   if (outputFormat === 'stream-json') {
     const message: PromptJsonResumeMetaMessage = {

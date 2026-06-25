@@ -46,10 +46,6 @@ export interface CLIOptions {
   skillsDirs: string[];
   addDirs?: string[];
   worktree?: string;
-  /** Populated during startup when --worktree is used. */
-  worktreePath?: string;
-  /** Populated during startup when --worktree is used. */
-  parentRepoPath?: string;
 }
 
 export interface ValidatedOptions {
