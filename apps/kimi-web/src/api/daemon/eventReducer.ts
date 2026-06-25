@@ -534,7 +534,9 @@ export function reduceAppEvent(
         if (outputLines.at(-1) === event.outputChunk) return t;
         return {
           ...t,
-          outputLines: [...outputLines, event.outputChunk].slice(-40),
+          // Accumulate the full progress so the subagent panel can show the
+          // entire process, not just the most recent handful of lines.
+          outputLines: [...outputLines, event.outputChunk],
         };
       });
       break;

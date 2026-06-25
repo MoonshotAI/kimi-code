@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialState, reduceAppEvent } from '../src/api/daemon/eventReducer';
-import type { AppMessage, AppSession } from '../src/api/types';
+import type { AppMessage, AppSession, AppTask } from '../src/api/types';
 
 function makeSession(id: string, updatedAt: string): AppSession {
   return {
@@ -34,6 +34,17 @@ function makeMessage(sessionId: string, createdAt: string): AppMessage {
     role: 'user',
     content: [{ type: 'text', text: 'hi' }],
     createdAt,
+  };
+}
+
+function makeSubagentTask(id: string, sessionId: string): AppTask {
+  return {
+    id,
+    sessionId,
+    kind: 'subagent',
+    description: 'subagent task',
+    status: 'running',
+    createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
 
@@ -79,5 +90,37 @@ describe('reduceAppEvent messageCreated', () => {
     );
     expect(next.sessions.find((s) => s.id === 's-a')?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
     expect(next.sessions.find((s) => s.id === 's-b')?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+});
+
+describe('reduceAppEvent taskProgress', () => {
+  it('accumulates the full progress output without truncating to a fixed window', () => {
+    const state = {
+      ...createInitialState(),
+      tasksBySession: { 's1': [makeSubagentTask('t1', 's1')] },
+    };
+    let next = state;
+    for (let i = 0; i < 60; i++) {
+      next = reduceAppEvent(
+        next,
+        { type: 'taskProgress', sessionId: 's1', taskId: 't1', outputChunk: `line ${i}`, stream: 'stdout' },
+        { sessionId: 's1', seq: i + 1 },
+      );
+    }
+    const lines = next.tasksBySession['s1']?.[0]?.outputLines;
+    expect(lines).toHaveLength(60);
+    expect(lines?.[0]).toBe('line 0');
+    expect(lines?.at(-1)).toBe('line 59');
+  });
+
+  it('deduplicates a repeated trailing chunk', () => {
+    const state = {
+      ...createInitialState(),
+      tasksBySession: { 's1': [makeSubagentTask('t1', 's1')] },
+    };
+    const event = { type: 'taskProgress', sessionId: 's1', taskId: 't1', outputChunk: 'same', stream: 'stdout' } as const;
+    const once = reduceAppEvent(state, event, { sessionId: 's1', seq: 1 });
+    const twice = reduceAppEvent(once, event, { sessionId: 's1', seq: 2 });
+    expect(twice.tasksBySession['s1']?.[0]?.outputLines).toEqual(['same']);
   });
 });
