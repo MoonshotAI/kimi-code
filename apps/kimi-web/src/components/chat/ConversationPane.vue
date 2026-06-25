@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../../types';
+import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolDiffTarget, ToolMedia, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { SwarmGroup } from '../../composables/swarmGroups';
 import type { FileItem } from './MentionMenu.vue';
@@ -108,6 +108,7 @@ const emit = defineEmits<{
   openThinking: [target: { turnId: string; blockIndex: number }];
   openCompaction: [target: { turnId: string }];
   openAgent: [target: { turnId: string; blockIndex: number; memberId: string }];
+  openToolDiff: [target: ToolDiffTarget];
   /** Chat header / files pane: focus the diff detail layer and refresh git status. */
   openChanges: [];
   refreshGitStatus: [];
@@ -1025,6 +1026,7 @@ defineExpose({ loadComposerForEdit });
               @open-thinking="emit('openThinking', $event)"
               @open-compaction="emit('openCompaction', $event)"
               @open-agent="emit('openAgent', $event)"
+              @open-tool-diff="emit('openToolDiff', $event)"
               @edit-message="emit('editMessage', $event)"
               @load-older-messages="handleLoadOlderMessages"
             />

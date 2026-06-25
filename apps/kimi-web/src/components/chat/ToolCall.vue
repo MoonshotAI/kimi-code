@@ -1,9 +1,8 @@
 <!-- apps/kimi-web/src/components/chat/ToolCall.vue -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import type { DiffViewLine, FilePreviewRequest, ToolCall, ToolMedia } from '../../types';
+import type { DiffViewLine, FilePreviewRequest, ToolCall, ToolDiffTarget, ToolMedia } from '../../types';
 import { normalizeToolName, toolLabel, toolGlyph, toolChip, toolSummary } from '../../lib/toolMeta';
-import DiffLines from './DiffLines.vue';
 import { buildDiffLines, diffStats } from '../../lib/diffLines';
 
 const props = withDefaults(
@@ -19,13 +18,18 @@ const props = withDefaults(
 const emit = defineEmits<{
   openMedia: [media: ToolMedia];
   openFile: [target: FilePreviewRequest];
+  openToolDiff: [target: ToolDiffTarget];
 }>();
 const isRunningBash = computed(() => props.tool.status === 'running' && /^bash$/i.test(props.tool.name));
 const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
-const canExpand = computed(() => hasOutput.value || isRunningBash.value || editDiff.value !== null);
+const canExpand = computed(() => hasOutput.value || isRunningBash.value);
 const open = ref(props.tool.defaultExpanded === true && canExpand.value);
 
 function toggle() {
+  if (diffTarget.value) {
+    emit('openToolDiff', diffTarget.value);
+    return;
+  }
   if (canExpand.value) open.value = !open.value;
 }
 
@@ -77,8 +81,8 @@ function parseToolArg(arg: string): Record<string, unknown> | null {
 
 /**
  * For Edit / Write tools, build a line-by-line diff from the tool input so it
- * can be rendered inline. Returns null for any other tool or when the input
- * doesn't carry the expected fields.
+ * can be previewed in the side panel. Returns null for any other tool or when
+ * the input doesn't carry the expected fields.
  */
 const editDiff = computed<DiffViewLine[] | null>(() => {
   const kind = normalizeToolName(props.tool.name);
@@ -100,6 +104,24 @@ const editDiff = computed<DiffViewLine[] | null>(() => {
   const content = typeof d.content === 'string' ? d.content : undefined;
   if (content === undefined) return null;
   return buildDiffLines('', content);
+});
+
+/** Build the side-panel preview payload for Edit/Write tools, or null for any
+ *  other tool. The panel shows `lines` when a from-args diff is faithful,
+ *  otherwise it falls back to the tool `output`. */
+const diffTarget = computed<ToolDiffTarget | null>(() => {
+  const kind = normalizeToolName(props.tool.name);
+  if (kind !== 'edit' && kind !== 'write') return null;
+  const d = parseToolArg(props.tool.arg);
+  const path = d && typeof d.path === 'string' ? d.path : undefined;
+  return {
+    title: toolLabel(props.tool.name),
+    path,
+    // On error the diff describes what was attempted, not what happened — show
+    // the tool output (the failure reason) instead.
+    lines: props.tool.status === 'error' ? null : editDiff.value,
+    output: props.tool.output,
+  };
 });
 
 // ExitPlanMode: expose the plan file as a clickable link (opens file preview).
@@ -226,14 +248,8 @@ function openMediaPreview(): void {
       <!-- When expanded, the command/summary moves here (and is hidden from the
            header) so it shows exactly once. -->
       <div v-if="summaryFull()" class="bb-summary">{{ summaryFull() }}</div>
-      <template v-if="editDiff && tool.status !== 'error'">
-        <div v-if="editDiff.length > 0" class="bb-diff"><DiffLines :lines="editDiff" /></div>
-        <div v-else class="bb-empty">No changes.</div>
-      </template>
-      <template v-else>
-        <div v-if="!hasOutput" class="bb-empty">Waiting for output…</div>
-        <div v-for="(line, i) in tool.output ?? []" :key="i">{{ line }}</div>
-      </template>
+      <div v-if="!hasOutput" class="bb-empty">Waiting for output…</div>
+      <div v-for="(line, i) in tool.output ?? []" :key="i">{{ line }}</div>
     </div>
   </div>
 </template>
@@ -412,13 +428,6 @@ function openMediaPreview(): void {
 .bb-empty {
   color: var(--muted);
   font-style: italic;
-}
-/* Inline edit/write diff: scroll horizontally for long lines so the card
-   width stays intact, and bleed to the card edges (counter the .bb padding)
-   so the gutter lines up cleanly. */
-.bb-diff {
-  overflow-x: auto;
-  margin: 0 -11px;
 }
 /* Mobile bubble layout: no left gutter indent, softer corners (prototype .tool). */
 .box.mob {

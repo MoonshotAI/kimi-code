@@ -10,7 +10,7 @@ import type { useKimiWebClient } from './useKimiWebClient';
 type KimiWebClient = ReturnType<typeof useKimiWebClient>;
 
 /** Which occupant currently owns the shared right-side detail layer. */
-export type DetailTarget = 'file' | 'diff' | 'thinking' | 'compaction' | 'agent' | 'btw';
+export type DetailTarget = 'file' | 'diff' | 'thinking' | 'compaction' | 'agent' | 'toolDiff' | 'btw';
 
 export interface UseFilePreviewOptions {
   client: KimiWebClient;

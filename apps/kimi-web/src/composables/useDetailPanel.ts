@@ -2,7 +2,7 @@
 // Unified right-side detail layer. Only one detail is open at a time.
 
 import { computed, ref, watch, type Ref } from 'vue';
-import type { AgentMember } from '../types';
+import type { AgentMember, ToolDiffTarget } from '../types';
 import type { DetailTarget } from './useFilePreview';
 import type { useKimiWebClient } from './useKimiWebClient';
 import { clampPanelWidth, panelMaxWidth, useViewportWidth } from './useViewportWidth';
@@ -154,6 +154,23 @@ export function useDetailPanel({
   }
 
   // ---------------------------------------------------------------------------
+  // Edit/Write tool-call diff preview
+  // ---------------------------------------------------------------------------
+  const toolDiffTarget = ref<ToolDiffTarget | null>(null);
+
+  const toolDiffVisible = computed(() => toolDiffTarget.value !== null);
+
+  function openToolDiff(target: ToolDiffTarget): void {
+    detailTarget.value = 'toolDiff';
+    toolDiffTarget.value = target;
+  }
+
+  function closeToolDiff(): void {
+    toolDiffTarget.value = null;
+    if (detailTarget.value === 'toolDiff') detailTarget.value = null;
+  }
+
+  // ---------------------------------------------------------------------------
   // Diff detail layer (opened from the chat header git area)
   // ---------------------------------------------------------------------------
   const detailDiffMode = ref<'list' | 'detail'>('list');
@@ -219,6 +236,7 @@ export function useDetailPanel({
     if (detailTarget.value === 'thinking' && thinkingVisible.value) { closeThinkingPanel(); return true; }
     if (detailTarget.value === 'compaction' && compactionPanelVisible.value) { closeCompactionPanel(); return true; }
     if (detailTarget.value === 'agent' && agentPanelVisible.value) { closeAgentPanel(); return true; }
+    if (detailTarget.value === 'toolDiff' && toolDiffVisible.value) { closeToolDiff(); return true; }
     if (detailTarget.value === 'file') { closeFilePreview(); return true; }
     if (detailTarget.value === 'diff') { closeDiffDetail(); return true; }
     if (detailTarget.value === 'btw') { closeSideChat(); return true; }
@@ -230,6 +248,7 @@ export function useDetailPanel({
     closeThinkingPanel();
     closeCompactionPanel();
     closeAgentPanel();
+    closeToolDiff();
     closeDiffDetail();
     hideSideChatPanel();
   });
@@ -253,6 +272,10 @@ export function useDetailPanel({
     agentPanelVisible,
     openAgentPanel,
     closeAgentPanel,
+    toolDiffTarget,
+    toolDiffVisible,
+    openToolDiff,
+    closeToolDiff,
     detailDiffMode,
     detailDiffPath,
     openDiffDetail,
