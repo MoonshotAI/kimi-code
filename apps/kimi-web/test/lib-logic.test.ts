@@ -6,6 +6,7 @@ import {
 } from '../src/lib/filePathLinks';
 import { parseDiff } from '../src/lib/parseDiff';
 import { buildDiffLines } from '../src/lib/diffLines';
+import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 
@@ -71,6 +72,33 @@ describe('buildDiffLines', () => {
   it('returns null when the LCS matrix would be too large', () => {
     const big = Array.from({ length: 2000 }, (_, i) => `line${i}`).join('\n');
     expect(buildDiffLines(big, `${big}\nextra`)).toBeNull();
+  });
+});
+
+describe('buildEditDiffLines', () => {
+  it('builds a diff for a single Edit', () => {
+    const arg = JSON.stringify({ path: 'a.ts', old_string: 'a\nb', new_string: 'a\nB' });
+    expect(buildEditDiffLines({ name: 'Edit', arg })).toEqual([
+      { type: 'context', text: 'a', oldNo: 1, newNo: 1 },
+      { type: 'del', text: 'b', oldNo: 2 },
+      { type: 'add', text: 'B', newNo: 2 },
+    ]);
+  });
+
+  it('falls back to output for replace_all edits', () => {
+    const arg = JSON.stringify({ path: 'a.ts', old_string: 'a', new_string: 'b', replace_all: true });
+    expect(buildEditDiffLines({ name: 'Edit', arg })).toBeNull();
+  });
+
+  it('falls back to output for every Write (new file or overwrite)', () => {
+    expect(buildEditDiffLines({ name: 'Write', arg: JSON.stringify({ path: 'a.ts', content: 'x' }) })).toBeNull();
+    expect(
+      buildEditDiffLines({ name: 'Write', arg: JSON.stringify({ path: 'a.ts', content: 'x', mode: 'append' }) }),
+    ).toBeNull();
+  });
+
+  it('returns null for non-edit/write tools', () => {
+    expect(buildEditDiffLines({ name: 'Bash', arg: JSON.stringify({ command: 'ls' }) })).toBeNull();
   });
 });
 

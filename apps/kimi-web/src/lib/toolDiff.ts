@@ -34,10 +34,11 @@ export function buildEditDiffLines(tool: { name: string; arg: string }): DiffVie
     if (before === undefined || after === undefined) return null;
     return buildDiffLines(before, after);
   }
-  if (d.mode === 'append') return null;
-  const content = typeof d.content === 'string' ? d.content : undefined;
-  if (content === undefined) return null;
-  return buildDiffLines('', content);
+  // Write only reports the new content (and whether it appended); the client
+  // cannot tell a new file from an overwrite of an existing one. A from-empty
+  // diff would show an overwrite as "all additions, no deletions", which is
+  // misleading — so fall back to the tool output for every Write.
+  return null;
 }
 
 /** Pull the file path out of an Edit/Write tool call's input, if present. */
