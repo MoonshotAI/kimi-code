@@ -1,6 +1,7 @@
 import {
   APIConnectionError,
   APITimeoutError,
+  APIStatusError,
   ChatProviderError,
   normalizeAPIStatusError,
 } from '#/errors';
@@ -567,6 +568,35 @@ function convertMessage(message: Message, model: string): MessageParam {
 
   return { role: role, content: blocks };
 }
+
+/**
+ * Classify a status-less Anthropic SDK error into a retryable error type
+ * based on message patterns. This catches provider-level errors (e.g.
+ * reverse-proxy overloads like Xunfei's "Engine Busy") that the SDK
+ * surfaces as a generic {@link AnthropicError} without an HTTP status code.
+ */
+function classifyAnthropicSdkError(message: string): ChatProviderError {
+  const lower = message.toLowerCase();
+  // Provider-side overload / transient failures — map to 503 so the
+  // retry loop picks them up automatically.
+  if (
+    /\b(?:engine\s*busy|overloaded|too\s+(?:many|much)\s+(?:load|traffic)|server\s+(?:busy|overloaded))\b/i.test(
+      lower,
+    )
+  ) {
+    return new APIStatusError(503, `Anthropic error: ${message}`, null);
+  }
+  // Rate-limit patterns that arrive without a 429 status code.
+  if (
+    /\b(?:rate[ _-]?limit(?:ed)?|too\s+many\s+requests|quota\s+exceeded)\b/i.test(
+      lower,
+    )
+  ) {
+    return new APIStatusError(429, `Anthropic error: ${message}`, null);
+  }
+  return new ChatProviderError(`Anthropic error: ${message}`);
+}
+
 export function convertAnthropicError(error: unknown): ChatProviderError {
   // Check timeout before connection (APIConnectionTimeoutError extends APIConnectionError)
   if (error instanceof AnthropicTimeoutError) {
@@ -581,7 +611,9 @@ export function convertAnthropicError(error: unknown): ChatProviderError {
     return normalizeAPIStatusError(error.status, error.message, reqId);
   }
   if (error instanceof AnthropicError) {
-    return new ChatProviderError(`Anthropic error: ${error.message}`);
+    // Heuristic: classify status-less SDK errors into retryable categories
+    // so the downstream retry loop doesn't treat them as fatal.
+    return classifyAnthropicSdkError(error.message);
   }
   if (error instanceof Error) {
     return new ChatProviderError(`Error: ${error.message}`);

@@ -92,6 +92,30 @@ describe('convertAnthropicError', () => {
     expect(result.message).toContain('something went wrong');
   });
 
+  it('AnthropicError "Engine Busy" → APIStatusError(503)', () => {
+    const err = new AnthropicError(
+      'Xunfei claude request failed with code: 10010, msg: RecvFromEngineError:Engine Busy',
+    );
+    const result = convertAnthropicError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).statusCode).toBe(503);
+    expect(result.message).toContain('Engine Busy');
+  });
+
+  it('AnthropicError "overloaded" → APIStatusError(503)', () => {
+    const err = new AnthropicError('server is overloaded, try again later');
+    const result = convertAnthropicError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).statusCode).toBe(503);
+  });
+
+  it('AnthropicError rate-limit message → APIStatusError(429)', () => {
+    const err = new AnthropicError('rate limited: too many requests');
+    const result = convertAnthropicError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).statusCode).toBe(429);
+  });
+
   it('plain Error -> ChatProviderError', () => {
     const err = new Error('unexpected');
     const result = convertAnthropicError(err);

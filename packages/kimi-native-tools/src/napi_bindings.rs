@@ -268,3 +268,18 @@ pub fn native_list_directory(
         collapse_hidden_dirs: collapse_hidden_dirs.unwrap_or(false),
     })
 }
+
+// ============================================================================
+// File Type tool
+// ============================================================================
+
+use crate::file_type::{self, ImageDimensions};
+
+/// Best-effort pixel-dimension reader for common raster formats.
+///
+/// @param data - Raw file bytes (at least the first few hundred bytes).
+/// @returns ImageDimensions { width: number, height: number } or null if unknown.
+#[napi]
+pub fn native_sniff_image_dimensions(data: Vec<u8>) -> Option<ImageDimensions> {
+    file_type::sniff_image_dimensions(&data)
+}

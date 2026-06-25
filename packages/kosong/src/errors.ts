@@ -95,7 +95,26 @@ export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIEmptyResponseError) {
     return true;
   }
-  return error instanceof APIStatusError && [429, 500, 502, 503, 504].includes(error.statusCode);
+  if (error instanceof APIStatusError) {
+    return [429, 500, 502, 503, 504].includes(error.statusCode);
+  }
+  // Heuristic fallback: generic ChatProviderErrors whose message matches
+  // known transient/server-overload patterns — classified as retryable
+  // so errors like "Engine Busy" from reverse proxies are retried
+  // even when the SDK doesn't carry an HTTP status code.
+  if (error instanceof ChatProviderError) {
+    return isRetryableProviderMessage(error.message);
+  }
+  return false;
+}
+
+const RETRYABLE_PROVIDER_MESSAGE_PATTERNS: readonly RegExp[] = [
+  /\b(?:engine\s*busy|overloaded|too\s+(?:many|much)\s+(?:load|traffic)|server\s+(?:busy|overloaded))\b/i,
+  /\b(?:rate[ _-]?limit(?:ed)?|too\s+many\s+requests|quota\s+exceeded)\b/i,
+];
+
+function isRetryableProviderMessage(message: string): boolean {
+  return RETRYABLE_PROVIDER_MESSAGE_PATTERNS.some((p) => p.test(message));
 }
 
 const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [

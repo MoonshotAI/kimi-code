@@ -132,6 +132,41 @@ describe('isRetryableGenerateError', () => {
     expect(isRetryableGenerateError(new Error('boom'))).toBe(false);
     expect(isRetryableGenerateError('boom')).toBe(false);
   });
+
+  it('retries ChatProviderError with engine-busy / overloaded message', () => {
+    expect(
+      isRetryableGenerateError(
+        new ChatProviderError('Anthropic error: Xunfei claude request failed with RecvFromEngineError:Engine Busy'),
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableGenerateError(new ChatProviderError('server is overloaded')),
+    ).toBe(true);
+    expect(
+      isRetryableGenerateError(new ChatProviderError('too much load on the server')),
+    ).toBe(true);
+  });
+
+  it('retries ChatProviderError with rate-limit message', () => {
+    expect(
+      isRetryableGenerateError(new ChatProviderError('rate limited, try again')),
+    ).toBe(true);
+    expect(
+      isRetryableGenerateError(new ChatProviderError('too many requests')),
+    ).toBe(true);
+    expect(
+      isRetryableGenerateError(new ChatProviderError('quota exceeded')),
+    ).toBe(true);
+  });
+
+  it('does not retry ChatProviderError with unknown message', () => {
+    expect(
+      isRetryableGenerateError(new ChatProviderError('something went wrong')),
+    ).toBe(false);
+    expect(
+      isRetryableGenerateError(new ChatProviderError('invalid api key')),
+    ).toBe(false);
+  });
 });
 
 describe('error hierarchy instanceof checks', () => {

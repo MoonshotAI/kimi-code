@@ -30,10 +30,27 @@ import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '../../support/file-type';
+import { tryLoadNative } from '../native-tools';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
 import readMediaDescriptionHead from './read-media.md?raw';
+
+// ── Native sniff helper ──────────────────────────────────────────────
+
+function sniffImageDimensionsNative(data: Buffer | Uint8Array): { width: number; height: number } | null {
+  try {
+    const mod = tryLoadNative();
+    if (!mod) return null;
+    const fn = mod['nativeSniffImageDimensions'] as
+      | ((data: Buffer | Uint8Array) => { width: number; height: number } | null)
+      | undefined;
+    if (typeof fn !== 'function') return null;
+    return fn(data);
+  } catch {
+    return null;
+  }
+}
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -247,7 +264,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       const closeText = `</${tag}>`;
 
       const dimensions =
-        fileType.kind === 'image' ? sniffImageDimensions(data) : null;
+        fileType.kind === 'image' ? sniffImageDimensionsNative(data) ?? sniffImageDimensions(data) : null;
       const systemText = buildSystemSummary({
         kind: fileType.kind,
         mimeType: fileType.mimeType,

@@ -221,6 +221,20 @@ function nativeListDirectory(options = {}) {
 }
 
 // ============================================================================
+// File Type tool
+// ============================================================================
+
+/**
+ * Best-effort pixel-dimension reader for common raster formats.
+ *
+ * @param {Buffer|Uint8Array} data - Raw file bytes (at least the first few hundred bytes).
+ * @returns {{ width: number, height: number } | null} Image dimensions or null if unknown.
+ */
+function nativeSniffImageDimensions(data) {
+  return binding.nativeSniffImageDimensions(data);
+}
+
+// ============================================================================
 // Bash tool
 // ============================================================================
 
@@ -259,6 +273,7 @@ module.exports = {
   nativeGrep,
   nativeGlob,
   nativeListDirectory,
+  nativeSniffImageDimensions,
   nativeBash,
 
   // Constants

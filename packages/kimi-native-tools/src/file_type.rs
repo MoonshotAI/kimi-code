@@ -1,5 +1,6 @@
 /// File type detection via magic bytes and extension sniffing.
 /// Mirrors the TypeScript `detectFileType` in `support/file-type.ts`.
+use napi_derive::napi;
 use std::path::Path;
 
 /// Number of bytes to read from file header for magic-byte detection.
@@ -143,7 +144,8 @@ const SENSITIVE_DOT_VARIANT_SUFFIXES: &[&str] = &[
 ];
 
 /// Image dimensions (width × height in pixels).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[napi(object)]
 pub struct ImageDimensions {
     pub width: u32,
     pub height: u32,
@@ -296,31 +298,45 @@ mod tests {
     #[test]
     fn test_png_magic() {
         let header = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-        assert_eq!(detect_file_type(&PathBuf::from("test"), header), FileKind::Image);
+        assert_eq!(
+            detect_file_type(&PathBuf::from("test"), header),
+            FileKind::Image
+        );
     }
 
     #[test]
     fn test_jpeg_magic() {
         let header = &[0xFF, 0xD8, 0xFF, 0xE0];
-        assert_eq!(detect_file_type(&PathBuf::from("test"), header), FileKind::Image);
+        assert_eq!(
+            detect_file_type(&PathBuf::from("test"), header),
+            FileKind::Image
+        );
     }
 
     #[test]
     fn test_gif_magic() {
-        assert_eq!(detect_file_type(&PathBuf::from("test"), b"GIF89a"), FileKind::Image);
+        assert_eq!(
+            detect_file_type(&PathBuf::from("test"), b"GIF89a"),
+            FileKind::Image
+        );
     }
 
     #[test]
     fn test_mp4_magic() {
-        // ftyp box
         let header = b"\x00\x00\x00\x1cftypisom\x00\x00\x02\x00";
-        assert_eq!(detect_file_type(&PathBuf::from("test"), header), FileKind::Video);
+        assert_eq!(
+            detect_file_type(&PathBuf::from("test"), header),
+            FileKind::Video
+        );
     }
 
     #[test]
     fn test_webm_magic() {
         let header = &[0x1A, 0x45, 0xDF, 0xA3, 0x01, 0x00, 0x00, 0x00];
-        assert_eq!(detect_file_type(&PathBuf::from("test"), header), FileKind::Video);
+        assert_eq!(
+            detect_file_type(&PathBuf::from("test"), header),
+            FileKind::Video
+        );
     }
 
     #[test]
@@ -341,7 +357,6 @@ mod tests {
 
     #[test]
     fn test_extension_override() {
-        // Even if header looks like text, extension wins for known media.
         assert_eq!(
             detect_file_type(&PathBuf::from("photo.png"), b"not a png"),
             FileKind::Image
@@ -369,7 +384,6 @@ mod tests {
 
     #[test]
     fn test_is_sensitive_file_exemptions() {
-        // Public-key files and template envs are intentionally allowed.
         assert!(!is_sensitive_file("/repo/.env.example"));
         assert!(!is_sensitive_file("/repo/.env.sample"));
         assert!(!is_sensitive_file("/repo/.env.template"));
@@ -379,12 +393,10 @@ mod tests {
 
     #[test]
     fn test_is_sensitive_file_variants() {
-        // Rename-shielded variants must still be caught.
         assert!(is_sensitive_file("/secrets/id_rsa.bak"));
         assert!(is_sensitive_file("/secrets/id_rsa.old"));
         assert!(is_sensitive_file("/secrets/id_rsa-backup"));
         assert!(is_sensitive_file("/secrets/id_rsa_disabled"));
-        // Unrelated filenames sharing a prefix are not flagged.
         assert!(!is_sensitive_file("/code/id_rsafoo.txt"));
         assert!(!is_sensitive_file("/code/credentials.json"));
     }
@@ -393,5 +405,126 @@ mod tests {
     fn test_is_sensitive_file_case_insensitive() {
         assert!(is_sensitive_file("/repo/.ENV"));
         assert!(is_sensitive_file("/home/User/.SSH/ID_RSA"));
+    }
+
+    // ============================================================================
+    // sniff_image_dimensions tests
+    // ============================================================================
+
+    #[test]
+    fn test_sniff_png_dimensions() {
+        let png = [
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // signature
+            0x00, 0x00, 0x00, 0x0D, // IHDR length (13)
+            0x49, 0x48, 0x44, 0x52, // "IHDR"
+            0x00, 0x00, 0x00, 0x64, // width = 100
+            0x00, 0x00, 0x00, 0xC8, // height = 200
+        ];
+        let dims = sniff_image_dimensions(&png);
+        assert!(dims.is_some());
+        let dims = dims.unwrap();
+        assert_eq!(dims.width, 100);
+        assert_eq!(dims.height, 200);
+    }
+
+    #[test]
+    fn test_sniff_gif_dimensions() {
+        let gif = b"GIF89a\x64\x00\xC8\x00"; // width=100, height=200 (little-endian)
+        let dims = sniff_image_dimensions(gif);
+        assert!(dims.is_some());
+        let dims = dims.unwrap();
+        assert_eq!(dims.width, 100);
+        assert_eq!(dims.height, 200);
+    }
+
+    #[test]
+    fn test_sniff_bmp_dimensions() {
+        let mut bmp = vec![0u8; 26];
+        bmp[0] = b'B';
+        bmp[1] = b'M';
+        bmp[18] = 100;
+        bmp[19] = 0;
+        bmp[20] = 0;
+        bmp[21] = 0;
+        bmp[22] = 200;
+        bmp[23] = 0;
+        bmp[24] = 0;
+        bmp[25] = 0;
+        let dims = sniff_image_dimensions(&bmp);
+        assert!(dims.is_some());
+        let dims = dims.unwrap();
+        assert_eq!(dims.width, 100);
+        assert_eq!(dims.height, 200);
+    }
+
+    #[test]
+    fn test_sniff_bmp_negative_height() {
+        let mut bmp = vec![0u8; 26];
+        bmp[0] = b'B';
+        bmp[1] = b'M';
+        bmp[18] = 100;
+        bmp[19] = 0;
+        bmp[20] = 0;
+        bmp[21] = 0;
+        let neg200 = (-200i32).to_le_bytes();
+        bmp[22] = neg200[0];
+        bmp[23] = neg200[1];
+        bmp[24] = neg200[2];
+        bmp[25] = neg200[3];
+        let dims = sniff_image_dimensions(&bmp);
+        assert!(dims.is_some());
+        let dims = dims.unwrap();
+        assert_eq!(dims.width, 100);
+        assert_eq!(dims.height, 200);
+    }
+
+    #[test]
+    fn test_sniff_webp_vp8_dimensions() {
+        let mut data = vec![0u8; 30];
+        data[0..4].copy_from_slice(b"RIFF");
+        data[8..12].copy_from_slice(b"WEBP");
+        data[12..16].copy_from_slice(b"VP8 ");
+        // width = 320 (0x0140), height = 240 (0x00F0), little-endian with 0x3fff mask
+        data[26] = 0x40;
+        data[27] = 0x01;
+        data[28] = 0xF0;
+        data[29] = 0x00;
+        let dims = sniff_image_dimensions(&data);
+        assert!(dims.is_some());
+        let dims = dims.unwrap();
+        assert_eq!(dims.width, 320);
+        assert_eq!(dims.height, 240);
+    }
+
+    #[test]
+    fn test_sniff_jpeg_dimensions() {
+        let mut jpeg = vec![0xFF, 0xD8]; // SOI
+        jpeg.extend_from_slice(&[
+            0xFF, 0xC0, // SOF0
+            0x00, 0x0B, // length = 11
+            0x08,       // precision
+            0x00, 0xC8, // height = 200
+            0x00, 0x64, // width = 100
+            0x03,       // components
+        ]);
+        let dims = sniff_image_dimensions(&jpeg);
+        assert!(dims.is_some());
+        let dims = dims.unwrap();
+        assert_eq!(dims.width, 100);
+        assert_eq!(dims.height, 200);
+    }
+
+    #[test]
+    fn test_sniff_unknown_format() {
+        let data = b"not an image at all";
+        let dims = sniff_image_dimensions(data);
+        assert!(dims.is_none());
+    }
+
+    #[test]
+    fn test_sniff_buffer_too_short() {
+        let png_short = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]; // only 8 bytes
+        let dims = sniff_image_dimensions(png_short);
+        assert!(dims.is_none());
     }
 }
