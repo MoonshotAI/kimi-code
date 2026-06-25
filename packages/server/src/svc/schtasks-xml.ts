@@ -16,12 +16,27 @@ export interface BuildScheduledTaskXmlInput {
   arguments?: string;
 
   taskUser?: string;
+
+  redirectLogPath?: string;
+}
+
+export function buildCmdRedirectArgs(
+  command: string,
+  args: string | undefined,
+  logPath: string,
+): string {
+  const invocation = args ? `"${command}" ${args}` : `"${command}"`;
+  return `/c "${invocation} >> "${logPath}" 2>&1"`;
 }
 
 export function buildScheduledTaskXml(input: BuildScheduledTaskXmlInput): string {
   const description = escapeXmlText(input.description);
-  const command = escapeXmlText(input.command);
-  const args = input.arguments ? escapeXmlText(input.arguments) : '';
+  const redirect = input.redirectLogPath?.trim();
+  const command = redirect ? escapeXmlText('cmd.exe') : escapeXmlText(input.command);
+  const rawArgs = redirect
+    ? buildCmdRedirectArgs(input.command, input.arguments, redirect)
+    : (input.arguments ?? '');
+  const argumentsXml = rawArgs ? `\n      <Arguments>${escapeXmlText(rawArgs)}</Arguments>` : '';
 
   const principalLogon = input.taskUser
     ? `\n      <UserId>${escapeXmlText(input.taskUser)}</UserId>\n      <LogonType>InteractiveToken</LogonType>`
@@ -29,7 +44,6 @@ export function buildScheduledTaskXml(input: BuildScheduledTaskXmlInput): string
   const triggerUser = input.taskUser
     ? `\n      <UserId>${escapeXmlText(input.taskUser)}</UserId>`
     : '';
-  const argumentsXml = args ? `\n      <Arguments>${args}</Arguments>` : '';
 
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">

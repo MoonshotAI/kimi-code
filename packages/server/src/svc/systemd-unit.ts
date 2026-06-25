@@ -23,6 +23,8 @@ export interface BuildSystemdUnitInput {
   workingDirectory?: string;
 
   environment?: Readonly<Record<string, string>>;
+
+  logPath?: string;
 }
 
 
@@ -43,6 +45,16 @@ export function buildSystemdUnit(input: BuildSystemdUnitInput): string {
       })
     : [];
 
+  const logLines = input.logPath
+    ? (() => {
+        assertNoLineBreaks(input.logPath, 'Systemd log path');
+        return [
+          `StandardOutput=append:${input.logPath}`,
+          `StandardError=append:${input.logPath}`,
+        ];
+      })()
+    : [];
+
   const lines = [
     '[Unit]',
     `Description=${description}`,
@@ -61,6 +73,7 @@ export function buildSystemdUnit(input: BuildSystemdUnitInput): string {
     'KillMode=control-group',
     workingDirLine,
     ...envLines,
+    ...logLines,
     '',
     '[Install]',
     'WantedBy=default.target',

@@ -14,7 +14,11 @@ import {
   createSchtasksManager,
   type SchtasksManagerDeps,
 } from '../../src/svc/schtasks';
-import { buildScheduledTaskXml, parseSchtasksQuery } from '../../src/svc/schtasks-xml';
+import {
+  buildCmdRedirectArgs,
+  buildScheduledTaskXml,
+  parseSchtasksQuery,
+} from '../../src/svc/schtasks-xml';
 import { KIMI_SERVER_TASK_NAME } from '../../src/svc/paths';
 import { readInstallPlan, writeInstallPlan } from '../../src/svc/install-plan';
 import type { ExecOptions, ExecResult } from '../../src/svc/exec';
@@ -120,6 +124,34 @@ describe('buildScheduledTaskXml', () => {
     expect(xml).toContain('<LogonType>InteractiveToken</LogonType>');
     expect(xml).not.toContain('<GroupId>S-1-5-32-545</GroupId>');
   });
+
+  it('wraps in cmd.exe and redirects stdout/stderr when redirectLogPath is set', () => {
+    const xml = buildScheduledTaskXml({
+      description: 'desc',
+      command: 'C:\\Program Files\\Kimi\\kimi.exe',
+      arguments: 'server run --foreground --port 58627',
+      redirectLogPath: 'C:\\Users\\alice\\AppData\\Local\\kimi-code\\server.log',
+    });
+    expect(xml).toContain('<Command>cmd.exe</Command>');
+    expect(xml).toContain('<Arguments>');
+    expect(xml).toContain('&gt;&gt;');
+    expect(xml).toContain('2&gt;&amp;1');
+    expect(xml).toContain('C:\\Program Files\\Kimi\\kimi.exe');
+    expect(xml).toContain('C:\\Users\\alice\\AppData\\Local\\kimi-code\\server.log');
+    expect(xml).toContain('server run --foreground --port 58627');
+  });
+});
+
+describe('buildCmdRedirectArgs', () => {
+  it('builds a cmd /c line that redirects to the log file', () => {
+    const args = buildCmdRedirectArgs('C:\\bin\\kimi.exe', 'server run', 'C:\\logs\\server.log');
+    expect(args).toBe('/c ""C:\\bin\\kimi.exe" server run >> "C:\\logs\\server.log" 2>&1"');
+  });
+
+  it('handles a missing argument list', () => {
+    const args = buildCmdRedirectArgs('C:\\bin\\kimi.exe', undefined, 'C:\\logs\\server.log');
+    expect(args).toBe('/c ""C:\\bin\\kimi.exe" >> "C:\\logs\\server.log" 2>&1"');
+  });
 });
 
 describe('parseSchtasksQuery', () => {
@@ -168,6 +200,7 @@ describe('schtasks manager — install', () => {
     expect(writtenXmls.length).toBe(1);
     expect(writtenXmls[0]).toContain(`<Description>Kimi Code local server`);
     expect(writtenXmls[0]).not.toContain('--host');
+    expect(writtenXmls[0]).toContain('--foreground');
     expect(writtenXmls[0]).toContain('--port 58627');
 
     expect(calls.length).toBe(2);

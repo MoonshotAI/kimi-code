@@ -39,7 +39,7 @@ export interface SchtasksManagerDeps {
 const DEFAULT_DEPS: SchtasksManagerDeps = {
   execSchtasks: (args, options) =>
     execFileUtf8('schtasks', args, { windowsHide: true, ...options }),
-  resolveProgram: () => resolveSupervisorProgram(process.argv, process.cwd(), 'kimi.exe'),
+  resolveProgram: () => resolveSupervisorProgram(),
   logPath: defaultSupervisorLogPath,
   writeTaskXml: defaultWriteTaskXml,
   taskExists: defaultTaskExists,
@@ -69,6 +69,7 @@ export function createSchtasksManager(
       description: 'Kimi Code local server (managed by `kimi server install`)',
       command: plan.program,
       ...(argString.length > 0 ? { arguments: argString } : {}),
+      redirectLogPath: logPath,
     });
     const xmlPath = deps.writeTaskXml(xml);
 

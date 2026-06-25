@@ -1,6 +1,7 @@
 
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { userInfo } from 'node:os';
 import { dirname } from 'node:path';
 
 import { execFileUtf8, type ExecOptions, type ExecResult } from './exec';
@@ -34,18 +35,24 @@ export interface SystemdManagerDeps {
 
   execSystemctl(args: readonly string[], options?: ExecOptions): Promise<ExecResult>;
 
+  execLoginctl(args: readonly string[], options?: ExecOptions): Promise<ExecResult>;
+
   resolveProgram(): string;
 
   unitPath(): string;
 
   logPath(): string;
+
+  userName(): string;
 }
 
 const DEFAULT_DEPS: SystemdManagerDeps = {
   execSystemctl: (args, options) => execFileUtf8('systemctl', ['--user', ...args], options),
+  execLoginctl: (args, options) => execFileUtf8('loginctl', args, options),
   resolveProgram: () => resolveSupervisorProgram(),
   unitPath: defaultSystemdUnitPath,
   logPath: defaultSupervisorLogPath,
+  userName: () => userInfo().username,
 };
 
 export function createSystemdManager(
@@ -87,9 +94,12 @@ export function createSystemdManager(
       );
     }
 
+    const lingerNote = await enableLinger(deps);
+    const baseMessage = `Kimi server systemd unit ${alreadyInstalled ? 'replaced' : 'installed'} at ${unitPath} (port ${plan.port}).`;
+
     return {
       status: alreadyInstalled ? 'replaced' : 'installed',
-      message: `Kimi server systemd unit ${alreadyInstalled ? 'replaced' : 'installed'} at ${unitPath} (port ${plan.port}).`,
+      message: lingerNote ? `${baseMessage} ${lingerNote}` : baseMessage,
       unitPath,
     };
   }
@@ -190,11 +200,15 @@ export function createSystemdManager(
     const subState = fields['SubState'];
     const mainPid = Number.parseInt(fields['MainPID'] ?? '', 10);
     const running = activeState === 'active' && subState !== 'failed';
+    const lingerNote = await probeLingerNote(deps);
     return {
       ...base,
       running,
       ...(Number.isFinite(mainPid) && mainPid > 0 ? { pid: mainPid } : {}),
-      notes: [`systemd state: ${activeState ?? 'unknown'}/${subState ?? 'unknown'}`],
+      notes: [
+        `systemd state: ${activeState ?? 'unknown'}/${subState ?? 'unknown'}`,
+        ...(lingerNote ? [lingerNote] : []),
+      ],
     };
   }
 
@@ -215,6 +229,7 @@ function writeUnit(unitPath: string, plan: InstallPlan): void {
   const text = buildSystemdUnit({
     description: 'Kimi Code local server (managed by `kimi server install`)',
     programArguments: plan.programArguments,
+    logPath: plan.logPath,
   });
   mkdirSync(dirname(unitPath), { recursive: true, mode: UNIT_DIR_MODE });
   writeFileSync(unitPath, text, { mode: UNIT_MODE });
@@ -223,4 +238,29 @@ function writeUnit(unitPath: string, plan: InstallPlan): void {
 function detail(res: ExecResult): string | undefined {
   const text = (res.stderr || res.stdout).trim();
   return text.length > 0 ? text : undefined;
+}
+
+async function readLinger(deps: SystemdManagerDeps): Promise<'yes' | 'no' | undefined> {
+  const probe = await deps.execLoginctl(['show-user', deps.userName(), '--property=Linger']);
+  if (probe.code !== 0) return undefined;
+  if (/\bLinger=yes\b/.test(probe.stdout)) return 'yes';
+  if (/\bLinger=no\b/.test(probe.stdout)) return 'no';
+  return undefined;
+}
+
+async function enableLinger(deps: SystemdManagerDeps): Promise<string | undefined> {
+  const user = deps.userName();
+  if ((await readLinger(deps)) === 'yes') return undefined;
+  const enable = await deps.execLoginctl(['enable-linger', user]);
+  if (enable.code === 0) return undefined;
+  return `Note: could not enable linger automatically; run \`sudo loginctl enable-linger ${user}\` to keep the server running after logout.`;
+}
+
+async function probeLingerNote(deps: SystemdManagerDeps): Promise<string | undefined> {
+  const current = await readLinger(deps);
+  if (current === 'yes') return 'linger: enabled (survives logout / starts at boot)';
+  if (current === 'no') {
+    return 'linger: disabled (stops on logout; run `sudo loginctl enable-linger $USER` to persist)';
+  }
+  return undefined;
 }
