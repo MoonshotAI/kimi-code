@@ -1,25 +1,46 @@
-/**
- * `goal` domain (L4) — active-goal tracking.
- *
- * Defines the public contract of goal mode: the `GoalState` model and the
- * `IGoalService` used to create, update, and clear the current goal.
- * Agent-scoped — one instance per agent.
- */
+import { createDecorator } from "#/_base/di";
+import type {
+  CreateGoalInput,
+  GoalActor,
+  GoalBudgetLimits,
+  GoalSnapshot,
+  GoalStatus,
+  GoalToolResult,
+} from '../../../agent/goal';
 
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-
-export interface GoalState {
-  readonly objective: string;
-  readonly status: string;
+export interface GoalReasonInput {
+  readonly reason?: string;
 }
 
 export interface IGoalService {
   readonly _serviceBrand: undefined;
-  readonly current: GoalState | undefined;
-  create(objective: string): void;
-  update(patch: Partial<GoalState>): void;
-  clear(): void;
+  getGoal(): GoalToolResult;
+  createGoal(input: CreateGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;
+  pauseGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;
+  resumeGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;
+  cancelGoal(actor?: GoalActor): Promise<GoalSnapshot>;
 }
 
-export const IGoalService: ServiceIdentifier<IGoalService> =
-  createDecorator<IGoalService>('goalService');
+declare module '../types' {
+  interface WireRecordMap {
+    forked: {};
+    'goal.create': {
+      goalId: string;
+      objective: string;
+      completionCriterion?: string;
+    };
+    'goal.update': {
+      status?: GoalStatus;
+      reason?: string;
+      turnsUsed?: number;
+      tokensUsed?: number;
+      wallClockMs?: number;
+      budgetLimits?: GoalBudgetLimits;
+      actor?: GoalActor;
+    };
+    'goal.clear': {};
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const IGoalService = createDecorator<IGoalService>('agentGoalService');

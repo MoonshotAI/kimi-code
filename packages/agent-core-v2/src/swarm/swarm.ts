@@ -1,19 +1,23 @@
-/**
- * `swarm` domain (L4) — multi-agent swarm mode.
- *
- * Defines the public contract of swarm mode: the `ISwarmService` used to enter
- * and exit swarm mode and to query whether it is active. Agent-scoped — one
- * instance per agent.
- */
+import { createDecorator } from "#/_base/di";
 
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+export type SwarmModeTrigger = 'manual' | 'task' | 'tool';
 
 export interface ISwarmService {
   readonly _serviceBrand: undefined;
-  readonly active: boolean;
-  enter(): Promise<void>;
+  readonly isActive: boolean;
+  enter(trigger: SwarmModeTrigger): void;
   exit(): void;
 }
 
-export const ISwarmService: ServiceIdentifier<ISwarmService> =
-  createDecorator<ISwarmService>('swarmService');
+declare module '../types' {
+  interface WireRecordMap {
+    'swarm_mode.enter': {
+      trigger: SwarmModeTrigger;
+    };
+    'swarm_mode.exit': {};
+  }
+
+}
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ISwarmService = createDecorator<ISwarmService>('agentSwarmService');

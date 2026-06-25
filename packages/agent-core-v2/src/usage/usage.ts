@@ -1,22 +1,22 @@
-/**
- * `usage` domain (L4) — per-agent token and cost accounting.
- *
- * Defines the `UsageTotals` model and the `IUsageService` used to record and
- * read token usage. Agent-scoped — one instance per agent.
- */
+import type { TokenUsage } from '@moonshot-ai/kosong';
 
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { createDecorator } from "#/_base/di";
 
-export interface UsageTotals {
-  readonly inputTokens: number;
-  readonly outputTokens: number;
+export type UsageRecordScope = 'session' | 'turn';
+
+export interface UsageStatus {
+  readonly byModel?: Record<string, TokenUsage>;
+  readonly total?: TokenUsage;
+  readonly currentTurn?: TokenUsage;
 }
 
 export interface IUsageService {
-  readonly _serviceBrand: undefined;
-  readonly totals: UsageTotals;
-  record(inputTokens: number, outputTokens: number): void;
+  beginTurn(): void;
+  endTurn(): void;
+  record(model: string, usage: TokenUsage, scope?: UsageRecordScope): void;
+  data(): UsageStatus;
+  status(): UsageStatus | undefined;
 }
 
-export const IUsageService: ServiceIdentifier<IUsageService> =
-  createDecorator<IUsageService>('usageService');
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const IUsageService = createDecorator<IUsageService>('usageService.agent');

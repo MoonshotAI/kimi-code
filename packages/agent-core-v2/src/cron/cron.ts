@@ -1,43 +1,58 @@
-/**
- * `cron` domain (L5) — schedules cron tasks and coordinates their firing.
- *
- * Defines the public contract of session cron: the `CronTask` / `CronFiredEvent`
- * models, the `ICronService` used to create, list, and delete tasks and observe
- * `onDidFire`, and the `ICronFireCoordinator` that reacts to fires.
- * Session-scoped — one instance per session.
- */
+import type { ContentPart } from '@moonshot-ai/kosong';
 
-import type { Event } from '#/_base/event';
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { createDecorator } from "#/_base/di";
+import type { ClockSources } from '../../../tools/cron/clock';
+import type { SessionCronTaskInit } from '../../../tools/cron/session-store';
+import type { CronTask, CronToolManager } from '../../../tools/cron/types';
+import type { Turn } from '../types';
 
-export interface CronTask {
-  readonly id: string;
-  readonly cron: string;
-  readonly prompt: string;
-  readonly recurring?: boolean;
+export type CronTaskInit = SessionCronTaskInit;
+
+export interface CronPersistence {
+  list(): Promise<readonly CronTask[]>;
+  write(id: string, task: CronTask): Promise<void>;
+  remove(id: string): Promise<void>;
 }
 
-export interface CronFiredEvent {
-  readonly taskId: string;
-  readonly content: string;
-  readonly origin?: string;
+export interface CronOptions {
+  readonly persistence?: CronPersistence;
+  readonly homedir?: string;
+  readonly isSubagent?: boolean;
+  readonly clocks?: ClockSources;
+  readonly pollIntervalMs?: number | null;
+  readonly autoStart?: boolean;
+  readonly registerTools?: boolean;
+  readonly onPersistenceError?: (error: unknown, taskId: string) => void;
 }
 
-export interface ICronService {
+export interface CronLoadOptions {
+  readonly replace?: boolean;
+}
+
+export interface CronFireOptions {
+  readonly coalescedCount?: number;
+  readonly firedAt?: number;
+}
+
+export interface ICronService extends CronToolManager {
   readonly _serviceBrand: undefined;
-  readonly onDidFire: Event<CronFiredEvent>;
-  create(task: CronTask): Promise<string>;
+  readonly isEnabled: boolean;
+  getTask(id: string): CronTask | undefined;
   list(): readonly CronTask[];
-  delete(id: string): Promise<void>;
-  tick(now?: number): void;
+  loadFromDisk(options?: CronLoadOptions): Promise<void>;
+  start(): void;
+  stop(): Promise<void>;
+  tick(): void;
+  getNextFireTime(): number | null;
+  fire(id: string, options?: CronFireOptions): Turn | undefined;
+  handleMissed(
+    tasks: readonly CronTask[],
+    renderMissedNotification: (
+      tasks: readonly CronTask[],
+    ) => readonly ContentPart[],
+  ): Turn | undefined;
+  flushPersist(): Promise<void>;
 }
 
-export const ICronService: ServiceIdentifier<ICronService> =
-  createDecorator<ICronService>('cronService');
-
-export interface ICronFireCoordinator {
-  readonly _serviceBrand: undefined;
-}
-
-export const ICronFireCoordinator: ServiceIdentifier<ICronFireCoordinator> =
-  createDecorator<ICronFireCoordinator>('cronFireCoordinator');
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ICronService = createDecorator<ICronService>('agentCronService');

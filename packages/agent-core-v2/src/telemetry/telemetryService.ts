@@ -1,50 +1,37 @@
-/**
- * `telemetry` domain (L1) — `ITelemetryService` implementation.
- *
- * Merges the bound `TelemetryContext` into each event and forwards it to the
- * configured `TelemetryClient`; supports child contexts via `withContext`.
- * Bound at Core scope.
- */
-
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-
+import { registerSingleton, SyncDescriptor } from "#/_base/di";
 import {
-  type TelemetryClient,
-  type TelemetryContext,
-  type TelemetryProperties,
-  ITelemetryService,
   noopTelemetryClient,
+  withTelemetryContext,
+  type TelemetryClient,
+  type TelemetryContextPatch,
+  type TelemetryProperties,
+} from '../../../telemetry';
+import {
+  ITelemetryService,
+  type TelemetryServiceOptions,
 } from './telemetry';
 
 export class TelemetryService implements ITelemetryService {
-  declare readonly _serviceBrand: undefined;
-  private delegate: TelemetryClient;
+  private readonly client: TelemetryClient;
 
-  constructor(private readonly context: TelemetryContext = {}) {
-    this.delegate = noopTelemetryClient;
-  }
-
-  setDelegate(client: TelemetryClient): void {
-    this.delegate = client;
+  constructor(options: TelemetryServiceOptions = {}) {
+    this.client = options.client ?? noopTelemetryClient;
   }
 
   track(event: string, properties?: TelemetryProperties): void {
-    const merged: TelemetryProperties = { ...this.context, ...properties };
-    this.delegate.track(event, merged);
+    this.client.track(event, properties);
   }
 
-  withContext(patch: TelemetryContext): ITelemetryService {
-    const child = new TelemetryService({ ...this.context, ...patch });
-    child.delegate = this.delegate;
-    return child;
+  withContext(patch: TelemetryContextPatch): ITelemetryService {
+    return new TelemetryService({ client: withTelemetryContext(this.client, patch) });
+  }
+
+  setContext(patch: TelemetryContextPatch): void {
+    this.client.setContext?.(patch);
   }
 }
 
-registerScopedService(
-  LifecycleScope.Core,
+registerSingleton(
   ITelemetryService,
-  TelemetryService,
-  InstantiationType.Eager,
-  'telemetry',
+  new SyncDescriptor(TelemetryService, [{}], true),
 );

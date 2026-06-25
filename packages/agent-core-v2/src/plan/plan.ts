@@ -1,21 +1,39 @@
-/**
- * `plan` domain (L4) — plan-mode state machine.
- *
- * Defines the public contract of plan mode: the `IPlanService` used to enter,
- * cancel, exit, and clear plan mode and to query whether it is active.
- * Agent-scoped — one instance per agent.
- */
+import { createDecorator } from "#/_base/di";
 
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+export type PlanData = null | {
+  readonly id: string;
+  readonly content: string;
+  readonly path: string;
+};
+
+export type PlanFilePath = string | null;
 
 export interface IPlanService {
   readonly _serviceBrand: undefined;
-  readonly active: boolean;
-  enter(): Promise<void>;
-  cancel(): void;
-  exit(): Promise<void>;
-  clear(): void;
+  readonly isActive: boolean;
+  readonly planFilePath: PlanFilePath;
+  enter(id?: string, createFile?: boolean): Promise<void>;
+  cancel(id?: string): void;
+  clear(): Promise<void>;
+  exit(id?: string): void;
+  data(): Promise<PlanData>;
 }
 
-export const IPlanService: ServiceIdentifier<IPlanService> =
-  createDecorator<IPlanService>('planService');
+declare module '../types' {
+  interface WireRecordMap {
+    'plan_mode.enter': {
+      id: string;
+    };
+    'plan_mode.cancel': {
+      id?: string;
+    };
+    'plan_mode.exit': {
+      id?: string;
+    };
+  }
+
+}
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const IPlanService =
+  createDecorator<IPlanService>('agentPlanService');
