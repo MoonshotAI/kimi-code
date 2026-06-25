@@ -5,6 +5,8 @@ import { computed, ref, watch, type Ref } from 'vue';
 import type { AgentMember, ToolDiffTarget } from '../types';
 import type { DetailTarget } from './useFilePreview';
 import type { useKimiWebClient } from './useKimiWebClient';
+import { buildEditDiffLines, extractEditPath, findToolCallById } from '../lib/toolDiff';
+import { toolLabel } from '../lib/toolMeta';
 import { clampPanelWidth, panelMaxWidth, useViewportWidth } from './useViewportWidth';
 
 type KimiWebClient = ReturnType<typeof useKimiWebClient>;
@@ -156,21 +158,40 @@ export function useDetailPanel({
   // ---------------------------------------------------------------------------
   // Edit/Write tool-call diff preview
   // ---------------------------------------------------------------------------
-  const toolDiffTarget = ref<ToolDiffTarget | null>(null);
+  // Store only the tool id and re-derive the panel payload from the live tool
+  // call in the session turns, so a panel opened while the tool is still
+  // running keeps tracking its status / output / diff as they update.
+  const toolDiffToolId = ref<string | null>(null);
+
+  const toolDiffTarget = computed<ToolDiffTarget | null>(() => {
+    const id = toolDiffToolId.value;
+    if (!id) return null;
+    const tool = findToolCallById(client.turns.value, id);
+    if (!tool) return null;
+    return {
+      id,
+      title: toolLabel(tool.name),
+      path: extractEditPath(tool.arg),
+      // On error the diff describes what was attempted, not what happened —
+      // show the tool output (the failure reason) instead.
+      lines: tool.status === 'error' ? null : buildEditDiffLines(tool),
+      output: tool.output,
+    };
+  });
 
   const toolDiffVisible = computed(() => toolDiffTarget.value !== null);
 
-  function openToolDiff(target: ToolDiffTarget): void {
-    if (detailTarget.value === 'toolDiff' && toolDiffTarget.value?.id === target.id) {
+  function openToolDiff(id: string): void {
+    if (detailTarget.value === 'toolDiff' && toolDiffToolId.value === id) {
       closeToolDiff();
       return;
     }
     detailTarget.value = 'toolDiff';
-    toolDiffTarget.value = target;
+    toolDiffToolId.value = id;
   }
 
   function closeToolDiff(): void {
-    toolDiffTarget.value = null;
+    toolDiffToolId.value = null;
     if (detailTarget.value === 'toolDiff') detailTarget.value = null;
   }
 

@@ -1,9 +1,10 @@
 <!-- apps/kimi-web/src/components/chat/ToolCall.vue -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import type { DiffViewLine, FilePreviewRequest, ToolCall, ToolDiffTarget, ToolMedia } from '../../types';
+import type { DiffViewLine, FilePreviewRequest, ToolCall, ToolMedia } from '../../types';
 import { normalizeToolName, toolLabel, toolGlyph, toolChip, toolSummary } from '../../lib/toolMeta';
-import { buildDiffLines, diffStats } from '../../lib/diffLines';
+import { diffStats } from '../../lib/diffLines';
+import { buildEditDiffLines } from '../../lib/toolDiff';
 
 const props = withDefaults(
   defineProps<{
@@ -18,16 +19,21 @@ const props = withDefaults(
 const emit = defineEmits<{
   openMedia: [media: ToolMedia];
   openFile: [target: FilePreviewRequest];
-  openToolDiff: [target: ToolDiffTarget];
+  openToolDiff: [id: string];
 }>();
 const isRunningBash = computed(() => props.tool.status === 'running' && /^bash$/i.test(props.tool.name));
 const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
 const canExpand = computed(() => hasOutput.value || isRunningBash.value);
 const open = ref(props.tool.defaultExpanded === true && canExpand.value);
 
+const isEditWrite = computed(() => {
+  const kind = normalizeToolName(props.tool.name);
+  return kind === 'edit' || kind === 'write';
+});
+
 function toggle() {
-  if (diffTarget.value) {
-    emit('openToolDiff', diffTarget.value);
+  if (isEditWrite.value) {
+    emit('openToolDiff', props.tool.id);
     return;
   }
   if (canExpand.value) open.value = !open.value;
@@ -67,63 +73,9 @@ const chip = () => {
 const isError = () => props.tool.status === 'error';
 const media = computed(() => (props.tool.status === 'ok' ? props.tool.media : undefined));
 
-/** Parse the JSON-stringified tool input into a record, or null. */
-function parseToolArg(arg: string): Record<string, unknown> | null {
-  const s = arg.trim();
-  if (!s.startsWith('{')) return null;
-  try {
-    const v = JSON.parse(s);
-    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * For Edit / Write tools, build a line-by-line diff from the tool input so it
- * can be previewed in the side panel. Returns null for any other tool or when
- * the input doesn't carry the expected fields.
- */
-const editDiff = computed<DiffViewLine[] | null>(() => {
-  const kind = normalizeToolName(props.tool.name);
-  if (kind !== 'edit' && kind !== 'write') return null;
-  const d = parseToolArg(props.tool.arg);
-  if (!d) return null;
-  if (kind === 'edit') {
-    // A replace_all edit changes many occurrences; a single-pair diff would
-    // misrepresent the result, so fall back to the tool output.
-    if (d.replace_all === true) return null;
-    const before = typeof d.old_string === 'string' ? d.old_string : undefined;
-    const after = typeof d.new_string === 'string' ? d.new_string : undefined;
-    if (before === undefined || after === undefined) return null;
-    return buildDiffLines(before, after);
-  }
-  // An append write extends an existing file; a from-empty diff would show the
-  // appended chunk as a new file, so fall back to the tool output.
-  if (d.mode === 'append') return null;
-  const content = typeof d.content === 'string' ? d.content : undefined;
-  if (content === undefined) return null;
-  return buildDiffLines('', content);
-});
-
-/** Build the side-panel preview payload for Edit/Write tools, or null for any
- *  other tool. The panel shows `lines` when a from-args diff is faithful,
- *  otherwise it falls back to the tool `output`. */
-const diffTarget = computed<ToolDiffTarget | null>(() => {
-  const kind = normalizeToolName(props.tool.name);
-  if (kind !== 'edit' && kind !== 'write') return null;
-  const d = parseToolArg(props.tool.arg);
-  const path = d && typeof d.path === 'string' ? d.path : undefined;
-  return {
-    id: props.tool.id,
-    title: toolLabel(props.tool.name),
-    path,
-    // On error the diff describes what was attempted, not what happened — show
-    // the tool output (the failure reason) instead.
-    lines: props.tool.status === 'error' ? null : editDiff.value,
-    output: props.tool.output,
-  };
-});
+/** Line diff for an Edit/Write tool call (drives the +/- chip); null for any
+ *  other tool or when a from-args diff can't represent the operation. */
+const editDiff = computed<DiffViewLine[] | null>(() => buildEditDiffLines(props.tool));
 
 // ExitPlanMode: expose the plan file as a clickable link (opens file preview).
 const isExitPlan = computed(() => props.tool.name === 'ExitPlanMode');

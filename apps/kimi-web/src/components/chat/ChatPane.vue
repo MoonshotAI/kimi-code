@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolDiffTarget, ToolMedia } from '../../types';
+import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia } from '../../types';
 import ToolCall from './ToolCall.vue';
 import Markdown from './Markdown.vue';
 import ThinkingBlock from './ThinkingBlock.vue';
@@ -197,7 +197,7 @@ const emit = defineEmits<{
   /** Show a subagent's full detail in the right-side panel. */
   openAgent: [target: { turnId: string; blockIndex: number; memberId: string }];
   /** Show an Edit/Write tool call's diff in the right-side panel. */
-  openToolDiff: [target: ToolDiffTarget];
+  openToolDiff: [id: string];
   /** Edit + resend the last user message (parent undoes, then refills composer). */
   editMessage: [text: string];
   /** Fetch the next older page of messages (triggered by top sentinel visibility or click). */
