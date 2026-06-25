@@ -1,5 +1,91 @@
 # @moonshot-ai/kimi-code
 
+## 0.20.0
+
+### Minor Changes
+
+- [#1079](https://github.com/MoonshotAI/kimi-code/pull/1079) [`2db5fc2`](https://github.com/MoonshotAI/kimi-code/commit/2db5fc20ecdf3212afd47e7c26195e428f8eddd5) - Add shell mode for running shell commands.
+  Type `!` in the input box to enable it.
+  The command output is visible to the AI.
+  For long-running commands, press Ctrl+B to move them to the background.
+  For example, you can run `!gh auth login` to sign in to the GitHub CLI without opening a new terminal, so Kimi can use `gh`.
+
+- [#1088](https://github.com/MoonshotAI/kimi-code/pull/1088) [`0030f76`](https://github.com/MoonshotAI/kimi-code/commit/0030f76c5cc6465c5a6646c166375127d83696d3) - Add a confirmation prompt before installing third-party plugins.
+
+- [#1066](https://github.com/MoonshotAI/kimi-code/pull/1066) [`3554f7e`](https://github.com/MoonshotAI/kimi-code/commit/3554f7e7d6e472413aa7a9873d7a2eef5f2b819c) - Show update badges on the /plugins Installed tab, where Enter now installs the available update and I opens plugin details.
+
+- [#1025](https://github.com/MoonshotAI/kimi-code/pull/1025) [`5ef66dd`](https://github.com/MoonshotAI/kimi-code/commit/5ef66ddfeda2f23c40fc0cf53225cdaf3cc1147d) - Redesign `/plugins` as a single tabbed panel: **Installed** (manage installed
+  plugins — toggle, remove, MCP, details, reload), **Official** (Kimi-maintained
+  marketplace plugins), **Third-party** (marketplace plugins from other
+  publishers), and **Custom** (install straight from a GitHub URL, zip URL, or
+  local path). `Tab` / `Shift-Tab` switch tabs. The Official and Third-party
+  catalogs load lazily, so `/plugins` opens instantly and keeps working offline —
+  a marketplace fetch failure is shown inline instead of closing the panel. The
+  tab strip is shared with the `/model` provider tabs via the new `renderTabStrip`
+  helper.
+
+- [#1006](https://github.com/MoonshotAI/kimi-code/pull/1006) [`60dfb68`](https://github.com/MoonshotAI/kimi-code/commit/60dfb68a2d4c342cfbad5f48d4d269fb6cdd43c0) - Add server authentication and safe `--host` exposure. The local server now
+  requires a per-start bearer token on all API and WebSocket calls (the CLI reads
+  it automatically), enforces Host/Origin checks, and gains `--host` with a
+  public-binding hardening tier: mandatory `KIMI_CODE_PASSWORD`, TLS (or
+  `--insecure-no-tls`), auth-failure rate limiting, disabled remote
+  shutdown/terminals, and security response headers. See `packages/server/SECURITY.md`.
+
+- [#1040](https://github.com/MoonshotAI/kimi-code/pull/1040) [`6664038`](https://github.com/MoonshotAI/kimi-code/commit/66640380ebf60141994986beadf5347617f82814) - Replace silent AGENTS.md truncation with a visible warning in the TUI status bar and web UI.
+
+- [#1101](https://github.com/MoonshotAI/kimi-code/pull/1101) [`3ea6ac2`](https://github.com/MoonshotAI/kimi-code/commit/3ea6ac278d2e57bb859ab423704bbd0fb2033c72) - Show the plan body and approach choices in the plan review card when exiting plan mode in the web UI.
+
+- [#1103](https://github.com/MoonshotAI/kimi-code/pull/1103) [`18f7c34`](https://github.com/MoonshotAI/kimi-code/commit/18f7c34a0739dab454af1f09d951a1bbf278cccb) - Show a line-by-line diff when the agent edits or writes a file in the web chat.
+
+### Patch Changes
+
+- [#1072](https://github.com/MoonshotAI/kimi-code/pull/1072) [`a86bb97`](https://github.com/MoonshotAI/kimi-code/commit/a86bb9757d99f32983e82a6a82fd3ccaab691b1a) - Improve the image paste hint.
+
+- [#1076](https://github.com/MoonshotAI/kimi-code/pull/1076) [`500677a`](https://github.com/MoonshotAI/kimi-code/commit/500677ab8baf9081b73a35df5fbbcfc49cb2f9b7) - Fix Ctrl-C during compaction so it clears a pending editor draft first instead of cancelling immediately.
+
+- [#1067](https://github.com/MoonshotAI/kimi-code/pull/1067) [`0e227ba`](https://github.com/MoonshotAI/kimi-code/commit/0e227ba18aec793aa4c233be7c578068ae91e604) - Fix explore subagents silently losing git context when git commands time out or the directory is not a repository.
+
+- [#1075](https://github.com/MoonshotAI/kimi-code/pull/1075) [`3aaf1e5`](https://github.com/MoonshotAI/kimi-code/commit/3aaf1e58037c4045aaa3b9fbabaffa158c60d2ca) - Fix a startup crash on Linux caused by an unhandled native clipboard error.
+
+- [#1094](https://github.com/MoonshotAI/kimi-code/pull/1094) [`8ee5c0f`](https://github.com/MoonshotAI/kimi-code/commit/8ee5c0ff813d361733226a1606e7c724e5e38f2e) - Fix the terminal window repeatedly losing focus on Linux Wayland, which broke IME input.
+
+- [#1057](https://github.com/MoonshotAI/kimi-code/pull/1057) [`ee69e16`](https://github.com/MoonshotAI/kimi-code/commit/ee69e16dc8fb18153d7ddff04bef1f4fc593688a) - Fix MCP server working directories when sessions are hosted by the web server.
+
+- [#1064](https://github.com/MoonshotAI/kimi-code/pull/1064) [`a752a53`](https://github.com/MoonshotAI/kimi-code/commit/a752a5309b3c456f7da0e6141bcd435b497d127a) - Fix truncated skill descriptions missing an ellipsis in the model's skill listing.
+
+- [#903](https://github.com/MoonshotAI/kimi-code/pull/903) [`bbd8a1a`](https://github.com/MoonshotAI/kimi-code/commit/bbd8a1a947ba26c0e59f98819cab9e20898ff0b7) - Fix `kimi web` and `/web` failing to start the background server daemon on Windows with `spawn EFTYPE` when the CLI is installed via npm/pnpm or run from source. The official single-binary install script was not affected.
+
+- [#1070](https://github.com/MoonshotAI/kimi-code/pull/1070) [`ff17715`](https://github.com/MoonshotAI/kimi-code/commit/ff177155ca630248bcd692421faab21e7b5be069) - Stop auto-dismissing questions in the web UI after 60 seconds so they wait for the user's answer.
+
+- [#1097](https://github.com/MoonshotAI/kimi-code/pull/1097) [`27ef516`](https://github.com/MoonshotAI/kimi-code/commit/27ef5166955b5deaecc367a4b3393909b0ccc9f9) - Add a hint to the per-turn step limit error pointing users to the loop_control.max_steps_per_turn config option.
+
+- [#1062](https://github.com/MoonshotAI/kimi-code/pull/1062) [`ea6a4bf`](https://github.com/MoonshotAI/kimi-code/commit/ea6a4bfe6ef8914f67f254f24b0c5c543c48a341) - Preserve full tool output logs when previews are truncated and link background task completion notifications to saved output.
+
+- [#1086](https://github.com/MoonshotAI/kimi-code/pull/1086) [`fe667d7`](https://github.com/MoonshotAI/kimi-code/commit/fe667d7c2ef113aef8a9546148f980d9adf560a3) - `/reload` now refreshes the assistant's view of plugin skills, so plugin changes take effect in the current session instead of requiring a new one.
+
+- [#1081](https://github.com/MoonshotAI/kimi-code/pull/1081) [`8fc6aa5`](https://github.com/MoonshotAI/kimi-code/commit/8fc6aa5f6842aa78acf8f23912342b721efcf7a9) - Sync session title changes across all connected clients in server mode.
+
+- [#1078](https://github.com/MoonshotAI/kimi-code/pull/1078) [`75ca3b2`](https://github.com/MoonshotAI/kimi-code/commit/75ca3b21609d7197bb2c9b4389901595840ac7e3) - Add Ctrl+U and Ctrl+D as page up and page down shortcuts in the task output viewer.
+
+- [#1069](https://github.com/MoonshotAI/kimi-code/pull/1069) [`d18aa16`](https://github.com/MoonshotAI/kimi-code/commit/d18aa1666a09b038d5a107e9a37fff1031b2e847) - Reduce streaming redraw cost for long assistant messages with code blocks.
+
+- [#1112](https://github.com/MoonshotAI/kimi-code/pull/1112) [`6a97d0b`](https://github.com/MoonshotAI/kimi-code/commit/6a97d0bf431bc7038ce801da21164a67e07422d8) - Add a copy button to user messages in the web chat.
+
+- [#1035](https://github.com/MoonshotAI/kimi-code/pull/1035) [`ea03f30`](https://github.com/MoonshotAI/kimi-code/commit/ea03f30e5174825049ed4dfedebf8e43fbe751a4) - Render LaTeX display math (`$$…$$`) in the web chat via KaTeX. Single `$` is intentionally left as literal text, so prices, env vars, and shell paths (e.g. `$PATH`, `$5/$10`, `$HOME/bin`) are never swallowed as a formula.
+
+- [#1084](https://github.com/MoonshotAI/kimi-code/pull/1084) [`d6e5246`](https://github.com/MoonshotAI/kimi-code/commit/d6e524682d9fb95460fceb86e17632ed858f7fcb) - Page the web session list per workspace so the first screen no longer fetches every session up front.
+
+- [#1113](https://github.com/MoonshotAI/kimi-code/pull/1113) [`6194d3f`](https://github.com/MoonshotAI/kimi-code/commit/6194d3fad3b53e6c2b80c422fe98043145494655) - Keep the web session sidebar from re-rendering on every streaming token. The
+  event reducer now reuses the `sessions` array reference for events that do not
+  change sessions, so the sidebar computeds (`sessionsForView` / `workspaceGroups`
+  / `mergedWorkspaces`) are no longer dirtied by unrelated high-frequency events.
+
+- [#1087](https://github.com/MoonshotAI/kimi-code/pull/1087) [`884b65a`](https://github.com/MoonshotAI/kimi-code/commit/884b65a04014be8d68ffd406f89fc2d26af6e62c) - Fix duplicate session snapshot reloads in the bundled web UI during resync.
+
+- [#1109](https://github.com/MoonshotAI/kimi-code/pull/1109) [`d554f9a`](https://github.com/MoonshotAI/kimi-code/commit/d554f9ac8771be09b5c9a56943167dd45108dc4f) - Show the full accumulated progress of a subagent in its detail panel, with concise tool-call summaries instead of raw JSON.
+
+- [#1065](https://github.com/MoonshotAI/kimi-code/pull/1065) [`4b837d6`](https://github.com/MoonshotAI/kimi-code/commit/4b837d6bfbf3850807b5f88ccdd10f31e69b019c) - Create missing parent directories automatically when writing a file.
+
 ## 0.19.2
 
 ### Patch Changes
