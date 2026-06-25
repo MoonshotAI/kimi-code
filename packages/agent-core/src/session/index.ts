@@ -171,6 +171,11 @@ export class Session {
   };
   private writeMetadataPromise = Promise.resolve();
   private agentsMdWarning: string | undefined;
+  private isClosed = false;
+
+  get closed(): boolean {
+    return this.isClosed;
+  }
 
   constructor(public readonly options: SessionOptions) {
     // Attach the per-session log sink up front so the constructor's
@@ -316,6 +321,8 @@ export class Session {
   }
 
   async close(): Promise<void> {
+    if (this.isClosed) return;
+    this.isClosed = true;
     try {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
@@ -334,6 +341,8 @@ export class Session {
   }
 
   async closeForReload(): Promise<void> {
+    if (this.isClosed) return;
+    this.isClosed = true;
     try {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),

@@ -9,15 +9,17 @@ import {
   Spacer,
 } from '@earendil-works/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import type {
-  ApprovalRequest,
-  ApprovalResponse,
-  BackgroundTaskInfo,
-  CreateSessionOptions,
-  KimiHarness,
-  PermissionMode,
-  PromptPart,
-  Session,
+import {
+  ErrorCodes,
+  isKimiError,
+  type ApprovalRequest,
+  type ApprovalResponse,
+  type BackgroundTaskInfo,
+  type CreateSessionOptions,
+  type KimiHarness,
+  type PermissionMode,
+  type PromptPart,
+  type Session,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import { resolve } from 'pathe';
@@ -1217,16 +1219,29 @@ export class KimiTUI {
   // setPermission is idempotent and needs no such guard.
   private async applyStartupModesToResumedSession(session: Session): Promise<void> {
     const { startup } = this.options;
-    if (startup.auto) {
-      await session.setPermission('auto');
-    } else if (startup.yolo) {
-      await session.setPermission('yolo');
-    }
-    if (startup.plan) {
-      const status = await session.getStatus();
-      if (!status.planMode) {
-        await session.setPlanMode(true);
+    try {
+      if (startup.auto) {
+        await session.setPermission('auto');
+      } else if (startup.yolo) {
+        await session.setPermission('yolo');
       }
+      if (startup.plan) {
+        const status = await session.getStatus();
+        if (!status.planMode) {
+          await session.setPlanMode(true);
+        }
+      }
+    } catch (error) {
+      if (isKimiError(error) && error.code === ErrorCodes.SESSION_NOT_FOUND) {
+        this.showError(
+          `Session disappeared during startup. ` +
+            `This usually means the session was closed while initialization was still running ` +
+            `(for example, an MCP server failed to start). ` +
+            `Try running the command again, or start a fresh session.`,
+        );
+        return;
+      }
+      throw error;
     }
   }
 

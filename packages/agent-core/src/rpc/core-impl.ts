@@ -374,7 +374,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       ...localWorkspaceDirs.additionalDirs,
       ...callerAdditionalDirs,
     ]);
-    const active = this.sessions.get(summary.id);
+    let active = this.sessions.get(summary.id);
+    if (active !== undefined && active.closed) {
+      // The session object is still in the map but has already been closed
+      // (e.g. by an earlier failed initialization or crash). Remove it so
+      // we can build a fresh session from persisted state.
+      this.sessions.delete(summary.id);
+      active = undefined;
+    }
     if (active !== undefined) {
       if (overrides.kaos !== undefined) {
         active.setToolKaos(overrides.kaos.withCwd(summary.workDir));
@@ -953,6 +960,15 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session "${sessionId}" was not found`, {
         details: { sessionId },
       });
+    }
+    if (session.closed) {
+      throw new KimiError(
+        ErrorCodes.SESSION_NOT_FOUND,
+        `Session "${sessionId}" has been closed. ` +
+          `This can happen when session initialization fails (for example, an MCP server could not start). ` +
+          `Try resuming the session again, or start a fresh session.`,
+        { details: { sessionId } },
+      );
     }
     return session;
   }
