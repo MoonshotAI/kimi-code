@@ -630,4 +630,12 @@ describe('CustomEditor bash mode via paste', () => {
     expect(editor.inputMode).toBe('bash');
     expect(editor.getText()).toBe('');
   });
+
+  it('enters bash mode on a CSI-u encoded ! keystroke (Kitty/VSCode terminals)', () => {
+    const editor = makeEditor();
+    editor.handleInput('\u001B[33u');
+
+    expect(editor.inputMode).toBe('bash');
+    expect(editor.getText()).toBe('');
+  });
 });

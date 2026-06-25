@@ -16,6 +16,8 @@ import {
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 
+import { printableChar } from '#/tui/utils/printable-key';
+
 import { extractAtPrefix } from './file-mention-provider';
 import { WrappingSelectList } from './wrapping-select-list';
 
@@ -438,7 +440,11 @@ export class CustomEditor extends Editor {
     // Enter bash mode: typing `!` at the start of an empty prompt. The `!` is
     // not inserted into the buffer — it becomes the mode + prompt symbol, so the
     // cursor never has to skip over it and submit never has to strip it.
-    if (this.inputMode === 'prompt' && normalized === '!' && this.getText().length === 0) {
+    if (
+      this.inputMode === 'prompt' &&
+      printableChar(normalized) === '!' &&
+      this.getText().length === 0
+    ) {
       this.inputMode = 'bash';
       this.onInputModeChange?.('bash');
       return;
