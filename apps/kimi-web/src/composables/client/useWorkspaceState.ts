@@ -313,9 +313,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const api = getKimiWebApi();
     const workspaces = rawState.workspaces;
     if (workspaces.length === 0) {
+      // /workspaces may be unavailable or empty on older / partially-failing
+      // daemons while /sessions still works. Fall back to the legacy global
+      // walk so history still shows and mergedWorkspaces can derive workspaces
+      // from session cwds, instead of rendering a blank sidebar.
+      const fallback = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
       rawState.sessionsHasMoreByWorkspace = {};
-      rawState.sessionsFullyLoaded = false;
-      return [];
+      rawState.sessionsFullyLoaded = true;
+      return fallback;
     }
     const pages = await Promise.all(
       workspaces.map((w) =>
