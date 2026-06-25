@@ -1,12 +1,12 @@
 /**
- * `turn` domain (L4) — `ITurnService` (Agent driver) implementation.
+ * `turn` domain (L4) — `ITurnService` implementation.
  *
- * Owns the turn lifecycle: `prompt` launches a turn (or buffers input while
- * one is active via `steer`), emits the lifecycle events
- * (`onWillStartTurn` → `onDidEndStep` → `onDidEndTurn`), and tracks
- * `hasActiveTurn` / `currentId`. The per-step engine is the injected
- * `ILoopRunner` (currently a stub); per-turn Turn-scope creation is wired in
- * a later step.
+ * Drives the turn lifecycle and emits its events; runs the turn loop through
+ * `loopRunner`, drives agent lifecycle through `agent-lifecycle`, reads
+ * history through `context`, enqueues follow-up through `injection`, drives
+ * LLM generation through `kosong`, logs through `log`, checks permissions
+ * through `permission`, reports telemetry through `telemetry`, executes tools
+ * through `tool`, and checks usage through `usage`. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

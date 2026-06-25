@@ -1,5 +1,9 @@
 /**
  * `plan` domain (L4) — plan-mode state machine.
+ *
+ * Defines the public contract of plan mode: the `IPlanService` used to enter,
+ * cancel, exit, and clear plan mode and to query whether it is active.
+ * Agent-scoped — one instance per agent.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

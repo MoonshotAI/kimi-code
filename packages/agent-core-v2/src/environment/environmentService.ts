@@ -1,5 +1,8 @@
 /**
  * `environment` domain (L1) — `IEnvironmentService` implementation.
+ *
+ * Resolves `homeDir` / `configPath` from the injected options and detects the
+ * host `Environment` on demand. Bound at Core scope.
  */
 
 import { join } from 'node:path';

@@ -6,11 +6,6 @@ import { IInstantiationService, createDecorator } from '#/_base/di/instantiation
 import { InstantiationService } from '#/_base/di/instantiationService';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function param(dec: any, target: any, index: number): void {
-  (dec as (t: unknown, k: string, i: number) => void)(target, '', index);
-}
-
 describe('@IFoo auto-injection', () => {
   it('pure-service ctor: both @IFoo params resolve from the container', () => {
     interface IBar {
@@ -30,12 +25,10 @@ describe('@IFoo auto-injection', () => {
     }
     class Foo {
       constructor(
-        public readonly bar: IBar,
-        public readonly baz: IBaz,
+        @IBar public readonly bar: IBar,
+        @IBaz public readonly baz: IBaz,
       ) {}
     }
-    param(IBar, Foo, 0);
-    param(IBaz, Foo, 1);
     const IFoo = createDecorator<Foo>('p1.1-IFoo-pure');
 
     const ix = new InstantiationService(
@@ -62,10 +55,9 @@ describe('@IFoo auto-injection', () => {
     class Bar {
       constructor(
         public readonly name: string,
-        public readonly baz: IBaz,
+        @IBaz public readonly baz: IBaz,
       ) {}
     }
-    param(IBaz, Bar, 1);
     const ix = new InstantiationService(
       new ServiceCollection([IBaz, new SyncDescriptor(Baz)]),
     );
@@ -83,12 +75,11 @@ describe('@IFoo auto-injection', () => {
     }
     const IFactoryHost = createDecorator<IFactoryHost>('p1.1-IFactoryHost');
     class FactoryHost implements IFactoryHost {
-      constructor(private readonly ix: IInstantiationService) {}
+      constructor(@IInstantiationService private readonly ix: IInstantiationService) {}
       makeWidget(): Widget {
         return this.ix.createInstance(Widget, 'made-by-factory');
       }
     }
-    param(IInstantiationService, FactoryHost, 0);
     const ix = new InstantiationService(
       new ServiceCollection([IFactoryHost, new SyncDescriptor(FactoryHost)]),
     );
@@ -112,18 +103,16 @@ describe('@IFoo auto-injection', () => {
     let bCtorRan = false;
     class AImpl implements IA {
       tag = 'A' as const;
-      constructor(_b: IB) {
+      constructor(@IB _b: IB) {
         aCtorRan = true;
       }
     }
     class BImpl implements IB {
       tag = 'B' as const;
-      constructor(_a: IA) {
+      constructor(@IA _a: IA) {
         bCtorRan = true;
       }
     }
-    param(IB, AImpl, 0);
-    param(IA, BImpl, 0);
     const ix = new InstantiationService(
       new ServiceCollection(
         [IA, new SyncDescriptor(AImpl)],
@@ -157,14 +146,12 @@ describe('@IFoo auto-injection', () => {
 
     class AImpl implements IA {
       tag = 'A' as const;
-      constructor(_b: IB) {}
+      constructor(@IB _b: IB) {}
     }
     class BImpl implements IB {
       tag = 'B' as const;
-      constructor(_a: IA) {}
+      constructor(@IA _a: IA) {}
     }
-    param(IB, AImpl, 0);
-    param(IA, BImpl, 0);
     const parent = new InstantiationService(
       new ServiceCollection([IA, new SyncDescriptor(AImpl)]),
     );

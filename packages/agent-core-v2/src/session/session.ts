@@ -1,5 +1,11 @@
 /**
- * `session` domain (L6) — session facade (post-god-object).
+ * `session` domain (L6) — session facade.
+ *
+ * Defines the public contract of a session: the `SessionStatus` model and the
+ * `ISessionService` used by upper layers to query status, manage child agents
+ * (`fork` / `listChildren`), and run session operations (`compact` / `undo` /
+ * `archive`). Session-scoped — one instance per session. The agent loop itself
+ * is driven by `agent-lifecycle` and `turn`, not here.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

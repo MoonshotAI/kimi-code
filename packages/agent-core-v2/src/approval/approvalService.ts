@@ -1,9 +1,8 @@
 /**
- * `approval` domain (L7) — `IApprovalService` in-memory broker.
+ * `approval` domain (L7) — `IApprovalService` implementation.
  *
- * Pending approval requests are stored per session. `request` returns a
- * promise that `decide` resolves; `listPending` surfaces the open requests
- * (the reverse-RPC bridge to the client is wired in a later step).
+ * Owns the pending-approval set and resolves requests when a decision arrives.
+ * Bound at Session scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

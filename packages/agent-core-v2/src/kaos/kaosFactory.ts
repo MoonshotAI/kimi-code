@@ -1,9 +1,8 @@
 /**
- * `kaos` domain (L1) — `IKaosFactory` (Core) implementation.
+ * `kaos` domain (L1) — `IKaosFactory` implementation.
  *
- * Builds concrete `Kaos` instances. Local kaos is created via
- * `LocalKaos.create()` (which probes the host environment) and optionally
- * pinned to a cwd. SSH kaos is left as a TODO stub.
+ * Creates `Kaos` instances for the requested kind; resolves paths through
+ * `environment` and logs through `log`. Bound at Core scope.
  */
 
 import { type Kaos, LocalKaos } from '@moonshot-ai/kaos';

@@ -11,11 +11,6 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function param(dec: any, target: any, index: number): void {
-  (dec as (t: unknown, k: string, i: number) => void)(target, '', index);
-}
-
 interface ICoreSvc {
   tag: 'core';
 }
@@ -38,19 +33,15 @@ class CoreSvc implements ICoreSvc {
 }
 class SessionSvc implements ISessionSvc {
   tag = 'session' as const;
-  constructor(public readonly core: ICoreSvc) {}
+  constructor(@ICoreSvc public readonly core: ICoreSvc) {}
 }
 class AgentSvc implements IAgentSvc {
   tag = 'agent' as const;
   constructor(
-    public readonly session: ISessionSvc,
-    public readonly core: ICoreSvc,
+    @ISessionSvc public readonly session: ISessionSvc,
+    @ICoreSvc public readonly core: ICoreSvc,
   ) {}
 }
-
-param(ICoreSvc, SessionSvc, 0);
-param(ISessionSvc, AgentSvc, 0);
-param(ICoreSvc, AgentSvc, 1);
 
 describe('Scope tree', () => {
   beforeEach(() => {
@@ -77,13 +68,11 @@ describe('Scope tree', () => {
 
   it('child resolves ancestor services via createChild fallback', () => {
     const { core, session, agent } = buildTree();
-    // Session depends on Core; Agent depends on Session + Core.
     const sessionSvc = session.accessor.get(ISessionSvc);
     const agentSvc = agent.accessor.get(IAgentSvc);
     expect(sessionSvc.core.tag).toBe('core');
     expect(agentSvc.session.tag).toBe('session');
     expect(agentSvc.core.tag).toBe('core');
-    // The Core service is shared (same instance) across layers.
     expect(agentSvc.core).toBe(core.accessor.get(ICoreSvc));
     core.dispose();
   });
@@ -149,7 +138,6 @@ describe('Scope tree', () => {
     session.accessor.get(IB);
     agent.accessor.get(IC);
     core.dispose();
-    // Agent (C) tears down before Session (B) before Core (A).
     expect(events).toEqual(['C', 'B', 'A']);
   });
 
@@ -183,7 +171,6 @@ describe('Scope tree', () => {
       extra: [[ISessionContext as ServiceIdentifier<unknown>, { sessionId: 's1' }]],
     });
     expect(session.accessor.get(ISessionContext).sessionId).toBe('s1');
-    // Context token is not visible to the parent.
     expect(() => core.accessor.get(ISessionContext)).toThrow();
     core.dispose();
   });

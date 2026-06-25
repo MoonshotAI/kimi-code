@@ -1,5 +1,10 @@
 /**
  * `auth` domain (cross-cutting) — core-scope OAuth + auth summary.
+ *
+ * Defines the public contracts of authentication: the `AuthStatus` model, the
+ * `IOAuthService` used to log in/out and query status, and the
+ * `IAuthSummaryService` used to summarize auth state. Core-scoped — shared
+ * across the application.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

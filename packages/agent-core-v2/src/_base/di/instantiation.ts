@@ -1,3 +1,7 @@
+/**
+ * `di` domain (L0) — service identifiers, `createDecorator`, and the `IInstantiationService` contract.
+ */
+
 import type { SyncDescriptor0 } from './descriptors';
 import type { DisposableStore } from './lifecycle';
 import type { ServiceCollection } from './serviceCollection';

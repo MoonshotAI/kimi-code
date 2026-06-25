@@ -1,8 +1,8 @@
 /**
  * `terminal` domain (cross-cutting) — `ITerminalService` implementation.
  *
- * Spawns processes via the session kaos and tracks them by id for
- * `write`/`kill`.
+ * Owns the spawned terminal processes and their lifecycle; runs processes
+ * through `kaos` and logs through `log`. Bound at Session scope.
  */
 
 import type { KaosProcess } from '@moonshot-ai/kaos';

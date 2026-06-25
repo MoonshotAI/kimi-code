@@ -1,9 +1,10 @@
 /**
  * `mcp` domain (L5) — `IMcpService` implementation.
  *
- * Tracks MCP server connection state and emits `onDidChangeServerStatus`.
- * Tool fan-out to agents (via `IAgentLifecycleService` →
- * `IToolService.registerMcpTools`) is wired in a later step.
+ * Owns the connected MCP server set and broadcasts server status changes;
+ * authenticates through `auth`, reads configuration through `config`, logs
+ * through `log`, and reports telemetry through `telemetry`. Bound at Session
+ * scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

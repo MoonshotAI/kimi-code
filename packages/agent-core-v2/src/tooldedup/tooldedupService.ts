@@ -1,8 +1,9 @@
 /**
- * `tooldedup` domain (L4) — `IToolDedupService` (Turn scope) implementation.
+ * `tooldedup` domain (L4) — `IToolDedupService` implementation.
  *
- * Tracks tool calls within the current step to detect same-step duplicates,
- * and a cross-step streak counter for repeated identical calls.
+ * Tracks tool calls within a turn to detect same-step repeats and consecutive
+ * streaks; reports telemetry through `telemetry` and observes turns through
+ * `turn`. Bound at Turn scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

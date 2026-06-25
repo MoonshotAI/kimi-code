@@ -1,8 +1,8 @@
 /**
  * `usage` domain (L4) — `IUsageService` implementation.
  *
- * Accumulates per-agent token usage. Subscribes to turn begin/end (wired in
- * a later step) to record usage; `record` is the low-level entry point.
+ * Accumulates per-agent token totals; records usage through `records` and
+ * reports through `telemetry`. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

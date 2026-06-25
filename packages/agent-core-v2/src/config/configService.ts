@@ -1,12 +1,11 @@
 /**
- * `config` domain (L2) — `IConfigRegistry` / `IConfigService` /
- * `IAgentConfigService` implementation.
+ * `config` domain (L2) — `IConfigRegistry`, `IConfigService`, and
+ * `IAgentConfigService` implementations.
  *
- * `ConfigRegistry` holds per-domain config sections and a generic deep-merge.
- * `ConfigService` is the in-memory config store with `get`/`set` and an
- * `onDidChange` event (file persistence of `config.toml` is a host concern).
- * `AgentConfigService` is the per-agent resolved view (model / thinking /
- * systemPrompt / provider) plus `cwd` sourced from `IAgentKaos`.
+ * Owns the in-memory config store, the section registry, and the per-agent
+ * config view; reads the environment through `environment`, resolves the agent
+ * cwd through `kaos`, records through `records`, and logs through `log`. Bound
+ * at Core (registry and service) and Agent (agent view) scopes.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -48,6 +47,9 @@ export class ConfigRegistry implements IConfigRegistry {
   private readonly sections = new Map<string, unknown>();
 
   registerSection(domain: string, schema: unknown): void {
+    if (this.sections.has(domain)) {
+      throw new Error(`ConfigRegistry: section '${domain}' is already registered`);
+    }
     this.sections.set(domain, schema);
   }
 

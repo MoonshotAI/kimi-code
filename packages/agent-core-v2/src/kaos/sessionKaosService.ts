@@ -1,11 +1,9 @@
 /**
- * `kaos` domain (L1) — `ISessionKaosService` (Session) implementation.
+ * `kaos` domain (L1) — `ISessionKaosService` implementation.
  *
- * Owns the session-level tool / persistence kaos and the `additionalDirs`
- * allow-list. The base `toolKaos` is provided by the session bootstrap via
- * `setToolKaos(...)` (kaos creation is async, so it happens outside the DI
- * constructor). `persistenceKaos` defaults to `toolKaos`; `systemContextKaos`
- * is a cwd-pinned view of `persistenceKaos`.
+ * Holds the session's tool, persistence, and system-context `Kaos`
+ * environments plus additional search directories; logs through `log`. Bound
+ * at Session scope.
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';

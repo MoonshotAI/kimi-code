@@ -1,9 +1,10 @@
 /**
  * `compaction` domain (L4) — `ICompactionService` implementation.
  *
- * Subscribes to `ITurnService.onDidEndStep`; when the context's token usage
- * exceeds the threshold, it pushes a `compaction_summary` injection via
- * `IInjectionService` (the actual summarisation is a later step).
+ * Triggers context compaction on overflow; reads configuration through `config`,
+ * reads history through `context`, enqueues follow-up through `injection`,
+ * persists records through `records`, reports telemetry through `telemetry`, and
+ * observes turns through `turn`. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

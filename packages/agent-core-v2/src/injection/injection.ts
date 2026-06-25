@@ -1,5 +1,11 @@
 /**
- * `injection` domain (L4) — agent injection service + per-turn queue.
+ * `injection` domain (L4) — agent injection service and per-turn queue.
+ *
+ * Defines the public contract for injections: the `InjectionItem` model, the
+ * `IInjectionService` used by an agent to queue and flush pending injections,
+ * and the `IInjectionQueue` for per-turn injection buffering. `IInjectionService`
+ * is Agent-scoped (one per agent); `IInjectionQueue` is Turn-scoped (one per
+ * turn).
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

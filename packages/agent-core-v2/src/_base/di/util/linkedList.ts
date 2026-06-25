@@ -1,12 +1,5 @@
 /**
- * Doubly-linked list with O(1) `push` and removal via the disposer returned
- * from `push`. Used by `InstantiationService` to park `onDid*`/`onWill*`
- * event subscriptions made against a Proxy before the real service is
- * materialised — when the real instance is built, the list is drained and
- * each parked listener is rebound to the real event.
- *
- * Vendored verbatim from krow `packages/core/src/base/linkedList.ts`
- * (in turn the VSCode original).
+ * `di` domain (L0) — `LinkedList` with O(1) push/removal for parked event listeners.
  */
 
 class Node<E> {

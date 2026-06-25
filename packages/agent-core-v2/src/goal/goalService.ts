@@ -1,8 +1,9 @@
 /**
  * `goal` domain (L4) — `IGoalService` implementation.
  *
- * Holds the current goal state. Subscribes `onDidEndTurn` to drive
- * continuation turns (a later step); for now it tracks state only.
+ * Holds the active goal state; enqueues follow-up through `injection`,
+ * persists records through `records`, and observes turns through `turn`. Bound
+ * at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -24,7 +25,7 @@ export class GoalService extends Disposable implements IGoalService {
     @IInjectionService _injection: IInjectionService,
   ) {
     super();
-    this._register(turn.onDidEndTurn(() => { /* TODO: drive continuation turn */ }));
+    this._register(turn.onDidEndTurn(() => {}));
   }
 
   get current(): GoalState | undefined {

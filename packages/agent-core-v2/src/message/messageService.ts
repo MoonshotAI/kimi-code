@@ -1,8 +1,8 @@
 /**
  * `message` domain (L4) — `IMessageService` implementation.
  *
- * Projects `IContextService` history into protocol `Message` objects with
- * stable, position-derived ids.
+ * Projects context history into protocol messages; reads history through
+ * `context`. Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

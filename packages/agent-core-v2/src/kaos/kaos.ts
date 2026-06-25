@@ -1,21 +1,16 @@
 /**
- * `kaos` domain (L1) — execution-environment abstractions across three
- * scopes.
+ * `kaos` domain (L1) — execution-environment service contracts.
  *
- * kaos wraps `@moonshot-ai/kaos` (file / process / path primitives) into the
- * DI scope model:
- *  - `IKaosFactory` (Core): builds concrete `Kaos` instances (local / ssh).
- *  - `ISessionKaosService` (Session): owns the session-level tool /
- *    persistence / system-context kaos plus `additionalDirs`.
- *  - `IAgentKaos` (Agent): the per-agent cwd-scoped kaos view.
+ * Defines the execution-environment contracts: `IKaosFactory` for creating
+ * `Kaos` instances (Core), `ISessionKaosService` for the session's tool /
+ * persistence / system-context environments (Session), and `IAgentKaos` for
+ * the per-agent working directory (Agent).
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-/** Options for building a concrete `Kaos`. Shape is intentionally loose for
- *  the skeleton; it will be tightened when business logic lands. */
 export interface KaosFactoryOptions {
   readonly kind: 'local' | 'ssh';
   readonly cwd?: string;
@@ -46,7 +41,6 @@ export const ISessionKaosService: ServiceIdentifier<ISessionKaosService> =
 
 export interface IAgentKaos {
   readonly _serviceBrand: undefined;
-  /** The agent's cwd-scoped kaos. */
   readonly kaos: Kaos;
   readonly cwd: string;
   chdir(cwd: string): Promise<void>;

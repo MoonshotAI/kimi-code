@@ -1,8 +1,7 @@
 /**
- * `question` domain (L7) — `IQuestionService` in-memory broker.
+ * `question` domain (L7) — `IQuestionService` implementation.
  *
- * Mirrors `ApprovalService`: `request` parks a promise, `answer` resolves it,
- * `listPending` lists open questions.
+ * Brokers ask-user requests and resolves their answers. Bound at Session scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

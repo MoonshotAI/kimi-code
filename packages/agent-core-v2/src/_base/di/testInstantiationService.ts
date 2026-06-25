@@ -1,3 +1,7 @@
+/**
+ * `di` domain (L0) — `TestInstantiationService` and scoped test-container helpers.
+ */
+
 import * as sinon from 'sinon';
 
 import { SyncDescriptor, type SyncDescriptor0 } from './descriptors';
@@ -94,7 +98,7 @@ export class TestInstantiationService extends InstantiationService implements ID
 
   public stub<T>(
     id: ServiceIdentifier<T>,
-    instanceOrDescriptor: T | SyncDescriptor<T>,
+    instanceOrDescriptor: Partial<NoInfer<T>> | SyncDescriptor<T>,
   ): T | SyncDescriptor<T>;
   public stub<T>(id: ServiceIdentifier<T>, ctor: AnyConstructor<T>): T;
   public stub<T, V>(

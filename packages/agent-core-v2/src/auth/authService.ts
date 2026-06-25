@@ -2,8 +2,9 @@
  * `auth` domain (cross-cutting) — `IOAuthService` / `IAuthSummaryService`
  * implementation.
  *
- * Tracks login state per provider in-memory. The real OAuth flow is wired in
- * a later step.
+ * Owns the OAuth login state and auth summary; reads settings through `config`,
+ * reads the environment through `environment`, and reports through `telemetry`.
+ * Bound at Core scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

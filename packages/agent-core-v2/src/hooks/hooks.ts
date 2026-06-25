@@ -1,5 +1,9 @@
 /**
- * `hooks` domain (L6) — session-scope user hook engine.
+ * `hooks` domain (L6) — user hook engine.
+ *
+ * Defines the public contract of the hook engine: the `HookResult` model and the
+ * `IHookEngine` used to run the user-prompt-submit, pre-tool-call, and session
+ * start/end hook points. Session-scoped — one instance per session.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

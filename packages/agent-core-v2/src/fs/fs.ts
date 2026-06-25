@@ -1,5 +1,10 @@
 /**
  * `fs` domain (cross-cutting) — session-scope filesystem services.
+ *
+ * Defines the public contracts of filesystem access: the `IFsService`,
+ * `IFsSearchService`, `IFsGitService`, and `IFsWatcher` used by tools to read
+ * and write files, search, inspect git state, and watch paths. Session-scoped
+ * — one set of services per session.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

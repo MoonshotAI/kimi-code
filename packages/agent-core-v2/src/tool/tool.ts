@@ -1,5 +1,11 @@
 /**
- * `tool` domain (L3) — tool-definition registry + per-agent tool service.
+ * `tool` domain (L3) — tool-definition registry and per-agent tool service.
+ *
+ * Defines the public contract for tools: the `ToolDefinition` and
+ * `ToolCallResult` models, the `IToolDefinitionRegistry` used to register and
+ * look up tool definitions, and the `IToolService` used by agents to execute
+ * tools. `IToolDefinitionRegistry` is Core-scoped (one shared registry);
+ * `IToolService` is Agent-scoped (one per agent).
  */
 
 import { createDecorator, type ServiceIdentifier, type ServicesAccessor } from '#/_base/di/instantiation';

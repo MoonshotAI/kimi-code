@@ -1,8 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { IAgentKaos } from '#/kaos/kaos';
-import type { ILogService, ILogger } from '#/log/log';
-import type { IAgentRecords } from '#/records/records';
+import { IAgentKaos } from '#/kaos/kaos';
+import type { ILogger } from '#/log/log';
+
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import { IEnvironmentService } from '#/environment/environment';
+import { ILogService } from '#/log/log';
+import { IAgentRecords } from '#/records/records';
+import { IConfigRegistry, IConfigService } from '#/config/config';
 
 import { AgentConfigService, ConfigRegistry, ConfigService } from '#/config/configService';
 
@@ -13,6 +19,7 @@ const noopLogger: ILogger = {
   debug: () => {},
   child: () => noopLogger,
 };
+
 const noopLog: ILogService = {
   ...noopLogger,
   _serviceBrand: undefined,
@@ -20,13 +27,20 @@ const noopLog: ILogService = {
   setLevel: () => {},
 };
 
-function makeConfigService(): ConfigService {
-  return new ConfigService(
-    new ConfigRegistry(),
-    undefined as never, // env unused in memory store
-    noopLog,
-  );
-}
+const unusedEnv: IEnvironmentService = {
+  _serviceBrand: undefined,
+  homeDir: '',
+  configPath: '',
+  detect: () => Promise.reject(new Error('unused')),
+};
+
+const unusedRecords: IAgentRecords = {
+  _serviceBrand: undefined,
+  logRecord: () => Promise.resolve(),
+  // eslint-disable-next-line @typescript-eslint/require-await
+  replay: async function* () {},
+  restore: () => Promise.resolve(),
+};
 
 describe('ConfigRegistry', () => {
   it('registers and retrieves a section', () => {
@@ -37,6 +51,14 @@ describe('ConfigRegistry', () => {
     expect(reg.getSection('missing')).toBeUndefined();
   });
 
+  it('throws when the same domain is registered twice', () => {
+    const reg = new ConfigRegistry();
+    reg.registerSection('permission', { type: 'object' });
+    expect(() => reg.registerSection('permission', { type: 'object' })).toThrow(
+      /already registered/,
+    );
+  });
+
   it('deep-merges patches', () => {
     const reg = new ConfigRegistry();
     const merged = reg.merge({ a: 1, nested: { x: 1, y: 2 } }, { nested: { y: 3, z: 4 }, b: 2 });
@@ -45,17 +67,29 @@ describe('ConfigRegistry', () => {
 });
 
 describe('ConfigService', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(IConfigRegistry, new ConfigRegistry());
+    ix.stub(IEnvironmentService, unusedEnv);
+    ix.stub(ILogService, noopLog);
+  });
+  afterEach(() => disposables.dispose());
+
   it('set merges and get reads back', async () => {
-    const svc = makeConfigService();
+    const svc = disposables.add(ix.createInstance(ConfigService));
     await svc.set('agent', { modelAlias: 'k2', nested: { a: 1 } });
     await svc.set('agent', { nested: { b: 2 } });
     expect(svc.get('agent')).toEqual({ modelAlias: 'k2', nested: { a: 1, b: 2 } });
   });
 
   it('fires onDidChange with the domain', async () => {
-    const svc = makeConfigService();
+    const svc = disposables.add(ix.createInstance(ConfigService));
     const fired: string[] = [];
-    svc.onDidChange((e) => fired.push(e.domain));
+    disposables.add(svc.onDidChange((e) => fired.push(e.domain)));
     await svc.set('agent', { modelAlias: 'k2' });
     await svc.set('tool', { x: 1 });
     expect(fired).toEqual(['agent', 'tool']);
@@ -63,6 +97,10 @@ describe('ConfigService', () => {
 });
 
 describe('AgentConfigService', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+  let agentSection: Record<string, unknown>;
+
   const agentKaos: IAgentKaos = {
     _serviceBrand: undefined,
     get kaos(): never {
@@ -71,12 +109,20 @@ describe('AgentConfigService', () => {
     cwd: '/repo',
     chdir: () => Promise.resolve(),
   };
-  const agentRecords = undefined as unknown as IAgentRecords;
 
-  it('reads the agent section and cwd from kaos', async () => {
-    const svc = makeConfigService();
-    await svc.set('agent', { modelAlias: 'k2', systemPrompt: 'hi', provider: 'p' });
-    const view = new AgentConfigService(svc, agentRecords, agentKaos);
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    agentSection = {};
+    ix.stub(IConfigService, { get: <T>() => agentSection as T });
+    ix.stub(IAgentRecords, unusedRecords);
+    ix.stub(IAgentKaos, agentKaos);
+  });
+  afterEach(() => disposables.dispose());
+
+  it('reads the agent section and cwd from kaos', () => {
+    agentSection = { modelAlias: 'k2', systemPrompt: 'hi', provider: 'p' };
+    const view = ix.createInstance(AgentConfigService);
     expect(view.modelAlias).toBe('k2');
     expect(view.systemPrompt).toBe('hi');
     expect(view.provider).toBe('p');
@@ -85,8 +131,7 @@ describe('AgentConfigService', () => {
   });
 
   it('setModel / setThinking update the view', async () => {
-    const svc = makeConfigService();
-    const view = new AgentConfigService(svc, agentRecords, agentKaos);
+    const view = ix.createInstance(AgentConfigService);
     await view.setModel('k1');
     await view.setThinking('high');
     expect(view.modelAlias).toBe('k1');

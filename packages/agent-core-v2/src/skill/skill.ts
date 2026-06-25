@@ -1,5 +1,11 @@
 /**
- * `skill` domain (L3) — session skill registry + per-agent skill service.
+ * `skill` domain (L3) — session skill registry and per-agent skill service.
+ *
+ * Defines the public contract for skills: the `SkillDefinition` model, the
+ * `ISkillRegistry` used to load roots and register skills, and the
+ * `ISkillService` used by agents to activate a skill. `ISkillRegistry` is
+ * Session-scoped (one registry per session); `ISkillService` is Agent-scoped
+ * (one per agent).
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

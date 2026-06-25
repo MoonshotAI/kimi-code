@@ -1,15 +1,12 @@
 /**
  * `cron` domain (L5) — `ICronService` + `ICronFireCoordinator` implementation.
  *
- * `CronService` owns the session's cron tasks and a minimal scheduler: each
- * task carries a `nextFireAt`; `tick(now)` fires due tasks (gated on
- * `ISessionActivity.isIdle()`), emitting `onDidFire`. One-shot tasks are
- * removed after firing; recurring tasks advance `nextFireAt`. The cron
- * expression parser is intentionally minimal (numeric ms interval or a
- * default) — full cron-syntax support is a later step.
- *
- * `CronFireCoordinator` subscribes `onDidFire` and steers the `main` agent
- * via `IAgentLifecycleService`.
+ * Owns the scheduled task set and fires due tasks; drives agent lifecycle
+ * through `agent-lifecycle`, resolves paths through `environment`, logs
+ * through `log`, persists records through `records`, records activity through
+ * `session-activity`, reads session context through `session-context`, reports
+ * telemetry through `telemetry`, and observes turns through `turn`. Bound at
+ * Session scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -82,7 +79,6 @@ export class CronService extends Disposable implements ICronService {
     return Promise.resolve();
   }
 
-  /** Fire all due tasks (idle-gated). Exposed for deterministic testing. */
   tick(now: number = Date.now()): void {
     if (!this.activity.isIdle()) return;
     for (const scheduled of this.tasks.values()) {

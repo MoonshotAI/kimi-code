@@ -1,9 +1,9 @@
 /**
  * `hooks` domain (L6) — `IHookEngine` implementation.
  *
- * Runs user hooks at turn/session boundaries. The current implementation is a
- * permissive default (all hooks pass through with `continue: true`); user
- * hook registration is wired in a later step.
+ * Evaluates the session's hook points and returns their pass/fail results;
+ * reads configuration through `config` and logs through `log`. Bound at
+ * Session scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

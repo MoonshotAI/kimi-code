@@ -1,18 +1,5 @@
 /**
- * `GlobalIdleValue<T>` — defers an executor until the first `value` access
- * (or the next browser idle callback / `setTimeout` fallback). Used by
- * `InstantiationService._createServiceInstance` to back
- * `supportsDelayedInstantiation: true` services: the Proxy returned to
- * callers triggers `idle.value` on first non-`onDid*` access, which runs
- * the real construction.
- *
- * Vendored from krow `packages/core/src/base/async.ts:57-97` (which is the
- * VSCode original). Node-safe: falls back to `setTimeout` when
- * `requestIdleCallback` is unavailable (the typical Node environment).
- *
- * Only `GlobalIdleValue` is exported — `runWhenGlobalIdle` is internal to
- * this module because the DI subsystem is the only consumer; if another
- * package later needs it, lift it then.
+ * `di` domain (L0) — `GlobalIdleValue` lazy-initializer backing delayed DI services.
  */
 
 import type { IDisposable } from '../lifecycle';
@@ -48,13 +35,12 @@ function runWhenGlobalIdle(
       },
     };
   } else {
-    // Polyfill for environments without requestIdleCallback (e.g. Node.js).
     let disposed = false;
     const handle = setTimeout(() => {
       if (disposed) {
         return;
       }
-      const end = Date.now() + 15; // one frame at ~64fps
+      const end = Date.now() + 15;
       const deadline: IdleDeadline = {
         didTimeout: true,
         timeRemaining() {

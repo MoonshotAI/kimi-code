@@ -1,6 +1,14 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { ILogService, ILogger } from '#/log/log';
+import type { ILogger } from '#/log/log';
+
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import { IConfigRegistry, IConfigService } from '#/config/config';
+import { IEnvironmentService } from '#/environment/environment';
+import { IModelCatalogService } from '#/kosong/kosong';
+import { ILogService } from '#/log/log';
 
 import { ConfigRegistry, ConfigService } from '#/config/configService';
 import { ModelCatalogService, ProviderManager } from '#/kosong/kosongService';
@@ -19,12 +27,26 @@ const noopLog: ILogService = {
   setLevel: () => {},
 };
 
+const unusedEnv: IEnvironmentService = {
+  _serviceBrand: undefined,
+  homeDir: '',
+  configPath: '',
+  detect: () => Promise.reject(new Error('unused')),
+};
+
 describe('ModelCatalogService', () => {
-  let config: ConfigService;
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
   let catalog: ModelCatalogService;
 
   beforeEach(async () => {
-    config = new ConfigService(new ConfigRegistry(), undefined as never, noopLog);
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(IConfigRegistry, new ConfigRegistry());
+    ix.stub(IEnvironmentService, unusedEnv);
+    ix.stub(ILogService, noopLog);
+    const config = disposables.add(ix.createInstance(ConfigService));
+    ix.set(IConfigService, config);
     await config.set('kosong', {
       providers: [
         { id: 'kimi', name: 'Kimi' },
@@ -37,8 +59,9 @@ describe('ModelCatalogService', () => {
       defaultProviderId: 'kimi',
       defaultModelId: 'k2',
     });
-    catalog = new ModelCatalogService(config, undefined as never);
+    catalog = ix.createInstance(ModelCatalogService);
   });
+  afterEach(() => disposables.dispose());
 
   it('lists providers from config', async () => {
     expect(await catalog.listProviders()).toEqual([
@@ -54,16 +77,30 @@ describe('ModelCatalogService', () => {
 });
 
 describe('ProviderManager', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+  let config: ConfigService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(IConfigRegistry, new ConfigRegistry());
+    ix.stub(IEnvironmentService, unusedEnv);
+    ix.stub(ILogService, noopLog);
+    config = disposables.add(ix.createInstance(ConfigService));
+    ix.set(IConfigService, config);
+    ix.set(IModelCatalogService, new SyncDescriptor(ModelCatalogService));
+  });
+  afterEach(() => disposables.dispose());
+
   async function make(): Promise<ProviderManager> {
-    const config = new ConfigService(new ConfigRegistry(), undefined as never, noopLog);
     await config.set('kosong', {
       providers: [{ id: 'kimi', name: 'Kimi' }],
       models: [{ id: 'k2', providerId: 'kimi' }],
       defaultProviderId: 'kimi',
       defaultModelId: 'k2',
     });
-    const catalog = new ModelCatalogService(config, undefined as never);
-    return new ProviderManager(catalog, config);
+    return ix.createInstance(ProviderManager);
   }
 
   it('resolves defaults when no ids given', async () => {
@@ -82,10 +119,8 @@ describe('ProviderManager', () => {
   });
 
   it('throws when no defaults and no ids', async () => {
-    const config = new ConfigService(new ConfigRegistry(), undefined as never, noopLog);
     await config.set('kosong', { providers: [{ id: 'kimi', name: 'Kimi' }] });
-    const catalog = new ModelCatalogService(config, undefined as never);
-    const pm = new ProviderManager(catalog, config);
+    const pm = ix.createInstance(ProviderManager);
     await expect(pm.resolve()).rejects.toThrow(/no defaults/);
   });
 });

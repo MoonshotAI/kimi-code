@@ -2,8 +2,8 @@
  * `workspace` domain (cross-cutting) — `IWorkspaceRegistry` /
  * `IWorkspaceFsService` implementation.
  *
- * In-memory registry of workspace roots; `WorkspaceFsService` resolves
- * relative paths against a registered workspace.
+ * Owns the workspace registry and path resolution; resolves filesystem access
+ * through `kaos` and logs through `log`. Bound at Core scope.
  */
 
 import { join } from 'node:path';

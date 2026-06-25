@@ -1,5 +1,9 @@
 /**
  * `message` domain (L4) — protocol message projection over context.
+ *
+ * Defines the public contract for messages: the `ProtocolMessage` model and the
+ * `IMessageService` used to list and look up projected protocol messages.
+ * Agent-scoped — one instance per agent.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

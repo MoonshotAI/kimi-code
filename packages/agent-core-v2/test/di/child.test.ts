@@ -56,6 +56,7 @@ describe('InstantiationService.createChild', () => {
     interface IDep {
       tag: string;
     }
+    const IDep = createDecorator<IDep>('owner-scope-dep');
     class ParentDep implements IDep {
       tag = 'parent';
     }
@@ -63,16 +64,10 @@ describe('InstantiationService.createChild', () => {
       tag = 'child';
     }
     class ParentOwned {
-      constructor(public readonly dep: IDep) {}
+      constructor(@IDep public readonly dep: IDep) {}
     }
 
-    const IDep = createDecorator<IDep>('owner-scope-dep');
     const IParentOwned = createDecorator<ParentOwned>('owner-scope-parent-owned');
-    (IDep as unknown as (t: unknown, k: string, i: number) => void)(
-      ParentOwned,
-      '',
-      0,
-    );
 
     const parent = new InstantiationService(
       new ServiceCollection(
@@ -93,14 +88,9 @@ describe('InstantiationService.createChild', () => {
 
   it('injects the parent instantiation service into parent-owned services resolved from a child', () => {
     class ParentOwned {
-      constructor(public readonly ix: IInstantiationServiceType) {}
+      constructor(@IInstantiationService public readonly ix: IInstantiationServiceType) {}
     }
     const IParentOwned = createDecorator<ParentOwned>('owner-scope-parent-ix');
-    (IInstantiationService as unknown as (t: unknown, k: string, i: number) => void)(
-      ParentOwned,
-      '',
-      0,
-    );
 
     const parent = new InstantiationService(
       new ServiceCollection([IParentOwned, new SyncDescriptor(ParentOwned)]),

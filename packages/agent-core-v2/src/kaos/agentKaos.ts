@@ -1,9 +1,8 @@
 /**
- * `kaos` domain (L1) — `IAgentKaos` (Agent) implementation.
+ * `kaos` domain (L1) — `IAgentKaos` implementation.
  *
- * Per-agent cwd-scoped kaos view. Starts at the session tool kaos's cwd and
- * re-pins to a new `Kaos` on `chdir` (kaos instances are immutable; `withCwd`
- * returns a new instance). Switching cwd here never mutates the session kaos.
+ * Exposes the agent's active `Kaos` instance and working directory, and
+ * switches the working directory on `chdir`. Bound at Agent scope.
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';

@@ -1,5 +1,9 @@
 /**
- * `log` domain (L1) — `ILogService` implementation + sinks.
+ * `log` domain (L1) — `ILogService` implementation and built-in sinks.
+ *
+ * Filters entries by the configured `LogLevel` and writes them to the bound
+ * `ILogSink`; provides the console and in-memory `ILogSink` implementations.
+ * Bound at Core scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -43,7 +47,6 @@ function extractContext(payload: LogPayload): LogContext | undefined {
   return undefined;
 }
 
-/** In-memory sink — useful for tests and as a default buffer. */
 export class MemoryLogSink implements ILogSink {
   readonly entries: LogEntry[] = [];
   write(entry: LogEntry): void {
@@ -51,7 +54,6 @@ export class MemoryLogSink implements ILogSink {
   }
 }
 
-/** Console sink — default production sink. */
 export class ConsoleLogSink implements ILogSink {
   write(entry: LogEntry): void {
     const line = entry.ctx !== undefined ? `${entry.msg} ${JSON.stringify(entry.ctx)}` : entry.msg;
@@ -120,7 +122,6 @@ export class LogService implements ILogService {
     if (!levelEnabled(level, this._level)) return;
     const payloadCtx = extractContext(payload);
     const error = extractError(payload);
-    // Bound context wins over per-call payload context (ownership fields).
     const ctx =
       payloadCtx !== undefined || Object.keys(this.bound).length > 0
         ? { ...payloadCtx, ...this.bound }
@@ -136,8 +137,6 @@ export class LogService implements ILogService {
   }
 }
 
-// Default Core-scope registrations. The sink defaults to console; tests or
-// the server can override `ILogSink` by seeding a different instance.
 registerScopedService(
   LifecycleScope.Core,
   ILogSink,

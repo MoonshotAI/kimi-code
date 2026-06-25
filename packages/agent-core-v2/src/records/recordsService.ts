@@ -1,11 +1,10 @@
 /**
- * `records` domain (L2) — `ISessionStore` / `ISessionMetaStore` /
- * `IAgentRecords` implementation.
+ * `records` domain (L2) — `ISessionStore`, `ISessionMetaStore`, and
+ * `IAgentRecords` implementations.
  *
- * `SessionStore` owns the on-disk session directory layout (`encodeWorkDirKey`).
- * `SessionMetaStore` persists `state.json` through the session persistence
- * kaos. `AgentRecords` appends structured records to `wire.jsonl` and replays
- * them. Blobref / migration are left as TODO.
+ * Owns session state, session metadata, and the agent record stream; persists
+ * through `kaos` and logs through `log`. Bound at Core (session store), Session
+ * (session metadata), and Agent (agent records) scopes.
  */
 
 import { createHash } from 'node:crypto';
@@ -13,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { slugifyWorkDirName } from '#/_base/utils/workdir-slug';
 import { IKaosFactory, IAgentKaos, ISessionKaosService } from '#/kaos/kaos';
 import { ILogService } from '#/log/log';
 
@@ -26,14 +26,10 @@ import {
 const WORKDIR_KEY_PREFIX = 'wd_';
 const HASH_LENGTH = 12;
 
-function slugify(name: string): string {
-  return name.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'x';
-}
-
 export function encodeWorkDirKey(workDir: string): string {
   const normalized = workDir.replace(/\\/g, '/').replace(/\/+$/, '');
   const base = normalized.split('/').pop() ?? normalized;
-  const slug = slugify(base);
+  const slug = slugifyWorkDirName(base);
   const hash = createHash('sha256').update(normalized).digest('hex').slice(0, HASH_LENGTH);
   return `${WORKDIR_KEY_PREFIX}${slug}_${hash}`;
 }
@@ -110,7 +106,6 @@ export class AgentRecords extends Disposable implements IAgentRecords {
     try {
       existing = await this.agentKaos.kaos.readText(this.path);
     } catch {
-      // first record — file does not exist yet
     }
     await this.agentKaos.kaos.writeText(this.path, existing + line);
   }

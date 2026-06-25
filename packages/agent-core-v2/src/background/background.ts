@@ -1,5 +1,9 @@
 /**
  * `background` domain (L5) — per-agent background task manager.
+ *
+ * Defines the public contract of background tasks: the `BackgroundTask` model
+ * and the `IBackgroundService` used to start, stop, list, and read the output
+ * of tasks. Agent-scoped — one instance per agent.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

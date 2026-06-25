@@ -1,3 +1,7 @@
+/**
+ * `event` domain (L0) — `Event` / `Emitter` primitives and event combinators (`once` / `map` / `filter` / `any`).
+ */
+
 import { onUnexpectedError, safelyCallListener } from './errors/unexpectedError';
 import {
   Disposable,

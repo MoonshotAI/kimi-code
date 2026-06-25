@@ -1,5 +1,10 @@
 /**
- * `permission` domain (L3) — policy registry + per-agent decision service.
+ * `permission` domain (L3) — tool-call permission policy and decision contract.
+ *
+ * Defines the `Decision`, `PermissionContext`, and `PermissionPolicy` models,
+ * the `IPermissionPolicyRegistry` for registering and evaluating policies, and
+ * the `IPermissionService` used to decide a tool call before it runs. The
+ * registry is Core-scoped; the decision service is Agent-scoped.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

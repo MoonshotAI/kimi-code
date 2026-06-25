@@ -1,8 +1,9 @@
 /**
  * `swarm` domain (L4) — `ISwarmService` implementation.
  *
- * Tracks swarm-mode state. Sub-agent orchestration is wired via
- * `IAgentLifecycleService` in a later step.
+ * Tracks whether swarm mode is active; drives agent lifecycle through
+ * `agent-lifecycle`, checks permissions through `permission`, and persists
+ * records through `records`. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

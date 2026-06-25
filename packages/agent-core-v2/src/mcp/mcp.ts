@@ -1,5 +1,9 @@
 /**
- * `mcp` domain (L5) — session-scope MCP connection manager.
+ * `mcp` domain (L5) — manages MCP server connections.
+ *
+ * Defines the public contract of MCP: the `McpServerStatusEvent` model and the
+ * `IMcpService` used to connect, disconnect, and list servers and observe
+ * `onDidChangeServerStatus`. Session-scoped — one instance per session.
  */
 
 import type { Event } from '#/_base/event';

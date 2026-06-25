@@ -1,3 +1,7 @@
+/**
+ * `di` domain (L0) — scoped test host and service-stub helpers for DI domain tests.
+ */
+
 export {
   createServices,
   TestInstantiationService,
@@ -7,22 +11,6 @@ export type { ServiceIdCtorPair } from './testInstantiationService';
 import { type ServiceIdentifier } from './instantiation';
 import { createCoreScope, LifecycleScope, Scope, type ScopeSeed } from './scope';
 
-/**
- * Scoped test container.
- *
- * Builds a Scope tree whose layers can be seeded with stub instances
- * (`extra`) so a domain service under test resolves its dependencies as
- * stubs. Mirrors the production `createCoreScope`/`Scope.createChild` shape
- * so domain unit tests exercise the real scope wiring.
- *
- * Usage:
- * ```ts
- * const host = createScopedTestHost();
- * const session = host.child(LifecycleScope.Session, 's1', [[ILog, stubLog]]);
- * const svc = session.accessor.get(IMySessionService);
- * host.dispose();
- * ```
- */
 export interface ScopedTestHost {
   readonly core: Scope;
   child(kind: LifecycleScope, id: string, stubs?: ScopeSeed): Scope;
@@ -46,7 +34,6 @@ export function createScopedTestHost(coreStubs: ScopeSeed = []): ScopedTestHost 
   };
 }
 
-/** Convenience: seed a single stub pair. */
 export function stubPair<T>(
   id: ServiceIdentifier<T>,
   instance: T,

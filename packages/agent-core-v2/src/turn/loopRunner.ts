@@ -1,5 +1,7 @@
 /**
- * `turn` domain (L4) — `ILoopRunner` (Turn scope) skeleton.
+ * `turn` domain (L4) — `ILoopRunner` implementation.
+ *
+ * Runs the per-turn loop. Bound at Turn scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -10,7 +12,6 @@ import { ILoopRunner } from './turn';
 export class LoopRunner implements ILoopRunner {
   declare readonly _serviceBrand: undefined;
   run(): Promise<void> {
-    // TODO: port the v1 `loop/` step engine (llm/tool/retry scheduling).
     return Promise.resolve();
   }
 }

@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { ToolCallResult, ToolDefinition } from '#/tool/tool';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import { IAgentConfigService } from '#/config/config';
+import { IAgentKaos } from '#/kaos/kaos';
+import { ILLMService } from '#/kosong/kosong';
+import { IPermissionService } from '#/permission/permission';
+import { IAgentRecords } from '#/records/records';
+import { IToolDefinitionRegistry, type ToolCallResult, type ToolDefinition } from '#/tool/tool';
 import { ToolDefinitionRegistry, ToolService } from '#/tool/toolService';
 
 const echoDef: ToolDefinition = {
@@ -22,18 +29,26 @@ describe('ToolDefinitionRegistry', () => {
 });
 
 describe('ToolService', () => {
-  function make(): { svc: ToolService; reg: ToolDefinitionRegistry } {
-    const reg = new ToolDefinitionRegistry();
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+  let reg: ToolDefinitionRegistry;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    reg = new ToolDefinitionRegistry();
     reg.register(echoDef);
-    const svc = new ToolService(
-      reg,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-    );
+    ix.set(IToolDefinitionRegistry, reg);
+    ix.stub(IAgentConfigService, {});
+    ix.stub(IAgentRecords, {});
+    ix.stub(IAgentKaos, {});
+    ix.stub(IPermissionService, {});
+    ix.stub(ILLMService, {});
+  });
+  afterEach(() => disposables.dispose());
+
+  function make(): { svc: ToolService; reg: ToolDefinitionRegistry } {
+    const svc = ix.createInstance(ToolService);
     return { svc, reg };
   }
 

@@ -1,5 +1,10 @@
 /**
- * `approval` domain (L7) — session-scope approval broker (reverse RPC).
+ * `approval` domain (L7) — session-scope approval broker.
+ *
+ * Defines the public contract of approval brokering: the `ApprovalRequest` /
+ * `ApprovalDecision` models and the `IApprovalService` used to request a
+ * decision, resolve it, and list pending approvals. Session-scoped — one
+ * broker per session.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

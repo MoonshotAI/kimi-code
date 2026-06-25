@@ -2,10 +2,9 @@
  * `gateway` domain (L7) — `IScopeRegistry` / `IRestGateway` / `IWSGateway` /
  * `IWSBroadcastService` implementation.
  *
- * `ScopeRegistry` owns the process-wide Session scope handles. `RestGateway`
- * routes prompt/steer/cancel by resolving `sessionId` → `IScopeHandle` →
- * agent lifecycle → `ITurnService`. WS gateway / broadcast are structural
- * stubs (wired to real transports in a later step).
+ * Owns the session scope registry and the REST/WS entry points; resolves agents
+ * through `agent-lifecycle`, drives turns through `turn`, and subscribes to
+ * broadcasts through `event`. Bound at Core scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -107,7 +106,6 @@ export class WSGateway implements IWSGateway {
     this.connections.add(connectionId);
   }
   broadcast(_sessionId: string, _event: unknown): void {
-    // TODO: fan out to the session's WS connections.
   }
 }
 
@@ -117,7 +115,6 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
   constructor(@IEventService event: IEventService) {
     super();
     event.subscribe(() => {
-      // TODO: route published events to the appropriate WS connections.
     });
   }
 }

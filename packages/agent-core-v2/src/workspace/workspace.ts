@@ -1,5 +1,10 @@
 /**
  * `workspace` domain (cross-cutting) — core-scope workspace registry + fs.
+ *
+ * Defines the public contracts of workspace management: the `WorkspaceInfo`
+ * model, the `IWorkspaceRegistry` used to register and look up workspaces, and
+ * the `IWorkspaceFsService` used to resolve paths within a workspace.
+ * Core-scoped — shared across the application.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

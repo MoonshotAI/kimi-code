@@ -2,11 +2,9 @@
  * `kosong` domain (L1) — `IModelCatalogService` / `IProviderManager` /
  * `ILLMService` implementation.
  *
- * `ModelCatalogService` reads provider/model entries from the `kosong` config
- * section. `ProviderManager` resolves a concrete provider+model (explicit ids
- * or config defaults). `LLMService.generate` is the Agent-scope LLM entry
- * point; the full kosong `generate` wiring (auth, streaming, message mapping)
- * is left as a structural TODO — the dependency shape is what matters here.
+ * Serves the provider / model catalog, resolves the active provider and model,
+ * and drives LLM generation; reads configuration through `config` and resolves
+ * paths through `environment`. Bound at Core, Session, and Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -56,7 +54,6 @@ export class ModelCatalogService implements IModelCatalogService {
   }
 
   refresh(): Promise<void> {
-    // Re-reading from config is sufficient for the in-memory catalog.
     return Promise.resolve();
   }
 }
@@ -94,9 +91,6 @@ export class LLMService implements ILLMService {
 
   // eslint-disable-next-line require-yield -- TODO stub: yields the kosong stream once wired.
   async *generate(_args: GenerateArgs): AsyncIterable<GenerateResult> {
-    // Resolve the target provider/model so callers see misconfiguration early;
-    // the actual kosong `generate(...)` call (auth, streaming, message mapping)
-    // is wired in a later step.
     const resolved = await this.providers.resolve(
       this.agentConfig.provider,
       this.agentConfig.modelAlias,

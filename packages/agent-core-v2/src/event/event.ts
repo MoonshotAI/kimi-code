@@ -1,5 +1,9 @@
 /**
  * `event` domain (L7) — core-scope global pub-sub.
+ *
+ * Defines the public contract of the event bus: the `ProtocolEvent` model and
+ * the `IEventService` used by other domains to publish and subscribe to
+ * protocol events. Core-scoped — one shared bus for the application.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

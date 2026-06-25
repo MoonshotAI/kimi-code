@@ -1,5 +1,9 @@
 /**
  * `telemetry` domain (L1) — `ITelemetryService` implementation.
+ *
+ * Merges the bound `TelemetryContext` into each event and forwards it to the
+ * configured `TelemetryClient`; supports child contexts via `withContext`.
+ * Bound at Core scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -21,7 +25,6 @@ export class TelemetryService implements ITelemetryService {
     this.delegate = noopTelemetryClient;
   }
 
-  /** Wire the real emission sink. Called by the host after bootstrap. */
   setDelegate(client: TelemetryClient): void {
     this.delegate = client;
   }

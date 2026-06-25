@@ -1,8 +1,10 @@
 /**
  * `background` domain (L5) — `IBackgroundService` implementation.
  *
- * Tracks background tasks in-memory with an output ring buffer. Process /
- * agent / question task spawning is wired in a later step.
+ * Tracks running background tasks and their captured output; drives agent
+ * lifecycle through `agent-lifecycle`, runs processes through `kaos`, logs
+ * through `log`, persists records through `records`, and reports telemetry
+ * through `telemetry`. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

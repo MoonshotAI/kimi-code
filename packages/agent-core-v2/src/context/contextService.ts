@@ -1,10 +1,8 @@
 /**
  * `context` domain (L4) — `IContextService` implementation.
  *
- * Owns the agent's conversation history (ordered messages) and provides
- * projection for the LLM, compaction (replace history with a summary),
- * undo (revert the last append), and a rough token estimate. Compaction
- * snapshots the prior history so `undo` can restore it.
+ * Owns the agent's conversation history, projection, compaction, and undo;
+ * records context through `records`. Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

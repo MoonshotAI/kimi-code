@@ -1,11 +1,12 @@
 /**
- * `tool` domain (L3) — `IToolDefinitionRegistry` + `IToolService`.
+ * `tool` domain (L3) — `IToolDefinitionRegistry` and `IToolService`
+ * implementation.
  *
- * The registry collects `ToolDefinition` contributions (name + factory).
- * `ToolService` assembles the per-agent tool set (builtin from the registry,
- * plus runtime user / mcp tools) and routes `execute` by name. Tools are
- * built lazily via their factory with a `ServicesAccessor` backed by the
- * Agent scope's `IInstantiationService`.
+ * Owns the tool-definition registry and per-agent tool execution; reads
+ * configuration through `config`, runs processes through `kaos`, drives LLM
+ * generation through `kosong`, checks permissions through `permission`, and
+ * persists records through `records`. Registry bound at Core scope; service
+ * bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

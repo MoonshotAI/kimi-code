@@ -76,10 +76,10 @@ describe('CronService', () => {
     const fired: string[] = [];
     svc.onDidFire((e) => fired.push(e.content));
     await svc.create({ id: 'a', cron: '1000', prompt: 'fire-me', recurring: false });
-    svc.tick(Date.now() + 500); // not idle → no fire (also not yet due)
+    svc.tick(Date.now() + 500);
     expect(fired).toEqual([]);
     (svc as unknown as { activity: ISessionActivity }).activity = activity(true);
-    svc.tick(Date.now() + 2000); // idle + due → fire
+    svc.tick(Date.now() + 2000);
     expect(fired).toEqual(['fire-me']);
     svc.dispose();
   });

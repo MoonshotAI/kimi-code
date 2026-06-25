@@ -1,5 +1,10 @@
 /**
- * `turn` domain (L4) — turn lifecycle driver + per-turn context + loop runner.
+ * `turn` domain (L4) — drives the turn lifecycle.
+ *
+ * Defines the public contract of a turn: the `ITurnService` used by upper layers
+ * to start, steer, retry, and cancel a turn and to observe its events, the
+ * per-turn `ITurnContext`, and the `ILoopRunner` that runs the turn loop.
+ * `ITurnService` is Agent-scoped; `ILoopRunner` is Turn-scoped.
  */
 
 import type { Event } from '#/_base/event';
@@ -40,7 +45,6 @@ export interface ITurnService {
 export const ITurnService: ServiceIdentifier<ITurnService> =
   createDecorator<ITurnService>('turnService');
 
-/** Per-turn seeded context (not a registered descriptor). */
 export interface ITurnContext {
   readonly turnId: string;
 }

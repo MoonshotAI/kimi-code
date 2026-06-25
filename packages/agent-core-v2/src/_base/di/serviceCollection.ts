@@ -1,8 +1,5 @@
 /**
- * `ServiceCollection` is the unordered map of service-id → (descriptor | instance)
- * used to seed an `InstantiationService`. It's a thin wrapper over `Map` whose
- * value type is `SyncDescriptor<T> | T` — the container decides which based on
- * `instanceof SyncDescriptor`.
+ * `di` domain (L0) — `ServiceCollection` map of service id → descriptor or instance.
  */
 
 import type { SyncDescriptor } from './descriptors';
@@ -21,10 +18,6 @@ export class ServiceCollection {
     }
   }
 
-  /**
-   * Set an entry. Returns the previous value (or `undefined` if the id was
-   * not previously set).
-   */
   set<T>(
     id: ServiceIdentifier<T>,
     instanceOrDescriptor: T | SyncDescriptor<T>,
@@ -43,7 +36,6 @@ export class ServiceCollection {
     return this._entries.get(id) as T | SyncDescriptor<T> | undefined;
   }
 
-  /** Iterate all entries. Order is insertion-order (Map semantics). */
   forEach(
     callback: (
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

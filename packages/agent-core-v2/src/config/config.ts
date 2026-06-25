@@ -1,5 +1,11 @@
 /**
- * `config` domain (L2) — configuration registry + service + per-agent view.
+ * `config` domain (L2) — configuration registry, service, and per-agent view.
+ *
+ * Defines the config service identifiers and the `ConfigSection` /
+ * `ConfigChangedEvent` models: the `IConfigRegistry` for section schemas, the
+ * `IConfigService` used to read and mutate config, and the per-agent
+ * `IAgentConfigService` view. The registry and service are Core-scoped; the
+ * agent view is Agent-scoped.
  */
 
 import type { Event } from '#/_base/event';

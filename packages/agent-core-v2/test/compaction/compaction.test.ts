@@ -24,7 +24,7 @@ function makeTurn(): TurnService {
 describe('CompactionService', () => {
   it('injects a compaction summary when token usage exceeds the threshold', async () => {
     const ctx = new ContextService(undefined as never);
-    ctx.appendMessage({ role: 'user', content: 'x'.repeat(100) }); // ~25 tokens
+    ctx.appendMessage({ role: 'user', content: 'x'.repeat(100) });
     const injection = new InjectionService(ctx);
     const turn = makeTurn();
     const compaction = new CompactionService(
@@ -34,7 +34,7 @@ describe('CompactionService', () => {
       undefined as never,
       turn,
       injection,
-      10, // low threshold
+      10,
     );
     await turn.prompt('go');
     expect(injection.flush()).toEqual([

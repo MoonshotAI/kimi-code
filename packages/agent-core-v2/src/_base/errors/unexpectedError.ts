@@ -1,12 +1,6 @@
 /**
- * Centralised reporting for unexpected, non-actionable errors. Listener
- * callbacks (registered via `Emitter.event(...)`) may throw; the Emitter
- * routes those exceptions through `onUnexpectedError` rather than swallowing
- * them silently or letting them bubble through `fire()`.
- *
- * Ported from `packages/agent-core/src/errors/unexpectedError.ts`. Kept in
- * `_base` so the DI subsystem (and `_base` in general) has no business-domain
- * dependency.
+ * Unexpected-error reporting hook (`onUnexpectedError`) used by the Emitter to
+ * surface exceptions thrown by listener callbacks.
  */
 
 export type UnexpectedErrorHandler = (err: unknown) => void;

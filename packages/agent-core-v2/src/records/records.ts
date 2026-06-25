@@ -1,5 +1,10 @@
 /**
- * `records` domain (L2) — persistence / replay contracts across three scopes.
+ * `records` domain (L2) — persistence and replay contracts.
+ *
+ * Defines the records service identifiers and the `AgentRecord` model used by
+ * other domains to read and write session state, session metadata, and the
+ * agent record stream. Spans Core, Session, and Agent scopes — each store lives
+ * at the scope matching the data it owns.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

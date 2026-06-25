@@ -1,17 +1,8 @@
 /**
- * Service descriptors: a `SyncDescriptor` packages a constructor + static
- * args for later instantiation by the container. Modelled after VSCode's
- * `SyncDescriptor`.
+ * `di` domain (L0) — `SyncDescriptor` packaging a constructor + static args for lazy instantiation.
  */
 
-/**
- * Wraps a constructor plus optional static arguments. The container picks up
- * a `SyncDescriptor` from the `ServiceCollection` (rather than an already-
- * built instance) and constructs it on first `get`.
- */
 export class SyncDescriptor<T> {
-  // Match VSCode: the constructor argument is typed for callers, while the
-  // stored ctor is runtime metadata-bearing and consumed by DI internals.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   public readonly ctor: any;
 

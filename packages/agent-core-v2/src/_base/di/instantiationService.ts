@@ -1,3 +1,7 @@
+/**
+ * `di` domain (L0) — `InstantiationService` container (instantiation, child scopes, cycle detection).
+ */
+
 import { SyncDescriptor } from './descriptors';
 import { CyclicDependencyError } from './errors';
 import { Graph } from './graph';

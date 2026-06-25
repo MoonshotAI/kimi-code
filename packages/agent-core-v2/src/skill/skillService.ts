@@ -1,10 +1,10 @@
 /**
- * `skill` domain (L3) — `ISkillRegistry` + `ISkillService`.
+ * `skill` domain (L3) — `ISkillRegistry` and `ISkillService` implementation.
  *
- * `SkillRegistry` holds the session's discovered/registered skills.
- * `loadRoots` records the roots to scan (actual on-disk discovery is a
- * later step). `SkillService.activate` resolves a skill and kicks off a turn
- * with its prompt via `ITurnService`.
+ * Owns the skill registry and per-agent skill activation; reads configuration
+ * through `config`, logs through `log`, persists records through `records`, and
+ * observes turns through `turn`. Registry bound at Session scope; service bound
+ * at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

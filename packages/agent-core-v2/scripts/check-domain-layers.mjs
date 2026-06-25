@@ -48,6 +48,7 @@ const DOMAIN_LAYER = new Map([
   ['tool', 3],
   ['skill', 3],
   ['permission', 3],
+  ['flag', 3],
   // L4 — agent behaviour
   ['context', 4],
   ['message', 4],

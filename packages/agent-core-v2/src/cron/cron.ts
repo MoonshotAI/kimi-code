@@ -1,5 +1,10 @@
 /**
- * `cron` domain (L5) — session-scope cron scheduler + fire coordinator.
+ * `cron` domain (L5) — schedules cron tasks and coordinates their firing.
+ *
+ * Defines the public contract of session cron: the `CronTask` / `CronFiredEvent`
+ * models, the `ICronService` used to create, list, and delete tasks and observe
+ * `onDidFire`, and the `ICronFireCoordinator` that reacts to fires.
+ * Session-scoped — one instance per session.
  */
 
 import type { Event } from '#/_base/event';

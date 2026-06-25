@@ -59,10 +59,15 @@
     "@moonshot-ai/kimi-telemetry": "workspace:^",
     "@moonshot-ai/kosong": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^",
+    "nunjucks": "^3.2.4",
+    "pathe": "^2.0.3",
     "smol-toml": "^1.6.1",
+    "socks": "^2.8.9",
+    "undici": "^7.27.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/nunjucks": "^3.2.6",
     "@types/sinon": "^21.0.1",
     "sinon": "^22.0.0"
   }

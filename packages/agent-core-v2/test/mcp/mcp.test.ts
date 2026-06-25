@@ -1,15 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import { IOAuthService } from '#/auth/auth';
+import { IConfigService } from '#/config/config';
+import { ILogService } from '#/log/log';
+import { ITelemetryService } from '#/telemetry/telemetry';
 
 import { McpService } from '#/mcp/mcpService';
 
 describe('McpService', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(IConfigService, {});
+    ix.stub(ILogService, {});
+    ix.stub(ITelemetryService, {});
+    ix.stub(IOAuthService, {});
+  });
+  afterEach(() => disposables.dispose());
+
   it('connect / disconnect / list + status events', async () => {
-    const svc = new McpService(
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-    );
+    const svc = disposables.add(ix.createInstance(McpService));
     const statuses: string[] = [];
     svc.onDidChangeServerStatus((e) => statuses.push(`${e.serverId}:${e.status}`));
     await svc.connect('s1');

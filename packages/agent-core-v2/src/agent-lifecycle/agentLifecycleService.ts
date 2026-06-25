@@ -1,10 +1,9 @@
 /**
  * `agent-lifecycle` domain (L6) — `IAgentLifecycleService` implementation.
  *
- * Owns the session's Agent scope handles. `create` builds an Agent child
- * scope (from the session `IInstantiationService`, seeded with the
- * Agent-scope scoped-registry entries) and registers an `IScopeHandle`;
- * `getHandle`/`list`/`remove` manage the map.
+ * Creates and tracks the session's agents as child scopes; persists records
+ * through `records` and reads session context through `session-context`. Bound
+ * at Session scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

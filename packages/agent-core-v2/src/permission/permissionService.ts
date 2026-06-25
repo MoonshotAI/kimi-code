@@ -1,11 +1,11 @@
 /**
- * `permission` domain (L3) — `IPermissionPolicyRegistry` +
- * `IPermissionService`.
+ * `permission` domain (L3) — `IPermissionPolicyRegistry` and
+ * `IPermissionService` implementations.
  *
- * The registry evaluates contributed policies in order; the first
- * non-undefined decision wins (default `allow`). `PermissionService` wraps
- * the registry with the agent's mode and routes `ask` decisions through the
- * session `IApprovalService`.
+ * Owns the policy registry and the per-agent permission decision; requests user
+ * approval through `approval`, reads agent config through `config`, records
+ * through `records`, and logs through `log`. Bound at Core (policy registry)
+ * and Agent (decision service) scopes.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

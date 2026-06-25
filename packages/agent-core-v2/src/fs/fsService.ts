@@ -2,7 +2,8 @@
  * `fs` domain (cross-cutting) — `IFsService` / `IFsSearchService` /
  * `IFsGitService` / `IFsWatcher` implementation.
  *
- * Thin wrappers over the session kaos for file, search, and git operations.
+ * Owns file I/O, search, git inspection, and path watching; accesses the
+ * filesystem through `kaos` and logs through `log`. Bound at Session scope.
  */
 
 import type { Readable } from 'node:stream';

@@ -1,3 +1,7 @@
+/**
+ * `di` domain (L0) — directed `Graph` with cycle detection for DI instantiation.
+ */
+
 export class Node<T> {
   readonly incoming = new Map<string, Node<T>>();
   readonly outgoing = new Map<string, Node<T>>();

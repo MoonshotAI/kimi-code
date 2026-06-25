@@ -1,8 +1,10 @@
 /**
- * `kosong` domain (L1) — LLM / provider abstractions across three scopes.
+ * `kosong` domain (L1) — LLM / provider service contracts.
  *
- * NOTE: kosong (L1) reads its config section from `IConfigService` (L2) — a
- * documented layering exception (see `plan/skeleton-spec.md` rule 9).
+ * Defines the provider and model contracts: `IModelCatalogService` for the
+ * provider / model catalog (Core), `IProviderManager` for resolving the active
+ * provider and model (Session), and `ILLMService` for generating completions
+ * (Agent).
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

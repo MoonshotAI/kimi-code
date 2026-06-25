@@ -1,11 +1,10 @@
 /**
- * `injection` domain (L4) — `IInjectionService` (Agent) + `IInjectionQueue`
- * (Turn) implementation.
+ * `injection` domain (L4) — `IInjectionService` and `IInjectionQueue`
+ * implementation.
  *
- * Both are simple FIFO queues of pending injections; `flush` drains and
- * returns them. The Agent-scope service is fed by behavior domains
- * (compaction/plan/goal); the Turn-scope queue is flushed into the context
- * at the appropriate step boundary.
+ * Holds the agent-level and per-turn queues of pending injections; reads
+ * history through `context`. Service bound at Agent scope; queue bound at Turn
+ * scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

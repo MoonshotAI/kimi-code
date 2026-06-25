@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { LocalKaos } from '@moonshot-ai/kaos';
 
-import type { ILogService, ILogger } from '#/log/log';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import { IEnvironmentService } from '#/environment/environment';
+import { ILogService, type ILogger } from '#/log/log';
 
+import { ISessionKaosService } from '#/kaos/kaos';
 import { AgentKaos } from '#/kaos/agentKaos';
 import { KaosFactory } from '#/kaos/kaosFactory';
 import { SessionKaosService } from '#/kaos/sessionKaosService';
@@ -23,18 +27,25 @@ const noopLog: ILogService = {
 };
 
 describe('KaosFactory', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(IEnvironmentService, {});
+    ix.stub(ILogService, noopLog);
+  });
+  afterEach(() => disposables.dispose());
+
   it('creates a local kaos', async () => {
-    const factory = new KaosFactory(
-      // env/log unused for local creation
-      undefined as never,
-      undefined as never,
-    );
+    const factory = ix.createInstance(KaosFactory);
     const kaos = await factory.create({ kind: 'local' });
     expect(typeof kaos.getcwd()).toBe('string');
   });
 
   it('pins to the requested cwd', async () => {
-    const factory = new KaosFactory(undefined as never, undefined as never);
+    const factory = ix.createInstance(KaosFactory);
     const base = await LocalKaos.create();
     const target = base.getcwd();
     const kaos = await factory.create({ kind: 'local', cwd: target });
@@ -42,21 +53,31 @@ describe('KaosFactory', () => {
   });
 
   it('throws TODO for ssh', async () => {
-    const factory = new KaosFactory(undefined as never, undefined as never);
+    const factory = ix.createInstance(KaosFactory);
     await expect(factory.create({ kind: 'ssh', host: 'h' })).rejects.toThrow(/TODO/);
   });
 });
 
 describe('SessionKaosService', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, noopLog);
+  });
+  afterEach(() => disposables.dispose());
+
   async function make(): Promise<{ svc: SessionKaosService; kaos: LocalKaos }> {
-    const svc = new SessionKaosService(noopLog);
+    const svc = disposables.add(ix.createInstance(SessionKaosService));
     const kaos = await LocalKaos.create();
     svc.setToolKaos(kaos);
     return { svc, kaos };
   }
 
   it('throws before setToolKaos', () => {
-    const svc = new SessionKaosService(noopLog);
+    const svc = disposables.add(ix.createInstance(SessionKaosService));
     expect(() => svc.toolKaos).toThrow(/before setToolKaos/);
   });
 
@@ -91,18 +112,28 @@ describe('SessionKaosService', () => {
 });
 
 describe('AgentKaos', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, noopLog);
+  });
+  afterEach(() => disposables.dispose());
+
   it('derives cwd from the session kaos and isolates chdir', async () => {
-    const session = new SessionKaosService(noopLog);
+    const session = disposables.add(ix.createInstance(SessionKaosService));
     const base = await LocalKaos.create();
     session.setToolKaos(base);
+    ix.set(ISessionKaosService, session);
 
-    const agent = new AgentKaos(session);
+    const agent = ix.createInstance(AgentKaos);
     expect(agent.cwd).toBe(base.getcwd());
 
     const next = base.withCwd('/').getcwd();
     await agent.chdir('/');
     expect(agent.cwd).toBe(next);
-    // session kaos is untouched
     expect(session.toolKaos.getcwd()).toBe(base.getcwd());
   });
 });

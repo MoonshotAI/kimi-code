@@ -4,8 +4,6 @@ import { SRC_ROOT, checkSource } from '../../scripts/check-domain-layers.mjs';
 
 const at = (domain: string, file: string): string => `${SRC_ROOT}/${domain}/${file}`;
 
-// Build the v1 specifier dynamically so the static import-boundary scanner
-// does not flag this test file itself.
 const V1 = ['@moonshot-ai', 'agent-core'].join('/');
 
 describe('check-domain-layers', () => {
@@ -28,7 +26,6 @@ describe('check-domain-layers', () => {
   });
 
   it('allows a domain to import a lower layer', () => {
-    // turn (L4) importing _base (L0) — legal.
     const violations = checkSource(
       `import { createDecorator } from '#/_base/di/instantiation';`,
       at('turn', 'turn.ts'),
@@ -37,7 +34,6 @@ describe('check-domain-layers', () => {
   });
 
   it('flags a lower layer importing a higher layer', () => {
-    // log (L1) importing turn (L4) — illegal.
     const violations = checkSource(
       `import { ITurnService } from '#/turn/turn';`,
       at('log', 'log.ts'),

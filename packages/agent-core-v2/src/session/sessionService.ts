@@ -1,9 +1,10 @@
 /**
  * `session` domain (L6) — `ISessionService` implementation.
  *
- * Session facade combining metadata, agent lifecycle, and activity. `status`
- * derives from activity; `agents` delegates to the lifecycle. Child-session
- * fork / compact / undo / archive are wired in a later step.
+ * Owns the session's child-agent set and session-level operations; drives
+ * agent lifecycle through `agent-lifecycle`, broadcasts through `event`,
+ * persists session metadata through `records`, and records activity through
+ * `session-activity`. Bound at Session scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

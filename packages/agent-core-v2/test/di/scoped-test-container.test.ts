@@ -8,11 +8,6 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function param(dec: any, target: any, index: number): void {
-  (dec as (t: unknown, k: string, i: number) => void)(target, '', index);
-}
-
 interface IGreeter {
   greet(): string;
 }
@@ -24,12 +19,11 @@ const IGreeter = createDecorator<IGreeter>('container-greeter');
 const IConsumer = createDecorator<IConsumer>('container-consumer');
 
 class Consumer implements IConsumer {
-  constructor(private readonly greeter: IGreeter) {}
+  constructor(@IGreeter private readonly greeter: IGreeter) {}
   label(): string {
     return `consumed:${this.greeter.greet()}`;
   }
 }
-param(IGreeter, Consumer, 0);
 
 describe('scoped test container', () => {
   beforeEach(() => {
@@ -57,9 +51,6 @@ describe('scoped test container', () => {
       stubPair(IGreeter, { greet: () => 'two' }),
     ]);
 
-    // Both sessions register IConsumer via the scoped registry; each resolves
-    // IGreeter from its own layer (shadowing), so they diverge.
-    // Re-register IConsumer to depend on the locally-seeded IGreeter.
     expect(s1.accessor.get(IGreeter).greet()).toBe('one');
     expect(s2.accessor.get(IGreeter).greet()).toBe('two');
 
@@ -73,9 +64,7 @@ describe('scoped test container', () => {
       stubPair(IGreeter, { greet: () => 'agent-local' }),
     ]);
 
-    // Agent shadows IGreeter with its own seed.
     expect(agent.accessor.get(IGreeter).greet()).toBe('agent-local');
-    // Session still resolves the core seed.
     expect(session.accessor.get(IGreeter).greet()).toBe('deep');
 
     host.dispose();

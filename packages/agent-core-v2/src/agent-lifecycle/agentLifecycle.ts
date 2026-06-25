@@ -1,5 +1,10 @@
 /**
- * `agent-lifecycle` domain (L6) — session-scope agent factory + handle map.
+ * `agent-lifecycle` domain (L6) — creates and tracks agents within a session.
+ *
+ * Defines the public contract of agent lifecycle: the `CreateAgentOptions` and
+ * the `IAgentLifecycleService` used to create agents (`create` / `createMain`),
+ * look them up (`getHandle` / `list`), and remove them. Session-scoped — one
+ * instance per session.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

@@ -1,24 +1,45 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import { IAgentLifecycleService } from '#/agent-lifecycle/agentLifecycle';
+import { IContextService } from '#/context/context';
+import { IInjectionService } from '#/injection/injection';
+import { ILLMService } from '#/kosong/kosong';
+import { ILogService } from '#/log/log';
+import { IPermissionService } from '#/permission/permission';
+import { ITelemetryService } from '#/telemetry/telemetry';
+import { IToolService } from '#/tool/tool';
+import { ILoopRunner } from '#/turn/turn';
+import { IUsageService } from '#/usage/usage';
 
 import { LoopRunner } from '#/turn/loopRunner';
 import { TurnService } from '#/turn/turnService';
 
-function make(): TurnService {
-  return new TurnService(
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    new LoopRunner(),
-  );
-}
-
 describe('TurnService', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(IContextService, {});
+    ix.stub(IToolService, {});
+    ix.stub(IPermissionService, {});
+    ix.stub(ILLMService, {});
+    ix.stub(IInjectionService, {});
+    ix.stub(IUsageService, {});
+    ix.stub(ITelemetryService, {});
+    ix.stub(ILogService, {});
+    ix.stub(IAgentLifecycleService, {});
+    ix.set(ILoopRunner, new LoopRunner());
+  });
+  afterEach(() => disposables.dispose());
+
+  function make(): TurnService {
+    return disposables.add(ix.createInstance(TurnService));
+  }
+
   it('launch emits start → step → end and tracks active state', async () => {
     const svc = make();
     const events: string[] = [];
@@ -36,7 +57,6 @@ describe('TurnService', () => {
     const svc = make();
     svc.steer('a');
     svc.steer('b', 'user');
-    // buffer is internal; ensure it does not throw and no turn is active
     expect(svc.hasActiveTurn).toBe(false);
   });
 
@@ -44,24 +64,13 @@ describe('TurnService', () => {
     const svc = make();
     const ends: string[] = [];
     svc.onDidEndTurn((e) => ends.push(e.reason));
-    // launch a turn that we cancel mid-flight via a slow loop runner
     const slow = new (class extends LoopRunner {
       override run(): Promise<void> {
         return new Promise((resolve) => setTimeout(resolve, 10));
       }
     })();
-    const svc2 = new TurnService(
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      slow,
-    );
+    ix.set(ILoopRunner, slow);
+    const svc2 = disposables.add(ix.createInstance(TurnService));
     svc2.onDidEndTurn((e) => ends.push(e.reason));
     const p = svc2.prompt('hello');
     expect(svc2.hasActiveTurn).toBe(true);

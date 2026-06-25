@@ -1,8 +1,8 @@
 /**
  * `event` domain (L7) — `IEventService` implementation.
  *
- * Core-scope pub-sub. `publish` fan-outs to all subscribers whose filter
- * matches; `subscribe` returns a disposable that unregisters the listener.
+ * Owns the in-process pub-sub listener set and event fan-out. Bound at Core
+ * scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

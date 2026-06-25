@@ -1,8 +1,8 @@
 /**
  * `filestore` domain (cross-cutting) — `IFileStore` implementation.
  *
- * In-memory blob store keyed by string. Persistence to disk (via kaos) is a
- * later step.
+ * Stores and retrieves blobs keyed by string; uses the execution environment
+ * through `kaos`. Bound at Core scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

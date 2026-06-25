@@ -1,9 +1,9 @@
 /**
  * `session-activity` domain (L6) — `ISessionActivity` implementation.
  *
- * `isIdle()` is true when no agent in the session has an active turn. It
- * reaches into each agent handle's `ITurnService` to check
- * `hasActiveTurn` (a parent→child handle read).
+ * Derives session idleness by checking each agent's turn; drives agent
+ * lifecycle through `agent-lifecycle` and observes turns through `turn`. Bound
+ * at Session scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

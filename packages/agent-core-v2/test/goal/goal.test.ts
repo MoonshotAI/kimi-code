@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import { IInjectionService } from '#/injection/injection';
+import { IAgentRecords } from '#/records/records';
+import { ITurnService } from '#/turn/turn';
 import { LoopRunner } from '#/turn/loopRunner';
 import { TurnService } from '#/turn/turnService';
 
@@ -21,8 +26,20 @@ function makeTurn(): TurnService {
 }
 
 describe('GoalService', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(IAgentRecords, {});
+    ix.set(ITurnService, makeTurn());
+    ix.stub(IInjectionService, {});
+  });
+  afterEach(() => disposables.dispose());
+
   it('create / update / clear track current goal', () => {
-    const goal = new GoalService(undefined as never, makeTurn(), undefined as never);
+    const goal = disposables.add(ix.createInstance(GoalService));
     expect(goal.current).toBeUndefined();
     goal.create('build it');
     expect(goal.current).toEqual({ objective: 'build it', status: 'active' });

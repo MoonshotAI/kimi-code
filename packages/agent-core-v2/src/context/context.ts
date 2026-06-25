@@ -1,5 +1,9 @@
 /**
- * `context` domain (L4) — per-agent conversation context / memory.
+ * `context` domain (L4) — per-agent conversation context and memory.
+ *
+ * Defines the `ContextMessage` model and the `IContextService` used to append
+ * messages, project the conversation, and apply compaction and undo.
+ * Agent-scoped — one instance per agent.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

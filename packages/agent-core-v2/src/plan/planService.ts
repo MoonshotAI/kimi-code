@@ -1,8 +1,10 @@
 /**
  * `plan` domain (L4) — `IPlanService` implementation.
  *
- * Tracks plan-mode state. On `enter`, pushes a plan reminder injection via
- * `IInjectionService`. Subscribes to turn lifecycle (reset on turn end).
+ * Tracks plan-mode activation; reads configuration through `config`, enqueues
+ * follow-up through `injection`, runs processes through `kaos`, persists
+ * records through `records`, and observes turns through `turn`. Bound at Agent
+ * scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';

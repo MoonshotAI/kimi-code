@@ -1,5 +1,10 @@
 /**
- * `gateway` domain (L7) — scope registry + REST/WS gateways (post-KimiCore).
+ * `gateway` domain (L7) — scope registry and REST/WS gateways.
+ *
+ * Defines the public contracts of the gateway layer: the `IScopeRegistry` used
+ * to create and look up sessions, plus the `IRestGateway` / `IWSGateway` /
+ * `IWSBroadcastService` entry points. Core-scoped — shared across the
+ * application.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
