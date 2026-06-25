@@ -14,7 +14,7 @@ import { homedir } from 'node:os';
 import { dirname, join, win32 as pathWin32 } from 'node:path';
 
 import { KIMI_BUILD_INFO } from '#/cli/build-info';
-import { NATIVE_ASSET_MANIFEST_VERSION as MANIFEST_VERSION, buildManifestKey } from '../../scripts/native/manifest.mjs';
+import { NATIVE_ASSET_MANIFEST_VERSION as MANIFEST_VERSION, buildManifestKey } from './manifest-keys';
 
 export const NATIVE_ASSET_MANIFEST_VERSION = MANIFEST_VERSION;
 

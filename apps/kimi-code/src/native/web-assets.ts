@@ -11,7 +11,7 @@ import {
 import {
   WEB_ASSET_MANIFEST_VERSION as MANIFEST_VERSION,
   buildWebManifestKey,
-} from '../../scripts/native/manifest.mjs';
+} from './manifest-keys';
 
 export const WEB_ASSET_MANIFEST_VERSION = MANIFEST_VERSION;
 

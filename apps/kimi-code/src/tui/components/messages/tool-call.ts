@@ -377,7 +377,7 @@ function makeWorkspaceRelativePath(filePath: string, workspaceDir: string | unde
   ) {
     return filePath;
   }
-  return relativePath;
+  return relativePath.replaceAll('\\', '/');
 }
 
 function formatKeyArgument(
