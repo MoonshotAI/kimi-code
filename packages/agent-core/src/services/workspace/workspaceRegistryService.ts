@@ -1,9 +1,7 @@
-
-
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import type { Dirent, Stats } from 'node:fs';
+import type { Stats } from 'node:fs';
 
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
 import { encodeWorkDirKey } from '../../session/store';
@@ -35,7 +33,8 @@ interface WorkspaceRegistryFile {
   version: number;
   workspaces: Record<string, WorkspaceRegistryEntry>;
   /** Workspace ids the user explicitly removed. Their session buckets stay on
-   *  disk, so derived registration must skip them to keep deletion durable. */
+   *  disk, so derived workspaces (computed from the session index) must skip
+   *  them to keep deletion durable. */
   deleted_workspace_ids: string[];
 }
 
@@ -64,75 +63,40 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
   }
 
   async list(): Promise<Workspace[]> {
-    // Surface cwds that have sessions but were never registered (e.g. sessions
-    // created with cwd only) by registering them idempotently first, so the
-    // sidebar can page sessions per workspace without a full global walk.
-    await this.registerDerivedWorkspaces();
     const file = await this.runExclusive(() => this.readRegistry());
-    const hydrated = await Promise.all(
-      Object.entries(file.workspaces).map(([workspaceId, entry]) =>
-        this.hydrate(workspaceId, entry),
-      ),
-    );
-    return hydrated.sort((a, b) => (b.last_opened_at < a.last_opened_at ? -1 : 1));
-  }
-
-  /**
-   * Register cwds that own sessions but are absent from the registry.
-   *
-   * `GET /sessions?workspace_id=` resolves the id through this registry, so a
-   * workspace that only exists as a session bucket (created with cwd only) must
-   * be registered before the web UI can page its sessions. Scanning the buckets
-   * and recovering each root from the session index lets `list()` return them
-   * without a full global session walk. Registration is idempotent and
-   * self-heals: once written, the bucket becomes a normal registered workspace.
-   */
-  private async registerDerivedWorkspaces(): Promise<void> {
-    let dirents: Dirent[];
-    try {
-      dirents = await fsp.readdir(this.sessionsDir, { withFileTypes: true });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-      throw err;
-    }
-
-    const file = await this.runExclusive(() => this.readRegistry());
-    const registered = new Set(Object.keys(file.workspaces));
     const deleted = new Set(file.deleted_workspace_ids);
-    const missing = dirents.filter(
-      (d) => d.isDirectory() && !registered.has(d.name) && !deleted.has(d.name),
-    );
-    if (missing.length === 0) return;
 
-    // Recover each bucket's root from the session index: the bucket dir name is
-    // encodeWorkDirKey(root), and the index maps sessionId -> workDir.
+    const result: Workspace[] = [];
+    // Registered workspaces (explicitly added by the user).
+    for (const [id, entry] of Object.entries(file.workspaces)) {
+      result.push(await this.hydrate(id, entry));
+    }
+
+    // Derived workspaces: cwds that own sessions but were never registered
+    // (e.g. sessions created with cwd only). Computed on the fly from the
+    // session index and never persisted, so the registry cannot drift from the
+    // session store.
     const index = await readSessionIndex(this.homeDir, this.sessionsDir);
-    const rootByKey = new Map<string, string>();
+    const derived = new Map<string, string>(); // workspace id -> workDir
     for (const entry of index.values()) {
-      rootByKey.set(encodeWorkDirKey(entry.workDir), entry.workDir);
+      const id = encodeWorkDirKey(entry.workDir);
+      if (file.workspaces[id] !== undefined || deleted.has(id)) continue;
+      derived.set(id, entry.workDir);
+    }
+    for (const [id, workDir] of derived) {
+      // Skip archived-only buckets so they don't surface as empty groups.
+      const sessionCount = await countActiveSessions(join(this.sessionsDir, id));
+      if (sessionCount === 0) continue;
+      result.push(
+        await this.hydrate(
+          id,
+          { root: workDir, name: basename(workDir), created_at: '', last_opened_at: '' },
+          sessionCount,
+        ),
+      );
     }
 
-    for (const d of missing) {
-      const root = rootByKey.get(d.name);
-      if (root === undefined) continue;
-      // Verify the root still exists (skip stale buckets) without changing the
-      // key. Session buckets are keyed by normalizeWorkDir (resolve, not
-      // realpath), so register with the resolved root to keep the workspace id
-      // aligned with the bucket — otherwise a symlinked cwd would register a
-      // realpath id whose bucket lookup misses the actual sessions.
-      try {
-        await fsp.stat(root);
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT' || code === 'ENOTDIR') continue;
-        throw err;
-      }
-      // Skip buckets that only contain archived sessions — otherwise a plain
-      // GET /workspaces would surface an empty group for a cwd that the old
-      // session-derived fallback kept hidden.
-      if ((await countActiveSessions(join(this.sessionsDir, d.name))) === 0) continue;
-      await this.register(d.name, root);
-    }
+    return result.sort((a, b) => (b.last_opened_at < a.last_opened_at ? -1 : 1));
   }
 
   async get(workspaceId: string): Promise<Workspace> {
@@ -157,17 +121,7 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       }
       throw err;
     }
-    return this.register(encodeWorkDirKey(realRoot), realRoot, name);
-  }
-
-  /** Register a workspace with an explicit id and root, without realpath-ing.
-   *  createOrTouch keys by realpath; derived registration keys by the resolved
-   *  session bucket (which must stay aligned with the on-disk bucket). */
-  private async register(
-    workspaceId: string,
-    root: string,
-    name?: string,
-  ): Promise<Workspace> {
+    const workspaceId = encodeWorkDirKey(realRoot);
     await fsp.mkdir(join(this.sessionsDir, workspaceId), { recursive: true, mode: 0o700 });
 
     const now = new Date().toISOString();
@@ -178,14 +132,13 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         existing !== undefined
           ? { ...existing, last_opened_at: now }
           : {
-              root,
-              name: name ?? basename(root),
+              root: realRoot,
+              name: name ?? basename(realRoot),
               created_at: now,
               last_opened_at: now,
             };
       file.workspaces[workspaceId] = next;
-      // An explicit add clears any prior deletion tombstone so the workspace is
-      // no longer suppressed from derived registration.
+      // An explicit add clears any prior deletion tombstone.
       file.deleted_workspace_ids = file.deleted_workspace_ids.filter((id) => id !== workspaceId);
       await this.writeRegistry(file);
       return { entry: next, created: existing === undefined };
@@ -225,8 +178,8 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         throw new WorkspaceNotFoundError(workspaceId);
       }
       delete file.workspaces[workspaceId];
-      // Remember the deletion so derived registration (which scans the surviving
-      // session bucket) does not immediately recreate this workspace.
+      // Tombstone so derived workspaces (computed from the surviving session
+      // bucket) do not resurrect this workspace on the next list().
       if (!file.deleted_workspace_ids.includes(workspaceId)) {
         file.deleted_workspace_ids.push(workspaceId);
       }
@@ -245,19 +198,25 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       const file = await this.readRegistry();
       return file.workspaces[workspaceId] ?? null;
     });
-    if (entry === null) {
-      throw new WorkspaceNotFoundError(workspaceId);
+    if (entry !== null) return entry.root;
+
+    // Not registered — may be a derived workspace id, which is the session
+    // bucket key (encodeWorkDirKey(workDir)). Resolve it from the index.
+    const index = await readSessionIndex(this.homeDir, this.sessionsDir);
+    for (const e of index.values()) {
+      if (encodeWorkDirKey(e.workDir) === workspaceId) return e.workDir;
     }
-    return entry.root;
+    throw new WorkspaceNotFoundError(workspaceId);
   }
 
   private async hydrate(
     workspaceId: string,
     entry: WorkspaceRegistryEntry,
+    sessionCount?: number,
   ): Promise<Workspace> {
     const [{ is_git_repo, branch }, session_count] = await Promise.all([
       detectGit(entry.root),
-      countActiveSessions(join(this.sessionsDir, workspaceId)),
+      sessionCount ?? countActiveSessions(join(this.sessionsDir, workspaceId)),
     ]);
     return {
       id: workspaceId,

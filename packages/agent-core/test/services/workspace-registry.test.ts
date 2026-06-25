@@ -127,11 +127,12 @@ describe('WorkspaceRegistryService', () => {
     expect(matches).toHaveLength(1);
   });
 
-  it('skips a derived bucket whose root no longer exists on disk', async () => {
+  it('keeps a derived bucket visible even when its root no longer exists on disk', async () => {
     const registeredRoot = await makeProjectRoot('live');
     await ctx.registry.createOrTouch(registeredRoot);
 
-    // Point the index at a root that was never created on disk.
+    // A session whose cwd has since been deleted: the bucket + index remain,
+    // so the conversation should still show (matches the old global walk).
     const goneRoot = join(tmpdir(), 'kimi-ws-gone-never-created');
     await seedSessionBucket(goneRoot, 'sess-gone-1');
 
@@ -139,7 +140,7 @@ describe('WorkspaceRegistryService', () => {
     const roots = list.map((w) => w.root);
 
     expect(roots).toContain(registeredRoot);
-    expect(roots).not.toContain(goneRoot);
+    expect(roots).toContain(goneRoot);
   });
 
   it('does not re-register a deleted workspace that still has sessions', async () => {
