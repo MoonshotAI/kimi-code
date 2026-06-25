@@ -24,6 +24,9 @@ import type {
 
 export * from './types';
 
+/** Foreground timeout (seconds) for a user-initiated `!` shell command. */
+const SHELL_FOREGROUND_TIMEOUT_S = 3 * 60;
+
 interface McpToolEntry {
   readonly tool: ExecutableTool;
   readonly serverName: string;
@@ -110,7 +113,7 @@ export class ToolManager {
     const controller = new AbortController();
     if (commandId !== undefined) this.shellCommandControllers.set(commandId, controller);
     try {
-      const execution = await bash.resolveExecution({ command });
+      const execution = await bash.resolveExecution({ command, timeout: SHELL_FOREGROUND_TIMEOUT_S });
       if (!('execute' in execution)) {
         const output =
           typeof execution.output === 'string' ? execution.output : 'Command failed.';

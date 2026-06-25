@@ -274,6 +274,10 @@ export class BashTool implements BuiltinTool<BashInput> {
         {
           detached: startsInBackground,
           timeoutMs,
+          // Detaching (ctrl+b) moves a foreground command to the background;
+          // give it the background timeout so it is not still bounded by the
+          // shorter foreground deadline.
+          detachTimeoutMs: DEFAULT_BACKGROUND_TIMEOUT_S * MS_PER_SECOND,
           signal: startsInBackground ? undefined : signal,
         },
       );
