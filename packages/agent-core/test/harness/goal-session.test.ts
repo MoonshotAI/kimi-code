@@ -589,6 +589,45 @@ describe('goal session end-to-end', () => {
     expect(goal?.tokensUsed).toBeGreaterThan(1);
   });
 
+  it('does not let a Stop hook continue past a reached goal budget', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    // A Stop hook that always asks to keep going. Without the budget guard it
+    // would append its reason and drive another model step past the ceiling.
+    const stopHook: HookDef = {
+      event: 'Stop',
+      command:
+        'echo \'{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"keep going"}}\'',
+      timeout: 5,
+    };
+    const { session, agent, scripted } = await setupSession(
+      sessionDir,
+      events,
+      ['GetGoal'],
+      undefined,
+      [stopHook],
+    );
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ agentId: 'main', objective: 'work' });
+    await agent.goal.setBudgetLimits({ budgetLimits: { tokenBudget: 1 } }, 'model');
+
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'g1',
+      name: 'GetGoal',
+      arguments: JSON.stringify({}),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'should not run' });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = (await api.getGoal({ agentId: 'main' })).goal;
+    // Only the first step ran; the Stop-hook continuation was suppressed.
+    expect(scripted.calls).toHaveLength(1);
+    expect(goal?.status).toBe('blocked');
+  });
+
   it('preserves terminal status and demotes active goals across resume', async () => {
     const sessionDir = await makeTempDir();
     const events: Array<Record<string, unknown>> = [];

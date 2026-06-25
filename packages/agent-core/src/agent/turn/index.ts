@@ -725,6 +725,15 @@ export class TurnFlow {
             // oxlint-disable-next-line no-loop-func -- stop hook continuation state is scoped to this turn.
             shouldContinueAfterStop: async (ctx) => {
               const { signal } = ctx;
+              // 0. A reached hard goal budget is a deterministic ceiling. While
+              //    the goal is still active, never extend the turn — neither a
+              //    steered message nor a Stop-hook continuation — past it; end
+              //    the turn so the goal driver blocks the goal at the boundary.
+              //    A goal the model just marked terminal is no longer active, so
+              //    its final outcome message (step 2 below) still runs.
+              if (stopForGoalBudget && this.agent.goal.getActiveGoal() !== null) {
+                return { continue: false };
+              }
               // 1. Flush any steered user messages.
               if (this.flushSteerBuffer()) return { continue: true };
               signal.throwIfAborted();
