@@ -552,3 +552,31 @@ describe('CustomEditor shortcut telemetry hooks', () => {
     expect(onToggleTodoExpand).toHaveBeenCalledOnce();
   });
 });
+
+describe('CustomEditor bash mode border label', () => {
+  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
+  const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
+
+  it('shows "! shell mode" on the top border in bash mode', () => {
+    const editor = makeEditor();
+    editor.inputMode = 'bash';
+    const top = stripAnsi(editor.render(90)[0] ?? '');
+    expect(top.startsWith('╭')).toBe(true);
+    expect(top).toContain('! shell mode');
+    expect(top.endsWith('╮')).toBe(true);
+  });
+
+  it('does not show the shell mode label in prompt mode', () => {
+    const editor = makeEditor();
+    const top = stripAnsi(editor.render(90)[0] ?? '');
+    expect(top).not.toContain('! shell mode');
+  });
+
+  it('keeps the top border at full width when the label is present', () => {
+    const editor = makeEditor();
+    editor.inputMode = 'bash';
+    const width = 90;
+    const top = stripAnsi(editor.render(width)[0] ?? '');
+    expect(top).toHaveLength(width);
+  });
+});

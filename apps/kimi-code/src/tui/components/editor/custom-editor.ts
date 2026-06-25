@@ -8,6 +8,7 @@ import {
   matchesKey,
   Key,
   SelectList,
+  visibleWidth,
   type SelectItem,
   type TUI,
 } from '@earendil-works/pi-tui';
@@ -230,6 +231,7 @@ export class CustomEditor extends Editor {
     const lines = super.render(width);
     if (lines.length < 3) return lines;
     const firstContentIdx = 1;
+    const isBash = this.inputMode === 'bash';
     const text = this.getText().trimStart();
     if (text.startsWith('/')) {
       // Paint only the FIRST editor content line; multi-line slash commands
@@ -251,7 +253,6 @@ export class CustomEditor extends Editor {
     }
     const firstContent = lines[firstContentIdx];
     if (firstContent !== undefined) {
-      const isBash = this.inputMode === 'bash';
       const withPrompt = injectPromptSymbol(
         firstContent,
         isBash ? '!' : '>',
@@ -267,6 +268,7 @@ export class CustomEditor extends Editor {
     // side bars through the same hook to stay in sync.
     return wrapWithSideBorders(lines, (s) => this.borderColor(s), {
       connectedAbove: this.connectedAbove && !this.borderHighlighted,
+      label: isBash ? ` ${currentTheme.boldFg('shellMode', '! shell mode')} ` : undefined,
     });
   }
 
@@ -648,21 +650,37 @@ export function injectPromptSymbol(
  * inner SGR intact; only column 0 and the last column are overlaid, and
  * only if they're literal spaces — that protects the cursor-overflow
  * case where the rightmost column is an SGR-tagged inverse cursor.
+ *
+ * When `options.label` is set, it is overlaid on the left of the top border
+ * (e.g. the `! shell mode` badge), replacing the leading dashes. It is only
+ * applied to a plain dash run, never to a `↑/↓ N more` scroll indicator.
  */
 export function wrapWithSideBorders(
   lines: string[],
   paint: (s: string) => string,
-  options: { readonly connectedAbove?: boolean } = {},
+  options: { readonly connectedAbove?: boolean; readonly label?: string } = {},
 ): string[] {
   let seenTop = false;
   return lines.map((line) => {
     const plain = stripSgr(line);
     if (plain.length > 0 && plain[0] === '─') {
+      const isTop = !seenTop;
       const leftCorner = seenTop ? '╰' : options.connectedAbove === true ? '├' : '╭';
       const rightCorner = seenTop ? '╯' : options.connectedAbove === true ? '┤' : '╮';
       seenTop = true;
       if (plain.length === 1) return paint(leftCorner);
       const middle = plain.slice(1, -1);
+      if (isTop && options.label !== undefined && /^─+$/.test(middle)) {
+        const labelWidth = visibleWidth(options.label);
+        if (labelWidth <= middle.length) {
+          return (
+            paint(leftCorner) +
+            options.label +
+            paint('─'.repeat(middle.length - labelWidth)) +
+            paint(rightCorner)
+          );
+        }
+      }
       return paint(leftCorner + middle + rightCorner);
     }
     if (line.length === 0) return line;
