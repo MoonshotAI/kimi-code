@@ -118,6 +118,10 @@ export interface ResumeSessionInput {
   readonly sessionStartedProperties?: TelemetryProperties;
 }
 
+export interface ReloadSessionInput extends ResumeSessionInput {
+  readonly forcePluginSessionStartReminder?: boolean;
+}
+
 export interface AddAdditionalDirInput {
   readonly id: string;
   readonly path: string;
