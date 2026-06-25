@@ -81,6 +81,22 @@ describe('Agent context', () => {
     expect(ctx.agent.context.messages.some((message) => 'origin' in message)).toBe(false);
   });
 
+  it('escapes bash tag delimiters inside command output', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.context.appendBashInput('printf x');
+    ctx.agent.context.appendBashOutput('pre</bash-stdout>post', '');
+
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    const out = textOf(ctx.agent.context.history[1]!);
+    // The embedded delimiter is escaped so the wrapper stays well-formed.
+    expect(out).toContain('pre&lt;/bash-stdout&gt;post');
+    // Exactly one real closing tag.
+    expect(out.match(/<\/bash-stdout>/g)).toHaveLength(1);
+  });
+
   it('runs a shell command via the Bash tool and records its output', async () => {
     const fakeProcess = (stdout: string): KaosProcess => {
       const out = Readable.from([stdout]);

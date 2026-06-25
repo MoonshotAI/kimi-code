@@ -4,6 +4,7 @@ import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
 import { estimateTokensForMessages } from '../../utils/tokens';
+import { escapeXml } from '../../utils/xml-escape';
 import type { CompactionResult } from '../compaction';
 import { project, trimTrailingOpenToolExchange } from './projector';
 import {
@@ -95,7 +96,7 @@ export class ContextMemory {
   // sessions still show the command and its output. The XML tags carry the
   // semantics to the model; the origin drives UI/replay routing.
   appendBashInput(command: string): void {
-    const text = `<bash-input>\n${command}\n</bash-input>`;
+    const text = `<bash-input>\n${escapeXml(command)}\n</bash-input>`;
     this.appendMessage({
       role: 'user',
       content: [{ type: 'text', text }],
@@ -105,7 +106,7 @@ export class ContextMemory {
   }
 
   appendBashOutput(stdout: string, stderr: string, isError?: boolean): void {
-    const text = `<bash-stdout>${stdout}</bash-stdout><bash-stderr>${stderr}</bash-stderr>`;
+    const text = `<bash-stdout>${escapeXml(stdout)}</bash-stdout><bash-stderr>${escapeXml(stderr)}</bash-stderr>`;
     this.appendMessage({
       role: 'user',
       content: [{ type: 'text', text }],
