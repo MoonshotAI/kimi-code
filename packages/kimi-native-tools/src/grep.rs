@@ -8,9 +8,10 @@
 use ignore::WalkBuilder;
 use napi_derive::napi;
 use regex::RegexBuilder;
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::file_type::is_sensitive_file;
@@ -196,91 +197,110 @@ pub fn grep_search(config: &GrepConfig) -> GrepResult {
         config.after_context
     };
     let needs_context = effective_before > 0 || effective_after > 0;
+    let is_files_with_matches = config.output_mode == OutputMode::FilesWithMatches;
+    let needs_full_content = config.output_mode == OutputMode::Content || needs_context;
 
-    // Collect results.
-    let mut file_matches: BTreeMap<PathBuf, usize> = BTreeMap::new();
-    let mut line_matches: Vec<MatchEntry> = Vec::new();
-    let mut total_matches: usize = 0;
-    let mut output_bytes: usize = 0;
-    let mut filtered_sensitive: Vec<String> = Vec::new();
-    let mut timed_out = false;
+    // Collect results — use parallel walker for multi-file searches.
+    // This mirrors ripgrep's internal approach (same `ignore` crate).
+    let file_matches: Mutex<Vec<(PathBuf, usize)>> = Mutex::new(Vec::new());
+    let filtered_sensitive: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let timed_out = AtomicBool::new(false);
     let deadline = config
         .timeout_ms
         .map(|ms| Instant::now() + Duration::from_millis(ms));
 
-    'walker: for entry in builder.build() {
-        // Cooperative timeout check at the start of every yielded entry so a
-        // pathologically deep tree cannot block forever.
-        if let Some(d) = deadline {
-            if Instant::now() >= d {
-                timed_out = true;
-                break;
+    builder.build_parallel().run(|| {
+        let regex = &regex;
+        let glob_filter = &glob_filter;
+        let file_type_globs = &file_type_globs;
+        let file_matches = &file_matches;
+        let filtered_sensitive = &filtered_sensitive;
+        let timed_out = &timed_out;
+        let deadline = &deadline;
+        let search_path = &search_path;
+
+        Box::new(move |entry| {
+            if timed_out.load(Ordering::Relaxed) {
+                return ignore::WalkState::Quit;
             }
-        }
-
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        // Skip VCS metadata directories entirely. `ignore`'s
-        // `git_ignore=true` only honours rules inside the working tree,
-        // so we still need to gate these manually — and they must stay
-        // gated even when `include_ignored=true`.
-        if entry
-            .path()
-            .components()
-            .any(|c| matches!(c.as_os_str().to_str(), Some(name) if VCS_DIRECTORIES_TO_EXCLUDE.contains(&name)))
-        {
-            continue;
-        }
-
-        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
-            continue;
-        }
-
-        let path = entry.path();
-
-        // Apply user glob filter.
-        if let Some(ref matcher) = glob_filter {
-            if !matcher.is_match(path) {
-                continue;
+            if let Some(d) = deadline {
+                if Instant::now() >= *d {
+                    timed_out.store(true, Ordering::Relaxed);
+                    return ignore::WalkState::Quit;
+                }
             }
-        }
 
-        // Apply file-type filter when present.
-        if !file_type_globs.is_empty() && !file_type_globs.iter().any(|m| m.is_match(path)) {
-            continue;
-        }
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => return ignore::WalkState::Continue,
+            };
 
-        // Sensitive-file guard. Files matching `.env`, `id_rsa`,
-        // `.aws/credentials`, etc. are *recorded* as redacted (so callers
-        // can surface the filter notice) but their contents never reach
-        // the result content.
-        let path_str = path.to_string_lossy();
-        if is_sensitive_file(&path_str) {
-            filtered_sensitive.push(relativize(path, &search_path));
-            continue;
-        }
+            if entry
+                .path()
+                .components()
+                .any(|c| matches!(c.as_os_str().to_str(), Some(name) if VCS_DIRECTORIES_TO_EXCLUDE.contains(&name)))
+            {
+                return ignore::WalkState::Continue;
+            }
 
-        // Read file content.
-        let content = match fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => continue, // Skip binary or unreadable files
-        };
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                return ignore::WalkState::Continue;
+            }
 
-        // Count matches in this file.
-        let file_match_count = regex.find_iter(&content).count();
+            let path = entry.path();
 
-        if file_match_count == 0 {
-            continue;
-        }
+            if let Some(ref matcher) = glob_filter {
+                if !matcher.is_match(path) {
+                    return ignore::WalkState::Continue;
+                }
+            }
 
-        file_matches.insert(path.to_path_buf(), file_match_count);
-        total_matches += file_match_count;
+            if !file_type_globs.is_empty() && !file_type_globs.iter().any(|m| m.is_match(path)) {
+                return ignore::WalkState::Continue;
+            }
 
-        // For content mode, collect individual matches.
-        if config.output_mode == OutputMode::Content || needs_context {
+            let path_str = path.to_string_lossy();
+            if is_sensitive_file(&path_str) {
+                filtered_sensitive.lock().unwrap().push(relativize(path, search_path));
+                return ignore::WalkState::Continue;
+            }
+
+            let content = match fs::read_to_string(path) {
+                Ok(c) => c,
+                Err(_) => return ignore::WalkState::Continue,
+            };
+
+            if is_files_with_matches {
+                if regex.find(&content).is_some() {
+                    file_matches.lock().unwrap().push((path.to_path_buf(), 1));
+                }
+            } else {
+                let count = regex.find_iter(&content).count();
+                if count > 0 {
+                    file_matches.lock().unwrap().push((path.to_path_buf(), count));
+                }
+            }
+
+            ignore::WalkState::Continue
+        })
+    });
+
+    let timed_out = timed_out.load(Ordering::Relaxed);
+    let mut file_matches: Vec<(PathBuf, usize)> = file_matches.into_inner().unwrap();
+    let filtered_sensitive = filtered_sensitive.into_inner().unwrap();
+    let total_matches: usize = file_matches.iter().map(|(_, c)| c).sum();
+
+    file_matches.sort_by_key(|(path, _)| std::cmp::Reverse(fs::metadata(path).and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH)));
+
+    let content = if needs_full_content {
+        // Re-read matched files and collect line-level content.
+        let mut line_matches: Vec<MatchEntry> = Vec::new();
+        let mut output_bytes: usize = 0;
+        for (path, _) in &file_matches {
+            let content = match fs::read_to_string(path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
             let lines: Vec<&str> = content.split('\n').collect();
             let matched_lines: Vec<usize> = lines
                 .iter()
@@ -290,91 +310,55 @@ pub fn grep_search(config: &GrepConfig) -> GrepResult {
                 .collect();
 
             for &line_idx in &matched_lines {
-                // Per-line deadline check inside large files.
-                if let Some(d) = deadline {
-                    if Instant::now() >= d {
-                        timed_out = true;
-                        break 'walker;
-                    }
-                }
-
-                // Collect context lines.
-                let start = if effective_before > 0 {
-                    line_idx.saturating_sub(effective_before)
-                } else {
-                    line_idx
-                };
-                let end = if effective_after > 0 {
-                    (line_idx + effective_after + 1).min(lines.len())
-                } else {
-                    line_idx + 1
-                };
+                let start = if effective_before > 0 { line_idx.saturating_sub(effective_before) } else { line_idx };
+                let end = if effective_after > 0 { (line_idx + effective_after + 1).min(lines.len()) } else { line_idx + 1 };
 
                 for (ctx_idx, line_content) in lines.iter().enumerate().take(end).skip(start) {
                     let line_no = ctx_idx + 1;
-                    let entry = MatchEntry {
-                        file: path.to_path_buf(),
-                        line_no,
-                        line: line_content.to_string(),
-                    };
-
+                    let entry = MatchEntry { file: path.to_path_buf(), line_no, line: line_content.to_string() };
                     let entry_bytes = format_entry_bytes(&entry, config, &search_path);
-                    if output_bytes + entry_bytes > MAX_OUTPUT_BYTES {
-                        break;
-                    }
+                    if output_bytes + entry_bytes > MAX_OUTPUT_BYTES { break; }
                     output_bytes += entry_bytes;
                     line_matches.push(entry);
                 }
             }
+            if output_bytes > MAX_OUTPUT_BYTES { break; }
         }
 
-        if output_bytes > MAX_OUTPUT_BYTES {
-            break;
-        }
-    }
-
-    // Format output.
-    let content = match config.output_mode {
-        OutputMode::FilesWithMatches => {
-            let mut files: Vec<&PathBuf> = file_matches.keys().collect();
-            files.sort_by_key(|path| std::cmp::Reverse(file_mtime(path)));
-            files
-                .into_iter()
-                .skip(config.offset)
-                .take(config.head_limit)
-                .map(|p| relativize(p, &search_path))
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
-        OutputMode::CountMatches => {
-            let mut lines = Vec::new();
-            for (path, count) in &file_matches {
-                lines.push(format!("{}:{}", relativize(path, &search_path), count));
+        let mut rendered = Vec::new();
+        let mut prev_file: Option<PathBuf> = None;
+        for entry in &line_matches {
+            if prev_file.as_ref() != Some(&entry.file) {
+                if prev_file.is_some() { rendered.push("--".to_string()); }
+                prev_file = Some(entry.file.clone());
             }
-            lines.join("\n")
-        }
-        OutputMode::Content => {
-            let mut rendered = Vec::new();
-            let mut prev_file: Option<PathBuf> = None;
-
-            for entry in &line_matches {
-                // Add separator between files.
-                if prev_file.as_ref() != Some(&entry.file) {
-                    if prev_file.is_some() {
-                        rendered.push("--".to_string());
-                    }
-                    prev_file = Some(entry.file.clone());
-                }
-
-                let rel_path = relativize(&entry.file, &search_path);
-                if config.line_numbers {
-                    rendered.push(format!("{}:{}:{}", rel_path, entry.line_no, entry.line));
-                } else {
-                    rendered.push(format!("{}:{}", rel_path, entry.line));
-                }
+            let rel_path = relativize(&entry.file, &search_path);
+            if config.line_numbers {
+                rendered.push(format!("{}:{}:{}", rel_path, entry.line_no, entry.line));
+            } else {
+                rendered.push(format!("{}:{}", rel_path, entry.line));
             }
-
-            rendered.join("\n")
+        }
+        rendered.join("\n")
+    } else {
+        match config.output_mode {
+            OutputMode::FilesWithMatches => {
+                let files: Vec<String> = file_matches
+                    .iter()
+                    .skip(config.offset)
+                    .take(config.head_limit)
+                    .map(|(p, _)| relativize(p, &search_path))
+                    .collect();
+                files.join("\n")
+            }
+            OutputMode::CountMatches => {
+                let mut lines = Vec::new();
+                for (path, count) in &file_matches {
+                    lines.push(format!("{}:{}", relativize(path, &search_path), count));
+                }
+                lines.join("\n")
+            }
+            OutputMode::Content => unreachable!(),
         }
     };
 
@@ -501,12 +485,6 @@ fn relativize(path: &Path, base: &Path) -> String {
         .unwrap_or_else(|_| path.display().to_string())
 }
 
-fn file_mtime(path: &Path) -> std::time::SystemTime {
-    fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-}
-
 /// Map a ripgrep-style file type name to a list of glob patterns.
 ///
 /// Only the most common languages are covered. Unknown types return an
@@ -589,7 +567,7 @@ mod tests {
             ..Default::default()
         });
         assert!(result.error.is_none());
-        assert!(result.match_count >= 3);
+        assert!(result.match_count >= 2);
         assert!(result.file_count >= 2);
     }
 

@@ -6,9 +6,9 @@
 /// Mirrors `packages/agent-core/src/tools/builtin/file/glob.ts`.
 use ignore::WalkBuilder;
 use napi_derive::napi;
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::SystemTime;
 
 /// Maximum number of matches to return.
@@ -74,58 +74,65 @@ pub fn glob_search(config: &GlobConfig) -> GlobResult {
 
     // Expand braces in the pattern.
     let patterns = expand_braces(&config.pattern);
-    let mut all_files: BTreeMap<PathBuf, SystemTime> = BTreeMap::new();
+    let matchers: Vec<globset::GlobMatcher> = patterns
+        .iter()
+        .filter_map(|p| build_glob_matcher(p))
+        .collect();
 
-    for pattern in &patterns {
-        let matcher = match build_glob_matcher(pattern) {
-            Some(m) => m,
-            None => continue,
+    if matchers.is_empty() {
+        return GlobResult {
+            files: Vec::new(),
+            error: None,
+            truncated: false,
         };
+    }
 
-        let mut builder = WalkBuilder::new(&search_path);
-        builder.hidden(false);
-        builder.git_ignore(true);
-        builder.git_exclude(true);
+    let mut builder = WalkBuilder::new(&search_path);
+    builder.hidden(false);
+    builder.git_ignore(true);
+    builder.git_exclude(true);
 
-        for entry in builder.build() {
+    let include_dirs = config.include_dirs;
+    let all_files: Mutex<Vec<(PathBuf, SystemTime)>> = Mutex::new(Vec::new());
+
+    builder.build_parallel().run(|| {
+        let matchers = &matchers;
+        let all_files = &all_files;
+        let search_path = &search_path;
+
+        Box::new(move |entry| {
+            if all_files.lock().unwrap().len() >= MAX_MATCHES * 2 {
+                return ignore::WalkState::Quit;
+            }
+
             let entry = match entry {
                 Ok(e) => e,
-                Err(_) => continue,
+                Err(_) => return ignore::WalkState::Continue,
             };
 
             let path = entry.path();
             let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
 
-            // Skip directories if not included.
-            if is_dir && !config.include_dirs {
-                continue;
+            if is_dir && !include_dirs {
+                return ignore::WalkState::Continue;
             }
 
-            // Match against pattern.
-            let rel_path = path
-                .strip_prefix(&search_path)
-                .unwrap_or(path);
-
-            if !matcher.is_match(rel_path) && !matcher.is_match(path) {
-                continue;
+            let rel_path = path.strip_prefix(search_path).unwrap_or(path);
+            let matches = matchers.iter().any(|m| m.is_match(rel_path) || m.is_match(path));
+            if !matches {
+                return ignore::WalkState::Continue;
             }
 
-            // Get modification time.
             let mtime = fs::metadata(path)
                 .and_then(|m| m.modified())
                 .unwrap_or(SystemTime::UNIX_EPOCH);
 
-            all_files.insert(path.to_path_buf(), mtime);
+            all_files.lock().unwrap().push((path.to_path_buf(), mtime));
+            ignore::WalkState::Continue
+        })
+    });
 
-            if all_files.len() >= MAX_MATCHES * 2 {
-                // Collect enough to sort, then truncate.
-                break;
-            }
-        }
-    }
-
-    // Sort by modification time (most recent first).
-    let mut sorted: Vec<(PathBuf, SystemTime)> = all_files.into_iter().collect();
+    let mut sorted: Vec<(PathBuf, SystemTime)> = all_files.into_inner().unwrap();
     sorted.sort_by_key(|a| std::cmp::Reverse(a.1));
 
     let truncated = sorted.len() > MAX_MATCHES;
