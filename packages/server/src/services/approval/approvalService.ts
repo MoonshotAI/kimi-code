@@ -16,13 +16,6 @@ export const APPROVAL_DEFAULT_TIMEOUT_MS = 60_000;
 
 export const APPROVAL_RECENTLY_RESOLVED_CAP = 1024;
 
-export class ApprovalExpiredError extends Error {
-  constructor(public readonly approvalId: string, timeoutMs: number) {
-    super(`approval ${approvalId} expired after ${timeoutMs}ms`);
-    this.name = 'ApprovalExpiredError';
-  }
-}
-
 class PendingApproval implements IDisposable {
   private _settled = false;
 
@@ -35,13 +28,11 @@ class PendingApproval implements IDisposable {
     readonly protocolRequest: ProtocolApprovalRequest,
     private readonly _resolveFn: (r: ApprovalResponse) => void,
     private readonly _rejectFn: (e: Error) => void,
-    private readonly _timer: NodeJS.Timeout,
   ) {}
 
   markSettled(): void {
     if (this._settled) return;
     this._settled = true;
-    clearTimeout(this._timer);
   }
 
   resolve(r: ApprovalResponse): void {
@@ -55,7 +46,6 @@ class PendingApproval implements IDisposable {
   dispose(): void {
     if (this._settled) return;
     this._settled = true;
-    clearTimeout(this._timer);
     try {
       this._rejectFn(new Error('server shutting down'));
     } catch {
@@ -72,7 +62,6 @@ export class ApprovalService extends Disposable implements IApprovalService {
   private readonly _byToolCallId = new Map<string, string>();
 
   private readonly _recentlyResolved = new Set<string>();
-  private _timeoutMs = APPROVAL_DEFAULT_TIMEOUT_MS;
   private readonly _recentlyResolvedCap = APPROVAL_RECENTLY_RESOLVED_CAP;
 
   constructor(
@@ -81,6 +70,39 @@ export class ApprovalService extends Disposable implements IApprovalService {
   ) {
     super();
     this._pending = this._register(new DisposableMap<string, PendingApproval>());
+
+    // The turn's abort signal never reaches this broker: agent-core's
+    // `BridgeClientAPI.requestApproval` drops the `{ signal }` option, so an
+    // aborted turn would otherwise leave the approval in `_pending` forever
+    // (pinning the session in `awaiting_approval` and keeping the web panel
+    // open). Settle stale approvals when the in-process bus reports the turn
+    // ended for a cancellation reason. This is intentionally session-scoped: a
+    // turn has at most one pending approval, and on normal completion the
+    // approval is already resolved so this is a no-op.
+    this._register(
+      this.eventService.onDidPublish((event) => {
+        if ((event as { type?: string }).type !== 'turn.ended') return;
+        const reason = (event as { reason?: string }).reason;
+        if (reason !== 'cancelled' && reason !== 'failed' && reason !== 'filtered') return;
+        const sessionId = (event as { sessionId?: string }).sessionId;
+        if (sessionId === undefined || sessionId === '') return;
+        this.dismissForSession(sessionId);
+      }),
+    );
+  }
+
+  private dismissForSession(sessionId: string): void {
+    const ids: string[] = [];
+    for (const p of this._pending.values()) {
+      if (p.sessionId === sessionId) ids.push(p.approvalId);
+    }
+    for (const id of ids) {
+      // Reuse resolve(): clears `_pending` / `_byToolCallId` and publishes
+      // `event.approval.resolved` (decision: 'cancelled') so the web panel
+      // closes. The agent-core caller's promise is already rejected by the
+      // abort, so the resolved value is only observed by tests.
+      this.resolve(id, { decision: 'cancelled' });
+    }
   }
 
   async request(
@@ -92,7 +114,10 @@ export class ApprovalService extends Disposable implements IApprovalService {
 
     const approvalId = ulid();
     const createdAt = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + this._timeoutMs).toISOString();
+    // `expires_at` is still populated for the protocol/web contract, but the
+    // broker no longer enforces it — approvals wait until the user resolves
+    // them or the server shuts down.
+    const expiresAt = new Date(Date.now() + APPROVAL_DEFAULT_TIMEOUT_MS).toISOString();
 
     const protocolRequest = approvalToBrokerRequest(req, {
       approvalId,
@@ -121,8 +146,6 @@ export class ApprovalService extends Disposable implements IApprovalService {
     );
 
     return new Promise<ApprovalResponse>((resolve, reject) => {
-      const timer = setTimeout(() => this._expire(approvalId), this._timeoutMs);
-      timer.unref?.();
       this._pending.set(
         approvalId,
         new PendingApproval(
@@ -134,7 +157,6 @@ export class ApprovalService extends Disposable implements IApprovalService {
           protocolRequest,
           resolve,
           reject,
-          timer,
         ),
       );
       this._byToolCallId.set(req.toolCallId, approvalId);
@@ -197,30 +219,6 @@ export class ApprovalService extends Disposable implements IApprovalService {
     const p = this._pending.get(approvalId);
     if (!p) return undefined;
     return { sessionId: p.sessionId, toolCallId: p.toolCallId };
-  }
-
-  _setTimeoutMsForTests(ms: number): void {
-    this._timeoutMs = ms;
-  }
-
-  private _expire(approvalId: string): void {
-    const p = this._pending.get(approvalId);
-    if (!p) return;
-    p.markSettled();
-    this._pending.deleteAndLeak(approvalId);
-    this._byToolCallId.delete(p.toolCallId);
-
-    this.markResolved(p.approvalId);
-
-    const expiredEvent: Event = {
-      type: 'event.approval.expired',
-      sessionId: p.sessionId,
-      agentId: 'main',
-      approval_id: p.approvalId,
-    } as unknown as Event;
-    this.eventService.publish(expiredEvent);
-
-    p.reject(new ApprovalExpiredError(p.approvalId, this._timeoutMs));
   }
 
   override dispose(): void {

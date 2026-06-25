@@ -27,6 +27,7 @@ export default {
   daemon: 'Daemon',
   noSessions: 'No conversations yet',
   showMore: 'Show more ({count})',
+  loadingMore: 'Loading…',
   collapseSidebar: 'Collapse sidebar',
   expandSidebar: 'Expand sidebar',
   searchPlaceholder: 'Search sessions',

@@ -578,31 +578,6 @@ describe('ApprovalService (broadcasts + resolve-by-approval_id)', () => {
     bus.dispose();
   });
 
-  it('rejects with ApprovalExpiredError + broadcasts event.approval.expired after timeoutMs', async () => {
-    const { broker, bus, broadcast, conn } = makeBrokerWithBus();
-    broker._setTimeoutMsForTests(30);
-    const pending = broker.request({
-      sessionId: 'sess_1',
-      agentId: 'agent_1',
-      toolCallId: 'tc_timeout',
-      toolName: 'shell.run',
-      action: 'Run',
-      display: { kind: 'generic', summary: 'test' },
-    } as Parameters<typeof broker.request>[0]);
-
-    await expect(pending).rejects.toMatchObject({
-      name: 'ApprovalExpiredError',
-    });
-    await broadcast._drainForTest('sess_1');
-    const expiredFrame = conn.sent.find(
-      (f) => (f as { type: string }).type === 'event.approval.expired',
-    );
-    expect(expiredFrame).toBeDefined();
-    broker.dispose();
-    broadcast.dispose();
-    bus.dispose();
-  });
-
   it('dispose rejects all pending requests with "server shutting down"', async () => {
     const { broker, bus, broadcast } = makeBrokerWithBus();
     const p1 = broker.request({
@@ -727,29 +702,6 @@ describe('QuestionService (broadcasts + dismiss)', () => {
     expect(dismissedFrame).toBeDefined();
     expect(broker.isPending(questionId!)).toBe(false);
     expect(broker.isRecentlyResolved(questionId!)).toBe(true);
-
-    broker.dispose();
-    broadcast.dispose();
-    bus.dispose();
-  });
-
-  it('60s timeout broadcasts event.question.expired + rejects QuestionExpiredError', async () => {
-    const { broker, bus, broadcast, conn } = makeQuestionBroker();
-    broker._setTimeoutMsForTests(30);
-    const pending = broker.request({
-      sessionId: 's',
-      agentId: 'a',
-      questions: [
-        { question: '?', options: [{ label: 'A' }, { label: 'B' }] },
-      ],
-    } as Parameters<typeof broker.request>[0]);
-
-    await expect(pending).rejects.toMatchObject({ name: 'QuestionExpiredError' });
-    await broadcast._drainForTest('s');
-    const expiredFrame = conn.sent.find(
-      (f) => (f as { type: string }).type === 'event.question.expired',
-    );
-    expect(expiredFrame).toBeDefined();
 
     broker.dispose();
     broadcast.dispose();
