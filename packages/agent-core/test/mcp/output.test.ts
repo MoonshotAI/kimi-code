@@ -285,6 +285,7 @@ describe('mcpResultToExecutableOutput', () => {
     // The notice merges into the single text part so collapseSingleText still
     // emits a plain string — the very common "single oversized text" case.
     expect(out.output).toBe('x'.repeat(100_000) + MCP_OUTPUT_TRUNCATED_TEXT);
+    expect(out.truncated).toBe(true);
   });
 
   test('drops oversized binary parts in favor of a per-part notice without touching the text budget', () => {
@@ -304,6 +305,7 @@ describe('mcpResultToExecutableOutput', () => {
     // The text-budget marker must NOT appear — only the binary part was dropped.
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
     expect(joined).not.toContain('Output truncated');
+    expect(out.truncated).toBe(true);
   });
 
   test('binary part within the per-part cap survives intact alongside oversized text', () => {
@@ -320,5 +322,6 @@ describe('mcpResultToExecutableOutput', () => {
       { type: 'text', text: 'A'.repeat(100_000) },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,' + 'B'.repeat(500_000) } },
     ]);
+    expect(out).not.toHaveProperty('truncated');
   });
 });

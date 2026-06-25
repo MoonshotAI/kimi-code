@@ -6,7 +6,7 @@ import {
   type ProviderConfig,
 } from '@moonshot-ai/kosong';
 
-import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '../kimi-env-params';
+import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '#/config/kimi-env-params';
 
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';

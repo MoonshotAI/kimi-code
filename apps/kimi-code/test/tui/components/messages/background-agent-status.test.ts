@@ -1,3 +1,4 @@
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { BackgroundAgentStatusComponent } from '#/tui/components/messages/background-agent-status';
@@ -42,5 +43,19 @@ describe('BackgroundAgentStatusComponent', () => {
     expect(failedLines[1]).toBe(
       '✗ explore agent failed in background (Explore project structure · boom)',
     );
+  });
+
+  it('keeps status lines within very narrow widths', () => {
+    const component = new BackgroundAgentStatusComponent({
+      phase: 'started',
+      headline: 'explore agent started in background',
+      detail: 'Explore project structure',
+    });
+
+    for (const width of [1, 2, 4, 10, 39]) {
+      for (const line of component.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 });

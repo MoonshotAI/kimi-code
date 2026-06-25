@@ -62,8 +62,8 @@ describe('QueuePaneComponent', () => {
     });
 
     const lines = component.render(30);
-    expect(lines).toHaveLength(2); // message + hint
-    const messageLine = stripAnsi(lines[0] as string);
+    expect(lines).toHaveLength(3); // border + message + hint
+    const messageLine = stripAnsi(lines[1] as string);
     expect(messageLine).not.toContain('a'.repeat(30));
     expect(messageLine.endsWith('…')).toBe(true);
   });
@@ -77,9 +77,46 @@ describe('QueuePaneComponent', () => {
     });
 
     const lines = component.render(120);
-    expect(lines).toHaveLength(2); // message + hint
-    const messageLine = stripAnsi(lines[0] as string);
+    expect(lines).toHaveLength(3); // border + message + hint
+    const messageLine = stripAnsi(lines[1] as string);
     expect(messageLine).toContain('line one line two line three');
     expect(messageLine).not.toContain('\n');
+  });
+
+  it('renders bash queued items with a $ prompt to distinguish them from text', () => {
+    const component = new QueuePaneComponent({
+      isCompacting: false,
+      isStreaming: true,
+      canSteerImmediately: false,
+      messages: [{ text: 'ls -la', mode: 'bash' }],
+    });
+
+    const output = stripAnsi(component.render(120).join('\n'));
+    expect(output).toContain('❯ $ ls -la');
+  });
+
+  it('omits the steer hint when every queued item is a bash command', () => {
+    const component = new QueuePaneComponent({
+      isCompacting: false,
+      isStreaming: true,
+      canSteerImmediately: true,
+      messages: [{ text: 'ls', mode: 'bash' }],
+    });
+
+    const output = stripAnsi(component.render(120).join('\n'));
+    expect(output).not.toContain('ctrl-s to steer immediately');
+    expect(output).toContain('will send after current task');
+  });
+
+  it('keeps the steer hint when at least one queued item is steerable', () => {
+    const component = new QueuePaneComponent({
+      isCompacting: false,
+      isStreaming: true,
+      canSteerImmediately: true,
+      messages: [{ text: 'ls', mode: 'bash' }, { text: 'focus on tests' }],
+    });
+
+    const output = stripAnsi(component.render(120).join('\n'));
+    expect(output).toContain('ctrl-s to steer immediately');
   });
 });

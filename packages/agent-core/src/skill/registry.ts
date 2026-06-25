@@ -2,6 +2,7 @@ import { expandSkillParameters, skillArgumentNames } from './parser';
 import { discoverSkills, type DiscoverSkillsOptions } from './scanner';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
 import { isInlineSkillType, normalizeSkillName } from './types';
+import type { SkillRegistry as AgentSkillRegistry } from '../agent/skill/types';
 import { escapeXmlAttr } from '../utils/xml-escape';
 
 const LISTING_DESC_MAX = 250;
@@ -22,7 +23,7 @@ export interface SkillRegistryOptions {
   readonly sessionId?: string;
 }
 
-export class SkillRegistry {
+export class SessionSkillRegistry implements AgentSkillRegistry {
   private readonly byName = new Map<string, SkillDefinition>();
   private readonly byPluginAndName = new Map<string, SkillDefinition>();
   private readonly roots: string[] = [];
@@ -182,6 +183,18 @@ function formatModelSkill(skill: SkillDefinition): readonly string[] {
   return lines;
 }
 
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
 function truncate(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value;
+  if (value.length <= max) return value;
+  // Reserve one code unit for the trailing ellipsis and walk whole grapheme
+  // clusters so we never split a surrogate pair or combining sequence.
+  let length = 0;
+  let result = '';
+  for (const { segment } of graphemeSegmenter.segment(value)) {
+    if (length + segment.length > max - 1) break;
+    result += segment;
+    length += segment.length;
+  }
+  return `${result}…`;
 }

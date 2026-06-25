@@ -1,8 +1,11 @@
 import { APIConnectionError, emptyUsage, isRetryableGenerateError } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
+import type { KimiConfig } from '#/config';
+import { ErrorCodes, KimiError } from '#/errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from '#/loop/llm';
 import { chatWithRetry } from '#/loop/retry';
+import { ProviderManager } from '#/session/provider-manager';
 
 function okResponse(): LLMChatResponse {
   return { toolCalls: [], usage: emptyUsage() };
@@ -67,4 +70,60 @@ describe('chatWithRetry: terminated stream drops', () => {
     });
     expect(calls).toBe(1);
   });
+
+  it('does not retry OAuth token fetch connection errors (already retried internally)', async () => {
+    let tokenCalls = 0;
+    const manager = new ProviderManager({
+      config: oauthConfig(),
+      resolveOAuthTokenProvider: () => ({
+        async getAccessToken() {
+          tokenCalls += 1;
+          throw new KimiError(
+            ErrorCodes.PROVIDER_CONNECTION_ERROR,
+            'OAuth provider "managed:kimi-code" failed to fetch an access token: fetch failed',
+          );
+        },
+      }),
+    });
+    const resolveAuth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    if (resolveAuth === undefined) throw new Error('expected OAuth auth resolver');
+
+    let chatCalls = 0;
+    const llm: LLM = {
+      systemPrompt: '',
+      modelName: 'mock',
+      isRetryableError: (e) => isRetryableGenerateError(e),
+      async chat(_params: LLMChatParams): Promise<LLMChatResponse> {
+        chatCalls += 1;
+        return resolveAuth(async () => okResponse());
+      },
+    };
+
+    await expect(chatWithRetry(makeInput(llm, new AbortController().signal))).rejects.toMatchObject({
+      code: ErrorCodes.PROVIDER_CONNECTION_ERROR,
+    });
+    expect(chatCalls).toBe(1);
+    expect(tokenCalls).toBe(1);
+  });
 });
+
+function oauthConfig(): KimiConfig {
+  return {
+    defaultModel: 'kimi-code/kimi-for-coding',
+    providers: {
+      'managed:kimi-code': {
+        type: 'kimi',
+        apiKey: '',
+        baseUrl: 'https://api.example/v1',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+    },
+    models: {
+      'kimi-code/kimi-for-coding': {
+        provider: 'managed:kimi-code',
+        model: 'kimi-for-coding',
+        maxContextSize: 1_000_000,
+      },
+    },
+  };
+}

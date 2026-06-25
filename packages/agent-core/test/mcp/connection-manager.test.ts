@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'pathe';
@@ -32,6 +33,7 @@ import { createScriptedGenerate } from '../agent/harness';
 
 const here = import.meta.dirname;
 const stdioFixture = join(here, 'fixtures', 'mock-stdio-server.mjs');
+const cwdStdioFixture = join(here, 'fixtures', 'cwd-stdio-server.mjs');
 const slowStdioFixture = join(here, 'fixtures', 'slow-stdio-server.mjs');
 const crashAfterConnectFixture = join(here, 'fixtures', 'crash-after-connect-stdio-server.mjs');
 const stderrThenExitFixture = join(here, 'fixtures', 'stderr-then-exit-stdio-server.mjs');
@@ -112,6 +114,25 @@ describe('McpConnectionManager', () => {
       const entry = cm.get('remote');
       expect(entry?.status).toBe('failed');
       expect(entry?.error).toContain('"REMOTE_MCP_TOKEN" is not set or is empty');
+    } finally {
+      await cm.shutdown();
+    }
+  });
+
+  it('marks SSE servers failed when configured bearer token env var is missing', async () => {
+    const cm = new McpConnectionManager({ envLookup: () => undefined });
+    try {
+      await cm.connectAll({
+        legacy: {
+          transport: 'sse',
+          url: 'https://example.invalid/sse',
+          bearerTokenEnvVar: 'LEGACY_MCP_TOKEN',
+        },
+      });
+      const entry = cm.get('legacy');
+      expect(entry?.transport).toBe('sse');
+      expect(entry?.status).toBe('failed');
+      expect(entry?.error).toContain('"LEGACY_MCP_TOKEN" is not set or is empty');
     } finally {
       await cm.shutdown();
     }
@@ -361,6 +382,47 @@ describe('McpConnectionManager', () => {
       const entry = cm.get('gated');
       expect(entry?.status).toBe('needs-auth');
       expect(entry?.error).toContain('run /mcp-config login gated');
+      expect(entry?.toolCount).toBe(0);
+    } finally {
+      await cm.shutdown();
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve();
+        });
+      });
+      await rm(storeDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('flips SSE servers into needs-auth when the server returns 401 and no static token is set', async () => {
+    const server: HttpServer = createHttpServer((_req, res) => {
+      res.writeHead(401, {
+        'content-type': 'text/plain',
+        'www-authenticate': 'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
+      });
+      res.end('unauthorized');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as HttpAddress).port;
+    const storeDir = await mkdtemp(join(tmpdir(), 'kimi-mcp-oauth-sse-cm-'));
+    const oauthService = new McpOAuthService({ store: new JsonFileStore(storeDir) });
+    const cm = new McpConnectionManager({ oauthService });
+    try {
+      await cm.connectAll({
+        legacy: {
+          transport: 'sse',
+          url: `http://127.0.0.1:${port}/sse`,
+          startupTimeoutMs: 5_000,
+        },
+      });
+      const entry = cm.get('legacy');
+      expect(entry?.transport).toBe('sse');
+      expect(entry?.status).toBe('needs-auth');
+      expect(entry?.error).toContain('run /mcp-config login legacy');
       expect(entry?.toolCount).toBe(0);
     } finally {
       await cm.shutdown();
@@ -729,6 +791,40 @@ describe('Session MCP startup', () => {
     } finally {
       await session.close();
       await Promise.race([create.catch(() => {}), sleep(1_000)]);
+      await rm(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+    }
+  }, 7000);
+
+  it('starts stdio MCP servers in the session cwd when config.cwd is omitted', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-cwd-'));
+    const session = new Session({
+      id: 'test-mcp-cwd',
+      kaos: testKaos.withCwd(tmp),
+      homedir: join(tmp, 'session'),
+      rpc: sessionRpc(),
+      mcpConfig: {
+        servers: {
+          cwd: {
+            transport: 'stdio',
+            command: process.execPath,
+            args: [cwdStdioFixture],
+            startupTimeoutMs: 2_000,
+          },
+        },
+      },
+    });
+
+    try {
+      await session.mcp.waitForInitialLoad();
+      const resolved = session.mcp.resolved('cwd');
+      if (resolved === undefined) {
+        throw new Error('MCP server cwd did not connect');
+      }
+      const result = await resolved.client.callTool('get_cwd', {});
+      const text = (result.content[0] as { type: 'text'; text: string }).text;
+      expect(realpathSync(text)).toBe(realpathSync(tmp));
+    } finally {
+      await session.close();
       await rm(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
     }
   }, 7000);

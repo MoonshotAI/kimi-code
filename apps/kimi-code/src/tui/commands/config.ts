@@ -28,6 +28,8 @@ import type { SlashCommandHost } from './dispatch';
 // Plan / Config commands
 // ---------------------------------------------------------------------------
 
+const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
+
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
@@ -196,8 +198,9 @@ export async function handleThemeCommand(host: SlashCommandHost, args: string): 
   await applyThemeChoice(host, theme);
 }
 
-export function handleModelCommand(host: SlashCommandHost, args: string): void {
+export async function handleModelCommand(host: SlashCommandHost, args: string): Promise<void> {
   const alias = args.trim();
+  await refreshModelsForPicker(host);
   if (alias.length === 0) {
     showModelPicker(host);
     return;
@@ -227,6 +230,37 @@ function showEditorPicker(host: SlashCommandHost): void {
       },
     }),
   );
+}
+
+async function refreshModelsForPicker(host: SlashCommandHost): Promise<void> {
+  try {
+    const result = await withTimeout(
+      host.authFlow.refreshOAuthProviderModels(),
+      MODEL_PICKER_REFRESH_TIMEOUT_MS,
+    );
+    if (result === undefined) return;
+    for (const f of result.failed) {
+      host.showStatus(`Skipped refreshing ${f.provider}: ${f.reason}`, 'warning');
+    }
+  } catch (error) {
+    host.showStatus(`Skipped refreshing models: ${formatErrorMessage(error)}`, 'warning');
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<undefined>((resolve) => {
+        timeout = setTimeout(() => {
+          resolve(undefined);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 async function applyEditorChoice(host: SlashCommandHost, value: string): Promise<void> {
@@ -277,7 +311,11 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
       currentThinking: host.state.appState.thinking,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, thinking);
+        void performModelSwitch(host, alias, thinking, true);
+      },
+      onSessionOnlySelect: ({ alias, thinking }) => {
+        host.restoreEditor();
+        void performModelSwitch(host, alias, thinking, false);
       },
       onCancel: () => {
         host.restoreEditor();
@@ -286,7 +324,12 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
   );
 }
 
-async function performModelSwitch(host: SlashCommandHost, alias: string, thinking: boolean): Promise<void> {
+async function performModelSwitch(
+  host: SlashCommandHost,
+  alias: string,
+  thinking: boolean,
+  persist: boolean,
+): Promise<void> {
   if (host.state.appState.streamingPhase !== 'idle') {
     host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
     return;
@@ -326,19 +369,26 @@ async function performModelSwitch(host: SlashCommandHost, alias: string, thinkin
   }
 
   let persisted = false;
-  try {
-    persisted = await persistModelSelection(host, alias, thinking);
-  } catch (error) {
-    const msg = formatErrorMessage(error);
-    host.showError(`Switched to ${alias}, but failed to save default: ${msg}`);
-    return;
+  if (persist) {
+    try {
+      persisted = await persistModelSelection(host, alias, thinking);
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      host.showError(`Switched to ${alias}, but failed to save default: ${msg}`);
+      return;
+    }
   }
 
-  const status = runtimeChanged
-    ? `Switched to ${alias} with thinking ${level}.`
-    : persisted
-      ? `Saved ${alias} with thinking ${level} as default.`
-      : `Already using ${alias} with thinking ${level}.`;
+  let status: string;
+  if (runtimeChanged) {
+    status = persist
+      ? `Switched to ${alias} with thinking ${level}.`
+      : `Switched to ${alias} with thinking ${level} for this session only.`;
+  } else if (persist && persisted) {
+    status = `Saved ${alias} with thinking ${level} as default.`;
+  } else {
+    status = `Already using ${alias} with thinking ${level}.`;
+  }
   host.showStatus(status, 'success');
 }
 

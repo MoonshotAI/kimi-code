@@ -12,6 +12,7 @@ export interface CLIOptions {
   prompt: string | undefined;
   skillsDirs: string[];
   strictConfig: boolean;
+  addDirs?: string[];
 }
 
 export interface ValidatedOptions {

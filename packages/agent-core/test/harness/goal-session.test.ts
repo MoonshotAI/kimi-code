@@ -239,6 +239,94 @@ describe('goal session end-to-end', () => {
     expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
   });
 
+  it('drives a goal the model creates mid-turn with CreateGoal', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(sessionDir, events, [
+      'CreateGoal',
+      'GetGoal',
+      'UpdateGoal',
+    ]);
+    const api = new SessionAPIImpl(session);
+
+    // No goal exists at launch. The model creates one mid-turn via CreateGoal;
+    // the driver must then pursue it across continuation turns instead of
+    // stopping after the ordinary turn that merely started it.
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'create',
+      name: 'CreateGoal',
+      arguments: JSON.stringify({ objective: 'work' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'Goal created and active.' });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'complete',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'I completed the goal.' });
+
+    agent.turn.prompt([{ type: 'text', text: 'Please start a goal to do the work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    // The driver ran a continuation turn after the goal became active, reaching
+    // the UpdateGoal('complete') the standalone turn never would have.
+    expect(scripted.calls.length).toBeGreaterThanOrEqual(4);
+    expect(JSON.stringify(scripted.calls[2]?.history ?? [])).toContain(
+      'Continue working toward the active goal',
+    );
+    const turnStarts = events.filter((e) => e['type'] === 'turn.started').length;
+    expect(turnStarts).toBeGreaterThanOrEqual(2);
+    expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
+  });
+
+  it('keeps the active turn alive (cancelable) while driving a goal created mid-turn', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const scripted = createScriptedGenerate();
+    let agentRef: { turn: { readonly hasActiveTurn: boolean } } | undefined;
+    const activeDuringCall: boolean[] = [];
+    const generate: NonNullable<AgentOptions['generate']> = (...args) => {
+      activeDuringCall.push(agentRef?.turn.hasActiveTurn ?? false);
+      return scripted.generate(...args);
+    };
+    const { agent } = await setupSession(
+      sessionDir,
+      events,
+      ['CreateGoal', 'GetGoal', 'UpdateGoal'],
+      generate,
+    );
+    agentRef = agent;
+
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'create',
+      name: 'CreateGoal',
+      arguments: JSON.stringify({ objective: 'work' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'Goal created and active.' });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'complete',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'I completed the goal.' });
+
+    agent.turn.prompt([{ type: 'text', text: 'Please start a goal to do the work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    // Calls 0-1 are the standalone first turn (CreateGoal, then text); calls 2-3
+    // are the goal driver's continuation turn. The continuation must run under a
+    // live active turn so a user cancel can abort it and no concurrent turn can
+    // launch. Before the fix the standalone turn released the active turn the
+    // instant it created the goal, leaving calls 2-3 with no active turn.
+    expect(activeDuringCall.length).toBeGreaterThanOrEqual(4);
+    expect(activeDuringCall[2]).toBe(true);
+    expect(activeDuringCall[3]).toBe(true);
+  });
+
   it('asks the model to explain why it marked a goal blocked', async () => {
     const sessionDir = await makeTempDir();
     const events: Array<Record<string, unknown>> = [];
@@ -400,6 +488,31 @@ describe('goal session end-to-end', () => {
     const goal = (await api.getGoal({ agentId: 'main' })).goal;
     expect(goal?.status).toBe('paused');
     expect(goal?.terminalReason).toBe('Paused after runtime error: unexpected failure');
+  });
+
+  it('pauses the goal on provider safety policy blocks', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const generate: NonNullable<AgentOptions['generate']> = async () => ({
+      id: null,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'filtered' }], toolCalls: [] },
+      usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 },
+      finishReason: 'filtered',
+      rawFinishReason: 'content_filter',
+    });
+    const { session, agent } = await setupSession(sessionDir, events, ['GetGoal'], generate);
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ agentId: 'main', objective: 'work' });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = (await api.getGoal({ agentId: 'main' })).goal;
+    expect(goal?.status).toBe('paused');
+    expect(goal?.terminalReason).toBe('Paused after provider safety policy block');
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'turn.ended', reason: 'filtered' }),
+    );
   });
 
   it('blocks the goal when the initial prompt hook blocks the objective', async () => {

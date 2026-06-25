@@ -4,10 +4,11 @@
 
 ## Connection Methods
 
-Kimi Code CLI supports two MCP server connection methods:
+Kimi Code CLI supports three MCP server connection methods:
 
 - **stdio**: The CLI starts the local MCP server as a child process and communicates via standard input/output. Suitable for local command-line tools.
 - **HTTP**: The CLI connects to an already-running HTTP endpoint. Suitable for remote services or processes that need to run persistently.
+- **SSE**: The CLI connects to a legacy HTTP+SSE endpoint (Server-Sent Events, a streaming HTTP mechanism). Prefer HTTP for new MCP servers, but use `transport: "sse"` when a service still exposes only the older SSE transport.
 
 ## Configuration
 
@@ -31,12 +32,16 @@ Structure of `mcp.json`:
     },
     "linear": {
       "url": "https://mcp.linear.app/mcp"
+    },
+    "legacy-events": {
+      "transport": "sse",
+      "url": "https://mcp.example.com/sse"
     }
   }
 }
 ```
 
-Entries with a `command` field are stdio servers; entries with a `url` field are HTTP servers. The `transport` field generally does not need to be written manually.
+Entries with a `command` field are stdio servers; entries with a `url` field and no `transport` are HTTP servers. For legacy SSE servers, set `transport` to `"sse"` explicitly.
 
 Optional fields:
 
@@ -44,14 +49,15 @@ Optional fields:
 | --- | --- | --- | --- |
 | `env` | `Record<string, string>` | stdio | Environment variables injected into the child process |
 | `cwd` | `string` | stdio | Working directory for the child process |
-| `headers` | `Record<string, string>` | HTTP | Static request headers appended to every request |
-| `enabled` | `boolean` | Both | Set to `false` to disable this server |
-| `startupTimeoutMs` | `number` | Both | Connection timeout; default `30000` milliseconds |
-| `toolTimeoutMs` | `number` | Both | Timeout for a single tool call |
-| `enabledTools` | `string[]` | Both | Tool allowlist |
-| `disabledTools` | `string[]` | Both | Tool blocklist |
+| `headers` | `Record<string, string>` | HTTP, SSE | Static request headers appended to every request |
+| `bearerTokenEnvVar` | `string` | HTTP, SSE | Name of an environment variable that contains a bearer token |
+| `enabled` | `boolean` | All | Set to `false` to disable this server |
+| `startupTimeoutMs` | `number` | All | Connection timeout; default `30000` milliseconds |
+| `toolTimeoutMs` | `number` | All | Timeout for a single tool call |
+| `enabledTools` | `string[]` | All | Tool allowlist |
+| `disabledTools` | `string[]` | All | Tool blocklist |
 
-HTTP servers support providing static credentials via `headers` or `bearerTokenEnvVar`. When OAuth is needed, run `/mcp-config login <server-name>` to complete browser-based authorization.
+HTTP and SSE servers support providing static credentials via `headers` or `bearerTokenEnvVar`. When OAuth is needed, run `/mcp-config login <server-name>` to complete browser-based authorization.
 
 Plugins can also declare MCP servers in their manifest. Servers declared by a plugin are enabled by default and can be disabled or re-enabled in `/plugins`, then a new session must be started. See [Plugins](./plugins.md) for details.
 

@@ -6,16 +6,18 @@ Kimi Code CLI applies a conservative loading strategy for plugins: installing a 
 
 ## Installation and Management
 
-Run `/plugins` in the TUI to open the plugin manager, where you can perform all routine operations. Common keys:
+Run `/plugins` in the TUI to open the plugin manager. It is a single panel with four tabs — **Installed** (manage what you have), **Official** (Kimi-maintained marketplace plugins), **Third-party** (marketplace plugins from other publishers), and **Custom** (install from a URL) — switched with `Tab` / `Shift-Tab`. Common keys:
 
 | Key | Action |
 | --- | --- |
-| `Enter` or `→` | Open the selected item, or install a marketplace plugin |
-| `Space` | Enable or disable an installed plugin; install or update a marketplace plugin |
-| `M` | Manage MCP servers for the selected plugin |
-| `←` or `Esc` | Go back to the previous level |
-
-In the marketplace list, an installed plugin with a newer version available shows `update <local> → <latest>`, an up-to-date one shows `installed · v<version>`, and an uninstalled one shows `install v<version>`. Select an updatable entry and press `Enter` to update.
+| `Tab` / `Shift-Tab` | Switch between the Installed / Official / Third-party / Custom tabs |
+| `Space` | Enable or disable the selected installed plugin (Installed tab) |
+| `D` | Remove the selected installed plugin (Installed tab) |
+| `M` | Manage MCP servers for the selected plugin (Installed tab) |
+| `R` | Reload `installed.json` and all manifests (Installed tab) |
+| `Enter` | Installed tab: install the available update, or view details if up to date · Official/Third-party tab: install or update · Custom tab: install |
+| `I` | View plugin details (Installed tab) |
+| `Esc` | Go back or cancel |
 
 You can also use slash commands directly:
 
@@ -24,7 +26,7 @@ You can also use slash commands directly:
 | `/plugins` | Open the interactive plugin manager |
 | `/plugins list` | List installed plugins |
 | `/plugins install <path-or-url>` | Install from a local directory, zip URL, or GitHub repository URL |
-| `/plugins marketplace [source]` | Browse the official marketplace; optionally pass a path or URL to a marketplace JSON |
+| `/plugins marketplace [source]` | Browse the official marketplace, or pass a custom marketplace JSON path or URL |
 | `/plugins info <id>` | View plugin details and diagnostics |
 | `/plugins enable <id>` | Enable a plugin |
 | `/plugins disable <id>` | Disable a plugin |
@@ -33,7 +35,7 @@ You can also use slash commands directly:
 | `/plugins mcp enable <id> <server>` | Enable an MCP server declared by a plugin |
 | `/plugins mcp disable <id> <server>` | Disable an MCP server declared by a plugin |
 
-The plugin manager shows the installation source and a trust badge for each install: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else).
+The **Installed** tab lists your installed plugins and shows an update badge when a newer version is available in the marketplace. The **Official** and **Third-party** tabs list marketplace plugins by tier; the **Custom** tab installs from a URL. Marketplace catalogs load automatically when needed. Each install shows a trust badge: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else). Installing a third-party plugin (anything not from the official address, including Custom installs) first shows a confirmation prompt that defaults to cancelling, so it is only installed if you choose to trust the source.
 
 ### Installing from GitHub
 
@@ -48,10 +50,27 @@ Network requests only go through `github.com` redirects and `codeload.github.com
 
 ### Notes
 
-- Plugin changes only take effect for new sessions. After installing, enabling/disabling, or removing a plugin, run `/reload` to reload plugins or `/new` to start a new session; the current session will not update.
+- Plugin changes apply after `/reload` or in new sessions. After installing, enabling/disabling, or removing a plugin, run `/reload` or `/new`; the current session will not update.
 - Local installations are copied to `$KIMI_CODE_HOME/plugins/managed/<id>/`, and the CLI always runs from this managed copy. Editing the original source directory after installation has no effect; you must reinstall.
 - Removing a plugin only deletes the installation record; the managed copy and original source files remain on disk.
 - Plugins are currently installed per-user and apply to all projects; project-level installation scope is not yet supported.
+
+### Custom marketplace JSON
+
+Pass a custom marketplace JSON path or URL to `/plugins marketplace <source>`, or set [`KIMI_CODE_PLUGIN_MARKETPLACE_URL`](../configuration/env-vars.md) to override the default catalog. Each entry in the `plugins` array needs an `id` and a `source` (local path, zip URL, or GitHub URL):
+
+```json
+{
+  "version": "2",
+  "plugins": [
+    {
+      "id": "my-plugin",
+      "displayName": "My Plugin",
+      "source": "./my-plugin"
+    }
+  ]
+}
+```
 
 ## Kimi Datasource
 
@@ -61,17 +80,17 @@ Kimi Datasource is the official Kimi Code data plugin. It lets you query financi
 
 You must first complete OAuth login with a Kimi Code account via `/login`. The plugin relies on local credentials to access data services.
 
-1. Run `/plugins` and select **Marketplace**
-2. Find **Kimi Datasource** and press `Space` to install
-3. After installation completes, run `/reload` to activate the plugin
+1. Run `/plugins` and select **Official**
+2. Find **Kimi Datasource** and press `Enter` to install
+3. After installation completes, run `/reload` or `/new` to activate the plugin
 
 The current latest version is v3.2.0. The plugin does not update automatically — to upgrade to a newer version, repeat the installation steps above.
 
-### How to Use
+### How to use
 
 Once installed, describe your need in natural language and Kimi Code will automatically invoke the data capabilities. You can also explicitly trigger the data query skill with `/skill:kimi-datasource`.
 
-### What You Can Do
+### What you can do
 
 **Live market research**: Want to run a quantitative analysis on a stock? Pull three years of daily closing prices, MACD, and KDJ signals in a single query — no third-party data platforms needed.
 
@@ -93,7 +112,7 @@ Once installed, describe your need in natural language and Kimi Code will automa
 | Academic literature | Millions of papers across physics, mathematics, CS, quantitative finance, economics — including preprints |
 | Legal | Chinese laws, regulations, and judicial cases — semantic/keyword search and detail lookup for statutes across all authority levels (constitution, laws, judicial interpretations, departmental rules), plus ordinary and authoritative case search |
 
-### Notes
+### Billing and limitations
 
 - Data queries are billed per call and consume Kimi Code account credits
 - The plugin provides read-only queries; no write or trading functionality is available
@@ -192,14 +211,14 @@ HTTP server (remote service):
 
 For stdio servers, `command` can be a command on `PATH` or a path starting with `./` within the plugin root directory. `cwd` likewise must start with `./` and be within the plugin root directory; otherwise the server is ignored.
 
-Plugin MCP servers only start in new sessions. To enable or disable a server:
+Plugin MCP servers start after `/reload` or in new sessions. To enable or disable a server:
 
 ```sh
 /plugins mcp disable kimi-finance finance
-/new
+/reload
 
 /plugins mcp enable kimi-finance finance
-/new
+/reload
 ```
 
 ## Security Model
@@ -208,10 +227,6 @@ Plugins have a limited loading scope. The following operations do not occur duri
 
 - Command-type plugin tools, hooks, and legacy tool runtimes are not executed
 - All paths must remain within the plugin root directory after symbolic link resolution
-- MCP servers of enabled plugins only start in new sessions and can be disabled at any time from `/plugins`
+- MCP servers of enabled plugins start after `/reload` or in new sessions and can be disabled at any time from `/plugins`
 - Broken manifests or unsafe paths appear in `/plugins info <id>` diagnostics and do not affect other sessions
 
-## Next steps
-
-- [Agent Skills](./skills.md) — File format and frontmatter field reference for Skills
-- [MCP](./mcp.md) — Full schema and permission configuration for plugin MCP servers

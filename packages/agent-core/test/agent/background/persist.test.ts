@@ -27,6 +27,7 @@ function sample(overrides: Partial<Extract<BackgroundTaskInfo, { kind: 'process'
     endedAt: null,
     exitCode: null,
     status: 'running',
+    detached: true,
     ...overrides,
   };
 }

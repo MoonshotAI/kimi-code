@@ -19,6 +19,7 @@ export const backgroundTaskSchema = z.object({
   kind: backgroundTaskKindSchema,
   description: z.string(),
   status: backgroundTaskStatusSchema,
+  command: z.string().optional(),
   created_at: isoDateTimeSchema,
   started_at: isoDateTimeSchema.optional(),
   completed_at: isoDateTimeSchema.optional(),

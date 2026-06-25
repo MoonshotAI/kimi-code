@@ -89,6 +89,7 @@ export interface KimiHarnessOptions {
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
   readonly strictConfig?: boolean;
+  readonly sessionStartedProperties?: TelemetryProperties;
 }
 
 export interface CreateSessionOptions {
@@ -101,6 +102,8 @@ export interface CreateSessionOptions {
   readonly metadata?: JsonObject | undefined;
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
+  readonly additionalDirs?: readonly string[];
+  readonly sessionStartedProperties?: TelemetryProperties;
 }
 
 export interface RenameSessionInput {
@@ -112,6 +115,22 @@ export interface ResumeSessionInput {
   readonly id: string;
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
+  readonly additionalDirs?: readonly string[];
+  readonly sessionStartedProperties?: TelemetryProperties;
+}
+
+export interface ReloadSessionInput extends ResumeSessionInput {
+  readonly forcePluginSessionStartReminder?: boolean;
+}
+
+export interface AddAdditionalDirInput {
+  readonly id: string;
+  readonly path: string;
+  readonly persist: boolean;
+}
+
+export interface AddAdditionalDirOptions {
+  readonly persist: boolean;
 }
 
 export interface ForkSessionInput {
@@ -150,6 +169,10 @@ export interface GetConfigOptions {
 
 export interface CompactOptions {
   readonly instruction?: string | undefined;
+}
+
+export interface ReloadSessionOptions {
+  readonly forcePluginSessionStartReminder?: boolean;
 }
 
 export interface PlanInfo {
@@ -195,6 +218,14 @@ export interface SessionSummary {
   readonly updatedAt: number;
   readonly archived?: boolean | undefined;
   readonly metadata?: JsonObject | undefined;
+  readonly additionalDirs?: readonly string[];
+}
+
+export interface AddAdditionalDirResult {
+  readonly additionalDirs: readonly string[];
+  readonly projectRoot: string;
+  readonly configPath: string;
+  readonly persisted: boolean;
 }
 
 export type ResumedSessionState = Pick<ResumeSessionResult, 'sessionMetadata' | 'agents' | 'warning'>;

@@ -40,6 +40,12 @@ export interface RefreshResult {
   readonly failed: ReadonlyArray<{ readonly provider: string; readonly reason: string }>;
 }
 
+export type RefreshProviderScope = 'all' | 'oauth';
+
+export interface RefreshProviderOptions {
+  readonly scope?: RefreshProviderScope;
+}
+
 function readCustomRegistrySource(provider: ProviderConfig): CustomRegistrySource | undefined {
   const source = provider.source;
   if (typeof source !== 'object' || source === null) return undefined;
@@ -264,10 +270,14 @@ function pickDefaultModel(config: KimiConfig, providerId: string, models: Array<
   return firstModel.id;
 }
 
-export async function refreshAllProviderModels(host: RefreshProviderHost): Promise<RefreshResult> {
+export async function refreshAllProviderModels(
+  host: RefreshProviderHost,
+  options: RefreshProviderOptions = {},
+): Promise<RefreshResult> {
   const changed: ProviderChange[] = [];
   const unchanged: string[] = [];
   const failed: Array<{ provider: string; reason: string }> = [];
+  const scope = options.scope ?? 'all';
 
   let config = await host.getConfig();
 
@@ -341,6 +351,10 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
         reason: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  if (scope === 'oauth') {
+    return { changed, unchanged, failed };
   }
 
   // -------------------------------------------------------------------------

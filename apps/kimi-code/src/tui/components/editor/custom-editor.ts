@@ -8,6 +8,7 @@ import {
   matchesKey,
   Key,
   SelectList,
+  visibleWidth,
   type SelectItem,
   type TUI,
 } from '@earendil-works/pi-tui';
@@ -15,6 +16,9 @@ import {
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 
+import { printableChar } from '#/tui/utils/printable-key';
+
+import { extractAtPrefix } from './file-mention-provider';
 import { WrappingSelectList } from './wrapping-select-list';
 
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
@@ -118,6 +122,10 @@ export class CustomEditor extends Editor {
   public onToggleToolExpand?: () => void;
   public onOpenExternalEditor?: () => void;
   public onCtrlS?: () => void;
+  /** Return `true` to consume Ctrl+B; return `false`/`undefined` to fall through to the editor default (cursor-left). */
+  public onCtrlB?: () => boolean;
+  /** Return `true` to consume Ctrl+T (the todo list had overflow to toggle); return `false`/`undefined` to fall through to the editor default. */
+  public onToggleTodoExpand?: () => boolean;
   public onUndo?: () => void;
   public onInsertNewline?: () => void;
   public onTextPaste?: () => void;
@@ -129,6 +137,10 @@ export class CustomEditor extends Editor {
   public onUpArrowEmpty?: () => boolean;
   public onDownArrowEmpty?: () => boolean;
   public onShiftTab?: () => void;
+  /** 'bash' when entering a `!` shell command. The `!` is never part of the
+   *  text buffer — it is a separate mode + prompt symbol (see handleInput). */
+  public inputMode: 'prompt' | 'bash' = 'prompt';
+  public onInputModeChange?: (mode: 'prompt' | 'bash') => void;
   public connectedAbove = false;
   public borderHighlighted = false;
   /**
@@ -143,6 +155,11 @@ export class CustomEditor extends Editor {
 
   private consumingPaste = false;
   private consumeBuffer = '';
+  private argumentHints: ReadonlyMap<string, string> = new Map();
+
+  setArgumentHints(hints: ReadonlyMap<string, string>): void {
+    this.argumentHints = hints;
+  }
 
   constructor(tui: TUI) {
     // paddingX: 4 reserves column 0 for the left vertical border (│),
@@ -216,6 +233,7 @@ export class CustomEditor extends Editor {
     const lines = super.render(width);
     if (lines.length < 3) return lines;
     const firstContentIdx = 1;
+    const isBash = this.inputMode === 'bash';
     const text = this.getText().trimStart();
     if (text.startsWith('/')) {
       // Paint only the FIRST editor content line; multi-line slash commands
@@ -228,9 +246,20 @@ export class CustomEditor extends Editor {
         }
       }
     }
+    const hint = this.computeArgumentHint();
+    if (hint !== undefined) {
+      const line = lines[firstContentIdx];
+      if (line !== undefined) {
+        lines[firstContentIdx] = injectArgumentHint(line, hint, this.getText().length, width);
+      }
+    }
     const firstContent = lines[firstContentIdx];
     if (firstContent !== undefined) {
-      const withPrompt = injectPromptSymbol(firstContent);
+      const withPrompt = injectPromptSymbol(
+        firstContent,
+        isBash ? '!' : '>',
+        isBash ? (s) => this.borderColor(s) : undefined,
+      );
       if (withPrompt !== undefined) {
         lines[firstContentIdx] = withPrompt;
       }
@@ -241,7 +270,24 @@ export class CustomEditor extends Editor {
     // side bars through the same hook to stay in sync.
     return wrapWithSideBorders(lines, (s) => this.borderColor(s), {
       connectedAbove: this.connectedAbove && !this.borderHighlighted,
+      label: isBash ? ` ${currentTheme.boldFg('shellMode', '! shell mode')} ` : undefined,
     });
+  }
+
+  private computeArgumentHint(): string | undefined {
+    const text = this.getText();
+    const match = /^\/(\S+)( ?)$/.exec(text);
+    if (match === null) return undefined;
+    const cmd = match[1];
+    const trailingSpace = match[2] ?? '';
+    if (cmd === undefined) return undefined;
+    const hint = this.argumentHints.get(cmd);
+    if (hint === undefined) return undefined;
+    const { line, col } = this.getCursor();
+    if (line !== 0) return undefined;
+    const currentLine = this.getLines()[0] ?? '';
+    if (col !== currentLine.length) return undefined;
+    return trailingSpace.length > 0 ? hint : ` ${hint}`;
   }
 
   override handleInput(data: string): void {
@@ -320,6 +366,19 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    if (matchesKey(normalized, Key.ctrl('b'))) {
+      // Only consume the key when the handler actually detached something;
+      // otherwise fall through so readline's backward-char still works at the
+      // idle prompt.
+      if (this.onCtrlB?.() === true) return;
+    }
+
+    if (matchesKey(normalized, Key.ctrl('t'))) {
+      // Only consume the key when the todo list actually has overflow to
+      // expand/collapse; otherwise fall through to the editor default.
+      if (this.onToggleTodoExpand?.() === true) return;
+    }
+
     if (matchesKey(normalized, 'shift+tab')) {
       this.onShiftTab?.();
       return;
@@ -327,6 +386,19 @@ export class CustomEditor extends Editor {
 
     if (matchesKey(normalized, Key.ctrl('-'))) {
       this.onUndo?.();
+    }
+
+    // Exit bash mode: Backspace/Escape on an empty `!` prompt returns to prompt
+    // mode. Because the `!` is not in the buffer, "deleting" it is really
+    // "delete on empty bash input".
+    if (
+      this.inputMode === 'bash' &&
+      this.getText().length === 0 &&
+      (matchesKey(normalized, Key.escape) || matchesKey(normalized, Key.backspace))
+    ) {
+      this.inputMode = 'prompt';
+      this.onInputModeChange?.('prompt');
+      return;
     }
 
     const newlineInput = getNewlineInput(normalized);
@@ -358,7 +430,79 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    // Swallow Tab while the autocomplete dropdown is closed so it does not
+    // trigger pi-tui's built-in file completion. When the dropdown is open,
+    // fall through so pi-tui can still accept the selected item with Tab.
+    if (matchesKey(normalized, Key.tab) && !this.isShowingAutocomplete()) {
+      return;
+    }
+
+    // Enter bash mode: typing `!` at the start of an empty prompt. The `!` is
+    // not inserted into the buffer — it becomes the mode + prompt symbol, so the
+    // cursor never has to skip over it and submit never has to strip it.
+    if (
+      this.inputMode === 'prompt' &&
+      printableChar(normalized) === '!' &&
+      this.getText().length === 0
+    ) {
+      this.inputMode = 'bash';
+      this.onInputModeChange?.('bash');
+      return;
+    }
+
+    const emptyPromptBeforeInput = this.inputMode === 'prompt' && this.getText().length === 0;
     super.handleInput(normalized);
+
+    // Enter bash mode when `!...` is pasted into an empty prompt. The typed path
+    // above handles the single `!` keystroke; this catches bracketed / Ctrl-V
+    // pastes whose content starts with `!`. Strip the leading `!` so the buffer
+    // holds only the command, exactly like the typed path.
+    if (emptyPromptBeforeInput && this.inputMode === 'prompt' && this.getText().startsWith('!')) {
+      this.inputMode = 'bash';
+      this.onInputModeChange?.('bash');
+      this.setText(this.getText().slice(1));
+    }
+
+    this.reopenAutocompleteAfterInput();
+  }
+
+  private reopenAutocompleteAfterInput(): void {
+    if (this.isShowingAutocomplete()) return;
+    const { line, col } = this.getCursor();
+    const textBeforeCursor = this.getLines()[line]?.slice(0, col) ?? '';
+    const editor = this as unknown as {
+      requestAutocomplete?: (options: { force: boolean; explicitTab: boolean }) => void;
+    };
+    if (editor.requestAutocomplete === undefined) return;
+    const trigger = (): void => {
+      // Use force:false so slash-aware logic runs: commands with argument
+      // completions return their subcommands, commands without them return
+      // null. force:true would bypass the slash branch and fall through to
+      // path completion, wrongly popping up the file list.
+      editor.requestAutocomplete?.({ force: false, explicitTab: false });
+    };
+
+    // Reopen path / argument completion right after a `/` is typed
+    // (e.g. `/add-dir /` or an `@dir/` mention).
+    if (textBeforeCursor.endsWith('/')) {
+      const isSlashArgument = textBeforeCursor.startsWith('/') && textBeforeCursor.includes(' ');
+      const isAtMention = extractAtPrefix(textBeforeCursor) !== null;
+      if (isSlashArgument || isAtMention) {
+        trigger();
+      }
+      return;
+    }
+
+    // After accepting a slash command name via Tab, pi-tui inserts a trailing
+    // space and closes the menu without triggering argument completion. Reopen
+    // it so subcommands (e.g. `/goal ` → status/pause/…) show immediately.
+    if (
+      textBeforeCursor.endsWith(' ') &&
+      textBeforeCursor.startsWith('/') &&
+      textBeforeCursor.includes(' ')
+    ) {
+      trigger();
+    }
   }
 }
 
@@ -443,6 +587,53 @@ function highlightVisibleRanges(
   return out + line.slice(rawCursor);
 }
 
+// Mirrors the editor's paddingX (see constructor). The hint is spliced into
+// the first content line, which starts with this many spaces of left padding.
+const EDITOR_LEFT_PADDING = 4;
+// pi-tui renders the end-of-input cursor as an inverse-video space.
+const CURSOR_BLOCK = '\u001B[7m \u001B[0m';
+
+/**
+ * Splice a dimmed argument-hint ghost string into the first content line.
+ *
+ * The hint is purely visual: it is appended after the typed command (and
+ * after the cursor block when one is rendered) so the cursor stays at the
+ * end of the real input. It consumes trailing padding space, so the line
+ * width is preserved; if it would overflow the box it is truncated with an
+ * ellipsis. Returns the line unchanged when there is no room for a hint.
+ */
+function injectArgumentHint(
+  line: string,
+  hint: string,
+  realTextLength: number,
+  width: number,
+): string {
+  const cursorIdx = line.indexOf(CURSOR_BLOCK);
+  const cursorPresent = cursorIdx !== -1;
+  const contentWidth = Math.max(1, width - EDITOR_LEFT_PADDING * 2);
+  // Room left in the content area after the typed text (and cursor). The hint
+  // must fit within this so the rendered line keeps its width.
+  const available = contentWidth - realTextLength - (cursorPresent ? 1 : 0);
+  const trimmed = truncateHint(hint, available);
+  if (trimmed.length === 0) return line;
+  const colored = currentTheme.fg('textDim', trimmed);
+  const insertAt = cursorPresent
+    ? cursorIdx + CURSOR_BLOCK.length
+    : mapVisibleIdxToRaw(line, EDITOR_LEFT_PADDING + realTextLength);
+  // Everything after the insertion point is trailing padding + right padding
+  // (plain spaces). Replace it with the hint followed by the remaining spaces
+  // so the visible line width is preserved.
+  const trailing = line.length - insertAt;
+  return line.slice(0, insertAt) + colored + ' '.repeat(Math.max(0, trailing - trimmed.length));
+}
+
+function truncateHint(hint: string, maxLen: number): string {
+  if (maxLen <= 0) return '';
+  if (hint.length <= maxLen) return hint;
+  if (maxLen === 1) return '…';
+  return `${hint.slice(0, maxLen - 1)}…`;
+}
+
 /**
  * Overlay a terminal-style `> ` prompt symbol on the first content line.
  * Column 0 is reserved for the left vertical border (overlaid later by
@@ -453,12 +644,17 @@ function highlightVisibleRanges(
  * default foreground colour renders the symbol. Returns `undefined` if the
  * line is too short or doesn't begin with the expected padding.
  */
-export function injectPromptSymbol(line: string): string | undefined {
+export function injectPromptSymbol(
+  line: string,
+  symbol = '>',
+  paint?: (s: string) => string,
+): string | undefined {
   if (line.length < 4) return undefined;
   for (let i = 0; i < 4; i++) {
     if (line[i] !== ' ') return undefined;
   }
-  return '  > ' + line.slice(4);
+  const rendered = paint ? paint(symbol) : symbol;
+  return '  ' + rendered + ' ' + line.slice(4);
 }
 
 /**
@@ -472,21 +668,37 @@ export function injectPromptSymbol(line: string): string | undefined {
  * inner SGR intact; only column 0 and the last column are overlaid, and
  * only if they're literal spaces — that protects the cursor-overflow
  * case where the rightmost column is an SGR-tagged inverse cursor.
+ *
+ * When `options.label` is set, it is overlaid on the left of the top border
+ * (e.g. the `! shell mode` badge), replacing the leading dashes. It is only
+ * applied to a plain dash run, never to a `↑/↓ N more` scroll indicator.
  */
 export function wrapWithSideBorders(
   lines: string[],
   paint: (s: string) => string,
-  options: { readonly connectedAbove?: boolean } = {},
+  options: { readonly connectedAbove?: boolean; readonly label?: string } = {},
 ): string[] {
   let seenTop = false;
   return lines.map((line) => {
     const plain = stripSgr(line);
     if (plain.length > 0 && plain[0] === '─') {
+      const isTop = !seenTop;
       const leftCorner = seenTop ? '╰' : options.connectedAbove === true ? '├' : '╭';
       const rightCorner = seenTop ? '╯' : options.connectedAbove === true ? '┤' : '╮';
       seenTop = true;
       if (plain.length === 1) return paint(leftCorner);
       const middle = plain.slice(1, -1);
+      if (isTop && options.label !== undefined && /^─+$/.test(middle)) {
+        const labelWidth = visibleWidth(options.label);
+        if (labelWidth <= middle.length) {
+          return (
+            paint(leftCorner) +
+            options.label +
+            paint('─'.repeat(middle.length - labelWidth)) +
+            paint(rightCorner)
+          );
+        }
+      }
       return paint(leftCorner + middle + rightCorner);
     }
     if (line.length === 0) return line;

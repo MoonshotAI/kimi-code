@@ -10,7 +10,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  KIMI_CODE_BANNER_DIR_NAME,
+  KIMI_CODE_BANNER_STATE_FILE_NAME,
   KIMI_CODE_BIN_DIR_NAME,
+  KIMI_CODE_CACHE_DIR_NAME,
   KIMI_CODE_DATA_DIR_NAME,
   KIMI_CODE_HOME_ENV,
   KIMI_CODE_INPUT_HISTORY_DIR_NAME,
@@ -18,6 +21,7 @@ import {
   KIMI_CODE_UPDATE_INSTALL_LOCK_FILE_NAME,
   KIMI_CODE_UPDATE_INSTALL_STATE_FILE_NAME,
   KIMI_CODE_UPDATE_DIR_NAME,
+  KIMI_CODE_UPDATE_ROLLOUT_LOG_FILE_NAME,
   KIMI_CODE_UPDATE_STATE_FILE_NAME,
 } from '#/constant/app';
 
@@ -39,6 +43,13 @@ export function getDataDir(): string {
  */
 export function getLogDir(): string {
   return join(getDataDir(), KIMI_CODE_LOG_DIR_NAME);
+}
+
+/**
+ * Return the CLI cache directory: `<dataDir>/cache/`.
+ */
+export function getCacheDir(): string {
+  return join(getDataDir(), KIMI_CODE_CACHE_DIR_NAME);
 }
 
 /**
@@ -67,6 +78,20 @@ export function getUpdateInstallStateFile(): string {
  */
 export function getUpdateInstallLockFile(): string {
   return join(getDataDir(), KIMI_CODE_UPDATE_DIR_NAME, KIMI_CODE_UPDATE_INSTALL_LOCK_FILE_NAME);
+}
+
+/**
+ * Return the rollout decision log: `<dataDir>/updates/rollout.log`.
+ */
+export function getUpdateRolloutLogFile(): string {
+  return join(getDataDir(), KIMI_CODE_UPDATE_DIR_NAME, KIMI_CODE_UPDATE_ROLLOUT_LOG_FILE_NAME);
+}
+
+/**
+ * Return the banner display state file: `<dataDir>/cache/banner/state.json`.
+ */
+export function getBannerStateFile(): string {
+  return join(getCacheDir(), KIMI_CODE_BANNER_DIR_NAME, KIMI_CODE_BANNER_STATE_FILE_NAME);
 }
 
 /**

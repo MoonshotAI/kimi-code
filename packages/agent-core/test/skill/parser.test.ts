@@ -8,7 +8,7 @@ import {
   discoverSkills,
   expandSkillParameters,
   type SkillDefinition,
-  SkillRegistry,
+  SessionSkillRegistry,
   type SkillRoot,
 } from '../../src/skill';
 
@@ -181,7 +181,7 @@ describe('skill parameter expansion', () => {
 
 describe('SkillRegistry.renderSkillPrompt', () => {
   it('expands argument placeholders without appending duplicate arguments', () => {
-    const rendered = new SkillRegistry().renderSkillPrompt(
+    const rendered = new SessionSkillRegistry().renderSkillPrompt(
       testSkill({
         content: 'Review $target from $ARGUMENTS.',
         metadata: { arguments: ['target'] },
@@ -194,7 +194,7 @@ describe('SkillRegistry.renderSkillPrompt', () => {
   });
 
   it('appends ARGUMENTS when the body has no argument placeholders', () => {
-    const rendered = new SkillRegistry().renderSkillPrompt(
+    const rendered = new SessionSkillRegistry().renderSkillPrompt(
       testSkill({ content: 'Review this file.' }),
       'src/app.ts',
     );
@@ -203,7 +203,7 @@ describe('SkillRegistry.renderSkillPrompt', () => {
   });
 
   it('expands context placeholders and still appends args when no argument placeholder is used', () => {
-    const rendered = new SkillRegistry({ sessionId: 'ses_1' }).renderSkillPrompt(
+    const rendered = new SessionSkillRegistry({ sessionId: 'ses_1' }).renderSkillPrompt(
       testSkill({ content: 'Use ${KIMI_SKILL_DIR}/references/checklist.md.' }),
       'src/app.ts',
     );
@@ -214,7 +214,7 @@ describe('SkillRegistry.renderSkillPrompt', () => {
   });
 
   it('does not treat longer variable names as declared argument placeholders', () => {
-    const rendered = new SkillRegistry().renderSkillPrompt(
+    const rendered = new SessionSkillRegistry().renderSkillPrompt(
       testSkill({
         content: 'Leave $targeted alone.',
         metadata: { arguments: ['target'] },
@@ -226,7 +226,7 @@ describe('SkillRegistry.renderSkillPrompt', () => {
   });
 
   it('accepts space-separated argument names', () => {
-    const rendered = new SkillRegistry().renderSkillPrompt(
+    const rendered = new SessionSkillRegistry().renderSkillPrompt(
       testSkill({
         content: 'Target: $target\nMode: $mode',
         metadata: { arguments: 'target mode' },
@@ -238,7 +238,7 @@ describe('SkillRegistry.renderSkillPrompt', () => {
   });
 
   it('ignores numeric argument names so positional placeholders keep shell-like semantics', () => {
-    const rendered = new SkillRegistry().renderSkillPrompt(
+    const rendered = new SessionSkillRegistry().renderSkillPrompt(
       testSkill({
         content: 'Zero: $0\nOne: $1',
         metadata: { arguments: ['1'] },
@@ -250,7 +250,7 @@ describe('SkillRegistry.renderSkillPrompt', () => {
   });
 
   it('prepends plugin instructions when a skill came from a plugin root', () => {
-    const rendered = new SkillRegistry().renderSkillPrompt(
+    const rendered = new SessionSkillRegistry().renderSkillPrompt(
       testSkill({
         content: 'Brainstorm body.',
         plugin: {

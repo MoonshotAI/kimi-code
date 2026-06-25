@@ -96,7 +96,6 @@ describe('questionRequestSchema (SCHEMAS §6.2)', () => {
       },
     ],
     created_at: '2026-06-04T10:30:00Z',
-    expires_at: '2026-06-04T10:31:00Z',
   };
 
   it('accepts a 1-question request', () => {
@@ -262,7 +261,6 @@ describe('listPendingQuestionsResponseSchema (REST pending recovery)', () => {
       },
     ],
     created_at: '2026-06-04T10:30:00Z',
-    expires_at: '2026-06-04T10:31:00Z',
   };
 
   it('accepts status=pending query', () => {

@@ -4,10 +4,11 @@
 
 ## 接入方式
 
-Kimi Code CLI 支持两种 MCP server 接入方式：
+Kimi Code CLI 支持三种 MCP server 接入方式：
 
 - **stdio**：CLI 以子进程方式启动本地 MCP server，通过标准输入输出通信。适合本地命令行工具。
 - **HTTP**：CLI 连接一个已在运行的 HTTP 端点。适合远程服务或需要持久运行的进程。
+- **SSE**：CLI 连接旧式 HTTP+SSE 端点（Server-Sent Events，一种流式 HTTP 机制）。新 MCP server 优先使用 HTTP；只有服务仍仅暴露旧式 SSE 传输时，才设置 `transport: "sse"`。
 
 ## 配置
 
@@ -31,12 +32,16 @@ MCP server 配置写在 `mcp.json` 中，分两层：
     },
     "linear": {
       "url": "https://mcp.linear.app/mcp"
+    },
+    "legacy-events": {
+      "transport": "sse",
+      "url": "https://mcp.example.com/sse"
     }
   }
 }
 ```
 
-含 `command` 字段的条目为 stdio server，含 `url` 字段的条目为 HTTP server，通常不需要手写 `transport` 字段。
+含 `command` 字段的条目为 stdio server；含 `url` 字段且未写 `transport` 的条目为 HTTP server。旧式 SSE server 需要显式把 `transport` 设为 `"sse"`。
 
 可选字段：
 
@@ -44,14 +49,15 @@ MCP server 配置写在 `mcp.json` 中，分两层：
 | --- | --- | --- | --- |
 | `env` | `Record<string, string>` | stdio | 注入子进程的环境变量 |
 | `cwd` | `string` | stdio | 子进程工作目录 |
-| `headers` | `Record<string, string>` | HTTP | 附加到每次请求的静态请求头 |
-| `enabled` | `boolean` | 两者 | 设为 `false` 可禁用该 server |
-| `startupTimeoutMs` | `number` | 两者 | 连接超时，默认 `30000` 毫秒 |
-| `toolTimeoutMs` | `number` | 两者 | 单次工具调用超时 |
-| `enabledTools` | `string[]` | 两者 | 工具白名单 |
-| `disabledTools` | `string[]` | 两者 | 工具黑名单 |
+| `headers` | `Record<string, string>` | HTTP、SSE | 附加到每次请求的静态请求头 |
+| `bearerTokenEnvVar` | `string` | HTTP、SSE | 存放 bearer token 的环境变量名 |
+| `enabled` | `boolean` | 全部 | 设为 `false` 可禁用该 server |
+| `startupTimeoutMs` | `number` | 全部 | 连接超时，默认 `30000` 毫秒 |
+| `toolTimeoutMs` | `number` | 全部 | 单次工具调用超时 |
+| `enabledTools` | `string[]` | 全部 | 工具白名单 |
+| `disabledTools` | `string[]` | 全部 | 工具黑名单 |
 
-HTTP server 支持通过 `headers` 或 `bearerTokenEnvVar` 提供静态凭证。需要 OAuth 时，运行 `/mcp-config login <server-name>` 完成浏览器授权。
+HTTP 与 SSE server 支持通过 `headers` 或 `bearerTokenEnvVar` 提供静态凭证。需要 OAuth 时，运行 `/mcp-config login <server-name>` 完成浏览器授权。
 
 Plugins 也可以在 manifest 中声明 MCP servers。Plugin 声明的 servers 默认启用，可以在 `/plugins` 中禁用或重新启用，然后开启新会话。详见 [Plugins](./plugins.md)。
 

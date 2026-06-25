@@ -13,6 +13,7 @@ interface CompactionRibbonProps {
  */
 export function CompactionRibbon({ message }: CompactionRibbonProps) {
   const summary = extractSummary(message);
+  const stats = message.compaction;
   return (
     <div className="my-3 flex flex-col gap-2">
       <div className="flex items-center gap-3">
@@ -22,6 +23,12 @@ export function CompactionRibbon({ message }: CompactionRibbonProps) {
         </span>
         <span className="h-px flex-1 bg-[var(--color-compaction)] opacity-50" />
       </div>
+      {stats ? (
+        <div className="text-center font-mono text-[10.5px] text-fg-3">
+          {stats.compactedCount} msgs · {stats.tokensBefore.toLocaleString()}→
+          {stats.tokensAfter.toLocaleString()} tok
+        </div>
+      ) : null}
       {summary.length > 0 ? (
         <pre className="whitespace-pre-wrap break-words font-mono text-[12px] text-fg-2">
           {summary}

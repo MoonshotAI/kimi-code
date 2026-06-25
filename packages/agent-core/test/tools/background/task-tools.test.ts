@@ -12,7 +12,6 @@ import type { KaosProcess } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  AgentBackgroundTask,
   BackgroundTaskPersistence,
   type BackgroundManager,
   type BackgroundTaskInfo,
@@ -21,6 +20,7 @@ import { TaskListTool } from '../../../src/tools/background/task-list';
 import { TaskOutputTool } from '../../../src/tools/background/task-output';
 import { TaskStopTool } from '../../../src/tools/background/task-stop';
 import {
+  agentTask,
   createBackgroundManager,
   registerProcess,
   waitForOutput,
@@ -43,6 +43,7 @@ function immediateProcess(exitCode: number, stdoutText = ''): KaosProcess {
     exitCode,
     wait: vi.fn().mockResolvedValue(exitCode) as KaosProcess['wait'],
     kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
   };
 }
 
@@ -67,6 +68,7 @@ function pendingProcess(): KaosProcess {
     },
     wait: () => waitPromise,
     kill: killSpy as unknown as KaosProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
   };
 }
 
@@ -270,7 +272,7 @@ describe('TaskOutputTool', () => {
   it('returns agent metadata and final summary without process fields', async () => {
     const { manager } = createBackgroundManager();
     const taskId = manager.registerTask(
-      new AgentBackgroundTask(
+      agentTask(
         Promise.resolve({ result: 'SUBAGENT-FINAL-SUMMARY\n' }),
         'agent output test',
         { agentId: 'agent-child', subagentType: 'coder' },
@@ -336,12 +338,16 @@ describe('TaskOutputTool', () => {
   });
 
   it('surfaces timeout terminal metadata', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { manager } = createBackgroundManager();
     const taskId = manager.registerTask(
-      new AgentBackgroundTask(new Promise(() => {}), 'will time out', { timeoutMs: 1 }),
+      agentTask(new Promise(() => {}), 'will time out'),
+      { timeoutMs: 1 },
     );
 
-    await manager.wait(taskId);
+    const terminal = manager.wait(taskId);
+    await vi.advanceTimersByTimeAsync(5_010);
+    await terminal;
     const content = await taskOutput(manager, taskId, true);
 
     expect(content).toContain('status: timed_out');

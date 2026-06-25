@@ -7,6 +7,7 @@ import {
   ProviderConfigSchema,
   transformTomlData,
 } from '@moonshot-ai/agent-core';
+import { FLAG_DEFINITIONS } from '@moonshot-ai/agent-core/flags/registry';
 import { atomicWrite } from '../atomic-write.js';
 import { DEFAULT_CONFIG_FILE_TEXT, isTuiStubOrMissing } from '../stub-detect.js';
 import {
@@ -19,6 +20,18 @@ import {
 
 // `theme` / `default_editor` belong in tui.toml, not config.toml.
 const TUI_TOP_LEVEL_KEYS = new Set(['theme', 'default_editor']);
+const TOP_LEVEL_KEYS_TO_DROP = new Set(['plan_mode', 'yolo']);
+const LOOP_CONTROL_FIELDS_TO_KEEP = new Set([
+  'max_retries_per_step',
+  'reserved_context_size',
+]);
+const BACKGROUND_FIELDS_TO_KEEP = new Set([
+  'max_running_tasks',
+  'keep_alive_on_exit',
+]);
+const REGISTERED_EXPERIMENTAL_FLAGS: ReadonlySet<string> = new Set(
+  FLAG_DEFINITIONS.map((definition) => definition.id),
+);
 
 // kimi-code's tui.toml `theme` enum (mirrors apps/kimi-code TuiThemeSchema).
 // A legacy theme outside this set would fail loadTuiConfig()'s whole-file
@@ -95,6 +108,23 @@ function emptyResult(): ConfigStepResult {
     droppedHooks: 0,
     siblingContents: { providers: [], models: [], hooks: 0 },
   };
+}
+
+function filterFields(
+  value: Record<string, unknown>,
+  fieldsToKeep: ReadonlySet<string>,
+): Record<string, unknown> | undefined {
+  const keptEntries = Object.entries(value).filter(([field]) => fieldsToKeep.has(field));
+  return keptEntries.length > 0 ? Object.fromEntries(keptEntries) : undefined;
+}
+
+function filterRegisteredExperimentalFlags(
+  value: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const keptEntries = Object.entries(value).filter(
+    ([field, flag]) => REGISTERED_EXPERIMENTAL_FLAGS.has(field) && typeof flag === 'boolean',
+  );
+  return keptEntries.length > 0 ? Object.fromEntries(keptEntries) : undefined;
 }
 
 /** True when the kimi-cli provider entry validates against kimi-code's schema. */
@@ -309,6 +339,7 @@ export async function migrateConfigStep(input: ConfigStepInput): Promise<ConfigS
   for (const [k, v] of Object.entries(parsed)) {
     if (k === 'providers' || k === 'models' || k === 'hooks') continue;
     if (TUI_TOP_LEVEL_KEYS.has(k)) continue;
+    if (TOP_LEVEL_KEYS_TO_DROP.has(k)) continue;
     if (k === 'default_yolo') {
       // kimi-cli's `default_yolo` maps to kimi-code's `default_permission_mode`.
       if (v === true) migratedTop['default_permission_mode'] = 'yolo';
@@ -328,6 +359,27 @@ export async function migrateConfigStep(input: ConfigStepInput): Promise<ConfigS
       keptModels[v] === undefined &&
       !availableModelNames.has(v)
     ) {
+      continue;
+    }
+    if (k === 'loop_control' && isRecord(v)) {
+      const filteredLoopControl = filterFields(v, LOOP_CONTROL_FIELDS_TO_KEEP);
+      if (filteredLoopControl !== undefined) {
+        migratedTop[k] = filteredLoopControl;
+      }
+      continue;
+    }
+    if (k === 'background' && isRecord(v)) {
+      const filteredBackground = filterFields(v, BACKGROUND_FIELDS_TO_KEEP);
+      if (filteredBackground !== undefined) {
+        migratedTop[k] = filteredBackground;
+      }
+      continue;
+    }
+    if (k === 'experimental' && isRecord(v)) {
+      const filteredExperimental = filterRegisteredExperimentalFlags(v);
+      if (filteredExperimental !== undefined) {
+        migratedTop[k] = filteredExperimental;
+      }
       continue;
     }
     migratedTop[k] = v;

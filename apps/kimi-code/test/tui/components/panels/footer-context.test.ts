@@ -22,6 +22,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
   return {
     model: 'k2',
     workDir: '/tmp',
+    additionalDirs: [],
     sessionId: 'sess_1',
     permissionMode: 'manual',
     planMode: false,

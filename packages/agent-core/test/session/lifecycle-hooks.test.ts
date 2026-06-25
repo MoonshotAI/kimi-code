@@ -11,7 +11,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
-import { AgentBackgroundTask, ProcessBackgroundTask } from '../../src/agent/background';
+import { ProcessBackgroundTask } from '../../src/agent/background';
+import { agentTask } from '../agent/background/helpers';
 
 
 const tempDirs: string[] = [];
@@ -131,6 +132,30 @@ describe('Session lifecycle hooks', () => {
     expect(agent.background.getTask(taskId)?.status).toBe('killed');
   });
 
+  it('does not steer background task notifications while closing the session', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-bg-cleanup-no-steer',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+    const agent = await session.createMain();
+    const steerSpy = vi.spyOn(agent.turn, 'steer');
+    const { proc, killSpy } = pendingProcess();
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'exit cleanup without steer'),
+    );
+
+    await session.close();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+    expect(agent.background.getTask(taskId)?.status).toBe('killed');
+    expect(steerSpy).not.toHaveBeenCalled();
+  });
+
   it('keeps background tasks alive on close when keepAliveOnExit is true', async () => {
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({
@@ -176,10 +201,11 @@ describe('Session lifecycle hooks', () => {
       turnSettled.resolve();
     });
     vi.spyOn(child.turn, 'hasActiveTurn', 'get').mockReturnValue(true);
-    const abort = vi.fn();
+    const abortController = new AbortController();
+    const abort = vi.spyOn(abortController, 'abort');
     const taskId = main.background.registerTask(
-      new AgentBackgroundTask(new Promise(() => {}), 'keep background agent alive', {
-        abort,
+      agentTask(new Promise(() => {}), 'keep background agent alive', {
+        abortController,
         agentId: childId,
         subagentType: 'coder',
       }),
@@ -444,6 +470,7 @@ function pendingProcess(exitOnKill = 143): {
     },
     wait: () => waitPromise,
     kill: killSpy as unknown as KaosProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
   };
   return { proc, killSpy };
 }
