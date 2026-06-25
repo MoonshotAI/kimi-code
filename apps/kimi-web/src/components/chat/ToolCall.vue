@@ -86,11 +86,17 @@ const editDiff = computed<DiffViewLine[] | null>(() => {
   const d = parseToolArg(props.tool.arg);
   if (!d) return null;
   if (kind === 'edit') {
+    // A replace_all edit changes many occurrences; a single-pair diff would
+    // misrepresent the result, so fall back to the tool output.
+    if (d.replace_all === true) return null;
     const before = typeof d.old_string === 'string' ? d.old_string : undefined;
     const after = typeof d.new_string === 'string' ? d.new_string : undefined;
     if (before === undefined || after === undefined) return null;
     return buildDiffLines(before, after);
   }
+  // An append write extends an existing file; a from-empty diff would show the
+  // appended chunk as a new file, so fall back to the tool output.
+  if (d.mode === 'append') return null;
   const content = typeof d.content === 'string' ? d.content : undefined;
   if (content === undefined) return null;
   return buildDiffLines('', content);
