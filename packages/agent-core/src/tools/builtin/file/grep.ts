@@ -57,7 +57,7 @@ export const GrepInputSchema = z.object({
     .enum(['content', 'files_with_matches', 'count_matches'])
     .optional()
     .describe(
-      'Shape of the result. `content` shows matching lines (honors `-A`, `-B`, `-C`, `-n`, and `head_limit`); `files_with_matches` shows only the paths of files that contain a match (honors `head_limit`); `count_matches` shows the total number of matches. Defaults to `files_with_matches`.',
+      'Shape of the result. `content` shows matching lines (honors `-A`, `-B`, `-C`, `-n`, and `head_limit`); `files_with_matches` shows only the paths of files that contain a match, most-recently-modified first (honors `head_limit`); `count_matches` shows the total number of matches. Defaults to `files_with_matches`.',
     ),
   '-i': z.boolean().optional().describe('Perform a case-insensitive search. Defaults to false.'),
   '-n': z

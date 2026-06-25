@@ -379,6 +379,19 @@ describe('BashTool', () => {
     expect(tool.description).toContain('/tasks');
   });
 
+  it('points at the cwd argument instead of relying on cross-call cd', () => {
+    const tool = bashTool(
+      createFakeKaos({ osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+    );
+
+    // Each call is a fresh shell (cwd not preserved), and there is a first-class
+    // cwd param — the description must steer toward it rather than cross-call cd.
+    expect(tool.description).toContain('cwd');
+    expect(tool.description).toContain('absolute paths');
+  });
+
   it('runs through execWithEnv, injects cwd, noninteractive env, and closes stdin', async () => {
     const proc = processWithOutput({ stdout: 'ok\n' });
     const execWithEnv = vi.fn().mockResolvedValue(proc);

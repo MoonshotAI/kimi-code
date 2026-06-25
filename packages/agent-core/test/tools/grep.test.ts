@@ -235,6 +235,15 @@ describe('GrepTool', () => {
       expect(params.properties['output_mode']?.description).toContain('count_matches');
     });
 
+    it('documents that files_with_matches is ordered most-recently-modified first', () => {
+      const tool = new GrepTool(createFakeKaos(), workspace);
+      const params = tool.parameters as {
+        properties: Record<string, { description?: string }>;
+      };
+      // grep.ts sorts files_with_matches by mtime descending (b.mtime - a.mtime).
+      expect(params.properties['output_mode']?.description).toContain('most-recently-modified');
+    });
+
     it('does not present an absolute path as a hard requirement for path', () => {
       const tool = new GrepTool(createFakeKaos(), workspace);
       const params = tool.parameters as {
