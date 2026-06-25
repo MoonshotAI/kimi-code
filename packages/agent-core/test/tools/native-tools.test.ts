@@ -57,18 +57,17 @@ describe('native-tools flag gating', () => {
     vi.unstubAllEnvs();
   });
 
-  it('is disabled by default', () => {
-    expect(isNativeToolsEnabled()).toBe(false);
-    expect(tryLoadNative()).toBeUndefined();
+  it('is enabled by default', () => {
+    expect(isNativeToolsEnabled()).toBe(true);
   });
 
-  it('turns on via KIMI_CODE_EXPERIMENTAL_NATIVE_TOOLS', () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NATIVE_TOOLS', '1');
+  it('turns on via KIMI_CODE_NATIVE_TOOLS', () => {
+    vi.stubEnv('KIMI_CODE_NATIVE_TOOLS', '1');
     expect(isNativeToolsEnabled()).toBe(true);
   });
 
   it('remains off for lenient falsy values', () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NATIVE_TOOLS', '0');
+    vi.stubEnv('KIMI_CODE_NATIVE_TOOLS', '0');
     expect(isNativeToolsEnabled()).toBe(false);
   });
 });
@@ -78,7 +77,7 @@ describe('native-tools integration', () => {
   let workspace: { workspaceDir: string; additionalDirs: string[] };
 
   beforeEach(() => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NATIVE_TOOLS', '1');
+    vi.stubEnv('KIMI_CODE_NATIVE_TOOLS', '1');
     tmpDir = mkdtempSync(join(tmpdir(), 'native-tools-test-'));
     workspace = { workspaceDir: tmpDir, additionalDirs: [] };
   });
