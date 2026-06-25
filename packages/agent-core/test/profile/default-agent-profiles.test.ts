@@ -89,6 +89,13 @@ describe('default agent profiles', () => {
       expect(prompt).not.toContain('maintain a `TodoList`'); // TodoList → todo-list.md
       expect(prompt).not.toContain('prefer entering plan mode first'); // EnterPlanMode → enter-plan-mode.md
       expect(prompt).not.toContain('call `TaskList` to re-enumerate'); // compaction recovery → task-list.md
+      // The dedicated-tool routing must name only universally-present tools (Read/Glob/Grep).
+      // Write/Edit/Bash are absent from read-only profiles (plan has no Bash/Write/Edit;
+      // explore no Write/Edit), so naming them in the shared routing sentence would dangle —
+      // that routing lives in bash.md (echo>file→Write, sed→Edit, etc.), which ships with Bash.
+      expect(prompt).not.toContain('`Write` / `Edit` to change files');
+      expect(prompt).not.toContain('Keep `Bash` for genuine shell work');
+      expect(prompt).toContain('`Glob` to find files by name'); // universal routing stays
       expect(prompt).toContain('refuse a fixed set of well-known secret files'); // shared guard stays
     }
   });
