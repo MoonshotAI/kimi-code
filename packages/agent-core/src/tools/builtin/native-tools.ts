@@ -23,7 +23,7 @@ import {
   matchesGlobRuleSubject,
   matchesPathRuleSubject,
 } from '../../tools/support/rule-match';
-import { BashTool } from './shell/bash';
+import { BashTool, type BashInput } from './shell/bash';
 
 // Lazy-load the native module to avoid hard dependency.
 let nativeModule: Record<string, unknown> | undefined;
@@ -447,6 +447,8 @@ export class NativeGlobTool implements BuiltinTool {
 }
 
 export class NativeBashTool extends BashTool {
+  private readonly nativeCwd: string;
+
   constructor(
     kaos: Kaos,
     cwd: string,
@@ -456,5 +458,54 @@ export class NativeBashTool extends BashTool {
     },
   ) {
     super(kaos, cwd, backgroundManager, options);
+    this.nativeCwd = cwd;
+  }
+
+  override resolveExecution(args: BashInput): ToolExecution {
+    const parentExecution = super.resolveExecution(args);
+    if (args.run_in_background === true || parentExecution.isError === true) {
+      return parentExecution;
+    }
+
+    const cwd = args.cwd ?? this.nativeCwd;
+    return {
+      ...parentExecution,
+      execute: async () => {
+        const result = callNative<{
+          exitCode: number;
+          stdout: string;
+          stderr: string;
+          timedOut: boolean;
+          error?: string;
+        }>('nativeBash', args.command, {
+          cwd,
+          timeout: args.timeout,
+        });
+        if (!result) {
+          return { isError: true, output: 'Native tools module not available.' };
+        }
+        if (result.error) {
+          return { isError: true, output: result.error };
+        }
+
+        let output = '';
+        if (result.stdout) output += result.stdout;
+        if (result.stderr) {
+          if (output) output += '\n';
+          output += `[stderr]\n${result.stderr}`;
+        }
+        if (result.timedOut) {
+          output += `\n\nCommand timed out after ${args.timeout ?? 60}s.`;
+        }
+        if (result.exitCode !== 0) {
+          output += `\n\nExit code: ${result.exitCode}`;
+        }
+
+        return {
+          output: output || '(no output)',
+          isError: result.exitCode !== 0 ? true : undefined,
+        };
+      },
+    };
   }
 }

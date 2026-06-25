@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Complete the Rust native tools migration for Read, Write, Edit, Grep, and Glob with streaming I/O, sensitive-file filtering, timeout, and workspace-aware path handling.
+Complete the Rust native tools migration: Read uses streaming I/O, Grep filters sensitive files and skips VCS metadata, Bash calls native execution for foreground commands while preserving background task support.
