@@ -1309,6 +1309,21 @@ command = "vim"
     ]);
   });
 
+  it('does not steer while a shell command is running', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'shell';
+    driver.state.queuedMessages = [{ text: 'summarize the output', agentId: 'main' }];
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'summarize the output', agentId: 'main' },
+    ]);
+  });
+
   it('does not steer the editor draft while it is in bash mode', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);

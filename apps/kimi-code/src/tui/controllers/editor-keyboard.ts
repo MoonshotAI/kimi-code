@@ -174,7 +174,12 @@ export class EditorKeyboardController {
     };
 
     editor.onCtrlS = () => {
-      if (host.state.appState.streamingPhase === 'idle' || host.state.appState.isCompacting) return;
+      if (
+        host.state.appState.streamingPhase === 'idle' ||
+        host.state.appState.streamingPhase === 'shell' ||
+        host.state.appState.isCompacting
+      )
+        return;
       const text = editor.getText().trim();
       const editorIsBash = editor.inputMode === 'bash';
 
