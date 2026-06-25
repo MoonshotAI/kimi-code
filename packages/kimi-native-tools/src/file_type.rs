@@ -290,47 +290,27 @@ pub fn is_sensitive_file(path: &str) -> bool {
     false
 }
 
-/// Same logic as [`is_sensitive_file`], but operates directly on UTF-16 code
-/// units (`&[u16]`) — V8's native string format.
+/// Same logic as [`is_sensitive_file`], but operates on raw bytes (`&[u8]`)
+/// via `Buffer.from(path, 'latin1')` from JS.
 ///
-/// This avoids the UTF-16→UTF-8 conversion + `String` heap allocation that
-/// napi's `String` parameter triggers (~130ns/call overhead). For ASCII
-/// paths (the overwhelming majority), u16 code units are identical to byte
-/// values, so results are identical to `is_sensitive_file`.
+/// This avoids the UTF-16→UTF-8 string conversion that napi's `String`
+/// parameter triggers (~170ns overhead). `Buffer.from(path, 'latin1')` is a
+/// V8 C++ intrinsic that copies bytes directly (~31ns for typical paths).
+/// For ASCII paths, Latin1 bytes are identical to ASCII/UTF-8.
 ///
-/// All comparison helpers are allocation-free: no `replace`, `to_lowercase`,
-/// `format!`, or `Vec` creation.
-pub fn is_sensitive_file_u16(path: &[u16]) -> bool {
-    // ── Allocation-free comparison helpers ─────────────────────────
+/// Uses `eq_ignore_ascii_case` (Rust stdlib, SIMD-optimized) for comparisons.
+/// All operations are allocation-free: no `replace`, `to_lowercase`, or `Vec`.
+pub fn is_sensitive_file_bytes(path: &[u8]) -> bool {
+    // ── Path-suffix helpers (treat `\` and `/` as equivalent) ───────
 
     #[inline]
-    fn lower(c: u16) -> u16 {
-        if (0x41..=0x5A).contains(&c) { c + 0x20 } else { c }
+    fn char_eq_sep(c: u8, a: u8) -> bool {
+        let c = if c == b'\\' { b'/' } else { c.to_ascii_lowercase() };
+        let a = if a == b'\\' { b'/' } else { a.to_ascii_lowercase() };
+        c == a
     }
 
-    /// Case-insensitive equality of a u16 slice against an ASCII byte string.
-    fn eq_ascii(s: &[u16], ascii: &[u8]) -> bool {
-        s.len() == ascii.len()
-            && s.iter().zip(ascii).all(|(&c, &a)| lower(c) == a as u16)
-    }
-
-    /// Case-insensitive starts-with of a u16 slice against an ASCII prefix.
-    fn starts_with_ascii(s: &[u16], prefix: &[u8]) -> bool {
-        s.len() >= prefix.len()
-            && s[..prefix.len()].iter().zip(prefix).all(|(&c, &a)| lower(c) == a as u16)
-    }
-
-    /// Case-insensitive char match that also treats `\` and `/` as equivalent.
-    #[inline]
-    fn char_eq_sep(c: u16, a: u8) -> bool {
-        let c = lower(c);
-        let a = if a.is_ascii_uppercase() { a.to_ascii_lowercase() } else { a };
-        let c = if c == b'\\' as u16 { b'/' as u16 } else { c };
-        c == a as u16
-    }
-
-    /// Case-insensitive path-ends-with, treating `\` and `/` as equivalent.
-    fn path_ends_with(path: &[u16], suffix: &[u8]) -> bool {
+    fn path_ends_with(path: &[u8], suffix: &[u8]) -> bool {
         if path.len() < suffix.len() {
             return false;
         }
@@ -338,8 +318,7 @@ pub fn is_sensitive_file_u16(path: &[u16]) -> bool {
         path[off..].iter().zip(suffix).all(|(&c, &a)| char_eq_sep(c, a))
     }
 
-    /// Case-insensitive path-contains, treating `\` and `/` as equivalent.
-    fn path_contains(path: &[u16], needle: &[u8]) -> bool {
+    fn path_contains(path: &[u8], needle: &[u8]) -> bool {
         if needle.len() > path.len() {
             return false;
         }
@@ -356,70 +335,63 @@ pub fn is_sensitive_file_u16(path: &[u16]) -> bool {
 
     // ── Basename extraction (find last `/` or `\`) ─────────────────
 
-    let slash = b'/' as u16;
-    let backslash = b'\\' as u16;
     let basename_start = path
         .iter()
-        .rposition(|&c| c == slash || c == backslash)
+        .rposition(|&c| c == b'/' || c == b'\\')
         .map(|i| i + 1)
         .unwrap_or(0);
     let name = &path[basename_start..];
 
     // ── Exemptions ─────────────────────────────────────────────────
 
-    if eq_ascii(name, b".env.example")
-        || eq_ascii(name, b".env.sample")
-        || eq_ascii(name, b".env.template")
+    if name.eq_ignore_ascii_case(b".env.example")
+        || name.eq_ignore_ascii_case(b".env.sample")
+        || name.eq_ignore_ascii_case(b".env.template")
     {
         return false;
     }
-    if eq_ascii(name, b"id_rsa.pub")
-        || eq_ascii(name, b"id_ed25519.pub")
-        || eq_ascii(name, b"id_ecdsa.pub")
+    if name.eq_ignore_ascii_case(b"id_rsa.pub")
+        || name.eq_ignore_ascii_case(b"id_ed25519.pub")
+        || name.eq_ignore_ascii_case(b"id_ecdsa.pub")
     {
         return false;
     }
 
     // ── Exact basename matches ─────────────────────────────────────
 
-    if eq_ascii(name, b".env")
-        || eq_ascii(name, b"id_rsa")
-        || eq_ascii(name, b"id_ed25519")
-        || eq_ascii(name, b"id_ecdsa")
-        || eq_ascii(name, b"credentials")
+    if name.eq_ignore_ascii_case(b".env")
+        || name.eq_ignore_ascii_case(b"id_rsa")
+        || name.eq_ignore_ascii_case(b"id_ed25519")
+        || name.eq_ignore_ascii_case(b"id_ecdsa")
+        || name.eq_ignore_ascii_case(b"credentials")
     {
         return true;
     }
 
     // ── .env.* prefix ──────────────────────────────────────────────
 
-    if starts_with_ascii(name, b".env.") {
+    if name.len() >= 5 && name[..5].eq_ignore_ascii_case(b".env.") {
         return true;
     }
 
     // ── Prefixed variants: id_rsa.bak, id_rsa-backup, etc. ─────────
 
-    const PREFIXES: &[&[u8]] = &[
-        b"id_rsa",
-        b"id_ed25519",
-        b"id_ecdsa",
-        b"credentials",
-    ];
+    const PREFIXES: &[&[u8]] = &[b"id_rsa", b"id_ed25519", b"id_ecdsa", b"credentials"];
     const DOT_SUFFIXES: &[&[u8]] = &[
         b".bak", b".backup", b".copy", b".disabled", b".key", b".old", b".orig", b".pem",
         b".save", b".tmp",
     ];
 
     for &prefix in PREFIXES {
-        if name.len() > prefix.len() && starts_with_ascii(name, prefix) {
+        if name.len() > prefix.len() && name[..prefix.len()].eq_ignore_ascii_case(prefix) {
             let suffix = &name[prefix.len()..];
             let next = suffix[0];
-            if next == b'-' as u16 || next == b'_' as u16 {
+            if next == b'-' || next == b'_' {
                 return true;
             }
-            if next == b'.' as u16 {
+            if next == b'.' {
                 for &dot_suffix in DOT_SUFFIXES {
-                    if eq_ascii(suffix, dot_suffix) {
+                    if suffix.eq_ignore_ascii_case(dot_suffix) {
                         return true;
                     }
                 }
@@ -429,14 +401,10 @@ pub fn is_sensitive_file_u16(path: &[u16]) -> bool {
 
     // ── Path suffix checks: .aws/credentials, .gcp/credentials ─────
 
-    if path_ends_with(path, b"/.aws/credentials")
-        || path_contains(path, b"/.aws/credentials/")
-    {
+    if path_ends_with(path, b"/.aws/credentials") || path_contains(path, b"/.aws/credentials/") {
         return true;
     }
-    if path_ends_with(path, b"/.gcp/credentials")
-        || path_contains(path, b"/.gcp/credentials/")
-    {
+    if path_ends_with(path, b"/.gcp/credentials") || path_contains(path, b"/.gcp/credentials/") {
         return true;
     }
 
@@ -561,15 +529,16 @@ mod tests {
     }
 
     // ============================================================================
-    // is_sensitive_file_u16 — verifies identical results to is_sensitive_file
+    // is_sensitive_file_bytes — verifies identical results to is_sensitive_file
+    //
+    // For ASCII paths, `str::as_bytes()` returns UTF-8 bytes which are
+    // byte-identical to the Latin1 output of `Buffer.from(path, 'latin1')`
+    // in JS. All test cases below are ASCII, so this is a faithful mirror
+    // of the production code path.
     // ============================================================================
 
-    fn str_to_u16(s: &str) -> Vec<u16> {
-        s.encode_utf16().collect()
-    }
-
     #[test]
-    fn test_u16_matches_str_all_cases() {
+    fn test_bytes_matches_str_all_cases() {
         let cases = [
             // (path, expected)
             (".env", true),
@@ -614,16 +583,58 @@ mod tests {
 
         for (path, expected) in cases {
             let str_result = is_sensitive_file(path);
-            let u16_result = is_sensitive_file_u16(&str_to_u16(path));
+            let bytes_result = is_sensitive_file_bytes(path.as_bytes());
             assert_eq!(
-                str_result, u16_result,
-                "str/u16 mismatch for {:?}: str={}, u16={}",
-                path, str_result, u16_result
+                str_result, bytes_result,
+                "str/bytes mismatch for {:?}: str={}, bytes={}",
+                path, str_result, bytes_result
             );
             assert_eq!(
-                u16_result, expected,
-                "u16 result mismatch for {:?}: got {}, expected {}",
-                path, u16_result, expected
+                bytes_result, expected,
+                "bytes result mismatch for {:?}: got {}, expected {}",
+                path, bytes_result, expected
+            );
+        }
+    }
+
+    // ============================================================================
+    // Boundary cases for path-suffix matching (.aws/credentials, .gcp/credentials)
+    // Verifies that separators are required around the suffix.
+    // ============================================================================
+
+    #[test]
+    fn test_sensitive_path_suffix_boundaries() {
+        // Should match: proper separator boundaries
+        assert!(is_sensitive_file_bytes(b"/home/user/.aws/credentials"));
+        assert!(is_sensitive_file_bytes(b"/home/user/.aws/credentials/extra"));
+        assert!(is_sensitive_file_bytes(b"/.aws/credentials"));
+        assert!(is_sensitive_file_bytes(b"foo/.aws/credentials"));
+        assert!(is_sensitive_file_bytes(b"foo/.aws/credentials/bar"));
+        assert!(is_sensitive_file_bytes(b"/home/user/.gcp/credentials"));
+        assert!(is_sensitive_file_bytes(b"foo/.gcp/credentials/bar"));
+        // Backslash variants
+        assert!(is_sensitive_file_bytes(b"C:\\Users\\foo\\.aws\\credentials"));
+        assert!(is_sensitive_file_bytes(b"foo\\.aws\\credentials\\bar"));
+
+        // Should NOT match: no separator before .aws (basename is NOT a
+        // sensitive name, so only the path-suffix check is exercised).
+        assert!(!is_sensitive_file_bytes(b"foo.aws/credentials/bar"));
+        assert!(!is_sensitive_file_bytes(b"x.aws/credentialsy"));
+        assert!(!is_sensitive_file_bytes(b"foo.gcp/credentials/bar"));
+
+        // str and bytes must agree
+        for path in [
+            "foo.aws/credentials/bar",
+            "x.aws/credentialsy",
+            "foo.gcp/credentials/bar",
+            "foo/.aws/credentials",
+            "foo/.aws/credentials/bar",
+        ] {
+            assert_eq!(
+                is_sensitive_file(path),
+                is_sensitive_file_bytes(path.as_bytes()),
+                "str/bytes mismatch for {:?}",
+                path,
             );
         }
     }

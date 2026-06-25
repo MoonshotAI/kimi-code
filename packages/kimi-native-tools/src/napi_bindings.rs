@@ -9,7 +9,7 @@ use crate::grep::{self, GrepConfig, GrepResult, OutputMode, DEFAULT_HEAD_LIMIT};
 use crate::list_directory::{self, ListDirectoryConfig, ListDirectoryResult};
 use crate::read::{self, ReadConfig, ReadResult, MAX_BYTES, MAX_LINE_LENGTH, MAX_LINES};
 use crate::write::{self, WriteMode, WriteResult};
-use napi::bindgen_prelude::Uint16Array;
+use napi::bindgen_prelude::Uint8Array;
 use napi_derive::napi;
 
 // ============================================================================
@@ -294,12 +294,44 @@ pub fn native_is_sensitive_file(path: String) -> bool {
     file_type::is_sensitive_file(&path)
 }
 
-/// Same as `native_is_sensitive_file` but accepts a `Uint16Array` (V8's
-/// native UTF-16 format) to avoid the UTF-16→UTF-8 string conversion that
-/// `String` parameters trigger. The JS wrapper converts the string to a
-/// `Uint16Array` via `charCodeAt`, which is a direct read from V8's
-/// internal buffer with no encoding conversion.
+/// Same as `native_is_sensitive_file` but accepts a `Uint8Array` produced
+/// by `Buffer.from(path, 'latin1')` in JS. This avoids the UTF-16→UTF-8
+/// string conversion that napi's `String` parameter triggers (~170ns for
+/// typical paths). `Buffer.from(path, 'latin1')` is a V8 C++ intrinsic
+/// (~31ns) that copies each UTF-16 code unit's low byte directly; for ASCII
+/// paths the result is identical to UTF-8.
 #[napi]
-pub fn native_is_sensitive_file_u16(path: Uint16Array) -> bool {
-    file_type::is_sensitive_file_u16(&path)
+pub fn native_is_sensitive_file_bytes(path: Uint8Array) -> bool {
+    file_type::is_sensitive_file_bytes(&path)
+}
+
+// ============================================================================
+// Token estimation
+// ============================================================================
+
+use crate::tokens;
+
+/// Estimate token count from text using a character-based heuristic.
+///
+/// ASCII: ~4 chars per token. Non-ASCII (CJK, emoji): ~1 char per token.
+/// Matches the TS `estimateTokens` in `utils/tokens.ts`.
+///
+/// Uses byte-level UTF-8 scanning — counts start bytes of multi-byte
+/// sequences instead of decoding code points, giving identical results
+/// with SIMD-friendly byte comparisons.
+#[napi]
+pub fn native_estimate_tokens(text: String) -> u32 {
+    tokens::estimate_tokens(&text) as u32
+}
+
+/// Batch token estimation — sums token counts across multiple strings
+/// in a single napi call. Equivalent to calling `native_estimate_tokens`
+/// per string and summing, but with one boundary crossing instead of N.
+///
+/// Use this when estimating tokens for a full message (role + content
+/// parts + tool calls) or a set of tools (names + descriptions + schemas).
+#[napi]
+pub fn native_estimate_tokens_batch(texts: Vec<String>) -> u32 {
+    let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+    tokens::estimate_tokens_batch(&refs) as u32
 }

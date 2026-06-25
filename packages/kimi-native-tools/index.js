@@ -237,21 +237,42 @@ function nativeSniffImageDimensions(data) {
 /**
  * Check if a path points to a credentials-bearing file.
  *
- * Converts the JS string to a Uint16Array (V8's native UTF-16 format) before
- * calling the Rust binding, avoiding the UTF-16→UTF-8 conversion that a
- * `String` napi parameter would trigger (~130ns overhead). For ASCII paths,
- * `charCodeAt` returns the byte value directly — no encoding work at all.
+ * Converts the JS string to a Latin1 byte buffer via `Buffer.from(path,
+ * 'latin1')` — a V8 C++ intrinsic (~31ns for typical paths) — before calling
+ * the Rust binding. This avoids the UTF-16→UTF-8 string conversion that a
+ * `String` napi parameter would trigger (~170ns). For ASCII paths the Latin1
+ * bytes are identical to UTF-8.
  *
  * @param {string} path - File path to check.
  * @returns {boolean} True if the file is sensitive (credentials, keys, .env).
  */
 function nativeIsSensitiveFile(path) {
-  const len = path.length;
-  const buf = new Uint16Array(len);
-  for (let i = 0; i < len; i++) {
-    buf[i] = path.charCodeAt(i);
-  }
-  return binding.nativeIsSensitiveFileU16(buf);
+  return binding.nativeIsSensitiveFileBytes(Buffer.from(path, 'latin1'));
+}
+
+// ============================================================================
+// Token estimation
+// ============================================================================
+
+/**
+ * Estimate token count from text (ASCII ~4 chars/token, non-ASCII ~1 char/token).
+ *
+ * @param {string} text - Text to estimate.
+ * @returns {number} Estimated token count.
+ */
+function nativeEstimateTokens(text) {
+  return binding.nativeEstimateTokens(text);
+}
+
+/**
+ * Batch token estimation — sums token counts across multiple strings
+ * in a single napi call (one boundary crossing instead of N).
+ *
+ * @param {string[]} texts - Array of text strings to estimate.
+ * @returns {number} Total estimated token count across all strings.
+ */
+function nativeEstimateTokensBatch(texts) {
+  return binding.nativeEstimateTokensBatch(texts);
 }
 
 // ============================================================================
@@ -295,6 +316,8 @@ module.exports = {
   nativeListDirectory,
   nativeSniffImageDimensions,
   nativeIsSensitiveFile,
+  nativeEstimateTokens,
+  nativeEstimateTokensBatch,
   nativeBash,
 
   // Constants
