@@ -357,7 +357,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async resumeSessionWithOverrides(
     input: ResumeSessionPayload,
-    overrides: { kaos?: Kaos; persistenceKaos?: Kaos },
+    overrides: {
+      kaos?: Kaos;
+      persistenceKaos?: Kaos;
+      forcePluginSessionStartReminder?: boolean;
+    },
   ): Promise<ResumeSessionResult> {
     const summary = await this.sessionStore.get(input.sessionId);
     const parentKaosForRead = overrides.kaos ?? (await this.getKaos());
@@ -432,6 +436,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       throw error;
     }
     this.sessions.set(summary.id, session);
+    if (overrides.forcePluginSessionStartReminder === true) {
+      // Append before constructing the result so the returned ResumeSessionResult
+      // (and any SDK caller's resumeState) reflects the refreshed plugin context.
+      await session.appendPluginSessionStartReminder();
+    }
     return resumeSessionResult(summary, session, warning);
   }
 
@@ -454,7 +463,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       await active.closeForReload();
       this.sessions.delete(summary.id);
     }
-    return this.resumeSession({ sessionId: summary.id });
+    return this.resumeSessionWithOverrides(
+      { sessionId: summary.id },
+      { forcePluginSessionStartReminder: input.forcePluginSessionStartReminder },
+    );
   }
 
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {

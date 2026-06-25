@@ -66,6 +66,10 @@ export interface SessionIdRpcInput {
   readonly sessionId: string;
 }
 
+export interface ReloadSessionRpcInput extends SessionIdRpcInput {
+  readonly forcePluginSessionStartReminder?: boolean;
+}
+
 export interface SetSessionModelRpcInput extends SessionIdRpcInput {
   readonly model: string;
 }
@@ -150,9 +154,12 @@ export abstract class SDKRpcClientBase {
     return this.resumeSession(input);
   }
 
-  async reloadSession(input: SessionIdRpcInput): Promise<ResumedSessionSummary> {
+  async reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary> {
     const rpc = await this.getRpc();
-    return rpc.reloadSession({ sessionId: input.sessionId });
+    return rpc.reloadSession({
+      sessionId: input.sessionId,
+      forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
+    });
   }
 
   async forkSession(input: ForkSessionInput): Promise<SessionSummary> {
