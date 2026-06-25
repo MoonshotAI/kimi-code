@@ -134,7 +134,7 @@ describe('FetchURLTool', () => {
     expect(toolContentString(result)).toContain('timeout');
   });
 
-  it('passes the tool call id to the fetcher', async () => {
+  it('passes the tool call id and abort signal to the fetcher', async () => {
     const fetcher = fakeFetcher('content');
     const tool = new FetchURLTool(fetcher);
     await executeTool(tool, {
@@ -145,6 +145,7 @@ describe('FetchURLTool', () => {
     });
     expect(fetcher.fetch).toHaveBeenCalledWith('https://example.com', {
       toolCallId: 'c4',
+      signal,
     });
   });
 

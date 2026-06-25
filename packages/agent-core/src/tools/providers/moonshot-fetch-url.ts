@@ -48,9 +48,12 @@ export class MoonshotFetchURLProvider implements UrlFetcher {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
-  async fetch(url: string, options?: { toolCallId?: string }): Promise<UrlFetchResult> {
+  async fetch(
+    url: string,
+    options?: { toolCallId?: string; signal?: AbortSignal },
+  ): Promise<UrlFetchResult> {
     try {
-      const content = await this.fetchViaMoonshot(url, options?.toolCallId);
+      const content = await this.fetchViaMoonshot(url, options?.toolCallId, options?.signal);
       // The service returns text it has already extracted from the page.
       return { content, kind: 'extracted' };
     } catch {
@@ -63,10 +66,11 @@ export class MoonshotFetchURLProvider implements UrlFetcher {
   private async fetchViaMoonshot(
     url: string,
     toolCallId: string | undefined,
+    signal: AbortSignal | undefined,
   ): Promise<string> {
     const bodyJson = JSON.stringify({ url });
 
-    const response = await this.post(bodyJson, toolCallId);
+    const response = await this.post(bodyJson, toolCallId, signal);
 
     if (response.status !== 200) {
       let detail = '';
@@ -85,7 +89,11 @@ export class MoonshotFetchURLProvider implements UrlFetcher {
     return response.text();
   }
 
-  private async post(bodyJson: string, toolCallId: string | undefined): Promise<Response> {
+  private async post(
+    bodyJson: string,
+    toolCallId: string | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<Response> {
     const accessToken = await this.resolveApiKey();
     return this.fetchImpl(this.baseUrl, {
       method: 'POST',
@@ -100,6 +108,7 @@ export class MoonshotFetchURLProvider implements UrlFetcher {
         ...this.customHeaders,
       },
       body: bodyJson,
+      signal,
     });
   }
 

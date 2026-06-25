@@ -231,7 +231,7 @@ describe('WebSearchTool', () => {
     expect(content).toContain('The operation was aborted');
   });
 
-  it('passes limit and includeContent to provider', async () => {
+  it('passes limit, includeContent, and abort signal to provider', async () => {
     const provider = fakeProvider([]);
     const tool = new WebSearchTool(provider);
     await executeTool(tool, {
@@ -244,6 +244,7 @@ describe('WebSearchTool', () => {
       limit: 10,
       includeContent: true,
       toolCallId: 'c4',
+      signal,
     });
   });
 
@@ -285,5 +286,23 @@ describe('MoonshotWebSearchProvider', () => {
     expect(fetchImpl.mock.calls[0]?.[1]?.headers).toMatchObject({
       Authorization: 'Bearer fresh-token',
     });
+  });
+  it('forwards the caller abort signal to the underlying fetch', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ search_results: [] }), { status: 200 }),
+      );
+    const provider = new MoonshotWebSearchProvider({
+      apiKey: 'test-key',
+      baseUrl: 'https://search.example/v1',
+      fetchImpl,
+    });
+    await provider.search('query', { signal: controller.signal });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://search.example/v1',
+      expect.objectContaining({ signal: controller.signal }),
+    );
   });
 });
