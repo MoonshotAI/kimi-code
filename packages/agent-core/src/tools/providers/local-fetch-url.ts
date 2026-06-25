@@ -189,6 +189,7 @@ export class LocalFetchURLProvider implements UrlFetcher {
         content: '',
         kind: 'image',
         image: { mimeType: contentType, base64 },
+        page: { url, mime: contentType },
       };
     }
 
@@ -203,10 +204,10 @@ export class LocalFetchURLProvider implements UrlFetcher {
     }
 
     if (contentType.startsWith('text/plain') || contentType.startsWith('text/markdown')) {
-      return { content: body, kind: 'passthrough' };
+      return { content: body, kind: 'passthrough', page: { url, mime: contentType } };
     }
 
-    return { content: this.extractMainContent(body), kind: 'extracted' };
+    return { content: this.extractMainContent(body), kind: 'extracted', page: { url, mime: contentType } };
   }
 
   private extractMainContent(html: string): string {

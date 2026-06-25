@@ -30,6 +30,15 @@ import DESCRIPTION from './fetch-url.md?raw';
  */
 export type UrlFetchKind = 'passthrough' | 'extracted' | 'image';
 
+export interface PageMetadata {
+  /** The URL that was fetched. */
+  url: string;
+  /** The title of the page, if available. */
+  title?: string;
+  /** The MIME type of the response. */
+  mime?: string;
+}
+
 export interface UrlFetchResult {
   /** The text handed to the LLM, or empty string for image content. */
   content: string;
@@ -37,6 +46,8 @@ export interface UrlFetchResult {
   kind: UrlFetchKind;
   /** Image data as base64, when kind is 'image'. */
   image?: { mimeType: string; base64: string };
+  /** Page metadata for the fetched resource, aligning with internal API shape. */
+  page?: PageMetadata;
 }
 
 export interface UrlFetcher {
@@ -96,15 +107,9 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
       if (image) {
         const output: ContentPart[] = [
           {
-            type: 'text',
-            text: `<system>Fetched image from ${args.url}. Mime type: ${image.mimeType}</system>`,
-          },
-          { type: 'text', text: `<image url="${args.url}">` },
-          {
             type: 'image_url',
-            imageUrl: { url: `data:${image.mimeType};base64,${image.base64}` },
+            imageUrl: { url: `data:${image.mimeType};base64,${image.base64}`, id: args.url },
           },
-          { type: 'text', text: '</image>' },
         ];
         return { output, isError: false };
       }

@@ -38,6 +38,7 @@ describe('LocalFetchURLProvider content kind', () => {
     expect(result.image).toBeDefined();
     expect(result.image?.mimeType).toBe('image/png');
     expect(result.image?.base64).toBeTruthy();
+    expect(result.page).toEqual({ url: 'https://example.com/image.png', mime: 'image/png' });
   });
 
   it('reports text/plain bodies as a verbatim passthrough', async () => {
@@ -48,7 +49,7 @@ describe('LocalFetchURLProvider content kind', () => {
 
     const result = await provider.fetch('https://example.com/file.txt');
 
-    expect(result).toEqual({ content: 'plain body', kind: 'passthrough' });
+    expect(result).toEqual({ content: 'plain body', kind: 'passthrough', page: { url: 'https://example.com/file.txt', mime: 'text/plain; charset=utf-8' } });
   });
 
   it('reports text/markdown bodies as a verbatim passthrough', async () => {
@@ -59,7 +60,7 @@ describe('LocalFetchURLProvider content kind', () => {
 
     const result = await provider.fetch('https://example.com/readme.md');
 
-    expect(result).toEqual({ content: '# Title\n\nbody', kind: 'passthrough' });
+    expect(result).toEqual({ content: '# Title\n\nbody', kind: 'passthrough', page: { url: 'https://example.com/readme.md', mime: 'text/markdown' } });
   });
 
   it('reports HTML bodies as extracted main content', async () => {
