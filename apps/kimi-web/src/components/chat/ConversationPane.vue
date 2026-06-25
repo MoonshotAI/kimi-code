@@ -1020,6 +1020,7 @@ defineExpose({ loadComposerForEdit });
               :loading-more="loadingMore"
               :loading-more-error="loadingMoreError"
               :is-following="following"
+              :tool-diff-panel="true"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
               @copy-conversation-copied="handleCopyConversationCopied"

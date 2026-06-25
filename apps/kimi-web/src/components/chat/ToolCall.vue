@@ -13,8 +13,14 @@ const props = withDefaults(
     mobile?: boolean;
     /** Position inside a consecutive run of non-media tool cards. */
     stackPosition?: 'single' | 'first' | 'middle' | 'last';
+    /**
+     * When true, clicking an Edit/Write card opens the right-side diff panel.
+     * When false (e.g. inside the side chat, where the panel isn't wired), the
+     * card expands inline instead so its output stays reachable.
+     */
+    toolDiffPanel?: boolean;
   }>(),
-  { mobile: false, stackPosition: 'single' },
+  { mobile: false, stackPosition: 'single', toolDiffPanel: false },
 );
 const emit = defineEmits<{
   openMedia: [media: ToolMedia];
@@ -32,7 +38,7 @@ const isEditWrite = computed(() => {
 });
 
 function toggle() {
-  if (isEditWrite.value) {
+  if (isEditWrite.value && props.toolDiffPanel) {
     emit('openToolDiff', props.tool.id);
     return;
   }
