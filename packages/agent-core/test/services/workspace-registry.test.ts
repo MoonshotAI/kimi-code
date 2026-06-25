@@ -137,4 +137,29 @@ describe('WorkspaceRegistryService', () => {
     expect(roots).toContain(registeredRoot);
     expect(roots).not.toContain(goneRoot);
   });
+
+  it('does not re-register a deleted workspace that still has sessions', async () => {
+    const root = await makeProjectRoot('deleted');
+    const ws = await ctx.registry.createOrTouch(root);
+    // Session bucket + index entry remain on disk after the registry entry is removed.
+    await seedSessionBucket(root, 'sess-del-1');
+
+    await ctx.registry.delete(ws.id);
+
+    const list = await ctx.registry.list();
+    expect(list.map((w) => w.root)).not.toContain(root);
+  });
+
+  it('re-adding a previously deleted workspace clears its tombstone', async () => {
+    const root = await makeProjectRoot('readd');
+    const ws = await ctx.registry.createOrTouch(root);
+    await seedSessionBucket(root, 'sess-readd-1');
+    await ctx.registry.delete(ws.id);
+
+    // Explicit re-add should bring it back (clears the tombstone).
+    await ctx.registry.createOrTouch(root);
+
+    const list = await ctx.registry.list();
+    expect(list.map((w) => w.root)).toContain(root);
+  });
 });

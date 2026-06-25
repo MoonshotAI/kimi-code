@@ -34,6 +34,9 @@ interface WorkspaceRegistryEntry {
 interface WorkspaceRegistryFile {
   version: number;
   workspaces: Record<string, WorkspaceRegistryEntry>;
+  /** Workspace ids the user explicitly removed. Their session buckets stay on
+   *  disk, so derived registration must skip them to keep deletion durable. */
+  deleted_workspace_ids: string[];
 }
 
 type WorkspaceRegistryEvent =
@@ -95,7 +98,10 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
 
     const file = await this.runExclusive(() => this.readRegistry());
     const registered = new Set(Object.keys(file.workspaces));
-    const missing = dirents.filter((d) => d.isDirectory() && !registered.has(d.name));
+    const deleted = new Set(file.deleted_workspace_ids);
+    const missing = dirents.filter(
+      (d) => d.isDirectory() && !registered.has(d.name) && !deleted.has(d.name),
+    );
     if (missing.length === 0) return;
 
     // Recover each bucket's root from the session index: the bucket dir name is
@@ -159,6 +165,9 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
               last_opened_at: now,
             };
       file.workspaces[workspaceId] = next;
+      // An explicit add clears any prior deletion tombstone so the workspace is
+      // no longer suppressed from derived registration.
+      file.deleted_workspace_ids = file.deleted_workspace_ids.filter((id) => id !== workspaceId);
       await this.writeRegistry(file);
       return { entry: next, created: existing === undefined };
     });
@@ -197,6 +206,11 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         throw new WorkspaceNotFoundError(workspaceId);
       }
       delete file.workspaces[workspaceId];
+      // Remember the deletion so derived registration (which scans the surviving
+      // session bucket) does not immediately recreate this workspace.
+      if (!file.deleted_workspace_ids.includes(workspaceId)) {
+        file.deleted_workspace_ids.push(workspaceId);
+      }
       await this.writeRegistry(file);
       return existing.root;
     });
@@ -268,7 +282,7 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'ENOTDIR') {
-        return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {} };
+        return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {}, deleted_workspace_ids: [] };
       }
       throw err;
     }
@@ -280,7 +294,7 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         { path: this.registryPath, err: String(err) },
         'workspaces.json malformed; treating as empty',
       );
-      return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {} };
+      return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {}, deleted_workspace_ids: [] };
     }
     if (
       typeof parsed !== 'object' ||
@@ -292,7 +306,7 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         { path: this.registryPath },
         'workspaces.json missing required keys; treating as empty',
       );
-      return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {} };
+      return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {}, deleted_workspace_ids: [] };
     }
     const rawWorkspaces = (parsed as { workspaces: Record<string, unknown> }).workspaces;
     const workspaces: Record<string, WorkspaceRegistryEntry> = {};
@@ -306,7 +320,11 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       typeof (parsed as { version?: unknown }).version === 'number'
         ? (parsed as { version: number }).version
         : WORKSPACE_REGISTRY_VERSION;
-    return { version, workspaces };
+    const rawDeleted = (parsed as { deleted_workspace_ids?: unknown }).deleted_workspace_ids;
+    const deleted_workspace_ids = Array.isArray(rawDeleted)
+      ? rawDeleted.filter((id): id is string => typeof id === 'string')
+      : [];
+    return { version, workspaces, deleted_workspace_ids };
   }
 
   private sanitizeEntry(value: unknown): WorkspaceRegistryEntry | null {
