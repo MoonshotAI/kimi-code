@@ -46,8 +46,8 @@ afterEach(async () => {
     // ignore
   }
   server = undefined;
-  rmSync(tmpDir, { recursive: true, force: true });
-  rmSync(bridgeHome, { recursive: true, force: true });
+  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  rmSync(bridgeHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
 async function bootDaemon(): Promise<RunningServer> {
