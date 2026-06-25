@@ -9,7 +9,7 @@
  */
 
 import type { ChildProcess } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -45,7 +45,7 @@ describe('kimi server', () => {
     const server = program.commands.find((c) => c.name() === 'server');
     expect(server).toBeDefined();
     const subs = server?.commands.map((c) => c.name()).toSorted();
-    expect(subs).toEqual(['kill', 'ps', 'run']);
+    expect(subs).toEqual(['kill', 'ps', 'rotate-token', 'run']);
   });
 
   it('`server run` exposes local-only foreground options', () => {
@@ -55,10 +55,13 @@ describe('kimi server', () => {
       ?.commands.find((c) => c.name() === 'run');
     expect(run).toBeDefined();
     const longs = run!.options.map((o) => o.long).filter(Boolean);
-    expect(longs).not.toContain('--host');
+    expect(longs).toContain('--host');
     expect(longs).toContain('--port');
     expect(longs).toContain('--log-level');
     expect(longs).toContain('--debug-endpoints');
+    expect(longs).toContain('--insecure-no-tls');
+    expect(longs).toContain('--allow-remote-shutdown');
+    expect(longs).toContain('--allow-remote-terminals');
     expect(longs).toContain('--foreground');
     // run defaults to NOT opening the browser → option is the positive --open
     expect(longs).toContain('--open');
@@ -87,7 +90,7 @@ describe('kimi server', () => {
     const longs = web!.options.map((o) => o.long).filter(Boolean);
     // web defaults to opening → the option is the negative form --no-open
     expect(longs).toContain('--no-open');
-    expect(longs).not.toContain('--host');
+    expect(longs).toContain('--host');
     expect(longs).toContain('--port');
   });
 });
@@ -333,6 +336,44 @@ describe('`kimi server run` background start', () => {
     expect(parsed).toMatchObject({ logLevel: 'debug' });
   });
 
+  it('warns and uses the running server host when a daemon is reused', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+
+    // The user asks for a public bind, but a loopback daemon is already up.
+    await handleRunCommand(
+      { port: '58627', host: '0.0.0.0' },
+      {
+        startServerBackground: async () => ({
+          origin: 'http://127.0.0.1:58627',
+          reused: true,
+          host: '127.0.0.1',
+          port: 58627,
+        }),
+        resolveToken: () => 'tok',
+        openUrl: vi.fn(),
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: { write: () => true },
+      },
+    );
+
+    const plain = stripAnsi(stdout);
+    // A clear notice that a server was already running and options were ignored.
+    expect(plain).toContain('A server is already running');
+    expect(plain).toContain('kimi server kill');
+    // The banner uses the *actual* host (loopback), not the requested 0.0.0.0 —
+    // so it shows a Local URL plus the "network disabled" hint, NOT real
+    // Network addresses (which would be misleading since nothing binds them).
+    expect(plain).toContain('http://127.0.0.1:58627/#token=tok');
+    expect(plain).toContain('use --host 0.0.0.0 to enable');
+    expect(plain).not.toContain('Network:  http');
+  });
+
   it('prints a TUI-style ready panel once the daemon is up', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let stdout = '';
@@ -357,21 +398,33 @@ describe('`kimi server run` background start', () => {
     );
 
     const plain = stripAnsi(stdout);
-    expect(plain).toContain('╭');
-    expect(plain).toContain('╰');
-    expect(plain).toContain('▐█▛█▛█▌');
-    expect(plain).toContain('▐█████▌');
     expect(plain).toContain('Kimi server ready');
-    expect(plain).toContain('URL:');
+    expect(plain).toContain('Local:');
     expect(plain).toContain('http://127.0.0.1:58627/');
+    // Loopback bind shows a Network hint for enabling network access.
     expect(plain).toContain('Network:');
-    expect(plain).toContain('local only');
+    expect(plain).toContain('use --host 0.0.0.0 to enable');
     expect(plain).toContain('Logs:');
     expect(plain).toContain('off');
     expect(plain).toContain('Stop:');
     expect(plain).toContain('kimi server kill');
+    // Version sits on the title line; no separate Ready:/Version: rows and no
+    // startup-time metric.
+    expect(plain).not.toContain('Ready:');
+    expect(plain).not.toContain('Version:');
+    expect(plain).not.toContain(' ms');
+    // No bordered panel (the token URL must print in full for copying), but
+    // the Kimi sprite stays next to the title.
+    expect(plain).not.toContain('╭');
+    expect(plain).not.toContain('╰');
+    expect(plain).toContain('▐█▛█▛█▌');
+    expect(plain).toContain('▐█████▌');
     expect(plain).not.toContain('➜');
     expect(plain).not.toContain('Kimi server:');
+
+    // Title is above the URLs; Logs/Stop are at the bottom.
+    expect(plain.indexOf('Kimi server ready')).toBeLessThan(plain.indexOf('Local:'));
+    expect(plain.indexOf('Logs:')).toBeLessThan(plain.indexOf('Stop:'));
   });
 
   it('uses the TUI dark palette for the ready banner', async () => {
@@ -407,8 +460,8 @@ describe('`kimi server run` background start', () => {
     expect(stdout).toContain(color.hex(darkColors.primary)('▐█▛█▛█▌'));
     expect(stdout).toContain(color.bold.hex(darkColors.primary)('Kimi server ready'));
     expect(stdout).toContain(color.hex(darkColors.accent)('http://127.0.0.1:58627/'));
-    expect(stdout).toContain(color.bold.hex(darkColors.textDim)('URL:      '));
-    expect(stdout).toContain(color.hex(darkColors.textMuted)('local only'));
+    expect(stdout).toContain(color.bold.hex(darkColors.textDim)('Local:    '));
+    expect(stdout).toContain(color.hex(darkColors.textMuted)('off'));
   });
 });
 
@@ -564,6 +617,190 @@ async function allocateAdjacentFreeRun(count: number, host = '127.0.0.1'): Promi
   throw new Error('could not allocate a run of adjacent free ports');
 }
 
+describe('--host threading (M6.2)', () => {
+  it('passes --host through to the background daemon', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let parsed: unknown;
+
+    await handleRunCommand(
+      { port: '58627', host: '0.0.0.0' },
+      {
+        startServerBackground: async (options) => {
+          parsed = options;
+          return { origin: 'http://0.0.0.0:58627' };
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(parsed).toMatchObject({ host: '0.0.0.0', port: 58627 });
+  });
+
+  it('passes --host through to the foreground runner', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let foregroundOptions: unknown;
+
+    await handleRunCommand(
+      { port: '58627', host: '0.0.0.0', foreground: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://0.0.0.0:58627' }),
+        startServerForeground: async (options) => {
+          foregroundOptions = options;
+          return undefined as unknown as never;
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(foregroundOptions).toMatchObject({ host: '0.0.0.0' });
+  });
+});
+
+describe('lockConnectHost (M6.2 connect side)', () => {
+  it('maps a 0.0.0.0 bind to 127.0.0.1 so the CLI connects over loopback', async () => {
+    const { lockConnectHost } = await import('#/cli/sub/server/daemon');
+    // The daemon binds 0.0.0.0 (all interfaces), but the local CLI must
+    // connect over loopback — 0.0.0.0 is not a connectable address. The token
+    // then rides on that loopback connection (covered by the M5.4 kill/ps
+    // Authorization tests).
+    expect(lockConnectHost({ pid: 1, started_at: '', port: 58627, host: '0.0.0.0' })).toBe(
+      '127.0.0.1',
+    );
+  });
+
+  it('preserves a loopback / concrete bind host', async () => {
+    const { lockConnectHost } = await import('#/cli/sub/server/daemon');
+    expect(lockConnectHost({ pid: 1, started_at: '', port: 58627, host: '127.0.0.1' })).toBe(
+      '127.0.0.1',
+    );
+    expect(lockConnectHost({ pid: 1, started_at: '', port: 58627, host: '192.168.1.5' })).toBe(
+      '192.168.1.5',
+    );
+  });
+
+  it('falls back to 127.0.0.1 when the lock has no host', async () => {
+    const { lockConnectHost } = await import('#/cli/sub/server/daemon');
+    expect(lockConnectHost({ pid: 1, started_at: '', port: 58627 })).toBe('127.0.0.1');
+  });
+});
+
+describe('--insecure-no-tls threading (M6.3)', () => {
+  it('threads --insecure-no-tls to the foreground runner', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let foregroundOptions: unknown;
+
+    await handleRunCommand(
+      { host: '0.0.0.0', insecureNoTls: true, foreground: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://0.0.0.0:58627' }),
+        startServerForeground: async (options) => {
+          foregroundOptions = options;
+          return undefined as unknown as never;
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(foregroundOptions).toMatchObject({ host: '0.0.0.0', insecureNoTls: true });
+  });
+
+  it('threads --insecure-no-tls to the background daemon', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let parsed: unknown;
+
+    await handleRunCommand(
+      { host: '0.0.0.0', insecureNoTls: true },
+      {
+        startServerBackground: async (options) => {
+          parsed = options;
+          return { origin: 'http://0.0.0.0:58627' };
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(parsed).toMatchObject({ insecureNoTls: true });
+  });
+});
+
+describe('ready banner reflects the bind class (M6.3)', () => {
+  it('lists Local + Network addresses for a 0.0.0.0 bind (Vite-style)', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+
+    await handleRunCommand(
+      { host: '0.0.0.0', insecureNoTls: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://0.0.0.0:58627' }),
+        resolveToken: () => 'tok-xyz',
+        networkAddresses: [
+          { address: '192.168.98.66', family: 'IPv4' },
+          { address: '10.8.12.216', family: 'IPv4' },
+        ],
+        openUrl: vi.fn(),
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: { write: () => true },
+      },
+    );
+
+    const raw = stripAnsi(stdout);
+    expect(raw).toContain('Kimi server ready');
+    expect(raw).toContain('Local:');
+    expect(raw).toContain('Network:');
+    // Full token-bearing URLs are printed plainly (no box, no truncation) so
+    // they are easy to copy.
+    expect(raw).toContain('http://localhost:58627/#token=tok-xyz');
+    expect(raw).toContain('http://192.168.98.66:58627/#token=tok-xyz');
+    expect(raw).toContain('http://10.8.12.216:58627/#token=tok-xyz');
+    expect(raw).toContain('Token:');
+    expect(raw).toContain('tok-xyz');
+    expect(raw).not.toContain('╭');
+  });
+
+  it('prints the Local URL and token for a 127.0.0.1 bind', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+
+    await handleRunCommand(
+      { host: '127.0.0.1' },
+      {
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+        resolveToken: () => 'tok-loop',
+        openUrl: vi.fn(),
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: { write: () => true },
+      },
+    );
+
+    const raw = stripAnsi(stdout);
+    expect(raw).toContain('Kimi server ready');
+    expect(raw).toContain('Local:');
+    // Full token-bearing URL, printed plainly for copying.
+    expect(raw).toContain('http://127.0.0.1:58627/#token=tok-loop');
+    expect(raw).toContain('Token:');
+    expect(raw).toContain('tok-loop');
+    expect(raw).not.toContain('╭');
+  });
+});
+
 describe('resolveDaemonPort', () => {
   it('returns the preferred port when it is free', async () => {
     const { resolveDaemonPort } = await import('#/cli/sub/server/daemon');
@@ -672,6 +909,94 @@ describe('spawnDaemonChild', () => {
     expect(args).toEqual(expect.arrayContaining(['server', 'run', '--daemon']));
     expect(options).toMatchObject({ detached: true, cwd: dirname(daemonLogPath()) });
     expect(options?.cwd).not.toBe(process.cwd());
+  });
+
+  it('passes --host through to the daemon child args (M6.2)', async () => {
+    const { spawn } = await import('node:child_process');
+    const spawnMock = vi.mocked(spawn);
+    spawnMock.mockClear();
+    spawnMock.mockReturnValue({ unref: vi.fn(), once: vi.fn() } as unknown as ChildProcess);
+
+    const { spawnDaemonChild } = await import('#/cli/sub/server/daemon');
+    spawnDaemonChild({ host: '0.0.0.0', port: 58627, logLevel: 'info' });
+
+    const [, args] = spawnMock.mock.calls[0]!;
+    expect(args).toEqual(expect.arrayContaining(['--host', '0.0.0.0']));
+  });
+
+  it('passes --insecure-no-tls through to the daemon child args (M6.3)', async () => {
+    const { spawn } = await import('node:child_process');
+    const spawnMock = vi.mocked(spawn);
+    spawnMock.mockClear();
+    spawnMock.mockReturnValue({ unref: vi.fn(), once: vi.fn() } as unknown as ChildProcess);
+
+    const { spawnDaemonChild } = await import('#/cli/sub/server/daemon');
+    spawnDaemonChild({ host: '0.0.0.0', port: 58627, logLevel: 'info', insecureNoTls: true });
+
+    const [, args] = spawnMock.mock.calls[0]!;
+    expect(args).toEqual(expect.arrayContaining(['--insecure-no-tls']));
+  });
+});
+
+describe('ensureDaemon surfaces boot failures via early exit', () => {
+  let workDir: string;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), 'kimi-ensure-exit-'));
+    prevHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = workDir;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) {
+      delete process.env['KIMI_CODE_HOME'];
+    } else {
+      process.env['KIMI_CODE_HOME'] = prevHome;
+    }
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  it('rejects fast with the exit reason and a log tail when the daemon exits early', async () => {
+    const { spawn } = await import('node:child_process');
+    const spawnMock = vi.mocked(spawn);
+    const { mkdirSync, writeFileSync: writeSync } = await import('node:fs');
+    const { daemonLogPath, ensureDaemon } = await import('#/cli/sub/server/daemon');
+
+    // Seed the daemon log with the kind of line a failing boot writes, so we
+    // can assert it is surfaced to the user instead of a generic timeout.
+    mkdirSync(dirname(daemonLogPath()), { recursive: true });
+    writeSync(daemonLogPath(), 'fatal: Refusing to bind a non-loopback host without TLS.\n');
+
+    // Fake child that exits with code 1 shortly after the 'exit' listener is
+    // attached — simulating a daemon that fails during boot.
+    const fakeChild = {
+      unref: vi.fn(),
+      once: vi.fn((event: string, cb: (...a: unknown[]) => void) => {
+        if (event === 'exit') {
+          setTimeout(() => cb(1, null), 5);
+        }
+        return fakeChild;
+      }),
+    };
+    spawnMock.mockReturnValueOnce(fakeChild as unknown as ChildProcess);
+
+    const start = Date.now();
+    let caught: unknown;
+    try {
+      await ensureDaemon({ port: 0 });
+    } catch (error) {
+      caught = error;
+    }
+    const elapsed = Date.now() - start;
+
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    expect(message).toMatch(/exited with code 1/);
+    expect(message).toContain('Refusing to bind');
+    // Must fail fast — nowhere near the 20s spawn timeout.
+    expect(elapsed).toBeLessThan(5000);
   });
 });
 
@@ -809,6 +1134,7 @@ function makeKillDeps(overrides: Partial<KillCommandDeps> = {}): {
     requestShutdown: async () => {
       state.shutdownCalls += 1;
     },
+    resolveToken: () => undefined,
     signalPid: (pid, signal) => {
       signals.push({ pid, signal });
       return true;
@@ -880,6 +1206,272 @@ describe('`kimi server kill`', () => {
     });
 
     await expect(handleKillCommand(deps)).rejects.toThrow(/insufficient permissions/);
+  });
+});
+
+describe('resolveServerToken', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'kimi-server-token-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reads the token from <homeDir>/server.token', async () => {
+    const { resolveServerToken } = await import('#/cli/sub/server/shared');
+    writeFileSync(join(dir, 'server.token'), 'secret-token\n');
+    expect(resolveServerToken(dir)).toBe('secret-token');
+  });
+
+  it('trims surrounding whitespace', async () => {
+    const { resolveServerToken } = await import('#/cli/sub/server/shared');
+    writeFileSync(join(dir, 'server.token'), '  tok  \n');
+    expect(resolveServerToken(dir)).toBe('tok');
+  });
+
+  it('throws a clear error when the token file is missing', async () => {
+    const { resolveServerToken } = await import('#/cli/sub/server/shared');
+    expect(() => resolveServerToken(dir)).toThrow(/unable to read server token/);
+  });
+});
+
+describe('authHeaders', () => {
+  it('builds a Bearer Authorization header', async () => {
+    const { authHeaders } = await import('#/cli/sub/server/shared');
+    expect(authHeaders('abc')).toEqual({ Authorization: 'Bearer abc' });
+  });
+});
+
+describe('`kimi server kill` carries the bearer token', () => {
+  const liveLock = { pid: 1234, started_at: '2026-06-17T00:00:00.000Z', port: 58627 };
+
+  it('passes the resolved token to requestShutdown', async () => {
+    const { handleKillCommand } = await import('#/cli/sub/server/kill');
+    let seenToken: string | undefined = 'unset';
+    const { deps } = makeKillDeps({
+      getLiveLock: () => liveLock,
+      resolveToken: () => 'tok-123',
+      requestShutdown: async (_origin, token) => {
+        seenToken = token;
+      },
+      pidAlive: () => false,
+    });
+
+    await handleKillCommand(deps);
+
+    expect(seenToken).toBe('tok-123');
+  });
+
+  it('passes undefined when the token cannot be read (best-effort)', async () => {
+    const { handleKillCommand } = await import('#/cli/sub/server/kill');
+    let seenToken: string | undefined = 'unset';
+    const { deps } = makeKillDeps({
+      getLiveLock: () => liveLock,
+      resolveToken: () => undefined,
+      requestShutdown: async (_origin, token) => {
+        seenToken = token;
+      },
+      pidAlive: () => false,
+    });
+
+    await handleKillCommand(deps);
+
+    expect(seenToken).toBeUndefined();
+  });
+});
+
+describe('buildWebUrl', () => {
+  it('carries the token in the URL fragment (not path or query)', async () => {
+    const { buildWebUrl } = await import('#/cli/sub/server/run');
+    const url = buildWebUrl('http://127.0.0.1:58627', 'abc123');
+    expect(url).toBe('http://127.0.0.1:58627/#token=abc123');
+    const parsed = new URL(url);
+    expect(parsed.hash).toBe('#token=abc123');
+    // The token is client-side only: it must NOT appear in the path or query
+    // (which WOULD be sent to the server and logged).
+    expect(parsed.pathname).not.toContain('abc123');
+    expect(parsed.search).not.toContain('abc123');
+  });
+
+  it('normalizes a trailing slash', async () => {
+    const { buildWebUrl } = await import('#/cli/sub/server/run');
+    expect(buildWebUrl('http://127.0.0.1:58627/', 't')).toBe(
+      'http://127.0.0.1:58627/#token=t',
+    );
+  });
+});
+
+describe('accessUrlLines', () => {
+  it('returns Local + Network lines for a wildcard bind', async () => {
+    const { accessUrlLines } = await import('#/cli/sub/server/access-urls');
+    const lines = accessUrlLines('0.0.0.0', 58627, 'tok', [
+      { address: '192.168.1.5', family: 'IPv4' },
+    ]);
+    expect(lines).toEqual([
+      { label: 'Local:    ', url: 'http://localhost:58627/#token=tok' },
+      { label: 'Network:  ', url: 'http://192.168.1.5:58627/#token=tok' },
+    ]);
+  });
+
+  it('returns a single Local line for a loopback bind', async () => {
+    const { accessUrlLines } = await import('#/cli/sub/server/access-urls');
+    const lines = accessUrlLines('127.0.0.1', 58627, 'tok');
+    expect(lines).toEqual([
+      { label: 'Local:    ', url: 'http://127.0.0.1:58627/#token=tok' },
+    ]);
+  });
+
+  it('returns a single URL line for a specific host (no token)', async () => {
+    const { accessUrlLines } = await import('#/cli/sub/server/access-urls');
+    const lines = accessUrlLines('192.168.1.5', 58627, undefined);
+    expect(lines).toEqual([{ label: 'URL:      ', url: 'http://192.168.1.5:58627/' }]);
+  });
+
+  it('splitTokenFragment splits off the #token= fragment', async () => {
+    const { splitTokenFragment } = await import('#/cli/sub/server/access-urls');
+    expect(splitTokenFragment('http://h:1/#token=abc')).toEqual(['http://h:1/', '#token=abc']);
+    expect(splitTokenFragment('http://h:1/')).toEqual(['http://h:1/', '']);
+  });
+});
+
+describe('`kimi web` / `server run --open` token fragment (M5.5)', () => {
+  it('opens the Web UI URL with the token fragment when a token is resolvable', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    const openUrl = vi.fn();
+    await handleRunCommand(
+      { port: '58627', open: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+        resolveToken: () => 'tok-xyz',
+        openUrl,
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627/#token=tok-xyz');
+  });
+
+  it('opens the plain origin when no token is resolvable', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    const openUrl = vi.fn();
+    await handleRunCommand(
+      { port: '58627', open: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+        resolveToken: () => undefined,
+        openUrl,
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627');
+  });
+});
+
+describe('`kimi server rotate-token`', () => {
+  let dir: string;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'kimi-rotate-'));
+    prevHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = dir;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) {
+      delete process.env['KIMI_CODE_HOME'];
+    } else {
+      process.env['KIMI_CODE_HOME'] = prevHome;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes a new token to server.token and prints it', async () => {
+    const { registerServerCommand } = await import('#/cli/sub/server');
+    const program = new Command('kimi').exitOverride();
+    registerServerCommand(program);
+    let stdout = '';
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdout += String(chunk);
+      return true;
+    });
+
+    await program.parseAsync(['node', 'kimi', 'server', 'rotate-token']);
+    writeSpy.mockRestore();
+
+    const token = readFileSync(join(dir, 'server.token'), 'utf8').trim();
+    expect(token.length).toBeGreaterThan(20);
+    expect(stdout).toContain('New server token');
+    expect(stdout).toContain(token);
+  });
+
+  it('re-prints the access links with the new token when a server is running', async () => {
+    const { registerServerCommand } = await import('#/cli/sub/server');
+    const { mkdirSync, writeFileSync: writeSync } = await import('node:fs');
+    // Fake a live lock pointing at this (alive) process so getLiveLock() finds
+    // the running server and the command can re-print its links.
+    mkdirSync(join(dir, 'server'), { recursive: true });
+    writeSync(
+      join(dir, 'server', 'lock'),
+      JSON.stringify({
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        port: 58627,
+        host: '127.0.0.1',
+      }),
+    );
+
+    const program = new Command('kimi').exitOverride();
+    registerServerCommand(program);
+    let stdout = '';
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdout += String(chunk);
+      return true;
+    });
+
+    await program.parseAsync(['node', 'kimi', 'server', 'rotate-token']);
+    writeSpy.mockRestore();
+
+    const token = readFileSync(join(dir, 'server.token'), 'utf8').trim();
+    expect(stdout).toContain('New server token');
+    expect(stdout).toContain(`http://127.0.0.1:58627/#token=${token}`);
+    // Token line sits between the note and the links.
+    expect(stdout.indexOf('picks up the new token')).toBeLessThan(
+      stdout.indexOf('New server token'),
+    );
+    expect(stdout.indexOf('New server token')).toBeLessThan(
+      stdout.indexOf(`http://127.0.0.1:58627/#token=${token}`),
+    );
+  });
+});
+
+describe('formatHostForUrl', () => {
+  it('bracket-wraps IPv6 and leaves IPv4 as-is', async () => {
+    const { formatHostForUrl } = await import('#/cli/sub/server/networks');
+    expect(formatHostForUrl('192.168.1.5', 'IPv4')).toBe('192.168.1.5');
+    expect(formatHostForUrl('fe80::1', 'IPv6')).toBe('[fe80::1]');
+  });
+});
+
+describe('filterDisplayAddresses', () => {
+  it('drops IPv6 link-local, de-duplicates, and orders IPv4 before IPv6', async () => {
+    const { filterDisplayAddresses } = await import('#/cli/sub/server/networks');
+    const out = filterDisplayAddresses([
+      { address: 'fe80::ecf3:c2ff:fe9c:11c3', family: 'IPv6' },
+      { address: '192.168.1.5', family: 'IPv4' },
+      { address: 'fe80::ecf3:c2ff:fe9c:11c3', family: 'IPv6' },
+      { address: '10.0.0.1', family: 'IPv4' },
+      { address: 'fe80::1', family: 'IPv6' },
+      { address: '2001:db8::1', family: 'IPv6' },
+    ]);
+    expect(out).toEqual([
+      { address: '192.168.1.5', family: 'IPv4' },
+      { address: '10.0.0.1', family: 'IPv4' },
+      { address: '2001:db8::1', family: 'IPv6' },
+    ]);
   });
 });
 

@@ -1205,7 +1205,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   async function respondApproval(
     approvalId: string,
-    response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string },
+    response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string; selectedLabel?: string },
   ): Promise<void> {
     const sid = rawState.activeSessionId;
     if (!sid) return;
@@ -1215,6 +1215,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         decision: response.decision,
         scope: response.scope,
         feedback: response.feedback,
+        selectedLabel: response.selectedLabel,
       };
       await api.respondApproval(sid, approvalId, fullResponse);
       // Remove from local approvals immediately (WS event will confirm)

@@ -165,8 +165,10 @@ function tryExclusiveCreate(path: string, contents: LockContents): boolean {
   let fd: number | undefined;
   try {
     // 0o100 (O_CREAT) | 0o200 (O_EXCL) | 0o2 (O_RDWR) — but `openSync` accepts the
-    // string flag form which is portable.
-    fd = openSync(path, 'wx');
+    // string flag form which is portable. Mode 0o600 so the lock file (which
+    // lives next to the per-pid token file) is not world/group readable
+    // (ROADMAP M5.2).
+    fd = openSync(path, 'wx', 0o600);
     writeFileSync(fd, JSON.stringify(contents));
     return true;
   } catch (err) {

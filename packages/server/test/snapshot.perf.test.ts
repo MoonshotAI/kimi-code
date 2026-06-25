@@ -20,6 +20,7 @@ import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { startServer, type RunningServer } from '../src';
+import { fixedTokenAuth, withAuth } from './helpers/serverHarness';
 
 let tmpDir: string;
 let bridgeHome: string;
@@ -42,11 +43,14 @@ afterEach(async () => {
 });
 
 async function postSession(baseUrl: string, cwd: string): Promise<string> {
-  const res = await fetch(`${baseUrl}/api/v1/sessions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ metadata: { cwd } }),
-  });
+  const res = await fetch(
+    `${baseUrl}/api/v1/sessions`,
+    withAuth({
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metadata: { cwd } }),
+    }),
+  );
   const env = (await res.json()) as { code: number; data: { id: string } | null };
   if (env.code !== 0 || env.data === null) throw new Error(JSON.stringify(env));
   return env.data.id;
@@ -54,7 +58,7 @@ async function postSession(baseUrl: string, cwd: string): Promise<string> {
 
 async function timeSnapshot(baseUrl: string, sid: string): Promise<number> {
   const t = performance.now();
-  const res = await fetch(`${baseUrl}/api/v1/sessions/${sid}/snapshot`);
+  const res = await fetch(`${baseUrl}/api/v1/sessions/${sid}/snapshot`, withAuth());
   await res.text();
   return performance.now() - t;
 }
@@ -71,6 +75,7 @@ describe('SnapshotReader perf (real HTTP, 50 sessions)', () => {
       host: '127.0.0.1',
       port: 0,
       lockPath: join(tmpDir, 'lock'),
+      serviceOverrides: [fixedTokenAuth()],
       logger: pino({ level: 'silent' }),
       coreProcessOptions: { homeDir: bridgeHome },
     });
