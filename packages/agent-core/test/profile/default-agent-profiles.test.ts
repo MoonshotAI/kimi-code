@@ -107,4 +107,20 @@ describe('default agent profiles', () => {
       expect(prompt).toContain('premature abstraction'); // MINIMAL-changes counterexample
     }
   });
+
+  it('gates Agent guidance on availableTools, not just the declared profile tools', () => {
+    // The agent profile DECLARES Agent, but Agent only registers when a subagentHost
+    // exists. When the runtime renders with availableTools that exclude Agent (e.g.
+    // constructed without a subagentHost), the explore-delegation guidance must not
+    // appear — otherwise the model is steered toward a tool it cannot call.
+    const declared = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
+    expect(declared).toContain('Launch multiple explore agents concurrently'); // omitted → fallback to declared tools
+
+    const withoutAgent =
+      DEFAULT_AGENT_PROFILES['agent']?.systemPrompt({
+        ...promptContext,
+        availableTools: ['Bash', 'Read', 'Grep', 'Glob', 'Write', 'Edit'],
+      }) ?? '';
+    expect(withoutAgent).not.toContain('Launch multiple explore agents concurrently');
+  });
 });

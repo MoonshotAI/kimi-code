@@ -151,6 +151,12 @@ function buildTemplateVars(
       ? context.now.toISOString()
       : (context.now ?? new Date().toISOString());
 
+  // Gate on the tools actually available to the model when the runtime supplies
+  // them; fall back to the profile's declared tools otherwise. The profile may
+  // declare a tool (e.g. Agent) that did not register at runtime, so the
+  // declared list alone can over-state what the model can call.
+  const effectiveTools = context.availableTools ?? tools;
+
   return {
     ...promptVars,
     KIMI_OS: context.osEnv.osKind,
@@ -159,10 +165,10 @@ function buildTemplateVars(
     KIMI_WORK_DIR: context.cwd,
     KIMI_WORK_DIR_LS: context.cwdListing ?? '',
     KIMI_AGENTS_MD: context.agentsMd ?? '',
-    KIMI_SKILLS: tools.includes('Skill') ? skills : '',
-    HAS_AGENT: tools.includes('Agent') ? 'yes' : '',
-    HAS_TASKLIST: tools.includes('TaskList') ? 'yes' : '',
-    HAS_TODOLIST: tools.includes('TodoList') ? 'yes' : '',
+    KIMI_SKILLS: effectiveTools.includes('Skill') ? skills : '',
+    HAS_AGENT: effectiveTools.includes('Agent') ? 'yes' : '',
+    HAS_TASKLIST: effectiveTools.includes('TaskList') ? 'yes' : '',
+    HAS_TODOLIST: effectiveTools.includes('TodoList') ? 'yes' : '',
     KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
     ROLE_ADDITIONAL:
       context.roleAdditional ?? promptVars['ROLE_ADDITIONAL'] ?? promptVars['roleAdditional'] ?? '',

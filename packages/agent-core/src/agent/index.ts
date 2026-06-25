@@ -248,6 +248,13 @@ export class Agent {
   }
 
   useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
+    // Agent/AgentSwarm only register when a subagentHost exists (see
+    // ToolManager.initializeBuiltinTools). Mirror that condition here so the
+    // prompt's tool-availability gating never advertises a tool the model
+    // cannot call when the runtime was built without a subagentHost.
+    const availableTools = this.subagentHost
+      ? profile.tools
+      : profile.tools.filter((name) => name !== 'Agent' && name !== 'AgentSwarm');
     const systemPrompt = profile.systemPrompt({
       osEnv: this.kaos.osEnv,
       cwd: this.config.cwd,
@@ -255,6 +262,7 @@ export class Agent {
       cwdListing: context?.cwdListing,
       agentsMd: context?.agentsMd,
       additionalDirsInfo: context?.additionalDirsInfo,
+      availableTools,
     });
     this.config.update({ profileName: profile.name, systemPrompt });
     this.tools.setActiveTools(profile.tools);
