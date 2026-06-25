@@ -75,21 +75,21 @@ describe('default agent profiles', () => {
     }
   });
 
-  it('gates tool-specific guidance to agents that hold the tool', () => {
-    // The root agent holds Agent / TaskList / TodoList, so the tool-specific guidance renders.
-    const agentPrompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
-    expect(agentPrompt).toContain('Launch multiple explore agents concurrently'); // Agent (explore delegation)
-    expect(agentPrompt).toContain('long-running shell commands as background tasks'); // TaskList
-    expect(agentPrompt).toContain('maintain a `TodoList`'); // TodoList
-
-    // explore/plan hold none of Agent / TaskList / TodoList, so that guidance is gone —
-    // but the cross-tool secret-file guard (they keep Read/Grep/Glob) must stay shared.
-    for (const name of ['explore', 'plan']) {
+  it('keeps optional-tool guidance out of the shared system prompt entirely', () => {
+    // Tool-coupled guidance now lives in each tool's own description, which the schema
+    // layer ships ONLY when the tool is registered — that is the availability gate, for
+    // free. So the shared system.md must not name optional tools at all (no per-tool
+    // {% if %} reconstruction of availability). This holds for the root `agent` too, not
+    // just subagents. The cross-tool secret-file guard — built on the always-present
+    // Read/Grep/Glob — stays shared.
+    for (const name of ['agent', 'coder', 'explore', 'plan']) {
       const prompt = DEFAULT_AGENT_PROFILES[name]?.systemPrompt(promptContext) ?? '';
-      expect(prompt).not.toContain('Launch multiple explore agents concurrently');
-      expect(prompt).not.toContain('long-running shell commands as background tasks');
-      expect(prompt).not.toContain('maintain a `TodoList`');
-      expect(prompt).toContain('refuse a fixed set of well-known secret files');
+      expect(prompt).not.toContain('Launch multiple explore agents concurrently'); // Agent → agent.md + explore whenToUse
+      expect(prompt).not.toContain('long-running shell commands as background tasks'); // background → bash.md
+      expect(prompt).not.toContain('maintain a `TodoList`'); // TodoList → todo-list.md
+      expect(prompt).not.toContain('prefer entering plan mode first'); // EnterPlanMode → enter-plan-mode.md
+      expect(prompt).not.toContain('call `TaskList` to re-enumerate'); // compaction recovery → task-list.md
+      expect(prompt).toContain('refuse a fixed set of well-known secret files'); // shared guard stays
     }
   });
 
@@ -106,39 +106,5 @@ describe('default agent profiles', () => {
       expect(prompt).toContain('update the related tests'); // preamble phrasing example
       expect(prompt).toContain('premature abstraction'); // MINIMAL-changes counterexample
     }
-  });
-
-  it('gates Agent guidance on availableTools, not just the declared profile tools', () => {
-    // The agent profile DECLARES Agent, but Agent only registers when a subagentHost
-    // exists. When the runtime renders with availableTools that exclude Agent (e.g.
-    // constructed without a subagentHost), the explore-delegation guidance must not
-    // appear — otherwise the model is steered toward a tool it cannot call.
-    const declared = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
-    expect(declared).toContain('Launch multiple explore agents concurrently'); // omitted → fallback to declared tools
-
-    const withoutAgent =
-      DEFAULT_AGENT_PROFILES['agent']?.systemPrompt({
-        ...promptContext,
-        availableTools: ['Bash', 'Read', 'Grep', 'Glob', 'Write', 'Edit'],
-      }) ?? '';
-    expect(withoutAgent).not.toContain('Launch multiple explore agents concurrently');
-  });
-
-  it('gates the plan-mode suggestion on EnterPlanMode availability, not just TodoList', () => {
-    // The TodoList guidance bullet ends by steering toward EnterPlanMode. EnterPlanMode
-    // registers unconditionally, but a custom profile can keep TodoList while dropping
-    // EnterPlanMode/ExitPlanMode. In that case only the plan-mode half-sentence must drop —
-    // otherwise the model is steered toward a tool it cannot call — while the TodoList half
-    // (gated on HAS_TODOLIST) keeps rendering.
-    const declared = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
-    expect(declared).toContain('prefer entering plan mode first'); // both present → renders
-
-    const withoutPlanMode =
-      DEFAULT_AGENT_PROFILES['agent']?.systemPrompt({
-        ...promptContext,
-        availableTools: ['Bash', 'Read', 'Grep', 'Glob', 'Write', 'Edit', 'TodoList'],
-      }) ?? '';
-    expect(withoutPlanMode).toContain('maintain a `TodoList`'); // TodoList half still renders
-    expect(withoutPlanMode).not.toContain('prefer entering plan mode first'); // plan-mode half gated out
   });
 });

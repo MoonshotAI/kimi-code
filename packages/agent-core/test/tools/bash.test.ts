@@ -1244,6 +1244,9 @@ describe('BashTool', () => {
     expect(description).toContain('**Guidelines for efficiency:**');
     expect(description).toContain('run_in_background=true');
     expect(description).toContain('automatically notified');
+    // Moved here from system.md: the "don't block on a background task" nudge belongs in
+    // the background-enabled Bash description, the only place that documents it.
+    expect(description).toContain('returning control to the user');
   });
 });
 

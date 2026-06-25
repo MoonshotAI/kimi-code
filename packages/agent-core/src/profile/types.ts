@@ -42,15 +42,6 @@ export interface SystemPromptContext {
   readonly skills?: SkillRegistry | string;
   readonly additionalDirsInfo?: string;
   readonly roleAdditional?: string;
-  /**
-   * Tool names that are ACTUALLY available to the model at render time. The
-   * profile's declared `tools` is necessary but not sufficient — some builtins
-   * (e.g. `Agent`/`AgentSwarm`) only register when their runtime dependency
-   * (a `subagentHost`) exists. When provided, the `{% if HAS_* %}` / Skills
-   * gating is computed from this set so the prompt never mentions a tool the
-   * model cannot call. Falls back to the profile's declared tools when omitted.
-   */
-  readonly availableTools?: readonly string[];
 }
 
 export type SystemPromptRenderer = (context: SystemPromptContext) => string;
