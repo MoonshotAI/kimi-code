@@ -7,7 +7,8 @@
  *   3. Reject responses larger than `maxBytes` (content-length first,
  *      then measured body length as a defensive second check).
  *   4. `text/plain` / `text/markdown` → passthrough verbatim.
- *   5. Otherwise (assumed HTML) → run Readability over a linkedom
+ *   5. `image/*` → download binary, encode as base64, return as image kind.
+ *   6. Otherwise (assumed HTML) → run Readability over a linkedom
  *      document. Return `# ${title}\n\n${text}` (title omitted when
  *      absent). If extraction yields no meaningful text, fall back to
  *      common content containers (`<article>` / `<main>` / `<body>`)
@@ -172,6 +173,25 @@ export class LocalFetchURLProvider implements UrlFetcher {
       }
     }
 
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+
+    // Handle image content types
+    if (contentType.startsWith('image/')) {
+      const arrayBuffer = await response.arrayBuffer();
+      const actualBytes = arrayBuffer.byteLength;
+      if (actualBytes > this.maxBytes) {
+        throw new Error(
+          `Response body too large: ${String(actualBytes)} bytes exceeds maxBytes (${String(this.maxBytes)}).`,
+        );
+      }
+      const base64 = Buffer.from(arrayBuffer).toString('base64');
+      return {
+        content: '',
+        kind: 'image',
+        image: { mimeType: contentType, base64 },
+      };
+    }
+
     const body = await response.text();
 
     // Servers may omit content-length — measure again defensively.
@@ -182,7 +202,6 @@ export class LocalFetchURLProvider implements UrlFetcher {
       );
     }
 
-    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
     if (contentType.startsWith('text/plain') || contentType.startsWith('text/markdown')) {
       return { content: body, kind: 'passthrough' };
     }
