@@ -149,3 +149,44 @@ describe('reduceAppEvent taskProgress', () => {
     expect(lines?.at(-1)).toBe('line 59');
   });
 });
+
+describe('reduceAppEvent sessions reference stability', () => {
+  // The sidebar computeds (sessionsForView / workspaceGroups / mergedWorkspaces)
+  // depend on `rawState.sessions`. Events that do not change sessions must keep
+  // the SAME array reference so those computeds are not dirtied; events that do
+  // change sessions must produce a NEW array.
+
+  it('reuses the sessions reference for an event that does not touch sessions', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      messagesBySession: { s1: [makeMessage('s1', '2026-01-01T00:00:00.000Z')] },
+    };
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'messageUpdated',
+        sessionId: 's1',
+        messageId: 'msg_2026-01-01T00:00:00.000Z',
+        content: [{ type: 'text', text: 'updated' }],
+        status: 'completed',
+      },
+      { sessionId: 's1', seq: 2 },
+    );
+    expect(next.sessions).toBe(state.sessions);
+  });
+
+  it('produces a new sessions array for an event that changes sessions', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'sessionCreated', session: makeSession('s2', '2026-02-01T00:00:00.000Z') },
+      { sessionId: 's2', seq: 3 },
+    );
+    expect(next.sessions).not.toBe(state.sessions);
+    expect(next.sessions.map((s) => s.id)).toEqual(['s2', 's1']);
+  });
+});

@@ -84,7 +84,13 @@ export function createInitialState(): KimiClientState {
 function cloneState(s: KimiClientState): KimiClientState {
   return {
     ...s,
-    sessions: [...s.sessions],
+    // Reuse the `sessions` array reference when an event does not touch it.
+    // Every session-mutating case below already builds its own array via
+    // `[...]` / `.map` / `.filter`, so sharing the reference is safe — and it
+    // keeps `rawState.sessions` stable for events that don't change sessions,
+    // so the sidebar computeds (sessionsForView / workspaceGroups /
+    // mergedWorkspaces) are not dirtied by unrelated events.
+    sessions: s.sessions,
     messagesBySession: { ...s.messagesBySession },
     approvalsBySession: { ...s.approvalsBySession },
     planReviewByToolCallId: { ...s.planReviewByToolCallId },
