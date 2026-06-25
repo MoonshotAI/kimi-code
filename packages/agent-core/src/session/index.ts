@@ -552,10 +552,11 @@ export class Session {
    * the session has been re-resumed with reloaded plugin state.
    *
    * When no plugin session start is currently resolvable but an earlier
-   * `<plugin_session_start>` reminder exists in history (e.g. the plugin was
-   * disabled or removed), appends a neutralizing reminder instead, so the model
-   * does not keep following stale plugin instructions and the turn-loop injector
-   * does not dedup against the old reminder.
+   * When no plugin session start is currently resolvable but the context may still
+   * carry stale plugin guidance — either an earlier `<plugin_session_start>`
+   * reminder, or a compaction summary that may have folded one in — appends a
+   * neutralizing reminder instead, so the model does not keep following stale
+   * plugin instructions and the turn-loop injector does not dedup against them.
    */
   async appendPluginSessionStartReminder(): Promise<void> {
     await this.skillsReady;
@@ -570,7 +571,7 @@ export class Session {
         `${reminder}\n\nThis supersedes any earlier plugin_session_start reminder in this session.`,
         { kind: 'injection', variant: 'plugin_session_start' },
       );
-    } else if (this.hasPriorPluginSessionStartReminder(mainAgent)) {
+    } else if (this.shouldNeutralizePluginSessionStart(mainAgent)) {
       mainAgent.context.appendSystemReminder(
         'There are currently no active plugin session starts. This supersedes any earlier plugin_session_start reminder in this session.',
         { kind: 'injection', variant: 'plugin_session_start' },
@@ -581,12 +582,17 @@ export class Session {
     await mainAgent.records.flush();
   }
 
-  private hasPriorPluginSessionStartReminder(mainAgent: Agent): boolean {
-    return mainAgent.context.history.some(
-      (message) =>
-        message.origin?.kind === 'injection' &&
-        message.origin.variant === 'plugin_session_start',
-    );
+  private shouldNeutralizePluginSessionStart(mainAgent: Agent): boolean {
+    return mainAgent.context.history.some((message) => {
+      const kind = message.origin?.kind;
+      if (kind === 'injection') {
+        return message.origin?.variant === 'plugin_session_start';
+      }
+      // A compaction summary replaces earlier messages (including any plugin
+      // session-start reminder) with a single summary that may still carry stale
+      // plugin guidance, so the origin-only check above is not sufficient.
+      return kind === 'compaction_summary';
+    });
   }
 
   get hasActiveTurn(): boolean {

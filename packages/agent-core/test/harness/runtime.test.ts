@@ -1096,6 +1096,47 @@ base_url = "https://search.example.test/v1"
 
     expect(pluginSessionStartReminders(core, created.id)).toHaveLength(0);
   });
+
+  it('neutralizes stale plugin guidance after compaction when no sessionStart is active', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_reload_compacted',
+      workDir,
+      model: 'default-mock',
+    });
+    const session = core.sessions.get(created.id);
+    const main = session?.getReadyAgent('main');
+
+    // Simulate a compaction that folded earlier messages (and any plugin guidance)
+    // into a single summary, leaving no discrete plugin_session_start behind.
+    main?.context.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'summary of earlier conversation with plugin guidance' }],
+      toolCalls: [],
+      origin: { kind: 'compaction_summary' },
+    });
+
+    await session?.appendPluginSessionStartReminder();
+
+    const reminders = pluginSessionStartReminders(core, created.id);
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0]).toContain('no active plugin session starts');
+  });
 });
 
 async function writeSessionStartPlugin(root: string, skillBody: string): Promise<void> {
