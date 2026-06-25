@@ -5,6 +5,14 @@
 
 import type { DiffViewLine } from '../types';
 
+/**
+ * Maximum LCS matrix size (`(oldLines + 1) * (newLines + 1)`) we are willing to
+ * allocate. Beyond this the diff would be too expensive to compute client-side
+ * (a 5k × 5k edit is 25M cells, ~200MB) and we fall back to showing the raw
+ * tool output instead.
+ */
+const MAX_DIFF_CELLS = 1_000_000;
+
 function splitLines(s: string): string[] {
   if (s === '') return [];
   const lines = s.split('\n');
@@ -24,13 +32,17 @@ export interface DiffStats {
  * by <DiffLines/>. Line numbers are 1-based and advance per side like a
  * unified diff: context lines advance both, deletions advance old, additions
  * advance new.
+ *
+ * Returns null when the inputs are large enough that the LCS matrix would
+ * exceed `MAX_DIFF_CELLS`; callers should fall back to the raw tool output.
  */
-export function buildDiffLines(before: string, after: string): DiffViewLine[] {
+export function buildDiffLines(before: string, after: string): DiffViewLine[] | null {
   const oldLines = splitLines(before);
   const newLines = splitLines(after);
   const n = oldLines.length;
   const m = newLines.length;
   if (n === 0 && m === 0) return [];
+  if ((n + 1) * (m + 1) > MAX_DIFF_CELLS) return null;
 
   const dp: number[][] = Array.from({ length: n + 1 }, () => Array.from({ length: m + 1 }, () => 0));
   for (let i = 1; i <= n; i++) {

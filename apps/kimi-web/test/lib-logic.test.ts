@@ -67,6 +67,11 @@ describe('buildDiffLines', () => {
     ]);
     expect(buildDiffLines('', '')).toEqual([]);
   });
+
+  it('returns null when the LCS matrix would be too large', () => {
+    const big = Array.from({ length: 2000 }, (_, i) => `line${i}`).join('\n');
+    expect(buildDiffLines(big, `${big}\nextra`)).toBeNull();
+  });
 });
 
 describe('filePathLinks', () => {
