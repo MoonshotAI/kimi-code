@@ -959,7 +959,7 @@ base_url = "https://search.example.test/v1"
       `---\nname: greeter\ndescription: A greeter skill\n---\nNEW BODY\n`,
     );
 
-    await rpc.reloadSession({
+    const reloaded = await rpc.reloadSession({
       sessionId: created.id,
       forcePluginSessionStartReminder: true,
     });
@@ -970,6 +970,62 @@ base_url = "https://search.example.test/v1"
     expect(reminders[0]).toContain('NEW BODY');
     expect(reminders[0]).not.toContain('OLD BODY');
     expect(reminders[0]).toContain('supersedes any earlier plugin_session_start');
+
+    // The returned ResumeSessionResult must already include the fresh reminder
+    // (otherwise SDK callers reading getResumeState() see stale plugin context).
+    const resultReminders = remindersFromHistory(
+      reloaded.agents['main']?.context.history ?? [],
+    );
+    expect(resultReminders).toHaveLength(1);
+    expect(resultReminders[0]).toContain('NEW BODY');
+  });
+
+  it('neutralizes a stale plugin_session_start reminder when the plugin is removed', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const pluginRoot = join(tmp, 'plugin');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    await writeSessionStartPlugin(pluginRoot, 'BODY');
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    await core.installPlugin({ source: pluginRoot });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_reload_neutralize',
+      workDir,
+      model: 'default-mock',
+    });
+
+    // First forced reload appends an active reminder, establishing a prior
+    // plugin_session_start in history.
+    await rpc.reloadSession({
+      sessionId: created.id,
+      forcePluginSessionStartReminder: true,
+    });
+    expect(pluginSessionStartReminders(core, created.id)).toHaveLength(1);
+
+    // Removing the plugin means no sessionStart is resolvable on the next reload;
+    // the stale reminder must be neutralized rather than left in place.
+    await core.removePlugin({ id: 'demo' });
+    await rpc.reloadSession({
+      sessionId: created.id,
+      forcePluginSessionStartReminder: true,
+    });
+
+    const reminders = pluginSessionStartReminders(core, created.id);
+    expect(reminders).toHaveLength(2);
+    expect(reminders.at(-1)).toContain('no active plugin session starts');
+    expect(reminders.at(-1)).toContain('supersedes any earlier plugin_session_start');
   });
 
   it('does not append a plugin_session_start reminder on reload without the force flag', async () => {
@@ -1066,11 +1122,16 @@ function managedSkillPath(homeDir: string): string {
 function pluginSessionStartReminders(core: KimiCore, sessionId: string): string[] {
   const agent = core.sessions.get(sessionId)?.getReadyAgent('main');
   if (agent === undefined) return [];
-  const history = agent.context.history as ReadonlyArray<{
+  return remindersFromHistory(agent.context.history);
+}
+
+function remindersFromHistory(
+  history: ReadonlyArray<{
     role: string;
     origin?: { kind: string; variant?: string };
     content: ReadonlyArray<{ type: string; text?: string }>;
-  }>;
+  }>,
+): string[] {
   return history
     .filter(
       (message) =>

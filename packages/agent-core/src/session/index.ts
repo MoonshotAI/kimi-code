@@ -549,8 +549,13 @@ export class Session {
    * Appends a fresh `<plugin_session_start>` system reminder to the main agent
    * using the currently enabled plugins, then flushes records so the reminder is
    * persisted and visible on the wire. Used by the explicit `/reload` flow after
-   * the session has been re-resumed with reloaded plugin state. No-ops when there
-   * are no resolvable plugin session starts.
+   * the session has been re-resumed with reloaded plugin state.
+   *
+   * When no plugin session start is currently resolvable but an earlier
+   * `<plugin_session_start>` reminder exists in history (e.g. the plugin was
+   * disabled or removed), appends a neutralizing reminder instead, so the model
+   * does not keep following stale plugin instructions and the turn-loop injector
+   * does not dedup against the old reminder.
    */
   async appendPluginSessionStartReminder(): Promise<void> {
     await this.skillsReady;
@@ -560,12 +565,28 @@ export class Session {
       registry: mainAgent.skills?.registry,
       log: mainAgent.log,
     });
-    if (reminder === undefined) return;
-    mainAgent.context.appendSystemReminder(
-      `${reminder}\n\nThis supersedes any earlier plugin_session_start reminder in this session.`,
-      { kind: 'injection', variant: 'plugin_session_start' },
-    );
+    if (reminder !== undefined) {
+      mainAgent.context.appendSystemReminder(
+        `${reminder}\n\nThis supersedes any earlier plugin_session_start reminder in this session.`,
+        { kind: 'injection', variant: 'plugin_session_start' },
+      );
+    } else if (this.hasPriorPluginSessionStartReminder(mainAgent)) {
+      mainAgent.context.appendSystemReminder(
+        'There are currently no active plugin session starts. This supersedes any earlier plugin_session_start reminder in this session.',
+        { kind: 'injection', variant: 'plugin_session_start' },
+      );
+    } else {
+      return;
+    }
     await mainAgent.records.flush();
+  }
+
+  private hasPriorPluginSessionStartReminder(mainAgent: Agent): boolean {
+    return mainAgent.context.history.some(
+      (message) =>
+        message.origin?.kind === 'injection' &&
+        message.origin.variant === 'plugin_session_start',
+    );
   }
 
   get hasActiveTurn(): boolean {
