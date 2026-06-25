@@ -54,6 +54,9 @@ describe('TodoListTool', () => {
     expect(TODO_STORE_KEY).toBe('todo');
     expect(tool.name).toBe(TODO_LIST_TOOL_NAME);
     expect(tool.description.length).toBeGreaterThan(0);
+    // Plan-mode planning goes to the plan file, not the TodoList — the description
+    // must not present TodoList as the plan-mode mechanism.
+    expect(tool.description).toContain('plan file');
     expect(TodoListInputSchema.safeParse({}).success).toBe(true);
     expect(
       TodoListInputSchema.safeParse({ todos: [{ title: 'x', status: 'wip' }] }).success,

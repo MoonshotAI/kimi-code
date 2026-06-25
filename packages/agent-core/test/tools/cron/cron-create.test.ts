@@ -122,6 +122,18 @@ describe('CronCreateTool', () => {
     vi.unstubAllEnvs();
   });
 
+  it('documents the session task cap and pinned-date guard, without bench env vars', () => {
+    const { tool } = makeHarness();
+    expect(tool.description).toContain('50 live cron tasks');
+    expect(tool.description).toContain('already passed this year');
+    // Bench/CI-only env knobs the model never sets must not appear in the prompt.
+    expect(tool.description).not.toContain('KIMI_CRON_NO_STALE');
+    expect(tool.description).not.toContain('KIMI_CRON_NO_JITTER');
+    // The 8 KiB prompt cap lives in the param describe.
+    const params = tool.parameters as { properties: Record<string, { description?: string }> };
+    expect(params.properties['prompt']?.description).toContain('8 KiB');
+  });
+
   it('schedules a recurring task and emits cron_scheduled', async () => {
     const { stub, manager, tool } = makeHarness();
     const result = await runTool(tool, {

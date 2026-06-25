@@ -8,6 +8,9 @@ Use this tool when you are in plan mode and have finished writing your plan to t
 ## When to Use
 Only use this tool for tasks that require planning implementation steps. For research tasks (searching files, reading code, understanding the codebase), do NOT use this tool.
 
+## What a good plan contains
+List specific, verifiable steps grounded in the actual codebase — real files, functions, and commands, in a sensible order. Each step should be concrete enough to act on and to check. Avoid vague filler like "improve performance" or "add tests"; say what to change and where.
+
 ## Multiple Approaches
 If your plan contains multiple alternative approaches:
 - Pass them via the `options` parameter so the user can choose which approach to execute.
