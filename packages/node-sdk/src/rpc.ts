@@ -245,6 +245,11 @@ export abstract class SDKRpcClientBase {
     return rpc.generateAgentsMd({ sessionId: input.sessionId });
   }
 
+  async getSessionWarnings(input: SessionIdRpcInput) {
+    const rpc = await this.getRpc();
+    return rpc.getSessionWarnings({ sessionId: input.sessionId });
+  }
+
   async addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult> {
     const rpc = await this.getRpc();
     return rpc.addAdditionalDir({ sessionId: input.id, path: input.path, persist: input.persist });

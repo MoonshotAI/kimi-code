@@ -5,9 +5,14 @@
 import { ErrorCodes, KimiError, isKimiError } from '#/errors';
 
 export function createMaxStepsExceededError(maxSteps: number, message?: string): KimiError {
-  return new KimiError(ErrorCodes.LOOP_MAX_STEPS_EXCEEDED, message ?? `Turn exceeded maxSteps=${maxSteps}`, {
-    details: { maxSteps },
-  });
+  return new KimiError(
+    ErrorCodes.LOOP_MAX_STEPS_EXCEEDED,
+    message ??
+      `Turn exceeded maxSteps=${maxSteps}. If max_steps_per_turn is too small, raise it in config.toml (loop_control.max_steps_per_turn).`,
+    {
+      details: { maxSteps },
+    },
+  );
 }
 
 export function isMaxStepsExceededError(error: unknown): boolean {

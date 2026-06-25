@@ -2,6 +2,7 @@ import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { AgentGroupComponent } from '../components/messages/agent-group';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
+import { currentWorkingTip } from '../components/chrome/working-tips';
 import { CompactionComponent } from '../components/dialogs/compaction';
 import { ReadGroupComponent } from '../components/messages/read-group';
 import { ThinkingComponent } from '../components/messages/thinking';
@@ -599,12 +600,16 @@ export class StreamingUIController {
     const block = this._streamingBlock;
     if (block !== null) {
       block.entry.content = fullText;
-      block.component.updateContent(fullText);
+      block.component.updateContent(fullText, { transient: true });
       this.host.state.ui.requestRender();
     }
   }
 
   onStreamingTextEnd(): void {
+    const block = this._streamingBlock;
+    if (block !== null) {
+      block.component.updateContent(block.entry.content, { transient: false });
+    }
     this._streamingBlock = null;
   }
 
@@ -711,7 +716,7 @@ export class StreamingUIController {
       this._activeCompactionBlock.markDone();
       this._activeCompactionBlock = undefined;
     }
-    const block = new CompactionComponent(state.ui, instruction);
+    const block = new CompactionComponent(state.ui, instruction, currentWorkingTip()?.text);
     this._activeCompactionBlock = block;
     state.transcriptContainer.addChild(block);
     state.ui.requestRender();

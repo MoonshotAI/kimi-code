@@ -63,6 +63,11 @@ export class WSGateway extends Disposable implements IWSGateway {
       socket.destroy();
       return;
     }
+    // Disable Nagle's algorithm: streaming chat sends many small frames (one per
+    // token delta), and Nagle + the client's delayed ACK can bunch them into
+    // ~40 ms clusters, making the stream look stuttery. Trade a little bandwidth
+    // for lower latency.
+    socket.setNoDelay(true);
     this.wss.handleUpgrade(req, socket, head, (ws) => this.onConnect(ws, req));
   }
 

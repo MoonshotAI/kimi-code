@@ -57,6 +57,18 @@ export class UserMessageComponent implements Component {
       }
     }
 
-    return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
+    return lines.map((line) => {
+      // Inline image sequences (Kitty / iTerm2) carry their own placement
+      // information and have zero visible width, but pi-tui's truncateToWidth
+      // treats the embedded base64 payload as visible text and would chop the
+      // escape sequence in half, leaving garbage like "0m...". Skip truncation
+      // for those lines; the image itself already respects maxWidthCells.
+      if (isImageLine(line)) return line;
+      return truncateToWidth(line, safeWidth, '…');
+    });
   }
+}
+
+function isImageLine(line: string): boolean {
+  return line.includes('\u001B_G') || line.includes('\u001B]1337;File=');
 }

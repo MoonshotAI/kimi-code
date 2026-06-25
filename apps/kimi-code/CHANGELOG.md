@@ -1,5 +1,71 @@
 # @moonshot-ai/kimi-code
 
+## 0.19.2
+
+### Patch Changes
+
+- [#999](https://github.com/MoonshotAI/kimi-code/pull/999) [`6b68aa8`](https://github.com/MoonshotAI/kimi-code/commit/6b68aa85e2a58cfdaacba5580f66a6a74550ccf6) - Add `-c` as a shorthand for `--continue`.
+
+- [#1028](https://github.com/MoonshotAI/kimi-code/pull/1028) [`be77d5d`](https://github.com/MoonshotAI/kimi-code/commit/be77d5da03b96ebc24169ef563be1dc1c545590f) - Show a transient footer hint when an image is detected in the clipboard, displaying the platform-appropriate paste shortcut.
+
+- [#1004](https://github.com/MoonshotAI/kimi-code/pull/1004) [`d70c3a8`](https://github.com/MoonshotAI/kimi-code/commit/d70c3a8c0121f55e5f29f9a2ad01b17df449467a) - Show the command in running Bash tool cards and allow expanding it with Ctrl+O before the result arrives.
+
+- [#1009](https://github.com/MoonshotAI/kimi-code/pull/1009) [`e47de61`](https://github.com/MoonshotAI/kimi-code/commit/e47de610e4de9b11ccd182c0c16387f9d3fb0de4) - Add a Ctrl+T shortcut to expand and collapse a truncated todo list.
+
+- [#1028](https://github.com/MoonshotAI/kimi-code/pull/1028) [`be77d5d`](https://github.com/MoonshotAI/kimi-code/commit/be77d5da03b96ebc24169ef563be1dc1c545590f) - Fix stale rows occasionally leaving duplicate input boxes after tall content shrinks.
+
+- [#1028](https://github.com/MoonshotAI/kimi-code/pull/1028) [`be77d5d`](https://github.com/MoonshotAI/kimi-code/commit/be77d5da03b96ebc24169ef563be1dc1c545590f) - Fix inline images being rendered as broken escape sequences in the transcript.
+
+- [#1027](https://github.com/MoonshotAI/kimi-code/pull/1027) [`c240bfa`](https://github.com/MoonshotAI/kimi-code/commit/c240bfab7d2b00d41b993f681be612f2db45baa7) - Fix resume not realigning a tool call that was interrupted mid-history. The synthetic interrupted result is now closed in place at the next step boundary, so later turns and deferred messages keep their recorded order instead of only the trailing exchange being repaired. The `/messages` wire transcript reducer mirrors the same closure so its folded length stays aligned with live history, preventing the later turn from being duplicated/reordered. Replay also drops a tool result whose call is no longer awaiting one, so a stale interrupted result left at the log tail by an older resume of a damaged session is not re-applied as a duplicate.
+
+- [#1012](https://github.com/MoonshotAI/kimi-code/pull/1012) [`fd16ffb`](https://github.com/MoonshotAI/kimi-code/commit/fd16ffb80a90fda8a611a27a158b9b7a33e13303) - Show subcommand suggestions after Tab-completing a slash command name.
+
+- [#1012](https://github.com/MoonshotAI/kimi-code/pull/1012) [`fd16ffb`](https://github.com/MoonshotAI/kimi-code/commit/fd16ffb80a90fda8a611a27a158b9b7a33e13303) - Fix the Tab key unexpectedly opening the file completion list.
+
+- [#1044](https://github.com/MoonshotAI/kimi-code/pull/1044) [`9d197e0`](https://github.com/MoonshotAI/kimi-code/commit/9d197e0f67c879306b9d7659d66e9295e63faa5a) - Fix clipboard copy actions in the web UI when served over plain HTTP.
+
+- [#1032](https://github.com/MoonshotAI/kimi-code/pull/1032) [`a753b05`](https://github.com/MoonshotAI/kimi-code/commit/a753b0535e44f624289715bd560cf1346149e786) - Fix code blocks nested inside list items rendering blank in the web chat after a turn finishes generating.
+
+- [#1015](https://github.com/MoonshotAI/kimi-code/pull/1015) [`83384ee`](https://github.com/MoonshotAI/kimi-code/commit/83384ee6d46b37c00b7b8f160a7c48aebbd6921e) - Fix the composer's ↑/↓ input-history recall doing nothing right after the first message of a new session. The history is now persisted to localStorage and re-read on mount, so the docked composer no longer starts empty when it takes over from the empty-session composer. Slash commands are now recorded too — both typed-and-submitted and ones picked from the slash menu — so they can be recalled like plain messages.
+
+- [#1003](https://github.com/MoonshotAI/kimi-code/pull/1003) [`e15edfd`](https://github.com/MoonshotAI/kimi-code/commit/e15edfd017506fde396b8b0dcf68008b61b39752) - Fix the web question prompt missing the free-text Other option.
+
+- [#1056](https://github.com/MoonshotAI/kimi-code/pull/1056) [`b93e936`](https://github.com/MoonshotAI/kimi-code/commit/b93e9365b68d53f8f1a148e7349a5865b1b669a8) - Fix yolo mode in the web app auto-approving plan reviews and sensitive file access.
+
+- [#971](https://github.com/MoonshotAI/kimi-code/pull/971) [`b84704b`](https://github.com/MoonshotAI/kimi-code/commit/b84704bff39ae5cb382d2a8dc0911db286e84ead) - Read large text files in bounded memory and read tail lines without scanning whole files.
+
+- [#1020](https://github.com/MoonshotAI/kimi-code/pull/1020) [`9c553e4`](https://github.com/MoonshotAI/kimi-code/commit/9c553e4bf7d0a2c09030212fe06577343ea76a60) - Add an Alt+S shortcut in the model picker to switch the model for the current session only, without saving it as the default.
+
+- [#1043](https://github.com/MoonshotAI/kimi-code/pull/1043) [`27df39c`](https://github.com/MoonshotAI/kimi-code/commit/27df39c7ed2b012815c380a33fe56bd37c7fc7c1) - Fix web chat stop actions so stale prompt ids fall back to cancelling the active session.
+
+- [#1036](https://github.com/MoonshotAI/kimi-code/pull/1036) [`866b91c`](https://github.com/MoonshotAI/kimi-code/commit/866b91c8f5dc98dfc18e5c658beaa11afea5032e) - Reorganize the web app's components into area subdirectories (chat/settings/dialogs/mobile) and refresh the component path comments.
+
+- [#1042](https://github.com/MoonshotAI/kimi-code/pull/1042) [`dc6b9ef`](https://github.com/MoonshotAI/kimi-code/commit/dc6b9ef02bf7583d166c8c5b001a960329c225f8) - Add a development-mode indicator to the web sidebar for local development.
+
+- [#1047](https://github.com/MoonshotAI/kimi-code/pull/1047) [`98d3e5b`](https://github.com/MoonshotAI/kimi-code/commit/98d3e5b71d5760475f7a5a23b2b794584d12b89b) - Keep the web sidebar's workspace order stable and let workspaces be reordered by drag-and-drop, persisted locally instead of following recent activity; sessions now also float to the top of their group as soon as a new message arrives.
+
+- [#1034](https://github.com/MoonshotAI/kimi-code/pull/1034) [`603a767`](https://github.com/MoonshotAI/kimi-code/commit/603a7679de91e221802a7f7b0ab7df23c7e5526c) - Extract the composer's image/video attachment handling into a reusable composable.
+
+- [#1031](https://github.com/MoonshotAI/kimi-code/pull/1031) [`2bfd686`](https://github.com/MoonshotAI/kimi-code/commit/2bfd6860e487f902be53fd5f52f03e66d1839ae2) - Extract the composer's text state and per-session draft persistence into a reusable composable.
+
+- [#1011](https://github.com/MoonshotAI/kimi-code/pull/1011) [`fb780fc`](https://github.com/MoonshotAI/kimi-code/commit/fb780fce9665e2119cee6d0bc7f85895c6970865) - Extract the composer's shell-style input-history recall into a reusable composable.
+
+- [#1030](https://github.com/MoonshotAI/kimi-code/pull/1030) [`661c1fb`](https://github.com/MoonshotAI/kimi-code/commit/661c1fbe5b026ec32d80696290a18313b24eafef) - Extract the composer's @-mention menu logic into a reusable composable.
+
+- [#1026](https://github.com/MoonshotAI/kimi-code/pull/1026) [`318c964`](https://github.com/MoonshotAI/kimi-code/commit/318c964f074123ad228cbddcf7809fa4baaa7fb2) - Extract the composer's slash-command menu logic into a reusable composable.
+
+- [#1045](https://github.com/MoonshotAI/kimi-code/pull/1045) [`ac1882f`](https://github.com/MoonshotAI/kimi-code/commit/ac1882fe28c906904ffaacd8434bb20e689d6677) - Persist the collapsed state of workspace groups in the web sidebar across page reloads.
+
+- [#1001](https://github.com/MoonshotAI/kimi-code/pull/1001) [`ea1b33b`](https://github.com/MoonshotAI/kimi-code/commit/ea1b33b6743b822aa5083dbeb2d5e84a78b0ab3d) - Extract pure turn-rendering helpers out of the chat pane into their own module.
+
+- [#1010](https://github.com/MoonshotAI/kimi-code/pull/1010) [`a2650f8`](https://github.com/MoonshotAI/kimi-code/commit/a2650f85d467707e7c85d22cff590f68852d33f3) - Extract the beta conversation outline (table of contents) into its own component.
+
+- [#998](https://github.com/MoonshotAI/kimi-code/pull/998) [`3e4793d`](https://github.com/MoonshotAI/kimi-code/commit/3e4793d6111059cbfb97159f682ed4bd7a33441d) - Extract the workspace group rendering out of the sidebar into its own component.
+
+- [#985](https://github.com/MoonshotAI/kimi-code/pull/985) [`92c2cf0`](https://github.com/MoonshotAI/kimi-code/commit/92c2cf0ef57f00928d337bcfeb1d7eff9b0d0f7f) - Allow the web sidebar and detail panel to be resized up to the available viewport width, keeping their resize handles reachable on narrow windows.
+
+- [#1033](https://github.com/MoonshotAI/kimi-code/pull/1033) [`b1e6b64`](https://github.com/MoonshotAI/kimi-code/commit/b1e6b6431903fde002fdddbdfcabfab39f3ef5c5) - Optimize the loading tips display.
+
 ## 0.19.1
 
 ### Patch Changes

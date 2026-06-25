@@ -14,11 +14,10 @@
       "id": "superpowers",
       "tier": "curated",
       "displayName": "Superpowers",
-      "version": "5.1.0",
       "description": "Planning, TDD, debugging, and delivery workflows for coding agents.",
       "homepage": "https://github.com/obra/superpowers",
       "keywords": ["skills", "planning", "tdd", "debugging", "code-review"],
-      "source": "./curated/superpowers"
+      "source": "https://github.com/obra/superpowers"
     }
   ]
 }
