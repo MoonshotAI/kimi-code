@@ -101,10 +101,18 @@ describe('reduceAppEvent taskProgress', () => {
     };
     let next = state;
     for (let i = 0; i < 60; i++) {
+      // The real projector emits a taskCreated (without reducer-owned
+      // outputLines) right before every taskProgress; progress must survive
+      // that replacement.
+      next = reduceAppEvent(
+        next,
+        { type: 'taskCreated', sessionId: 's1', task: makeSubagentTask('t1', 's1') },
+        { sessionId: 's1', seq: i * 2 + 1 },
+      );
       next = reduceAppEvent(
         next,
         { type: 'taskProgress', sessionId: 's1', taskId: 't1', outputChunk: `line ${i}`, stream: 'stdout' },
-        { sessionId: 's1', seq: i + 1 },
+        { sessionId: 's1', seq: i * 2 + 2 },
       );
     }
     const lines = next.tasksBySession['s1']?.[0]?.outputLines;

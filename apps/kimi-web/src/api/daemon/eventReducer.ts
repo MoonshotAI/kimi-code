@@ -518,7 +518,9 @@ export function reduceAppEvent(
         next.tasksBySession[sid] = [...list, event.task];
       } else {
         const patched = [...list];
-        patched[idx] = event.task;
+        // The projected task does not carry reducer-owned accumulated progress;
+        // preserve it across the replacement so subagent output keeps growing.
+        patched[idx] = { ...event.task, outputLines: list[idx]!.outputLines };
         next.tasksBySession[sid] = patched;
       }
       break;
