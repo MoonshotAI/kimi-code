@@ -1,5 +1,6 @@
 import type { Agent } from '..';
 import type { PrepareToolExecutionResult } from '../../loop';
+import { parsePattern } from './matches-rule';
 import { createPermissionDecisionPolicies } from './policies';
 import type {
   ApprovalResponse,
@@ -14,6 +15,26 @@ import type {
 } from './types';
 
 export * from './types';
+
+/** Write/Edit 会话审批按工具名缓存，避免同目录多文件重复弹窗（#437）。 */
+function resolveSessionApprovalRule(
+  toolName: string,
+  approvalRule: string,
+  hasArgumentMatcher: boolean,
+): string {
+  if (!hasArgumentMatcher) {
+    return approvalRule;
+  }
+  try {
+    const parsed = parsePattern(approvalRule);
+    if (parsed.argPattern !== undefined && (toolName === 'Write' || toolName === 'Edit')) {
+      return parsed.toolName;
+    }
+  } catch {
+    // 保留字面规则
+  }
+  return approvalRule;
+}
 
 export interface PermissionManagerOptions {
   readonly initialRules?: readonly PermissionRule[];
@@ -191,7 +212,11 @@ export class PermissionManager {
 
     const sessionApprovalRule =
       response.decision === 'approved' && response.scope === 'session'
-        ? context.execution.approvalRule
+        ? resolveSessionApprovalRule(
+            name,
+            context.execution.approvalRule,
+            context.execution.matchesRule !== undefined,
+          )
         : undefined;
 
     if (requestedApproval) {
