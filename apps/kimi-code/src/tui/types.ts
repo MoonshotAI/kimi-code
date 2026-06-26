@@ -23,6 +23,13 @@ export interface BannerState {
   ttlHours?: number;
 }
 
+export interface QuotaInfo {
+  readonly label: string;
+  readonly used: number;
+  readonly limit: number;
+  readonly resetHint?: string;
+}
+
 export interface AppState {
   model: string;
   workDir: string;
@@ -54,6 +61,8 @@ export interface AppState {
   mcpServersSummary: string | null;
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
+  /** Managed quota rows (e.g. weekly limit, 5h limit). */
+  quotas?: readonly QuotaInfo[];
 }
 
 export interface ToolCallBlockData {

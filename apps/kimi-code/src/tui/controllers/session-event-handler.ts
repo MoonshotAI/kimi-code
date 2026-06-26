@@ -38,6 +38,7 @@ import {
   type SwarmModeMarkerState,
 } from '../components/messages/swarm-markers';
 import {
+  isManagedUsageProvider,
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
@@ -78,6 +79,7 @@ import { SubAgentEventHandler } from './subagent-event-handler';
 import type {
   AppState,
   LivePaneState,
+  QuotaInfo,
   QueuedMessage,
   ToolCallBlockData,
   ToolResultBlockData,
@@ -95,6 +97,7 @@ export interface SessionEventHost {
 
   requireSession(): Session;
   setAppState(patch: Partial<AppState>): void;
+  fetchManagedQuotas(): Promise<readonly QuotaInfo[] | undefined>;
   patchLivePane(patch: Partial<LivePaneState>): void;
   resetLivePane(): void;
   showError(msg: string): void;
@@ -144,6 +147,9 @@ export class SessionEventHandler {
   private queuedGoalPromotionPending = false;
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
+  private quotaRefreshTimer: ReturnType<typeof setInterval> | undefined;
+  private quotaRefreshInFlight = false;
+  private lastServerQuotas: readonly QuotaInfo[] | undefined;
 
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
@@ -159,6 +165,8 @@ export class SessionEventHandler {
     this.queuedGoalPromotionPending = false;
     this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
+    this.clearQuotaRefreshTimer();
+    this.lastServerQuotas = undefined;
     this.stopAllMcpServerStatusSpinners();
   }
 
@@ -192,6 +200,7 @@ export class SessionEventHandler {
       this.handleEvent(event, sendQueued);
     });
     void this.syncMcpServerStatusSnapshot(session);
+    this.scheduleQuotaRefresh();
   }
 
   async syncMcpServerStatusSnapshot(session: Session): Promise<void> {
@@ -589,6 +598,7 @@ export class SessionEventHandler {
     }
     if (event.model !== undefined) patch.model = event.model;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
+    if (event.model !== undefined) this.scheduleQuotaRefresh();
     if (event.swarmMode === false) {
       this.host.state.swarmModeEntry = undefined;
       if (shouldRenderSwarmEnded) {
@@ -701,6 +711,67 @@ export class SessionEventHandler {
     if (this.queuedGoalPromotionTimer === undefined) return;
     clearTimeout(this.queuedGoalPromotionTimer);
     this.queuedGoalPromotionTimer = undefined;
+  }
+
+  private scheduleQuotaRefresh(): void {
+    this.clearQuotaRefreshTimer();
+    const providerKey = this.host.state.appState.availableModels[this.host.state.appState.model]?.provider;
+    if (!isManagedUsageProvider(providerKey)) {
+      // Switched away from (or never used) a managed provider: drop stale
+      // quota rows so the footer does not keep showing limits that no longer
+      // apply to the active model.
+      if (this.host.state.appState.quotas !== undefined) {
+        this.host.setAppState({ quotas: undefined });
+      }
+      return;
+    }
+
+    void this.refreshQuota();
+    this.quotaRefreshTimer = setInterval(() => {
+      void this.refreshQuota();
+    }, 30_000);
+    this.quotaRefreshTimer.unref?.();
+  }
+
+  private clearQuotaRefreshTimer(): void {
+    if (this.quotaRefreshTimer === undefined) return;
+    clearInterval(this.quotaRefreshTimer);
+    this.quotaRefreshTimer = undefined;
+  }
+
+  private async refreshQuota(): Promise<void> {
+    if (this.quotaRefreshInFlight) return;
+    if (this.host.aborted) return;
+    const providerKey = this.host.state.appState.availableModels[this.host.state.appState.model]?.provider;
+    if (!isManagedUsageProvider(providerKey)) return;
+
+    this.quotaRefreshInFlight = true;
+    try {
+      const quotas = await this.host.fetchManagedQuotas();
+      if (this.host.aborted) return;
+      if (quotas !== undefined) {
+        this.lastServerQuotas = quotas;
+      }
+      const server = this.lastServerQuotas;
+      if (server === undefined) return;
+      const current = this.host.state.appState.quotas;
+      if (
+        current !== undefined &&
+        current.length === server.length &&
+        server.every(
+          (q, i) =>
+            q.label === current[i]?.label &&
+            q.used === current[i]?.used &&
+            q.limit === current[i]?.limit &&
+            q.resetHint === current[i]?.resetHint,
+        )
+      ) {
+        return;
+      }
+      this.host.setAppState({ quotas: server });
+    } finally {
+      this.quotaRefreshInFlight = false;
+    }
   }
 
   requestQueuedGoalPromotion(): void {

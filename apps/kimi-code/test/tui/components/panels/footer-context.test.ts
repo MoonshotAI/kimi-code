@@ -48,7 +48,7 @@ describe('FooterComponent — context NaN resilience', () => {
     const fc = new FooterComponent(baseState({ contextUsage: Number.NaN }));
     const out = strip(fc.render(120).join(''));
     expect(out).not.toMatch(/NaN/);
-    expect(out).toMatch(/context: 0\.0%/);
+    expect(out).toMatch(/context:\s+0\.0%/);
   });
 
   it('undefined-ish (coerced) usage → renders 0.0%', () => {
@@ -57,19 +57,19 @@ describe('FooterComponent — context NaN resilience', () => {
     );
     const out = strip(fc.render(120).join(''));
     expect(out).not.toMatch(/NaN/);
-    expect(out).toMatch(/context: 0\.0%/);
+    expect(out).toMatch(/context:\s+0\.0%/);
   });
 
   it('clamps ratios above 1.0 → renders 100.0%', () => {
     const fc = new FooterComponent(baseState({ contextUsage: 1.5 }));
     const out = strip(fc.render(120).join(''));
-    expect(out).toMatch(/context: 100\.0%/);
+    expect(out).toMatch(/context:\s+100\.0%/);
   });
 
   it('ratio 0.427 → renders 42.7%', () => {
     const fc = new FooterComponent(baseState({ contextUsage: 0.427 }));
     const out = strip(fc.render(200).join(''));
-    expect(out).toMatch(/context: 42\.7%/);
+    expect(out).toMatch(/context:\s+42\.7%/);
   });
 
   it('tokens provided but max=0 → falls back to percent-only, no division-by-zero artefact', () => {
@@ -78,7 +78,7 @@ describe('FooterComponent — context NaN resilience', () => {
     );
     const out = strip(fc.render(200).join(''));
     expect(out).not.toMatch(/Infinity|NaN/);
-    expect(out).toMatch(/context: 0\.0%/);
+    expect(out).toMatch(/context:\s+0\.0%/);
     // With maxTokens=0, token-count annotation is suppressed.
     expect(out).not.toMatch(/\(500\//);
   });
@@ -91,7 +91,7 @@ describe('FooterComponent — context NaN resilience', () => {
     const out = strip(footer.render(200).join(''));
     expect(out).toContain('kimi-k2-5');
     expect(out).not.toContain(' k2 ');
-    expect(out).toMatch(/context: 50\.0%/);
+    expect(out).toMatch(/context:\s+50\.0%/);
   });
 
   it('shows "thinking" label when thinking is enabled, hides it when disabled', () => {
@@ -109,7 +109,7 @@ describe('FooterComponent — context NaN resilience', () => {
 
     const [, line2] = footer.render(120);
     expect(strip(line2 ?? '')).toContain('Press Ctrl-C again to exit');
-    expect(strip(line2 ?? '')).toContain('context: 0.0%');
+    expect(strip(line2 ?? '')).toMatch(/context:\s+0\.0%/);
   });
 
   it('highlights the pull request badge separately from git status text', () => {

@@ -23,6 +23,7 @@ import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import { resolve } from 'pathe';
 
 import type { CLIOptions } from '#/cli/options';
+import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
@@ -120,6 +121,7 @@ import {
   type LivePaneState,
   type LoginProgressSpinnerHandle,
   type QueuedMessage,
+  type QuotaInfo,
   type TranscriptEntry,
   type TUIStartupOptions,
   type TUIStartupState,
@@ -222,6 +224,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     goal: null,
     mcpServersSummary: null,
     banner: undefined,
+    quotas: undefined,
   };
 }
 
@@ -304,6 +307,39 @@ export class KimiTUI {
 
   track(event: string, properties?: Parameters<KimiHarness['track']>[1]): void {
     this.harness.track(event, properties);
+  }
+
+  async fetchManagedQuotas(): Promise<readonly QuotaInfo[] | undefined> {
+    const providerKey = this.state.appState.availableModels[this.state.appState.model]?.provider;
+    if (providerKey !== DEFAULT_OAUTH_PROVIDER_NAME) return undefined;
+
+    let res;
+    try {
+      res = await this.harness.auth.getManagedUsage(providerKey);
+    } catch {
+      return undefined;
+    }
+    if (res.kind !== 'ok') return undefined;
+
+    const rows: QuotaInfo[] = [];
+    if (res.summary !== null && res.summary.limit > 0) {
+      rows.push({
+        label: res.summary.label,
+        used: Math.max(0, res.summary.used),
+        limit: res.summary.limit,
+        resetHint: res.summary.resetHint,
+      });
+    }
+    for (const row of res.limits) {
+      if (row.limit <= 0) continue;
+      rows.push({
+        label: row.label,
+        used: Math.max(0, row.used),
+        limit: row.limit,
+        resetHint: row.resetHint,
+      });
+    }
+    return rows.length > 0 ? rows : undefined;
   }
 
   constructor(harness: KimiHarness, startupInput: KimiTUIStartupInput) {

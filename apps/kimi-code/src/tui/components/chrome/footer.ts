@@ -4,6 +4,7 @@
  * Layout:
  *   Line 1: [yolo] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
  *   Line 2: context: XX.X% (tokens/max)
+ *   Line 3+: right-aligned quota rows: "label:   XX%   (reset in ...)"
  */
 
 import type { Component } from '@earendil-works/pi-tui';
@@ -14,7 +15,7 @@ import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
-import type { AppState } from '#/tui/types';
+import type { AppState, QuotaInfo } from '#/tui/types';
 import {
   createGitStatusCache,
   formatGitBadgeBase,
@@ -162,12 +163,131 @@ function safeUsage(usage: number): number {
   return safeUsageRatio(usage);
 }
 
-function formatContextStatus(usage: number, tokens?: number, maxTokens?: number): string {
-  const pct = `${(safeUsage(usage) * 100).toFixed(1)}%`;
-  if (maxTokens && maxTokens > 0 && tokens !== undefined) {
-    return `context: ${pct} (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
+function hslToHex(h: number, s: number, l: number): string {
+  const normalizedH = h / 360;
+  const a = (s * Math.min(l, 100 - l)) / 100;
+  const f = (n: number): string => {
+    const k = (n + normalizedH * 12) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round((color / 100) * 255)
+      .toString(16)
+      .padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+function formatResetHint(hint: string | undefined, labelName?: string): string {
+  if (hint === undefined) return '';
+  if (hint === 'reset') return '(reset)';
+  if (hint.startsWith('resets in ')) {
+    let parts = hint.slice('resets in '.length).split(' ');
+    // For weekly quotas, drop minutes when days are still present so the
+    // countdown column does not jitter. When less than a day remains, hours
+    // shift left and minutes take the hours slot.
+    if ((labelName ?? '').includes('week') && parts.some((p) => p.endsWith('d')) && parts.length > 2) {
+      parts = parts.slice(0, 2);
+    }
+    const duration = parts.join(', ');
+    return `(${duration})`;
   }
-  return `context: ${pct}`;
+  return `(${hint})`;
+}
+
+function shortenQuotaLabel(label: string): string {
+  const normalized = label.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (normalized.includes('week')) return 'week';
+  return normalized.replace(/(\s*limit)$/, '');
+}
+
+interface StatusRow {
+  readonly labelName: string;
+  readonly percent: string;
+  readonly suffix: string;
+  readonly ratio: number;
+  readonly colored: boolean;
+}
+
+function buildStatusRows(state: AppState): StatusRow[] {
+  const contextSuffix =
+    state.maxContextTokens && state.maxContextTokens > 0 && state.contextTokens !== undefined
+      ? `(${formatTokenCount(state.contextTokens)}/${formatTokenCount(state.maxContextTokens)})`
+      : '';
+  const rows: StatusRow[] = [
+    {
+      labelName: 'context',
+      percent: `${(safeUsage(state.contextUsage) * 100).toFixed(1)}%`,
+      suffix: contextSuffix,
+      ratio: state.contextUsage,
+      colored: false,
+    },
+  ];
+
+  for (const quota of state.quotas ?? []) {
+    if (quota.limit <= 0) continue;
+    const ratio = Math.max(0, Math.min(quota.used / quota.limit, 1));
+    rows.push({
+      labelName: shortenQuotaLabel(quota.label),
+      percent: `${(ratio * 100).toFixed(1)}%`,
+      suffix: formatResetHint(quota.resetHint, shortenQuotaLabel(quota.label)),
+      ratio,
+      colored: true,
+    });
+  }
+
+  return rows;
+}
+
+function formatStatusLines(
+  state: AppState,
+  width: number,
+  colors: ColorPalette,
+  transientHint: string | null,
+): string[] {
+  const rows = buildStatusRows(state);
+  if (rows.length === 0) return [];
+
+  const labelNameWidth = Math.max(...rows.map((r) => visibleWidth(r.labelName)));
+  // Reserve space for 100.0 % so the percentage column never shifts when a
+  // quota fills up.
+  const percentColWidth = Math.max(visibleWidth('100.0%'), ...rows.map((r) => visibleWidth(r.percent)));
+  const suffixColWidth = Math.max(...rows.map((r) => visibleWidth(r.suffix)));
+  const gap = 3;
+  const blockWidth = labelNameWidth + 1 + gap + percentColWidth + gap + suffixColWidth;
+  const leftPad = Math.max(0, width - blockWidth);
+
+  const lines: string[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    // Smooth green -> yellow -> red gradient. Hue interpolates linearly from
+    // green (120) at 0 % to red (0) at 100 % with moderate saturation.
+    const numberColor = row.colored
+      ? chalk.hex(hslToHex(Math.round((1 - row.ratio) * 120), 70, 45))
+      : chalk.hex(colors.text);
+    const content =
+      row.labelName.padStart(labelNameWidth) +
+      ':' +
+      ' '.repeat(gap) +
+      numberColor(row.percent.padStart(percentColWidth)) +
+      ' '.repeat(gap) +
+      chalk.hex(colors.text)(row.suffix.padEnd(suffixColWidth));
+
+    let line: string;
+    if (i === 0 && transientHint) {
+      const maxHintWidth = Math.max(0, width - blockWidth - 1);
+      const shownHint =
+        visibleWidth(transientHint) <= maxHintWidth
+          ? transientHint
+          : truncateToWidth(transientHint, maxHintWidth, '…');
+      const hintWidth = visibleWidth(shownHint);
+      const pad = Math.max(0, leftPad - hintWidth);
+      line =
+        chalk.hex(colors.warning).bold(shownHint) + ' '.repeat(pad) + content;
+    } else {
+      line = ' '.repeat(leftPad) + content;
+    }
+    lines.push(truncateToWidth(line, width));
+  }
+  return lines;
 }
 
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {
@@ -319,32 +439,14 @@ export class FooterComponent implements Component {
       line1 = truncateToWidth(leftLine, width, '…');
     }
 
-    // ── Line 2: transient hint (bottom-left) + context (right) ──
-    const contextText = formatContextStatus(
-      state.contextUsage,
-      state.contextTokens,
-      state.maxContextTokens,
-    );
-    const contextWidth = visibleWidth(contextText);
-    let line2: string;
-    if (this.transientHint) {
-      const maxHintWidth = Math.max(0, width - contextWidth - 1);
-      const shownHint =
-        visibleWidth(this.transientHint) <= maxHintWidth
-          ? this.transientHint
-          : truncateToWidth(this.transientHint, maxHintWidth, '…');
-      const hintWidth = visibleWidth(shownHint);
-      const pad = Math.max(0, width - hintWidth - contextWidth);
-      line2 =
-        chalk.hex(colors.warning).bold(shownHint) +
-        ' '.repeat(pad) +
-        chalk.hex(colors.text)(contextText);
-    } else {
-      const leftPad = Math.max(0, width - contextWidth);
-      line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
+    // ── Lines 2+: unified context + quota status block. Colons, percentages
+    // and suffixes share columns; the block is right-aligned.
+    const statusLines = formatStatusLines(state, width, colors, this.transientHint);
+    if (statusLines.length > 0) {
+      return [truncateToWidth(line1, width), ...statusLines];
     }
 
-    return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
+    return [truncateToWidth(line1, width)];
   }
 
   private syncGoalClock(goal: AppState['goal']): void {
