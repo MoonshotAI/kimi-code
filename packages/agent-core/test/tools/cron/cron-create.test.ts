@@ -122,6 +122,25 @@ describe('CronCreateTool', () => {
     vi.unstubAllEnvs();
   });
 
+  it('documents the session task cap and near-term one-shot guidance, without bench env vars', () => {
+    const { tool } = makeHarness();
+    expect(tool.description).toContain('50 live cron tasks');
+    // One-shot guidance nudges the model toward near-term reminders; the hard future-window
+    // limit lives in code (ONE_SHOT_MAX_FUTURE_MS) and must NOT be surfaced as a prompt rule,
+    // and the year-boundary heuristic — wrong across Dec 31 → Jan 1 — must be gone.
+    expect(tool.description).toContain('near-term reminders');
+    expect(tool.description).not.toContain('already passed this year');
+    expect(tool.description).not.toContain('350 days');
+    // Bench/CI-only env knobs the model never sets must not appear in the prompt.
+    expect(tool.description).not.toContain('KIMI_CRON_NO_STALE');
+    expect(tool.description).not.toContain('KIMI_CRON_NO_JITTER');
+    // The 8 KiB prompt cap lives in the param describe.
+    const params = tool.parameters as { properties: Record<string, { description?: string }> };
+    expect(params.properties['prompt']?.description).toContain('8 KiB');
+    // Returned fields include `cron` (CronCreateOutput.cron), which formatOutput emits.
+    expect(tool.description).toContain('the normalized expression');
+  });
+
   it('schedules a recurring task and emits cron_scheduled', async () => {
     const { stub, manager, tool } = makeHarness();
     const result = await runTool(tool, {

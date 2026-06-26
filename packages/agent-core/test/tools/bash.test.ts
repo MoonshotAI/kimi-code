@@ -379,6 +379,21 @@ describe('BashTool', () => {
     expect(tool.description).toContain('/tasks');
   });
 
+  it('points at the cwd argument instead of relying on cross-call cd', () => {
+    const tool = bashTool(
+      createFakeKaos({ osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+    );
+
+    // Each call is a fresh shell (cwd not preserved), and there is a first-class
+    // cwd param — the description must steer toward it rather than cross-call cd.
+    expect(tool.description).toContain('cwd');
+    expect(tool.description).toContain('absolute paths');
+    // The failure trailer is non-zero-exit-specific; timeout/interrupt differ.
+    expect(tool.description).toContain('exits non-zero');
+  });
+
   it('runs through execWithEnv, injects cwd, noninteractive env, and closes stdin', async () => {
     const proc = processWithOutput({ stdout: 'ok\n' });
     const execWithEnv = vi.fn().mockResolvedValue(proc);
@@ -788,6 +803,9 @@ describe('BashTool', () => {
 
     expect(result.output).toMatch(/task_id: bash-[0-9a-z]{8}/);
     expect(result.output).toContain('automatic_notification: true');
+    // The launch message must steer away from waiting, not invite a TaskOutput peek.
+    expect(result.output).toContain('do NOT wait, poll, or call TaskOutput on it');
+    expect(result.output).not.toContain('block=false');
     expect(manager.list(false)).toHaveLength(1);
   });
 
@@ -1229,6 +1247,9 @@ describe('BashTool', () => {
     expect(description).toContain('**Guidelines for efficiency:**');
     expect(description).toContain('run_in_background=true');
     expect(description).toContain('automatically notified');
+    // Moved here from system.md: the "don't block on a background task" nudge belongs in
+    // the background-enabled Bash description, the only place that documents it.
+    expect(description).toContain('returning control to the user');
   });
 });
 

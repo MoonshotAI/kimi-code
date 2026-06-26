@@ -415,7 +415,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       `description: ${description}\n` +
       `status: ${status}\n` +
       `automatic_notification: true\n` +
-      this.nextStepLines(taskId, scenario) +
+      this.nextStepLines(scenario) +
       'human_shell_hint: Tell the human to run /tasks to open the interactive background-task panel.';
 
     const foregroundResult = builder.ok('');
@@ -439,7 +439,6 @@ export class BashTool implements BuiltinTool<BashInput> {
   }
 
   private nextStepLines(
-    taskId: string,
     scenario: 'background_started' | 'foreground_detached',
   ): string {
     if (scenario === 'foreground_detached') {
@@ -452,13 +451,15 @@ export class BashTool implements BuiltinTool<BashInput> {
         `when it completes — ${avoid}; continue with your current work.\n`
       );
     }
-    // background_started: the model chose to launch in the background.
+    // background_started: the model chose to launch in the background. Same anti-wait
+    // stance — immediately waiting on a background task is just a blocked turn, so do
+    // not invite a TaskOutput peek here.
     if (!this.allowBackground) {
       return 'next_step: You will be automatically notified when it completes.\n';
     }
     return (
-      'next_step: The completion arrives automatically in a later turn — no polling needed. ' +
-      `To peek at progress without blocking, call TaskOutput(task_id="${taskId}", block=false).\n` +
+      'next_step: The completion arrives automatically in a later turn — do NOT wait, poll, ' +
+      'or call TaskOutput on it; continue with your current work.\n' +
       'next_step: Use TaskStop only if the task must be cancelled.\n'
     );
   }

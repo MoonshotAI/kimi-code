@@ -1,4 +1,4 @@
-import type { McpServerConfig } from '../config/schema';
+import type { HookDefConfig, McpServerConfig } from '../config/schema';
 
 export type PluginDiagnosticSeverity = 'error' | 'warn' | 'info';
 
@@ -35,6 +35,7 @@ export interface PluginManifest {
   readonly skills?: readonly string[]; // resolved absolute paths
   readonly sessionStart?: PluginSessionStart;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly hooks?: readonly HookDefConfig[];
   readonly interface?: PluginInterface;
   readonly skillInstructions?: string;
 }
@@ -105,6 +106,7 @@ export interface PluginSummary {
   readonly skillCount: number;
   readonly mcpServerCount: number;
   readonly enabledMcpServerCount: number;
+  readonly hookCount: number;
   readonly hasErrors: boolean;
   readonly source: PluginSource;
   readonly originalSource?: string;

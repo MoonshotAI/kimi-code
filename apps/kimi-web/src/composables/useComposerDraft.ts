@@ -34,7 +34,12 @@ export function useComposerDraft(deps: ComposerDraftDeps) {
   function autosize(): void {
     const el = textareaRef.value;
     if (!el) return;
-    el.style.removeProperty('height');
+    // Reset to measure the natural content height, then fit the box to it.
+    // The resting height and the upper cap live in CSS (`min-height` /
+    // `max-height`); once the content outgrows the cap, `overflow-y: auto`
+    // scrolls internally. This keeps a single source of truth for the bounds.
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
   }
 
   watch(text, (value) => {

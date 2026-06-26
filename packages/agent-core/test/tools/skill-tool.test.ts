@@ -102,6 +102,27 @@ describe('SkillTool metadata and schema', () => {
     expect(SkillToolInputSchema.safeParse({}).success).toBe(false);
     expect(MAX_SKILL_QUERY_DEPTH).toBe(3);
   });
+
+  it('documents the skill and args parameters and the already-loaded guard', () => {
+    const tool = skillTool(registry());
+    const params = tool.parameters as {
+      properties: { skill: { description?: string }; args: { description?: string } };
+    };
+
+    expect(params.properties.skill.description ?? '').toMatch(/skill listing/i);
+    expect(params.properties.args.description ?? '').toMatch(/argument/i);
+    // A skill loaded earlier surfaces a <kimi-skill-loaded> block; the description
+    // must steer the model to follow it rather than re-invoking the tool.
+    expect(tool.description).toContain('kimi-skill-loaded');
+    // ...but the no-reinvoke guard is scoped to the SAME args: an arg-bearing skill
+    // reused with new inputs must be called again, because the loaded block froze the
+    // earlier args (it was expanded with them).
+    expect(tool.description).toContain('with the same `args`');
+    expect(tool.description.toLowerCase()).toContain('different arguments');
+    // The recursion depth cap is never seeded in production (currentDepth is
+    // always 0), so the description must not advertise it as a hard limit.
+    expect(tool.description).not.toMatch(/recursive depth|capped at/i);
+  });
 });
 
 describe('SkillTool execution', () => {
