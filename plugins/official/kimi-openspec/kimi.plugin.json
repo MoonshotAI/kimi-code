@@ -1,0 +1,18 @@
+{
+  "name": "kimi-openspec",
+  "version": "0.1.0",
+  "description": "OpenSpec integration for Kimi Code. List, read, and manage OpenSpec changes and specs.",
+  "keywords": ["openspec", "spec-driven", "mcp", "fission"],
+  "mcpServers": {
+    "openspec": {
+      "command": "node",
+      "args": ["./bin/kimi-openspec.mjs"],
+      "cwd": "./"
+    }
+  },
+  "interface": {
+    "displayName": "OpenSpec",
+    "shortDescription": "OpenSpec integration: list changes, read proposals/designs/tasks, browse specs.",
+    "developerName": "Moonshot AI"
+  }
+}

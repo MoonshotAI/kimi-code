@@ -259,6 +259,60 @@ describe('FetchURLTool', () => {
     const message = (result as { message?: string }).message ?? '';
     expect(message).toContain('full response body');
   });
+
+  it('returns image content as ContentPart[] when fetcher returns image kind', async () => {
+    const dataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    const fetcher: UrlFetcher = {
+      fetch: vi.fn().mockResolvedValue({
+        content: dataUri,
+        kind: 'image',
+        mimeType: 'image/png',
+        dimensions: { width: 1, height: 1 },
+      }),
+    };
+    const tool = new FetchURLTool(fetcher);
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_img',
+      args: { url: 'https://example.com/image.png' },
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    const output = (result as { output?: unknown }).output;
+    expect(Array.isArray(output)).toBe(true);
+    const parts = output as Array<Record<string, unknown>>;
+    expect(parts).toHaveLength(4);
+    expect(parts[0]).toMatchObject({ type: 'text', text: expect.stringContaining('Fetched image') });
+    expect(parts[1]).toMatchObject({ type: 'text', text: '<image url="https://example.com/image.png">' });
+    expect(parts[2]).toMatchObject({ type: 'image_url', imageUrl: { url: dataUri } });
+    expect(parts[3]).toMatchObject({ type: 'text', text: '</image>' });
+  });
+
+  it('returns image without dimensions when fetcher omits them', async () => {
+    const dataUri = 'data:image/jpeg;base64,abc123';
+    const fetcher: UrlFetcher = {
+      fetch: vi.fn().mockResolvedValue({
+        content: dataUri,
+        kind: 'image',
+        mimeType: 'image/jpeg',
+      }),
+    };
+    const tool = new FetchURLTool(fetcher);
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_img2',
+      args: { url: 'https://example.com/image.jpg' },
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    const output = (result as { output?: unknown }).output as Array<Record<string, unknown>>;
+    expect(output[0]).toMatchObject({ type: 'text', text: expect.stringContaining('Mime type: image/jpeg') });
+    expect(output[0]).toMatchObject({ type: 'text', text: expect.not.stringContaining('Original dimensions') });
+  });
 });
 
 describe('MoonshotFetchURLProvider', () => {
