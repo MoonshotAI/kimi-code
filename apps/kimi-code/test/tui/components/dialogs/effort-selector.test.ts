@@ -13,15 +13,15 @@ function text(component: EffortSelectorComponent, width = 120): string {
 }
 
 describe('EffortSelectorComponent', () => {
-  it('renders levels as horizontal segments with the active one bracketed', () => {
+  it('renders efforts as horizontal segments with the active one bracketed', () => {
     const picker = new EffortSelectorComponent({
-      levels: ['off', 'low', 'high', 'max'],
+      efforts: ['off', 'low', 'high', 'max'],
       currentValue: 'high',
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
     const out = text(picker);
-    // All levels are rendered on a single row.
+    // All efforts are rendered on a single row.
     expect(out).toContain('Off');
     expect(out).toContain('Low');
     expect(out).toContain('High');
@@ -32,10 +32,10 @@ describe('EffortSelectorComponent', () => {
     expect(out).not.toContain('[ Max ]');
   });
 
-  it('invokes onSelect with the chosen level on Enter', () => {
+  it('invokes onSelect with the chosen effort on Enter', () => {
     const onSelect = vi.fn();
     const picker = new EffortSelectorComponent({
-      levels: ['off', 'low', 'high', 'max'],
+      efforts: ['off', 'low', 'high', 'max'],
       currentValue: 'high',
       onSelect,
       onCancel: vi.fn(),
@@ -47,7 +47,7 @@ describe('EffortSelectorComponent', () => {
   it('moves the active segment with Left/Right and stops at the edges', () => {
     const onSelect = vi.fn();
     const picker = new EffortSelectorComponent({
-      levels: ['off', 'low', 'high', 'max'],
+      efforts: ['off', 'low', 'high', 'max'],
       currentValue: 'high',
       onSelect,
       onCancel: vi.fn(),
@@ -80,7 +80,7 @@ describe('EffortSelectorComponent', () => {
     const onSelect = vi.fn();
     const onSessionOnlySelect = vi.fn();
     const picker = new EffortSelectorComponent({
-      levels: ['off', 'low', 'high', 'max'],
+      efforts: ['off', 'low', 'high', 'max'],
       currentValue: 'high',
       onSelect,
       onSessionOnlySelect,
@@ -94,7 +94,7 @@ describe('EffortSelectorComponent', () => {
   it('cancels on Escape', () => {
     const onCancel = vi.fn();
     const picker = new EffortSelectorComponent({
-      levels: ['off', 'low', 'high', 'max'],
+      efforts: ['off', 'low', 'high', 'max'],
       currentValue: 'high',
       onSelect: vi.fn(),
       onCancel,

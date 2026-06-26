@@ -106,7 +106,7 @@ describe('FooterComponent', () => {
     }
   });
 
-  it('shows the effort level for an effort-capable model', () => {
+  it('shows the effort for an effort-capable model', () => {
     const effortModel: ModelAlias = {
       provider: 'managed:kimi-code',
       model: 'kimi-k2',
@@ -124,7 +124,7 @@ describe('FooterComponent', () => {
     expect(footer.render(120).join('\n')).toContain('thinking:max');
   });
 
-  it('does not show the effort level for a legacy boolean model', () => {
+  it('does not show the effort for a legacy boolean model', () => {
     const plainModel: ModelAlias = {
       provider: 'managed:kimi-code',
       model: 'kimi-k2',

@@ -491,7 +491,7 @@ export class AcpServer implements Agent {
         : await this.resolveCurrentModelId();
     // Phase 15 reads the resumed thinking effort off the main-agent
     // config and projects it onto the binary toggle: any non-`'off'`
-    // effort level reads as "thinking on" because the ACP surface only
+    // effort reads as "thinking on" because the ACP surface only
     // exposes the boolean axis. Falls back to the harness-level default
     // when the resume state lacks the field.
     const resumedThinkingEffort = resumeState?.agents?.['main']?.config?.thinkingEffort;

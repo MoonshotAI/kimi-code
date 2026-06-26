@@ -61,20 +61,20 @@ describe('defaultThinkingEffortFor', () => {
 });
 
 describe('resolveThinkingEffort', () => {
-  it('returns the requested level verbatim when one is provided', () => {
+  it('returns the requested effort verbatim when one is provided', () => {
     expect(resolveThinkingEffort('low', undefined, effortModel)).toBe('low');
     expect(resolveThinkingEffort('on', { enabled: false }, booleanModel)).toBe('on');
     expect(resolveThinkingEffort('off', undefined, booleanModel)).toBe('off');
   });
 
-  it('returns off when config.enabled is false and no level is requested', () => {
+  it('returns off when config.enabled is false and no effort is requested', () => {
     expect(resolveThinkingEffort(undefined, { enabled: false }, effortModel)).toBe('off');
     expect(resolveThinkingEffort(undefined, { enabled: false, effort: 'high' }, effortModel)).toBe(
       'off',
     );
   });
 
-  it('uses config.effort as the default level', () => {
+  it('uses config.effort as the default effort', () => {
     expect(resolveThinkingEffort(undefined, { effort: 'high' }, effortModel)).toBe('high');
     expect(resolveThinkingEffort(undefined, { enabled: true, effort: 'low' }, effortModel)).toBe(
       'low',
@@ -87,7 +87,7 @@ describe('resolveThinkingEffort', () => {
     expect(resolveThinkingEffort(undefined, undefined, undefined)).toBe('off');
   });
 
-  it('forces always-thinking models back on when the resolved level is off', () => {
+  it('forces always-thinking models back on when the resolved effort is off', () => {
     expect(resolveThinkingEffort('off', undefined, alwaysThinkingModel)).toBe('on');
     expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel)).toBe('on');
   });

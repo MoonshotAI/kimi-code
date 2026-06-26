@@ -725,7 +725,7 @@ describe('resolveThinkingEffort', () => {
     capabilities: ['thinking', 'always_thinking'],
   };
 
-  it('returns the requested level verbatim when one is provided', () => {
+  it('returns the requested effort verbatim when one is provided', () => {
     expect(resolveThinkingEffort('on', { effort: 'medium' }, booleanModel)).toBe('on');
     expect(resolveThinkingEffort('off', { effort: 'medium' }, booleanModel)).toBe('off');
     expect(resolveThinkingEffort('low', { effort: 'medium' }, booleanModel)).toBe('low');
@@ -736,21 +736,21 @@ describe('resolveThinkingEffort', () => {
     );
   });
 
-  it('treats config.enabled=false as off when no level is requested', () => {
+  it('treats config.enabled=false as off when no effort is requested', () => {
     expect(
       resolveThinkingEffort(undefined, { enabled: false, effort: 'medium' }, booleanModel),
     ).toBe('off');
     expect(resolveThinkingEffort(undefined, { enabled: false }, booleanModel)).toBe('off');
   });
 
-  it('uses config.effort as the default level when enabled', () => {
+  it('uses config.effort as the default effort when enabled', () => {
     expect(resolveThinkingEffort(undefined, { effort: 'medium' }, booleanModel)).toBe('medium');
     expect(resolveThinkingEffort(undefined, { enabled: true, effort: 'medium' }, booleanModel)).toBe(
       'medium',
     );
   });
 
-  it('falls back to the model default level when no effort is set', () => {
+  it('falls back to the model default effort when no effort is set', () => {
     // boolean thinking model -> 'on'
     expect(resolveThinkingEffort(undefined, {}, booleanModel)).toBe('on');
     // effort-capable model -> middle supportEfforts entry

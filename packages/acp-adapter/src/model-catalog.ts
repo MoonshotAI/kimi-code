@@ -75,7 +75,7 @@ export function deriveAlwaysThinking(alias: ModelAlias): boolean {
 }
 
 /**
- * The level a boolean "thinking on" toggle maps to for this model: declared
+ * The effort a boolean "thinking on" toggle maps to for this model: declared
  * `default_effort`, else the middle `support_efforts` entry, else `'on'` for
  * boolean models (no `support_efforts`).
  */

@@ -189,7 +189,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     });
   }
 
-  it('clamps thinkingEffort off to the model default level', () => {
+  it('clamps thinkingEffort off to the model default effort', () => {
     const ctx = alwaysThinkingAgent();
     ctx.agent.config.update({ modelAlias: 'kimi-code/deep', thinkingEffort: 'off' });
 

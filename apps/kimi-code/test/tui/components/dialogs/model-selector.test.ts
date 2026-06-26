@@ -338,7 +338,7 @@ describe('ModelSelectorComponent', () => {
     expect(out).toContain('Thinking  (←→ to switch)');
   });
 
-  it('cycles effort levels with Left/Right and clamps at the ends', () => {
+  it('cycles efforts with Left/Right and clamps at the ends', () => {
     const onSelect = vi.fn();
     const picker = new ModelSelectorComponent({
       models: { kimi: effortModel('Kimi K2', ['low', 'high', 'max'], 'high') },

@@ -45,7 +45,7 @@ export interface KimiOptions {
   stream?: boolean | undefined;
   defaultHeaders?: Record<string, string> | undefined;
   generationKwargs?: GenerationKwargs | undefined;
-  /** Effort levels the model advertises (e.g. ["low", "high", "max"]). When
+  /** Efforts the model advertises (e.g. ["low", "high", "max"]). When
    * present and non-empty, withThinking sends the chosen effort on the wire;
    * when absent/empty, only thinking.type is sent. */
   supportEfforts?: readonly string[] | undefined;
@@ -422,7 +422,7 @@ export class KimiChatProvider implements ChatProvider {
     const thinking = this._generationKwargs.extra_body?.thinking;
     if (thinking === undefined) return null;
     if (thinking.type === 'disabled') return 'off';
-    // `support_efforts` is the single source of truth for effort levels: a
+    // `support_efforts` is the single source of truth for efforts: a
     // model that sends thinking without an effort is a boolean ("on") model.
     return thinking.effort ?? 'on';
   }
@@ -508,23 +508,23 @@ export class KimiChatProvider implements ChatProvider {
     }
   }
 
-  withThinking(level: ThinkingEffort): KimiChatProvider {
+  withThinking(effort: ThinkingEffort): KimiChatProvider {
     let thinking: ThinkingConfig;
     let reasoningEffort: string | undefined;
-    if (level === 'off') {
+    if (effort === 'off') {
       thinking = { type: 'disabled' };
     } else {
-      // `support_efforts` is the single source of truth for effort levels:
-      // only values the model declared are sent as effort. Everything else
+      // `support_efforts` is the single source of truth for efforts: only
+      // values the model declared are sent as effort. Everything else
       // ('on', 'xhigh', or any unrecognized string) is normalized to "no
-      // effort" — thinking is enabled but the model picks its own level.
-      const effort = this._supportEfforts.includes(level) ? level : undefined;
+      // effort" — thinking is enabled but the model picks its own effort.
+      const declared = this._supportEfforts.includes(effort) ? effort : undefined;
       thinking =
-        effort !== undefined ? { type: 'enabled', effort } : { type: 'enabled' };
+        declared !== undefined ? { type: 'enabled', effort: declared } : { type: 'enabled' };
       // TODO: drop reasoning_effort once the new thinking.effort wire format is
       // fully rolled out across all kimi models. Until then mirror the same
       // value so both code paths agree.
-      reasoningEffort = effort;
+      reasoningEffort = declared;
     }
     // Replace extra_body.thinking wholesale so a stale `effort` from a previous
     // withThinking call can never linger on a disabled or non-effort thinking

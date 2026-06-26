@@ -7,13 +7,13 @@ import type { TokenUsage } from './usage';
  *
  * `'off'` and `'on'` are the only reserved values: `'off'` disables thinking,
  * and `'on'` is the on-signal for boolean models (models that do not declare
- * `support_efforts`). Everything else is a model-declared effort level (e.g.
+ * `support_efforts`). Everything else is a model-declared effort (e.g.
  * `"low"`, `"high"`, `"max"`) carried as an open string. The type collapses to
  * `string` at runtime; it exists purely as a semantic marker that a value is
- * expected to be `'off'`, `'on'`, or a model-declared effort level.
+ * expected to be `'off'`, `'on'`, or a model-declared effort.
  *
- * The model's `support_efforts` is the single source of truth for which effort
- * levels are valid — providers normalize any unrecognized level by omitting
+ * The model's `support_efforts` is the single source of truth for which
+ * efforts are valid — providers normalize any unrecognized effort by omitting
  * the effort on the wire rather than rejecting it.
  */
 export type ThinkingEffort = 'off' | 'on' | (string & {});

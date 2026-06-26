@@ -1643,7 +1643,7 @@ describe('AnthropicChatProvider', () => {
       expect(provider.thinkingEffort).toBe('high');
     });
 
-    it('pre-4.6 budget-based levels', () => {
+    it('pre-4.6 budget-based efforts', () => {
       const low = createProvider().withThinking('low');
       expect(low.thinkingEffort).toBe('low');
 

@@ -187,7 +187,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'effort',
     aliases: ['thinking'],
-    description: 'Switch thinking effort level',
+    description: 'Switch thinking effort',
     priority: 95,
     availability: 'always',
   },

@@ -250,7 +250,7 @@ function showEffortPicker(
   const alias = host.state.appState.model;
   host.mountEditorReplacement(
     new EffortSelectorComponent({
-      levels: segments,
+      efforts: segments,
       currentValue,
       onSelect: (effort) => {
         host.restoreEditor();

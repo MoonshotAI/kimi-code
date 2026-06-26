@@ -10,12 +10,12 @@ import type { ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
 
 import { currentTheme } from '#/tui/theme';
 
-import { levelLabel } from './model-selector';
+import { effortLabel } from './model-selector';
 
 export interface EffortSelectorOptions {
   readonly title?: string;
   /** Selectable thinking efforts for the current model (e.g. ["off","low","high","max"]). */
-  readonly levels: readonly ThinkingEffort[];
+  readonly efforts: readonly ThinkingEffort[];
   /** Currently active effort (highlighted). */
   readonly currentValue: ThinkingEffort;
   readonly onSelect: (effort: ThinkingEffort) => void;
@@ -40,7 +40,7 @@ export class EffortSelectorComponent extends Container implements Focusable {
   constructor(opts: EffortSelectorOptions) {
     super();
     this.opts = opts;
-    const idx = opts.levels.indexOf(opts.currentValue);
+    const idx = opts.efforts.indexOf(opts.currentValue);
     this.activeIndex = Math.max(idx, 0);
   }
 
@@ -54,15 +54,15 @@ export class EffortSelectorComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.right)) {
-      this.activeIndex = Math.min(this.opts.levels.length - 1, this.activeIndex + 1);
+      this.activeIndex = Math.min(this.opts.efforts.length - 1, this.activeIndex + 1);
       return;
     }
     if (matchesKey(data, Key.alt('s')) && this.opts.onSessionOnlySelect !== undefined) {
-      this.opts.onSessionOnlySelect(this.opts.levels[this.activeIndex]!);
+      this.opts.onSessionOnlySelect(this.opts.efforts[this.activeIndex]!);
       return;
     }
     if (matchesKey(data, Key.enter)) {
-      this.opts.onSelect(this.opts.levels[this.activeIndex]!);
+      this.opts.onSelect(this.opts.efforts[this.activeIndex]!);
       return;
     }
   }
@@ -79,8 +79,8 @@ export class EffortSelectorComponent extends Container implements Focusable {
       '',
     ];
 
-    const segments = this.opts.levels.map((effort, index) => {
-      const label = levelLabel(effort);
+    const segments = this.opts.efforts.map((effort, index) => {
+      const label = effortLabel(effort);
       return index === this.activeIndex
         ? currentTheme.boldFg('primary', `[ ${label} ]`)
         : currentTheme.fg('text', `  ${label}  `);

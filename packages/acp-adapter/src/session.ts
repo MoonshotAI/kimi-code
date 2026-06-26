@@ -116,7 +116,7 @@ export class AcpSession {
    * `${id},thinking` form (legacy `unstable_setSessionModel`
    * compatibility).
    *
-   * Maps to the SDK's effort-level string at the boundary:
+   * Maps to the SDK's effort string at the boundary:
    * `true` → `'high'` (the typical default for kimi-code), `false`
    * → `'off'`. The granularity of `'low' | 'medium' | 'xhigh' | 'max'`
    * is intentionally not surfaced — the ACP `thinking` axis is binary
@@ -313,7 +313,7 @@ export class AcpSession {
    * Wire semantics:
    *  - `'kimi-v2'`           → setModel('kimi-v2'); thinking state unchanged.
    *  - `'kimi-v2,thinking'`  → setModel('kimi-v2') + setThinking(<default
-   *    level for that model>); thinking state flips on.
+   *    effort for that model>); thinking state flips on.
    *
    * Note the asymmetry: a bare model id does NOT turn thinking OFF.
    * That keeps the model / thinking axes orthogonal — model changes
@@ -348,8 +348,8 @@ export class AcpSession {
    * Forward an ACP thinking-toggle change to the underlying SDK.
    *
    * Phase 15 introduces this as the new canonical channel for the
-   * thinking axis. Boolean → thinking-level mapping:
-   *  - `true`  → `Session.setThinking(level)` where `level` is the
+   * thinking axis. Boolean → thinking-effort mapping:
+   *  - `true`  → `Session.setThinking(effort)` where `effort` is the
    *    current model's default effort (see {@link thinkingOnEffort}).
    *  - `false` → `Session.setThinking('off')`.
    *

@@ -112,7 +112,7 @@ export function segmentsFor(model: ModelAlias): readonly string[] {
   return ['on', 'off'];
 }
 
-export function levelLabel(effort: string): string {
+export function effortLabel(effort: string): string {
   if (effort.length === 0) return effort;
   return effort.charAt(0).toUpperCase() + effort.slice(1);
 }
@@ -221,7 +221,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
           const current = this.effectiveEffort(selected);
           const idx = segments.indexOf(current);
           // The two-segment case is the legacy boolean On/Off control: both
-          // arrows flip it. With more segments (effort levels), ←/→ step.
+          // arrows flip it. With more segments (efforts), ←/→ step.
           let next: number;
           if (segments.length === 2) {
             next = idx === 0 ? 1 : 0;
@@ -373,7 +373,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
     const segments = segmentsFor(choice.model);
     const active = this.effectiveEffort(choice);
-    const rendered = segments.map((effort) => segment(levelLabel(effort), effort === active));
+    const rendered = segments.map((effort) => segment(effortLabel(effort), effort === active));
     // Always-on models (including effort-capable ones) additionally surface an
     // unsupported Off so it's explicit that thinking cannot be disabled — same
     // shape as the legacy always-on control.
