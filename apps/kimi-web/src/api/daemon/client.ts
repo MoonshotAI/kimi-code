@@ -987,26 +987,24 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   /**
    * Browse directories under `path` (defaults to $HOME on the daemon).
-   * PRESUMED — GET /api/v1/fs:browse?path=. On error returns an empty path so
-   * the picker can distinguish "browse failed" from "directory has no children".
+   * PRESUMED — GET /api/v1/fs:browse?path=. Propagates errors so callers that
+   * need to know whether the path exists (e.g. new-session validation) can rely
+   * on the thrown error. The workspace-state layer still exposes a defensive
+   * wrapper for the folder picker.
    */
   async browseFs(path?: string): Promise<FsBrowseResult> {
-    try {
-      const data = await this.http.get<WireFsBrowseResult>('/fs:browse', { path });
-      return {
-        path: data.path,
-        parent: data.parent,
-        entries: (data.entries ?? []).map((e) => ({
-          name: e.name,
-          path: e.path,
-          isDir: e.is_dir,
-          isGitRepo: e.is_git_repo,
-          branch: e.branch,
-        })),
-      };
-    } catch {
-      return { path: '', parent: null, entries: [] };
-    }
+    const data = await this.http.get<WireFsBrowseResult>('/fs:browse', { path });
+    return {
+      path: data.path,
+      parent: data.parent,
+      entries: (data.entries ?? []).map((e) => ({
+        name: e.name,
+        path: e.path,
+        isDir: e.is_dir,
+        isGitRepo: e.is_git_repo,
+        branch: e.branch,
+      })),
+    };
   }
 
   /**

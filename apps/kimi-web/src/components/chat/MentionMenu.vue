@@ -12,6 +12,7 @@ const props = defineProps<{
   items: FileItem[];
   activeIndex: number;
   loading: boolean;
+  error?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -62,7 +63,10 @@ function fileIcon(item: FileItem): string {
     <!-- Loading state -->
     <div v-if="props.loading" class="mention-state dim">{{ t('mention.searching') }}</div>
 
-    <!-- Empty state (not loading, no items) -->
+    <!-- Error state -->
+    <div v-else-if="props.error" class="mention-state mention-error">{{ props.error }}</div>
+
+    <!-- Empty state (not loading, no items, no error) -->
     <div v-else-if="props.items.length === 0" class="mention-state dim">{{ t('mention.noMatch') }}</div>
 
     <!-- File items -->
@@ -109,6 +113,10 @@ function fileIcon(item: FileItem): string {
 
 .dim {
   color: var(--muted);
+}
+
+.mention-error {
+  color: var(--red, #c62828);
 }
 
 .mention-item {

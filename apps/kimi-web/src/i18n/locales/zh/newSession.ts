@@ -9,4 +9,6 @@ export default {
   create: '新建',
   cancel: '取消',
   footerHint: 'Enter 新建 · Esc 关闭',
+  cwdNotFound: '目录不存在或无法访问。',
+  validating: '正在检查目录…',
 } as const;

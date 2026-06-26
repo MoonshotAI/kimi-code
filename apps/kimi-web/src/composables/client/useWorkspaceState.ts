@@ -601,9 +601,19 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /**
+   * Verify that a working directory exists and is reachable before creating a
+   * session. Throws the original error (e.g. ENOENT from browseFs) on failure.
+   */
+  async function validateCwdForCreate(cwd: string): Promise<void> {
+    const api = getKimiWebApi();
+    await api.browseFs(cwd);
+  }
+
+  /**
    * Create a session in a workspace — the one-click path (no cwd typing).
    * Register/touch the workspace first when the daemon supports it; if that
-   * fails, fall back to the legacy cwd-only create path.
+   * fails, fall back to the legacy cwd-only create path. Refuses to create the
+   * session if the workspace directory no longer exists.
    */
   async function createSessionInWorkspace(workspaceId: string): Promise<AppSession | undefined> {
     const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
@@ -622,6 +632,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         // path-like workspace id as workspace_id would fail validation, so use
         // metadata.cwd only.
       }
+      await validateCwdForCreate(cwdForCreate);
       const session = await api.createSession({ workspaceId: workspaceIdForCreate, cwd: cwdForCreate });
       upsertSessionFront(session);
       selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
@@ -639,7 +650,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   /**
    * Create a session and immediately submit the first prompt.
    * This is the unified path when there is no active session (e.g. after
-   * clicking "+" or in an empty workspace).
+   * clicking "+" or in an empty workspace). Refuses to create the session if
+   * the workspace directory no longer exists.
    */
   async function startSessionAndSendPrompt(
     workspaceId: string,
@@ -660,6 +672,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       } catch {
         // Older daemons may not have /workspaces.
       }
+      await validateCwdForCreate(cwdForCreate);
       const draftPick = modelProvider.draftModel.value ?? undefined;
       const session = await api.createSession({
         workspaceId: workspaceIdForCreate,
@@ -880,6 +893,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   async function createSession(cwd: string, opts?: { title?: string; model?: string }): Promise<void> {
     try {
+      await validateCwdForCreate(cwd);
       const api = getKimiWebApi();
       const session = await api.createSession({ cwd, title: opts?.title, model: opts?.model });
       upsertSessionFront(session);
@@ -1689,18 +1703,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   /**
    * Search files in the active session using the daemon searchFiles endpoint.
-   * Returns {path, name}[] — defensive, returns [] on error or no active session.
+   * Returns {path, name}[] for no active session, empty query, or empty results;
+   * propagates backend errors so the UI can distinguish "no matches" from
+   * "search failed".
    */
   async function searchFiles(query: string): Promise<Array<{ path: string; name: string }>> {
     const sid = rawState.activeSessionId;
-    if (!sid) return [];
-    try {
-      const api = getKimiWebApi();
-      const result = await api.searchFiles(sid, { query, limit: 20 });
-      return result.items.map((item) => ({ path: item.path, name: item.name }));
-    } catch {
-      return [];
-    }
+    if (!sid || query.trim().length === 0) return [];
+    const api = getKimiWebApi();
+    const result = await api.searchFiles(sid, { query, limit: 20 });
+    return result.items.map((item) => ({ path: item.path, name: item.name }));
   }
 
   return {
