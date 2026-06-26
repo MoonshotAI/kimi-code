@@ -7,6 +7,7 @@ import type { HookResult } from './types';
 export interface RunHookOptions {
   readonly timeout: number;
   readonly cwd?: string;
+  readonly env?: Readonly<Record<string, string>>;
   readonly signal?: AbortSignal;
 }
 
@@ -50,6 +51,7 @@ export async function runHook(
       cwd: options.cwd,
       stdio: 'pipe',
       detached: process.platform !== 'win32',
+      env: options.env ? { ...process.env, ...options.env } : undefined,
     });
   } catch (error) {
     return allowResult({ stderr: errorMessage(error) });

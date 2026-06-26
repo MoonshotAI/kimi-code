@@ -210,7 +210,9 @@ describe('HTTP Host check (start.ts)', () => {
     expect(res.status).toBe(403);
     const body = JSON.parse(res.body) as Record<string, unknown>;
     expect(body['code']).toBe(40301);
-    expect(body['msg']).toBe('Invalid Host header');
+    expect(body['msg']).toBe(
+      "Invalid Host header: evil.com; allow this host with KIMI_CODE_ALLOWED_HOSTS=evil.com or 'kimi server run --allowed-host evil.com'.",
+    );
   });
 
   it('allows the default 127.0.0.1:<port> Host', async () => {

@@ -96,6 +96,7 @@ export function createProgram(
   registerMigrateCommand(program, onMigrate);
   program
     .command('upgrade')
+    .alias('update')
     .description('Upgrade Kimi Code to the latest version.')
     .action(async () => {
       await onUpgrade();

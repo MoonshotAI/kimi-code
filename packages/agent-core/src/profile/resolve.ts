@@ -123,7 +123,7 @@ function toResolvedProfile(merged: MergedAgentProfile): ResolvedAgentProfile {
  */
 function createSystemPromptRenderer(merged: MergedAgentProfile): SystemPromptRenderer {
   return (context: SystemPromptContext): string => {
-    const vars = buildTemplateVars(context, merged.promptVars);
+    const vars = buildTemplateVars(context, merged.promptVars, merged.tools);
     try {
       return renderPrompt(merged.systemPromptTemplate, vars);
     } catch (error) {
@@ -140,6 +140,7 @@ function createSystemPromptRenderer(merged: MergedAgentProfile): SystemPromptRen
 function buildTemplateVars(
   context: SystemPromptContext,
   promptVars: Record<string, string>,
+  tools: readonly string[],
 ): Record<string, string> {
   const skills =
     typeof context.skills === 'string'
@@ -158,7 +159,7 @@ function buildTemplateVars(
     KIMI_WORK_DIR: context.cwd,
     KIMI_WORK_DIR_LS: context.cwdListing ?? '',
     KIMI_AGENTS_MD: context.agentsMd ?? '',
-    KIMI_SKILLS: skills,
+    KIMI_SKILLS: tools.includes('Skill') ? skills : '',
     KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
     ROLE_ADDITIONAL:
       context.roleAdditional ?? promptVars['ROLE_ADDITIONAL'] ?? promptVars['roleAdditional'] ?? '',

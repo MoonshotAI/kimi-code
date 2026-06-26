@@ -89,7 +89,7 @@ export const CronCreateInputSchema = z.object({
     .string()
     .min(1)
     .max(MAX_PROMPT_BYTES)
-    .describe('The prompt to enqueue at each fire time.'),
+    .describe('The prompt to enqueue at each fire time. Limited to 8 KiB (UTF-8).'),
   recurring: z
     .boolean()
     .optional()

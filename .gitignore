@@ -15,6 +15,7 @@ coverage/
 plugins/cdn/
 .worktrees/
 .kimi-code/local.toml
+.kimi-sandbox/
 
 Dockerfile
 docker-compose.yml

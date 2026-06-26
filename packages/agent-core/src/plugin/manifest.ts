@@ -1,7 +1,12 @@
 import { realpath, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { McpServerConfigSchema, type McpServerConfig } from '../config/schema';
+import {
+  HookDefSchema,
+  McpServerConfigSchema,
+  type HookDefConfig,
+  type McpServerConfig,
+} from '../config/schema';
 import {
   PLUGIN_NAME_REGEX,
   type PluginDiagnostic,
@@ -19,7 +24,6 @@ const KIMI_PLUGIN_DIR_PATH = '.kimi-plugin/plugin.json';
 const UNSUPPORTED_RUNTIME_FIELDS = [
   'tools',
   'commands',
-  'hooks',
   'apps',
   'inject',
   'configFile',
@@ -121,6 +125,7 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
     skills,
     sessionStart: readSessionStart(raw['sessionStart'], diagnostics),
     mcpServers: await readMcpServers(pluginRoot, raw['mcpServers'], diagnostics),
+    hooks: readHooks(raw['hooks'], diagnostics),
     interface: readInterface(raw['interface']),
     skillInstructions,
   };
@@ -282,6 +287,30 @@ async function readMcpServers(
     if (normalized !== undefined) out[trimmedName] = normalized;
   }
   return Object.keys(out).length === 0 ? undefined : out;
+}
+
+function readHooks(
+  raw: unknown,
+  diagnostics: PluginDiagnostic[],
+): readonly HookDefConfig[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) {
+    diagnostics.push({ severity: 'warn', message: '"hooks" must be an array' });
+    return undefined;
+  }
+  const out: HookDefConfig[] = [];
+  raw.forEach((entry, i) => {
+    const parsed = HookDefSchema.safeParse(entry);
+    if (!parsed.success) {
+      diagnostics.push({
+        severity: 'warn',
+        message: `Invalid hook at index ${i}: ${parsed.error.message}`,
+      });
+    } else {
+      out.push(parsed.data);
+    }
+  });
+  return out.length === 0 ? undefined : out;
 }
 
 async function normalizePluginMcpServer(input: {
