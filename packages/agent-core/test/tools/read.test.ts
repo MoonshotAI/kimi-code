@@ -756,6 +756,19 @@ describe('ReadTool', () => {
     expect(result.output).not.toContain(`${String(MAX_LINES + 1)}\tline ${String(MAX_LINES + 1)}`);
   });
 
+  it('reports both line and byte caps when both limits are hit', async () => {
+    const longLine = 'x'.repeat(200);
+    const content = Array.from({ length: MAX_LINES + 1 }, () => longLine).join('\n');
+    const tool = toolWithContent(content);
+
+    const result = await executeTool(tool, context({ path: '/tmp/dual-limit.txt' }));
+    const output = toolContentString(result);
+
+    expect(output).toContain(`Max ${String(MAX_LINES)} lines reached.`);
+    expect(output).toContain(`Max ${String(MAX_BYTES)} bytes reached.`);
+    expect(output).not.toContain('End of file reached.');
+  });
+
   it('tail byte truncation keeps the newest lines closest to EOF', async () => {
     const numLines = Math.floor(MAX_BYTES / 1001) + 20;
     const content = Array.from({ length: numLines }, (_, i) => {
