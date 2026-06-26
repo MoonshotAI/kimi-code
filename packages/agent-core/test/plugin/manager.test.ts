@@ -23,6 +23,7 @@ async function makePlugin(
     version?: string;
     sessionStartSkill?: string;
     mcpServers?: Record<string, unknown>;
+    hooks?: readonly unknown[];
   } = {},
 ): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), `plugin-${name}-`));
@@ -48,6 +49,9 @@ async function makePlugin(
   }
   if (options.mcpServers !== undefined) {
     manifest['mcpServers'] = options.mcpServers;
+  }
+  if (options.hooks !== undefined) {
+    manifest['hooks'] = options.hooks;
   }
   await writeFile(
     path.join(root, 'kimi.plugin.json'),
@@ -341,6 +345,7 @@ describe('PluginManager', () => {
       mcpServers: {
         finance: { command: 'finance-mcp' },
         docs: { url: 'https://example.com/mcp' },
+        events: { transport: 'sse', url: 'https://example.com/sse' },
       },
     });
     const manager = new PluginManager({ kimiHomeDir: home });
@@ -356,10 +361,18 @@ describe('PluginManager', () => {
         command: 'finance-mcp',
       }),
     );
+    expect(manager.info('demo')?.mcpServers).toContainEqual(
+      expect.objectContaining({
+        name: 'events',
+        runtimeName: 'plugin-demo:events',
+        transport: 'sse',
+        url: 'https://example.com/sse',
+      }),
+    );
     expect(manager.summaries()[0]).toEqual(
       expect.objectContaining({
-        mcpServerCount: 2,
-        enabledMcpServerCount: 2,
+        mcpServerCount: 3,
+        enabledMcpServerCount: 3,
       }),
     );
 
@@ -373,6 +386,10 @@ describe('PluginManager', () => {
         'plugin-demo:docs': expect.objectContaining({
           url: 'https://example.com/mcp',
         }),
+        'plugin-demo:events': expect.objectContaining({
+          transport: 'sse',
+          url: 'https://example.com/sse',
+        }),
       }),
     );
 
@@ -381,8 +398,8 @@ describe('PluginManager', () => {
     expect(manager.enabledMcpServers()).not.toHaveProperty('plugin-demo:finance');
     expect(manager.summaries()[0]).toEqual(
       expect.objectContaining({
-        mcpServerCount: 2,
-        enabledMcpServerCount: 1,
+        mcpServerCount: 3,
+        enabledMcpServerCount: 2,
       }),
     );
 
@@ -839,6 +856,52 @@ describe('PluginManager', () => {
     expect(updated.originalSource).toBe('https://github.com/wbxl2000/superpowers');
     expect(updated.github?.ref).toEqual({ kind: 'tag', value: 'v5.1.0' });
     expect(manager.list()).toHaveLength(1);
+  });
+
+  it('enabledHooks() returns hooks from enabled plugins with cwd and env injected', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      hooks: [{ event: 'PreToolUse', command: './hooks/guard.sh', timeout: 10 }],
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    const installedRoot = await managedPluginRoot(home, 'demo');
+    expect(manager.enabledHooks()).toEqual([
+      {
+        event: 'PreToolUse',
+        command: './hooks/guard.sh',
+        timeout: 10,
+        cwd: installedRoot,
+        env: { KIMI_CODE_HOME: home, KIMI_PLUGIN_ROOT: installedRoot },
+      },
+    ]);
+  });
+
+  it('enabledHooks() excludes disabled plugins', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      hooks: [{ event: 'PreToolUse', command: './x.sh' }],
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    await manager.setEnabled('demo', false);
+    expect(manager.enabledHooks()).toEqual([]);
+  });
+
+  it('summaries() include hookCount', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      hooks: [
+        { event: 'PreToolUse', command: './a.sh' },
+        { event: 'Stop', command: './b.sh' },
+      ],
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    expect(manager.summaries()[0]?.hookCount).toBe(2);
   });
 });
 

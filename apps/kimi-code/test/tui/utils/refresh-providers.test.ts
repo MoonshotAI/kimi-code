@@ -126,6 +126,92 @@ describe('refreshAllProviderModels', () => {
     expect(resolveOAuthToken).toHaveBeenCalledWith(KIMI_CODE_PROVIDER_NAME, envOauthRef);
   });
 
+  it('can refresh only the managed OAuth provider without fetching third-party registries', async () => {
+    const baseUrl = 'https://api.example.test/coding/v1';
+    const registryUrl = 'https://registry.example.test/v1/models/api.json';
+    const config: KimiConfig = {
+      providers: {
+        [KIMI_CODE_PROVIDER_NAME]: {
+          type: 'kimi',
+          baseUrl,
+          apiKey: '',
+          oauth: {
+            storage: 'file',
+            key: resolveKimiCodeOAuthKey({ baseUrl }),
+          },
+        },
+        custom: {
+          type: 'openai',
+          baseUrl: 'https://custom.example.test/v1',
+          apiKey: 'sk-test-token',
+          source: { kind: 'apiJson', url: registryUrl, apiKey: 'sk-test-token' },
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-for-coding',
+          maxContextSize: 262144,
+          capabilities: ['thinking', 'tool_use'],
+          displayName: 'Old Kimi',
+        },
+        'custom/m1': {
+          provider: 'custom',
+          model: 'm1',
+          maxContextSize: 131072,
+          capabilities: ['tool_use'],
+          displayName: 'Custom M1',
+        },
+      },
+      defaultModel: 'kimi-code/kimi-for-coding',
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    const resolveOAuthToken = vi.fn(async () => 'oauth-access-token');
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      expect(fetchInputUrl(input)).toBe(`${baseUrl}/models`);
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer oauth-access-token');
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'kimi-for-coding',
+              context_length: 262144,
+              supports_reasoning: true,
+              display_name: 'Fresh Kimi',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels(
+      {
+        getConfig: async () => host.current(),
+        removeProvider: host.removeProvider,
+        setConfig: host.setConfig,
+        resolveOAuthToken,
+      },
+      { scope: 'oauth' },
+    );
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      {
+        providerId: KIMI_CODE_PROVIDER_NAME,
+        providerName: 'Kimi Code',
+        added: 0,
+        removed: 0,
+      },
+    ]);
+    expect(result.unchanged).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(host.current().models?.['kimi-code/kimi-for-coding']?.displayName).toBe('Fresh Kimi');
+    expect(host.current().models?.['custom/m1']?.displayName).toBe('Custom M1');
+  });
+
   it('refreshes custom-registry model capabilities even when model ids are unchanged', async () => {
     const registryUrl = 'https://registry.example.test/v1/models/api.json';
     const providerId = 'example_chat-completions';

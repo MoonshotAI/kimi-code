@@ -1,3 +1,4 @@
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { DeviceCodeBoxComponent } from '#/tui/components/chrome/device-code-box';
@@ -59,5 +60,20 @@ describe('DeviceCodeBoxComponent', () => {
 
     const joined = component.render(80).map(strip).join('\n');
     expect(joined).not.toContain('Press Ctrl-C');
+  });
+
+  it('keeps every line within narrow widths', () => {
+    const component = new DeviceCodeBoxComponent({
+      title,
+      url,
+      code,
+      hint,
+    });
+
+    for (const width of [39, 20, 10, 4]) {
+      for (const line of component.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 });

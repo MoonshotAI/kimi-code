@@ -4,14 +4,15 @@ import { isAbsolute, join, resolve } from 'node:path';
 import type { PluginInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
 import {
+  PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
-  PluginMarketplaceSelectorComponent,
   PluginRemoveConfirmComponent,
-  PluginsOverviewSelectorComponent,
+  PluginsPanelComponent,
+  type PluginInstallTrustConfirmResult,
   type PluginMcpSelection,
-  type PluginMarketplaceSelection,
   type PluginRemoveConfirmResult,
-  type PluginsOverviewSelection,
+  type PluginsPanelSelection,
+  type PluginsPanelTabId,
 } from '../components/dialogs/plugins-selector';
 import {
   buildPluginsInfoLines,
@@ -19,7 +20,7 @@ import {
 } from '../components/messages/plugins-status-panel';
 import { UsagePanelComponent } from '../components/messages/usage-panel';
 import { formatErrorMessage } from '../utils/event-payload';
-import { formatPluginSourceLabel } from '../utils/plugin-source-label';
+import { formatPluginSourceLabel, isOfficialPluginSource } from '../utils/plugin-source-label';
 import { loadPluginMarketplace } from '#/utils/plugin-marketplace';
 import type { SlashCommandHost } from './dispatch';
 
@@ -29,6 +30,8 @@ interface ShowPluginsPickerOptions {
     readonly id: string;
     readonly text: string;
   };
+  readonly initialTab?: PluginsPanelTabId;
+  readonly marketplaceSource?: string;
 }
 
 interface PluginMcpServerHint {
@@ -62,6 +65,10 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
         host.showError('Usage: /plugins install <local-path-or-zip-url>');
         return;
       }
+      if (!(await confirmInstallTrust(host, source, isOfficialPluginSource(source)))) {
+        host.showStatus('Install cancelled.');
+        return;
+      }
       const spinner = host.showProgressSpinner(`Installing plugin from ${truncateForStatus(source)}…`);
       try {
         await installPluginFromSource(host, source);
@@ -73,7 +80,15 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
       return;
     }
     if (sub === 'marketplace') {
-      await showPluginMarketplacePicker(host, rest.join(' ').trim() || undefined);
+      const marketplaceSource = rest.join(' ').trim() || undefined;
+      await showPluginsPicker(host, {
+        // Custom marketplaces often omit `tier`, so their entries land on the
+        // Third-party tab (entry.tier !== 'official'). Open there when a custom
+        // source is supplied; otherwise the default catalog's official entries
+        // make Official the right landing tab.
+        initialTab: marketplaceSource === undefined ? 'official' : 'third-party',
+        marketplaceSource,
+      });
       return;
     }
     if (sub === 'info') {
@@ -95,7 +110,7 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
       }
       await session.setPluginMcpServerEnabled(id, server, action === 'enable');
       host.showStatus(
-        `${action === 'enable' ? 'Enabled' : 'Disabled'} MCP server ${server} for ${id}. Run /new to apply.`,
+        `${action === 'enable' ? 'Enabled' : 'Disabled'} MCP server ${server} for ${id}. Run /reload or /new to apply.`,
       );
       return;
     }
@@ -118,8 +133,7 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
         host.showStatus(`Remove cancelled: ${id}.`);
         return;
       }
-      await session.removePlugin(id);
-      host.showStatus(`Removed ${id} (plugin files left in place).`);
+      await removePlugin(host, id);
       return;
     }
     if (sub === 'reload') {
@@ -149,55 +163,58 @@ async function showPluginsPicker(
     return;
   }
 
-  host.mountEditorReplacement(
-    new PluginsOverviewSelectorComponent({
-      plugins,
-      selectedId: options?.selectedId,
-      pluginHint: options?.pluginHint,
-      onSelect: (selection) => {
-        // Each branch of the handler either mounts the next view or restores
-        // the editor itself, so do not pre-restore here — that would flash the
-        // editor for in-place actions like toggling a plugin.
-        void handlePluginsOverviewSelection(host, selection).catch((error: unknown) => {
-          host.showError(`/plugins failed: ${formatErrorMessage(error)}`);
-        });
-      },
-      onCancel: () => {
-        host.restoreEditor();
-      },
-    }),
-  );
+  const panel = new PluginsPanelComponent({
+    installed: plugins,
+    installedIds: new Set(plugins.map((plugin) => plugin.id)),
+    initialTab: options?.initialTab,
+    selectedId: options?.selectedId,
+    pluginHint: options?.pluginHint,
+    onSelect: (selection) => {
+      // Each branch of the handler either mounts the next view or restores the
+      // editor itself, so do not pre-restore here — that would flash the editor
+      // for in-place actions like toggling a plugin.
+      void handlePluginsPanelSelection(host, panel, selection).catch((error: unknown) => {
+        host.showError(`/plugins failed: ${formatErrorMessage(error)}`);
+      });
+    },
+    onCancel: () => {
+      host.restoreEditor();
+    },
+    // Every tab except Custom needs the catalog: Official/Third-party list it,
+    // and Installed uses it to show update badges. The Installed/Custom tabs
+    // keep working even when the marketplace is unreachable (badges simply stay
+    // hidden until data arrives).
+    onRequestMarketplace: () => {
+      void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
+    },
+  });
+  host.mountEditorReplacement(panel);
+  // Kick off the catalog fetch for any tab that needs it: Installed uses it for
+  // update badges, Official/Third-party list it. Custom never reads the catalog,
+  // so skip the fetch there. Done here (after `panel` is initialized) rather
+  // than inside the component constructor, because the callback above closes
+  // over `panel`.
+  if (options?.initialTab !== 'custom') {
+    panel.setMarketplaceLoading();
+    void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
+  }
 }
 
-async function showPluginMarketplacePicker(host: SlashCommandHost, source?: string): Promise<void> {
+async function loadMarketplaceCatalog(
+  host: SlashCommandHost,
+  panel: PluginsPanelComponent,
+  source?: string,
+): Promise<void> {
   try {
-    const [marketplace, installed] = await Promise.all([
-      loadPluginMarketplace({ workDir: host.state.appState.workDir, source }),
-      host.requireSession().listPlugins(),
-    ]);
-    host.mountEditorReplacement(
-      new PluginMarketplaceSelectorComponent({
-        entries: marketplace.plugins,
-        installed: new Map(
-          installed.map((plugin): [string, string | undefined] => [plugin.id, plugin.version]),
-        ),
-        source: marketplace.source,
-        onSelect: (selection) => {
-          // Every marketplace action re-mounts a picker, so let the handler do
-          // the mounting — pre-restoring the editor here would flash.
-          void handlePluginMarketplaceSelection(host, selection).catch((error: unknown) => {
-            host.showError(`/plugins marketplace failed: ${formatErrorMessage(error)}`);
-          });
-        },
-        onCancel: () => {
-          host.restoreEditor();
-          void showPluginsPicker(host);
-        },
-      }),
-    );
+    const marketplace = await loadPluginMarketplace({
+      workDir: host.state.appState.workDir,
+      source,
+    });
+    panel.setMarketplace(marketplace.plugins, marketplace.source);
   } catch (error) {
-    host.showError(`Failed to load plugin marketplace: ${formatErrorMessage(error)}`);
+    panel.setMarketplaceError(formatErrorMessage(error));
   }
+  host.state.ui.requestRender();
 }
 
 async function showPluginMcpPicker(
@@ -255,6 +272,67 @@ async function confirmRemovePlugin(host: SlashCommandHost, id: string): Promise<
   });
 }
 
+async function confirmInstallTrust(
+  host: SlashCommandHost,
+  label: string,
+  official: boolean,
+): Promise<boolean> {
+  // Kimi-built official plugins are trusted implicitly; anything else requires
+  // the user to explicitly opt in via the trust prompt.
+  if (official) return true;
+  return new Promise((resolveConfirmed) => {
+    host.mountEditorReplacement(
+      new PluginInstallTrustConfirmComponent({
+        label,
+        onDone: (result: PluginInstallTrustConfirmResult) => {
+          host.restoreEditor();
+          resolveConfirmed(result.kind === 'confirm');
+        },
+      }),
+    );
+  });
+}
+
+async function installFromPanel(
+  host: SlashCommandHost,
+  panel: PluginsPanelComponent,
+  source: string,
+  label: string,
+  official: boolean,
+): Promise<void> {
+  if (!(await confirmInstallTrust(host, label, official))) {
+    host.showStatus(`Install cancelled: ${label}.`);
+    host.restoreEditor();
+    return;
+  }
+  // Official installs keep the panel mounted and show the inline installing
+  // state; third-party installs pass through a trust prompt that replaces the
+  // panel, so fall back to a transcript status for those.
+  if (official) {
+    panel.setInstalling(truncateForStatus(label));
+  } else {
+    host.showStatus(`Installing or updating ${label} from marketplace...`);
+  }
+  host.state.ui.requestRender();
+  try {
+    await installPluginFromSource(host, source);
+  } catch (error) {
+    if (official) {
+      panel.clearInstalling();
+      host.state.ui.requestRender();
+    } else {
+      // The trust prompt replaced the panel; re-mount it so the user can retry
+      // instead of being dropped back at the editor.
+      host.mountEditorReplacement(panel);
+    }
+    host.showError(`Failed to install ${label}: ${formatErrorMessage(error)}`);
+    return;
+  }
+  // Close the panel after installing so the result status and the
+  // "/reload or /new" tip are visible in the transcript.
+  host.restoreEditor();
+}
+
 async function applyPluginEnabled(
   host: SlashCommandHost,
   id: string,
@@ -274,53 +352,64 @@ async function applyPluginEnabled(
       ? ` Some MCP servers are disabled; re-enable with /plugins mcp enable ${id} <server>.`
       : '';
   if (showStatus) {
-    host.showStatus(`${enabled ? 'Enabled' : 'Disabled'} ${id}. Run /new to apply.${mcpHint}`);
+    host.showStatus(`${enabled ? 'Enabled' : 'Disabled'} ${id}. Run /reload or /new to apply.${mcpHint}`);
   }
   const inlineMcpHint = mcpHint.length > 0 ? ' · MCP servers disabled' : '';
   return `${pluginInlineChangeHint()}${inlineMcpHint}`;
 }
 
-async function handlePluginsOverviewSelection(
+async function handlePluginsPanelSelection(
   host: SlashCommandHost,
-  selection: PluginsOverviewSelection,
+  panel: PluginsPanelComponent,
+  selection: PluginsPanelSelection,
 ): Promise<void> {
-  const session = host.requireSession();
   switch (selection.kind) {
-    case 'marketplace':
-      await showPluginMarketplacePicker(host);
-      return;
-    case 'reload':
-      await reloadPlugins(host);
-      await showPluginsPicker(host);
-      return;
-    case 'show-list':
-      host.restoreEditor();
-      await renderPluginsList(host);
-      return;
     case 'toggle': {
       const hint = await applyPluginEnabled(host, selection.id, selection.enabled, false);
       await showPluginsPicker(host, {
+        initialTab: 'installed',
         selectedId: selection.id,
         pluginHint: { id: selection.id, text: hint },
       });
       return;
     }
-    case 'mcp':
-      await showPluginMcpPicker(host, selection.id);
-      return;
     case 'remove':
       if (!(await confirmRemovePlugin(host, selection.id))) {
         host.showStatus(`Remove cancelled: ${selection.id}.`);
-        await showPluginsPicker(host, { selectedId: selection.id });
+        await showPluginsPicker(host, { initialTab: 'installed', selectedId: selection.id });
         return;
       }
-      await session.removePlugin(selection.id);
-      host.showStatus(`Removed ${selection.id} (plugin files left in place).`);
-      await showPluginsPicker(host);
+      await removePlugin(host, selection.id);
+      await showPluginsPicker(host, { initialTab: 'installed' });
       return;
-    case 'info':
+    case 'mcp':
+      await showPluginMcpPicker(host, selection.id);
+      return;
+    case 'details':
       host.restoreEditor();
       await renderPluginInfo(host, selection.id);
+      return;
+    case 'reload':
+      await reloadPlugins(host);
+      await showPluginsPicker(host, { initialTab: 'installed' });
+      return;
+    case 'install':
+      await installFromPanel(
+        host,
+        panel,
+        selection.entry.source,
+        selection.entry.displayName,
+        isOfficialPluginSource(selection.entry.source),
+      );
+      return;
+    case 'install-source':
+      await installFromPanel(
+        host,
+        panel,
+        selection.source,
+        selection.source,
+        isOfficialPluginSource(selection.source),
+      );
       return;
   }
 }
@@ -350,22 +439,10 @@ async function handlePluginMcpSelection(
   }
 }
 
-async function handlePluginMarketplaceSelection(
-  host: SlashCommandHost,
-  selection: PluginMarketplaceSelection,
-): Promise<void> {
-  switch (selection.kind) {
-    case 'install':
-      host.showStatus(`Installing or updating ${selection.entry.displayName} from marketplace...`);
-      await installPluginFromSource(host, selection.entry.source, {
-        successNotice: 'marketplace',
-      });
-      await showPluginsPicker(host, { selectedId: selection.entry.id });
-      return;
-    case 'back':
-      await showPluginsPicker(host);
-      return;
-  }
+async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
+  await host.requireSession().removePlugin(id);
+  host.showStatus(`Removed ${id}.`);
+  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
 
 async function renderPluginsList(
@@ -397,25 +474,21 @@ async function renderPluginInfo(host: SlashCommandHost, id: string): Promise<voi
 async function installPluginFromSource(
   host: SlashCommandHost,
   source: string,
-  options?: {
-    readonly successNotice?: 'marketplace';
-  },
 ): Promise<void> {
   const session = host.requireSession();
   const beforeList = await session.listPlugins();
   const summary = await session.installPlugin(
     resolvePluginInstallSource(source, host.state.appState.workDir),
   );
-  showPluginInstallResult(host, beforeList, summary, options);
+  showPluginInstallResult(host, beforeList, summary);
 }
+
+const PLUGIN_RELOAD_HINT = 'Run /new or /reload to apply plugin changes.';
 
 function showPluginInstallResult(
   host: SlashCommandHost,
   beforeList: readonly PluginSummary[],
   summary: PluginSummary,
-  options?: {
-    readonly successNotice?: 'marketplace';
-  },
 ): void {
   const previous = beforeList.find((entry) => entry.id === summary.id);
   const serverWord = summary.mcpServerCount === 1 ? 'server' : 'servers';
@@ -424,15 +497,8 @@ function showPluginInstallResult(
       ? ` Declares ${summary.mcpServerCount} MCP ${serverWord}; enabled by default and configurable from /plugins.`
       : '';
   const action = describeInstallAction(previous, summary);
-  host.showStatus(
-    `${action} (${summary.id}).${mcpHint} Run /new to apply plugin changes.`,
-  );
-  if (options?.successNotice === 'marketplace') {
-    host.showNotice(
-      `Installed or updated ${summary.displayName}`,
-      `Marketplace install or update succeeded for ${summary.id}. Run /new to apply plugin changes.`,
-    );
-  }
+  host.showStatus(`${action} (${summary.id}).${mcpHint}`);
+  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
 
 function describeInstallAction(
@@ -445,13 +511,19 @@ function describeInstallAction(
     return ` ${prev} → ${cur ?? '-'}`;
   };
   if (previous === undefined) {
-    return `Installed ${next.displayName}${versionFromTo(undefined, next.version)} from ${sourceLabel}`;
+    return `Installed ${next.displayName}${versionFromTo(undefined, next.version)} ${sourcePhrase(sourceLabel)}`;
   }
   if (sourceIdentity(previous) !== sourceIdentity(next)) {
     const prevSourceLabel = formatPluginSourceLabel(previous);
     return `Migrated ${next.displayName}: ${prevSourceLabel} → ${sourceLabel}${versionFromTo(previous.version, next.version)}`;
   }
-  return `Updated ${next.displayName}${versionFromTo(previous.version, next.version)} from ${sourceLabel}`;
+  return `Updated ${next.displayName}${versionFromTo(previous.version, next.version)} ${sourcePhrase(sourceLabel)}`;
+}
+
+// formatPluginSourceLabel already prefixes zip-url hosts with "via", so adding
+// "from" would read as "from via <host>". Only prepend "from" otherwise.
+function sourcePhrase(sourceLabel: string): string {
+  return sourceLabel.startsWith('via ') ? sourceLabel : `from ${sourceLabel}`;
 }
 
 function sourceIdentity(plugin: PluginSummary): string {
@@ -482,5 +554,5 @@ function resolvePluginInstallSource(source: string, workDir: string): string {
 }
 
 function pluginInlineChangeHint(): string {
-  return 'require run /new to apply';
+  return 'run /reload or /new to apply';
 }

@@ -1,3 +1,4 @@
+import { visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -11,6 +12,7 @@ const TRUECOLOR_PATTERN = /\u001B\[38;2;(\d+);(\d+);(\d+)m/g;
 const appState: AppState = {
   version: '1.2.3',
   workDir: '/tmp/project',
+  additionalDirs: [],
   sessionId: 'ses-1',
   sessionTitle: null,
   model: 'kimi-k2',
@@ -24,6 +26,7 @@ const appState: AppState = {
   streamingPhase: 'idle',
   streamingStartTime: 0,
   planMode: false,
+  inputMode: 'prompt',
   swarmMode: false,
   theme: 'dark',
   editorCommand: null,
@@ -90,5 +93,13 @@ describe('WelcomeComponent', () => {
     const off = headerOf(new WelcomeComponent(appState).render(80));
 
     expect(off).toBe(base);
+  });
+
+  it('keeps every line within the requested width on narrow terminals', () => {
+    for (const width of [0, 1, 2, 4, 10, 39, 80]) {
+      for (const line of new WelcomeComponent(appState).render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 });

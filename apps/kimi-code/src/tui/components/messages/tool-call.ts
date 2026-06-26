@@ -5,7 +5,7 @@
 
 import { isAbsolute, relative, sep } from 'node:path';
 
-import { Container, Text, Spacer, visibleWidth } from '@earendil-works/pi-tui';
+import { Container, Spacer, Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, TUI } from '@earendil-works/pi-tui';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
@@ -25,6 +25,7 @@ import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
@@ -45,6 +46,10 @@ const SUBAGENT_ELAPSED_INTERVAL_MS = 1000;
 const PROGRESS_URL_RE = /https?:\/\/\S+/g;
 const ABORTED_MARK = '⊘';
 const MAX_LIVE_OUTPUT_CHARS = 50_000;
+
+/** Delay before a long-running foreground Bash/Agent card advertises Ctrl+B. */
+const DETACH_HINT_DELAY_MS = 10_000;
+const DETACH_HINT_TEXT = 'Press Ctrl+B to run in background';
 
 type SubagentTextKind = 'thinking' | 'text';
 type SubagentPhase = 'queued' | 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded';
@@ -459,6 +464,8 @@ function tailNonEmptyLines(text: string, maxLines: number): string[] {
 }
 
 class PrefixedWrappedLine implements Component {
+  private renderCache: { width: number; lines: string[] } | undefined;
+
   constructor(
     private readonly firstPrefix: string,
     private readonly continuationPrefix: string,
@@ -469,22 +476,37 @@ class PrefixedWrappedLine implements Component {
     private readonly tailLines?: number,
   ) { }
 
-  invalidate(): void { }
+  invalidate(): void {
+    this.renderCache = undefined;
+  }
 
   render(width: number): string[] {
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [''];
+
+    if (isRenderCacheEnabled() && this.renderCache?.width === safeWidth) {
+      return this.renderCache.lines;
+    }
+
     const prefixWidth = Math.max(
       visibleWidth(this.firstPrefix),
       visibleWidth(this.continuationPrefix),
     );
-    const contentWidth = Math.max(1, width - prefixWidth);
+    const contentWidth = Math.max(1, safeWidth - prefixWidth);
     const wrapped = new Text(this.text, 0, 0).render(contentWidth);
     const lines =
       this.tailLines !== undefined && wrapped.length > this.tailLines
         ? wrapped.slice(wrapped.length - this.tailLines)
         : wrapped;
-    return lines.map((line, index) =>
-      index === 0 ? `${this.firstPrefix}${line}` : `${this.continuationPrefix}${line}`,
-    );
+    const rendered = lines
+      .map((line, index) =>
+        index === 0 ? `${this.firstPrefix}${line}` : `${this.continuationPrefix}${line}`,
+      )
+      .map((line) => truncateToWidth(line, safeWidth, '…'));
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width: safeWidth, lines: rendered };
+    }
+    return rendered;
   }
 }
 
@@ -529,6 +551,14 @@ export class ToolCallComponent extends Container {
   // ── Subagent lifecycle state from subagent.spawned/started/completed/failed ──
   private subagentPhase: SubagentPhase | undefined;
   /**
+   * Distinguishes a foreground subagent that the user detached via Ctrl+B from
+   * one that started in the background. Both set `subagentPhase = 'backgrounded'`,
+   * but only the detached one should keep showing `◐ backgrounded` after its
+   * spawn-success ToolResult lands — a started-in-background agent reads as
+   * `done` once its result arrives.
+   */
+  private detachedFromForeground = false;
+  /**
    * Authoritative terminal phase for a backgrounded subagent. Set from
    * `BackgroundTaskInfo.status` via `setBackgroundTaskTerminalStatus` once
    * the backing task reaches a terminal state — either live (a bg agent
@@ -559,6 +589,13 @@ export class ToolCallComponent extends Container {
   private progressLines: string[] = [];
   private static readonly MAX_PROGRESS_LINES = 24;
   private liveOutput = '';
+
+  /**
+   * Advertises `Ctrl+B` on a foreground Bash/Agent card that has been running
+   * for {@link DETACH_HINT_DELAY_MS}. Cleared when the result lands.
+   */
+  private detachHintTimer: ReturnType<typeof setTimeout> | undefined;
+  private detachHintVisible = false;
 
   /**
    * Registered by a group container (`AgentGroupComponent` or
@@ -593,9 +630,52 @@ export class ToolCallComponent extends Container {
     this.buildSubagentBlock();
     this.syncStreamingProgressTimer();
     this.syncSubagentElapsedTimer();
+    this.startDetachHintTimer();
+  }
+
+  private renderCache:
+    | { width: number; lines: string[]; childRefs: Component[]; childLines: string[][] }
+    | undefined;
+
+  override render(width: number): string[] {
+    const cache = this.renderCache;
+    const cacheValid =
+      isRenderCacheEnabled() &&
+      cache !== undefined &&
+      cache.width === width &&
+      cache.childRefs.length === this.children.length;
+
+    const childRefs: Component[] = [];
+    const childLines: string[][] = [];
+    let allReused = cacheValid;
+
+    let i = 0;
+    for (const child of this.children) {
+      const lines = child.render(width);
+      childRefs.push(child);
+      childLines.push(lines);
+      if (cacheValid && (cache.childRefs[i] !== child || cache.childLines[i] !== lines)) {
+        allReused = false;
+      }
+      i++;
+    }
+
+    if (allReused) {
+      return cache!.lines;
+    }
+
+    const out: string[] = [];
+    for (const lines of childLines) {
+      for (const line of lines) out.push(line);
+    }
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width, lines: out, childRefs, childLines };
+    }
+    return out;
   }
 
   override invalidate(): void {
+    this.renderCache = undefined;
     this.headerText.setText(this.buildHeader());
     this.rebuildBody();
     super.invalidate();
@@ -619,6 +699,8 @@ export class ToolCallComponent extends Container {
     // show both the streamed status lines and the final output stacked.
     this.progressLines = [];
     this.liveOutput = '';
+    this.detachHintVisible = false;
+    this.stopDetachHintTimer();
     this.finalizeSubagentElapsedIfNeeded();
     this.syncStreamingProgressTimer();
     this.syncSubagentElapsedTimer();
@@ -677,6 +759,7 @@ export class ToolCallComponent extends Container {
   dispose(): void {
     this.stopStreamingProgressTimer();
     this.stopSubagentElapsedTimer();
+    this.stopDetachHintTimer();
   }
 
   /**
@@ -778,14 +861,11 @@ export class ToolCallComponent extends Container {
     //      'spawning' and keep showing `Initializing...`.
     // Intermediate states without a result still use `subagentPhase`.
     // `backgrounded` has no result because background agents do not enter the
-    // transcript.
-    const derivedPhase: ToolCallSubagentSnapshot['phase'] =
-      this.backgroundTaskTerminalPhase ??
-      (this.result !== undefined
-        ? this.result.is_error
-          ? 'failed'
-          : 'done'
-        : this.subagentPhase);
+    // transcript — but a foreground subagent detached via Ctrl+B keeps
+    // `subagentPhase === 'backgrounded'` even after its ToolResult lands, so
+    // the group card shows `◐ backgrounded` rather than `✓ Completed`. Reuse
+    // the standalone derivation so both paths agree.
+    const derivedPhase = this.getDerivedSubagentPhase();
     const errorText =
       this.subagentError ?? (derivedPhase === 'failed' ? this.result?.output : undefined);
     return {
@@ -897,6 +977,46 @@ export class ToolCallComponent extends Container {
     if (this.streamingProgressTimer === undefined) return;
     clearInterval(this.streamingProgressTimer);
     this.streamingProgressTimer = undefined;
+  }
+
+  /** Only foreground Bash/Agent calls can be detached via Ctrl+B. */
+  private isDetachHintEligible(): boolean {
+    return this.toolCall.name === 'Bash' || this.toolCall.name === 'Agent';
+  }
+
+  private startDetachHintTimer(): void {
+    if (!this.isDetachHintEligible()) return;
+    if (this.result !== undefined) return;
+    if (this.ui === undefined) return;
+    if (this.toolCall.name === 'Agent') {
+      // Subagents are long-running by nature; advertise Ctrl+B immediately
+      // instead of waiting out the delay used for short Bash commands.
+      if (this.detachHintVisible) return;
+      this.detachHintVisible = true;
+      this.rebuildBody();
+      this.ui?.requestRender();
+      return;
+    }
+    if (this.detachHintTimer !== undefined) return;
+    this.detachHintTimer = setTimeout(() => {
+      this.detachHintTimer = undefined;
+      if (this.result !== undefined) return;
+      this.detachHintVisible = true;
+      this.rebuildBody();
+      this.ui?.requestRender();
+    }, DETACH_HINT_DELAY_MS);
+  }
+
+  private stopDetachHintTimer(): void {
+    if (this.detachHintTimer === undefined) return;
+    clearTimeout(this.detachHintTimer);
+    this.detachHintTimer = undefined;
+  }
+
+  private buildDetachHintBlock(): void {
+    if (!this.detachHintVisible) return;
+    if (this.result !== undefined) return;
+    this.addChild(new Text(currentTheme.dim(DETACH_HINT_TEXT), 2, 0));
   }
 
   private syncSubagentElapsedTimer(): void {
@@ -1084,6 +1204,22 @@ export class ToolCallComponent extends Container {
     this.headerText.setText(this.buildHeader());
     this.rebuildContent();
     this.notifySnapshotChange();
+  }
+
+  /**
+   * Mark a foreground subagent as detached-to-background. Called when a
+   * `background.task.started` event arrives for this agent (i.e. the user
+   * pressed Ctrl+B). Keeps the card showing `◐ backgrounded` instead of
+   * flipping to `✓ Completed` when the spawn-success ToolResult lands.
+   */
+  markBackgrounded(): void {
+    if (this.detachedFromForeground) return;
+    this.detachedFromForeground = true;
+    this.subagentPhase = 'backgrounded';
+    this.headerText.setText(this.buildHeader());
+    this.rebuildContent();
+    this.notifySnapshotChange();
+    this.ui?.requestRender();
   }
 
   /**
@@ -1335,6 +1471,7 @@ export class ToolCallComponent extends Container {
       this.children.pop();
     }
     this.buildProgressBlock();
+    this.buildDetachHintBlock();
     this.buildLiveOutputBlock();
     this.buildContent();
     this.buildSubagentBlock();
@@ -1347,6 +1484,7 @@ export class ToolCallComponent extends Container {
     this.buildCallPreview();
     this.callPreviewEndIndex = this.children.length;
     this.buildProgressBlock();
+    this.buildDetachHintBlock();
     this.buildLiveOutputBlock();
     this.buildContent();
     this.buildSubagentBlock();
@@ -1544,6 +1682,14 @@ export class ToolCallComponent extends Container {
   private getDerivedSubagentPhase(): SubagentPhase | undefined {
     if (this.backgroundTaskTerminalPhase !== undefined) {
       return this.backgroundTaskTerminalPhase;
+    }
+    // A foreground subagent detached via Ctrl+B keeps showing `backgrounded`
+    // even after its spawn-success ToolResult lands, so the card doesn't flip
+    // to `✓ Completed` and look like the work actually finished. Agents that
+    // started in the background (`detachedFromForeground === false`) read as
+    // `done` once their result lands.
+    if (this.detachedFromForeground && this.subagentPhase === 'backgrounded') {
+      return 'backgrounded';
     }
     if (this.result !== undefined) return this.result.is_error ? 'failed' : 'done';
     return this.subagentPhase;
@@ -1761,6 +1907,20 @@ export class ToolCallComponent extends Container {
       for (const line of lines) {
         this.addChild(new Text(line, 2, 0));
       }
+    } else if (name === 'Bash' && this.result === undefined) {
+      // While a long-running Bash call is in-flight (args finalized, no result
+      // yet), surface its command in the body so the user can see what is
+      // running and expand it with ctrl+o. Once the result lands, buildContent's
+      // shellExecutionResultRenderer takes over command rendering.
+      const command = str(this.toolCall.args['command']);
+      if (command.length === 0) return;
+      this.addChild(
+        new ShellExecutionComponent({
+          command,
+          showCommand: true,
+          commandPreviewLines: this.expanded ? undefined : COMMAND_PREVIEW_LINES,
+        }),
+      );
     }
   }
 

@@ -7,9 +7,11 @@
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": [
+    "@moonshot-ai/server-e2e",
     "@moonshot-ai/vis",
     "@moonshot-ai/vis-server",
-    "@moonshot-ai/vis-web"
+    "@moonshot-ai/vis-web",
+    "kimi-migration-legacy"
   ],
   "snapshot": {
     "useCalculatedVersion": true,

@@ -57,12 +57,75 @@ describe('update cache', () => {
       source: 'cdn',
       checkedAt: '2026-04-23T08:00:00.000Z',
       latest: '0.5.0',
+      manifest: null,
     } as const;
 
     await writeUpdateCache(cache);
 
     expect(getUpdateStateFile()).toBe(join(dir, 'updates', 'latest.json'));
     await expect(readUpdateCache()).resolves.toEqual(cache);
+  });
+
+  it('writes and reads back a cache carrying a rollout manifest', async () => {
+    const cache = {
+      source: 'cdn',
+      checkedAt: '2026-04-23T08:00:00.000Z',
+      latest: '0.5.0',
+      manifest: {
+        version: '0.5.0',
+        publishedAt: '2026-04-23T07:00:00.000Z',
+        rollout: [
+          { percent: 30, delaySeconds: 0 },
+          { percent: 30, delaySeconds: 43_200 },
+          { percent: 40, delaySeconds: 86_400 },
+        ],
+      },
+    } as const;
+
+    await writeUpdateCache(cache);
+
+    await expect(readUpdateCache()).resolves.toEqual(cache);
+  });
+
+  it('reads a legacy cache file without a manifest field as manifest null', async () => {
+    mkdirSync(join(dir, 'updates'), { recursive: true });
+    writeFileSync(
+      getUpdateStateFile(),
+      JSON.stringify({
+        source: 'cdn',
+        checkedAt: '2026-04-23T08:00:00.000Z',
+        latest: '0.5.0',
+      }),
+      'utf-8',
+    );
+
+    await expect(readUpdateCache()).resolves.toEqual({
+      source: 'cdn',
+      checkedAt: '2026-04-23T08:00:00.000Z',
+      latest: '0.5.0',
+      manifest: null,
+    });
+  });
+
+  it('keeps latest and treats a malformed manifest field as null', async () => {
+    mkdirSync(join(dir, 'updates'), { recursive: true });
+    writeFileSync(
+      getUpdateStateFile(),
+      JSON.stringify({
+        source: 'cdn',
+        checkedAt: '2026-04-23T08:00:00.000Z',
+        latest: '0.5.0',
+        manifest: { version: 'not-semver', publishedAt: 'nope', rollout: 'bad' },
+      }),
+      'utf-8',
+    );
+
+    await expect(readUpdateCache()).resolves.toEqual({
+      source: 'cdn',
+      checkedAt: '2026-04-23T08:00:00.000Z',
+      latest: '0.5.0',
+      manifest: null,
+    });
   });
 });
 

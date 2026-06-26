@@ -22,6 +22,7 @@ import type {
   ListSessionsOptions,
   RenameSessionInput,
   ResumeSessionInput,
+  ReloadSessionInput,
   SessionSummary,
   TelemetryClient,
   TelemetryContextPatch,
@@ -37,6 +38,7 @@ export interface KimiHarnessRuntimeOptions {
   readonly telemetry: TelemetryClient;
   readonly ensureConfigFile: () => Promise<void>;
   readonly onClose: () => void | Promise<void>;
+  readonly sessionStartedProperties?: TelemetryProperties;
 }
 
 export class KimiHarness {
@@ -50,6 +52,7 @@ export class KimiHarness {
   private readonly activeSessions = new Map<string, Session>();
   private readonly ensureConfigFileImpl: () => Promise<void>;
   private readonly closeImpl: () => void | Promise<void>;
+  private readonly sessionStartedProperties: TelemetryProperties;
 
   constructor(
     private readonly rpc: SDKRpcClientBase,
@@ -63,6 +66,7 @@ export class KimiHarness {
     this.auth = options.auth;
     this.ensureConfigFileImpl = options.ensureConfigFile;
     this.closeImpl = options.onClose;
+    this.sessionStartedProperties = options.sessionStartedProperties ?? {};
   }
 
   get sessions(): ReadonlyMap<string, Session> {
@@ -86,7 +90,7 @@ export class KimiHarness {
   }
 
   async createSession(options: CreateSessionOptions): Promise<Session> {
-    const { planMode, kaos, persistenceKaos, ...coreOptions } = options;
+    const { planMode, kaos, persistenceKaos, sessionStartedProperties, ...coreOptions } = options;
     const summary =
       kaos === undefined && persistenceKaos === undefined
         ? await this.rpc.createSession(coreOptions)
@@ -104,7 +108,7 @@ export class KimiHarness {
     if (planMode === true) {
       await session.setPlanMode(true);
     }
-    this.trackSessionStarted(summary.id, false);
+    this.trackSessionStarted(summary.id, false, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_new');
     return session;
   }
@@ -112,7 +116,7 @@ export class KimiHarness {
   async resumeSession(input: ResumeSessionInput): Promise<Session> {
     const id = normalizeSessionId(input.id);
     const active = this.activeSessions.get(id);
-    const { kaos, persistenceKaos, ...resumeInput } = input;
+    const { kaos, persistenceKaos, sessionStartedProperties, ...resumeInput } = input;
     if (active !== undefined) {
       if (kaos !== undefined || persistenceKaos !== undefined) {
         await this.rpc.resumeSessionWithKaos({ ...resumeInput, id }, kaos ?? persistenceKaos as Kaos, persistenceKaos);
@@ -134,21 +138,26 @@ export class KimiHarness {
       },
     });
     this.activeSessions.set(session.id, session);
-    this.trackSessionStarted(summary.id, true);
+    this.trackSessionStarted(summary.id, true, sessionStartedProperties);
     this.trackSessionEvent(session.id, 'session_resume');
     return session;
   }
 
-  async reloadSession(input: ResumeSessionInput): Promise<Session> {
+  async reloadSession(input: ReloadSessionInput): Promise<Session> {
     const id = normalizeSessionId(input.id);
     const active = this.activeSessions.get(id);
     if (active !== undefined) {
-      await active.reloadSession();
+      await active.reloadSession({
+        forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
+      });
       this.trackSessionEvent(active.id, 'session_reload');
       return active;
     }
 
-    const summary = await this.rpc.reloadSession({ sessionId: id });
+    const summary = await this.rpc.reloadSession({
+      sessionId: id,
+      forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
+    });
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -246,8 +255,16 @@ export class KimiHarness {
     withTelemetryContext(this.telemetry, { sessionId: eventSessionId }).track(event);
   }
 
-  private trackSessionStarted(eventSessionId: string, resumed: boolean): void {
+  private trackSessionStarted(
+    eventSessionId: string,
+    resumed: boolean,
+    sessionScoped?: TelemetryProperties,
+  ): void {
     withTelemetryContext(this.telemetry, { sessionId: eventSessionId }).track('session_started', {
+      ...this.sessionStartedProperties,
+      ...sessionScoped,
+      // Canonical fields are owned by the harness and must win over any
+      // caller-supplied sessionStartedProperties that happen to share a key.
       client_name: this.identity?.userAgentProduct ?? null,
       client_version: this.identity?.version ?? null,
       ui_mode: this.uiMode,

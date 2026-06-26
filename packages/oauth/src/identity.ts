@@ -32,24 +32,28 @@ export interface CreateKimiDeviceIdOptions {
   readonly onFirstLaunch?: ((id: string) => void) | undefined;
 }
 
+export function readKimiDeviceId(homeDir: string): string | null {
+  const deviceIdPath = join(homeDir, 'device_id');
+  if (!existsSync(deviceIdPath)) return null;
+  try {
+    const text = readFileSync(deviceIdPath, 'utf-8').trim();
+    return text.length > 0 ? text : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createKimiDeviceId(
   homeDir: string,
   options: CreateKimiDeviceIdOptions = {},
 ): string {
-  const deviceIdPath = join(homeDir, 'device_id');
-  if (existsSync(deviceIdPath)) {
-    try {
-      const text = readFileSync(deviceIdPath, 'utf-8').trim();
-      if (text.length > 0) return text;
-    } catch {
-      // Fall through to regenerate.
-    }
-  }
+  const existing = readKimiDeviceId(homeDir);
+  if (existing !== null) return existing;
 
   const id = randomUUID();
   try {
     mkdirSync(homeDir, { recursive: true, mode: 0o700 });
-    writeFileSync(deviceIdPath, id, { encoding: 'utf-8', mode: 0o600 });
+    writeFileSync(join(homeDir, 'device_id'), id, { encoding: 'utf-8', mode: 0o600 });
   } catch {
     // Best-effort: requests can still use the in-memory id.
   }

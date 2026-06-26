@@ -5,6 +5,10 @@
  * Geometry mirrors `DeviceCodeBox` so the chrome stays consistent with
  * the OAuth login flow. The box embeds a `pi-tui` Input for the actual
  * text entry; cursor visibility tracks the dialog's `focused` flag.
+ *
+ * This is stage 1 of the feedback flow: it collects the free-form text
+ * only. Whether to attach diagnostic logs / codebase is decided in a
+ * follow-up stage (see `promptFeedbackAttachment`).
  */
 
 import {
@@ -67,8 +71,9 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
   override render(width: number): string[] {
     this.input.focused = this.focused && !this.done;
 
-    const safeWidth = Math.max(28, width);
-    const innerWidth = Math.max(10, safeWidth - 4);
+    const safeWidth = Math.max(0, width);
+    if (safeWidth <= 0) return [''];
+    const innerWidth = Math.max(1, safeWidth - 4);
     const pad = '  ';
 
     const border = (s: string): string => currentTheme.fg('primary', s);
@@ -82,7 +87,19 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
     const footerLine = truncateToWidth(footerStyled, innerWidth, '…');
     const inputLine = this.input.render(innerWidth)[0] ?? '> ';
 
-    const contentLines: string[] = [titleLine, '', subtitleLine, '', inputLine, '', footerLine];
+    const contentLines: string[] = [
+      titleLine,
+      '',
+      subtitleLine,
+      '',
+      inputLine,
+      '',
+      footerLine,
+    ];
+
+    if (safeWidth < 4) {
+      return ['', ...contentLines.map((line) => truncateToWidth(line, safeWidth, '…'))];
+    }
 
     const lines: string[] = [
       '',
@@ -100,7 +117,7 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
     lines.push(border('╰' + '─'.repeat(safeWidth - 2) + '╯'));
     lines.push('');
 
-    return lines;
+    return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
   }
 
   private submit(value: string): void {

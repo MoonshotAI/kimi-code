@@ -18,6 +18,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { HookEngine } from '../../src/session/hooks';
 import { abortError } from '../../src/utils/abort';
 import type { AgentOptions } from '../../src/agent';
+import { ErrorCodes, KimiError } from '../../src/errors';
 import type { Logger, LogPayload } from '../../src/logging';
 import type {
   QueuedSubagentRunResult,
@@ -424,6 +425,50 @@ describe('Agent turn flow', () => {
     );
   });
 
+  it('ends the turn with reason filtered when the provider filters a non-empty response', async () => {
+    const generate: GenerateFn = async () => ({
+      id: null,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'some filtered text' }],
+        toolCalls: [],
+      },
+      usage: {
+        inputOther: 10,
+        output: 5,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      },
+      finishReason: 'filtered',
+      rawFinishReason: 'content_filter',
+    });
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Trigger filtered response' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'filtered',
+        }),
+      }),
+    );
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'turn.ended',
+        args: expect.objectContaining({ reason: 'completed' }),
+      }),
+    );
+  });
+
   it('emits a friendly model.not_configured error when no model is configured', async () => {
     const ctx = testAgent();
 
@@ -452,7 +497,7 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: "echo 'hook response 2'",
+        command: 'node -e "process.stdout.write(\'hook response 2\')"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -513,12 +558,12 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: "echo '{}'",
+        command: 'node -e "process.stdout.write(\'{}\')"',
       },
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: 'echo \'{"hookSpecificOutput":{}}\'',
+        command: 'node -e "process.stdout.write(JSON.stringify({hookSpecificOutput:{}}))"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -576,7 +621,7 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'bad words',
-        command: "echo 'no profanity' >&2; exit 2",
+        command: 'node -e "process.stderr.write(\'no profanity\'); process.exit(2)"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -668,7 +713,7 @@ describe('Agent turn flow', () => {
     const hookEngine = new HookEngine([
       {
         event: 'Stop',
-        command: "echo 'continue from hook' >&2; exit 2",
+        command: 'node -e "process.stderr.write(\'continue from hook\'); process.exit(2)"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -1064,11 +1109,14 @@ describe('Agent turn flow', () => {
     expect(requestPayload).not.toHaveProperty('estimatedInputTokens');
   });
 
-  it('classifies OAuth resolver failures as auth errors', async () => {
+  it('classifies OAuth resolver connection failures as provider connection errors without retrying', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const oauthOptions = oauthAgentOptions(async (options) => {
       tokenCalls.push(options?.force);
-      throw new Error('refresh token expired');
+      throw new KimiError(
+        ErrorCodes.PROVIDER_CONNECTION_ERROR,
+        'OAuth provider "managed:kimi-code" failed to fetch an access token: fetch failed',
+      );
     });
     const generate = vi.fn<GenerateFn>();
     const ctx = testAgent({ ...oauthOptions, generate });
@@ -1088,7 +1136,41 @@ describe('Agent turn flow', () => {
         args: expect.objectContaining({
           reason: 'failed',
           error: expect.objectContaining({
-            code: 'auth.login_required',
+            code: ErrorCodes.PROVIDER_CONNECTION_ERROR,
+            message: expect.stringContaining('fetch failed'),
+            retryable: true,
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('classifies explicit OAuth login-required resolver failures as auth errors', async () => {
+    const tokenCalls: Array<boolean | undefined> = [];
+    const oauthOptions = oauthAgentOptions(async (options) => {
+      tokenCalls.push(options?.force);
+      throw new KimiError(ErrorCodes.AUTH_LOGIN_REQUIRED, 'not logged in');
+    });
+    const generate = vi.fn<GenerateFn>();
+    const ctx = testAgent({ ...oauthOptions, generate });
+    ctx.configure();
+    await ctx.rpc.setModel({ model: 'kimi-code' });
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello after token expiry' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(tokenCalls).toEqual([undefined]);
+    expect(generate).not.toHaveBeenCalled();
+    expect(events).not.toContainEqual(expect.objectContaining({ event: 'assistant.delta' }));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: ErrorCodes.AUTH_LOGIN_REQUIRED,
+            retryable: false,
           }),
         }),
       }),
@@ -1126,6 +1208,7 @@ describe('Agent turn flow', () => {
           reason: 'failed',
           error: expect.objectContaining({
             code: 'loop.max_steps_exceeded',
+            message: expect.stringContaining('config.toml'),
             details: expect.objectContaining({
               maxSteps: 1,
             }),
@@ -1372,11 +1455,13 @@ describe('Agent turn flow', () => {
       callbacks,
       options,
     ) => {
+      options?.onRequestStart?.();
       authKeys.push(options?.auth?.apiKey ?? '<missing>');
       if (authKeys.length === 1) {
         throw new APIConnectionError('socket hang up');
       }
       await callbacks?.onMessagePart?.({ type: 'text', text: 'Recovered after retry' });
+      options?.onStreamEnd?.();
       return textResult('Recovered after retry');
     };
     const ctx = testAgent({ ...oauthOptions, generate, log: logger });

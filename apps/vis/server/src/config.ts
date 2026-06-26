@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 /** Resolve KIMI_CODE_HOME (env > ~/.kimi-code). */
-function resolveKimiCodeHome(): string {
+export function resolveKimiCodeHome(): string {
   const envHome = process.env['KIMI_CODE_HOME'];
   if (envHome !== undefined && envHome.length > 0) {
     return envHome;
@@ -37,6 +37,15 @@ export function isLoopbackHost(host: string): boolean {
     normalized === '0:0:0:0:0:0:0:1' ||
     normalized.startsWith('127.')
   );
+}
+
+/** Format a host for embedding in a URL authority. Bare IPv6 literals (which
+ *  contain ':') must be bracketed, e.g. `::1` → `[::1]`, otherwise
+ *  `http://::1:3001/` is an invalid URL. Already-bracketed literals, IPv4
+ *  addresses, and hostnames are returned unchanged. */
+export function hostForUrl(host: string): string {
+  if (host.includes(':') && !host.startsWith('[')) return `[${host}]`;
+  return host;
 }
 
 export function resolveVisAuthToken(host: string = resolveHost()): string | undefined {

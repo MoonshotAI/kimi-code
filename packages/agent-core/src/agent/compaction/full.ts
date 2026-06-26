@@ -2,16 +2,15 @@ import {
   ErrorCodes,
   KimiError,
   isKimiError,
-  makeErrorPayload,
   toKimiErrorPayload,
 } from '#/errors';
 import {
   APIEmptyResponseError,
   isRetryableGenerateError,
   type GenerateResult,
-  type Message,
   type TokenUsage,
   APIContextOverflowError,
+  createUserMessage,
 } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
@@ -30,7 +29,6 @@ import {
   resolveCompletionBudget,
 } from '../../utils/completion-budget';
 import compactionInstructionTemplate from './compaction-instruction.md?raw';
-import { renderMessagesToText } from './render-messages';
 import { renderTodoList, type TodoItem } from '../../tools/builtin/state/todo-list';
 import type { CompactionBeginData, CompactionResult } from './types';
 import {
@@ -38,12 +36,6 @@ import {
   DefaultCompactionStrategy,
   type CompactionStrategy,
 } from './strategy';
-
-type CompactionTelemetryTrigger = CompactionBeginData['source'] | 'manual-with-prompt' | 'unknown';
-
-export interface CompactedHistory {
-  text: string;
-}
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 
@@ -58,12 +50,9 @@ export class FullCompaction {
   protected compactionCountInTurn = 0;
   protected compacting: {
     abortController: AbortController;
-    startedAt: number;
-    telemetryTrigger: CompactionTelemetryTrigger;
     promise: Promise<void>;
     blockedByTurn: boolean;
   } | null = null;
-  protected _compactedHistory: CompactedHistory[] = [];
   protected readonly strategy: CompactionStrategy;
 
   constructor(
@@ -85,10 +74,6 @@ export class FullCompaction {
 
   get isCompacting(): boolean {
     return this.compacting !== null;
-  }
-
-  get compactedHistory(): readonly CompactedHistory[] {
-    return this._compactedHistory;
   }
 
   begin(data: Readonly<CompactionBeginData>): void {
@@ -114,35 +99,20 @@ export class FullCompaction {
       type: 'full_compaction.begin',
       ...data,
     });
-    this.startCompactionWorker(data, compactedCount);
-  }
-
-  private startCompactionWorker(
-    data: Readonly<CompactionBeginData>,
-    compactedCount: number,
-  ): void {
-    const abortController = new AbortController();
     this.agent.emitEvent({
       type: 'compaction.started',
       trigger: data.source,
       instruction: data.instruction,
     });
-    const active = {
+    const abortController = new AbortController();
+    this.compacting = {
       abortController,
-      startedAt: Date.now(),
-      telemetryTrigger: compactionTelemetryTrigger(data.source, data.instruction),
-      promise: Promise.resolve(),
+      promise: this.compactionWorker(abortController.signal, data, compactedCount),
       blockedByTurn: false,
     };
-    this.compacting = active;
-    active.promise = this.compactionWorker(abortController.signal, data, compactedCount);
   }
 
   cancel(): void {
-    this.markCanceled();
-  }
-
-  private markCanceled(): void {
     this.agent.replayBuilder.patchLast('compaction', {
       result: 'cancelled',
     });
@@ -160,9 +130,6 @@ export class FullCompaction {
       type: 'full_compaction.complete',
     });
     this.compacting = null;
-    this._compactedHistory.push({
-      text: renderMessagesToText(this.agent.context.history),
-    });
   }
 
   private get tokenCountWithPending(): number {
@@ -197,7 +164,6 @@ export class FullCompaction {
   private checkAutoCompaction(throwOnLimit: boolean = true): boolean {
     if (this.compacting) return true;
     if (!this.strategy.shouldCompact(this.tokenCountWithPending)) return false;
-
     return this.beginAutoCompaction(throwOnLimit);
   }
 
@@ -236,8 +202,55 @@ export class FullCompaction {
   private async compactionWorker(
     signal: AbortSignal,
     data: Readonly<CompactionBeginData>,
-    initialCompactedCount: number,
+    compactedCount: number,
   ): Promise<void> {
+    try {
+      const finalResult = {
+        summary: '',
+        compactedCount: 1,
+        tokensBefore: 0,
+        tokensAfter: 0,
+      };
+
+      for (let round = 1; ; round++) {
+        const result = await this.compactionRound(round, signal, data, compactedCount);
+        if (!result) return;
+
+        finalResult.summary = result.summary;
+        finalResult.compactedCount += result.compactedCount - 1;
+        finalResult.tokensBefore += result.tokensBefore - finalResult.tokensAfter;
+        finalResult.tokensAfter = result.tokensAfter;
+
+        if (result.tokensBefore - result.tokensAfter < 1024) break;
+        if (!this.strategy.shouldBlock(result.tokensAfter)) break;
+        compactedCount = this.strategy.computeCompactCount(this.agent.context.history, data.source);
+        if (compactedCount === 0) break;
+      }
+      this.markCompleted();
+      this.agent.emitEvent({ type: 'compaction.completed', result: finalResult });
+      await this.agent.injection.injectGoal();
+      this.triggerPostCompactHook(data, finalResult);
+    } catch (error) {
+      if (isAbortError(error)) return;
+      const blockedByTurn = this.compacting?.blockedByTurn === true;
+      this.cancel();
+      this.agent.log.error('compaction failed', { error });
+      if (blockedByTurn) {
+        throw error;
+      }
+      this.agent.emitEvent({
+        type: 'error',
+        ...toKimiErrorPayload(error),
+      });
+    }
+  }
+
+  private async compactionRound(
+    round: number,
+    signal: AbortSignal,
+    data: Readonly<CompactionBeginData>,
+    initialCompactedCount: number,
+  ) {
     const startedAt = Date.now();
     const originalHistory = [...this.agent.context.history];
     const tokensBefore = estimateTokensForMessages(originalHistory);
@@ -263,16 +276,7 @@ export class FullCompaction {
         const messagesToCompact = originalHistory.slice(0, compactedCount);
         const messages = [
           ...this.agent.context.project(messagesToCompact),
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: COMPACTION_INSTRUCTION(data.instruction),
-              },
-            ],
-            toolCalls: [],
-          } satisfies Message,
+          createUserMessage(renderPrompt(compactionInstructionTemplate, { customInstruction: data.instruction ?? '' })),
         ];
         try {
           const response = await this.agent.generate(
@@ -290,7 +294,11 @@ export class FullCompaction {
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
-          if (error instanceof APIContextOverflowError || error instanceof CompactionTruncatedError) {
+          if (
+            error instanceof APIContextOverflowError ||
+            error instanceof CompactionTruncatedError ||
+            error instanceof APIEmptyResponseError // e.g. think-only
+          ) {
             compactedCount = this.strategy.reduceCompactOnOverflow(messagesToCompact);
           }
           else if (!isRetryableGenerateError(error)) {
@@ -329,55 +337,32 @@ export class FullCompaction {
         tokensAfter,
       };
 
-      const active = this.compacting!;
       this.agent.telemetry.track('compaction_finished', {
-        trigger_type: active.telemetryTrigger,
-        before_tokens: result.tokensBefore,
-        after_tokens: result.tokensAfter,
-        duration_ms: Date.now() - active.startedAt,
-        compacted_count: result.compactedCount,
-        retry_count: retryCount,
+        tokensBefore: result.tokensBefore,
+        tokensAfter: result.tokensAfter,
+        duration: Date.now() - startedAt,
+        compactedCount: result.compactedCount,
+        retryCount,
+        round,
+        thinkingLevel: this.agent.config.thinkingLevel,
         ...usage,
+        ...data,
       });
-      this.markCompleted();
-      this.agent.emitEvent({ type: 'compaction.completed', result });
       this.agent.context.applyCompaction(result);
-      // Compaction collapses the prefix into a summary, dropping any goal
-      // reminder that lived there. Re-inject it onto the fresh tail so an active
-      // goal does not silently fall out of context. Append-only; no-op off goal mode.
-      await this.agent.injection.injectGoal();
-      this.triggerPostCompactHook(data, result);
+      return result;
     } catch (error) {
-      if (!isAbortError(error)) {
-        const active = this.compacting;
-        const blockedByTurn = active?.blockedByTurn === true;
-        this.agent.log.error('compaction failed', {
-          code: isKimiError(error) ? error.code : undefined,
-          error,
-        });
-        this.markCanceled();
-        if (!blockedByTurn) {
-          const payload =
-            isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED
-              ? toKimiErrorPayload(error)
-              : makeErrorPayload(ErrorCodes.COMPACTION_FAILED, String(error));
-          this.agent.emitEvent({
-            type: 'error',
-            ...payload,
-          });
-        }
-        this.agent.telemetry.track('compaction_failed', {
-          trigger_type: compactionTelemetryTrigger(data.source, data.instruction),
-          before_tokens: tokensBefore,
-          duration_ms: Date.now() - startedAt,
-          retry_count: retryCount,
-          error_type: error instanceof Error ? error.name : 'Unknown',
-        });
-        if (blockedByTurn) {
-          if (isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;
-          throw new KimiError(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
-        }
-      }
+      if (isAbortError(error)) return;
+      this.agent.telemetry.track('compaction_failed', {
+        ...data,
+        tokensBefore,
+        duration: Date.now() - startedAt,
+        round,
+        retryCount,
+        thinkingLevel: this.agent.config.thinkingLevel,
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+      if (isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;
+      throw new KimiError(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
     }
   }
 
@@ -434,18 +419,4 @@ function extractCompactionSummary(response: GenerateResult): string {
     );
   }
   return summary;
-}
-
-export const COMPACTION_INSTRUCTION = (customInstruction = ''): string =>
-  renderPrompt(compactionInstructionTemplate, { customInstruction });
-
-function compactionTelemetryTrigger(
-  trigger: CompactionBeginData['source'] | undefined,
-  instruction: string | undefined,
-): CompactionTelemetryTrigger {
-  if (trigger === undefined) return 'unknown';
-  if (trigger === 'manual' && instruction !== undefined && instruction.length > 0) {
-    return 'manual-with-prompt';
-  }
-  return trigger;
 }

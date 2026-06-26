@@ -223,7 +223,6 @@ describe('parseManifest', () => {
         config_file: 'legacy-cfg.json',
         inject: { foo: 'bar' },
         bootstrap: { skill: 'using-demo' },
-        hooks: { sessionStart: { skill: 'using-demo' } },
         apps: './apps',
       }),
     });
@@ -236,7 +235,6 @@ describe('parseManifest', () => {
       'config_file',
       'inject',
       'bootstrap',
-      'hooks',
       'apps',
     ]) {
       expect(result.diagnostics).toContainEqual(
@@ -305,6 +303,11 @@ describe('parseManifest', () => {
               url: 'https://example.com/mcp',
               headers: { 'X-Test': '1' },
             },
+            events: {
+              transport: 'sse',
+              url: 'https://example.com/sse',
+              headers: { 'X-Events': '1' },
+            },
           },
         }),
       },
@@ -323,6 +326,11 @@ describe('parseManifest', () => {
       transport: 'http',
       url: 'https://example.com/mcp',
       headers: { 'X-Test': '1' },
+    });
+    expect(result.manifest?.mcpServers?.['events']).toEqual({
+      transport: 'sse',
+      url: 'https://example.com/sse',
+      headers: { 'X-Events': '1' },
     });
   });
 
@@ -355,5 +363,60 @@ describe('parseManifest', () => {
     const result = await parseManifest(root);
     expect(result.manifest?.interface?.displayName).toBe('Demo');
     expect(result.manifest?.interface?.shortDescription).toBe('A demo.');
+  });
+
+  it('parses a flat hooks array from the manifest', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({
+        name: 'demo',
+        hooks: [
+          { event: 'PreToolUse', matcher: 'Bash', command: './hooks/guard.sh', timeout: 10 },
+          { event: 'UserPromptSubmit', command: 'node ./hooks/log.js' },
+        ],
+      }),
+    });
+    const result = await parseManifest(root);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.manifest?.hooks).toEqual([
+      { event: 'PreToolUse', matcher: 'Bash', command: './hooks/guard.sh', timeout: 10 },
+      { event: 'UserPromptSubmit', command: 'node ./hooks/log.js' },
+    ]);
+  });
+
+  it('warns and skips a hook entry that is missing required fields', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({
+        name: 'demo',
+        hooks: [{ event: 'PreToolUse' }],
+      }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.hooks).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ severity: 'warn', message: expect.stringContaining('index 0') }),
+    );
+  });
+
+  it('warns when hooks is not an array', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', hooks: { event: 'Stop', command: 'x' } }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.hooks).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ severity: 'warn', message: '"hooks" must be an array' }),
+    );
+  });
+
+  it('rejects a hook entry that sets cwd/env (strict schema)', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({
+        name: 'demo',
+        hooks: [{ event: 'PreToolUse', command: './x.sh', cwd: '/tmp' }],
+      }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.hooks).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warn' }));
   });
 });

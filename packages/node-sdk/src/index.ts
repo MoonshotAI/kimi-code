@@ -2,11 +2,7 @@ export { KimiHarness } from '#/kimi-harness';
 export type { KimiHarnessRuntimeOptions } from '#/kimi-harness';
 export { Session } from '#/session';
 export { KimiAuthFacade } from '#/auth';
-export {
-  createKimiHarness,
-  SDKRpcClient,
-  type SDKRpcClientOptions,
-} from '#/sdk-rpc-client';
+export { createKimiHarness, SDKRpcClient, type SDKRpcClientOptions } from '#/sdk-rpc-client';
 export {
   createKimiConfigRpc,
   KimiConfigRpcClient,
@@ -62,6 +58,11 @@ export {
 } from '@moonshot-ai/agent-core';
 export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agent-core';
 
+// Host-side config helpers — safe config reader + config path resolution, used
+// by hosts (e.g. the CLI's server telemetry bootstrap) that need to inspect
+// config without spinning up a full KimiCore.
+export { loadRuntimeConfigSafe, resolveConfigPath } from '@moonshot-ai/agent-core';
+
 // Process-wide HTTP proxy bootstrap — installed once at CLI startup so all
 // outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.
 export { installGlobalProxyDispatcher } from '@moonshot-ai/agent-core';
@@ -79,6 +80,12 @@ export type {
 } from '@moonshot-ai/agent-core';
 
 export type {
+  KimiAuthCompleteFeedbackUploadInput,
+  KimiAuthCompleteFeedbackUploadPart,
+  KimiAuthCreateFeedbackUploadUrlInput,
+  KimiAuthCreateFeedbackUploadUrlOk,
+  KimiAuthCreateFeedbackUploadUrlResult,
+  KimiAuthFeedbackUploadPart,
   KimiAuthLoginResult,
   KimiAuthLogoutResult,
   KimiAuthSubmitFeedbackInput,

@@ -7,6 +7,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';
+import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
 
 function makeEditor(): CustomEditor {
   const tui = {
@@ -73,8 +74,269 @@ describe('CustomEditor autocomplete Escape handling', () => {
   });
 });
 
+describe('CustomEditor slash argument completion refresh', () => {
+  it('reopens /add-dir directory completions after tab completion and entering slash', async () => {
+    const editor = makeEditor();
+    const provider = new FileMentionProvider(
+      [
+        {
+          name: 'add-dir',
+          description: 'Add directory',
+          getArgumentCompletions: (prefix) =>
+            prefix === '/' ? [{ value: '/tmp/shared/', label: 'shared/' }] : null,
+        },
+      ],
+      process.cwd(),
+      null,
+    );
+    editor.setAutocompleteProvider(provider);
+
+    for (const char of '/add-dir ') {
+      editor.handleInput(char);
+    }
+    await flushAutocomplete();
+
+    editor.handleInput('/');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+
+    expect(editor.getText()).toBe('/add-dir /');
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+
+  it('reopens the next directory level after tab-accepting a directory', async () => {
+    const editor = makeEditor();
+    const provider = new FileMentionProvider(
+      [
+        {
+          name: 'add-dir',
+          description: 'Add directory',
+          getArgumentCompletions: (prefix) => {
+            if (prefix === '/') return [{ value: '/tmp/shared/', label: 'shared/' }];
+            if (prefix === '/tmp/shared/') return [{ value: '/tmp/shared/child/', label: 'child/' }];
+            return null;
+          },
+        },
+      ],
+      process.cwd(),
+      null,
+    );
+    editor.setAutocompleteProvider(provider);
+
+    for (const char of '/add-dir ') {
+      editor.handleInput(char);
+    }
+    await flushAutocomplete();
+
+    editor.handleInput('/');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+
+    editor.handleInput('\t');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+
+    expect(editor.getText()).toBe('/add-dir /tmp/shared/');
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+});
+
+describe('CustomEditor slash command name Tab-accept', () => {
+  it('reopens subcommand completions after Tab-accepting a slash command name', async () => {
+    const editor = makeEditor();
+    const provider = new FileMentionProvider(
+      [
+        {
+          name: 'goal',
+          description: 'Manage goals',
+          getArgumentCompletions: (prefix) =>
+            prefix === ''
+              ? [
+                  { value: 'status', label: 'status' },
+                  { value: 'pause', label: 'pause' },
+                ]
+              : null,
+        },
+      ],
+      process.cwd(),
+      null,
+    );
+    editor.setAutocompleteProvider(provider);
+
+    for (const char of '/go') {
+      editor.handleInput(char);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+
+    editor.handleInput('\t');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+
+    expect(editor.getText()).toBe('/goal ');
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+
+  it('does not fall back to file completions for a command without subcommands', async () => {
+    const editor = makeEditor();
+    const provider = new FileMentionProvider(
+      [
+        {
+          name: 'compact',
+          description: 'Compact context',
+        },
+      ],
+      process.cwd(),
+      null,
+    );
+    editor.setAutocompleteProvider(provider);
+
+    for (const char of '/comp') {
+      editor.handleInput(char);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+
+    editor.handleInput('\t');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await flushAutocomplete();
+
+    expect(editor.getText()).toBe('/compact ');
+    expect(editor.isShowingAutocomplete()).toBe(false);
+  });
+});
+
+describe('CustomEditor @ mention completion refresh', () => {
+  it('reopens the next directory level after tab-accepting an @ directory', async () => {
+    const editor = makeEditor();
+    const provider: AutocompleteProvider = {
+      getSuggestions: vi.fn(
+        async (
+          lines: string[],
+          cursorLine: number,
+          cursorCol: number,
+        ): Promise<AutocompleteSuggestions> => {
+          const text = (lines[cursorLine] ?? '').slice(0, cursorCol);
+          if (text === '@') {
+            return { items: [{ value: '@shared/', label: 'shared/' }], prefix: '@' };
+          }
+          if (text === '@shared/') {
+            return { items: [{ value: '@shared/child/', label: 'child/' }], prefix: '@shared/' };
+          }
+          return { items: [], prefix: '' };
+        },
+      ),
+      applyCompletion: vi.fn(
+        (
+          lines: string[],
+          cursorLine: number,
+          cursorCol: number,
+          item: AutocompleteItem,
+          prefix: string,
+        ) => {
+          const line = lines[cursorLine] ?? '';
+          const beforePrefix = line.slice(0, cursorCol - prefix.length);
+          const afterCursor = line.slice(cursorCol);
+          const newLine = beforePrefix + item.value + afterCursor;
+          const newLines = [...lines];
+          newLines[cursorLine] = newLine;
+          return {
+            lines: newLines,
+            cursorLine,
+            cursorCol: beforePrefix.length + item.value.length,
+          };
+        },
+      ),
+    };
+    editor.setAutocompleteProvider(provider);
+
+    editor.handleInput('@');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+
+    editor.handleInput('\t');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flushAutocomplete();
+
+    expect(editor.getText()).toBe('@shared/');
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+});
+
+describe('CustomEditor Tab key handling', () => {
+  it('does not open autocomplete when Tab is pressed with the dropdown closed', async () => {
+    const editor = makeEditor();
+    const provider = providerReturning([{ value: '@src/file.ts', label: 'file.ts' }]);
+    editor.setAutocompleteProvider(provider);
+
+    editor.handleInput('\t');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flushAutocomplete();
+
+    expect(provider.getSuggestions).not.toHaveBeenCalled();
+    expect(editor.isShowingAutocomplete()).toBe(false);
+  });
+});
+
+describe('CustomEditor slash argument hint', () => {
+  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
+  const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
+
+  it('renders the argument hint after a command with a trailing space', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+
+    for (const char of '/add-dir ') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).toContain('[list] | <path>');
+  });
+
+  it('renders the argument hint after a command without a trailing space', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+
+    for (const char of '/add-dir') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).toContain('[list] | <path>');
+  });
+
+  it('hides the hint once an argument is typed', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+
+    for (const char of '/add-dir foo') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).not.toContain('[list] | <path>');
+  });
+
+  it('does not render a hint for an unknown command', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+
+    for (const char of '/unknown ') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).not.toContain('[list] | <path>');
+  });
+});
+
 describe('CustomEditor slash menu description wrapping', () => {
-  // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
+  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
   const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
 
   it('wraps long slash command descriptions to at most two lines with an ellipsis', async () => {
@@ -133,8 +395,8 @@ describe('CustomEditor Kitty key release handling', () => {
 });
 
 describe('CustomEditor paste marker expansion', () => {
-  const PASTE_START = '\x1b[200~';
-  const PASTE_END = '\x1b[201~';
+  const PASTE_START = '\u001B[200~';
+  const PASTE_END = '\u001B[201~';
 
   function simulateLargePaste(editor: CustomEditor, content: string): void {
     editor.handleInput(`${PASTE_START}${content}${PASTE_END}`);
@@ -199,7 +461,7 @@ describe('CustomEditor paste marker expansion', () => {
 
     expect(editor.getText()).toMatch(/\[paste #1/);
 
-    editor.handleInput('\x16');
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
 
     expect(editor.getText()).not.toContain('[paste #');
     expect(editor.getText()).toContain(longText);
@@ -243,7 +505,7 @@ describe('CustomEditor paste marker expansion', () => {
 
     // Split: PASTE_START in chunk 1, paste-end split across chunk 2 and 3
     editor.handleInput(`${PASTE_START}data`);
-    editor.handleInput('\x1b[20');
+    editor.handleInput('\u001B[20');
     editor.handleInput('1~');
 
     expect(editor.getText()).toContain(longText);
@@ -278,5 +540,102 @@ describe('CustomEditor shortcut telemetry hooks', () => {
     editor.handleInput('\u001F');
 
     expect(onUndo).toHaveBeenCalledOnce();
+  });
+
+  it('invokes onToggleTodoExpand on Ctrl+T', () => {
+    const editor = makeEditor();
+    const onToggleTodoExpand = vi.fn().mockReturnValue(true);
+    editor.onToggleTodoExpand = onToggleTodoExpand;
+
+    editor.handleInput('\u0014');
+
+    expect(onToggleTodoExpand).toHaveBeenCalledOnce();
+  });
+});
+
+describe('CustomEditor bash mode border label', () => {
+  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
+  const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
+
+  it('shows "! shell mode" on the top border in bash mode', () => {
+    const editor = makeEditor();
+    editor.inputMode = 'bash';
+    const top = stripAnsi(editor.render(90)[0] ?? '');
+    expect(top.startsWith('╭')).toBe(true);
+    expect(top).toContain('! shell mode');
+    expect(top.endsWith('╮')).toBe(true);
+  });
+
+  it('does not show the shell mode label in prompt mode', () => {
+    const editor = makeEditor();
+    const top = stripAnsi(editor.render(90)[0] ?? '');
+    expect(top).not.toContain('! shell mode');
+  });
+
+  it('keeps the top border at full width when the label is present', () => {
+    const editor = makeEditor();
+    editor.inputMode = 'bash';
+    const width = 90;
+    const top = stripAnsi(editor.render(width)[0] ?? '');
+    expect(top).toHaveLength(width);
+  });
+});
+
+describe('CustomEditor bash mode via paste', () => {
+  const PASTE_START = '\u001B[200~';
+  const PASTE_END = '\u001B[201~';
+
+  it('enters bash mode and strips the leading ! when !cmd is pasted into an empty prompt', () => {
+    const editor = makeEditor();
+    const modes: Array<'prompt' | 'bash'> = [];
+    editor.onInputModeChange = (mode) => modes.push(mode);
+
+    editor.handleInput(`${PASTE_START}!ls${PASTE_END}`);
+
+    expect(editor.inputMode).toBe('bash');
+    expect(editor.getText()).toBe('ls');
+    expect(modes).toEqual(['bash']);
+  });
+
+  it('enters bash mode on a bare pasted ! with an empty buffer', () => {
+    const editor = makeEditor();
+    editor.handleInput(`${PASTE_START}!${PASTE_END}`);
+
+    expect(editor.inputMode).toBe('bash');
+    expect(editor.getText()).toBe('');
+  });
+
+  it('does not enter bash mode when pasting !cmd into a non-empty prompt', () => {
+    const editor = makeEditor();
+    editor.handleInput('hello');
+    editor.handleInput(`${PASTE_START}!ls${PASTE_END}`);
+
+    expect(editor.inputMode).toBe('prompt');
+    expect(editor.getText()).toContain('hello');
+    expect(editor.getText()).toContain('!ls');
+  });
+
+  it('does not enter bash mode for a pasted command without a leading !', () => {
+    const editor = makeEditor();
+    editor.handleInput(`${PASTE_START}ls${PASTE_END}`);
+
+    expect(editor.inputMode).toBe('prompt');
+    expect(editor.getText()).toBe('ls');
+  });
+
+  it('keeps the typed ! behaviour (bash mode, empty buffer)', () => {
+    const editor = makeEditor();
+    editor.handleInput('!');
+
+    expect(editor.inputMode).toBe('bash');
+    expect(editor.getText()).toBe('');
+  });
+
+  it('enters bash mode on a CSI-u encoded ! keystroke (Kitty/VSCode terminals)', () => {
+    const editor = makeEditor();
+    editor.handleInput('\u001B[33u');
+
+    expect(editor.inputMode).toBe('bash');
+    expect(editor.getText()).toBe('');
   });
 });

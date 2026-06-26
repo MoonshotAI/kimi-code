@@ -65,14 +65,20 @@ const SENSITIVE_RG_ARGS = [
 ] as const;
 
 function processWithOutput(stdout: string, stderr = '', exitCode = 0): KaosProcess {
+  const stdoutStream = Readable.from([stdout]);
+  const stderrStream = Readable.from([stderr]);
   return {
     stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
-    stdout: Readable.from([stdout]),
-    stderr: Readable.from([stderr]),
+    stdout: stdoutStream,
+    stderr: stderrStream,
     pid: 123,
     exitCode,
     wait: vi.fn().mockResolvedValue(exitCode),
     kill: vi.fn(async () => {}),
+    dispose: vi.fn(async () => {
+      stdoutStream.destroy();
+      stderrStream.destroy();
+    }),
   };
 }
 
@@ -97,11 +103,13 @@ function processThatExitsOnKill(stdout: string, stderr = '', exitCode = 143): Ka
   const waitPromise = new Promise<number>((resolve) => {
     resolveWait = resolve;
   });
+  const stdoutStream = Readable.from(stdout === '' ? [] : [stdout]);
+  const stderrStream = Readable.from(stderr === '' ? [] : [stderr]);
 
   return {
     stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
-    stdout: Readable.from(stdout === '' ? [] : [stdout]),
-    stderr: Readable.from(stderr === '' ? [] : [stderr]),
+    stdout: stdoutStream,
+    stderr: stderrStream,
     pid: 123,
     get exitCode() {
       return currentExitCode;
@@ -110,6 +118,10 @@ function processThatExitsOnKill(stdout: string, stderr = '', exitCode = 143): Ka
     kill: vi.fn(async () => {
       currentExitCode = exitCode;
       resolveWait(exitCode);
+    }),
+    dispose: vi.fn(async () => {
+      stdoutStream.destroy();
+      stderrStream.destroy();
     }),
   };
 }
@@ -221,6 +233,17 @@ describe('GrepTool', () => {
         properties: Record<string, { description?: string }>;
       };
       expect(params.properties['output_mode']?.description).toContain('count_matches');
+      // count_matches emits per-file `path:count`, not a single total (grep.ts).
+      expect(params.properties['output_mode']?.description).toContain('per-file');
+    });
+
+    it('documents that files_with_matches is ordered most-recently-modified first', () => {
+      const tool = new GrepTool(createFakeKaos(), workspace);
+      const params = tool.parameters as {
+        properties: Record<string, { description?: string }>;
+      };
+      // grep.ts sorts files_with_matches by mtime descending (b.mtime - a.mtime).
+      expect(params.properties['output_mode']?.description).toContain('most-recently-modified');
     });
 
     it('does not present an absolute path as a hard requirement for path', () => {
@@ -321,9 +344,8 @@ describe('GrepTool', () => {
     );
 
     expect(toolContentString(contentResult)).toBe('/extra/pkg/b.ts:10:hit');
-    expect(toolContentString(countResult)).toBe('/extra/pkg/b.ts:2');
-    expect((countResult as { message?: string }).message).toBe(
-      'Found 2 total occurrences across 1 file.',
+    expect(toolContentString(countResult)).toBe(
+      ['Found 2 total occurrences across 1 file.', '/extra/pkg/b.ts:2'].join('\n'),
     );
   });
 
@@ -1197,9 +1219,8 @@ describe('GrepTool', () => {
 
     const result = await executeTool(tool, context({ pattern: 'hit', output_mode: 'count_matches' }));
 
-    expect(toolContentString(result)).toBe(['src/a.ts:3', 'src/b.ts:7'].join('\n'));
-    expect((result as { message?: string }).message).toBe(
-      'Found 10 total occurrences across 2 files.',
+    expect(toolContentString(result)).toBe(
+      ['Found 10 total occurrences across 2 files.', 'src/a.ts:3', 'src/b.ts:7'].join('\n'),
     );
   });
 
@@ -1215,10 +1236,11 @@ describe('GrepTool', () => {
     const result = await executeTool(tool, context({ pattern: 'hit', output_mode: 'count_matches' }));
 
     expect(toolContentString(result)).toBe(
-      ['src/a.ts:3', 'Filtered 1 sensitive file(s): .env'].join('\n'),
-    );
-    expect((result as { message?: string }).message).toBe(
-      'Found 3 total non-sensitive occurrences across 1 file.',
+      [
+        'Found 3 total non-sensitive occurrences across 1 file.',
+        'src/a.ts:3',
+        'Filtered 1 sensitive file(s): .env',
+      ].join('\n'),
     );
   });
 
@@ -1240,14 +1262,38 @@ describe('GrepTool', () => {
     );
 
     expect(toolContentString(result)).toBe(
-      ['src/a.ts:3', 'src/b.ts:7', 'Filtered 1 sensitive file(s): .env'].join('\n'),
-    );
-    expect((result as { message?: string }).message).toBe(
       [
         'Found 11 total non-sensitive occurrences across 3 files.',
         'Results truncated to 2 lines (total: 3). Use offset=2 to see more.',
+        'src/a.ts:3',
+        'src/b.ts:7',
+        'Filtered 1 sensitive file(s): .env',
       ].join('\n'),
     );
+  });
+
+  it('keeps the count summary ahead of the body so the char cap cannot drop it', async () => {
+    // With head_limit: 0 the count rows are unbounded and can exceed ToolResultBuilder's
+    // char cap. The aggregate total must still reach the model, so it leads the output
+    // (a header before the rows) — truncation can only eat the rows, never the total.
+    const fileCount = 5000;
+    const stdout =
+      Array.from({ length: fileCount }, (_, i) => `/workspace/f${String(i)}.txt:3`).join('\n') + '\n';
+    const tool = new GrepTool(
+      createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout)) }),
+      { workspaceDir: '/workspace', additionalDirs: [] },
+    );
+
+    const result = await executeTool(tool,
+      context({ pattern: 'hit', output_mode: 'count_matches', head_limit: 0 }),
+    );
+
+    const output = toolContentString(result);
+    const summary = `Found ${String(fileCount * 3)} total occurrences across ${String(fileCount)} files.`;
+    expect(output).toContain(summary);
+    // The body was large enough to truncate; the summary survives because it leads it.
+    expect(output).toContain('[...truncated]');
+    expect(output.indexOf(summary)).toBeLessThan(output.indexOf('[...truncated]'));
   });
 
   it('does not add a zero count summary when every count result is sensitive', async () => {
@@ -1294,9 +1340,8 @@ describe('GrepTool', () => {
       'yyyy',
       '/workspace/src/only.ts',
     );
-    expect(toolContentString(result)).toBe('src/only.ts:25850');
-    expect((result as { message?: string }).message).toBe(
-      'Found 25850 total occurrences across 1 file.',
+    expect(toolContentString(result)).toBe(
+      ['Found 25850 total occurrences across 1 file.', 'src/only.ts:25850'].join('\n'),
     );
   });
 
@@ -1464,10 +1509,10 @@ describe('GrepTool', () => {
     expect(toolContentString(result)).toContain('post2');
   });
 
-  it('places the count-mode summary in a separate message channel', async () => {
-    // py: count_matches output is pure "path:count" lines; the
-    // human-readable "Found N occurrences" summary lives on a separate
-    // separate message channel so it never contaminates the data stream.
+  it('appends the count-mode summary and pagination to the model-visible output', async () => {
+    // The "Found N occurrences" summary and the pagination notice must ride in `output`:
+    // `result.message` is dropped before the result reaches the model, so a side channel
+    // would hide the total and the "use offset=N to see more" cue.
     const counts = Array.from(
       { length: 10 },
       (_, i) => `/workspace/f${String(i)}.txt:3`,
@@ -1484,16 +1529,12 @@ describe('GrepTool', () => {
     );
 
     const output = toolContentString(result);
-    const summary = (result as { message?: unknown }).message;
-
-    expect(output.split('\n').filter((line) => line.trim() !== '')).toHaveLength(3);
-    for (const line of output.split('\n')) {
-      if (line.trim() === '') continue;
-      expect(line).not.toContain('Found');
-    }
-    expect(typeof summary).toBe('string');
-    expect(summary).toContain('Found 30 total occurrences across 10 files');
-    expect(summary).toContain('Results truncated to 3 lines');
+    const dataLines = output.split('\n').filter((line) => /^f\d+\.txt:3$/.test(line));
+    expect(dataLines).toHaveLength(3); // head_limit=3 path:count lines
+    expect(output).toContain('Found 30 total occurrences across 10 files.');
+    expect(output).toContain('Results truncated to 3 lines (total: 10). Use offset=3 to see more.');
+    // ...and nothing model-relevant is hidden in the dropped message channel.
+    expect((result as { message?: string }).message ?? '').not.toContain('Found');
   });
 
   it('truncates extremely long rg output with a byte-level safety cap message', async () => {

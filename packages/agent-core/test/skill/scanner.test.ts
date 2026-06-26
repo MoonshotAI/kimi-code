@@ -1,10 +1,18 @@
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath as fsRealpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'pathe';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { discoverSkills, resolveSkillRoots, SkillRegistry, type SkillRoot } from '../../src/skill';
+import { discoverSkills, resolveSkillRoots, SessionSkillRegistry, type SkillRoot } from '../../src/skill';
+
+// Mirror `resolveSkillRoots`' internal realpath (fs.realpath + forward-slash
+// normalization, see scanner.ts) so `root.path` comparisons hold on Windows,
+// where `node:fs.realpath` returns backslashes. Every test in this file
+// compares against `root.path`, so the helper must match that exact form.
+async function realpath(p: string): Promise<string> {
+  return (await fsRealpath(p)).replaceAll('\\', '/');
+}
 
 const tempDirs: string[] = [];
 
@@ -138,7 +146,7 @@ describe('skill discovery', () => {
       '```',
     ]);
 
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
     await registry.loadRoots([{ path: projectRoot, source: 'project' }]);
 
     expect(registry.listSkills().map((skill) => skill.name)).toEqual(['review-flow']);
@@ -854,7 +862,7 @@ describe('resolveSkillRoots extra dirs', () => {
       '',
       'plugin body',
     ]);
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
 
     await registry.loadRoots([
       { path: projectRoot, source: 'project' },

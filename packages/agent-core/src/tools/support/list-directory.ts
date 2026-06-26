@@ -18,6 +18,10 @@ import type { Kaos } from '@moonshot-ai/kaos';
 export const LIST_DIR_ROOT_WIDTH = 30;
 export const LIST_DIR_CHILD_WIDTH = 10;
 
+export interface ListDirectoryOptions {
+  readonly collapseHiddenDirs?: boolean;
+}
+
 interface Entry {
   readonly name: string;
   readonly isDir: boolean;
@@ -53,12 +57,20 @@ async function collectEntries(
   return { entries: all.slice(0, maxWidth), total: all.length, readable: true };
 }
 
+function shouldCollapseDirectory(entry: Entry, options: ListDirectoryOptions): boolean {
+  return options.collapseHiddenDirs === true && entry.isDir && entry.name.startsWith('.');
+}
+
 /**
  * Return a 2-level tree listing of `workDir` suitable for inclusion in a
  * tool error message. Returns `"(empty directory)"` if the directory is
  * empty, or an error marker line if the directory itself is unreadable.
  */
-export async function listDirectory(kaos: Kaos, workDir: string = kaos.getcwd()): Promise<string> {
+export async function listDirectory(
+  kaos: Kaos,
+  workDir: string = kaos.getcwd(),
+  options: ListDirectoryOptions = {},
+): Promise<string> {
   const lines: string[] = [];
   const { entries, total, readable } = await collectEntries(
     kaos,
@@ -77,6 +89,7 @@ export async function listDirectory(kaos: Kaos, workDir: string = kaos.getcwd())
 
     if (isDir) {
       lines.push(`${connector}${name}/`);
+      if (shouldCollapseDirectory(entry, options)) continue;
       const childPrefix = isLast ? '    ' : '│   ';
       const childDir = join(workDir, name);
       const child = await collectEntries(kaos, childDir, LIST_DIR_CHILD_WIDTH);

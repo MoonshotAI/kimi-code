@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type * as KosongModule from '@moonshot-ai/kosong';
@@ -13,6 +13,7 @@ import {
 } from '#/index';
 import type { SDKRpcClientBase } from '#/rpc';
 
+import { normalizeWorkDir } from '../../agent-core/src/session/store';
 import {
   makeTempDir,
   removeTempDirs,
@@ -172,6 +173,7 @@ describe('Session skills', () => {
       expect(state['isCustomTitle']).toBe(false);
       expect(state['lastPrompt']).toBe('/review src/app.ts');
 
+      const skillDir = normalizeWorkDir(await realpath(join(workDir, '.kimi-code', 'skills', 'review')));
       await expect(
         waitForAgentWireEvent(
           homeDir,
@@ -187,7 +189,7 @@ describe('Session skills', () => {
             text: [
               'User activated the skill "review". Follow the loaded skill instructions.',
               '',
-              '<kimi-skill-loaded name="review" trigger="user-slash" source="project" args="src/app.ts">',
+              `<kimi-skill-loaded name="review" trigger="user-slash" source="project" dir="${skillDir}" args="src/app.ts">`,
               'Review the requested file.',
               '',
               'ARGUMENTS: src/app.ts',

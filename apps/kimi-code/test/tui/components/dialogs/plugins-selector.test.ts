@@ -2,21 +2,20 @@ import { describe, expect, it, vi } from 'vitest';
 import chalk from 'chalk';
 
 import {
+  PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
-  PluginMarketplaceSelectorComponent,
   PluginRemoveConfirmComponent,
-  PluginsOverviewSelectorComponent,
+  PluginsPanelComponent,
+  type PluginInstallTrustConfirmResult,
   type PluginMcpSelection,
   type PluginRemoveConfirmResult,
+  type PluginsPanelSelection,
 } from '#/tui/components/dialogs/plugins-selector';
-import { darkColors } from '#/tui/theme/colors';
-import { pluginTrustLabel } from '#/tui/utils/plugin-source-label';
+import { currentTheme } from '#/tui/theme';
+import { darkColors, lightColors } from '#/tui/theme/colors';
+import { isOfficialPluginSource, pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 
-const ANSI_SGR = /\[[0-9;]*m/g;
-const MID = '\u00B7';
-const ESC = String.fromCodePoint(27);
-const RIGHT = `${ESC}[C`;
-const LEFT = `${ESC}[D`;
+const ANSI_SGR = /\u001B\[[0-9;]*m/g;
 
 function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '').replaceAll('\u276F', '?');
@@ -40,6 +39,56 @@ function dangerShortcut(text: string): string {
   return withAnsiColors(() => chalk.hex(darkColors.error).bold(text));
 }
 
+function warningMark(): string {
+  // Opening ANSI escape for the warning color; the install-trust notice is the
+  // only element in that dialog using it, so its presence confirms the tone.
+  return withAnsiColors(() => chalk.hex(darkColors.warning)('\u0001').split('\u0001')[0]!);
+}
+
+const superpowers = {
+  id: 'superpowers',
+  displayName: 'Superpowers',
+  version: '5.1.0',
+  enabled: true,
+  state: 'ok' as const,
+  skillCount: 14,
+  mcpServerCount: 0,
+  enabledMcpServerCount: 0,
+  hookCount: 0,
+  hasErrors: false,
+  source: 'local-path' as const,
+};
+
+const officialEntries = [
+  { id: 'kimi-datasource', tier: 'official' as const, displayName: 'Kimi Datasource', version: '3.1.1', source: 'https://x/d.zip' },
+];
+const thirdPartyEntries = [
+  { id: 'superpowers', tier: 'curated' as const, displayName: 'Superpowers', source: 'https://x/s.zip' },
+];
+const marketplaceEntries = [...officialEntries, ...thirdPartyEntries];
+
+function makePanel(opts: {
+  installed?: readonly (typeof superpowers)[];
+  initialTab?: 'installed' | 'official' | 'third-party' | 'custom';
+  selectedId?: string;
+  pluginHint?: { id: string; text: string };
+}) {
+  const installed = opts.installed ?? [];
+  const onSelect = vi.fn<(s: PluginsPanelSelection) => void>();
+  const onRequestMarketplace = vi.fn();
+  const panel = new PluginsPanelComponent({
+    installed,
+    installedIds: new Set(installed.map((p) => p.id)),
+    initialTab: opts.initialTab,
+    selectedId: opts.selectedId,
+    pluginHint: opts.pluginHint,
+    onSelect,
+    onCancel: vi.fn(),
+    onRequestMarketplace,
+  });
+  return { panel, onSelect, onRequestMarketplace };
+}
+
 describe('plugins selector dialogs', () => {
   it('trusts only built-in Kimi CDN plugin paths', () => {
     expect(pluginTrustLabel({
@@ -50,6 +99,7 @@ describe('plugins selector dialogs', () => {
       skillCount: 0,
       mcpServerCount: 0,
       enabledMcpServerCount: 0,
+      hookCount: 0,
       hasErrors: false,
       source: 'zip-url',
       originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
@@ -62,6 +112,7 @@ describe('plugins selector dialogs', () => {
       skillCount: 0,
       mcpServerCount: 0,
       enabledMcpServerCount: 0,
+      hookCount: 0,
       hasErrors: false,
       source: 'zip-url',
       originalSource: 'https://code.kimi.com/kimi-code/plugins/curated/superpowers.zip',
@@ -74,6 +125,7 @@ describe('plugins selector dialogs', () => {
       skillCount: 0,
       mcpServerCount: 0,
       enabledMcpServerCount: 0,
+      hookCount: 0,
       hasErrors: false,
       source: 'zip-url',
       originalSource: 'https://code.kimi.com/demo.zip',
@@ -86,317 +138,275 @@ describe('plugins selector dialogs', () => {
       skillCount: 0,
       mcpServerCount: 0,
       enabledMcpServerCount: 0,
+      hookCount: 0,
       hasErrors: false,
       source: 'local-path',
       originalSource: 'https://code.kimi.com/kimi-code/plugins/official/local',
     })).toBe('third-party');
   });
 
-  it('renders installed plugins as selectable overview entries', () => {
-    const onSelect = vi.fn();
-    const picker = new PluginsOverviewSelectorComponent({
-      plugins: [
-        {
-          id: 'kimi-datasource',
-          displayName: 'Kimi Datasource',
-          version: '1.0.0',
-          enabled: true,
-          state: 'ok',
-          skillCount: 2,
-          mcpServerCount: 1,
-          enabledMcpServerCount: 1,
-          hasErrors: false,
-          source: 'local-path',
-        },
-      ],
-      onSelect,
-      onCancel: vi.fn(),
-    });
-
-    const raw = renderRaw(picker);
-    const out = strip(raw);
-    expect(out).toContain('Installed plugins (1)');
-    expect(out).toContain('Actions');
-    expect(out).toContain('? Kimi Datasource  enabled');
-    expect(out).toContain(`id kimi-datasource ${MID} 2 skills ${MID} MCP 1/1`);
-    expect(out).not.toContain('Space disable');
-    expect(out).not.toContain('Enter info');
-    expect(out).toContain('Space toggle · M MCP servers · D remove · Enter details');
-    expect(out).toContain('Marketplace');
-    expect(out).toContain('Summary');
-
-    picker.handleInput('\r');
-    expect(onSelect).toHaveBeenCalledWith({ kind: 'info', id: 'kimi-datasource' });
+  it('treats only the official Kimi CDN path as a trusted install source', () => {
+    expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip')).toBe(true);
+    // Curated and other Kimi CDN paths are not "official" for the install gate.
+    expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
+    expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/foo.zip')).toBe(false);
+    // Non-Kimi hosts, non-https schemes, local paths, and GitHub sources are unofficial.
+    expect(isOfficialPluginSource('https://example.test/kimi-code/plugins/official/x.zip')).toBe(false);
+    expect(isOfficialPluginSource('http://code.kimi.com/kimi-code/plugins/official/x.zip')).toBe(false);
+    expect(isOfficialPluginSource('./plugins/kimi-datasource')).toBe(false);
+    expect(isOfficialPluginSource('/abs/path/to/plugin')).toBe(false);
+    expect(isOfficialPluginSource('github.com/owner/repo')).toBe(false);
+    expect(isOfficialPluginSource('not a url')).toBe(false);
   });
 
-  it('ignores Left/Right arrows in the overview (no enter/exit by arrow)', () => {
-    const onSelect = vi.fn();
-    const onCancel = vi.fn();
-    const picker = new PluginsOverviewSelectorComponent({
-      plugins: [
-        {
-          id: 'kimi-datasource',
-          displayName: 'Kimi Datasource',
-          version: '1.0.0',
-          enabled: true,
-          state: 'ok',
-          skillCount: 2,
-          mcpServerCount: 1,
-          enabledMcpServerCount: 1,
-          hasErrors: false,
-          source: 'local-path',
-        },
-      ],
-      onSelect,
-      onCancel,
-    });
-
-    picker.handleInput(RIGHT); // must NOT open details
-    expect(onSelect).not.toHaveBeenCalled();
-    picker.handleInput(LEFT); // must NOT cancel/exit
-    expect(onCancel).not.toHaveBeenCalled();
+  it('opens on the Installed tab with the four panel tabs', () => {
+    const { panel } = makePanel({ installed: [superpowers] });
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Plugins');
+    expect(out).toContain('Installed');
+    expect(out).toContain('Official');
+    expect(out).toContain('Third-party');
+    expect(out).toContain('Custom');
+    expect(out).toContain('? Superpowers  enabled');
+    expect(out).toContain('Space toggle');
+    expect(out).toContain('1 installed');
   });
 
-  it('renders marketplace plugins separately from marketplace actions', () => {
-    const onSelect = vi.fn();
-    const picker = new PluginMarketplaceSelectorComponent({
-      entries: [
-        {
-          id: 'superpowers',
-          tier: 'curated',
-          displayName: 'Superpowers',
-          version: '5.1.0',
-          description: 'Workflow skills',
-          source: 'https://example.com/superpowers.zip',
-          keywords: ['workflow'],
-        },
-      ],
-      installed: new Map(),
-      source: '/tmp/marketplace.json',
-      onSelect,
-      onCancel: vi.fn(),
-    });
+  it('repaints from the current theme palette without remounting', () => {
+    const { panel } = makePanel({ installed: [superpowers] });
+    const previous = currentTheme.palette;
+    try {
+      currentTheme.setPalette(darkColors);
+      const darkOut = renderRaw(panel);
+      currentTheme.setPalette(lightColors);
+      const lightOut = renderRaw(panel);
+      // A palette snapshot cached at construction would render identically
+      // after the switch; reading currentTheme.palette at render time must
+      // produce different ANSI output for the same panel instance.
+      expect(darkOut).not.toBe(lightOut);
+    } finally {
+      currentTheme.setPalette(previous);
+    }
+  });
 
-    const raw = renderRaw(picker);
-    const out = strip(raw);
-    expect(out).toContain('Marketplace (1)');
-    expect(out).toContain('? Superpowers  install v5.1.0');
-    expect(out).toContain(
-      `Workflow skills ${MID} id superpowers ${MID} Curated plugin ${MID} workflow`,
-    );
-    expect(out).toContain('Enter install/update');
-    expect(out).toContain('Actions');
-    expect(out).toContain('Back to installed plugins');
+  it('toggles an installed plugin with Space', () => {
+    const { panel, onSelect } = makePanel({ installed: [superpowers] });
+    panel.handleInput(' ');
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'toggle', id: 'superpowers', enabled: false });
+  });
 
-    picker.handleInput('\r');
+  it('routes D / M / R / Enter to remove / mcp / reload / details on the Installed tab', () => {
+    const { panel, onSelect } = makePanel({ installed: [superpowers] });
+    panel.handleInput('d');
+    panel.handleInput('m');
+    panel.handleInput('r');
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'remove', id: 'superpowers' });
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'mcp', id: 'superpowers' });
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'reload' });
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'superpowers' });
+  });
+
+  it('Enter on an installed plugin with an available update installs it', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
       kind: 'install',
       entry: expect.objectContaining({ id: 'superpowers' }),
     });
   });
 
-  it('installs only on Enter, not Space, in the marketplace', () => {
-    const onSelect = vi.fn();
-    const picker = new PluginMarketplaceSelectorComponent({
-      entries: [
-        {
-          id: 'superpowers',
-          tier: 'curated',
-          displayName: 'Superpowers',
-          version: '5.1.0',
-          description: 'Workflow skills',
-          source: 'https://example.com/superpowers.zip',
-          keywords: ['workflow'],
-        },
-      ],
-      installed: new Map(),
-      source: '/tmp/marketplace.json',
-      onSelect,
-      onCancel: vi.fn(),
-    });
+  it('Enter on an up-to-date installed plugin opens details', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '5.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'superpowers' });
+  });
 
-    picker.handleInput(' '); // Space must NOT install
-    expect(onSelect).not.toHaveBeenCalled();
-    picker.handleInput('\r'); // Enter installs
+  it('I on an installed plugin opens details even when an update is available', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    panel.handleInput('i');
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'superpowers' });
+  });
+
+  it('renders the inline plugin hint on the installed row', () => {
+    const datasource = { ...superpowers, id: 'kimi-datasource', displayName: 'Kimi Datasource', skillCount: 1 };
+    const { panel } = makePanel({
+      installed: [datasource],
+      selectedId: 'kimi-datasource',
+      pluginHint: { id: 'kimi-datasource', text: 'pending /new' },
+    });
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('? Kimi Datasource  enabled  pending /new');
+  });
+
+  it('lazily loads the Official catalog, then lists installed entries first', () => {
+    const { panel, onRequestMarketplace } = makePanel({ installed: [superpowers] });
+    panel.handleInput('\t'); // → Official
+    expect(onRequestMarketplace).toHaveBeenCalledTimes(1);
+    expect(strip(renderRaw(panel))).toContain('Loading marketplace');
+
+    panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Kimi Datasource  install');
+    expect(out).toContain('0 installed · 1 available');
+  });
+
+  it('installs the selected Third-party entry on Enter', () => {
+    const { panel, onSelect } = makePanel({ installed: [superpowers], initialTab: 'third-party' });
+    panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
+    panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
       kind: 'install',
       entry: expect.objectContaining({ id: 'superpowers' }),
     });
   });
 
-  it('ignores the Left arrow in the marketplace view (Esc returns instead)', () => {
-    const onCancel = vi.fn();
-    const picker = new PluginMarketplaceSelectorComponent({
-      entries: [
-        {
-          id: 'superpowers',
-          tier: 'curated',
-          displayName: 'Superpowers',
-          version: '5.1.0',
-          description: 'Workflow skills',
-          source: 'https://example.com/superpowers.zip',
-          keywords: ['workflow'],
-        },
-      ],
-      installed: new Map(),
-      source: '/tmp/marketplace.json',
-      onSelect: vi.fn(),
-      onCancel,
-    });
-
-    picker.handleInput(LEFT); // must NOT return to the overview
-    expect(onCancel).not.toHaveBeenCalled();
+  it('renders an installing state while an install is in progress', () => {
+    const { panel } = makePanel({ installed: [superpowers] });
+    panel.setInstalling('Superpowers');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Installing Superpowers from marketplace');
   });
 
-  it('issues install for installed marketplace entries (update path)', () => {
-    const onSelect = vi.fn();
-    const picker = new PluginMarketplaceSelectorComponent({
-      entries: [
-        {
-          id: 'superpowers',
-          displayName: 'Superpowers',
-          source: 'https://example.com/superpowers.zip',
-        },
-      ],
-      installed: new Map([['superpowers', undefined]]),
-      source: '/tmp/marketplace.json',
-      onSelect,
-      onCancel: vi.fn(),
-    });
-
-    const out = picker.render(120).map(strip).join('\n');
-    expect(out).toContain('? Superpowers  installed');
-    expect(out).toContain(`Plugin ${MID} id superpowers`);
-
-    picker.handleInput('\r');
+  it('keeps a valid selection if ↓ is pressed while the catalog is loading', () => {
+    const { panel, onSelect } = makePanel({ initialTab: 'third-party' });
+    // Catalog still loading (entries empty); pressing ↓ must not drive the
+    // selection negative, or the later Enter would read entries[-1].
+    panel.handleInput('\u001B[B'); // ↓
+    panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
+    panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
       kind: 'install',
       entry: expect.objectContaining({ id: 'superpowers' }),
     });
   });
 
-  it('shows an update badge when the installed version is older than the marketplace', () => {
-    const picker = new PluginMarketplaceSelectorComponent({
-      entries: [
-        {
-          id: 'superpowers',
-          tier: 'curated',
-          displayName: 'Superpowers',
-          version: '5.1.0',
-          source: 'https://example.com/superpowers.zip',
-        },
-      ],
-      installed: new Map([['superpowers', '5.0.0']]),
-      source: '/tmp/marketplace.json',
-      onSelect: vi.fn(),
-      onCancel: vi.fn(),
-    });
-
-    const out = picker.render(120).map(strip).join('\n');
-    expect(out).toContain('? Superpowers  update 5.0.0 → 5.1.0');
+  it('shows untiered marketplace entries on the Third-party tab', () => {
+    const untiered = [
+      { id: 'custom-plugin', displayName: 'Custom Plugin', source: 'https://x/c.zip' },
+    ];
+    const { panel } = makePanel({ initialTab: 'third-party' });
+    panel.setMarketplace(untiered, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Custom Plugin  install');
   });
 
-  it('shows installed with the version when already up to date', () => {
-    const picker = new PluginMarketplaceSelectorComponent({
-      entries: [
-        {
-          id: 'superpowers',
-          tier: 'curated',
-          displayName: 'Superpowers',
-          version: '5.1.0',
-          source: 'https://example.com/superpowers.zip',
-        },
-      ],
-      installed: new Map([['superpowers', '5.1.0']]),
-      source: '/tmp/marketplace.json',
-      onSelect: vi.fn(),
-      onCancel: vi.fn(),
-    });
-
-    const out = picker.render(120).map(strip).join('\n');
-    expect(out).toContain(`? Superpowers  installed ${MID} v5.1.0`);
+  it('shows an update badge when the marketplace version is newer than installed', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel } = makePanel({ installed, initialTab: 'third-party' });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Superpowers  update 4.0.0 → 5.0.0');
   });
 
-  it('toggles an installed plugin from the overview with space', () => {
-    const onSelect = vi.fn();
-    const picker = new PluginsOverviewSelectorComponent({
-      plugins: [
-        {
-          id: 'kimi-datasource',
-          displayName: 'Kimi Datasource',
-          version: '1.0.0',
-          enabled: true,
-          state: 'ok',
-          skillCount: 1,
-          mcpServerCount: 0,
-          enabledMcpServerCount: 0,
-          hasErrors: false,
-          source: 'local-path',
-        },
-      ],
-      onSelect,
-      onCancel: vi.fn(),
-    });
+  it('shows an update badge on the Installed tab when the marketplace version is newer', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Superpowers  enabled  update 4.0.0 → 5.0.0');
+  });
 
-    picker.handleInput(' ');
+  it('does not show an update badge on the Installed tab before the marketplace loads', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const { panel } = makePanel({ installed });
+    // The marketplace has not been loaded yet, so the badge stays hidden rather
+    // than guessing.
+    const out = strip(renderRaw(panel));
+    expect(out).not.toContain('update');
+  });
 
+  it('shows installed · v<version> when the installed plugin is up to date', () => {
+    const installed = [{ ...superpowers, id: 'superpowers', version: '5.0.0' }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel } = makePanel({ installed, initialTab: 'third-party' });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Superpowers  installed · v5.0.0');
+  });
+
+  it('shows an inline error when the Official catalog fails', () => {
+    const { panel } = makePanel({ installed: [superpowers] });
+    panel.handleInput('\t'); // → Official
+    panel.setMarketplaceError('fetch failed');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Marketplace unavailable: fetch failed');
+    expect(out).toContain('Use the Custom tab');
+  });
+
+  it('installs from a URL typed on the Custom tab', () => {
+    const { panel, onSelect } = makePanel({ initialTab: 'custom' });
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Install from a GitHub URL');
+    expect(out).toContain('╭');
+
+    for (const ch of 'https://github.com/owner/repo') {
+      panel.handleInput(ch);
+    }
+    panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
-      kind: 'toggle',
-      id: 'kimi-datasource',
-      enabled: false,
+      kind: 'install-source',
+      source: 'https://github.com/owner/repo',
     });
-  });
-
-  it('issues a remove request from the overview on D', () => {
-    const onSelect = vi.fn();
-    const picker = new PluginsOverviewSelectorComponent({
-      plugins: [
-        {
-          id: 'kimi-datasource',
-          displayName: 'Kimi Datasource',
-          version: '1.0.0',
-          enabled: true,
-          state: 'ok',
-          skillCount: 1,
-          mcpServerCount: 0,
-          enabledMcpServerCount: 0,
-          hasErrors: false,
-          source: 'local-path',
-        },
-      ],
-      onSelect,
-      onCancel: vi.fn(),
-    });
-
-    picker.handleInput('d');
-
-    expect(onSelect).toHaveBeenCalledWith({ kind: 'remove', id: 'kimi-datasource' });
-  });
-
-  it('opens MCP server management from the overview on M', () => {
-    const onSelect = vi.fn();
-    const picker = new PluginsOverviewSelectorComponent({
-      plugins: [
-        {
-          id: 'kimi-datasource',
-          displayName: 'Kimi Datasource',
-          version: '1.0.0',
-          enabled: true,
-          state: 'ok',
-          skillCount: 1,
-          mcpServerCount: 1,
-          enabledMcpServerCount: 1,
-          hasErrors: false,
-          source: 'local-path',
-        },
-      ],
-      onSelect,
-      onCancel: vi.fn(),
-    });
-
-    picker.handleInput('m');
-
-    expect(onSelect).toHaveBeenCalledWith({ kind: 'mcp', id: 'kimi-datasource' });
   });
 
   it('toggles MCP servers from the MCP selector', () => {
@@ -411,6 +421,7 @@ describe('plugins selector dialogs', () => {
         skillCount: 1,
         mcpServerCount: 1,
         enabledMcpServerCount: 1,
+        hookCount: 0,
         hasErrors: false,
         source: 'local-path',
         installedAt: '2026-05-29T00:00:00.000Z',
@@ -448,33 +459,6 @@ describe('plugins selector dialogs', () => {
     ]);
   });
 
-  it('renders plugin action hints inline on the overview row', () => {
-    const picker = new PluginsOverviewSelectorComponent({
-      plugins: [
-        {
-          id: 'kimi-datasource',
-          displayName: 'Kimi Datasource',
-          version: '1.0.0',
-          enabled: true,
-          state: 'ok',
-          skillCount: 1,
-          mcpServerCount: 0,
-          enabledMcpServerCount: 0,
-          hasErrors: false,
-          source: 'local-path',
-        },
-      ],
-      selectedId: 'kimi-datasource',
-      pluginHint: { id: 'kimi-datasource', text: 'pending /new' },
-      onSelect: vi.fn(),
-      onCancel: vi.fn(),
-    });
-
-    const out = picker.render(120).map(strip).join('\n');
-
-    expect(out).toContain('? Kimi Datasource  enabled  pending /new');
-  });
-
   it('defaults plugin removal confirmation to cancel', () => {
     const results: PluginRemoveConfirmResult[] = [];
     const picker = new PluginRemoveConfirmComponent({
@@ -505,11 +489,56 @@ describe('plugins selector dialogs', () => {
       },
     });
 
-    picker.handleInput('[B');
+    picker.handleInput('\u001B[B');
     const raw = renderRaw(picker);
     expect(strip(raw)).toContain('Enter/Space select');
     // The destructive option label keeps its danger styling (error + bold).
     expect(raw).toContain(dangerShortcut('Remove plugin'));
+
+    picker.handleInput('\r');
+
+    expect(results).toEqual([{ kind: 'confirm' }]);
+  });
+
+  it('defaults the third-party install trust prompt to exit', () => {
+    const results: PluginInstallTrustConfirmResult[] = [];
+    const picker = new PluginInstallTrustConfirmComponent({
+      label: 'Superpowers',
+      onDone: (result) => {
+        results.push(result);
+      },
+    });
+
+    const raw = renderRaw(picker);
+    const out = raw.split('\n').map(strip);
+    expect(out).toContain(' Install third-party plugin Superpowers?');
+    expect(out).toContain('  ? Exit');
+    expect(out).toContain('    Cancel the installation.');
+    expect(out).toContain('    Install this third-party plugin anyway.');
+    // The warning explains why confirmation is required and uses the
+    // design-system warning color rather than muted/default text.
+    expect(out.some((line) => line.includes('Kimi has not reviewed'))).toBe(true);
+    expect(out.some((line) => line.includes('trust the source'))).toBe(true);
+    expect(raw).toContain(warningMark());
+
+    picker.handleInput('\r');
+    expect(results).toEqual([{ kind: 'cancel' }]);
+  });
+
+  it('installs a third-party plugin only after switching to trust', () => {
+    const results: PluginInstallTrustConfirmResult[] = [];
+    const picker = new PluginInstallTrustConfirmComponent({
+      label: 'Superpowers',
+      onDone: (result) => {
+        results.push(result);
+      },
+    });
+
+    picker.handleInput('\u001B[B');
+    const raw = renderRaw(picker);
+    expect(strip(raw)).toContain('Enter/Space select');
+    // The opt-in option keeps its danger styling (error + bold).
+    expect(raw).toContain(dangerShortcut('Trust and install'));
 
     picker.handleInput('\r');
 

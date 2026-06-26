@@ -1,0 +1,192 @@
+import { describe, expect, it } from 'vitest';
+import { createInitialState, reduceAppEvent } from '../src/api/daemon/eventReducer';
+import type { AppMessage, AppSession, AppTask } from '../src/api/types';
+
+function makeSession(id: string, updatedAt: string): AppSession {
+  return {
+    id,
+    title: id,
+    createdAt: updatedAt,
+    updatedAt,
+    status: 'idle',
+    archived: false,
+    cwd: '/workspace',
+    model: 'kimi-code',
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      totalCostUsd: 0,
+      contextTokens: 0,
+      contextLimit: 0,
+      turnCount: 0,
+    },
+    messageCount: 0,
+    lastSeq: 0,
+  };
+}
+
+function makeMessage(sessionId: string, createdAt: string): AppMessage {
+  return {
+    id: `msg_${createdAt}`,
+    sessionId,
+    role: 'user',
+    content: [{ type: 'text', text: 'hi' }],
+    createdAt,
+  };
+}
+
+function makeSubagentTask(id: string, sessionId: string): AppTask {
+  return {
+    id,
+    sessionId,
+    kind: 'subagent',
+    description: 'subagent task',
+    status: 'running',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+describe('reduceAppEvent messageCreated', () => {
+  it('bumps the session updatedAt so it floats to the top of the sidebar', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s-old', '2026-01-01T00:00:00.000Z')],
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'messageCreated', message: makeMessage('s-old', '2026-06-01T12:00:00.000Z') },
+      { sessionId: 's-old', seq: 1 },
+    );
+    expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+  });
+
+  it('does not move a session backwards when an older message arrives', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s-new', '2026-06-01T12:00:00.000Z')],
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'messageCreated', message: makeMessage('s-new', '2026-01-01T00:00:00.000Z') },
+      { sessionId: 's-new', seq: 1 },
+    );
+    expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+  });
+
+  it('leaves other sessions untouched', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [
+        makeSession('s-a', '2026-01-01T00:00:00.000Z'),
+        makeSession('s-b', '2026-01-01T00:00:00.000Z'),
+      ],
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'messageCreated', message: makeMessage('s-a', '2026-06-01T12:00:00.000Z') },
+      { sessionId: 's-a', seq: 1 },
+    );
+    expect(next.sessions.find((s) => s.id === 's-a')?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+    expect(next.sessions.find((s) => s.id === 's-b')?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+});
+
+describe('reduceAppEvent taskProgress', () => {
+  it('accumulates the full progress output without truncating to a fixed window', () => {
+    const state = {
+      ...createInitialState(),
+      tasksBySession: { 's1': [makeSubagentTask('t1', 's1')] },
+    };
+    let next = state;
+    for (let i = 0; i < 60; i++) {
+      // The real projector emits a taskCreated (without reducer-owned
+      // outputLines) right before every taskProgress; progress must survive
+      // that replacement.
+      next = reduceAppEvent(
+        next,
+        { type: 'taskCreated', sessionId: 's1', task: makeSubagentTask('t1', 's1') },
+        { sessionId: 's1', seq: i * 2 + 1 },
+      );
+      next = reduceAppEvent(
+        next,
+        { type: 'taskProgress', sessionId: 's1', taskId: 't1', outputChunk: `line ${i}`, stream: 'stdout' },
+        { sessionId: 's1', seq: i * 2 + 2 },
+      );
+    }
+    const lines = next.tasksBySession['s1']?.[0]?.outputLines;
+    expect(lines).toHaveLength(60);
+    expect(lines?.[0]).toBe('line 0');
+    expect(lines?.at(-1)).toBe('line 59');
+  });
+
+  it('deduplicates a repeated trailing chunk', () => {
+    const state = {
+      ...createInitialState(),
+      tasksBySession: { 's1': [makeSubagentTask('t1', 's1')] },
+    };
+    const event = { type: 'taskProgress', sessionId: 's1', taskId: 't1', outputChunk: 'same', stream: 'stdout' } as const;
+    const once = reduceAppEvent(state, event, { sessionId: 's1', seq: 1 });
+    const twice = reduceAppEvent(once, event, { sessionId: 's1', seq: 2 });
+    expect(twice.tasksBySession['s1']?.[0]?.outputLines).toEqual(['same']);
+  });
+
+  it('caps accumulated output for non-subagent (background) tasks', () => {
+    const bash: AppTask = { ...makeSubagentTask('b1', 's1'), kind: 'bash' };
+    const state = { ...createInitialState(), tasksBySession: { 's1': [bash] } };
+    let next = state;
+    for (let i = 0; i < 60; i++) {
+      next = reduceAppEvent(
+        next,
+        { type: 'taskProgress', sessionId: 's1', taskId: 'b1', outputChunk: `line ${i}`, stream: 'stdout' },
+        { sessionId: 's1', seq: i + 1 },
+      );
+    }
+    const lines = next.tasksBySession['s1']?.[0]?.outputLines;
+    expect(lines).toHaveLength(40);
+    expect(lines?.[0]).toBe('line 20');
+    expect(lines?.at(-1)).toBe('line 59');
+  });
+});
+
+describe('reduceAppEvent sessions reference stability', () => {
+  // The sidebar computeds (sessionsForView / workspaceGroups / mergedWorkspaces)
+  // depend on `rawState.sessions`. Events that do not change sessions must keep
+  // the SAME array reference so those computeds are not dirtied; events that do
+  // change sessions must produce a NEW array.
+
+  it('reuses the sessions reference for an event that does not touch sessions', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      messagesBySession: { s1: [makeMessage('s1', '2026-01-01T00:00:00.000Z')] },
+    };
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'messageUpdated',
+        sessionId: 's1',
+        messageId: 'msg_2026-01-01T00:00:00.000Z',
+        content: [{ type: 'text', text: 'updated' }],
+        status: 'completed',
+      },
+      { sessionId: 's1', seq: 2 },
+    );
+    expect(next.sessions).toBe(state.sessions);
+  });
+
+  it('produces a new sessions array for an event that changes sessions', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'sessionCreated', session: makeSession('s2', '2026-02-01T00:00:00.000Z') },
+      { sessionId: 's2', seq: 3 },
+    );
+    expect(next.sessions).not.toBe(state.sessions);
+    expect(next.sessions.map((s) => s.id)).toEqual(['s2', 's1']);
+  });
+});

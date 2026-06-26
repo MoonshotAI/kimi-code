@@ -13,6 +13,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
   return {
     model: 'k2',
     workDir: '/tmp/proj',
+    additionalDirs: [],
     sessionId: 'sess_1',
     permissionMode: 'manual',
     planMode: false,
@@ -57,7 +58,7 @@ describe('FooterComponent — goal badge', () => {
 
   it('omits the badge when there is no goal', () => {
     const footer = new FooterComponent(baseState({ goal: null }));
-    expect(strip(footer.render(160)[0]!)).not.toMatch(/goal/);
+    expect(strip(footer.render(160)[0]!)).not.toContain('[goal');
   });
 
   it('shows status, elapsed, and a raw turn count for an unbounded active goal', () => {
@@ -115,7 +116,7 @@ describe('FooterComponent — goal badge', () => {
 
   it('hides the badge for a completed goal', () => {
     const footer = new FooterComponent(baseState({ goal: goal({ status: 'complete' }) }));
-    expect(strip(footer.render(160)[0]!)).not.toMatch(/goal/);
+    expect(strip(footer.render(160)[0]!)).not.toContain('[goal');
   });
 
   it('singularizes a single turn', () => {

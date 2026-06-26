@@ -46,6 +46,7 @@ export interface TUIState {
   toolOutputExpanded: boolean;
   sessions: SessionRow[];
   loadingSessions: boolean;
+  sessionsScope: 'cwd' | 'all';
   activeDialog: 'session-picker' | 'help' | null;
   tasksBrowser: TasksBrowserState | undefined;
   externalEditorRunning: boolean;
@@ -59,6 +60,11 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
 
   const terminal = new ProcessTerminal();
   const ui = new TUI(terminal);
+  // Content shrinks (e.g. a tall inline image is replaced by a short
+  // placeholder or text) can leave stale rows behind because pi-tui's
+  // differential renderer does not clear them by default. Enable clearing so
+  // artifacts like duplicated input boxes do not accumulate.
+  ui.setClearOnShrink(true);
 
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
@@ -94,6 +100,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     toolOutputExpanded: false,
     sessions: [],
     loadingSessions: false,
+    sessionsScope: 'cwd',
     activeDialog: null,
     tasksBrowser: undefined,
     externalEditorRunning: false,

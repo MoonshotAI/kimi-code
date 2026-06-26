@@ -653,6 +653,57 @@ describe('ProviderManager prompt cache key', () => {
   });
 });
 
+describe('ProviderManager OAuth auth', () => {
+  function oauthConfig(): KimiConfig {
+    return {
+      ...BASE_CONFIG,
+      providers: {
+        'managed:kimi-code': {
+          type: 'kimi',
+          apiKey: '',
+          baseUrl: 'https://api.example/v1',
+          oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        },
+      },
+    };
+  }
+
+  it('preserves non-Kimi token fetch failures instead of guessing their category', async () => {
+    const tokenError = new Error('token storage permission denied');
+    const manager = new ProviderManager({
+      config: oauthConfig(),
+      resolveOAuthTokenProvider: () => ({
+        async getAccessToken() {
+          throw tokenError;
+        },
+      }),
+    });
+
+    const resolveAuth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    expect(resolveAuth).toBeDefined();
+
+    await expect(resolveAuth!(async () => 'ok')).rejects.toBe(tokenError);
+  });
+
+  it('keeps explicit login-required token failures as login-required errors', async () => {
+    const manager = new ProviderManager({
+      config: oauthConfig(),
+      resolveOAuthTokenProvider: () => ({
+        async getAccessToken() {
+          throw new KimiError(ErrorCodes.AUTH_LOGIN_REQUIRED, 'not logged in');
+        },
+      }),
+    });
+
+    const resolveAuth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    expect(resolveAuth).toBeDefined();
+
+    await expect(resolveAuth!(async () => 'ok')).rejects.toMatchObject({
+      code: ErrorCodes.AUTH_LOGIN_REQUIRED,
+    });
+  });
+});
+
 describe('resolveThinkingLevel', () => {
   it('normalizes requested thinking into a concrete effort', () => {
     expect(

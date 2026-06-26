@@ -1,5 +1,21 @@
 # @moonshot-ai/migration-legacy
 
+## 0.1.14
+
+### Patch Changes
+
+- Updated dependencies [[`c0eeca2`](https://github.com/MoonshotAI/kimi-code/commit/c0eeca24692edd736eecd3c2541d7566bac9f80f), [`2730079`](https://github.com/MoonshotAI/kimi-code/commit/27300797f2149900219b05dda49dce65e71fa85a)]:
+  - @moonshot-ai/agent-core@0.14.0
+
+## 0.1.13
+
+### Patch Changes
+
+- [#772](https://github.com/MoonshotAI/kimi-code/pull/772) [`d47e699`](https://github.com/MoonshotAI/kimi-code/commit/d47e699015f02f4f76723aa8fb17d51a74aa74ff) - Do not carry obsolete legacy loop, background, plan, yolo, or unknown experimental flags into migrated config files.
+
+- Updated dependencies [[`4516f62`](https://github.com/MoonshotAI/kimi-code/commit/4516f62f6a7e4dd7675a3aec16b2a26c5e310d83), [`8a92db6`](https://github.com/MoonshotAI/kimi-code/commit/8a92db6a0c110a21c6e6e86622f498e836178e5f), [`e10b25f`](https://github.com/MoonshotAI/kimi-code/commit/e10b25f9be18ca64aada0d0a3cab0e02fdbd46df), [`c6a9967`](https://github.com/MoonshotAI/kimi-code/commit/c6a996756cd8f1fb317b6eee6f4e668eebc7dc14), [`4516f62`](https://github.com/MoonshotAI/kimi-code/commit/4516f62f6a7e4dd7675a3aec16b2a26c5e310d83), [`9cef896`](https://github.com/MoonshotAI/kimi-code/commit/9cef89656311974a57e6675f474ea6c2adb1d8e9), [`046856b`](https://github.com/MoonshotAI/kimi-code/commit/046856b740afb604132e914f1fc489de72394036), [`4578f05`](https://github.com/MoonshotAI/kimi-code/commit/4578f05f44101f24d45c6452e2a6993cbb52e331), [`a562ef5`](https://github.com/MoonshotAI/kimi-code/commit/a562ef54e537a36211c48f0fe19e9252e83397a0), [`18f299f`](https://github.com/MoonshotAI/kimi-code/commit/18f299fd0b266545a1f7cebae9f58b83b9d9776e), [`ecd7a0a`](https://github.com/MoonshotAI/kimi-code/commit/ecd7a0afb646d14a14c780a4088fd8a59da134ad), [`1eb363f`](https://github.com/MoonshotAI/kimi-code/commit/1eb363f655aa44abc1e5c3af89016f00764ecc95)]:
+  - @moonshot-ai/agent-core@0.13.0
+
 ## 0.1.12
 
 ### Patch Changes

@@ -384,6 +384,33 @@ describe('ReadTool', () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
+  it('rejects an image-extension file whose bytes are not an image as not readable', async () => {
+    // A `.png` file with no recognisable image magic and no NUL byte is not a
+    // real image; it must fall through to the generic "not readable" error
+    // rather than being misidentified as an image and sent to ReadMediaFile.
+    const plainText = Buffer.from('this is plain ascii text, not a png');
+    const readText = vi
+      .fn<Kaos['readText']>()
+      .mockRejectedValue(new Error('readText should not be called for non-image files'));
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(plainText),
+        readText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool, context({ path: '/tmp/fake.png' }));
+    const output = toolContentString(result);
+
+    expect(result.isError).toBe(true);
+    expect(output).toBe(
+      '"/tmp/fake.png" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+    );
+    expect(readText).not.toHaveBeenCalled();
+  });
+
   it('rejects extensionless image files using magic-byte sniffing', async () => {
     const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const readText = vi
@@ -607,6 +634,113 @@ describe('ReadTool', () => {
     expect(consumed).toBe(MAX_LINES + 5);
     expect(readBytes).toHaveBeenCalledWith('/tmp/large.txt', MEDIA_SNIFF_BYTES);
     expect(readText).not.toHaveBeenCalled();
+  });
+
+  it('uses range reader when available without consuming readLines', async () => {
+    const content = Array.from({ length: 20 }, (_, i) => `line ${String(i + 1)}`).join('\n');
+    const bytes = Buffer.from(content, 'utf8');
+    const readLines = vi.fn<Kaos['readLines']>();
+    const readLineRange = vi.fn(async function* readLineRange(
+      _path: string,
+      options: { startLine: number; maxLines: number },
+    ): AsyncGenerator<string> {
+      for (let i = options.startLine; i < options.startLine + options.maxLines; i += 1) {
+        yield `line ${String(i)}\n`;
+      }
+    });
+    const scanTextFile = vi.fn(async () => ({
+      totalLines: 20,
+      endsWithNewline: false,
+      hasNul: false,
+      lineEndingFlags: { hasCrLf: false, hasLf: true, hasLoneCr: false },
+    }));
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes: vi.fn<Kaos['readBytes']>().mockImplementation(async (_path, n) => {
+          return n === undefined ? bytes : bytes.subarray(0, n);
+        }),
+        readLines,
+        scanTextFile,
+        readLineRange,
+      } as unknown as Partial<Kaos>),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool, context({ path: '/tmp/range.txt', line_offset: 5, n_lines: 3 }));
+    const output = toolContentString(result);
+
+    expect(output).toContain('5\tline 5');
+    expect(output).toContain('7\tline 7');
+    expect(output).not.toContain('8\tline 8');
+    expect(readLineRange).toHaveBeenCalledWith('/tmp/range.txt', {
+      startLine: 5,
+      maxLines: 3,
+      errors: 'strict',
+    });
+    expect(readLines).not.toHaveBeenCalled();
+  });
+
+  it('uses tail reader when available without consuming readLines', async () => {
+    const content = Array.from({ length: 20 }, (_, i) => `line ${String(i + 1)}`).join('\n');
+    const bytes = Buffer.from(content, 'utf8');
+    const readLines = vi.fn<Kaos['readLines']>();
+    const readTailLines = vi.fn(async function* readTailLines(): AsyncGenerator<string> {
+      yield 'line 18\n';
+      yield 'line 19\n';
+      yield 'line 20';
+    });
+    const scanTextFile = vi.fn(async () => ({
+      totalLines: 20,
+      endsWithNewline: false,
+      hasNul: false,
+      lineEndingFlags: { hasCrLf: false, hasLf: true, hasLoneCr: false },
+    }));
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes: vi.fn<Kaos['readBytes']>().mockImplementation(async (_path, n) => {
+          return n === undefined ? bytes : bytes.subarray(0, n);
+        }),
+        readLines,
+        scanTextFile,
+        readTailLines,
+      } as unknown as Partial<Kaos>),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool, context({ path: '/tmp/tail.txt', line_offset: -3 }));
+    const output = toolContentString(result);
+
+    expect(output).toContain('18\tline 18');
+    expect(output).toContain('20\tline 20');
+    expect(readTailLines).toHaveBeenCalledWith('/tmp/tail.txt', { tailCount: 3, errors: 'strict' });
+    expect(readLines).not.toHaveBeenCalled();
+  });
+
+  it('short-circuits on scan NUL before range read', async () => {
+    const readLineRange = vi.fn();
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(Buffer.from('text')),
+        scanTextFile: vi.fn(async () => ({
+          totalLines: 1,
+          endsWithNewline: false,
+          hasNul: true,
+          lineEndingFlags: { hasCrLf: false, hasLf: false, hasLoneCr: false },
+        })),
+        readLineRange,
+      } as unknown as Partial<Kaos>),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool, context({ path: '/tmp/nul.txt' }));
+    const output = toolContentString(result);
+
+    expect(result.isError).toBe(true);
+    expect(output).toContain('is not readable as UTF-8 text');
+    expect(readLineRange).not.toHaveBeenCalled();
   });
 
   it('caps default reads at MAX_LINES', async () => {

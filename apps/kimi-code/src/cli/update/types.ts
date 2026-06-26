@@ -16,10 +16,28 @@ export interface UpdateTarget {
   readonly version: string;
 }
 
+/** One gradual-rollout cohort: `percent` of devices delayed by `delaySeconds`. */
+export interface RolloutBatch {
+  readonly percent: number;
+  readonly delaySeconds: number;
+}
+
+/**
+ * Parsed CDN `latest.json`. `rollout` batches claim bucket ranges in array
+ * order; an empty array means the release is fully rolled out immediately.
+ */
+export interface UpdateManifest {
+  readonly version: string;
+  readonly publishedAt: string;
+  readonly rollout: readonly RolloutBatch[];
+}
+
 export interface UpdateCache {
   readonly source: 'cdn';
   readonly checkedAt: string | null;
   readonly latest: string | null;
+  /** Null when the manifest came from the plain-text fallback or a legacy cache file. */
+  readonly manifest: UpdateManifest | null;
 }
 
 export interface UpdateInstallActive {
@@ -54,6 +72,7 @@ export function emptyUpdateCache(): UpdateCache {
     source: 'cdn',
     checkedAt: null,
     latest: null,
+    manifest: null,
   };
 }
 

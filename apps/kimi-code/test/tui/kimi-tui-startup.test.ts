@@ -1,13 +1,20 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { log, type GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BannerProvider } from '#/tui/banner/banner-provider';
+import { readBannerDisplayState } from '#/tui/banner/state';
 import { handleLoginCommand, handleLogoutCommand } from '#/tui/commands/auth';
 import { promptPlatformSelection, promptLogoutProviderSelection } from '#/tui/commands/prompts';
 import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
+import { quoteShellArg } from '#/utils/shell-quote';
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
   ENABLE_TERMINAL_THEME_REPORTING,
@@ -20,6 +27,11 @@ vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
   return { ...actual, promptPlatformSelection: vi.fn(), promptLogoutProviderSelection: vi.fn() };
 });
+vi.mock('#/utils/clipboard/clipboard-text', () => ({
+  copyTextToClipboard: vi.fn(async () => {}),
+}));
+
+const copyTextToClipboardMock = vi.mocked(copyTextToClipboard);
 
 interface StartupDriver {
   state: TUIState;
@@ -694,6 +706,273 @@ describe('KimiTUI startup', () => {
     expect(driver.state.appState.planMode).toBe(true);
   });
 
+  it('toggles the sessions picker from current cwd to all sessions with Ctrl+A', async () => {
+    const currentWorkDirSession = {
+      id: 'ses-cwd',
+      title: 'Current cwd session',
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now(),
+    };
+    const otherWorkDirSession = {
+      id: 'ses-other-cwd',
+      title: 'Other cwd session',
+      workDir: '/tmp/proj-b',
+      updatedAt: Date.now() - 1000,
+    };
+    const listSessions = vi.fn(async (input: { workDir?: string } = {}) => {
+      if (input.workDir === '/tmp/proj-a') return [currentWorkDirSession];
+      return [currentWorkDirSession, otherWorkDirSession];
+    });
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), { listSessions });
+    const driver = makeDriver(harness, makeStartupInput());
+    await expect(driver.init()).resolves.toBe(false);
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\u0001');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(listSessions).toHaveBeenNthCalledWith(1, { workDir: '/tmp/proj-a' });
+    expect(listSessions).toHaveBeenNthCalledWith(2, {});
+    expect(driver.state.sessionsScope).toBe('all');
+    expect(driver.state.sessions.map((session) => session.id)).toEqual([
+      'ses-cwd',
+      'ses-other-cwd',
+    ]);
+  });
+
+  it('toggles the sessions picker from all sessions back to current cwd with Ctrl+A', async () => {
+    const currentWorkDirSession = {
+      id: 'ses-cwd',
+      title: 'Current cwd session',
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now(),
+    };
+    const otherWorkDirSession = {
+      id: 'ses-other-cwd',
+      title: 'Other cwd session',
+      workDir: '/tmp/proj-b',
+      updatedAt: Date.now() - 1000,
+    };
+    const listSessions = vi.fn(async (input: { workDir?: string } = {}) => {
+      if (input.workDir === '/tmp/proj-a') return [currentWorkDirSession];
+      return [currentWorkDirSession, otherWorkDirSession];
+    });
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), { listSessions });
+    const driver = makeDriver(harness, makeStartupInput());
+    await expect(driver.init()).resolves.toBe(false);
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const firstPicker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    firstPicker.handleInput('\u0001');
+    await new Promise((resolve) => setImmediate(resolve));
+    const allPicker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    allPicker.handleInput('\u0001');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(listSessions).toHaveBeenNthCalledWith(3, { workDir: '/tmp/proj-a' });
+    expect(driver.state.sessionsScope).toBe('cwd');
+    expect(driver.state.sessions.map((session) => session.id)).toEqual(['ses-cwd']);
+  });
+
+  it('does not remount the session picker after it is closed while a scope toggle is pending', async () => {
+    const currentWorkDirSession = {
+      id: 'ses-cwd',
+      title: 'Current cwd session',
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now(),
+    };
+    const otherWorkDirSession = {
+      id: 'ses-other-cwd',
+      title: 'Other cwd session',
+      workDir: '/tmp/proj-b',
+      updatedAt: Date.now() - 1000,
+    };
+    let resolveAllSessions: ((value: unknown[]) => void) | undefined;
+    const listSessions = vi.fn((input: { workDir?: string } = {}) => {
+      if (input.workDir === '/tmp/proj-a') return Promise.resolve([currentWorkDirSession]);
+      return new Promise<unknown[]>((resolve) => {
+        resolveAllSessions = resolve;
+      });
+    });
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), { listSessions });
+    const driver = makeDriver(harness, makeStartupInput());
+    const mountSessionPicker = vi.spyOn(
+      driver as unknown as { mountSessionPicker(options: unknown): void },
+      'mountSessionPicker',
+    );
+    await expect(driver.init()).resolves.toBe(false);
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    expect(mountSessionPicker).toHaveBeenCalledTimes(1);
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\u0001');
+    (driver as unknown as { hideSessionPicker(): void }).hideSessionPicker();
+    resolveAllSessions?.([currentWorkDirSession, otherWorkDirSession]);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(driver.state.activeDialog).toBeNull();
+    expect(mountSessionPicker).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the sessions picker search query when toggling scope with Ctrl+A', async () => {
+    const currentWorkDirSession = {
+      id: 'ses-cwd',
+      title: 'Current cwd session',
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now(),
+    };
+    const otherWorkDirSession = {
+      id: 'ses-other-cwd',
+      title: 'Other cwd session',
+      workDir: '/tmp/proj-b',
+      updatedAt: Date.now() - 1000,
+    };
+    const listSessions = vi.fn(async (input: { workDir?: string } = {}) => {
+      if (input.workDir === '/tmp/proj-a') return [currentWorkDirSession];
+      return [currentWorkDirSession, otherWorkDirSession];
+    });
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), { listSessions });
+    const driver = makeDriver(harness, makeStartupInput());
+    await expect(driver.init()).resolves.toBe(false);
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const firstPicker = driver.state.editorContainer.children[0] as {
+      handleInput(data: string): void;
+      render(width: number): string[];
+    };
+    firstPicker.handleInput('c');
+    firstPicker.handleInput('w');
+    firstPicker.handleInput('d');
+    expect(firstPicker.render(160).join('\n')).toContain('Search: cwd');
+
+    firstPicker.handleInput('\u0001');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const allPicker = driver.state.editorContainer.children[0] as {
+      handleInput(data: string): void;
+      render(width: number): string[];
+    };
+    const output = allPicker.render(160).join('\n');
+
+    expect(driver.state.sessionsScope).toBe('all');
+    expect(output).toContain('All sessions');
+    expect(output).toContain('(type to search)');
+    expect(output).not.toContain('Search: cwd');
+  });
+
+  it('does not resume a session from a different cwd and shows a cd hint', async () => {
+    const currentWorkDirSession = {
+      id: 'ses-cwd',
+      title: 'Current cwd session',
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now(),
+    };
+    const otherWorkDirSession = {
+      id: 'ses-other-cwd',
+      title: 'Other cwd session',
+      workDir: '/tmp/proj-b',
+      updatedAt: Date.now() - 1000,
+    };
+    const resumeSession = vi.fn(async () => makeSession({ id: 'ses-other-cwd' }));
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+      resumeSession,
+      listSessions: vi.fn(async () => [currentWorkDirSession, otherWorkDirSession]),
+    });
+    const driver = makeDriver(harness, makeStartupInput());
+    await expect(driver.init()).resolves.toBe(false);
+    copyTextToClipboardMock.mockClear();
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(resumeSession).not.toHaveBeenCalled();
+    expect(driver.state.activeDialog).toBeNull();
+    const expectedResumeCmd = `cd ${quoteShellArg('/tmp/proj-b')} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
+    const transcript = driver.state.transcriptContainer.render(160).join('\n');
+    expect(transcript).toContain('Current session is in a different working directory.');
+    expect(transcript).toContain(`To resume, run: ${expectedResumeCmd}`);
+    expect(transcript).toContain(`To resume, run: ${expectedResumeCmd}`);
+    expect(transcript).toContain('Command copied to clipboard');
+  });
+
+  it('copies a shell-safe resume command for another cwd with metacharacters', async () => {
+    const currentWorkDirSession = {
+      id: 'ses-cwd',
+      title: 'Current cwd session',
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now(),
+    };
+    const otherWorkDirSession = {
+      id: 'ses-other-cwd',
+      title: 'Other cwd session',
+      workDir: '/tmp/proj$(touch /tmp/pwned)',
+      updatedAt: Date.now() - 1000,
+    };
+    const resumeSession = vi.fn(async () => makeSession({ id: 'ses-other-cwd' }));
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+      resumeSession,
+      listSessions: vi.fn(async () => [currentWorkDirSession, otherWorkDirSession]),
+    });
+    const driver = makeDriver(harness, makeStartupInput());
+    await expect(driver.init()).resolves.toBe(false);
+    copyTextToClipboardMock.mockClear();
+
+    await (driver as unknown as { showSessionPicker(): Promise<void> }).showSessionPicker();
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(resumeSession).not.toHaveBeenCalled();
+    const expectedResumeCmd = `cd ${quoteShellArg('/tmp/proj$(touch /tmp/pwned)')} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
+    const transcript = driver.state.transcriptContainer.render(160).join('\n');
+    expect(transcript).toContain(`To resume, run: ${expectedResumeCmd}`);
+  });
+
+  it('exits after picking another cwd from the startup picker', async () => {
+    const currentWorkDirSession = {
+      id: 'ses-cwd',
+      title: 'Current cwd session',
+      workDir: '/tmp/proj-a',
+      updatedAt: Date.now(),
+    };
+    const otherWorkDirSession = {
+      id: 'ses-other-cwd',
+      title: 'Other cwd session',
+      workDir: '/tmp/proj-b',
+      updatedAt: Date.now() - 1000,
+    };
+    const resumeSession = vi.fn(async () => makeSession({ id: 'ses-other-cwd' }));
+    const harness = makeHarness(makeSession({ id: 'ses-current' }), {
+      resumeSession,
+      listSessions: vi.fn(async () => [currentWorkDirSession, otherWorkDirSession]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: '' }));
+    const stop = vi.spyOn(driver, 'stop').mockResolvedValue(undefined);
+    copyTextToClipboardMock.mockClear();
+
+    await expect((driver as unknown as MigrateExitDriver).initMainTui()).resolves.toBe(false);
+    await (driver as unknown as { bootstrapFromPicker(): Promise<void> }).bootstrapFromPicker();
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(resumeSession).not.toHaveBeenCalled();
+    const expectedResumeCmd = `cd ${quoteShellArg('/tmp/proj-b')} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledWith(0);
+  });
+
   it('does not apply startup flags when switching sessions via the /sessions picker', async () => {
     const initial = makeSession({ id: 'ses-1' });
     const picked = makeSession({
@@ -815,7 +1094,27 @@ describe('KimiTUI startup', () => {
     expect(write).toHaveBeenCalledWith(DISABLE_TERMINAL_THEME_REPORTING);
   });
 
-  it('starts TUI without a session when fresh startup needs OAuth login', async () => {
+  it("only shows provider refresh status for added models", async () => {
+    const harness = makeHarness();
+    const driver = makeDriver(harness, makeStartupInput());
+    const showStatus = vi.spyOn(driver as any, "showStatus").mockImplementation(() => {});
+    vi.spyOn((driver as any).authFlow, "refreshProviderModels").mockResolvedValue({
+      changed: [
+        { providerId: "new-models", providerName: "New Models", added: 2, removed: 0 },
+        { providerId: "removed-models", providerName: "Removed Models", added: 0, removed: 3 },
+        { providerId: "metadata-only", providerName: "Metadata Only", added: 0, removed: 0 },
+      ],
+      unchanged: [],
+      failed: [],
+    });
+
+    await (driver as any).refreshProviderModelsInBackground();
+
+    expect(showStatus).toHaveBeenCalledTimes(1);
+    expect(showStatus).toHaveBeenCalledWith("New Models · +2 models.");
+  });
+
+  it("starts TUI without a session when fresh startup needs OAuth login", async () => {
     const harness = makeHarness(makeSession(), {
       createSession: vi.fn(async () => {
         throw loginRequiredError();
@@ -1287,9 +1586,11 @@ describe('KimiTUI startup', () => {
 
   it('renders the banner below the welcome message after it loads', async () => {
     const banner = {
+      key: 'new-banner',
       tag: 'New',
       mainText: 'Banner main',
       subText: null,
+      display: 'always' as const,
     };
     const loadSpy = vi.spyOn(BannerProvider.prototype, 'load').mockResolvedValue(banner);
     const session = makeSession({ id: 'ses-target' });
@@ -1321,6 +1622,106 @@ describe('KimiTUI startup', () => {
     expect(bannerIndex).toBe(welcomeIndex + 1);
 
     loadSpy.mockRestore();
+  });
+
+  it('writes display state after rendering a once banner', async () => {
+    const originalEnv = { ...process.env };
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-startup-banner-'));
+    process.env['KIMI_CODE_HOME'] = dir;
+
+    try {
+      const banner = {
+        key: 'once-banner',
+        tag: null,
+        mainText: 'Banner main',
+        subText: null,
+        display: 'once' as const,
+      };
+      const loadSpy = vi.spyOn(BannerProvider.prototype, 'load').mockResolvedValue(banner);
+      const session = makeSession({ id: 'ses-target' });
+      const harness = makeHarness(session, {
+        listSessions: vi.fn(async () => [{ id: 'ses-target', workDir: '/tmp/proj-a' }]),
+      });
+      const driver = makeDriver(
+        harness,
+        makeStartupInput({ session: 'ses-target' }),
+      ) as unknown as MigrateExitDriver;
+
+      await driver.initMainTui();
+
+      await vi.waitFor(() => {
+        expect(
+          driver.state.transcriptContainer.children.some((child) => child instanceof BannerComponent),
+        ).toBe(true);
+      });
+
+      // writeBannerDisplayState runs after renderBanner; on Windows the atomic
+      // write can lag behind the render, so wait for the state to land before
+      // asserting it.
+      await vi.waitFor(
+        async () => {
+          const state = await readBannerDisplayState();
+          expect(state.shown['once-banner']?.lastShownAt).toBeDefined();
+        },
+        { timeout: 5000 },
+      );
+      await expect(readBannerDisplayState()).resolves.toMatchObject({
+        version: 1,
+        shown: {
+          'once-banner': {
+            lastShownAt: expect.any(String),
+          },
+        },
+      });
+
+      loadSpy.mockRestore();
+    } finally {
+      process.env = { ...originalEnv };
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not write display state for an always banner', async () => {
+    const originalEnv = { ...process.env };
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-startup-banner-'));
+    process.env['KIMI_CODE_HOME'] = dir;
+
+    try {
+      const banner = {
+        key: 'always-banner',
+        tag: null,
+        mainText: 'Banner main',
+        subText: null,
+        display: 'always' as const,
+      };
+      const loadSpy = vi.spyOn(BannerProvider.prototype, 'load').mockResolvedValue(banner);
+      const session = makeSession({ id: 'ses-target' });
+      const harness = makeHarness(session, {
+        listSessions: vi.fn(async () => [{ id: 'ses-target', workDir: '/tmp/proj-a' }]),
+      });
+      const driver = makeDriver(
+        harness,
+        makeStartupInput({ session: 'ses-target' }),
+      ) as unknown as MigrateExitDriver;
+
+      await driver.initMainTui();
+
+      await vi.waitFor(() => {
+        expect(
+          driver.state.transcriptContainer.children.some((child) => child instanceof BannerComponent),
+        ).toBe(true);
+      });
+
+      await expect(readBannerDisplayState()).resolves.toEqual({
+        version: 1,
+        shown: {},
+      });
+
+      loadSpy.mockRestore();
+    } finally {
+      process.env = { ...originalEnv };
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('resumes a startup session when Windows workdir uses backslashes', async () => {

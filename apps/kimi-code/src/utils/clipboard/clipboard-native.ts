@@ -18,6 +18,7 @@ export interface ClipboardModule {
   availableFormats?(): string[];
   hasText?(): boolean;
   getText?(): Promise<string>;
+  setText?(text: string): Promise<void>;
   hasImage(): boolean;
   getImageBinary(): Promise<Array<number>>;
 }

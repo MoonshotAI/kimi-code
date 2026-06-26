@@ -20,6 +20,11 @@ import {
   type TelemetryContextRecord,
 } from '../fixtures/telemetry';
 
+// agent-core renders skill paths with forward slashes (pathe). Mirror that in
+// path assertions so they hold on Windows, where node:fs.realpath produces
+// backslashes.
+const toPosix = (p: string): string => p.replaceAll('\\', '/');
+
 describe('HarnessAPI session skills', () => {
   let tmp: string;
   let homeDir: string;
@@ -193,10 +198,11 @@ describe('HarnessAPI session skills', () => {
     const records = await readMainWire(created.sessionDir);
     const prompt = records.find((record) => record['type'] === 'turn.prompt');
     const userMessage = records.find((record) => record['type'] === 'context.append_message');
+    const skillDir = toPosix(await realpath(join(workDir, '.kimi-code', 'skills', 'phase-one-review')));
     const expectedPrompt = [
       'User activated the skill "phase-one-review". Follow the loaded skill instructions.',
       '',
-      '<kimi-skill-loaded name="phase-one-review" trigger="user-slash" source="project" args="src/app.ts">',
+      `<kimi-skill-loaded name="phase-one-review" trigger="user-slash" source="project" dir="${skillDir}" args="src/app.ts">`,
       'Review the requested file.',
       '',
       'ARGUMENTS: src/app.ts',
@@ -282,11 +288,11 @@ describe('HarnessAPI session skills', () => {
 
     const records = await readMainWire(created.sessionDir);
     const prompt = records.find((record) => record['type'] === 'turn.prompt');
-    const skillDir = await realpath(join(workDir, '.kimi-code', 'skills', 'templated-review'));
+    const skillDir = toPosix(await realpath(join(workDir, '.kimi-code', 'skills', 'templated-review')));
     const expectedPrompt = [
       'User activated the skill "templated-review". Follow the loaded skill instructions.',
       '',
-      '<kimi-skill-loaded name="templated-review" trigger="user-slash" source="project" args="&quot;src/app.ts&quot; careful">',
+      `<kimi-skill-loaded name="templated-review" trigger="user-slash" source="project" dir="${skillDir}" args="&quot;src/app.ts&quot; careful">`,
       'Target: src/app.ts',
       'Mode: careful',
       'Raw: "src/app.ts" careful',
@@ -329,9 +335,10 @@ describe('HarnessAPI session skills', () => {
     const prompt = records.find((record) => record['type'] === 'turn.prompt');
     const text = (prompt as { input?: Array<{ text?: string }> } | undefined)?.input?.[0]?.text;
 
+    const skillDir = toPosix(await realpath(join(workDir, '.kimi-code', 'skills', 'brainstorm')));
     expect(text).toContain('User activated the skill "brainstorm". Follow the loaded skill instructions.');
     expect(text).toContain(
-      '<kimi-skill-loaded name="brainstorm" trigger="user-slash" source="project" args="">',
+      `<kimi-skill-loaded name="brainstorm" trigger="user-slash" source="project" dir="${skillDir}" args="">`,
     );
     expect(text).toContain('Ask one clarifying question before proposing designs.');
     expect(text).not.toContain('<system-reminder>');
@@ -432,6 +439,7 @@ describe('HarnessAPI session skills', () => {
     const resumed = await second.rpc.resumeSession({ sessionId: created.id });
 
     expect(second.events.some((event) => event.type === 'skill.activated')).toBe(false);
+    const skillDir = toPosix(await realpath(join(workDir, '.kimi-code', 'skills', 'phase-one-review')));
     const context = await second.rpc.getContext({ sessionId: created.id, agentId: 'main' });
     expect(context.history).toMatchObject([
       {
@@ -442,7 +450,7 @@ describe('HarnessAPI session skills', () => {
             text: [
               'User activated the skill "phase-one-review". Follow the loaded skill instructions.',
               '',
-              '<kimi-skill-loaded name="phase-one-review" trigger="user-slash" source="project" args="src/app.ts">',
+              `<kimi-skill-loaded name="phase-one-review" trigger="user-slash" source="project" dir="${skillDir}" args="src/app.ts">`,
               'Review the requested file.',
               '',
               'ARGUMENTS: src/app.ts',
@@ -477,6 +485,59 @@ describe('HarnessAPI session skills', () => {
         origin: expect.objectContaining({ kind: 'skill_activation' }),
       }),
     );
+  });
+
+  it('keeps the skill directory in the resumed conversation context so bundled resources stay locatable', async () => {
+    // A skill that ships a helper script but does NOT embed ${KIMI_SKILL_DIR}
+    // in its body. The only way the agent can learn where the script lives is
+    // the `dir` attribute on the loaded block — and it must survive a resume.
+    await writeSkill('bundled-tool', [
+      '---',
+      'name: bundled-tool',
+      'description: A skill with a bundled script',
+      '---',
+      '',
+      'Run the bundled helper script to do the work.',
+    ]);
+    const scriptDir = join(workDir, '.kimi-code', 'skills', 'bundled-tool', 'scripts');
+    await mkdir(scriptDir, { recursive: true });
+    await writeFile(join(scriptDir, 'run.sh'), '#!/bin/sh\necho hi\n');
+
+    const first = await createTestRpc();
+    const created = await first.rpc.createSession({ id: 'ses_skill_resource_resume', workDir });
+    await first.rpc.activateSkill({
+      sessionId: created.id,
+      agentId: 'main',
+      name: 'bundled-tool',
+    });
+    await waitForEvent(first.events, (event) => event.type === 'skill.activated');
+    await first.core.sessions.get(created.id)?.flushMetadata();
+
+    // Resume in a completely fresh runtime — nothing in memory, the context is
+    // rebuilt from disk exactly as the model would see it on the next turn.
+    const second = await createTestRpc();
+    await second.rpc.resumeSession({ sessionId: created.id });
+    const context = await second.rpc.getContext({ sessionId: created.id, agentId: 'main' });
+
+    const skillDir = toPosix(await realpath(join(workDir, '.kimi-code', 'skills', 'bundled-tool')));
+    const skillMessage = context.history.find(
+      (entry) =>
+        entry.origin?.kind === 'skill_activation' &&
+        (entry.origin as { skillName?: string }).skillName === 'bundled-tool',
+    );
+    expect(skillMessage).toBeDefined();
+    const text = (skillMessage?.content?.[0] as { text?: string } | undefined)?.text ?? '';
+
+    // The directory is present in the resumed context...
+    expect(text).toContain(`dir="${skillDir}"`);
+    // ...and it is the directory that actually holds the bundled script, so an
+    // agent reading the context can resolve the resource by relative path.
+    expect(join(skillDir, 'scripts', 'run.sh')).toBe(
+      toPosix(await realpath(join(scriptDir, 'run.sh'))),
+    );
+    // Guard the regression: the path is surfaced by the wrapper, not because
+    // the skill body happened to mention it.
+    expect(text).toContain('Run the bundled helper script to do the work.');
   });
 
   it('registers builtin mcp-config skill, hides it from the model, and activates it via slash', async () => {

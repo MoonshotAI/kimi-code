@@ -19,8 +19,6 @@ export interface AgentRecordEvents {
   metadata: {
     protocol_version: string;
     created_at: number;
-    app_version?: string;
-    resumed?: boolean;
   };
 
   forked: {};

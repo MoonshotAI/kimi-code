@@ -1,0 +1,36 @@
+{
+  "name": "@moonshot-ai/kimi-web",
+  "version": "0.1.2",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:stub": "node dev/stub-daemon.mjs",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "katex": "^0.16.22",
+    "markstream-vue": "1.0.3",
+    "shiki": "^4.2.0",
+    "stream-markdown": "^0.0.16",
+    "vue": "^3.5.35",
+    "vue-i18n": "^11.4.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.4",
+    "@vitejs/plugin-vue": "^5.2.4",
+    "tailwindcss": "^4.1.4",
+    "typescript": "6.0.2",
+    "vite": "^6.3.3",
+    "vitest": "4.1.4",
+    "vue-tsc": "~3.2.0",
+    "ws": "^8.18.0"
+  }
+}

@@ -6,11 +6,22 @@ import { BannerComponent } from '#/tui/components/chrome/banner';
 import { currentTheme } from '#/tui/theme';
 import type { BannerState } from '#/tui/types';
 
-const banner: BannerState = {
+function makeBannerState(overrides: Partial<BannerState> = {}): BannerState {
+  return {
+    key: 'component-banner',
+    tag: null,
+    mainText: '',
+    subText: null,
+    display: 'always',
+    ...overrides,
+  };
+}
+
+const banner: BannerState = makeBannerState({
   tag: "What's new:",
   mainText: 'This is the main banner message for testing purposes.',
   subText: 'This is a short subtext line.',
-};
+});
 
 describe('BannerComponent', () => {
   const previousChalkLevel = chalk.level;
@@ -39,7 +50,7 @@ describe('BannerComponent', () => {
   });
 
   it('renders without a tag when tag is empty', () => {
-    const lines = new BannerComponent({ tag: null, mainText: 'Hello', subText: null }).render(80);
+    const lines = new BannerComponent(makeBannerState({ mainText: 'Hello' })).render(80);
     expect(lines.length).toBe(2);
     expect(lines[0]).not.toContain('✦');
     expect(lines[0]).toContain('Hello');
@@ -61,11 +72,10 @@ describe('BannerComponent', () => {
 
   it('wraps long subtext to fit available width', () => {
     const width = 30;
-    const state: BannerState = {
-      tag: null,
+    const state = makeBannerState({
       mainText: 'Short',
       subText: 'Short subtext line one plus subtext line two for wrapping tests.',
-    };
+    });
     const lines = new BannerComponent(state).render(width);
     expect(lines[0]).toContain('Short');
     const subContentLines = lines.filter((line) =>
@@ -89,11 +99,10 @@ describe('BannerComponent', () => {
 
   it('shows tag only on the first wrapped line', () => {
     const width = 40;
-    const state: BannerState = {
+    const state = makeBannerState({
       tag: 'New:',
       mainText: 'This is a very long main text line that should wrap automatically.',
-      subText: null,
-    };
+    });
     const lines = new BannerComponent(state).render(width);
     const mainRows = lines.slice(0, -1);
     let tagCount = 0;
@@ -135,21 +144,21 @@ describe('BannerComponent', () => {
     const width = 40;
     const lines = new BannerComponent(banner).render(width);
     expect(lines[0]).toContain('✦');
-    expect(lines[0]).toContain("What's new:");
+    expect(lines[0]).toContain("What's new");
     for (const line of lines) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(width);
     }
   });
 
   it('does not render subtext when empty', () => {
-    const lines = new BannerComponent({ tag: 'Tip', mainText: 'Use /help', subText: null }).render(80);
+    const lines = new BannerComponent(makeBannerState({ tag: 'Tip', mainText: 'Use /help' })).render(80);
     expect(lines.length).toBe(2);
     expect(lines[0]).toContain('Use /help');
     expect(lines[1]).toBe('');
   });
 
   it('supports explicit newlines in main text', () => {
-    const lines = new BannerComponent({ tag: null, mainText: 'Line 1\nLine 2', subText: null }).render(80);
+    const lines = new BannerComponent(makeBannerState({ mainText: 'Line 1\nLine 2' })).render(80);
     expect(lines.length).toBe(3);
     expect(lines[0]).toContain('Line 1');
     expect(lines[1]).toContain('Line 2');
@@ -174,11 +183,13 @@ describe('BannerComponent', () => {
 
   it('keeps subsequent main lines indented to the main-text column and subtext aligned with the tag text', () => {
     const width = 20;
-    const lines = new BannerComponent({
-      tag: 'New:',
-      mainText: 'Line 1 with a lot of content',
-      subText: 'Sub text',
-    }).render(width);
+    const lines = new BannerComponent(
+      makeBannerState({
+        tag: 'New:',
+        mainText: 'Line 1 with a lot of content',
+        subText: 'Sub text',
+      }),
+    ).render(width);
     for (const line of lines) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(width);
     }

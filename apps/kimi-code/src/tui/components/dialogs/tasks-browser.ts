@@ -130,8 +130,13 @@ function visibleTasks(
   tasks: readonly BackgroundTaskInfo[],
   filter: TasksFilter,
 ): BackgroundTaskInfo[] {
-  if (filter === 'all') return [...tasks];
-  return tasks.filter((t) => !isTerminal(t.status));
+  // The /tasks panel is for background task management. Foreground tasks
+  // (detached === false) are shown in the main transcript instead, and only
+  // appear here after being detached via Ctrl+B. `detached !== false` keeps
+  // reconcile ghosts whose `detached` field may be undefined.
+  const backgroundOnly = tasks.filter((t) => t.detached !== false);
+  if (filter === 'all') return [...backgroundOnly];
+  return backgroundOnly.filter((t) => !isTerminal(t.status));
 }
 
 function compareTasks(a: BackgroundTaskInfo, b: BackgroundTaskInfo): number {
@@ -333,7 +338,11 @@ export class TasksBrowserApp extends Container implements Focusable {
       'textMuted',
       ` filter=${this.props.filter === 'all' ? 'ALL' : 'ACTIVE'} `,
     );
-    const counts = countByStatus(this.props.tasks);
+    // Count only the tasks actually listed (background tasks after the
+    // foreground-task filter), so a foreground-only session doesn't read
+    // "1 running / 1 total" above an empty list.
+    const visible = visibleTasks(this.props.tasks, this.props.filter);
+    const counts = countByStatus(visible);
     const countSegments: string[] = [];
     if (counts.running > 0)
       countSegments.push(currentTheme.fg('success', ` ${String(counts.running)} running `));
@@ -343,7 +352,7 @@ export class TasksBrowserApp extends Container implements Focusable {
       countSegments.push(
         currentTheme.fg('error', ` ${String(counts.terminalFailed)} interrupted `),
       );
-    const totals = currentTheme.fg('textMuted', ` ${String(this.props.tasks.length)} total `);
+    const totals = currentTheme.fg('textMuted', ` ${String(visible.length)} total `);
 
     const composed = title + filterText + countSegments.join('') + totals;
     return fitExactly(composed, width);

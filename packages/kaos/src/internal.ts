@@ -136,6 +136,7 @@ export function decodeTextWithErrors(
   data: Buffer,
   encoding: BufferEncoding,
   errors: 'strict' | 'replace' | 'ignore' = 'strict',
+  ignoreBOM: boolean = false,
 ): string {
   // Map Node's BufferEncoding names to Web TextDecoder labels where the two
   // diverge. Only UTF-family encodings participate in the strict/replace/
@@ -163,7 +164,7 @@ export function decodeTextWithErrors(
   }
 
   if (errors === 'strict') {
-    return new TextDecoder(webLabel, { fatal: true }).decode(data);
+    return new TextDecoder(webLabel, { fatal: true, ignoreBOM }).decode(data);
   }
 
   // 'ignore' must skip invalid input bytes/code units, not delete every
@@ -174,7 +175,7 @@ export function decodeTextWithErrors(
   }
 
   // 'replace' → substitute each invalid sequence with U+FFFD (default).
-  return new TextDecoder(webLabel, { fatal: false }).decode(data);
+  return new TextDecoder(webLabel, { fatal: false, ignoreBOM }).decode(data);
 }
 
 /**
@@ -267,6 +268,7 @@ export class BufferedReadable extends Readable {
     this._source.off('end', this._onEnd);
     this._source.off('close', this._onClose);
     this._source.off('error', this._onError);
+    this._source.destroy();
     callback(error);
   }
 

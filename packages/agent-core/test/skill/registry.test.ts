@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SkillRegistry } from '../../src/skill';
+import { SessionSkillRegistry } from '../../src/skill';
 import type { SkillDefinition, SkillSource } from '../../src/skill';
 
 describe('skill registry prompt rendering', () => {
@@ -47,7 +47,7 @@ describe('skill registry prompt rendering', () => {
   });
 
   it('renders a "No skills" placeholder for an empty registry', () => {
-    const registry = new SkillRegistry();
+    const registry = new SessionSkillRegistry();
 
     const rendered = registry.getKimiSkillsDescription();
 
@@ -73,7 +73,9 @@ describe('skill registry prompt rendering', () => {
   });
 
   it('end-to-end: a project skill that shadows other scopes renders once under Project', () => {
-    const registry = makeRegistry([makeSkill('foo', 'project', 'project version', '/tmp/proj/foo/SKILL.md')]);
+    const registry = makeRegistry([
+      makeSkill('foo', 'project', 'project version', '/tmp/proj/foo/SKILL.md'),
+    ]);
 
     const rendered = registry.getKimiSkillsDescription();
 
@@ -96,8 +98,41 @@ describe('skill registry prompt rendering', () => {
   });
 });
 
-function makeRegistry(skills: readonly SkillDefinition[]): SkillRegistry {
-  const registry = new SkillRegistry();
+describe('getModelSkillListing description truncation', () => {
+  it('keeps descriptions at or below the 250-char limit unchanged', () => {
+    const description = 'a'.repeat(250);
+    const rendered = makeRegistry([makeSkill('demo', 'user', description)]).getModelSkillListing();
+
+    expect(rendered).toContain(`- demo: ${description}`);
+    expect(rendered).not.toContain('…');
+  });
+
+  it('appends an ellipsis and stays within the limit when a description is truncated', () => {
+    const description = 'a'.repeat(300);
+    const rendered = makeRegistry([makeSkill('demo', 'user', description)]).getModelSkillListing();
+
+    expect(rendered).toContain(`- demo: ${'a'.repeat(249)}…`);
+    expect(rendered).not.toContain('a'.repeat(250));
+  });
+
+  it('does not split a grapheme cluster at the truncation boundary', () => {
+    // The 250-char budget cuts at code-unit 249; the emoji spans 248-249, so a
+    // naive slice would leave a dangling surrogate. Grapheme-safe truncation
+    // must drop the whole emoji instead.
+    const description = `${'a'.repeat(248)}😀${'b'.repeat(100)}`;
+    const rendered = makeRegistry([makeSkill('demo', 'user', description)]).getModelSkillListing();
+
+    expect(rendered).toContain(`- demo: ${'a'.repeat(248)}…`);
+    expect(rendered).not.toContain('😀');
+    // no lone high or low surrogate should remain in the rendered output
+    expect(rendered).not.toMatch(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+    );
+  });
+});
+
+function makeRegistry(skills: readonly SkillDefinition[]): SessionSkillRegistry {
+  const registry = new SessionSkillRegistry();
   for (const skill of skills) registry.register(skill);
   return registry;
 }

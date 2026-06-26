@@ -1,6 +1,6 @@
 ---
 name: sync-changelog
-description: Use after a release succeeds, when maintainers need to sync apps/kimi-code/CHANGELOG.md into docs/en/release-notes/changelog.md and docs/zh/release-notes/changelog.md.
+description: Use after a release succeeds, when maintainers need to sync apps/kimi-code/CHANGELOG.md into docs/en/release-notes/changelog.md and docs/zh/release-notes/changelog.md, then open a PR on a dedicated branch.
 ---
 
 # Sync Changelog
@@ -15,7 +15,7 @@ apps/kimi-code/CHANGELOG.md
 
 This file is the **only upstream source** for the documentation-site changelog. Internal package changelogs such as `packages/*/CHANGELOG.md` do not go into the documentation site.
 
-After the release flow finishes (Release PR merged → `Version Packages` completed → npm publish succeeded), maintainers manually run this skill to copy the new CLI changelog entries into the docs site and translate the English increment into Chinese.
+After the release flow finishes (Release PR merged → `Version Packages` completed → npm publish succeeded), maintainers manually run this skill to copy the new CLI changelog entries into the docs site, translate the English increment into Chinese, wait for an optional human review, then commit on a dedicated branch and open a PR.
 
 ## When To Use
 
@@ -41,28 +41,54 @@ Before editing, confirm:
 
 - The released version exists on npm (`npm view @moonshot-ai/kimi-code versions --json`) or has a matching GitHub Release tag.
 - The top of `apps/kimi-code/CHANGELOG.md` is that new version.
-- The current branch is clean, or you are on a dedicated docs-sync branch.
 
 If any condition is not true, stop and confirm with the user.
 
+Do **not** edit or commit directly on `main`. All sync work happens on a dedicated branch created in step 1.
+
 ## Workflow
 
-### 1. Find The Version Range
+### 1. Prepare Branch
+
+Start from an up-to-date default branch:
 
 ```bash
-# Upstream versions
-rg '^## ' apps/kimi-code/CHANGELOG.md | head -20
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+```
 
-# Latest version already synced into the English docs page
+Before creating the branch, peek at the version range so the branch name matches the newest version being synced:
+
+```bash
+rg '^## ' apps/kimi-code/CHANGELOG.md | head -5
 rg '^## ' docs/en/release-notes/changelog.md | head -5
 ```
+
+Name the branch after the newest upstream version that is not yet in the English docs page:
+
+```text
+docs/changelog-sync-<newest-version>
+```
+
+Example: syncing `0.2.1` only → `docs/changelog-sync-0.2.1`.
+
+```bash
+git checkout -b docs/changelog-sync-<newest-version>
+```
+
+If the branch already exists locally or on the remote, stop and confirm with the user instead of reusing it.
+
+### 2. Find The Version Range
+
+Use the same version lists from step 1. Confirm:
 
 - First sync: copy all upstream version blocks into the English page.
 - Incremental sync: copy every upstream version block above the latest version already present in the English page.
 
 Use upstream order: newest version first.
 
-### 2. Strip Decorations And Extract Entry Text
+### 3. Strip Decorations And Extract Entry Text
 
 Upstream entries look like this:
 
@@ -92,7 +118,7 @@ Upstream language rule: `gen-changesets` requires changelog entries to be Englis
 
 Public-text rule: do not copy real internal endpoints, key names, account names, or service names into docs changelogs. Replace examples with neutral placeholders such as `example.com`, `example.test`, or `YOUR_API_KEY` while preserving the user-visible meaning.
 
-### 3. Classify Entries
+### 4. Classify Entries
 
 The docs changelog uses five section types:
 
@@ -136,7 +162,7 @@ Omit empty sections. Within each section, order entries by reader value, not ups
 
 Do not reword or exaggerate entries just to make them look more important; only reorder existing entries.
 
-### 4. Write The English Page
+### 5. Write The English Page
 
 Never change the English page header:
 
@@ -177,7 +203,7 @@ Example:
 - Update the native release workflow to use current GitHub artifact actions.
 ```
 
-### 5. Translate The Increment Into Chinese
+### 6. Translate The Increment Into Chinese
 
 After updating the English page, translate only the newly added English content into `docs/zh/release-notes/changelog.md`.
 
@@ -205,7 +231,7 @@ Chinese page requirements:
 - Translate only entry body text. Do not add entries that are not present in English.
 - Follow `docs/AGENTS.md` for Chinese typography: full-width punctuation, spaces between Chinese and English, and the glossary.
 
-### 6. Verify
+### 7. Verify
 
 Review:
 
@@ -231,7 +257,36 @@ Then run the docs build:
 pnpm --filter docs run build
 ```
 
-### 7. Commit
+### 8. Human Review Checkpoint
+
+After verification passes, **before committing**, ask the user whether they want to review the sync result. Use `AskQuestion` with options such as:
+
+- **Review first** — show the diff and wait for the user to finish checking.
+- **Skip review, commit and open PR** — proceed directly to steps 9 and 10.
+
+If the user chooses review:
+
+1. Show the uncommitted diff:
+
+   ```bash
+   git diff docs/en/release-notes/changelog.md docs/zh/release-notes/changelog.md
+   ```
+
+2. Summarize synced versions, section counts, and anything that needed manual classification.
+3. Tell the user to reply when they are done reviewing, or to ask for edits.
+4. Do **not** commit, push, or open a PR until the user explicitly says review is complete, or asks to proceed.
+
+If the user requests edits during review, make the changes, re-run verification from step 7, and return to this checkpoint.
+
+### 9. Commit
+
+Only run this step when the user skipped review or confirmed review is complete.
+
+Stage only the changelog docs files:
+
+```bash
+git add docs/en/release-notes/changelog.md docs/zh/release-notes/changelog.md
+```
 
 Use a neutral docs-sync commit message:
 
@@ -241,12 +296,65 @@ docs(changelog): sync <version range> from apps/kimi-code/CHANGELOG.md
 
 Do **not** create a changeset for changelog docs sync. Docs sync does not enter the bundle.
 
+### 10. Push And Open PR
+
+Run immediately after step 9.
+
+Push the branch:
+
+```bash
+git push -u origin HEAD
+```
+
+Create the PR with `gh pr create`. Title follows Conventional Commits:
+
+```text
+docs(changelog): sync <version range> from apps/kimi-code/CHANGELOG.md
+```
+
+Fill in `.github/pull_request_template.md`. For changelog sync PRs:
+
+- **Related Issue**: write `N/A — post-release docs maintenance` (no issue required).
+- **Problem**: the docs-site changelog is behind the published CLI release(s).
+- **What changed**: list synced version(s), note English source + Chinese translation, and mention verification (`pnpm --filter docs run build`).
+- **Checklist**: check CONTRIBUTING; explain no issue, no tests, no changeset, and that `gen-docs` is not needed because this is the dedicated changelog sync flow.
+
+Example body:
+
+```markdown
+## Related Issue
+
+N/A — post-release docs maintenance
+
+## Problem
+
+The docs-site changelog has not yet been synced for `<version range>` after the npm release.
+
+## What changed
+
+- Synced `<version range>` from `apps/kimi-code/CHANGELOG.md` into `docs/en/release-notes/changelog.md`
+- Translated the new English increment into `docs/zh/release-notes/changelog.md`
+- Verified with `pnpm --filter docs run build`
+
+## Checklist
+
+- [x] I have read the CONTRIBUTING document.
+- [x] I have linked a related issue, or explained the problem above.
+- [ ] I have added tests that prove my feature works. (N/A — docs-only sync)
+- [x] Ran `gen-changesets` skill, or this PR needs no changeset. (No changeset — docs sync is out of bundle)
+- [x] Ran `gen-docs` skill, or this PR needs no doc update. (This PR is the dedicated changelog sync)
+```
+
+Return the PR URL to the user when done.
+
 ## Rules
 
 - The English docs changelog is the source of truth.
 - Never edit upstream `apps/kimi-code/CHANGELOG.md`.
 - Do not backfill unreleased `.changeset/*.md` drafts into the docs site.
 - If upstream wording is wrong, leave upstream alone and fix it in a future changeset.
+- Always sync on a `docs/changelog-sync-*` branch and open a PR; never push changelog docs sync directly to `main`.
+- Wait for the human review checkpoint before committing, pushing, or opening a PR.
 
 ## Common Mistakes
 
@@ -268,6 +376,8 @@ Do **not** create a changeset for changelog docs sync. Docs sync does not enter 
 | Putting everything under Other for convenience | Classify what can be classified first |
 | Translating tool names, command names, or config keys | Keep them as written |
 | Creating a changeset for docs sync | Do not create one |
+| Committing or pushing directly on `main` | Create `docs/changelog-sync-<version>`, commit there, then open a PR |
+| Committing or opening a PR before the user skips review or confirms review is done | Wait at the human review checkpoint |
 | Using curly quotes or half-width Chinese punctuation | Follow `docs/AGENTS.md` |
 | Omitting the release date from a version heading, or guessing it | Add ` (YYYY-MM-DD)` (full-width `（）` in Chinese) taken from the published tag |
 
@@ -279,3 +389,5 @@ Do **not** create a changeset for changelog docs sync. Docs sync does not enter 
 - English and Chinese versions, entry counts, or section sets do not match.
 - A section is empty.
 - A Chinese term is uncertain and `docs/AGENTS.md` does not answer it.
+- A `docs/changelog-sync-*` branch already exists for the same version and you cannot confirm whether it is stale.
+- The user asked to review but has not yet confirmed review is complete.

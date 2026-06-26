@@ -319,6 +319,7 @@ describe('OAuthManager.ensureFresh', () => {
   it('throws when no stored token (caller should drive /login)', async () => {
     const storage = new InMemoryStorage();
     const mgr = new OAuthManager({ config, storage, now });
+    await expect(mgr.ensureFresh()).rejects.toBeInstanceOf(OAuthUnauthorizedError);
     await expect(mgr.ensureFresh()).rejects.toThrow(/no token/i);
   });
 

@@ -1,3 +1,6 @@
+import { pathToFileURL } from 'node:url';
+
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { PlanBoxComponent } from '#/tui/components/messages/plan-box';
@@ -69,7 +72,7 @@ describe('PlanBoxComponent', () => {
   it('wraps the basename in an OSC 8 hyperlink targeting file://', () => {
     const box = new PlanBoxComponent('# Hello', theme, darkColors.success, '/tmp/plan.md');
     const top = box.render(60)[0]!;
-    expect(top).toContain(`${ESC}]8;;file:///tmp/plan.md${BEL}plan.md${ESC}]8;;${BEL}`);
+    expect(top).toContain(`${ESC}]8;;${pathToFileURL('/tmp/plan.md').href}${BEL}plan.md${ESC}]8;;${BEL}`);
     // After stripping OSC + CSI, visible width must respect the requested render width.
     expect(strip(top).length).toBeLessThanOrEqual(60);
   });
@@ -87,6 +90,21 @@ describe('PlanBoxComponent', () => {
     const top = out.split('\n')[0]!;
     expect(top).toContain(' plan ');
     expect(top).not.toContain('plan:');
+  });
+
+  it('keeps every line within narrow widths', () => {
+    const box = new PlanBoxComponent(
+      '# Hello\n\n' + 'step with a fairly long description '.repeat(4),
+      theme,
+      darkColors.success,
+      '/tmp/projects/foo/.kimi-code/plans/very-long-slug-name.md',
+    );
+
+    for (const width of [39, 14, 10, 8, 4, 1]) {
+      for (const line of box.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 
   it('renders all plan lines without a truncation footer', () => {

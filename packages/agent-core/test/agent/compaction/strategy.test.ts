@@ -5,6 +5,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { DefaultCompactionStrategy } from '../../../src/agent/compaction';
+import { estimateTokensForMessages } from '../../../src/utils/tokens';
 
 describe('DefaultCompactionStrategy', () => {
   it('keeps an oversized trailing user message as recent', () => {
@@ -94,6 +95,36 @@ describe('DefaultCompactionStrategy', () => {
     // The only valid split is before the parallel exchange (after 'old assistant'),
     // never between tool_a and tool_b — that would leave tool_b as an orphan.
     expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
+  });
+
+  it('shrinks auto compaction input to fit the model window', () => {
+    const maxSize = 1_000;
+    const strategy = testCompactionStrategy(maxSize);
+    const messages = Array.from({ length: 30 }, (_, i) =>
+      textMessage('assistant', `message ${i} ${'x'.repeat(400)}`),
+    );
+
+    const count = strategy.computeCompactCount(messages, 'auto');
+
+    expect(count).toBeGreaterThan(0);
+    expect(count).toBeLessThan(messages.length);
+    expect(estimateTokensForMessages(messages.slice(0, count))).toBeLessThanOrEqual(maxSize);
+    expect(estimateTokensForMessages(messages.slice(0, count + 1))).toBeGreaterThan(maxSize);
+  });
+
+  it('shrinks manual compaction input to fit the model window', () => {
+    const maxSize = 1_000;
+    const strategy = testCompactionStrategy(maxSize);
+    const messages = Array.from({ length: 30 }, (_, i) =>
+      textMessage('assistant', `message ${i} ${'x'.repeat(400)}`),
+    );
+
+    const count = strategy.computeCompactCount(messages, 'manual');
+
+    expect(count).toBeGreaterThan(0);
+    expect(count).toBeLessThan(messages.length);
+    expect(estimateTokensForMessages(messages.slice(0, count))).toBeLessThanOrEqual(maxSize);
+    expect(estimateTokensForMessages(messages.slice(0, count + 1))).toBeGreaterThan(maxSize);
   });
 
   it('reserves response context by default before the ratio threshold is reached', () => {

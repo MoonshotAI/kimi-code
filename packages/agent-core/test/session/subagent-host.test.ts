@@ -1242,6 +1242,9 @@ describe('Session.createAgent', () => {
             '/repo/.git',
             '/repo/packages',
             workDir,
+            `${workDir}/.agents`,
+            `${workDir}/.github`,
+            `${workDir}/.github/workflows`,
             `${workDir}/src`,
             `${workDir}/.kimi-code`,
           ].includes(path)
@@ -1255,6 +1258,8 @@ describe('Session.createAgent', () => {
             `${workDir}/AGENTS.md`,
             `${workDir}/package.json`,
             `${workDir}/src/index.ts`,
+            `${workDir}/.agents/hidden.md`,
+            `${workDir}/.github/workflows/ci.yml`,
           ].includes(path)
         ) {
           return stat('file');
@@ -1263,8 +1268,22 @@ describe('Session.createAgent', () => {
       }),
       iterdir: async function* (path: string) {
         if (path === workDir) {
+          yield `${workDir}/.agents`;
+          yield `${workDir}/.github`;
           yield `${workDir}/src`;
           yield `${workDir}/package.json`;
+          return;
+        }
+        if (path === `${workDir}/.agents`) {
+          yield `${workDir}/.agents/hidden.md`;
+          return;
+        }
+        if (path === `${workDir}/.github`) {
+          yield `${workDir}/.github/workflows`;
+          return;
+        }
+        if (path === `${workDir}/.github/workflows`) {
+          yield `${workDir}/.github/workflows/ci.yml`;
           return;
         }
         if (path === `${workDir}/src`) {
@@ -1291,9 +1310,13 @@ describe('Session.createAgent', () => {
     const created = await session.createAgent({ type: 'main' }, { profile: contextProfile() });
 
     expect(created.agent.config.systemPrompt).toContain('cwd=/repo/packages/app');
-    expect(created.agent.config.systemPrompt).toContain('listing=├── src/');
+    expect(created.agent.config.systemPrompt).toContain('listing=├── .agents/');
+    expect(created.agent.config.systemPrompt).toContain('├── .github/');
+    expect(created.agent.config.systemPrompt).toContain('├── src/');
     expect(created.agent.config.systemPrompt).toContain('│   └── index.ts');
     expect(created.agent.config.systemPrompt).toContain('└── package.json');
+    expect(created.agent.config.systemPrompt).not.toContain('hidden.md');
+    expect(created.agent.config.systemPrompt).not.toContain('ci.yml');
     expect(created.agent.config.systemPrompt).toContain('<!-- From: /repo/AGENTS.md -->');
     expect(created.agent.config.systemPrompt).toContain('root instructions');
     expect(created.agent.config.systemPrompt).toContain(
@@ -1392,6 +1415,53 @@ describe('Session.createAgent', () => {
     // The subagent should inherit the parent's current cwd, not the session default.
     expect(child.agent.config.systemPrompt).toContain(`cwd=${parentWorkDir}`);
     expect(child.agent.config.systemPrompt).not.toContain(`cwd=${sessionWorkDir}`);
+  });
+
+  it('passes session additional dirs to main and child agents', async () => {
+    const extraDir = '/extra/work';
+    const directories = new Set(['/workspace', extraDir]);
+    const files = new Map([
+      [join(extraDir, 'AGENTS.md'), 'extra agents instructions'],
+      [join(extraDir, 'extra-file.ts'), 'export const extra = 1;'],
+    ]);
+    const session = new Session({
+      id: 'test-subagent-additional-dirs',
+      kaos: createFakeKaos({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeText: vi.fn().mockResolvedValue(0),
+        stat: vi.fn(async (path: string) => {
+          if (directories.has(path)) return stat('dir');
+          if (files.has(path)) return stat('file');
+          throw new Error(`ENOENT ${path}`);
+        }),
+        iterdir: async function* (path: string) {
+          if (path === extraDir) {
+            yield join(extraDir, 'AGENTS.md');
+            yield join(extraDir, 'extra-file.ts');
+          }
+        },
+        readText: vi.fn(async (path: string) => {
+          const content = files.get(path);
+          if (content === undefined) throw new Error(`ENOENT ${path}`);
+          return content;
+        }),
+      }),
+      homedir: '/tmp/kimi-session',
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+      additionalDirs: [extraDir],
+    });
+
+    const main = await session.createMain();
+    const child = await session.createAgent(
+      { type: 'sub' },
+      { profile: contextProfile(), parentAgentId: 'main' },
+    );
+
+    expect(main.getAdditionalDirs()).toEqual([extraDir]);
+    expect(child.agent.getAdditionalDirs()).toEqual([extraDir]);
+    expect(child.agent.config.systemPrompt).toContain(`additional=### ${extraDir}`);
+    expect(child.agent.config.systemPrompt).toContain('extra-file.ts');
   });
 
   it('allocates the next unused generated agent id', async () => {
@@ -1502,6 +1572,7 @@ function contextProfile(): ResolvedAgentProfile {
         `cwd=${context.cwd}`,
         `listing=${context.cwdListing ?? ''}`,
         `agents=${context.agentsMd ?? ''}`,
+        `additional=${context.additionalDirsInfo ?? ''}`,
       ].join('\n'),
     tools: [],
   };

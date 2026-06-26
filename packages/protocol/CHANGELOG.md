@@ -1,5 +1,11 @@
 # @moonshot-ai/protocol
 
+## 0.3.0
+
+### Minor Changes
+
+- [#744](https://github.com/MoonshotAI/kimi-code/pull/744) [`18f299f`](https://github.com/MoonshotAI/kimi-code/commit/18f299fd0b266545a1f7cebae9f58b83b9d9776e) - Add support for legacy SSE MCP servers alongside stdio and streamable HTTP transports.
+
 ## 0.2.0
 
 ### Minor Changes

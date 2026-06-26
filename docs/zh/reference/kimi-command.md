@@ -16,7 +16,7 @@ kimi <subcommand> [options]
 | `--version` | `-V` | 打印版本号并退出 |
 | `--help` | `-h` | 显示帮助信息并退出 |
 | `--session [id]` | `-S` | 恢复一个会话。带 ID 时直接打开指定会话；不带 ID 时进入交互式选择器 |
-| `--continue` | `-C` | 继续当前工作目录下最近一次的会话，无需手动指定 ID |
+| `--continue` | `-c` | 继续当前工作目录下最近一次的会话，无需手动指定 ID |
 | `--model <model>` | `-m` | 为本次启动指定模型别名。省略时新会话使用配置文件中的 `default_model` |
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式不会打开 TUI |
 | `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用，默认 `text` |
@@ -24,6 +24,7 @@ kimi <subcommand> [options]
 | `--auto` | | 以 auto 权限模式启动；工具审批自动处理，Agent 不会向用户提问 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
+| `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
 
@@ -119,7 +120,7 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`server`（运行并管理本地 REST/WebSocket/web 服务）、`web`（`kimi server run --open` 的别名）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
 
 ### `kimi login`
 
@@ -138,6 +139,73 @@ kimi login
 ```sh
 kimi acp
 ```
+
+### `kimi server`
+
+运行并管理本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI。父命令拆成按需入口 (`run`) 与 OS 级生命周期管理 (`install`、`uninstall`、`start`、`stop`、`restart`、`status`)。`kimi server run` 会确保一个后台守护进程在运行、健康后返回；如需把服务挂在当前终端，请加 `--foreground`。
+
+服务运行时，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。
+
+```sh
+kimi server run                # 启动或复用一个后台守护进程
+kimi server run --foreground   # 挂在当前终端前台运行
+kimi server install            # 注册到 launchd / systemd / schtasks
+kimi server start              # 启动 OS 管理的服务
+kimi server status             # 查看安装与运行状态
+```
+
+#### `kimi server run`
+
+| 选项 | 说明 |
+| --- | --- |
+| `--port <port>` | 绑定端口；默认 `58627` |
+| `--log-level <level>` | 按所选级别开启服务日志；默认不输出 |
+| `--debug-endpoints` | 挂载 `/api/v1/debug/*` 调试路由（默认关闭） |
+| `--foreground` | 前台运行，不 spawn 后台守护进程 |
+| `--open` | 服务健康后用默认浏览器打开 web UI |
+
+`kimi server run` 只绑定本机 loopback 地址。默认会 spawn 一个后台守护进程（多次运行会复用同一个），健康后即退出；守护进程在最后一个 web 客户端断开后自行关闭。加 `--foreground` 则在当前进程中运行——保持挂在终端，在 `SIGINT` / `SIGTERM` 时干净退出。
+
+#### `kimi server install`
+
+把服务注册成 OS 管理的进程，开机自启、崩溃后自动重启。根据当前平台选择对应后端：
+
+- **macOS**：写 LaunchAgent plist 到 `~/Library/LaunchAgents/ai.moonshot.kimi-server.plist`，并通过 `launchctl bootstrap gui/<uid>` 启动。
+- **Linux**：写 `--user` systemd unit 到 `~/.config/systemd/user/kimi-server.service`，并执行 `systemctl --user enable --now`。
+- **Windows**：通过 `schtasks /Create /XML` 注册名为 `KimiServer` 的计划任务。
+
+| 选项 | 说明 |
+| --- | --- |
+| `--port <port>` | 被托管的服务绑定端口；默认 `58627` |
+| `--log-level <level>` | 写入生成 unit 的日志级别 |
+| `--force` | 已安装时强制覆盖 |
+| `--json` | 用 JSON 替代人类可读输出 |
+
+本机地址、选定的端口和日志级别会写入 `~/.kimi-code/server/install.json`，即便服务停掉 `kimi server status` 也能读到。
+
+#### 生命周期子命令
+
+| 命令 | 说明 |
+| --- | --- |
+| `kimi server uninstall` | 停止并移除 OS 服务定义。幂等。 |
+| `kimi server start` | 启动 OS 管理的服务。未安装时会报错。 |
+| `kimi server stop` | 停止 OS 管理的服务。 |
+| `kimi server restart` | 重启 OS 管理的服务。 |
+| `kimi server status` | 打印 installed / running / pid / port / log-path；`--json` 用于脚本。 |
+
+#### `kimi web`
+
+在浏览器中打开 Kimi 的图形会话界面，作为终端 TUI 的替代入口。
+
+等价于 `kimi server run --open`：在后台启动本地 Kimi 服务（若已运行则复用），用默认浏览器打开 web UI，随后命令返回，服务驻留后台。与 `kimi server run` 的唯一区别是默认启用 `--open`（自动打开浏览器），其余行为一致。
+
+```sh
+kimi web                 # 后台启动服务并打开浏览器（已运行则复用）
+kimi web --no-open       # 不打开浏览器，等同 `kimi server run`
+kimi web --foreground    # 在当前终端前台运行，同时打开浏览器
+```
+
+停止服务使用 `kimi server kill`，查看活动连接使用 `kimi server ps`；`--port`、`--log-level` 等选项与 `kimi server run` 一致。
 
 ### `kimi doctor`
 
@@ -206,13 +274,39 @@ kimi migrate
 
 ### `kimi upgrade`
 
-立即检查最新版本并展示更新提示，选择操作后退出。
+立即检查最新版本并展示更新提示，选择操作后退出。也可以使用别名 `kimi update`。
 
 ```sh
 kimi upgrade
 ```
 
 对全局 npm、pnpm、yarn、bun 以及 macOS / Linux native 安装，`kimi upgrade` 会展示更新选项；选择 `Install update now` 后运行对应的前台安装命令。当前安装方式无法自动升级时（如 Windows native 安装），改为打印手动更新命令。
+
+### `kimi vis`
+
+在浏览器中启动会话可视化工具，直观查看一次会话的全过程。命令会启动一个指向本地会话的进程内服务器，打印访问地址并打开浏览器，持续运行直到你按下 `Ctrl-C`。
+
+```sh
+kimi vis [sessionId] [options]
+```
+
+| 参数 / 选项 | 说明 |
+| --- | --- |
+| `sessionId` | 直接打开指定会话的可视化页面。省略时打开列出所有会话的首页 |
+| `--port <number>` | 绑定的端口。默认自动挑选一个空闲端口 |
+| `--host <host>` | 绑定的主机。默认 `127.0.0.1` |
+| `--no-open` | 不自动打开浏览器，仅打印访问地址 |
+
+```sh
+# 启动可视化工具并在浏览器中打开首页
+kimi vis
+
+# 直接打开指定会话
+kimi vis 01HZ...XYZ
+
+# 绑定固定主机和端口且不打开浏览器（例如在远程主机上）
+kimi vis --host 0.0.0.0 --port 8123 --no-open
+```
 
 ### `kimi provider`
 
