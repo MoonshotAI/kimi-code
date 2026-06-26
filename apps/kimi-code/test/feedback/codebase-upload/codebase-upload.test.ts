@@ -1,13 +1,19 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { scanCodebase, packageBundle, packageSessionFiles, uploadPackagedCodebase } from '../../../src/feedback/codebase-upload';
+import {
+  packageCodebase,
+  packageSessionFiles,
+  removeStaleFeedbackUploads,
+  scanCodebase,
+  uploadPackagedCodebase,
+} from '../../../src/feedback/codebase-upload';
 
 const execFileAsync = promisify(execFile);
 
@@ -209,6 +215,28 @@ describe('uploadPackagedCodebase', () => {
   });
 });
 
+describe('packageCodebase', () => {
+  it('rejects empty codebase archives instead of uploading an empty zip', async () => {
+    const archivePath = join(tmpdir(), 'feedback-empty-codebase.zip');
+    try {
+      await expect(
+        packageCodebase(
+          {
+            root: tmpdir(),
+            files: [],
+            fingerprint: 'empty-codebase',
+            usedGitIgnore: false,
+          },
+          archivePath,
+        ),
+      ).rejects.toThrow(/empty/i);
+      await expect(stat(archivePath)).rejects.toThrow();
+    } finally {
+      await rm(archivePath, { force: true });
+    }
+  });
+});
+
 describe('packageSessionFiles', () => {
   it('recursively packs every file under the session directory', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'feedback-session-'));
@@ -229,14 +257,15 @@ describe('packageSessionFiles', () => {
       await rm(archivePath, { force: true });
     }
   });
-});
 
-describe('packageBundle', () => {
-  it('rejects empty bundles instead of uploading an empty archive', async () => {
-    const archivePath = join(tmpdir(), 'feedback-empty-bundle.zip');
+  it('rejects empty session archives instead of uploading an empty zip', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'feedback-empty-session-'));
+    const archivePath = join(tmpdir(), 'feedback-empty-session.zip');
     try {
-      await expect(packageBundle({}, archivePath)).rejects.toThrow(/empty/i);
+      await expect(packageSessionFiles(sessionDir, archivePath)).rejects.toThrow(/empty/i);
+      await expect(stat(archivePath)).rejects.toThrow();
     } finally {
+      await rm(sessionDir, { recursive: true, force: true });
       await rm(archivePath, { force: true });
     }
   });
@@ -376,5 +405,35 @@ describe('scanCodebase filtering', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('removeStaleFeedbackUploads', () => {
+  it('removes archive dirs older than the cutoff and keeps recent ones', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'feedback-uploads-gc-'));
+    try {
+      const staleDir = join(root, 'stale');
+      const freshDir = join(root, 'fresh');
+      await mkdir(staleDir);
+      await mkdir(freshDir);
+      await writeFile(join(staleDir, 'repo.zip'), 'old');
+      await writeFile(join(freshDir, 'repo.zip'), 'new');
+
+      const now = Date.now();
+      const twoDaysAgoSec = (now - 2 * 24 * 60 * 60 * 1000) / 1000;
+      await utimes(staleDir, twoDaysAgoSec, twoDaysAgoSec);
+
+      await removeStaleFeedbackUploads({ now, dir: root });
+
+      await expect(stat(staleDir)).rejects.toThrow();
+      await expect(stat(freshDir)).resolves.toBeDefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('is a no-op when the cache dir does not exist', async () => {
+    const missing = join(tmpdir(), 'feedback-uploads-gc-missing-' + String(Date.now()));
+    await expect(removeStaleFeedbackUploads({ dir: missing })).resolves.toBeUndefined();
   });
 });

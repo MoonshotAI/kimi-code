@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { lstat, mkdir, readdir, stat } from 'node:fs/promises';
+import { lstat, mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 
 import { ZipFile } from 'yazl';
@@ -16,13 +16,6 @@ interface PackageEntry {
   readonly archivePath: string;
   readonly size: number;
   readonly mtimeMs: number;
-}
-
-export interface PackageBundleInput {
-  /** Codebase files are placed under the `codebase/` prefix in the zip. */
-  readonly codebase?: FeedbackCodebaseScanResult;
-  /** Session directory files are placed under the `session/` prefix in the zip. */
-  readonly sessionDir?: string;
 }
 
 /**
@@ -59,77 +52,57 @@ export async function packageSessionFiles(
   return packageEntries(entries, archivePath);
 }
 
-/**
- * Pack a merged bundle: codebase under `codebase/` and session files under
- * `session/`. Used when the user opts to upload both logs and codebase.
- */
-export async function packageBundle(
-  input: PackageBundleInput,
-  archivePath: string,
-): Promise<FeedbackCodebaseArchive> {
-  const codebaseEntries: PackageEntry[] =
-    input.codebase === undefined
-      ? []
-      : input.codebase.files.map((file) => ({
-          absolutePath: file.absolutePath,
-          archivePath: `codebase/${file.path}`,
-          size: file.size,
-          mtimeMs: file.mtimeMs,
-        }));
-  const sessionEntries: PackageEntry[] =
-    input.sessionDir === undefined
-      ? []
-      : (await collectDirFiles(input.sessionDir)).map((file) => ({
-          absolutePath: file.absolutePath,
-          archivePath: `session/${file.path}`,
-          size: file.size,
-          mtimeMs: file.mtimeMs,
-        }));
-  const entries = [...codebaseEntries, ...sessionEntries];
-  if (entries.length === 0) {
-    throw new Error('Cannot package an empty feedback bundle.');
-  }
-  return packageEntries(entries, archivePath);
-}
-
 async function packageEntries(
   entries: readonly PackageEntry[],
   archivePath: string,
 ): Promise<FeedbackCodebaseArchive> {
+  if (entries.length === 0) {
+    throw new Error('Cannot package an empty feedback archive.');
+  }
   await mkdir(dirname(archivePath), { recursive: true });
 
   const zip = new ZipFile();
   const hash = createHash('sha256');
   const output = createWriteStream(archivePath);
 
-  const done = new Promise<void>((resolvePromise, rejectPromise) => {
-    output.on('finish', resolvePromise);
-    output.on('error', rejectPromise);
-    zip.outputStream.on('error', rejectPromise);
-  });
-
-  zip.outputStream.on('data', (chunk: Buffer) => {
-    hash.update(chunk);
-  });
-  zip.outputStream.pipe(output);
-
-  for (const entry of entries) {
-    zip.addFile(entry.absolutePath, entry.archivePath, {
-      mtime: new Date(entry.mtimeMs),
-      mode: 0o100644,
+  try {
+    const done = new Promise<void>((resolvePromise, rejectPromise) => {
+      output.on('finish', resolvePromise);
+      output.on('error', rejectPromise);
+      zip.outputStream.on('error', rejectPromise);
     });
-  }
-  zip.end();
-  await done;
 
-  const archiveStat = await stat(archivePath);
-  return {
-    path: archivePath,
-    size: archiveStat.size,
-    sha256: hash.digest('hex'),
-    fingerprint: fingerprintEntries(entries),
-    fileCount: entries.length,
-  };
+    zip.outputStream.on('data', (chunk: Buffer) => {
+      hash.update(chunk);
+    });
+    zip.outputStream.pipe(output);
+
+    for (const entry of entries) {
+      zip.addFile(entry.absolutePath, entry.archivePath, {
+        mtime: new Date(entry.mtimeMs),
+        mode: 0o100644,
+      });
+    }
+    zip.end();
+    await done;
+
+    const archiveStat = await stat(archivePath);
+    return {
+      path: archivePath,
+      size: archiveStat.size,
+      sha256: hash.digest('hex'),
+      fingerprint: fingerprintEntries(entries),
+      fileCount: entries.length,
+    };
+  } catch (error) {
+    // A failed zip (e.g. a source file vanished or became unreadable between
+    // scan and packaging) would otherwise leave a partial archive behind in
+    // the cache dir. Destroy the stream so the handle is released before we
+    // remove the file, then best-effort delete it.
+    output.destroy();
+    await rm(archivePath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 async function collectDirFiles(dir: string): Promise<FeedbackCodebaseFile[]> {

@@ -24,6 +24,8 @@ export interface FeedbackCodebaseArchive {
   readonly sha256: string;
   readonly fingerprint: string;
   readonly fileCount: number;
+  /** Directory created exclusively for this archive and safe to remove after upload. */
+  readonly cleanupDir?: string;
 }
 
 export interface CreateFeedbackUploadUrlInput {

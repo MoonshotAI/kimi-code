@@ -14,7 +14,6 @@ import {
   FEEDBACK_STATUS_NOT_SIGNED_IN,
   FEEDBACK_STATUS_SUBMITTING,
   FEEDBACK_STATUS_SUCCESS,
-  FEEDBACK_STATUS_UPLOADING,
   FEEDBACK_STATUS_UPLOAD_FAILED,
   FEEDBACK_TELEMETRY_EVENT,
   feedbackIdLine,
@@ -25,19 +24,19 @@ import { isManagedUsageProvider } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { getLogDir } from '#/utils/paths';
 import {
-  packageCurrentBundle,
+  packageCurrentCodebase,
   packageCurrentSession,
   removePackagedCodebaseArchive,
   scanCodebase,
   uploadPackagedCodebase,
-  BUNDLE_ARCHIVE_FILENAME,
+  CODEBASE_ARCHIVE_FILENAME,
   SESSION_ARCHIVE_FILENAME,
   type FeedbackCodebaseArchive,
   type FeedbackCodebaseScanResult,
   type FeedbackUploadUrlApi,
 } from '../../feedback/codebase-upload';
 import { openUrl } from '#/utils/open-url';
-import { promptFeedbackAttachment, promptFeedbackInput, type FeedbackAttachmentLevel } from './prompts';
+import { promptFeedbackAttachment, promptFeedbackInput } from './prompts';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
@@ -89,52 +88,79 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     return;
   }
 
-  // Await the upload before returning so the command cannot outlive the
-  // upload task; the spinner stays up for the whole submit + upload cycle
-  // so the outcome is deterministic.
-  let uploadFailed = false;
-  if (level !== 'none') {
-    spinner.setLabel(FEEDBACK_STATUS_UPLOADING);
-    try {
-      await uploadFeedbackAttachment(host, level, res.feedbackId);
-    } catch (error) {
-      uploadFailed = true;
-      await logFeedbackUploadError(error);
-    }
+  // Stage 3: prepare and upload each requested attachment independently.
+  // Attachment failures are non-fatal because the text feedback already exists,
+  // but any requested artifact that cannot be prepared/uploaded is reported as
+  // a partial attachment failure instead of silently downgrading the request.
+  let attachmentFailed = false;
+  const api = createFeedbackUploadApi(host);
+
+  if (level === 'logs') {
+    const uploaded = await prepareAndUploadSessionArchive(host, api, res.feedbackId);
+    attachmentFailed = !uploaded;
+  } else if (level === 'logs+codebase') {
+    const [sessionDir, scan] = await Promise.all([
+      resolveCurrentSessionDir(host),
+      scanCodebaseForFeedback(host.state.appState.workDir),
+    ]);
+    const [uploadedSession, uploadedCodebase] = await Promise.all([
+      prepareAndUploadSessionArchive(host, api, res.feedbackId, sessionDir),
+      prepareAndUploadCodebaseArchive(api, res.feedbackId, scan),
+    ]);
+    attachmentFailed = !uploadedSession || !uploadedCodebase;
   }
 
   spinner.stop({ ok: true, label: FEEDBACK_STATUS_SUCCESS });
   host.showStatus(feedbackSessionLine(host.state.appState.sessionId));
   host.showStatus(feedbackIdLine(res.feedbackId));
   host.track(FEEDBACK_TELEMETRY_EVENT);
-  if (uploadFailed) {
+  if (attachmentFailed) {
     host.showStatus(FEEDBACK_STATUS_UPLOAD_FAILED);
   }
 }
 
-async function uploadFeedbackAttachment(
+async function prepareAndUploadSessionArchive(
   host: SlashCommandHost,
-  level: Exclude<FeedbackAttachmentLevel, 'none'>,
+  api: FeedbackUploadUrlApi,
   feedbackId: number,
-): Promise<void> {
-  const api = createFeedbackUploadApi(host);
+  knownSessionDir?: string,
+): Promise<boolean> {
+  const sessionDir = knownSessionDir ?? (await resolveCurrentSessionDir(host));
+  if (sessionDir === undefined) {
+    await logFeedbackUploadError(new Error('cannot locate the current session directory'));
+    return false;
+  }
+
   let archive: FeedbackCodebaseArchive | undefined;
   try {
-    if (level === 'logs') {
-      const sessionDir = await resolveCurrentSessionDir(host);
-      if (sessionDir === undefined) {
-        throw new Error('cannot locate the current session directory');
-      }
-      archive = await packageCurrentSession(sessionDir);
-      await uploadPackagedCodebase(api, archive, feedbackId, { filename: SESSION_ARCHIVE_FILENAME });
-    } else {
-      const [sessionDir, scan] = await Promise.all([
-        resolveCurrentSessionDir(host),
-        scanCodebaseForFeedback(host.state.appState.workDir),
-      ]);
-      archive = await packageCurrentBundle({ codebase: scan, sessionDir });
-      await uploadPackagedCodebase(api, archive, feedbackId, { filename: BUNDLE_ARCHIVE_FILENAME });
+    archive = await packageCurrentSession(sessionDir);
+    await uploadPackagedCodebase(api, archive, feedbackId, { filename: SESSION_ARCHIVE_FILENAME });
+    return true;
+  } catch (error) {
+    await logFeedbackUploadError(error);
+    return false;
+  } finally {
+    if (archive !== undefined) {
+      await removePackagedCodebaseArchive(archive).catch(() => {});
     }
+  }
+}
+
+async function prepareAndUploadCodebaseArchive(
+  api: FeedbackUploadUrlApi,
+  feedbackId: number,
+  scan: FeedbackCodebaseScanResult | undefined,
+): Promise<boolean> {
+  if (scan === undefined) return false;
+
+  let archive: FeedbackCodebaseArchive | undefined;
+  try {
+    archive = await packageCurrentCodebase(scan);
+    await uploadPackagedCodebase(api, archive, feedbackId, { filename: CODEBASE_ARCHIVE_FILENAME });
+    return true;
+  } catch (error) {
+    await logFeedbackUploadError(error);
+    return false;
   } finally {
     if (archive !== undefined) {
       await removePackagedCodebaseArchive(archive).catch(() => {});

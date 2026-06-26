@@ -1,10 +1,10 @@
 import { createReadStream } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 
 import { getCacheDir } from '../../utils/paths';
-import { packageBundle, packageCodebase, packageSessionFiles, type PackageBundleInput } from './packager';
+import { packageCodebase, packageSessionFiles } from './packager';
 import type {
   CompletedUploadPart,
   FeedbackCodebaseArchive,
@@ -15,9 +15,9 @@ import type {
 
 export const CODEBASE_ARCHIVE_FILENAME = 'repo.zip';
 export const SESSION_ARCHIVE_FILENAME = 'session.zip';
-export const BUNDLE_ARCHIVE_FILENAME = 'feedback-bundle.zip';
 
 const MAX_ARCHIVE_SIZE = 524_288_000; // 500 MiB, matches the backend limit.
+const STALE_ARCHIVE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours.
 const DEFAULT_CONCURRENCY = 3;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_PART_TIMEOUT_MS = 60_000;
@@ -26,25 +26,22 @@ const RETRY_BASE_DELAY_MS = 1_000;
 export async function packageCurrentCodebase(
   scan: FeedbackCodebaseScanResult,
 ): Promise<FeedbackCodebaseArchive> {
-  const archivePath = defaultArchivePath(CODEBASE_ARCHIVE_FILENAME, scan.fingerprint);
-  await mkdir(dirname(archivePath), { recursive: true });
-  return packageCodebase(scan, archivePath);
+  const archivePath = await createArchivePath(CODEBASE_ARCHIVE_FILENAME);
+  const archive = await packageCodebase(scan, archivePath);
+  return { ...archive, cleanupDir: archivePathCleanupDir(archivePath) };
 }
 
 export async function packageCurrentSession(sessionDir: string): Promise<FeedbackCodebaseArchive> {
-  const archivePath = defaultArchivePath(SESSION_ARCHIVE_FILENAME, sessionDir);
-  await mkdir(dirname(archivePath), { recursive: true });
-  return packageSessionFiles(sessionDir, archivePath);
-}
-
-export async function packageCurrentBundle(input: PackageBundleInput): Promise<FeedbackCodebaseArchive> {
-  const fingerprint = `${input.codebase?.fingerprint ?? 'none'}-${input.sessionDir ?? 'none'}`;
-  const archivePath = defaultArchivePath(BUNDLE_ARCHIVE_FILENAME, fingerprint);
-  await mkdir(dirname(archivePath), { recursive: true });
-  return packageBundle(input, archivePath);
+  const archivePath = await createArchivePath(SESSION_ARCHIVE_FILENAME);
+  const archive = await packageSessionFiles(sessionDir, archivePath);
+  return { ...archive, cleanupDir: archivePathCleanupDir(archivePath) };
 }
 
 export async function removePackagedCodebaseArchive(archive: FeedbackCodebaseArchive): Promise<void> {
+  if (archive.cleanupDir !== undefined) {
+    await rm(archive.cleanupDir, { recursive: true, force: true });
+    return;
+  }
   await rm(archive.path, { force: true });
 }
 
@@ -80,22 +77,6 @@ export async function uploadPackagedCodebase(
   });
   const completed = await uploadParts(archive.path, created.parts, archive.size, options);
   await api.completeUpload({ uploadId: created.uploadId, parts: completed });
-}
-
-export function buildFeedbackCodebaseInfo(
-  scan: FeedbackCodebaseScanResult,
-  archive: FeedbackCodebaseArchive,
-): Record<string, unknown> {
-  return {
-    codebase: {
-      file_name: CODEBASE_ARCHIVE_FILENAME,
-      file_size: archive.size,
-      sha256: archive.sha256,
-      fingerprint: archive.fingerprint,
-      file_count: archive.fileCount,
-      truncated: scan.exceedsLimit !== undefined,
-    },
-  };
 }
 
 interface PartLayout {
@@ -228,6 +209,45 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-function defaultArchivePath(filename: string, fingerprint: string): string {
-  return join(getCacheDir(), 'feedback-uploads', fingerprint.slice(0, 12), filename);
+/**
+ * Remove feedback-upload archive directories older than 24 hours. Packaging
+ * cleans up its own archive on success and on failure, but a killed process
+ * or an empty parent dir can still leave leftovers behind; this is a
+ * best-effort backstop so the cache dir does not grow without bound.
+ *
+ * `dir` is injectable for tests; production callers leave it as the default.
+ */
+export async function removeStaleFeedbackUploads(
+  options: { readonly now?: number; readonly dir?: string } = {},
+): Promise<void> {
+  const now = options.now ?? Date.now();
+  const dir = options.dir ?? join(getCacheDir(), 'feedback-uploads');
+  const entries = await readdir(dir, { withFileTypes: true }).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  });
+  if (entries === null) return;
+
+  const cutoff = now - STALE_ARCHIVE_MAX_AGE_MS;
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) return;
+      const target = join(dir, entry.name);
+      const targetStat = await stat(target).catch(() => null);
+      if (targetStat === null || targetStat.mtimeMs >= cutoff) return;
+      await rm(target, { recursive: true, force: true }).catch(() => {});
+    }),
+  );
+}
+
+async function createArchivePath(filename: string): Promise<string> {
+  await removeStaleFeedbackUploads();
+  const root = join(getCacheDir(), 'feedback-uploads');
+  await mkdir(root, { recursive: true });
+  const dir = await mkdtemp(join(root, 'upload-'));
+  return join(dir, filename);
+}
+
+function archivePathCleanupDir(archivePath: string): string {
+  return dirname(archivePath);
 }
