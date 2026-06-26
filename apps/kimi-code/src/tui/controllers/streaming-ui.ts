@@ -553,11 +553,13 @@ export class StreamingUIController {
     const { state } = this.host;
     if (state.appState.streamingPhase === 'idle') return;
     this.host.deferUserMessages = false;
-    // Last-chance compact in case no assistant text triggered it
-    this.compactThinkingIfPending();
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
     this.finalizeLiveTextBuffers('idle');
+    // After finalizeLiveTextBuffers, onThinkingEnd may have set
+    // _pendingThinkingCompact. Compact now so the thinking block
+    // reaches its final compact form before the turn ends.
+    this.compactThinkingIfPending();
     this.resetToolCallState();
     this._currentTurnId = undefined;
 
@@ -597,7 +599,11 @@ export class StreamingUIController {
   private compactThinkingIfPending(): void {
     if (!this._pendingThinkingCompact) return;
     this._pendingThinkingCompact = false;
-    for (const child of this.host.state.transcriptContainer.children) {
+    // Walk in reverse to find the most recent stable-mode ThinkingComponent,
+    // not an older one from a previous turn.
+    const children = this.host.state.transcriptContainer.children;
+    for (let i = children.length - 1; i >= 0; i--) {
+      const child = children[i];
       if (child instanceof ThinkingComponent) {
         if ((child as ThinkingComponent).compact()) {
           this.host.state.ui.requestRender();
