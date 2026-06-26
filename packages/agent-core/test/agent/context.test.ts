@@ -446,6 +446,45 @@ describe('Agent context', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('adds a system reminder when user message contains a video tag', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.mockNextResponse({ type: 'text', text: 'got it' });
+    await ctx.rpc.prompt({
+      input: [
+        { type: 'text', text: '分析这个视频 <video path="/tmp/test.mp4"></video>' },
+      ],
+    });
+
+    await ctx.untilTurnEnd();
+    const lastCall = ctx.llmCalls.at(-1);
+    expect(lastCall).toBeDefined();
+    const allText = lastCall!.history
+      .map((m) => m.content.map((c) => (c.type === 'text' ? c.text : '')).join(''))
+      .join('');
+    expect(allText).toContain('The user provided a video file');
+    expect(allText).toContain('ReadMediaFile');
+    await ctx.expectResumeMatches();
+  });
+
+  it('does not add a video reminder when user message has no video tag', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
+
+    await ctx.untilTurnEnd();
+    const lastCall = ctx.llmCalls.at(-1);
+    expect(lastCall).toBeDefined();
+    const allText = lastCall!.history
+      .map((m) => m.content.map((c) => (c.type === 'text' ? c.text : '')).join(''))
+      .join('');
+    expect(allText).not.toContain('The user provided a video file');
+    await ctx.expectResumeMatches();
+  });
+
   it('keeps system reminders separate from real user prompts', async () => {
     const ctx = testAgent();
     ctx.configure();
@@ -465,6 +504,7 @@ describe('Agent context', () => {
         user: text "<system-reminder>\\nRemember the host note.\\n</system-reminder>"
         user: text "Real user prompt"
     `);
+    await ctx.expectResumeMatches();
   });
 
   it('defers system reminders until pending tool results are recorded and resumed', async () => {
