@@ -111,6 +111,17 @@ function toggleExpand(): void {
   });
 }
 
+// Collapse the expanded editor after a successful send/steer and re-fit the
+// textarea once the 70vh min-height is gone. On image-only sends the text is
+// already empty, so the draft watcher never re-runs autosize — without this,
+// the textarea keeps the inline height measured at 70vh and the collapsed cap
+// (1/4 viewport) leaves an oversized empty box until the next keystroke.
+function collapseAndRefit(): void {
+  if (!expanded.value) return;
+  expanded.value = false;
+  void nextTick(autosize);
+}
+
 // The expand toggle is hidden at the resting height and only appears once the
 // box has grown past it (multi-line content) — keeps the empty composer
 // uncluttered. While expanded it always shows so the user can collapse back.
@@ -278,9 +289,7 @@ function handleSubmit(): void {
     if (parsed && known) {
       text.value = '';
       slashOpen.value = false;
-      // Slash commands are a successful send too — collapse the expanded editor
-      // so an empty 70vh box isn't left behind.
-      if (expanded.value) expanded.value = false;
+      collapseAndRefit();
       emit('command', parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd);
       return;
     }
@@ -298,8 +307,7 @@ function handleSubmit(): void {
   text.value = '';
   slashOpen.value = false;
   mentionOpen.value = false;
-  // A successful send collapses the expanded editor back to its resting size.
-  if (expanded.value) expanded.value = false;
+  collapseAndRefit();
   emit('submit', payload);
 }
 
@@ -325,7 +333,7 @@ function handleSteer(): void {
   text.value = '';
   slashOpen.value = false;
   mentionOpen.value = false;
-  if (expanded.value) expanded.value = false;
+  collapseAndRefit();
   emit('steer', payload);
 }
 
