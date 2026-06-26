@@ -344,7 +344,7 @@ export class FullCompaction {
         compactedCount: result.compactedCount,
         retryCount,
         round,
-        thinkingLevel: this.agent.config.thinkingLevel,
+        thinkingEffort: this.agent.config.thinkingEffort,
         ...usage,
         ...data,
       });
@@ -358,7 +358,7 @@ export class FullCompaction {
         duration: Date.now() - startedAt,
         round,
         retryCount,
-        thinkingLevel: this.agent.config.thinkingLevel,
+        thinkingEffort: this.agent.config.thinkingEffort,
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
       if (isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;

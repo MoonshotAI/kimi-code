@@ -37,6 +37,13 @@ export interface AcpModelEntry {
   readonly thinkingSupported: boolean;
   /** Declared 'always_thinking' capability — thinking cannot be turned off. */
   readonly alwaysThinking?: boolean;
+  /**
+   * The thinking level to send when the binary ACP toggle flips on: the
+   * model's declared `default_effort`, else the middle `support_efforts`
+   * entry, else `'on'` for boolean models. Mirrors agent-core's
+   * `defaultThinkingEffortFor` so the ACP on-state matches the TUI.
+   */
+  readonly defaultThinkingEffort: string;
 }
 
 /**
@@ -68,6 +75,19 @@ export function deriveAlwaysThinking(alias: ModelAlias): boolean {
 }
 
 /**
+ * The level a boolean "thinking on" toggle maps to for this model: declared
+ * `default_effort`, else the middle `support_efforts` entry, else `'on'` for
+ * boolean models (no `support_efforts`).
+ */
+export function deriveDefaultThinkingEffort(alias: ModelAlias): string {
+  const efforts = alias.supportEfforts;
+  if (efforts !== undefined && efforts.length > 0) {
+    return alias.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
+  }
+  return 'on';
+}
+
+/**
  * Project `harness.getConfig().models` into a flat catalog. Returns an
  * empty array when the harness has no models configured, when
  * `getConfig` is missing on the harness (partial test stubs), or when
@@ -94,6 +114,7 @@ export async function listModelsFromHarness(
       name: alias.displayName ?? alias.model ?? id,
       thinkingSupported: deriveThinkingSupported(alias),
       alwaysThinking: deriveAlwaysThinking(alias),
+      defaultThinkingEffort: deriveDefaultThinkingEffort(alias),
     });
   }
   return out;

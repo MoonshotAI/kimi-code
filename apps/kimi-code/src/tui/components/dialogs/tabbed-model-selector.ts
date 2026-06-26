@@ -39,7 +39,7 @@ export interface TabbedModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
   readonly currentValue: string;
   readonly selectedValue?: string;
-  readonly currentThinkingLevel: string;
+  readonly currentThinkingEffort: string;
   /** When set, the tab for this provider id is initially active instead of the
    * tab derived from `currentValue`. */
   readonly initialTabId?: string;
@@ -179,7 +179,7 @@ function makeSelector(
     models: subset,
     currentValue: opts.currentValue,
     ...(selectedValue !== undefined ? { selectedValue } : {}),
-    currentThinkingLevel: opts.currentThinkingLevel,
+    currentThinkingEffort: opts.currentThinkingEffort,
     searchable: true,
     providerSwitchHint: true,
     onSelect: opts.onSelect,

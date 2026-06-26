@@ -356,7 +356,7 @@ describe('provisionManagedKimiCodeConfig', () => {
         },
       },
       defaultModel: 'custom-default',
-      defaultThinking: false,
+      thinking: { enabled: false },
       models: {
         'custom-default': {
           provider: 'custom',
@@ -385,7 +385,7 @@ describe('provisionManagedKimiCodeConfig', () => {
     expect(result.defaultModel).toBe('custom-default');
     expect(result.defaultThinking).toBe(false);
     expect(config.defaultModel).toBe('custom-default');
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
     expect(config.models?.['kimi-code/stale']).toBeUndefined();
     expect(config.models?.['kimi-code/kimi-for-coding']?.displayName).toBe('Kimi for Coding');
   });
@@ -422,7 +422,7 @@ describe('provisionManagedKimiCodeConfig', () => {
 
     expect(result.defaultModel).toBe('kimi-code/kimi-for-coding');
     expect(result.defaultThinking).toBe(true);
-    expect(config.defaultThinking).toBe(true);
+    expect(config.thinking?.enabled).toBe(true);
   });
 
   it('preserves explicit default_thinking when preserving a custom default without capabilities', async () => {
@@ -434,7 +434,7 @@ describe('provisionManagedKimiCodeConfig', () => {
         },
       },
       defaultModel: 'custom-default',
-      defaultThinking: true,
+      thinking: { enabled: true },
       models: {
         'custom-default': {
           provider: 'custom',
@@ -457,7 +457,7 @@ describe('provisionManagedKimiCodeConfig', () => {
 
     expect(result.defaultModel).toBe('custom-default');
     expect(result.defaultThinking).toBe(true);
-    expect(config.defaultThinking).toBe(true);
+    expect(config.thinking?.enabled).toBe(true);
   });
 
   it('defaults default_thinking to false when a preserved custom default has no signal', async () => {
@@ -491,7 +491,7 @@ describe('provisionManagedKimiCodeConfig', () => {
 
     expect(result.defaultModel).toBe('custom-default');
     expect(result.defaultThinking).toBe(false);
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
   });
 
   it('does not infer default_thinking from preserved custom default capabilities', async () => {
@@ -526,7 +526,7 @@ describe('provisionManagedKimiCodeConfig', () => {
 
     expect(result.defaultModel).toBe('custom-default');
     expect(result.defaultThinking).toBe(false);
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
   });
 
   it('keeps default_thinking off even when preserved custom default has thinking capability', async () => {
@@ -561,7 +561,7 @@ describe('provisionManagedKimiCodeConfig', () => {
 
     expect(result.defaultModel).toBe('custom-default');
     expect(result.defaultThinking).toBe(false);
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
   });
 
   it('falls back to the first fetched model when the preserved default was removed', async () => {
@@ -573,7 +573,7 @@ describe('provisionManagedKimiCodeConfig', () => {
         },
       },
       defaultModel: 'kimi-code/stale',
-      defaultThinking: false,
+      thinking: { enabled: false },
       models: {
         'kimi-code/stale': {
           provider: KIMI_CODE_PROVIDER_NAME,
@@ -597,7 +597,7 @@ describe('provisionManagedKimiCodeConfig', () => {
     expect(result.defaultModel).toBe('kimi-code/kimi-for-coding');
     expect(result.defaultThinking).toBe(false);
     expect(config.defaultModel).toBe('kimi-code/kimi-for-coding');
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
   });
 
   it('removes managed provider, models, services, and default model on logout', () => {
@@ -613,7 +613,7 @@ describe('provisionManagedKimiCodeConfig', () => {
         },
       },
       defaultModel: 'kimi-code/kimi-for-coding',
-      defaultThinking: true,
+      thinking: { enabled: true },
       models: {
         'kimi-code/kimi-for-coding': {
           provider: KIMI_CODE_PROVIDER_NAME,
@@ -944,7 +944,7 @@ describe('supports_thinking_type', () => {
   });
 
   it('forces default thinking on when the selected default model is thinking-only', async () => {
-    const config: ManagedKimiConfigShape = { providers: {}, defaultThinking: false };
+    const config: ManagedKimiConfigShape = { providers: {}, thinking: { enabled: false } };
 
     const result = await provisionManagedKimiCodeConfig({
       accessToken: 'oauth-access-token',
@@ -958,7 +958,7 @@ describe('supports_thinking_type', () => {
 
     expect(result.defaultModel).toBe('kimi-code/kimi-for-coding');
     expect(result.defaultThinking).toBe(true);
-    expect(config.defaultThinking).toBe(true);
+    expect(config.thinking?.enabled).toBe(true);
   });
 
   it('forces default thinking on when preserving a thinking-only managed default', async () => {
@@ -970,7 +970,7 @@ describe('supports_thinking_type', () => {
         },
       },
       defaultModel: 'kimi-code/kimi-for-coding',
-      defaultThinking: false,
+      thinking: { enabled: false },
       models: {
         'kimi-code/kimi-for-coding': {
           provider: KIMI_CODE_PROVIDER_NAME,
@@ -994,7 +994,7 @@ describe('supports_thinking_type', () => {
 
     expect(result.defaultModel).toBe('kimi-code/kimi-for-coding');
     expect(result.defaultThinking).toBe(true);
-    expect(config.defaultThinking).toBe(true);
+    expect(config.thinking?.enabled).toBe(true);
   });
 
   it('forces default thinking off when preserving a no-thinking managed default', async () => {
@@ -1006,7 +1006,7 @@ describe('supports_thinking_type', () => {
         },
       },
       defaultModel: 'kimi-code/kimi-plain',
-      defaultThinking: true,
+      thinking: { enabled: true },
       models: {
         'kimi-code/kimi-plain': {
           provider: KIMI_CODE_PROVIDER_NAME,
@@ -1030,7 +1030,7 @@ describe('supports_thinking_type', () => {
 
     expect(result.defaultModel).toBe('kimi-code/kimi-plain');
     expect(result.defaultThinking).toBe(false);
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
   });
 
   it('keeps a preserved non-managed default thinking selection untouched', async () => {
@@ -1042,7 +1042,7 @@ describe('supports_thinking_type', () => {
         },
       },
       defaultModel: 'custom-default',
-      defaultThinking: false,
+      thinking: { enabled: false },
       models: {
         'custom-default': {
           provider: 'custom',
@@ -1065,7 +1065,7 @@ describe('supports_thinking_type', () => {
 
     expect(result.defaultModel).toBe('custom-default');
     expect(result.defaultThinking).toBe(false);
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
   });
 });
 

@@ -199,7 +199,7 @@ export class AcpSession {
      * Initial value of the adapter-side thinking-toggle state, supplied
      * by the server when creating / loading the session. Phase 15
      * introduces this so resumed sessions whose persisted
-     * `thinkingLevel` was non-`'off'` start with the toggle on.
+     * `thinkingEffort` was non-`'off'` start with the toggle on.
      * Defaults to `false` when absent.
      */
     initialThinkingEnabled?: boolean,
@@ -312,8 +312,8 @@ export class AcpSession {
    *
    * Wire semantics:
    *  - `'kimi-v2'`           → setModel('kimi-v2'); thinking state unchanged.
-   *  - `'kimi-v2,thinking'`  → setModel('kimi-v2') + setThinking('high');
-   *    thinking state flips on.
+   *  - `'kimi-v2,thinking'`  → setModel('kimi-v2') + setThinking(<default
+   *    level for that model>); thinking state flips on.
    *
    * Note the asymmetry: a bare model id does NOT turn thinking OFF.
    * That keeps the model / thinking axes orthogonal — model changes
@@ -337,7 +337,7 @@ export class AcpSession {
     const baseKey = hasSuffix ? modelId.slice(0, -suffix.length) : modelId;
     await this.session.setModel(baseKey);
     if (hasSuffix && typeof this.session.setThinking === 'function') {
-      await this.session.setThinking(THINKING_ON_LEVEL);
+      await this.session.setThinking(await this.thinkingOnEffort());
       this.currentThinkingEnabledInternal = true;
     }
     this.currentModelIdInternal = baseKey;
@@ -348,10 +348,9 @@ export class AcpSession {
    * Forward an ACP thinking-toggle change to the underlying SDK.
    *
    * Phase 15 introduces this as the new canonical channel for the
-   * thinking axis. Boolean → effort-level mapping:
-   *  - `true`  → `Session.setThinking('high')` (kimi-code's typical
-   *    default; the agent-core `resolveThinkingEffort` would also
-   *    coerce a missing config to `'high'`).
+   * thinking axis. Boolean → thinking-level mapping:
+   *  - `true`  → `Session.setThinking(level)` where `level` is the
+   *    current model's default effort (see {@link thinkingOnEffort}).
    *  - `false` → `Session.setThinking('off')`.
    *
    * Tolerant to partial-stub `Session` instances (adapter-level unit
@@ -366,31 +365,26 @@ export class AcpSession {
    * carries a fresh snapshot.
    */
   async setThinking(enabled: boolean): Promise<void> {
-    if (!enabled && (await this.currentModelAlwaysThinking())) {
-      // The current model cannot disable thinking (declared
-      // 'always_thinking'); silently ignore the off request — agent-core
-      // clamps the runtime the same way — but still refresh the snapshot
-      // so a stale client toggle snaps back to on.
-      this.currentThinkingEnabledInternal = true;
-      await this.emitConfigOptionUpdate();
-      return;
-    }
     if (typeof this.session.setThinking === 'function') {
-      await this.session.setThinking(enabled ? THINKING_ON_LEVEL : THINKING_OFF_LEVEL);
+      const level = enabled ? await this.thinkingOnEffort() : THINKING_OFF_LEVEL;
+      await this.session.setThinking(level);
     }
     this.currentThinkingEnabledInternal = enabled;
     await this.emitConfigOptionUpdate();
   }
 
   /**
-   * Whether the currently-selected model declares 'always_thinking'.
-   * Harness-less adapter unit tests resolve to false — the agent-core
-   * runtime clamp still protects the actual request in that case.
+   * The level to send when the ACP thinking toggle flips on: the current
+   * model's declared default effort (or middle `support_efforts`), falling
+   * back to `'on'` for boolean models or when the catalog is unavailable
+   * (harness-less unit tests). The `always_thinking` constraint is enforced
+   * downstream by agent-core's resolve, so this adapter no longer clamps an
+   * explicit off request here.
    */
-  private async currentModelAlwaysThinking(): Promise<boolean> {
-    if (!this.harness) return false;
+  private async thinkingOnEffort(): Promise<string> {
+    if (!this.harness) return 'on';
     const models = await listModelsFromHarness(this.harness);
-    return models.find((m) => m.id === this.currentModelIdInternal)?.alwaysThinking === true;
+    return models.find((m) => m.id === this.currentModelIdInternal)?.defaultThinkingEffort ?? 'on';
   }
 
   /**
@@ -1390,7 +1384,7 @@ function formatStatusReport(status: SessionStatus): string {
   return [
     'Session status:',
     `- Model: ${status.model ?? '(not set)'}`,
-    `- Thinking: ${status.thinkingLevel}`,
+    `- Thinking: ${status.thinkingEffort}`,
     `- Permission: ${status.permission}`,
     `- Plan mode: ${status.planMode ? 'on' : 'off'}`,
     `- Context: ${status.contextTokens.toLocaleString('en-US')} / ${maxTokens}${usage}`,
@@ -1553,16 +1547,11 @@ function authRequiredFromUnknown(err: unknown): RequestError | undefined {
 }
 
 /**
- * Effort-level strings passed to {@link Session.setThinking} when the
- * ACP `thinking` toggle flips. Phase 15 wired the ACP-side binary axis
- * (then a `SessionConfigBoolean`; Phase 16 reshaped it to a 2-entry
- * `select` `off` / `on` for Zed UI compatibility) to the SDK's
- * effort-level channel: `true` → `'high'` (kimi-code's typical default,
- * also `resolveThinkingEffort`'s fallback), `false` → `'off'`. The
- * granularity of `'low' | 'medium' | 'xhigh' | 'max'` is intentionally
- * not exposed — the ACP `thinking` axis is binary.
+ * Level string passed to {@link Session.setThinking} when the ACP `thinking`
+ * toggle flips off. The on-state level is resolved per-model via
+ * {@link AcpSession.thinkingOnEffort} (declared default effort / middle
+ * `support_efforts` / `'on'`), so only the off sentinel is a constant here.
  */
-const THINKING_ON_LEVEL = 'high';
 const THINKING_OFF_LEVEL = 'off';
 
 /**

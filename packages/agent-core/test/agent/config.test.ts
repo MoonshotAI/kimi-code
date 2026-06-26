@@ -30,7 +30,7 @@ describe('Agent config', () => {
     await expect(ctx.rpc.getConfig({})).resolves.toMatchObject({
       provider: initialProvider,
       systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
       modelCapabilities: initialCapability,
     });
 
@@ -51,13 +51,13 @@ describe('Agent config', () => {
     ctx.configureRuntimeModel(nextProvider, nextCapability);
     ctx.agent.config.update({
       systemPrompt: 'Changed profile prompt.',
-      thinkingLevel: 'high',
+      thinkingEffort: 'high',
     });
 
     await expect(ctx.rpc.getConfig({})).resolves.toMatchObject({
       provider: nextProvider,
       systemPrompt: 'Changed profile prompt.',
-      thinkingLevel: 'high',
+      thinkingEffort: 'high',
       modelCapabilities: nextCapability,
     });
     await ctx.expectResumeMatches();

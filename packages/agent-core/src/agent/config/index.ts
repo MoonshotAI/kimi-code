@@ -11,7 +11,8 @@ import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '#/config/k
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { AgentConfigData, AgentConfigUpdateData } from './types';
-import { effectiveDefaultEffort, resolveThinkingEffort, type ThinkingEffort } from './thinking';
+import { resolveThinkingEffort, type ThinkingEffort } from './thinking';
+import type { ModelAlias } from '../../config/schema';
 import type { ResolvedRuntimeProvider } from '../../session/provider-manager';
 
 export * from './types';
@@ -21,7 +22,7 @@ export class ConfigState {
   private _cwd: string;
   private _modelAlias: string | undefined;
   private _profileName: string | undefined;
-  private _thinkingLevel: ThinkingEffort = 'off';
+  private _thinkingEffort: ThinkingEffort = 'off';
   private _systemPrompt: string = '';
 
   constructor(protected readonly agent: Agent) {
@@ -50,11 +51,23 @@ export class ConfigState {
     if (changed.profileName) {
       this._profileName = changed.profileName;
     }
-    if (changed.thinkingLevel !== undefined) {
-      this._thinkingLevel = resolveThinkingEffort(
-        changed.thinkingLevel,
+    if (changed.thinkingEffort !== undefined) {
+      // Resolve through the single source of truth so the always_thinking
+      // clamp and any future normalization apply uniformly — whether the
+      // level comes from createSession, setThinking RPC, or subagent
+      // inheritance.
+      this._thinkingEffort = resolveThinkingEffort(
+        changed.thinkingEffort,
         this.agent.kimiConfig?.thinking,
-        this.modelDefaultEffort,
+        this.currentModel,
+      );
+    } else if (changed.modelAlias !== undefined) {
+      // Re-apply the always_thinking clamp against the new model so a stale
+      // 'off' cannot survive a switch onto an always-thinking alias.
+      this._thinkingEffort = resolveThinkingEffort(
+        this._thinkingEffort,
+        this.agent.kimiConfig?.thinking,
+        this.currentModel,
       );
     }
     if (changed.systemPrompt !== undefined) {
@@ -74,7 +87,7 @@ export class ConfigState {
       modelAlias: this._modelAlias,
       modelCapabilities: resolved?.modelCapabilities ?? UNKNOWN_CAPABILITY,
       profileName: this.profileName,
-      thinkingLevel: this.thinkingLevel,
+      thinkingEffort: this.thinkingEffort,
       systemPrompt: this.systemPrompt,
     };
   }
@@ -105,8 +118,8 @@ export class ConfigState {
     //   - withThinking: preserve thinking during compaction (#464)
     //   - sampling params: KIMI_MODEL_TEMPERATURE / KIMI_MODEL_TOP_P
     //   - thinking.keep: KIMI_MODEL_THINKING_KEEP (only while thinking is on)
-    const provider = createProvider(this.providerConfig).withThinking(this.thinkingLevel);
-    return applyKimiEnvThinkingKeep(applyKimiEnvSamplingParams(provider), this.thinkingLevel);
+    const provider = createProvider(this.providerConfig).withThinking(this.thinkingEffort);
+    return applyKimiEnvThinkingKeep(applyKimiEnvSamplingParams(provider), this.thinkingEffort);
   }
 
   get model(): string {
@@ -120,26 +133,16 @@ export class ConfigState {
     return this._modelAlias;
   }
 
-  get thinkingLevel(): ThinkingEffort {
-    // Always-thinking models cannot run with thinking disabled. Clamping in
-    // the getter (rather than in update()) keeps the request builder, status
-    // events, and subagent inheritance consistent, and re-applies after a
-    // later model switch onto an always-thinking alias.
-    if (this._thinkingLevel === 'off' && this.alwaysThinkingModel) {
-      return resolveThinkingEffort('on', this.agent.kimiConfig?.thinking, this.modelDefaultEffort);
-    }
-    return this._thinkingLevel;
+  get thinkingEffort(): ThinkingEffort {
+    // Already resolved (with the always_thinking clamp applied) in update();
+    // return it verbatim.
+    return this._thinkingEffort;
   }
 
-  private get alwaysThinkingModel(): boolean {
-    return this.tryResolvedProviderConfig()?.alwaysThinking === true;
-  }
-
-  private get modelDefaultEffort(): string | undefined {
+  private get currentModel(): ModelAlias | undefined {
     const alias = this._modelAlias;
     if (alias === undefined) return undefined;
-    const model = this.agent.kimiConfig?.models?.[alias];
-    return model === undefined ? undefined : effectiveDefaultEffort(model);
+    return this.agent.kimiConfig?.models?.[alias];
   }
 
   get profileName(): string | undefined {

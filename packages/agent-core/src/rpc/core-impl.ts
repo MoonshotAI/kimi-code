@@ -9,7 +9,7 @@ import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
 import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
-import { effectiveDefaultEffort, resolveThinkingLevel } from '../agent/config/thinking';
+import { resolveThinkingEffort } from '../agent/config/thinking';
 import { Agent } from '../agent';
 import {
   ensureKimiHome,
@@ -221,15 +221,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const config = this.reloadProviderManager();
     const id = options.id ?? createSessionId();
     const modelAlias = options.model ?? config.defaultModel;
-    const modelDefaultEffort = (() => {
-      if (modelAlias === undefined) return undefined;
-      const model = config.models?.[modelAlias];
-      return model === undefined ? undefined : effectiveDefaultEffort(model);
-    })();
-    const thinkingLevel = resolveThinkingLevel(options.thinking, {
-      ...config,
-      modelDefaultEffort,
-    });
+    const model = modelAlias !== undefined ? config.models?.[modelAlias] : undefined;
+    const thinkingEffort = resolveThinkingEffort(options.thinking, config.thinking, model);
     const permissionMode = options.permission ?? config.defaultPermissionMode;
     const baseMcpConfig = await resolveSessionMcpConfig({
       cwd: workDir,
@@ -314,7 +307,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       const mainAgent = await session.createMain();
       mainAgent.config.update({
         modelAlias: options.model ?? config.defaultModel,
-        thinkingLevel,
+        thinkingEffort,
       });
       if (permissionMode !== undefined) {
         mainAgent.permission.setMode(permissionMode);

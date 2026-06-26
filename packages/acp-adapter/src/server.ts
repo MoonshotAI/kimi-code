@@ -494,11 +494,11 @@ export class AcpServer implements Agent {
     // effort level reads as "thinking on" because the ACP surface only
     // exposes the boolean axis. Falls back to the harness-level default
     // when the resume state lacks the field.
-    const resumedThinkingLevel = resumeState?.agents?.['main']?.config?.thinkingLevel;
+    const resumedThinkingEffort = resumeState?.agents?.['main']?.config?.thinkingEffort;
     const currentThinkingEnabled =
-      typeof resumedThinkingLevel === 'string'
-        ? resumedThinkingLevel.trim().toLowerCase() !== 'off' &&
-          resumedThinkingLevel.trim().length > 0
+      typeof resumedThinkingEffort === 'string'
+        ? resumedThinkingEffort.trim().toLowerCase() !== 'off' &&
+          resumedThinkingEffort.trim().length > 0
         : await this.resolveCurrentThinkingEnabled();
     const acpSession = new AcpSession(
       this.conn,
@@ -826,7 +826,7 @@ export class AcpServer implements Agent {
   /**
    * Compute the initial value for the `thinking` toggle when
    * a session is created (or loaded with no persisted thinking state).
-   * Reads the harness's `getConfig().defaultThinking` flag if exposed —
+   * Reads the harness's `getConfig().thinking.enabled` flag if exposed —
    * the same source `Session.createSession` would consult for new
    * sessions. Returns `false` when the harness has no opinion, so the
    * toggle starts off.
@@ -840,13 +840,8 @@ export class AcpServer implements Agent {
     if (typeof this.harness.getConfig !== 'function') return false;
     try {
       const config = await this.harness.getConfig();
-      const declared = (config as { defaultThinking?: unknown }).defaultThinking;
-      if (typeof declared === 'boolean') return declared;
-      if (typeof declared === 'string') {
-        const normalized = declared.trim().toLowerCase();
-        return normalized !== 'off' && normalized.length > 0;
-      }
-      return false;
+      const enabled = (config as { thinking?: { enabled?: unknown } }).thinking?.enabled;
+      return typeof enabled === 'boolean' ? enabled : false;
     } catch (err) {
       log.warn('acp: harness.getConfig threw during thinking toggle resolution; defaulting to off', {
         error: err instanceof Error ? err.message : String(err),

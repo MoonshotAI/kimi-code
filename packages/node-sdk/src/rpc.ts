@@ -435,7 +435,7 @@ export abstract class SDKRpcClientBase {
       usage.byModel !== undefined || usage.total !== undefined || usage.currentTurn !== undefined;
     return {
       model: config.modelAlias ?? config.provider?.model,
-      thinkingLevel: config.thinkingLevel,
+      thinkingEffort: config.thinkingEffort,
       permission: permission.mode,
       planMode: plan !== null,
       swarmMode,

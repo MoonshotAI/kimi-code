@@ -27,11 +27,11 @@ describe('Session.setThinking', () => {
           homeDir,
           session.id,
           'config.update',
-          (event) => event['thinkingLevel'] === 'low',
+          (event) => event['thinkingEffort'] === 'low',
         ),
       ).resolves.toMatchObject({
         type: 'config.update',
-        thinkingLevel: 'low',
+        thinkingEffort: 'low',
       });
     } finally {
       await harness.close();

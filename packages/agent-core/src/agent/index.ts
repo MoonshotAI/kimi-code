@@ -295,9 +295,9 @@ export class Agent {
         this.context.undo(payload.count);
       },
       setThinking: (payload) => {
-        const wasEnabled = this.config.thinkingLevel !== 'off';
-        this.config.update({ thinkingLevel: payload.level });
-        const enabled = this.config.thinkingLevel !== 'off';
+        const wasEnabled = this.config.thinkingEffort !== 'off';
+        this.config.update({ thinkingEffort: payload.level });
+        const enabled = this.config.thinkingEffort !== 'off';
         if (enabled !== wasEnabled) {
           this.telemetry.track('thinking_toggle', { enabled });
         }

@@ -40,7 +40,7 @@ const appState: AppState = {
   sessionTitle: null,
   model: 'kimi-k2',
   permissionMode: 'manual',
-  thinking: false,
+  thinkingEffort: 'off',
   contextUsage: 0,
   contextTokens: 0,
   maxContextTokens: 0,
@@ -116,8 +116,7 @@ describe('FooterComponent', () => {
     };
     const state: AppState = {
       ...appState,
-      thinking: true,
-      thinkingLevel: 'max',
+      thinkingEffort: 'max',
       availableModels: { 'kimi-k2': effortModel },
     };
     const footer = new FooterComponent(state);
@@ -134,8 +133,7 @@ describe('FooterComponent', () => {
     };
     const state: AppState = {
       ...appState,
-      thinking: true,
-      thinkingLevel: 'high',
+      thinkingEffort: 'high',
       availableModels: { 'kimi-k2': plainModel },
     };
     const footer = new FooterComponent(state);

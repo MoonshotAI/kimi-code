@@ -337,7 +337,7 @@ describe('agent replay range build', () => {
       {
         type: 'config.update',
         cwd: process.cwd(),
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
       },
       {
         type: 'usage.record',

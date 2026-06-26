@@ -4,6 +4,7 @@ import type {
   ModelAlias,
   PermissionMode,
   Session,
+  ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
@@ -23,6 +24,7 @@ import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
 import { setExperimentalFeatures } from './experimental-flags';
 import type { SlashCommandHost } from './dispatch';
@@ -243,8 +245,7 @@ function showEffortPicker(
   model: ModelAlias,
   segments: readonly string[],
 ): void {
-  const liveLevel =
-    host.state.appState.thinkingLevel ?? (host.state.appState.thinking ? 'on' : 'off');
+  const liveLevel = host.state.appState.thinkingEffort;
   const currentValue = segments.includes(liveLevel) ? liveLevel : (segments[0] ?? 'off');
   const alias = host.state.appState.model;
   host.mountEditorReplacement(
@@ -366,8 +367,7 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
       models: host.state.appState.availableModels,
       currentValue: host.state.appState.model,
       selectedValue,
-      currentThinkingLevel:
-        host.state.appState.thinkingLevel ?? (host.state.appState.thinking ? 'on' : 'off'),
+      currentThinkingEffort: host.state.appState.thinkingEffort,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, thinking, true);
@@ -386,7 +386,7 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
 async function performModelSwitch(
   host: SlashCommandHost,
   alias: string,
-  level: string,
+  level: ThinkingEffort,
   persist: boolean,
 ): Promise<void> {
   if (host.state.appState.streamingPhase !== 'idle') {
@@ -395,8 +395,7 @@ async function performModelSwitch(
   }
 
   const prevModel = host.state.appState.model;
-  const prevLevel =
-    host.state.appState.thinkingLevel ?? (host.state.appState.thinking ? 'on' : 'off');
+  const prevLevel = host.state.appState.thinkingEffort;
   const modelChanged = alias !== prevModel;
   const levelChanged = level !== prevLevel;
   const runtimeChanged = modelChanged || levelChanged;
@@ -420,7 +419,7 @@ async function performModelSwitch(
     return;
   }
 
-  host.setAppState({ model: alias, thinking: level !== 'off', thinkingLevel: level });
+  host.setAppState({ model: alias, thinkingEffort: level });
   if (session === undefined && runtimeChanged) {
     if (alias !== prevModel) {
       host.track('model_switch', { model: alias });
@@ -458,25 +457,23 @@ async function performModelSwitch(
   host.showStatus(status, 'success');
 }
 
-async function persistModelSelection(host: SlashCommandHost, alias: string, level: string): Promise<boolean> {
+async function persistModelSelection(
+  host: SlashCommandHost,
+  alias: string,
+  level: ThinkingEffort,
+): Promise<boolean> {
   const config = await host.harness.getConfig({ reload: true });
-  const defaultThinking = level !== 'off';
-  // Only effort-capable selections carry a concrete level; for plain on/off we
-  // leave the global thinking.effort untouched so it survives across toggles.
-  const concreteEffort = level !== 'on' && level !== 'off' ? level : undefined;
-  const effortUnchanged =
-    concreteEffort === undefined || config.thinking?.effort === concreteEffort;
+  const patch = thinkingEffortToConfig(level);
   if (
     config.defaultModel === alias &&
-    config.defaultThinking === defaultThinking &&
-    effortUnchanged
+    config.thinking?.enabled === patch.enabled &&
+    config.thinking?.effort === patch.effort
   ) {
     return false;
   }
   await host.harness.setConfig({
     defaultModel: alias,
-    defaultThinking,
-    thinking: concreteEffort !== undefined ? { effort: concreteEffort } : undefined,
+    thinking: patch,
   });
   return true;
 }

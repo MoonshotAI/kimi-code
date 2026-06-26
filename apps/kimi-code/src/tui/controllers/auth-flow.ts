@@ -50,7 +50,7 @@ export class AuthFlowController {
     this.host.setAppState({
       sessionId: '',
       model: '',
-      thinking: false,
+      thinkingEffort: 'off',
       contextTokens: 0,
       maxContextTokens: 0,
       contextUsage: 0,
@@ -121,16 +121,13 @@ export class AuthFlowController {
       return;
     }
 
-    await this.activateModelAfterLogin(defaultModel, config.defaultThinking === false ? 'off' : undefined);
+    await this.activateModelAfterLogin(defaultModel, config.thinking?.enabled === false ? 'off' : undefined);
     const appStatePatch: Partial<AppState> = {
       availableModels,
       availableProviders,
       model: defaultModel,
       maxContextTokens: selected.maxContextSize,
     };
-    if (config.defaultThinking !== undefined) {
-      appStatePatch.thinking = config.defaultThinking;
-    }
     host.setAppState(appStatePatch);
   }
 
@@ -140,7 +137,7 @@ export class AuthFlowController {
       availableModels: config.models ?? {},
       availableProviders: config.providers ?? {},
       model: '',
-      thinking: false,
+      thinkingEffort: 'off',
       maxContextTokens: 0,
       contextUsage: 0,
       contextTokens: 0,

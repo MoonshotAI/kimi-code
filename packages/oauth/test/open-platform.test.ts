@@ -289,7 +289,7 @@ describe('applyOpenPlatformConfig', () => {
       displayName: 'Kimi K2',
     });
     expect(config.defaultModel).toBe('moonshot-cn/kimi-k2-0712-preview');
-    expect(config.defaultThinking).toBe(true);
+    expect(config.thinking?.enabled).toBe(true);
     expect(config.services).toBeUndefined();
   });
 

@@ -6,6 +6,8 @@ import {
   type Focusable,
 } from '@earendil-works/pi-tui';
 
+import type { ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
+
 import { currentTheme } from '#/tui/theme';
 
 import { levelLabel } from './model-selector';
@@ -13,12 +15,12 @@ import { levelLabel } from './model-selector';
 export interface EffortSelectorOptions {
   readonly title?: string;
   /** Selectable thinking levels for the current model (e.g. ["off","low","high","max"]). */
-  readonly levels: readonly string[];
+  readonly levels: readonly ThinkingEffort[];
   /** Currently active level (highlighted). */
-  readonly currentValue: string;
-  readonly onSelect: (level: string) => void;
+  readonly currentValue: ThinkingEffort;
+  readonly onSelect: (level: ThinkingEffort) => void;
   /** When provided, Alt+S applies the choice to the current session only. */
-  readonly onSessionOnlySelect?: (level: string) => void;
+  readonly onSessionOnlySelect?: (level: ThinkingEffort) => void;
   readonly onCancel: () => void;
 }
 

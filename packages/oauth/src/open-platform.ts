@@ -199,7 +199,7 @@ export function applyOpenPlatformConfig(
 
   config.models = existingModels;
   config.defaultModel = modelKey;
-  config.defaultThinking = options.thinking;
+  config.thinking = { ...config.thinking, enabled: options.thinking };
 
   return { defaultModel: modelKey, defaultThinking: options.thinking };
 }

@@ -482,7 +482,7 @@ describe('MicroCompaction', () => {
       truncatedToolResultTokensAfter: expect.any(Number),
       tokensBefore: expect.any(Number),
       tokensAfter: expect.any(Number),
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
     });
     expect(numberProperty(event, 'truncatedToolResultTokensBefore')).toBeGreaterThan(
       numberProperty(event, 'truncatedToolResultTokensAfter'),

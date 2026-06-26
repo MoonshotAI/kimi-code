@@ -152,7 +152,7 @@ describe('AcpServer session/set_config_option', () => {
     }
   });
 
-  it('configId="model" + `${id},thinking` → SDK gets stripped id + setThinking("high") + snapshot shows base id with thinking toggle on', async () => {
+  it('configId="model" + `${id},thinking` → SDK gets stripped id + setThinking(<model default>) + snapshot shows base id with thinking toggle on', async () => {
     const handle = makeFakeSession('sess-model-thinking');
     const harness = makeHarness(handle);
     const { client, capturing, sessionId } = await openSession(harness);
@@ -165,7 +165,7 @@ describe('AcpServer session/set_config_option', () => {
     });
 
     expect(handle.setModelCalls).toEqual(['kimi-coder']);
-    expect(handle.setThinkingCalls).toEqual(['high']);
+    expect(handle.setThinkingCalls).toEqual(['on']);
     const respModel = response.configOptions.find((o) => o.id === 'model');
     if (respModel && respModel.type === 'select') {
       // Snapshot now carries the bare model id; thinking lives on a separate axis.
@@ -179,7 +179,7 @@ describe('AcpServer session/set_config_option', () => {
     expect(respThinking.category).toBe('thought_level');
   });
 
-  it('configId="thinking" + "on" → setThinking("high") + 1 config_option_update with currentValue="on"', async () => {
+  it('configId="thinking" + "on" → setThinking(<model default>) + 1 config_option_update with currentValue="on"', async () => {
     const handle = makeFakeSession('sess-thinking-on');
     const harness = makeHarness(handle);
     const { client, capturing, sessionId } = await openSession(harness);
@@ -191,7 +191,7 @@ describe('AcpServer session/set_config_option', () => {
       value: 'on',
     });
 
-    expect(handle.setThinkingCalls).toEqual(['high']);
+    expect(handle.setThinkingCalls).toEqual(['on']);
     expect(handle.setModelCalls).toEqual([]);
     const updates = capturing.notifications.filter(
       (n) => n.sessionId === sessionId && n.update.sessionUpdate === 'config_option_update',
@@ -226,7 +226,7 @@ describe('AcpServer session/set_config_option', () => {
     expect(respToggle.currentValue).toBe('off');
   });
 
-  it('configId="thinking" + "off" on an always-thinking model → no SDK call, toggle stays locked on', async () => {
+  it('configId="thinking" + "off" on an always-thinking model → forwards setThinking("off"); snapshot stays locked on', async () => {
     const handle = makeFakeSession('sess-thinking-locked');
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
@@ -248,9 +248,10 @@ describe('AcpServer session/set_config_option', () => {
       value: 'off',
     });
 
-    // The off request is silently ignored — the runtime cannot disable
-    // thinking on this model, so no SDK call is forwarded.
-    expect(handle.setThinkingCalls).toEqual([]);
+    // The adapter forwards the off request to the SDK; the always_thinking
+    // constraint is enforced downstream by agent-core's resolve (which clamps
+    // it back to the model default). The snapshot still renders locked-on.
+    expect(handle.setThinkingCalls).toEqual(['off']);
     const respToggle = response.configOptions.find((o) => o.id === 'thinking');
     if (!respToggle || respToggle.type !== 'select') throw new Error('expected select toggle');
     expect(respToggle.currentValue).toBe('on');

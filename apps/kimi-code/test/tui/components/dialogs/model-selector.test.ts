@@ -50,7 +50,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2') },
       currentValue: 'kimi',
-      currentThinkingLevel: 'on',
+      currentThinkingEffort: 'on',
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -67,7 +67,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2', ['thinking']) },
       currentValue: 'kimi',
-      currentThinkingLevel: 'on',
+      currentThinkingEffort: 'on',
       onSelect,
       onCancel: vi.fn(),
     });
@@ -92,7 +92,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2', ['thinking']) },
       currentValue: 'kimi',
-      currentThinkingLevel: 'off',
+      currentThinkingEffort: 'off',
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -107,7 +107,7 @@ describe('ModelSelectorComponent', () => {
         plain: model('Kimi Plain', ['tool_use']),
       },
       currentValue: 'always',
-      currentThinkingLevel: 'off',
+      currentThinkingEffort: 'off',
       onSelect,
       onCancel: vi.fn(),
     });
@@ -138,7 +138,7 @@ describe('ModelSelectorComponent', () => {
         plain: model('Kimi Plain', ['tool_use']),
       },
       currentValue: 'always',
-      currentThinkingLevel: 'on',
+      currentThinkingEffort: 'on',
       onSelect,
       onCancel: vi.fn(),
     });
@@ -157,7 +157,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { always: model('Kimi Thinking', ['always_thinking']) },
       currentValue: 'always',
-      currentThinkingLevel: 'on',
+      currentThinkingEffort: 'on',
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -174,7 +174,7 @@ describe('ModelSelectorComponent', () => {
         thinking: model('Kimi Thinking', ['thinking']),
       },
       currentValue: 'plain',
-      currentThinkingLevel: 'off',
+      currentThinkingEffort: 'off',
       onSelect,
       onCancel: vi.fn(),
     });
@@ -196,7 +196,7 @@ describe('ModelSelectorComponent', () => {
         other: model('Kimi Other', ['thinking']),
       },
       currentValue: 'current',
-      currentThinkingLevel: 'off', // thinking deliberately off on the active model
+      currentThinkingEffort: 'off', // thinking deliberately off on the active model
       onSelect,
       onCancel: vi.fn(),
     });
@@ -215,7 +215,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { k2: model('Kimi K2'), turbo: model('Kimi Turbo') },
       currentValue: 'k2',
-      currentThinkingLevel: 'off',
+      currentThinkingEffort: 'off',
       searchable: true,
       onSelect: vi.fn(),
       onCancel,
@@ -242,7 +242,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models,
       currentValue: 'm0',
-      currentThinkingLevel: 'off',
+      currentThinkingEffort: 'off',
       searchable: true,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
@@ -259,7 +259,7 @@ describe('ModelSelectorComponent', () => {
         cjk: model('超长的中文模型名称需要被正确截断处理'),
       },
       currentValue: 'long',
-      currentThinkingLevel: 'off',
+      currentThinkingEffort: 'off',
       searchable: true,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
@@ -278,7 +278,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2', ['thinking']) },
       currentValue: 'kimi',
-      currentThinkingLevel: 'on',
+      currentThinkingEffort: 'on',
       onSelect,
       onSessionOnlySelect,
       onCancel: vi.fn(),
@@ -296,7 +296,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2') },
       currentValue: 'kimi',
-      currentThinkingLevel: 'on',
+      currentThinkingEffort: 'on',
       onSelect,
       onCancel: vi.fn(),
     });
@@ -310,7 +310,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2') },
       currentValue: 'kimi',
-      currentThinkingLevel: 'on',
+      currentThinkingEffort: 'on',
       onSelect: vi.fn(),
       onSessionOnlySelect: vi.fn(),
       onCancel: vi.fn(),
@@ -322,7 +322,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: effortModel('Kimi K2', ['low', 'high', 'max'], 'high') },
       currentValue: 'kimi',
-      currentThinkingLevel: 'high',
+      currentThinkingEffort: 'high',
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -343,7 +343,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: effortModel('Kimi K2', ['low', 'high', 'max'], 'high') },
       currentValue: 'kimi',
-      currentThinkingLevel: 'high',
+      currentThinkingEffort: 'high',
       onSelect,
       onCancel: vi.fn(),
     });
@@ -370,7 +370,7 @@ describe('ModelSelectorComponent', () => {
         kimi: effortModel('Kimi K2', ['low', 'high', 'max'], 'high', ['always_thinking']),
       },
       currentValue: 'kimi',
-      currentThinkingLevel: 'high',
+      currentThinkingEffort: 'high',
       onSelect,
       onCancel: vi.fn(),
     });
@@ -395,7 +395,7 @@ describe('ModelSelectorComponent', () => {
         other: effortModel('Kimi Other', ['low', 'high', 'max'], 'max'),
       },
       currentValue: 'current',
-      currentThinkingLevel: 'off',
+      currentThinkingEffort: 'off',
       onSelect,
       onCancel: vi.fn(),
     });
@@ -412,7 +412,7 @@ describe('ModelSelectorComponent', () => {
         other: effortModel('Kimi Other', ['low', 'medium', 'high']),
       },
       currentValue: 'current',
-      currentThinkingLevel: 'off',
+      currentThinkingEffort: 'off',
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });

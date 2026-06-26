@@ -60,7 +60,7 @@ export const ModelAliasSchema = z.object({
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;
 
 export const ThinkingConfigSchema = z.object({
-  mode: z.enum(['auto', 'on', 'off']).optional(),
+  enabled: z.boolean().optional(),
   effort: z.string().optional(),
 });
 
@@ -214,7 +214,6 @@ export const KimiConfigSchema = z.object({
   thinking: ThinkingConfigSchema.optional(),
   planMode: z.boolean().optional(),
   yolo: z.boolean().optional(),
-  defaultThinking: z.boolean().optional(),
   defaultPermissionMode: PermissionModeSchema.optional(),
   defaultPlanMode: z.boolean().optional(),
   permission: PermissionConfigSchema.optional(),
@@ -253,7 +252,6 @@ export const KimiConfigPatchSchema = z
     thinking: ThinkingConfigPatchSchema.optional(),
     planMode: z.boolean().optional(),
     yolo: z.boolean().optional(),
-    defaultThinking: z.boolean().optional(),
     defaultPermissionMode: PermissionModeSchema.optional(),
     defaultPlanMode: z.boolean().optional(),
     permission: PermissionConfigPatchSchema.optional(),

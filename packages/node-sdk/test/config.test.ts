@@ -30,7 +30,6 @@ async function makeTempDir(): Promise<string> {
 
 const COMPLETE_TOML = `
 default_model = "kimi-for-coding"
-default_thinking = false
 default_permission_mode = "auto"
 skip_afk_prompt_injection = false
 default_plan_mode = false
@@ -79,6 +78,9 @@ api_key = "sk-fetch"
 
 [notifications]
 claim_stale_after_ms = 15000
+
+[thinking]
+enabled = false
 `;
 
 describe('SDK config TOML', () => {
@@ -120,7 +122,7 @@ max_context_size = "large"
     const config = parseConfigString(COMPLETE_TOML, 'complete.toml');
 
     expect(config.defaultModel).toBe('kimi-for-coding');
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
     expect(config.defaultPermissionMode).toBe('auto');
     expect(config.defaultPlanMode).toBe(false);
     expect(config.mergeAllAvailableSkills).toBe(true);
@@ -363,7 +365,7 @@ micro_compaction = false
     const config = await harness.getConfig({ reload: true });
     expect(config.providers).toEqual({});
     expect(config.defaultModel).toBeUndefined();
-    expect(config.defaultThinking).toBeUndefined();
+    expect(config.thinking?.enabled).toBeUndefined();
   });
 
   it('reloads an active session without closing the SDK session wrapper', async () => {

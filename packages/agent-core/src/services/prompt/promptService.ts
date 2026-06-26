@@ -213,7 +213,7 @@ function isTurnEnded(e: Event): e is Event & {
 /**
  * Type guard for `agent.status.updated` agent-core events. Carries the
  * subset of fields we mirror into the per-session shadow on every live
- * change (model / permission / planMode). `thinkingLevel` is NOT on this
+ * change (model / permission / planMode). `thinkingEffort` is NOT on this
  * event — bootstrap seeds it from `getConfig` and per-request diff dispatch
  * keeps it in sync from there.
  */
@@ -609,11 +609,11 @@ export class PromptService
     ]);
     const snapshot: AgentStateSnapshot = {};
     if (config.modelAlias !== undefined) snapshot.model = config.modelAlias;
-    // `AgentConfigData.thinkingLevel` is typed `string` but in practice
+    // `AgentConfigData.thinkingEffort` is typed `string` but in practice
     // takes one of the `PromptThinking` literals (`off|low|...|max`); the
     // narrow cast lets diff comparisons stay typed without forcing
     // protocol to import from agent-core.
-    snapshot.thinking = config.thinkingLevel as PromptThinking;
+    snapshot.thinking = config.thinkingEffort as PromptThinking;
     snapshot.permissionMode = permission.mode;
     snapshot.planMode = plan !== null;
     snapshot.swarmMode = swarmMode;

@@ -17,7 +17,7 @@ const appState: AppState = {
   sessionTitle: null,
   model: 'kimi-k2',
   permissionMode: 'manual',
-  thinking: false,
+  thinkingEffort: 'off',
   contextUsage: 0,
   contextTokens: 0,
   maxContextTokens: 0,

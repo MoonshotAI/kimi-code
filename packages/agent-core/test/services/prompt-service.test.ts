@@ -119,7 +119,7 @@ interface RpcRecord {
 
 interface BridgeStubOptions {
   /** Initial bootstrap values returned by getConfig/getPermission/getPlan. */
-  config?: { modelAlias?: string; thinkingLevel?: string };
+  config?: { modelAlias?: string; thinkingEffort?: string };
   permission?: { mode: 'manual' | 'yolo' | 'auto' };
   plan?: null | { id: string; content: string; path: string };
   sessions?: SessionSummary[];
@@ -153,7 +153,7 @@ function makeBridge(
   const config = {
     cwd: '/tmp/ws',
     modelCapabilities: {} as unknown,
-    thinkingLevel: opts.config?.thinkingLevel ?? 'off',
+    thinkingEffort: opts.config?.thinkingEffort ?? 'off',
     systemPrompt: '',
     modelAlias: opts.config?.modelAlias ?? 'kimi-code/k2',
   };
@@ -1043,7 +1043,7 @@ describe('PromptService queue steer', () => {
 describe('PromptService stateless controls — bootstrap + shadow', () => {
   it('bootstraps shadow from getConfig/getPermission/getPlan on first submit', async () => {
     const { bridge, record } = makeBridge({
-      config: { modelAlias: 'kimi-code/k2', thinkingLevel: 'medium' },
+      config: { modelAlias: 'kimi-code/k2', thinkingEffort: 'medium' },
       permission: { mode: 'yolo' },
       plan: { id: 'plan_abc', content: '', path: '/tmp/p' },
     });
@@ -1162,7 +1162,7 @@ describe('PromptService stateless controls — diff dispatch', () => {
   });
 
   it('issues setThinking only when the body level differs from the shadow', async () => {
-    const { bridge, record } = makeBridge({ config: { thinkingLevel: 'off' } });
+    const { bridge, record } = makeBridge({ config: { thinkingEffort: 'off' } });
     const { bus, triggerSubscribers } = makeBus();
     const impl = newSvc(bridge, bus);
     await impl.submit(SID, mkBody({ thinking: 'off' }));
@@ -1360,7 +1360,7 @@ describe('PromptService stateless controls — dispatch log', () => {
 
   it('appends one entry per setter dispatched, in the order setModel/setThinking/setPermission/(enter|cancel)Plan', async () => {
     const { bridge } = makeBridge({
-      config: { modelAlias: 'kimi-code/k2', thinkingLevel: 'off' },
+      config: { modelAlias: 'kimi-code/k2', thinkingEffort: 'off' },
       permission: { mode: 'manual' },
       plan: null,
     });
@@ -1434,7 +1434,7 @@ describe('PromptService stateless controls — dispatch log', () => {
 
   it('bootstraps swarmMode from getSwarmMode', async () => {
     const { bridge, record } = makeBridge({
-      config: { modelAlias: 'kimi-code/k2', thinkingLevel: 'off' },
+      config: { modelAlias: 'kimi-code/k2', thinkingEffort: 'off' },
       permission: { mode: 'manual' },
       plan: null,
     });
@@ -1446,7 +1446,7 @@ describe('PromptService stateless controls — dispatch log', () => {
 
   it('dispatches enterSwarm/exitSwarm and records them in the log', async () => {
     const { bridge, record } = makeBridge({
-      config: { modelAlias: 'kimi-code/k2', thinkingLevel: 'off' },
+      config: { modelAlias: 'kimi-code/k2', thinkingEffort: 'off' },
       permission: { mode: 'manual' },
       plan: null,
     });
@@ -1487,7 +1487,7 @@ describe('PromptService stateless controls — dispatch log', () => {
 
   it('does not re-dispatch swarm_mode when it matches the shadow', async () => {
     const { bridge, record } = makeBridge({
-      config: { modelAlias: 'kimi-code/k2', thinkingLevel: 'off' },
+      config: { modelAlias: 'kimi-code/k2', thinkingEffort: 'off' },
       permission: { mode: 'manual' },
       plan: null,
     });
@@ -1517,7 +1517,7 @@ describe('PromptService stateless controls — dispatch log', () => {
 
   it('dispatches createGoal and records it in the log', async () => {
     const { bridge, record } = makeBridge({
-      config: { modelAlias: 'kimi-code/k2', thinkingLevel: 'off' },
+      config: { modelAlias: 'kimi-code/k2', thinkingEffort: 'off' },
       permission: { mode: 'manual' },
       plan: null,
     });
@@ -1537,7 +1537,7 @@ describe('PromptService stateless controls — dispatch log', () => {
 
   it('dispatches goal control actions and records them in the log', async () => {
     const { bridge, record } = makeBridge({
-      config: { modelAlias: 'kimi-code/k2', thinkingLevel: 'off' },
+      config: { modelAlias: 'kimi-code/k2', thinkingEffort: 'off' },
       permission: { mode: 'manual' },
       plan: null,
     });
@@ -1631,7 +1631,7 @@ describe('PromptService.applyAgentState (POST /sessions/{sid}/profile path)', ()
   });
 
   it('dispatches setThinking and records source="meta" when patch differs from shadow', async () => {
-    const { bridge, record } = makeBridge({ config: { thinkingLevel: 'off' } });
+    const { bridge, record } = makeBridge({ config: { thinkingEffort: 'off' } });
     const { bus } = makeBus();
     const impl = newSvc(bridge, bus);
     await impl.applyAgentState(SID, { thinking: 'high' }, 'meta');
@@ -1648,7 +1648,7 @@ describe('PromptService.applyAgentState (POST /sessions/{sid}/profile path)', ()
 
   it('subsequent content-only submit observes the shadow set via /profile and dispatches nothing', async () => {
     const { bridge, record } = makeBridge({
-      config: { thinkingLevel: 'off' },
+      config: { thinkingEffort: 'off' },
       permission: { mode: 'manual' },
     });
     const { bus } = makeBus();

@@ -5,6 +5,7 @@ import type {
   PermissionMode,
   ProviderConfig,
   PromptPart,
+  ThinkingEffort,
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -31,10 +32,10 @@ export interface AppState {
   permissionMode: PermissionMode;
   planMode: boolean;
   swarmMode: boolean;
-  thinking: boolean;
   /** Live thinking level of the active session (e.g. 'off', 'on', 'high');
-   * mirrors the runtime so the model picker can highlight the active segment. */
-  thinkingLevel?: string;
+   * mirrors the runtime. The single source of truth for the thinking state in
+   * the TUI. */
+  thinkingEffort: ThinkingEffort;
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;

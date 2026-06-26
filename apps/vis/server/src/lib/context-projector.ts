@@ -29,7 +29,7 @@ export interface ConfigSnapshot {
   cwd?: string;
   modelAlias?: string;
   profileName?: string;
-  thinkingLevel?: string;
+  thinkingEffort?: string;
   systemPrompt?: string;
 }
 
@@ -308,7 +308,7 @@ export function projectContext(
         if (upd.cwd !== undefined) config.cwd = upd.cwd;
         if (upd.modelAlias !== undefined) config.modelAlias = upd.modelAlias;
         if (upd.profileName !== undefined) config.profileName = upd.profileName;
-        if (upd.thinkingLevel !== undefined) config.thinkingLevel = upd.thinkingLevel;
+        if (upd.thinkingEffort !== undefined) config.thinkingEffort = upd.thinkingEffort;
         if (upd.systemPrompt !== undefined) config.systemPrompt = upd.systemPrompt;
         break;
       }

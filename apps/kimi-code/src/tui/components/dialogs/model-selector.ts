@@ -1,4 +1,4 @@
-import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import type { ModelAlias, ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
 import {
   Container,
   Key,
@@ -30,9 +30,10 @@ interface ModelChoice {
 
 export interface ModelSelection {
   readonly alias: string;
-  /** Chosen thinking level: 'off', 'on' (legacy boolean models), or a concrete
-   * effort such as 'low' / 'high' / 'max'. */
-  readonly thinking: string;
+  /** Chosen thinking level: 'off', or a concrete effort such as 'low' /
+   * 'high' / 'max'. Boolean 'on' is normalized to the model's default level
+   * before the selection is committed (see commitLevel). */
+  readonly thinking: ThinkingEffort;
 }
 
 export function modelDisplayName(alias: string, model: ModelAlias | undefined): string {
@@ -60,7 +61,7 @@ export interface ModelSelectorOptions {
   readonly selectedValue?: string;
   /** Live thinking level of the currently active model (e.g. 'off', 'on',
    * 'high'). Used to highlight the active segment for the current model. */
-  readonly currentThinkingLevel: string;
+  readonly currentThinkingEffort: ThinkingEffort;
   /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
   readonly searchable?: boolean;
   /** Items per page. Lists longer than this paginate (PgUp/PgDn). */
@@ -117,6 +118,31 @@ export function levelLabel(level: string): string {
 }
 
 /**
+ * Default thinking level for a model: declared `default_effort`, else the
+ * middle `support_efforts` entry, else `'on'` for boolean models, `'off'` when
+ * thinking is unsupported.
+ */
+function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
+  if (thinkingAvailability(model) === 'unsupported') return 'off';
+  const efforts = effortsOf(model);
+  if (efforts.length > 0) {
+    return model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
+  }
+  return 'on';
+}
+
+/**
+ * Normalize a draft level before committing a selection. A boolean `'on'`
+ * never leaks past the UI boundary — it becomes the model's default level
+ * (a concrete effort for effort-capable models, `'on'` only for genuine
+ * boolean models).
+ */
+function commitLevel(choice: ModelChoice, draft: ThinkingEffort): ThinkingEffort {
+  if (draft === 'on') return defaultThinkingEffortFor(choice.model);
+  return draft;
+}
+
+/**
  * Flat, searchable single-list model picker.
  *
  * One navigation axis: ↑/↓ move the cursor (PgUp/PgDn page), typing fuzzy-filters
@@ -154,7 +180,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
   private draftFor(choice: ModelChoice): string {
     const override = this.thinkingOverrides.get(choice.alias);
     if (override !== undefined) return override;
-    if (choice.alias === this.opts.currentValue) return this.opts.currentThinkingLevel;
+    if (choice.alias === this.opts.currentValue) return this.opts.currentThinkingEffort;
     const efforts = effortsOf(choice.model);
     if (efforts.length > 0) {
       // A model with support_efforts but no default_effort defaults to the
@@ -216,7 +242,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (selected === undefined) return;
       this.opts.onSelect({
         alias: selected.alias,
-        thinking: this.effectiveLevel(selected),
+        thinking: commitLevel(selected, this.effectiveLevel(selected)),
       });
       return;
     }
@@ -226,7 +252,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (selected === undefined) return;
       this.opts.onSessionOnlySelect({
         alias: selected.alias,
-        thinking: this.effectiveLevel(selected),
+        thinking: commitLevel(selected, this.effectiveLevel(selected)),
       });
     }
   }

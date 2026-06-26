@@ -752,6 +752,20 @@ describe('KimiChatProvider', () => {
       expect(body['extra_body']).toBeUndefined();
     });
 
+    it('effort-capable model omits effort for levels not declared in support_efforts', async () => {
+      // 'xhigh' / 'on' / 'foo' are not in ['low', 'high', 'max'], so the
+      // provider normalizes them to "enabled, no effort" instead of rejecting.
+      for (const level of ['xhigh', 'on', 'foo']) {
+        const provider = createProvider(false, ['low', 'high', 'max']).withThinking(level);
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+        ];
+        const body = await captureRequestBody(provider, '', [], history);
+        expect(body['reasoning_effort']).toBeUndefined();
+        expect(body['thinking']).toEqual({ type: 'enabled' });
+      }
+    });
+
     it('thinkingEffort property reflects the configured effort', () => {
       const provider = createProvider(false, ['low', 'high', 'max']);
       expect(provider.thinkingEffort).toBeNull();
@@ -762,10 +776,12 @@ describe('KimiChatProvider', () => {
       expect(provider.withThinking('off').thinkingEffort).toBe('off');
     });
 
-    it('thinkingEffort falls back to high for an enabled non-effort model', () => {
+    it('thinkingEffort returns on for an enabled boolean (non-effort) model', () => {
       const provider = createProvider();
-      expect(provider.withThinking('high').thinkingEffort).toBe('high');
-      expect(provider.withThinking('low').thinkingEffort).toBe('high');
+      // A model without support_efforts carries no effort on the wire, so the
+      // getter falls back to 'on' regardless of the requested level.
+      expect(provider.withThinking('high').thinkingEffort).toBe('on');
+      expect(provider.withThinking('on').thinkingEffort).toBe('on');
     });
 
     it('replaces the previous thinking effort when called again', () => {

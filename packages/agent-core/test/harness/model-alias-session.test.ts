@@ -33,6 +33,9 @@ base_url = "https://api.example/v1"
 provider = "managed:kimi-code"
 model = "kimi-for-coding"
 max_context_size = 1000000
+capabilities = ["thinking"]
+support_efforts = ["low", "medium", "high"]
+default_effort = "high"
 `;
 
 describe('HarnessAPI session model aliases', () => {

@@ -4,6 +4,7 @@ import {
   type Catalog,
   type CatalogModel,
   type ModelAlias,
+  type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 import { capabilitiesForModel } from '@moonshot-ai/kimi-code-oauth';
 import type {
@@ -124,7 +125,7 @@ export async function promptModelSelectionForOpenPlatform(
   host: SlashCommandHost,
   models: ManagedKimiCodeModelInfo[],
   platform: OpenPlatformDefinition,
-): Promise<{ model: ManagedKimiCodeModelInfo; thinking: boolean } | undefined> {
+): Promise<{ model: ManagedKimiCodeModelInfo; thinking: ThinkingEffort } | undefined> {
   const modelDict: Record<string, ModelAlias> = {};
   for (const m of models) {
     modelDict[`${platform.id}/${m.id}`] = {
@@ -145,7 +146,7 @@ export async function promptModelSelectionForCatalog(
   host: SlashCommandHost,
   providerId: string,
   models: CatalogModel[],
-): Promise<{ model: CatalogModel; thinking: boolean } | undefined> {
+): Promise<{ model: CatalogModel; thinking: ThinkingEffort } | undefined> {
   const modelDict: Record<string, ModelAlias> = {};
   for (const m of models) {
     modelDict[`${providerId}/${m.id}`] = catalogModelToAlias(providerId, m);
@@ -159,7 +160,7 @@ export async function promptModelSelectionForCatalog(
 export function runModelSelector(
   host: SlashCommandHost,
   modelDict: Record<string, ModelAlias>,
-): Promise<{ alias: string; thinking: boolean } | undefined> {
+): Promise<{ alias: string; thinking: ThinkingEffort } | undefined> {
   return new Promise((resolve) => {
     const firstAlias = Object.keys(modelDict)[0] ?? '';
     const caps = modelDict[firstAlias]?.capabilities ?? [];
@@ -167,11 +168,11 @@ export function runModelSelector(
     const selector = new ModelSelectorComponent({
       models: modelDict,
       currentValue: firstAlias,
-      currentThinkingLevel: initialThinking ? 'on' : 'off',
+      currentThinkingEffort: initialThinking ? 'on' : 'off',
       searchable: true,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
-        resolve({ alias, thinking: thinking !== 'off' });
+        resolve({ alias, thinking });
       },
       onCancel: () => {
         host.restoreEditor();

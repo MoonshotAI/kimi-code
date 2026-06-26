@@ -30,6 +30,7 @@ import type {
   SessionSummary,
   SessionUsage,
   SkillSummary,
+  ThinkingEffort,
   Unsubscribe,
 } from '#/types';
 
@@ -168,7 +169,7 @@ export class Session {
     await this.rpc.setModel({ sessionId: this.id, model: normalized });
   }
 
-  async setThinking(level: string): Promise<void> {
+  async setThinking(level: ThinkingEffort): Promise<void> {
     this.ensureOpen();
     const normalized = normalizeRequiredString(
       level,

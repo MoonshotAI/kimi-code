@@ -13,7 +13,7 @@ function fakeInitialAppState(): AppState {
     permissionMode: 'manual',
     planMode: false,
     swarmMode: false,
-    thinking: false,
+    thinkingEffort: 'off',
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 0,

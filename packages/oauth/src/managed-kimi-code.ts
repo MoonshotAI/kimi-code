@@ -138,11 +138,17 @@ export interface ManagedKimiServicesConfig {
   readonly [key: string]: unknown;
 }
 
+export interface ManagedKimiThinkingShape {
+  enabled?: boolean | undefined;
+  effort?: string | undefined;
+  [key: string]: unknown;
+}
+
 export interface ManagedKimiConfigShape {
   providers: Record<string, ManagedKimiProviderConfig | Record<string, unknown>>;
   models?: Record<string, ManagedKimiModelAlias | Record<string, unknown>> | undefined;
   defaultModel?: string | undefined;
-  defaultThinking?: boolean | undefined;
+  thinking?: ManagedKimiThinkingShape | undefined;
   services?: ManagedKimiServicesConfig | undefined;
   [key: string]: unknown;
 }
@@ -511,7 +517,7 @@ export function applyManagedKimiCodeConfig(
 
   config.models = existingModels;
   config.defaultModel = selectedDefault.modelKey;
-  config.defaultThinking = selectedDefault.thinking;
+  config.thinking = { ...config.thinking, enabled: selectedDefault.thinking };
   config.services = {
     moonshotSearch: {
       baseUrl: `${baseUrl}/search`,
@@ -560,7 +566,7 @@ export function applyManagedKimiCodeLogoutConfig(config: ManagedKimiConfigShape)
   }
 }
 
-// The server's three-state declaration overrides any stale defaultThinking
+// The server's three-state declaration overrides any stale thinking.enabled
 // being preserved from an earlier config: an always-thinking model ('only')
 // must never end up with thinking off, and a non-thinking model ('no') must
 // never end up with thinking on.
@@ -600,14 +606,14 @@ function selectDefaultModel(
       modelKey: currentDefault,
       thinking: forcedThinking(
         preservedModel,
-        config.defaultThinking ?? preservedModel?.supportsReasoning ?? false,
+        config.thinking?.enabled ?? preservedModel?.supportsReasoning ?? false,
       ),
     };
   }
 
   return {
     modelKey: managedModelKey(firstModel.id),
-    thinking: forcedThinking(firstModel, config.defaultThinking ?? firstModel.supportsReasoning),
+    thinking: forcedThinking(firstModel, config.thinking?.enabled ?? firstModel.supportsReasoning),
   };
 }
 

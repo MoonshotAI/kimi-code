@@ -262,16 +262,17 @@ export class FooterComponent implements Component {
 
     const model = modelDisplayName(state);
     if (model) {
-      const effort = state.thinkingLevel;
+      const level = state.thinkingEffort;
       const currentModel = state.availableModels[state.model];
       // Only effort-capable models (those declaring support_efforts) show the
       // concrete level; legacy boolean models keep the plain "thinking" suffix.
       const hasEfforts = (currentModel?.supportEfforts?.length ?? 0) > 0;
-      const thinkingLabel = state.thinking
-        ? hasEfforts && effort !== undefined && effort !== 'on'
-          ? ` thinking:${effort}`
-          : ' thinking'
-        : '';
+      const thinkingLabel =
+        level !== 'off'
+          ? hasEfforts && level !== 'on'
+            ? ` thinking:${level}`
+            : ' thinking'
+          : '';
       const modelLabel = `${model}${thinkingLabel}`;
       let renderedModelLabel = chalk.hex(colors.text)(modelLabel);
       if (isRainbowDancing()) {

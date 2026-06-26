@@ -263,7 +263,7 @@ describe('AcpServer session/unstable_setSessionModel', () => {
     }
   });
 
-  it('splits a `,thinking` suffix into a bare setModel + setThinking("high") call; snapshot model carries the base id', async () => {
+  it('splits a `,thinking` suffix into a bare setModel + setThinking(<model default>) call; snapshot model carries the base id', async () => {
     const handle = makeFakeSession('sess-model-thinking');
     // This test needs a thinking-supported catalog row so the snapshot
     // includes the toggle (otherwise it would be omitted).
@@ -285,11 +285,12 @@ describe('AcpServer session/unstable_setSessionModel', () => {
       modelId: 'kimi-v2-something,thinking',
     });
 
-    // SDK receives the bare model key for setModel and `'high'` for
-    // setThinking — Phase 15 routes thinking through the dedicated SDK
-    // channel instead of dropping the suffix on the floor.
+    // SDK receives the bare model key for setModel and the model's default
+    // thinking level for setThinking — Phase 15 routes thinking through the
+    // dedicated SDK channel instead of dropping the suffix on the floor. This
+    // fixture declares no support_efforts, so the default level is 'on'.
     expect(handle.setModelCalls).toEqual(['kimi-v2-something']);
-    expect(handle.setThinkingCalls).toEqual(['high']);
+    expect(handle.setThinkingCalls).toEqual(['on']);
 
     // The model picker's currentValue is the bare id — thinking lives
     // on its own boolean toggle, and the snapshot reflects that.

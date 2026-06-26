@@ -35,7 +35,7 @@ function make(): {
       gpt: model('GPT-5', 'openai'),
     },
     currentValue: 'k2',
-    currentThinkingLevel: 'off',
+    currentThinkingEffort: 'off',
     onSelect,
     onCancel: vi.fn(),
   });

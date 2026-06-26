@@ -88,7 +88,7 @@ describe('applyCatalogProvider', () => {
       maxContextSize: 200000,
     });
     expect(config.defaultModel).toBe('anthropic/m1');
-    expect(config.defaultThinking).toBe(true);
+    expect(config.thinking?.enabled).toBe(true);
   });
 
   it('writes interleaved reasoning key from a catalog-selected model alias', () => {
