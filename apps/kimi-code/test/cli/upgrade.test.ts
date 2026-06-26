@@ -41,6 +41,7 @@ function createDeps(overrides: {
   readonly manifest?: UpdateCache['manifest'];
   readonly source?: InstallSource;
   readonly isInteractive?: boolean;
+  readonly skipPrompt?: boolean;
   readonly promptForInstallChoice?: () => Promise<InstallPromptChoiceValue>;
   readonly installUpdate?: (source: InstallSource, version: string, platform: NodeJS.Platform) => Promise<void>;
 } = {}) {
@@ -69,6 +70,7 @@ function createDeps(overrides: {
     },
     platform: 'darwin' as NodeJS.Platform,
     isInteractive: overrides.isInteractive ?? true,
+    skipPrompt: overrides.skipPrompt ?? false,
   };
 }
 
@@ -168,6 +170,36 @@ describe('handleUpgrade', () => {
     expect(deps.track).toHaveBeenCalledWith('upgrade_command_manual_command', expect.objectContaining({
       target_version: '0.5.0',
       source: 'npm-global',
+    }));
+    expect(stdout.join('')).toContain('To update manually, run: npm install -g @moonshot-ai/kimi-code@0.5.0');
+  });
+
+  it('installs without prompting when --yes is used and the source supports auto install', async () => {
+    const { stdout, writable } = captureOutput();
+    const deps = createDeps({ latest: '0.5.0', source: 'npm-global', skipPrompt: true });
+
+    await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(0);
+
+    expect(deps.promptForInstallChoice).not.toHaveBeenCalled();
+    expect(deps.installUpdate).toHaveBeenCalledWith('npm-global', '0.5.0', 'darwin');
+    expect(deps.track).toHaveBeenCalledWith('upgrade_command_succeeded', expect.objectContaining({
+      target_version: '0.5.0',
+      source: 'npm-global',
+    }));
+    expect(stdout.join('')).toContain('Updated @moonshot-ai/kimi-code to 0.5.0');
+  });
+
+  it('prints the manual update command with --yes when the source cannot be auto-installed', async () => {
+    const { stdout, writable } = captureOutput();
+    const deps = createDeps({ latest: '0.5.0', source: 'unsupported', skipPrompt: true });
+
+    await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(0);
+
+    expect(deps.promptForInstallChoice).not.toHaveBeenCalled();
+    expect(deps.installUpdate).not.toHaveBeenCalled();
+    expect(deps.track).toHaveBeenCalledWith('upgrade_command_manual_command', expect.objectContaining({
+      target_version: '0.5.0',
+      source: 'unsupported',
     }));
     expect(stdout.join('')).toContain('To update manually, run: npm install -g @moonshot-ai/kimi-code@0.5.0');
   });

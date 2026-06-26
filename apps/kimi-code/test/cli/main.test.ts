@@ -317,6 +317,7 @@ describe('main entry command handling', () => {
     expect(mocks.handleUpgrade).toHaveBeenCalledWith('0.0.1-alpha.2', {
       track: mocks.track,
       logger: mocks.log,
+      skipPrompt: false,
     });
     expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({ timeoutMs: 3000 });
     expect(mocks.harness.close).toHaveBeenCalledTimes(1);

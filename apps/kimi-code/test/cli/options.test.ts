@@ -347,6 +347,31 @@ describe('CLI options parsing', () => {
       expect(upgradeCalls).toBe(1);
     });
 
+    it('routes upgrade --yes without calling the main action', () => {
+      let yesValue: boolean | undefined;
+
+      const program = createProgram(
+        '0.0.0',
+        () => {
+          throw new Error('main action should not run');
+        },
+        () => {},
+        () => {},
+        (yes) => {
+          yesValue = yes;
+        },
+      );
+      program.exitOverride();
+      program.configureOutput({
+        writeOut: () => {},
+        writeErr: () => {},
+      });
+
+      program.parse(['node', 'kimi', 'upgrade', '--yes']);
+
+      expect(yesValue).toBe(true);
+    });
+
     it('routes update alias to the upgrade handler', () => {
       let upgradeCalls = 0;
       const program = createProgram(

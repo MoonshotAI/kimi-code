@@ -44,6 +44,7 @@ export interface UpgradeDeps {
   readonly stdout: WritableLike;
   readonly stderr: WritableLike;
   readonly isInteractive: boolean;
+  readonly skipPrompt: boolean;
   readonly track: UpgradeTrack;
   readonly logger: UpgradeLogger;
 }
@@ -86,7 +87,9 @@ export async function handleUpgrade(
 
   const source = await deps.detectInstallSource().catch(() => 'unsupported' as const);
   const installCommand = installCommandFor(source, target.version, deps.platform);
-  if (!canAutoInstall(source, deps.platform) || !deps.isInteractive) {
+  const autoInstallable = canAutoInstall(source, deps.platform);
+
+  if (!autoInstallable || (!deps.isInteractive && !deps.skipPrompt)) {
     trackUpgradeEvent(deps.track, 'upgrade_command_manual_command', {
       current_version: currentVersion,
       target_version: target.version,
@@ -101,42 +104,46 @@ export async function handleUpgrade(
     return 0;
   }
 
-  trackUpgradeEvent(deps.track, 'upgrade_command_prompted', {
-    current_version: currentVersion,
-    target_version: target.version,
-    source,
-  });
-  logUpgradeInfo(deps.logger, 'manual upgrade prompted', {
-    currentVersion,
-    targetVersion: target.version,
-    source,
-  });
-  const choice = await deps.promptForInstallChoice({
-    currentVersion,
-    target,
-    installCommand,
-    installSource: source,
-  });
-  if (choice === 'skip') {
-    trackUpgradeEvent(deps.track, 'upgrade_command_skipped', {
+  if (!deps.skipPrompt) {
+    trackUpgradeEvent(deps.track, 'upgrade_command_prompted', {
       current_version: currentVersion,
       target_version: target.version,
       source,
     });
-    logUpgradeInfo(deps.logger, 'manual upgrade skipped', {
+    logUpgradeInfo(deps.logger, 'manual upgrade prompted', {
       currentVersion,
       targetVersion: target.version,
       source,
     });
-    return 0;
+    const choice = await deps.promptForInstallChoice({
+      currentVersion,
+      target,
+      installCommand,
+      installSource: source,
+    });
+    if (choice === 'skip') {
+      trackUpgradeEvent(deps.track, 'upgrade_command_skipped', {
+        current_version: currentVersion,
+        target_version: target.version,
+        source,
+      });
+      logUpgradeInfo(deps.logger, 'manual upgrade skipped', {
+        currentVersion,
+        targetVersion: target.version,
+        source,
+      });
+      return 0;
+    }
   }
 
   try {
-    trackUpgradeEvent(deps.track, 'upgrade_command_install_selected', {
-      current_version: currentVersion,
-      target_version: target.version,
-      source,
-    });
+    if (!deps.skipPrompt) {
+      trackUpgradeEvent(deps.track, 'upgrade_command_install_selected', {
+        current_version: currentVersion,
+        target_version: target.version,
+        source,
+      });
+    }
     await deps.installUpdate(source, target.version, deps.platform);
     trackUpgradeEvent(deps.track, 'upgrade_command_succeeded', {
       current_version: currentVersion,
@@ -182,6 +189,7 @@ function createDefaultUpgradeDeps(overrides: Partial<UpgradeDeps>): UpgradeDeps 
     stdout: overrides.stdout ?? process.stdout,
     stderr: overrides.stderr ?? process.stderr,
     isInteractive: overrides.isInteractive ?? (process.stdin.isTTY && process.stdout.isTTY),
+    skipPrompt: overrides.skipPrompt ?? false,
     track: overrides.track ?? trackTelemetry,
     logger: overrides.logger ?? log,
   };

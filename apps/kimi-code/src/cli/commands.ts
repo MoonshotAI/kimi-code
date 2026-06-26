@@ -14,7 +14,7 @@ import { registerVisCommand } from './sub/vis';
 export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = () => void;
 export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
-export type UpgradeCommandHandler = () => void | Promise<void>;
+export type UpgradeCommandHandler = (yes?: boolean) => void | Promise<void>;
 
 export function createProgram(
   version: string,
@@ -98,8 +98,10 @@ export function createProgram(
     .command('upgrade')
     .alias('update')
     .description('Upgrade Kimi Code to the latest version.')
-    .action(async () => {
-      await onUpgrade();
+    .option('--yes', 'Install the update without prompting.', false)
+    .action(async function () {
+      const opts = this.optsWithGlobals<{ readonly yes?: boolean }>();
+      await onUpgrade(opts.yes === true);
     });
 
   program
