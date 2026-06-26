@@ -66,6 +66,7 @@ export interface IConfigService {
   get<T = unknown>(domain: string): T;
   getAll(): ResolvedConfig;
   set(domain: string, patch: unknown): Promise<void>;
+  replace(domain: string, value: unknown): Promise<void>;
   reload(): Promise<void>;
   diagnostics(): readonly ConfigDiagnostic[];
 }

@@ -2,11 +2,11 @@
  * `auth` domain (cross-cutting) — `IOAuthService` / `IAuthSummaryService`
  * implementation.
  *
- * Owns the device-code OAuth flows and the auth readiness view; reads the
- * `providers` config section through `config`, locates token storage through
- * `environment`, reports through `telemetry`, and delegates token storage,
- * refresh, and the device-code protocol to `@moonshot-ai/kimi-code-oauth`.
- * Bound at Core scope.
+ * Owns the device-code OAuth flows and the auth readiness view; reads and
+ * writes provider configuration through `provider`, locates token storage
+ * through `environment`, reports through `telemetry`, logs through `log`, and
+ * delegates token storage, refresh, and the device-code protocol to
+ * `@moonshot-ai/kimi-code-oauth`. Bound at Core scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -15,6 +15,7 @@ import {
   DeviceCodeTimeoutError,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
+  kimiCodeBaseUrl,
   OAuthError,
   type BearerTokenProvider,
   type DeviceAuthorization,
@@ -31,17 +32,12 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, KimiError } from '#/errors';
-import { IConfigRegistry, IConfigService } from '#/config/config';
 import { IEnvironmentService } from '#/environment/environment';
+import { ILogService } from '#/log/log';
+import { IProviderService, type OAuthRef } from '#/provider/provider';
 import { ITelemetryService } from '#/telemetry/telemetry';
 
 import { type AuthStatus, IAuthSummaryService, IOAuthService } from './auth';
-import {
-  type OAuthRef,
-  type ProvidersSection,
-  PROVIDERS_SECTION,
-  ProvidersSectionSchema,
-} from './oauthSchemas';
 
 const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
 const DEFAULT_DEVICE_EXPIRES_IN_SEC = 15 * 60;
@@ -65,21 +61,14 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   constructor(
     toolkit: KimiOAuthToolkit | undefined = undefined,
-    @IConfigRegistry registry: IConfigRegistry,
-    @IConfigService private readonly config: IConfigService,
+    @IProviderService private readonly providerService: IProviderService,
     @IEnvironmentService env: IEnvironmentService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
-    registry.registerSection(PROVIDERS_SECTION, ProvidersSectionSchema, { defaultValue: {} });
     this.toolkit = toolkit ?? new KimiOAuthToolkit({ homeDir: env.homeDir });
-    this._register(
-      config.onDidChange((e) => {
-        if (e.domain === PROVIDERS_SECTION) {
-          this.invalidateFlows();
-        }
-      }),
-    );
+    this._register(providerService.onDidChange(() => this.invalidateFlows()));
   }
 
   async startLogin(provider = KIMI_CODE_PROVIDER_NAME): Promise<OAuthFlowStart> {
@@ -158,8 +147,7 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   private readOAuthRef(provider: string): OAuthRef {
-    const providers = this.config.get<ProvidersSection>(PROVIDERS_SECTION);
-    const oauth = providers?.[provider]?.oauth;
+    const oauth = this.providerService.get(provider)?.oauth;
     if (oauth === undefined) {
       throw new KimiError(
         ErrorCodes.AUTH_LOGIN_REQUIRED,
@@ -170,8 +158,7 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   private readOAuthRefOptional(provider: string): OAuthRef | undefined {
-    const providers = this.config.get<ProvidersSection>(PROVIDERS_SECTION);
-    return providers?.[provider]?.oauth;
+    return this.providerService.get(provider)?.oauth;
   }
 
   private abortExisting(provider: string): void {
@@ -197,6 +184,25 @@ export class OAuthService extends Disposable implements IOAuthService {
   private handleSuccess(state: FlowState): void {
     if (state.status !== 'pending') return;
     this.setTerminal(state, 'authenticated');
+    void this.provisionProvider(state.provider, this.readOAuthRefOptional(state.provider));
+  }
+
+  private async provisionProvider(provider: string, oauthRef: OAuthRef | undefined): Promise<void> {
+    if (oauthRef === undefined) return;
+    const baseUrl = this.providerService.get(provider)?.baseUrl ?? kimiCodeBaseUrl();
+    try {
+      await this.providerService.set(provider, {
+        type: 'kimi',
+        baseUrl,
+        apiKey: '',
+        oauth: oauthRef,
+      });
+    } catch (error) {
+      this.log.warn('oauth provider provisioning failed', {
+        provider,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private handleFailure(state: FlowState, err: unknown): void {
@@ -246,12 +252,12 @@ export class AuthSummaryService implements IAuthSummaryService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IConfigService private readonly config: IConfigService,
+    @IProviderService private readonly providerService: IProviderService,
     @IOAuthService private readonly oauth: IOAuthService,
   ) {}
 
   async summarize(): Promise<readonly AuthStatus[]> {
-    const providers = this.config.get<ProvidersSection>(PROVIDERS_SECTION) ?? {};
+    const providers = this.providerService.list();
     const statuses: AuthStatus[] = [];
     for (const [name, providerConfig] of Object.entries(providers)) {
       if (providerConfig.oauth !== undefined) {

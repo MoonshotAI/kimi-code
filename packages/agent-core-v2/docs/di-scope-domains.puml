@@ -27,6 +27,7 @@ package "Core scope (process-wide)" #EAF3FB {
   rectangle "<b>workspace</b>\n<size:9><i>Core</i></size>\n  IWorkspaceRegistry\n  IWorkspaceFsService" as workspace #D6EAF8
   rectangle "<b>filestore</b>\n<size:9><i>Core</i></size>\n  IFileStore" as filestore #D6EAF8
   rectangle "<b>auth</b>\n<size:9><i>Core</i></size>\n  IOAuthService\n  IAuthSummaryService" as auth #D6EAF8
+  rectangle "<b>provider</b>\n<size:9><i>Core</i></size>\n  IProviderService" as provider #D6EAF8
   rectangle "<b>flag</b>\n<size:9><i>Core</i></size>\n  IFlagService" as flag #D6EAF8
 }
 
@@ -104,9 +105,11 @@ gateway --> event #34495E
 workspace --> kaos #34495E
 workspace --> log #34495E
 filestore --> kaos #34495E
-auth --> config #34495E
+auth --> provider #34495E
 auth --> environment #34495E
 auth --> telemetry #34495E
+auth --> log #34495E
+provider --> config #34495E
 flag --> config #34495E
 config --> environment #34495E
 config --> log #34495E

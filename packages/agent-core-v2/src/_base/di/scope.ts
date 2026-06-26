@@ -13,7 +13,6 @@ export enum LifecycleScope {
   Core = 0,
   Session = 1,
   Agent = 2,
-  Turn = 3,
 }
 
 export interface ScopedEntry {

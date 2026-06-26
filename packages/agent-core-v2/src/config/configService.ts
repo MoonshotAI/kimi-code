@@ -122,6 +122,18 @@ export class ConfigService extends Disposable implements IConfigService {
     this.applyRaw(nextRaw, 'set', [domain]);
   }
 
+  async replace(domain: string, value: unknown): Promise<void> {
+    const validated = this.registry.validate(domain, value);
+    const nextRaw: ResolvedConfig = {
+      ...this.raw,
+      [domain]: validated,
+    };
+
+    await mkdir(dirname(this.env.configPath), { recursive: true, mode: 0o700 });
+    await atomicWrite(this.env.configPath, `${stringifyToml(nextRaw)}\n`);
+    this.applyRaw(nextRaw, 'set', [domain]);
+  }
+
   reload(): Promise<void> {
     this.loadSync('reload');
     return Promise.resolve();
@@ -154,7 +166,9 @@ export class ConfigService extends Disposable implements IConfigService {
       const parsed = parseToml(text);
       return isPlainObject(parsed) ? parsed : {};
     } catch (error) {
-      throw new Error(`Failed to parse ${this.env.configPath}: ${describeUnknownError(error)}`);
+      throw new Error(`Failed to parse ${this.env.configPath}: ${describeUnknownError(error)}`, {
+        cause: error,
+      });
     }
   }
 

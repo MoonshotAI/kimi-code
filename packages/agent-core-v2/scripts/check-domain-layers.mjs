@@ -45,6 +45,7 @@ const DOMAIN_LAYER = new Map([
   ['kaos', 1],
   ['kosong', 1],
   ['hooks', 1],
+  ['storage', 1],
   // L2 — data & cross-cutting capabilities
   ['records', 2],
   ['wireRecord', 2],
@@ -55,6 +56,7 @@ const DOMAIN_LAYER = new Map([
   ['workspace', 2],
   ['filestore', 2],
   ['auth', 2],
+  ['provider', 2],
   ['sessionMetaStore', 2],
   ['sessionStore', 2],
   ['eventBus', 2],

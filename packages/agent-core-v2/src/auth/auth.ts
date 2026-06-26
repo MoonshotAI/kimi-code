@@ -18,7 +18,7 @@ import type {
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-import type { OAuthRef } from './oauthSchemas';
+import type { OAuthRef } from '#/provider/provider';
 
 export interface AuthStatus {
   readonly loggedIn: boolean;
