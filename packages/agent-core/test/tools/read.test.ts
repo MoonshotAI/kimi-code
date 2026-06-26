@@ -756,6 +756,22 @@ describe('ReadTool', () => {
     expect(result.output).not.toContain(`${String(MAX_LINES + 1)}\tline ${String(MAX_LINES + 1)}`);
   });
 
+  it('caps tail reads at MAX_LINES', async () => {
+    const content = Array.from({ length: MAX_LINES + 5 }, (_, i) => `line ${String(i + 1)}`).join(
+      '\n',
+    );
+    const tool = toolWithContent(content);
+
+    const result = await executeTool(
+      tool,
+      context({ path: '/tmp/tail-big.txt', line_offset: -MAX_LINES }),
+    );
+
+    expect(result.output).toContain(`Max ${String(MAX_LINES)} lines reached.`);
+    expect(result.output).toContain(`${String(MAX_LINES + 5)}\tline ${String(MAX_LINES + 5)}`);
+    expect(result.output).toMatch(/^6\tline 6/);
+  });
+
   it('tail byte truncation keeps the newest lines closest to EOF', async () => {
     const numLines = Math.floor(MAX_BYTES / 1001) + 20;
     const content = Array.from({ length: numLines }, (_, i) => {
