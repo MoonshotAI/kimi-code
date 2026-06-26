@@ -55,6 +55,7 @@ export interface SessionReplayHost {
   setAppState(patch: Partial<AppState>): void;
   showError(msg: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
+  mergeAllTurnSteps(): void;
 }
 
 export class SessionReplayRenderer {
@@ -72,6 +73,7 @@ export class SessionReplayRenderer {
       this.hydrateSnapshot(main);
       this.renderRecords(main);
       this.applyTerminalBackgroundAgentStatuses(main);
+      this.host.mergeAllTurnSteps();
       return true;
     } catch (error) {
       const message = formatErrorMessage(error);
