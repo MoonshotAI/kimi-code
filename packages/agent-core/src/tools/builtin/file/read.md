@@ -8,7 +8,7 @@ When you need several files, prefer to read them in parallel: emit multiple `Rea
 - Returns up to {{ MAX_LINES }} lines or {{ MAX_BYTES_KB }} KB per call, whichever comes first; lines longer than {{ MAX_LINE_LENGTH }} chars are truncated mid-line.
 - Page larger files with `line_offset` (1-based start line) and `n_lines`. Omit `n_lines` to read up to the {{ MAX_LINES }}-line cap.
 - Sensitive files (`.env` files, credential stores, SSH keys, and similar secrets) are refused to protect secrets; do not attempt to read them.
-- Only UTF-8 text files can be read. Non-UTF-8 encodings, binary files, and files containing NUL bytes are refused; use `ReadMediaFile` for images or video, and Bash or an MCP tool for other binary formats.
+- Only UTF-8 text files can be read. Non-UTF-8 encodings, binary files, and files containing NUL bytes are refused; use `ReadMediaFile` for images or video, and Bash or an MCP tool for other binary formats. Do not use Python scripts to extract frames from video files — use `ReadMediaFile` instead.
 - Negative line_offset reads from the end of the file (for example, -100 reads the last 100 lines); the absolute value cannot exceed {{ MAX_LINES }}.
 - Output format: `<line-number>\t<content>` per line.
 - A `<system>...</system>` status block is appended after the file content; it summarizes how much was read (line and byte counts, truncation, line-ending notes) and is not part of the file itself.
