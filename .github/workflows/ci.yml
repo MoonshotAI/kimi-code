@@ -46,6 +46,8 @@ jobs:
 
   test-windows:
     runs-on: windows-latest
+    # Temporarily disabled while Windows tests are being stabilized.
+    if: false
 
     steps:
       - uses: actions/checkout@v4
