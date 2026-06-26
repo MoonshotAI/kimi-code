@@ -1079,8 +1079,11 @@ describe('support_efforts / default_effort', () => {
             context_length: 262144,
             supports_reasoning: true,
             supports_thinking_type: 'both',
-            support_efforts: ['low', 'high', 'max'],
-            default_effort: 'high',
+            think_efforts: {
+              support: true,
+              valid_efforts: ['low', 'high', 'max'],
+              default_effort: 'high',
+            },
             display_name: 'Kimi For Coding',
           },
           {
@@ -1088,7 +1091,7 @@ describe('support_efforts / default_effort', () => {
             id: 'kimi-plain',
             context_length: 128000,
             supports_reasoning: true,
-            support_efforts: ['low', '', 42],
+            think_efforts: { support: true, valid_efforts: ['low', '', 42] },
           },
         ],
       }),
@@ -1096,7 +1099,7 @@ describe('support_efforts / default_effort', () => {
     );
   }
 
-  it('parses support_efforts and default_effort from the models endpoint', async () => {
+  it('parses think_efforts from the models endpoint', async () => {
     const models = await fetchManagedKimiCodeModels({
       accessToken: 'oauth-access-token',
       fetchImpl: vi.fn(async () => makeEffortModelsResponse()) as unknown as typeof fetch,
@@ -1104,12 +1107,12 @@ describe('support_efforts / default_effort', () => {
 
     expect(models[0]?.supportEfforts).toEqual(['low', 'high', 'max']);
     expect(models[0]?.defaultEffort).toBe('high');
-    // The empty string and number are filtered out of support_efforts.
+    // The empty string and number are filtered out of valid_efforts.
     expect(models[1]?.supportEfforts).toEqual(['low']);
     expect(models[1]?.defaultEffort).toBeUndefined();
   });
 
-  it('prefers the nested think_efforts object over the legacy flat fields', async () => {
+  it('ignores think_efforts entirely when support is not true', async () => {
     const models = await fetchManagedKimiCodeModels({
       accessToken: 'oauth-access-token',
       fetchImpl: async () =>
@@ -1117,21 +1120,14 @@ describe('support_efforts / default_effort', () => {
           JSON.stringify({
             data: [
               {
-                id: 'kimi-for-coding',
-                context_length: 262144,
+                id: 'kimi-no-effort',
+                context_length: 128000,
                 supports_reasoning: true,
-                supports_thinking_type: 'only',
-                // New nested format (matches the production /models response).
                 think_efforts: {
-                  support: true,
-                  valid_efforts: ['low', 'high', 'max'],
+                  support: false,
+                  valid_efforts: ['low', 'high'],
                   default_effort: 'high',
                 },
-                // Legacy flat fields present but different — must be ignored
-                // in favor of think_efforts.
-                support_efforts: ['low'],
-                default_effort: 'low',
-                display_name: 'Kimi For Coding',
               },
             ],
           }),
@@ -1139,11 +1135,15 @@ describe('support_efforts / default_effort', () => {
         ),
     });
 
-    expect(models[0]?.supportEfforts).toEqual(['low', 'high', 'max']);
-    expect(models[0]?.defaultEffort).toBe('high');
+    // support !== true gates the whole object — valid_efforts / default_effort
+    // are ignored.
+    expect(models[0]?.supportEfforts).toBeUndefined();
+    expect(models[0]?.defaultEffort).toBeUndefined();
   });
 
-  it('falls back to legacy flat fields when think_efforts is absent', async () => {
+  it('ignores legacy flat fields even when think_efforts is absent', async () => {
+    // The legacy support_efforts / default_effort fields are no longer read;
+    // only the nested think_efforts object is honored.
     const models = await fetchManagedKimiCodeModels({
       accessToken: 'oauth-access-token',
       fetchImpl: async () =>
@@ -1163,8 +1163,8 @@ describe('support_efforts / default_effort', () => {
         ),
     });
 
-    expect(models[0]?.supportEfforts).toEqual(['low', 'high']);
-    expect(models[0]?.defaultEffort).toBe('high');
+    expect(models[0]?.supportEfforts).toBeUndefined();
+    expect(models[0]?.defaultEffort).toBeUndefined();
   });
 
   it('writes supportEfforts and defaultEffort onto the provisioned model entry', async () => {

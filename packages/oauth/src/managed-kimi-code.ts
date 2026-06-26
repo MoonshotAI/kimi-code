@@ -385,15 +385,9 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
   const supportsToolUse = Object.hasOwn(item, 'supports_tool_use')
     ? Boolean(item['supports_tool_use'])
     : true;
-  // Prefer the nested `think_efforts` object; fall back to the legacy flat
-  // `support_efforts` / `default_effort` fields for older servers.
+  // Effort levels come from the nested `think_efforts` object
+  // ({ support, valid_efforts, default_effort }) returned by /models.
   const thinkEfforts = parseThinkEfforts(item['think_efforts']);
-  const rawDefaultEffort = item['default_effort'];
-  const defaultEffort =
-    thinkEfforts.defaultEffort ??
-    (typeof rawDefaultEffort === 'string' && rawDefaultEffort.length > 0
-      ? rawDefaultEffort
-      : undefined);
   return {
     id: item['id'],
     contextLength,
@@ -402,8 +396,8 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
     supportsVideoIn: Boolean(item['supports_video_in']),
     supportsToolUse,
     supportsThinkingType: parseSupportsThinkingType(item['supports_thinking_type']),
-    supportEfforts: thinkEfforts.supportEfforts ?? parseStringArray(item['support_efforts']),
-    defaultEffort,
+    supportEfforts: thinkEfforts.supportEfforts,
+    defaultEffort: thinkEfforts.defaultEffort,
     displayName: normalizedDisplayName,
   };
 }
@@ -435,6 +429,11 @@ export function parseThinkEfforts(value: unknown): {
     return { supportEfforts: undefined, defaultEffort: undefined };
   }
   const record = value as Record<string, unknown>;
+  // `support` gates the whole object: when it is not true, ignore
+  // valid_efforts / default_effort entirely.
+  if (record['support'] !== true) {
+    return { supportEfforts: undefined, defaultEffort: undefined };
+  }
   const rawDefault = record['default_effort'];
   return {
     supportEfforts: parseStringArray(record['valid_efforts']),
