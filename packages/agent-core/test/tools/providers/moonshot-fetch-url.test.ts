@@ -5,9 +5,11 @@ import { MoonshotFetchURLProvider } from '../../../src/tools/providers/moonshot-
 
 function fakeFetcher(
   content = '',
-  kind: 'passthrough' | 'extracted' = 'extracted',
+  kind: 'passthrough' | 'extracted' | 'image' = 'extracted',
+  image?: { mimeType: string; base64: string },
+  page?: { url: string; mime?: string; title?: string },
 ): UrlFetcher {
-  return { fetch: vi.fn().mockResolvedValue({ content, kind }) };
+  return { fetch: vi.fn().mockResolvedValue({ content, kind, image, page }) };
 }
 
 describe('MoonshotFetchURLProvider auth fallback', () => {

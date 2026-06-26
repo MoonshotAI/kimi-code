@@ -12,6 +12,7 @@ import {
   HttpFetchError,
   type UrlFetcher,
 } from '../../src/tools/builtin/web/fetch-url';
+import type { ImageURLPart } from '@moonshot-ai/kosong';
 import { MoonshotFetchURLProvider } from '../../src/tools/providers/moonshot-fetch-url';
 import { toolContentString } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
@@ -20,9 +21,11 @@ const signal = new AbortController().signal;
 
 function fakeFetcher(
   content = '',
-  kind: 'passthrough' | 'extracted' = 'extracted',
+  kind: 'passthrough' | 'extracted' | 'image' = 'extracted',
+  image?: { mimeType: string; base64: string },
+  page?: { url: string; mime?: string; title?: string },
 ): UrlFetcher {
-  return { fetch: vi.fn().mockResolvedValue({ content, kind }) };
+  return { fetch: vi.fn().mockResolvedValue({ content, kind, image, page }) };
 }
 
 describe('FetchURLTool', () => {
@@ -117,6 +120,32 @@ describe('FetchURLTool', () => {
     expect(content).toContain('Output is truncated');
     expect(content.length).toBeLessThan(60_000);
     expect((result as { message?: string }).message).toContain('Output is truncated');
+  });
+
+  it('returns image_url content part for image kind results', async () => {
+    const fetcher: UrlFetcher = {
+      fetch: vi.fn().mockResolvedValue({
+        content: '',
+        kind: 'image',
+        image: { mimeType: 'image/png', base64: 'base64data' },
+        page: { url: 'https://example.com/image.png', mime: 'image/png' },
+      }),
+    };
+    const tool = new FetchURLTool(fetcher);
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_img',
+      args: { url: 'https://example.com/image.png' },
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    const output = (result as { output?: ContentPart[] }).output;
+    expect(output).toHaveLength(1);
+    expect(output?.[0]?.type).toBe('image_url');
+    expect((output?.[0] as ImageURLPart).imageUrl.url).toBe('data:image/png;base64,base64data');
+    expect((output?.[0] as ImageURLPart).imageUrl.id).toBe('https://example.com/image.png');
   });
 
   it('returns error when fetcher throws', async () => {

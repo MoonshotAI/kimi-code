@@ -17,7 +17,30 @@ function htmlResponse(body: string, contentType: string): Response {
   });
 }
 
+function imageResponse(data: Uint8Array, contentType: string): Response {
+  return new Response(data, {
+    status: 200,
+    headers: { 'content-type': contentType },
+  });
+}
+
 describe('LocalFetchURLProvider content kind', () => {
+  it('reports image content as image kind with base64 data', async () => {
+    const imageData = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(imageResponse(imageData, 'image/png'));
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    const result = await provider.fetch('https://example.com/image.png');
+
+    expect(result.kind).toBe('image');
+    expect(result.image).toBeDefined();
+    expect(result.image?.mimeType).toBe('image/png');
+    expect(result.image?.base64).toBeTruthy();
+    expect(result.page).toEqual({ url: 'https://example.com/image.png', mime: 'image/png' });
+  });
+
   it('reports text/plain bodies as a verbatim passthrough', async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -26,7 +49,7 @@ describe('LocalFetchURLProvider content kind', () => {
 
     const result = await provider.fetch('https://example.com/file.txt');
 
-    expect(result).toEqual({ content: 'plain body', kind: 'passthrough' });
+    expect(result).toEqual({ content: 'plain body', kind: 'passthrough', page: { url: 'https://example.com/file.txt', mime: 'text/plain; charset=utf-8' } });
   });
 
   it('reports text/markdown bodies as a verbatim passthrough', async () => {
@@ -37,7 +60,7 @@ describe('LocalFetchURLProvider content kind', () => {
 
     const result = await provider.fetch('https://example.com/readme.md');
 
-    expect(result).toEqual({ content: '# Title\n\nbody', kind: 'passthrough' });
+    expect(result).toEqual({ content: '# Title\n\nbody', kind: 'passthrough', page: { url: 'https://example.com/readme.md', mime: 'text/markdown' } });
   });
 
   it('reports HTML bodies as extracted main content', async () => {

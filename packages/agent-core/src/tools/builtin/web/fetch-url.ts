@@ -10,7 +10,7 @@ import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
+import type { ContentPart, ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
@@ -25,14 +25,29 @@ import DESCRIPTION from './fetch-url.md?raw';
  *   returned verbatim, in full.
  * - `extracted` — the body was an HTML page; only the main article text
  *   was extracted and returned.
+ * - `image` — the body is an image file; the binary data is returned
+ *   as base64-encoded content for multimodal model input.
  */
-export type UrlFetchKind = 'passthrough' | 'extracted';
+export type UrlFetchKind = 'passthrough' | 'extracted' | 'image';
+
+export interface PageMetadata {
+  /** The URL that was fetched. */
+  url: string;
+  /** The title of the page, if available. */
+  title?: string;
+  /** The MIME type of the response. */
+  mime?: string;
+}
 
 export interface UrlFetchResult {
-  /** The text handed to the LLM. */
+  /** The text handed to the LLM, or empty string for image content. */
   content: string;
-  /** Whether `content` is a verbatim passthrough or extracted main text. */
+  /** Whether content is a verbatim passthrough, extracted main text, or image data. */
   kind: UrlFetchKind;
+  /** Image data as base64, when kind is 'image'. */
+  image?: { mimeType: string; base64: string };
+  /** Page metadata for the fetched resource, aligning with internal API shape. */
+  page?: PageMetadata;
 }
 
 export interface UrlFetcher {
@@ -84,12 +99,20 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
 
   private async execution(
     args: FetchURLInput,
-    {
-    toolCallId,
-    }: ExecutableToolContext,
+    { toolCallId }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      const { content, kind } = await this.fetcher.fetch(args.url, { toolCallId });
+      const { content, kind, image } = await this.fetcher.fetch(args.url, { toolCallId });
+
+      if (image) {
+        const output: ContentPart[] = [
+          {
+            type: 'image_url',
+            imageUrl: { url: `data:${image.mimeType};base64,${image.base64}`, id: args.url },
+          },
+        ];
+        return { output, isError: false };
+      }
 
       if (!content) {
         return {
