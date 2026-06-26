@@ -1,10 +1,6 @@
 import { readApiErrorMessage } from './api-error';
 import { isRecord } from './utils';
-import {
-  parseStringArray,
-  parseSupportsThinkingType,
-  parseThinkEfforts,
-} from './managed-kimi-code';
+import { parseSupportsThinkingType, parseThinkEfforts } from './managed-kimi-code';
 import type {
   ManagedKimiCodeModelInfo,
   ManagedKimiConfigShape,
