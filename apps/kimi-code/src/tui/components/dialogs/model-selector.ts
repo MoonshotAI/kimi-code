@@ -32,7 +32,7 @@ export interface ModelSelection {
   readonly alias: string;
   /** Chosen thinking effort: 'off', or a concrete effort such as 'low' /
    * 'high' / 'max'. Boolean 'on' is normalized to the model's default effort
-   * before the selection is committed (see commitLevel). */
+   * before the selection is committed (see commitEffort). */
   readonly thinking: ThinkingEffort;
 }
 
@@ -137,7 +137,7 @@ function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
  * (a concrete effort for effort-capable models, `'on'` only for genuine
  * boolean models).
  */
-function commitLevel(choice: ModelChoice, draft: ThinkingEffort): ThinkingEffort {
+function commitEffort(choice: ModelChoice, draft: ThinkingEffort): ThinkingEffort {
   if (draft === 'on') return defaultThinkingEffortFor(choice.model);
   return draft;
 }
@@ -194,7 +194,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
   /** Draft coerced onto the model's segment list so rendering/selection never
    * reference a effort the model cannot actually select. */
-  private effectiveLevel(choice: ModelChoice): string {
+  private effectiveEffort(choice: ModelChoice): string {
     const draft = this.draftFor(choice);
     const segments = segmentsFor(choice.model);
     return segments.includes(draft) ? draft : segments[0]!;
@@ -218,7 +218,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (selected !== undefined) {
         const segments = segmentsFor(selected.model);
         if (segments.length > 1) {
-          const current = this.effectiveLevel(selected);
+          const current = this.effectiveEffort(selected);
           const idx = segments.indexOf(current);
           // The two-segment case is the legacy boolean On/Off control: both
           // arrows flip it. With more segments (effort levels), ←/→ step.
@@ -242,7 +242,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (selected === undefined) return;
       this.opts.onSelect({
         alias: selected.alias,
-        thinking: commitLevel(selected, this.effectiveLevel(selected)),
+        thinking: commitEffort(selected, this.effectiveEffort(selected)),
       });
       return;
     }
@@ -252,7 +252,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (selected === undefined) return;
       this.opts.onSessionOnlySelect({
         alias: selected.alias,
-        thinking: commitLevel(selected, this.effectiveLevel(selected)),
+        thinking: commitEffort(selected, this.effectiveEffort(selected)),
       });
     }
   }
@@ -372,7 +372,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
     }
 
     const segments = segmentsFor(choice.model);
-    const active = this.effectiveLevel(choice);
+    const active = this.effectiveEffort(choice);
     const rendered = segments.map((effort) => segment(levelLabel(effort), effort === active));
     // Always-on models (including effort-capable ones) additionally surface an
     // unsupported Off so it's explicit that thinking cannot be disabled — same

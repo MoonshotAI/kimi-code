@@ -245,8 +245,8 @@ function showEffortPicker(
   model: ModelAlias,
   segments: readonly string[],
 ): void {
-  const liveLevel = host.state.appState.thinkingEffort;
-  const currentValue = segments.includes(liveLevel) ? liveLevel : (segments[0] ?? 'off');
+  const liveEffort = host.state.appState.thinkingEffort;
+  const currentValue = segments.includes(liveEffort) ? liveEffort : (segments[0] ?? 'off');
   const alias = host.state.appState.model;
   host.mountEditorReplacement(
     new EffortSelectorComponent({
@@ -395,10 +395,10 @@ async function performModelSwitch(
   }
 
   const prevModel = host.state.appState.model;
-  const prevLevel = host.state.appState.thinkingEffort;
+  const prevEffort = host.state.appState.thinkingEffort;
   const modelChanged = alias !== prevModel;
-  const levelChanged = effort !== prevLevel;
-  const runtimeChanged = modelChanged || levelChanged;
+  const effortChanged = effort !== prevEffort;
+  const runtimeChanged = modelChanged || effortChanged;
   const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
 
   const session = host.session;
@@ -409,7 +409,7 @@ async function performModelSwitch(
       if (alias !== prevModel) {
         await session.setModel(alias);
       }
-      if (effort !== prevLevel) {
+      if (effort !== prevEffort) {
         await session.setThinking(effort);
       }
     }
@@ -424,7 +424,7 @@ async function performModelSwitch(
     if (alias !== prevModel) {
       host.track('model_switch', { model: alias });
     }
-    if (effort !== prevLevel) {
+    if (effort !== prevEffort) {
       host.track('thinking_toggle', { effort });
     }
   }
@@ -445,7 +445,7 @@ async function performModelSwitch(
     status = persist
       ? `Switched to ${displayName} with thinking ${effort}.`
       : `Switched to ${displayName} with thinking ${effort} for this session only.`;
-  } else if (levelChanged) {
+  } else if (effortChanged) {
     status = persist
       ? `Thinking set to ${effort}.`
       : `Thinking set to ${effort} for this session only.`;
