@@ -6,8 +6,10 @@
  *   2. Reject HTTP >= 400 with the status code in the message.
  *   3. Reject responses larger than `maxBytes` (content-length first,
  *      then measured body length as a defensive second check).
- *   4. `text/plain` / `text/markdown` → passthrough verbatim.
- *   5. Otherwise (assumed HTML) → run Readability over a linkedom
+ *   4. `image/*` → read binary body, encode as base64 data URI, and
+ *      return as `image` kind with optional dimension sniffing.
+ *   5. `text/plain` / `text/markdown` → passthrough verbatim.
+ *   6. Otherwise (assumed HTML) → run Readability over a linkedom
  *      document. Return `# ${title}\n\n${text}` (title omitted when
  *      absent). If extraction yields no meaningful text, fall back to
  *      common content containers (`<article>` / `<main>` / `<body>`)
@@ -18,6 +20,7 @@ import { Readability } from '@mozilla/readability';
 import { parseHTML as rawParseHTML } from 'linkedom';
 
 import { HttpFetchError, type UrlFetcher, type UrlFetchResult } from '../builtin';
+import { sniffImageDimensions } from '../support/file-type';
 
 // Readability's .d.ts references the global `Document` type, but this
 // package compiles with `lib: ES2023` (no DOM). Extracting the
@@ -172,6 +175,23 @@ export class LocalFetchURLProvider implements UrlFetcher {
       }
     }
 
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+    const mimeType = contentType.split(';')[0]!.trim();
+
+    if (mimeType.startsWith('image/')) {
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      if (buffer.length > this.maxBytes) {
+        throw new Error(
+          `Response body too large: ${String(buffer.length)} bytes exceeds maxBytes (${String(this.maxBytes)}).`,
+        );
+      }
+      const base64 = buffer.toString('base64');
+      const dataUri = `data:${mimeType};base64,${base64}`;
+      const dimensions = sniffImageDimensions(buffer);
+      return { content: dataUri, kind: 'image', mimeType, dimensions };
+    }
+
     const body = await response.text();
 
     // Servers may omit content-length — measure again defensively.
@@ -182,8 +202,7 @@ export class LocalFetchURLProvider implements UrlFetcher {
       );
     }
 
-    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
-    if (contentType.startsWith('text/plain') || contentType.startsWith('text/markdown')) {
+    if (mimeType.startsWith('text/plain') || mimeType.startsWith('text/markdown')) {
       return { content: body, kind: 'passthrough' };
     }
 
