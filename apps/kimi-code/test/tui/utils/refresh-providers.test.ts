@@ -113,10 +113,11 @@ describe('refreshAllProviderModels', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
+    const host = makeRefreshHost(config);
     const result = await refreshAllProviderModels({
-      getConfig: async () => config,
-      removeProvider: vi.fn(),
-      setConfig: vi.fn(),
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
       resolveOAuthToken,
     });
 
@@ -124,6 +125,144 @@ describe('refreshAllProviderModels', () => {
     expect(result.unchanged).toEqual([KIMI_CODE_PROVIDER_NAME]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(resolveOAuthToken).toHaveBeenCalledWith(KIMI_CODE_PROVIDER_NAME, envOauthRef);
+    // An unchanged-models refresh still backfills the managed search/fetch
+    // services so the WebSearch tool works without a manual config edit.
+    expect(host.removeProvider).not.toHaveBeenCalled();
+    expect(host.current().services?.moonshotSearch).toEqual({
+      baseUrl: `${envBaseUrl}/search`,
+      apiKey: '',
+      oauth: envOauthRef,
+    });
+    expect(host.current().services?.moonshotFetch).toEqual({
+      baseUrl: `${envBaseUrl}/fetch`,
+      apiKey: '',
+      oauth: envOauthRef,
+    });
+  });
+
+  it('provisions managed search/fetch services when a model-changing refresh persists', async () => {
+    const baseUrl = 'https://api.example.test/coding/v1';
+    const oauthRef = resolveKimiCodeOAuthRef({ baseUrl });
+    const config: KimiConfig = {
+      providers: {
+        [KIMI_CODE_PROVIDER_NAME]: {
+          type: 'kimi',
+          baseUrl,
+          apiKey: '',
+          oauth: oauthRef,
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-for-coding',
+          maxContextSize: 262144,
+          capabilities: ['thinking', 'tool_use'],
+        },
+      },
+      defaultModel: 'kimi-code/kimi-for-coding',
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    const fetchMock = vi.fn<FetchMock>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-deep-coder',
+                context_length: 262144,
+                supports_reasoning: true,
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(async () => 'oauth-access-token'),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      { providerId: KIMI_CODE_PROVIDER_NAME, providerName: 'Kimi Code', added: 1, removed: 1 },
+    ]);
+    expect(host.removeProvider).toHaveBeenCalledWith(KIMI_CODE_PROVIDER_NAME);
+    expect(host.current().services?.moonshotSearch).toEqual({
+      baseUrl: `${baseUrl}/search`,
+      apiKey: '',
+      oauth: oauthRef,
+    });
+    expect(host.current().services?.moonshotFetch).toEqual({
+      baseUrl: `${baseUrl}/fetch`,
+      apiKey: '',
+      oauth: oauthRef,
+    });
+  });
+
+  it('leaves already-provisioned managed services untouched on an unchanged refresh', async () => {
+    const baseUrl = 'https://api.example.test/coding/v1';
+    const oauthRef = resolveKimiCodeOAuthRef({ baseUrl });
+    const config: KimiConfig = {
+      providers: {
+        [KIMI_CODE_PROVIDER_NAME]: {
+          type: 'kimi',
+          baseUrl,
+          apiKey: '',
+          oauth: oauthRef,
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-for-coding',
+          maxContextSize: 262144,
+          capabilities: ['thinking', 'tool_use'],
+        },
+      },
+      defaultModel: 'kimi-code/kimi-for-coding',
+      services: {
+        moonshotSearch: { baseUrl: `${baseUrl}/search`, apiKey: 'sk-user-key', oauth: oauthRef },
+        moonshotFetch: { baseUrl: `${baseUrl}/fetch`, apiKey: 'sk-user-key', oauth: oauthRef },
+      },
+      telemetry: true,
+    };
+    const host = makeRefreshHost(config);
+    const fetchMock = vi.fn<FetchMock>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-for-coding',
+                context_length: 262144,
+                supports_reasoning: true,
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await refreshAllProviderModels({
+      getConfig: async () => host.current(),
+      removeProvider: host.removeProvider,
+      setConfig: host.setConfig,
+      resolveOAuthToken: vi.fn(async () => 'oauth-access-token'),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.unchanged).toEqual([KIMI_CODE_PROVIDER_NAME]);
+    // Services already present (and carrying a user-set api_key) must not be
+    // rewritten — no setConfig churn, no clobbering the manual key.
+    expect(host.setConfig).not.toHaveBeenCalled();
+    expect(host.current().services?.moonshotSearch?.apiKey).toBe('sk-user-key');
   });
 
   it('can refresh only the managed OAuth provider without fetching third-party registries', async () => {

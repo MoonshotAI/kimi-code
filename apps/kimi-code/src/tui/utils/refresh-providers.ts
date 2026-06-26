@@ -92,6 +92,19 @@ function asManaged(config: KimiConfig): ManagedKimiConfigShape {
   return config as unknown as ManagedKimiConfigShape;
 }
 
+// The managed Kimi Code login provisions `services.moonshot_search` /
+// `services.moonshot_fetch` — the endpoints behind the WebSearch and URL-fetch
+// tools. A client is "missing" them when either lacks a baseUrl, e.g. it logged
+// in on a build that predates service provisioning. Without them WebSearch is
+// silently disabled until the user hand-edits config.toml, so a refresh
+// backfills them.
+function managedServicesMissing(config: KimiConfig): boolean {
+  return (
+    config.services?.moonshotSearch?.baseUrl === undefined ||
+    config.services?.moonshotFetch?.baseUrl === undefined
+  );
+}
+
 function collectModelIdsForAliases(config: KimiConfig, aliasKeys: ReadonlySet<string>): Set<string> {
   const ids = new Set<string>();
   for (const aliasKey of aliasKeys) {
@@ -324,6 +337,13 @@ export async function refreshAllProviderModels(
         clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
 
         if (providerModelsEqual(config, next, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys)) {
+          // Models are identical, but a client provisioned before the managed
+          // search/fetch services existed has no `services` block — which leaves
+          // the WebSearch tool disabled. Backfill the services so the refresh
+          // repairs it, without emitting a spurious model-change report.
+          if (managedServicesMissing(config)) {
+            config = await host.setConfig({ services: next.services });
+          }
           unchanged.push(KIMI_CODE_PROVIDER_NAME);
         } else {
           const { added, removed } = computeChanges(
@@ -336,6 +356,10 @@ export async function refreshAllProviderModels(
             models: next.models,
             defaultModel: next.defaultModel,
             defaultThinking: next.defaultThinking,
+            // Persist the managed search/fetch services alongside the model
+            // refresh; omitting them here is what left upgraded clients with a
+            // non-functional WebSearch tool.
+            services: next.services,
           });
           changed.push({
             providerId: KIMI_CODE_PROVIDER_NAME,
