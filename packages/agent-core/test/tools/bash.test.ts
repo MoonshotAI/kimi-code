@@ -803,6 +803,9 @@ describe('BashTool', () => {
 
     expect(result.output).toMatch(/task_id: bash-[0-9a-z]{8}/);
     expect(result.output).toContain('automatic_notification: true');
+    // The launch message must steer away from waiting, not invite a TaskOutput peek.
+    expect(result.output).toContain('do NOT wait, poll, or call TaskOutput on it');
+    expect(result.output).not.toContain('block=false');
     expect(manager.list(false)).toHaveLength(1);
   });
 

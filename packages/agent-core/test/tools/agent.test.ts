@@ -127,6 +127,9 @@ describe('AgentTool', () => {
     expect(tool.description).toContain('fixed 30-minute timeout');
     expect(tool.description).not.toContain('operator-configured background timeout');
     expect(tool.description).not.toContain('no time limit');
+    // Background guidance must steer foreground-by-default, so the model doesn't
+    // background-launch a result it needs and then block waiting on it.
+    expect(tool.description).toContain('Default to a foreground subagent');
   });
 
   it('does not expose a model parameter in the JSON schema', () => {
@@ -561,7 +564,7 @@ describe('AgentTool', () => {
     });
   });
 
-  it('guides the AI with a non-blocking query hint and a resume hint on background launch', async () => {
+  it('steers the AI away from waiting and gives a resume hint on background launch', async () => {
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({
         agentId: 'agent-child',
@@ -584,9 +587,10 @@ describe('AgentTool', () => {
     if (typeof result.output !== 'string') throw new TypeError('expected string output');
     const taskId = result.output.match(/task_id: (agent-[0-9a-z]{8})/)?.[1];
     expect(taskId).toBeDefined();
-    // M9: next_step — non-blocking progress check via TaskOutput
+    // M9: next_step steers away from waiting on a background launch (no poll/TaskOutput).
     expect(result.output).toContain('next_step:');
-    expect(result.output).toContain(`TaskOutput(task_id="${taskId!}", block=false)`);
+    expect(result.output).toContain('do NOT wait, poll, or call TaskOutput on it');
+    expect(result.output).not.toContain('block=false');
     // M9: resume_hint — continue the same subagent instance
     expect(result.output).toContain('resume_hint:');
     expect(result.output).toContain('Agent(resume="agent-child"');

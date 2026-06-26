@@ -4,6 +4,7 @@ Use this after `Bash(run_in_background=true)` or `Agent(run_in_background=true)`
 
 Guidelines:
 - Prefer relying on automatic completion notifications. Use this tool only when you need task output before the automatic notification arrives.
+- Do not use TaskOutput to wait for a result you need before continuing — if your next step depends on the task's result, run that task in the foreground instead. TaskOutput is for a deliberate progress check you will act on without blocking, not a way to sit and wait for a background task you just launched.
 - By default this tool is non-blocking and returns a current status/output snapshot.
 - Use block=true only when you intentionally want to wait for completion or timeout.
 - This tool returns structured task metadata, a fixed-size output preview, and an output_path for the full log.

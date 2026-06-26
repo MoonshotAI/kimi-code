@@ -576,6 +576,8 @@ describe('background tool descriptions', () => {
     // ...but a plain non-zero command exit carries no terminal_reason/stop_reason —
     // the description must point the model at exit_code for that common failure.
     expect(description).toContain('exit_code');
+    // Backstop: don't let the model use TaskOutput to sit and wait for a result it needs.
+    expect(description).toContain('run that task in the foreground instead');
   });
 
   it('TaskList description mentions active_only default, read-only, and plan-mode safety', () => {
