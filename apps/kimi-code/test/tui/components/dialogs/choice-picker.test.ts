@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
+import { ChoicePickerComponent, type ChoiceOption } from '#/tui/components/dialogs/choice-picker';
 import { EditorSelectorComponent } from '#/tui/components/dialogs/editor-selector';
 import { PermissionSelectorComponent } from '#/tui/components/dialogs/permission-selector';
 import { SettingsSelectorComponent } from '#/tui/components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '#/tui/components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '#/tui/components/dialogs/update-preference-selector';
+import { currentTheme } from '#/tui/theme';
 import { darkColors } from '#/tui/theme/colors';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
@@ -143,5 +144,36 @@ describe('ChoicePickerComponent', () => {
 
     picker.handleInput(' ');
     expect(onSelect).toHaveBeenCalledWith('a');
+  });
+
+  it('renders the selected option description in descriptionTone, others in textMuted', () => {
+    const options: ChoiceOption[] = [
+      { value: 'none', label: 'No attachment', description: 'Text feedback only' },
+      {
+        value: 'logs+codebase',
+        label: 'Logs + codebase',
+        description: 'Include your codebase for deeper diagnosis.',
+        descriptionTone: 'warning',
+      },
+    ];
+
+    const renderDescLine = (currentValue: string): string | undefined => {
+      const picker = new ChoicePickerComponent({
+        title: 'Share diagnostic info?',
+        options,
+        currentValue,
+        onSelect: vi.fn(),
+        onCancel: vi.fn(),
+      });
+      return picker.render(120).find((line) => strip(line).includes('Include your codebase'));
+    };
+
+    const warningLine = currentTheme.fg('warning', '    Include your codebase for deeper diagnosis.');
+    const mutedLine = currentTheme.fg('textMuted', '    Include your codebase for deeper diagnosis.');
+
+    // Selected option: description uses the configured tone.
+    expect(renderDescLine('logs+codebase')).toBe(warningLine);
+    // Unselected option: description falls back to textMuted.
+    expect(renderDescLine('none')).toBe(mutedLine);
   });
 });
