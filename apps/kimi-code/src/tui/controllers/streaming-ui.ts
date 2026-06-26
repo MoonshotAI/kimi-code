@@ -55,6 +55,7 @@ export class StreamingUIController {
   private _thinkingDraft = '';
   private _streamingBlock: { component: AssistantMessageComponent; entry: TranscriptEntry } | null = null;
   private _activeThinkingComponent: ThinkingComponent | undefined = undefined;
+  private _pendingThinkingCompact = false;
   private _activeCompactionBlock: CompactionComponent | undefined = undefined;
   private _activeToolCalls = new Map<string, ToolCallBlockData>();
   private _streamingToolCallArguments = new Map<
@@ -522,6 +523,7 @@ export class StreamingUIController {
   resetLiveText(): void {
     this.pendingAssistantFlush = false;
     this.pendingThinkingFlush = false;
+    this._pendingThinkingCompact = false;
     this.clearFlushTimerIfIdle();
     this._assistantDraft = '';
     this._streamingBlock = null;
@@ -551,6 +553,8 @@ export class StreamingUIController {
     const { state } = this.host;
     if (state.appState.streamingPhase === 'idle') return;
     this.host.deferUserMessages = false;
+    // Last-chance compact in case no assistant text triggered it
+    this.compactThinkingIfPending();
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
     this.finalizeLiveTextBuffers('idle');
@@ -579,7 +583,35 @@ export class StreamingUIController {
   // Live Render Hooks
   // ---------------------------------------------------------------------------
 
+  /**
+   * Compact a stable-mode thinking component to its minimal finalized form.
+   *
+   * Called at the start of assistant text streaming so that the thinking
+   * line-count reduction and the assistant content addition happen in the
+   * same pi-tui render cycle. The assistant content growing below offsets
+   * the destructive fullRender, making the transition invisible.
+   *
+   * Also called as a fallback in `finalizeTurn()` for the edge case where
+   * no assistant text follows the thinking block.
+   */
+  private compactThinkingIfPending(): void {
+    if (!this._pendingThinkingCompact) return;
+    this._pendingThinkingCompact = false;
+    for (const child of this.host.state.transcriptContainer.children) {
+      if (child instanceof ThinkingComponent) {
+        if ((child as ThinkingComponent).compact()) {
+          this.host.state.ui.requestRender();
+        }
+        break;
+      }
+    }
+  }
+
   onStreamingTextStart(): void {
+    // Compact thinking before adding assistant content so both changes
+    // land in the same render cycle (fixes #981 viewport jump).
+    this.compactThinkingIfPending();
+
     const { state } = this.host;
     this._pendingAgentGroup = null;
     this._pendingReadGroup = null;
@@ -636,7 +668,11 @@ export class StreamingUIController {
 
   onThinkingEnd(): void {
     if (this._activeThinkingComponent === undefined) return;
+    // Enter stable mode: spinner stops but rendered line count stays
+    // identical to live mode, preventing a destructive fullRender when
+    // this component is above the viewport (fixes #981).
     this._activeThinkingComponent.finalize();
+    this._pendingThinkingCompact = true;
     this._activeThinkingComponent = undefined;
     this.host.state.ui.requestRender();
     this.host.mergeCurrentTurnSteps();

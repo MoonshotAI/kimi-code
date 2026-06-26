@@ -3,6 +3,21 @@
  * Supports live in-place updates while thinking streams, then finalizes
  * without replacing the component.
  * Supports expand/collapse via Ctrl+O (shared with tool output).
+ *
+ * ## Stable Transition (fixes #981)
+ *
+ * During streaming, the thinking component typically sits above the visible
+ * viewport. When its rendered line count changes at that position, pi-tui's
+ * diff renderer hits the `firstChanged < prevViewportTop` branch and falls
+ * back to a destructive fullRender (clear-screen), which jumps the terminal
+ * scroll position to the top.
+ *
+ * To prevent this, `finalize()` enters a **stable mode** that keeps the
+ * rendered line count identical to 'live' mode (spinner replaced by a static
+ * bullet, same content region). The actual compact transition to the minimal
+ * finalized form is deferred to `compact()`, which should be called when a
+ * render cycle also changes content below the viewport (e.g., when the
+ * assistant message starts streaming).
  */
 
 import { Text, truncateToWidth, type Component, type TUI } from '@earendil-works/pi-tui';
@@ -23,6 +38,7 @@ export class ThinkingComponent implements Component {
   private text: string;
   private showMarker: boolean;
   private mode: ThinkingRenderMode;
+  private stableMode = false;
   private expanded = false;
   private readonly ui: TUI | undefined;
   private spinnerFrame = 0;
@@ -71,10 +87,35 @@ export class ThinkingComponent implements Component {
     return currentTheme.italicFg('textDim', text);
   }
 
+  /**
+   * Transition from live to finalized while keeping rendered line count
+   * stable. Stops the spinner but continues to render in live-format shape
+   * (same number of output lines) to avoid triggering pi-tui's destructive
+   * fullRender path when this component is above the viewport.
+   *
+   * Call `compact()` later to switch to the minimal finalized form.
+   */
   finalize(): void {
+    this.stopSpinner();
+    this.stableMode = true;
+    this.markRenderDirty();
+  }
+
+  /**
+   * Compact to the minimal finalized form (fewer rendered lines).
+   *
+   * This should only be called when it is safe for pi-tui to potentially
+   * trigger a fullRender — typically during a render cycle that also
+   * modifies content below the viewport (e.g., assistant text start).
+   *
+   * @returns true if the component actually changed shape
+   */
+  compact(): boolean {
+    if (!this.stableMode) return false;
+    this.stableMode = false;
     this.mode = 'finalized';
     this.markRenderDirty();
-    this.stopSpinner();
+    return true;
   }
 
   dispose(): void {
@@ -100,18 +141,24 @@ export class ThinkingComponent implements Component {
     const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
 
     let rendered: string[];
-    if (this.mode === 'live') {
+    if (this.mode === 'live' || this.stableMode) {
+      // Stable path: same line shape as live mode. The spinner is replaced
+      // by a static bullet to stop animation, but the number of output
+      // lines is identical — this keeps pi-tui on the safe differential
+      // rendering path when the component is above the viewport.
       const visibleLines =
         contentLines.length > THINKING_PREVIEW_LINES
           ? contentLines.slice(contentLines.length - THINKING_PREVIEW_LINES)
           : contentLines;
-      const spinner = currentTheme.fg(
-        'textDim',
-        `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
-      );
+      const indicator = this.stableMode
+        ? currentTheme.fg('textDim', `${STATUS_BULLET} `)
+        : currentTheme.fg(
+            'textDim',
+            `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
+          );
       rendered = [
         '',
-        spinner + currentTheme.fg('textDim', 'thinking...'),
+        indicator + currentTheme.fg('textDim', this.stableMode ? 'thought' : 'thinking...'),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
       ];
     } else {
