@@ -5,6 +5,7 @@
  * outer update preflight, then delegates to the requested UI runner.
  */
 
+import { spawnSync } from 'node:child_process';
 import {
   createKimiHarness,
   flushDiagnosticLogs,
@@ -116,6 +117,32 @@ const MIGRATE_CLI_OPTIONS: CLIOptions = {
 };
 
 export function main(): void {
+  // For Node 22+ native node:http clients (which resolve proxy at startup before
+  // user code runs), we must respawn the process with NODE_USE_ENV_PROXY=1.
+  // We skip this inside vitest (where NODE_ENV === 'test') to prevent exiting the test runner.
+  if (
+    process.env['NODE_ENV'] !== 'test' &&
+    process.env['VITEST'] === undefined &&
+    process.env['NODE_USE_ENV_PROXY'] !== '1'
+  ) {
+    const hasHttpProxy = [
+      process.env['http_proxy'],
+      process.env['HTTP_PROXY'],
+      process.env['https_proxy'],
+      process.env['HTTPS_PROXY'],
+      process.env['all_proxy'],
+      process.env['ALL_PROXY'],
+    ].some((val) => val && !/^(socks|socks4|socks4a|socks5|socks5h):/i.test(val));
+
+    if (hasHttpProxy) {
+      const result = spawnSync(process.execPath, process.argv.slice(1), {
+        stdio: 'inherit',
+        env: { ...process.env, NODE_USE_ENV_PROXY: '1' },
+      });
+      process.exit(result.status ?? 0);
+    }
+  }
+
   process.title = PROCESS_NAME;
   installCrashHandlers();
   // Route all outbound fetch through HTTP_PROXY/HTTPS_PROXY (honoring NO_PROXY)
