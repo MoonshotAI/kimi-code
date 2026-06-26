@@ -50,6 +50,10 @@ const SENSITIVE_FILE_NAMES: ReadonlySet<string> = new Set([
   '.netrc',
   '.htpasswd',
   '.pypirc',
+  '.npmrc',
+  '.envrc',
+  '.yarnrc',
+  '.yarnrc.yml',
 ]);
 
 const SENSITIVE_FILE_SUFFIXES: readonly string[] = [

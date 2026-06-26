@@ -176,7 +176,7 @@ async function uploadOnePart(
   const stream = createReadStream(filePath, { start, end: start + part.size - 1 });
   try {
     const res = await fetch(part.url, {
-      method: 'PUT',
+      method: part.method,
       body: Readable.toWeb(stream),
       headers: { 'Content-Length': String(part.size) },
       duplex: 'half',

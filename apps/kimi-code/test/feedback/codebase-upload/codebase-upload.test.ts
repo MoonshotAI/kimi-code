@@ -29,7 +29,7 @@ describe('uploadPackagedCodebase', () => {
     const api = {
       createUploadUrl: vi.fn(async () => ({
         uploadId: 28,
-        parts: [{ partNumber: 1, url: 'https://example.test/part1', size: 5 }],
+        parts: [{ partNumber: 1, url: 'https://example.test/part1', method: 'PUT', size: 5 }],
       })),
       completeUpload: vi.fn(async () => {}),
     };
@@ -71,6 +71,44 @@ describe('uploadPackagedCodebase', () => {
     }
   });
 
+  it('uses the backend-provided part upload method', async () => {
+    const workRoot = await mkdtemp(join(tmpdir(), 'feedback-upload-method-'));
+    const archivePath = join(workRoot, 'repo.zip');
+    await writeFile(archivePath, 'hello');
+
+    const fetchMock = vi.fn(
+      async () => new Response('', { status: 200, headers: { ETag: '"etag-1"' } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const api = {
+      createUploadUrl: vi.fn(async () => ({
+        uploadId: 28,
+        parts: [{ partNumber: 1, url: 'https://example.test/part1', method: 'POST', size: 5 }],
+      })),
+      completeUpload: vi.fn(async () => {}),
+    };
+
+    try {
+      await uploadPackagedCodebase(
+        api,
+        {
+          path: archivePath,
+          size: 5,
+          sha256: 'hash',
+          fingerprint: 'fingerprint',
+          fileCount: 1,
+        },
+        3,
+      );
+
+      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      expect(init.method).toBe('POST');
+      expect(await new Response(init.body as ReadableStream).text()).toBe('hello');
+    } finally {
+      await rm(workRoot, { recursive: true, force: true });
+    }
+  });
+
   it('aborts a stalled part PUT and does not mark upload complete', async () => {
     const workRoot = await mkdtemp(join(tmpdir(), 'feedback-upload-stalled-'));
     const archivePath = join(workRoot, 'repo.zip');
@@ -94,7 +132,7 @@ describe('uploadPackagedCodebase', () => {
     const api = {
       createUploadUrl: vi.fn(async () => ({
         uploadId: 28,
-        parts: [{ partNumber: 1, url: 'https://example.test/part1', size: 5 }],
+        parts: [{ partNumber: 1, url: 'https://example.test/part1', method: 'PUT', size: 5 }],
       })),
       completeUpload: vi.fn(async () => {}),
     };
@@ -138,7 +176,7 @@ describe('uploadPackagedCodebase', () => {
     const api = {
       createUploadUrl: vi.fn(async () => ({
         uploadId: 28,
-        parts: [{ partNumber: 1, url: 'https://example.test/part1', size: 5 }],
+        parts: [{ partNumber: 1, url: 'https://example.test/part1', method: 'PUT', size: 5 }],
       })),
       completeUpload: vi.fn(async () => {}),
     };
@@ -239,6 +277,9 @@ describe('scanCodebase filtering', () => {
     const root = await mkdtemp(join(tmpdir(), 'feedback-scan-git-'));
     try {
       await writeFile(join(root, '.env'), 'SECRET=1\n');
+      await writeFile(join(root, '.envrc'), 'export AWS_SECRET_ACCESS_KEY=secret\n');
+      await writeFile(join(root, '.npmrc'), '//registry.npmjs.org/:_authToken=secret\n');
+      await writeFile(join(root, '.yarnrc.yml'), 'npmAuthToken: secret\n');
       await writeFile(join(root, 'id_rsa'), 'private-key\n');
       await writeFile(join(root, 'app.ts'), 'export const app = 1;\n');
       await execFileAsync('git', ['init'], { cwd: root });
@@ -249,6 +290,9 @@ describe('scanCodebase filtering', () => {
       const paths = scan.files.map((file) => file.path);
       expect(paths).toContain('app.ts');
       expect(paths).not.toContain('.env');
+      expect(paths).not.toContain('.envrc');
+      expect(paths).not.toContain('.npmrc');
+      expect(paths).not.toContain('.yarnrc.yml');
       expect(paths).not.toContain('id_rsa');
     } finally {
       await rm(root, { recursive: true, force: true });

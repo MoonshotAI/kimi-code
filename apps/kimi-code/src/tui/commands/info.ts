@@ -187,6 +187,7 @@ function createFeedbackUploadApi(host: SlashCommandHost): FeedbackUploadUrlApi {
         parts: res.parts.map((part) => ({
           partNumber: part.part_number,
           url: part.url,
+          method: part.method,
           size: part.size,
         })),
       };

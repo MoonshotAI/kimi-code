@@ -36,6 +36,7 @@ export interface CreateFeedbackUploadUrlInput {
 export interface FeedbackUploadPart {
   readonly partNumber: number;
   readonly url: string;
+  readonly method: string;
   readonly size: number;
 }
 
