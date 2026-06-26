@@ -1,6 +1,10 @@
 import { readApiErrorMessage } from './api-error';
 import { isRecord } from './utils';
-import { parseStringArray, parseSupportsThinkingType } from './managed-kimi-code';
+import {
+  parseStringArray,
+  parseSupportsThinkingType,
+  parseThinkEfforts,
+} from './managed-kimi-code';
 import type {
   ManagedKimiCodeModelInfo,
   ManagedKimiConfigShape,
@@ -55,11 +59,15 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
   const supportsToolUse = Object.hasOwn(item, 'supports_tool_use')
     ? Boolean(item['supports_tool_use'])
     : true;
+  // Prefer the nested `think_efforts` object; fall back to the legacy flat
+  // `support_efforts` / `default_effort` fields for older servers.
+  const thinkEfforts = parseThinkEfforts(item['think_efforts']);
   const rawDefaultEffort = item['default_effort'];
   const defaultEffort =
-    typeof rawDefaultEffort === 'string' && rawDefaultEffort.length > 0
+    thinkEfforts.defaultEffort ??
+    (typeof rawDefaultEffort === 'string' && rawDefaultEffort.length > 0
       ? rawDefaultEffort
-      : undefined;
+      : undefined);
   return {
     id: item['id'],
     contextLength,
@@ -68,7 +76,7 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
     supportsVideoIn: Boolean(item['supports_video_in']),
     supportsToolUse,
     supportsThinkingType: parseSupportsThinkingType(item['supports_thinking_type']),
-    supportEfforts: parseStringArray(item['support_efforts']),
+    supportEfforts: thinkEfforts.supportEfforts ?? parseStringArray(item['support_efforts']),
     defaultEffort,
     displayName: normalizedDisplayName,
   };

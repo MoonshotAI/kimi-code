@@ -385,11 +385,15 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
   const supportsToolUse = Object.hasOwn(item, 'supports_tool_use')
     ? Boolean(item['supports_tool_use'])
     : true;
+  // Prefer the nested `think_efforts` object; fall back to the legacy flat
+  // `support_efforts` / `default_effort` fields for older servers.
+  const thinkEfforts = parseThinkEfforts(item['think_efforts']);
   const rawDefaultEffort = item['default_effort'];
   const defaultEffort =
-    typeof rawDefaultEffort === 'string' && rawDefaultEffort.length > 0
+    thinkEfforts.defaultEffort ??
+    (typeof rawDefaultEffort === 'string' && rawDefaultEffort.length > 0
       ? rawDefaultEffort
-      : undefined;
+      : undefined);
   return {
     id: item['id'],
     contextLength,
@@ -398,7 +402,7 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
     supportsVideoIn: Boolean(item['supports_video_in']),
     supportsToolUse,
     supportsThinkingType: parseSupportsThinkingType(item['supports_thinking_type']),
-    supportEfforts: parseStringArray(item['support_efforts']),
+    supportEfforts: thinkEfforts.supportEfforts ?? parseStringArray(item['support_efforts']),
     defaultEffort,
     displayName: normalizedDisplayName,
   };
@@ -414,6 +418,29 @@ export function parseStringArray(value: unknown): readonly string[] | undefined 
 // legacy supports_reasoning boolean instead of guessing.
 export function parseSupportsThinkingType(value: unknown): SupportsThinkingType | undefined {
   return value === 'only' || value === 'no' || value === 'both' ? value : undefined;
+}
+
+/**
+ * Parse the nested `think_efforts` object from `/models`:
+ *   { "support": true, "valid_efforts": ["low", "high", "max"], "default_effort": "high" }
+ * Returns the effort list and default effort, or undefineds when absent so
+ * callers can fall back to the legacy flat `support_efforts` / `default_effort`
+ * fields on older servers.
+ */
+export function parseThinkEfforts(value: unknown): {
+  supportEfforts: readonly string[] | undefined;
+  defaultEffort: string | undefined;
+} {
+  if (value === null || typeof value !== 'object') {
+    return { supportEfforts: undefined, defaultEffort: undefined };
+  }
+  const record = value as Record<string, unknown>;
+  const rawDefault = record['default_effort'];
+  return {
+    supportEfforts: parseStringArray(record['valid_efforts']),
+    defaultEffort:
+      typeof rawDefault === 'string' && rawDefault.length > 0 ? rawDefault : undefined,
+  };
 }
 
 export async function fetchManagedKimiCodeModels(

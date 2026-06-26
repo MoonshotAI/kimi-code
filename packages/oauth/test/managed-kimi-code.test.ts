@@ -1109,6 +1109,64 @@ describe('support_efforts / default_effort', () => {
     expect(models[1]?.defaultEffort).toBeUndefined();
   });
 
+  it('prefers the nested think_efforts object over the legacy flat fields', async () => {
+    const models = await fetchManagedKimiCodeModels({
+      accessToken: 'oauth-access-token',
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-for-coding',
+                context_length: 262144,
+                supports_reasoning: true,
+                supports_thinking_type: 'only',
+                // New nested format (matches the production /models response).
+                think_efforts: {
+                  support: true,
+                  valid_efforts: ['low', 'high', 'max'],
+                  default_effort: 'high',
+                },
+                // Legacy flat fields present but different — must be ignored
+                // in favor of think_efforts.
+                support_efforts: ['low'],
+                default_effort: 'low',
+                display_name: 'Kimi For Coding',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    });
+
+    expect(models[0]?.supportEfforts).toEqual(['low', 'high', 'max']);
+    expect(models[0]?.defaultEffort).toBe('high');
+  });
+
+  it('falls back to legacy flat fields when think_efforts is absent', async () => {
+    const models = await fetchManagedKimiCodeModels({
+      accessToken: 'oauth-access-token',
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-k2',
+                context_length: 128000,
+                supports_reasoning: true,
+                support_efforts: ['low', 'high'],
+                default_effort: 'high',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    });
+
+    expect(models[0]?.supportEfforts).toEqual(['low', 'high']);
+    expect(models[0]?.defaultEffort).toBe('high');
+  });
+
   it('writes supportEfforts and defaultEffort onto the provisioned model entry', async () => {
     const config: ManagedKimiConfigShape = { providers: {} };
 
