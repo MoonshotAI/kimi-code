@@ -1,4 +1,5 @@
-import { appendFile, mkdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { appendFile, mkdir, readFile, rm, stat } from 'node:fs/promises';
 import { release as osRelease, type as osType } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,10 +23,12 @@ import {
 } from '../constant/feedback';
 import { isManagedUsageProvider } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { detectInstallSource } from '#/cli/update/source';
+import { detectShellEnvironment } from '#/utils/process/shell-env';
 import { getLogDir } from '#/utils/paths';
 import {
+  createFeedbackArchivePath,
   packageCurrentCodebase,
-  packageCurrentSession,
   removePackagedCodebaseArchive,
   scanCodebase,
   uploadPackagedCodebase,
@@ -131,19 +134,41 @@ async function prepareAndUploadSessionArchive(
     return false;
   }
 
-  let archive: FeedbackCodebaseArchive | undefined;
+  const target = await createFeedbackArchivePath(SESSION_ARCHIVE_FILENAME);
   try {
-    archive = await packageCurrentSession(sessionDir);
+    const exported = await host.harness.exportSession({
+      id: host.state.appState.sessionId,
+      outputPath: target.archivePath,
+      includeGlobalLog: true,
+      version: host.state.appState.version,
+      installSource: await detectInstallSource(),
+      shellEnv: detectShellEnvironment(),
+    });
+    const archive = await archiveFromExportedSession(exported.zipPath, target.cleanupDir);
     await uploadPackagedCodebase(api, archive, feedbackId, { filename: SESSION_ARCHIVE_FILENAME });
     return true;
   } catch (error) {
     await logFeedbackUploadError(error);
     return false;
   } finally {
-    if (archive !== undefined) {
-      await removePackagedCodebaseArchive(archive).catch(() => {});
-    }
+    await rm(target.cleanupDir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+async function archiveFromExportedSession(
+  zipPath: string,
+  cleanupDir: string,
+): Promise<FeedbackCodebaseArchive> {
+  const data = await readFile(zipPath);
+  const archiveStat = await stat(zipPath);
+  return {
+    path: zipPath,
+    size: archiveStat.size,
+    sha256: createHash('sha256').update(data).digest('hex'),
+    fingerprint: createHash('sha256').update(data).digest('hex'),
+    fileCount: 1,
+    cleanupDir,
+  };
 }
 
 async function prepareAndUploadCodebaseArchive(
@@ -209,13 +234,8 @@ function createFeedbackUploadApi(host: SlashCommandHost): FeedbackUploadUrlApi {
       const res = await host.harness.auth.createFeedbackUploadUrl(input);
       if (res.kind !== 'ok') throw new Error(res.message);
       return {
-        uploadId: res.upload_id,
-        parts: res.parts.map((part) => ({
-          partNumber: part.part_number,
-          url: part.url,
-          method: part.method,
-          size: part.size,
-        })),
+        uploadId: res.uploadId,
+        parts: res.parts,
       };
     },
     async completeUpload(input) {

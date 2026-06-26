@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 
 import { getCacheDir } from '../../utils/paths';
-import { packageCodebase, packageSessionFiles } from './packager';
+import { packageCodebase } from './packager';
 import type {
   CompletedUploadPart,
   FeedbackCodebaseArchive,
@@ -31,10 +31,12 @@ export async function packageCurrentCodebase(
   return { ...archive, cleanupDir: archivePathCleanupDir(archivePath) };
 }
 
-export async function packageCurrentSession(sessionDir: string): Promise<FeedbackCodebaseArchive> {
-  const archivePath = await createArchivePath(SESSION_ARCHIVE_FILENAME);
-  const archive = await packageSessionFiles(sessionDir, archivePath);
-  return { ...archive, cleanupDir: archivePathCleanupDir(archivePath) };
+export async function createFeedbackArchivePath(filename: string): Promise<{
+  readonly archivePath: string;
+  readonly cleanupDir: string;
+}> {
+  const archivePath = await createArchivePath(filename);
+  return { archivePath, cleanupDir: archivePathCleanupDir(archivePath) };
 }
 
 export async function removePackagedCodebaseArchive(archive: FeedbackCodebaseArchive): Promise<void> {

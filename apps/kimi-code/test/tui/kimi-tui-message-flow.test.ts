@@ -33,7 +33,6 @@ import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
 import {
   packageCurrentCodebase,
-  packageCurrentSession,
   scanCodebase,
   uploadPackagedCodebase,
 } from '../../src/feedback/codebase-upload';
@@ -61,7 +60,6 @@ vi.mock('../../src/feedback/codebase-upload', async (importOriginal) => {
     ...actual,
     scanCodebase: vi.fn().mockResolvedValue(undefined),
     packageCurrentCodebase: vi.fn(),
-    packageCurrentSession: vi.fn(),
     uploadPackagedCodebase: vi.fn(),
   };
 });
@@ -241,6 +239,12 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     resumeSession: vi.fn(async () => session),
     forkSession: vi.fn(async () => session),
     listSessions: vi.fn(async () => []),
+    exportSession: vi.fn(async () => ({
+      zipPath: '/tmp/fake-session.zip',
+      entries: ['manifest.json', 'state.json'],
+      sessionDir: '/tmp/session-a',
+      manifest: {},
+    })),
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
@@ -353,6 +357,14 @@ async function makeTempHome(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'kimi-code-tui-'));
   tempDirs.push(dir);
   return dir;
+}
+
+async function makeExportedSessionZip(content = 'session zip'): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'kimi-code-feedback-export-'));
+  tempDirs.push(dir);
+  const zipPath = join(dir, 'session.zip');
+  await writeFile(zipPath, content);
+  return zipPath;
 }
 
 afterEach(async () => {
@@ -539,18 +551,24 @@ command = "vim"
     harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
     harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
 
-    const archive = {
-      path: '/tmp/fake-session.zip',
-      size: 4,
-      sha256: 'hash-session',
-      fingerprint: 'fp-session',
-      fileCount: 1,
-    };
-    let resolvePackage!: (value: typeof archive) => void;
-    const packageBlocked = new Promise<typeof archive>((resolve) => {
-      resolvePackage = resolve;
+    const zipPath = await makeExportedSessionZip();
+    let resolveExport!: () => void;
+    const exportBlocked = new Promise<{
+      zipPath: string;
+      entries: string[];
+      sessionDir: string;
+      manifest: Record<string, never>;
+    }>((resolve) => {
+      resolveExport = () => {
+        resolve({
+          zipPath,
+          entries: ['manifest.json', 'state.json'],
+          sessionDir: '/tmp/session-a',
+          manifest: {},
+        });
+      };
     });
-    vi.mocked(packageCurrentSession).mockImplementationOnce(() => packageBlocked);
+    harness.exportSession.mockImplementationOnce(() => exportBlocked);
 
     let settled = false;
     const command = handleFeedbackCommand(feedbackDriver as any).then(() => {
@@ -558,17 +576,23 @@ command = "vim"
     });
 
     await vi.waitFor(() => {
-      expect(packageCurrentSession).toHaveBeenCalledWith('/tmp/session-a');
+      expect(harness.exportSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'ses-1',
+          includeGlobalLog: true,
+          version: '0.0.0-test',
+        }),
+      );
     });
     expect(harness.auth.submitFeedback).toHaveBeenCalledWith(
       expect.objectContaining({ content: 'useful feedback' }),
     );
     expect(harness.auth.submitFeedback.mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(packageCurrentSession).mock.invocationCallOrder[0]!,
+      harness.exportSession.mock.invocationCallOrder[0]!,
     );
     expect(settled).toBe(false);
 
-    resolvePackage(archive);
+    resolveExport();
     await command;
   });
 
@@ -589,7 +613,7 @@ command = "vim"
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
-    vi.mocked(packageCurrentSession).mockReset();
+    harness.exportSession.mockReset();
     vi.mocked(packageCurrentCodebase).mockReset();
     vi.mocked(uploadPackagedCodebase).mockReset();
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
@@ -605,12 +629,12 @@ command = "vim"
       fingerprint: 'fp-123',
       usedGitIgnore: false,
     } as any);
-    vi.mocked(packageCurrentSession).mockResolvedValueOnce({
-      path: '/tmp/fake-session.zip',
-      size: 4,
-      sha256: 'hash-session',
-      fingerprint: 'fp-session',
-      fileCount: 1,
+    const sessionZipPath = await makeExportedSessionZip();
+    harness.exportSession.mockResolvedValueOnce({
+      zipPath: sessionZipPath,
+      entries: ['manifest.json', 'state.json'],
+      sessionDir: '/tmp/session-a',
+      manifest: {},
     });
     vi.mocked(packageCurrentCodebase).mockResolvedValueOnce({
       path: '/tmp/fake-codebase.zip',
@@ -625,7 +649,7 @@ command = "vim"
       resolveCodebaseUpload = resolve;
     });
     vi.mocked(uploadPackagedCodebase).mockImplementation((_api, archive) => {
-      if (archive.path === '/tmp/fake-session.zip') return Promise.resolve();
+      if (archive.path === sessionZipPath) return Promise.resolve();
       return codebaseUploadBlocked;
     });
 
@@ -642,16 +666,13 @@ command = "vim"
     resolveCodebaseUpload();
     await command;
     expect(settled).toBe(true);
-    // Session archive is uploaded first (small/reliable), then the codebase.
-    expect(uploadPackagedCodebase).toHaveBeenNthCalledWith(
-      1,
+    expect(uploadPackagedCodebase).toHaveBeenCalledWith(
       expect.any(Object),
-      expect.objectContaining({ path: '/tmp/fake-session.zip' }),
+      expect.objectContaining({ path: sessionZipPath }),
       3,
       { filename: 'session.zip' },
     );
-    expect(uploadPackagedCodebase).toHaveBeenNthCalledWith(
-      2,
+    expect(uploadPackagedCodebase).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ path: '/tmp/fake-codebase.zip' }),
       3,
@@ -679,30 +700,31 @@ command = "vim"
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
-    vi.mocked(packageCurrentSession).mockReset();
+    harness.exportSession.mockReset();
     vi.mocked(packageCurrentCodebase).mockReset();
     vi.mocked(uploadPackagedCodebase).mockReset();
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
     harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
     harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
-    const archive = {
-      path: '/tmp/fake-session.zip',
-      size: 4,
-      sha256: 'hash-session',
-      fingerprint: 'fp-session',
-      fileCount: 1,
-    };
+    const sessionZipPath = await makeExportedSessionZip();
     vi.mocked(scanCodebase).mockRejectedValueOnce(new Error('scan failed'));
-    vi.mocked(packageCurrentSession).mockResolvedValueOnce(archive);
+    harness.exportSession.mockResolvedValueOnce({
+      zipPath: sessionZipPath,
+      entries: ['manifest.json', 'state.json'],
+      sessionDir: '/tmp/session-a',
+      manifest: {},
+    });
 
     await handleFeedbackCommand(feedbackDriver as any);
 
-    expect(packageCurrentSession).toHaveBeenCalledWith('/tmp/session-a');
+    expect(harness.exportSession).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'ses-1', includeGlobalLog: true }),
+    );
     expect(packageCurrentCodebase).not.toHaveBeenCalled();
     expect(uploadPackagedCodebase).toHaveBeenCalledWith(
       expect.any(Object),
-      archive,
+      expect.objectContaining({ path: sessionZipPath }),
       3,
       { filename: 'session.zip' },
     );
@@ -729,19 +751,13 @@ command = "vim"
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
     vi.mocked(packageCurrentCodebase).mockReset();
-    vi.mocked(packageCurrentSession).mockReset();
+    harness.exportSession.mockReset();
     vi.mocked(uploadPackagedCodebase).mockReset();
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
     harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
     harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
-    const sessionArchive = {
-      path: '/tmp/fake-session.zip',
-      size: 4,
-      sha256: 'hash-session',
-      fingerprint: 'fp-session',
-      fileCount: 1,
-    };
+    const sessionZipPath = await makeExportedSessionZip();
 
     vi.mocked(scanCodebase).mockResolvedValueOnce({
       root: '/tmp/proj-a',
@@ -749,7 +765,12 @@ command = "vim"
       fingerprint: 'fp-123',
       usedGitIgnore: false,
     } as any);
-    vi.mocked(packageCurrentSession).mockResolvedValueOnce(sessionArchive);
+    harness.exportSession.mockResolvedValueOnce({
+      zipPath: sessionZipPath,
+      entries: ['manifest.json', 'state.json'],
+      sessionDir: '/tmp/session-a',
+      manifest: {},
+    });
     vi.mocked(packageCurrentCodebase).mockRejectedValueOnce(new Error('zip failed'));
 
     await handleFeedbackCommand(feedbackDriver as any);
@@ -758,7 +779,7 @@ command = "vim"
     expect(calls[0]?.[0]?.['info']).toBeUndefined();
     expect(uploadPackagedCodebase).toHaveBeenCalledWith(
       expect.any(Object),
-      sessionArchive,
+      expect.objectContaining({ path: sessionZipPath }),
       3,
       { filename: 'session.zip' },
     );

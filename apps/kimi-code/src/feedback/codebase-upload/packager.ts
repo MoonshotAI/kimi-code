@@ -1,15 +1,11 @@
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { lstat, mkdir, readdir, rm, stat } from 'node:fs/promises';
-import { dirname, join, relative } from 'node:path';
+import { mkdir, rm, stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 import { ZipFile } from 'yazl';
 
-import type {
-  FeedbackCodebaseArchive,
-  FeedbackCodebaseFile,
-  FeedbackCodebaseScanResult,
-} from './types';
+import type { FeedbackCodebaseArchive, FeedbackCodebaseScanResult } from './types';
 
 interface PackageEntry {
   readonly absolutePath: string;
@@ -26,24 +22,6 @@ export async function packageCodebase(
   archivePath: string,
 ): Promise<FeedbackCodebaseArchive> {
   const entries: PackageEntry[] = scan.files.map((file) => ({
-    absolutePath: file.absolutePath,
-    archivePath: file.path,
-    size: file.size,
-    mtimeMs: file.mtimeMs,
-  }));
-  return packageEntries(entries, archivePath);
-}
-
-/**
- * Pack the current session directory (state.json, agents/<id>/wire.jsonl,
- * logs/kimi-code.log) into a zip, with files placed at the zip root.
- */
-export async function packageSessionFiles(
-  sessionDir: string,
-  archivePath: string,
-): Promise<FeedbackCodebaseArchive> {
-  const files = await collectDirFiles(sessionDir);
-  const entries: PackageEntry[] = files.map((file) => ({
     absolutePath: file.absolutePath,
     archivePath: file.path,
     size: file.size,
@@ -105,34 +83,6 @@ async function packageEntries(
   }
 }
 
-async function collectDirFiles(dir: string): Promise<FeedbackCodebaseFile[]> {
-  const results: FeedbackCodebaseFile[] = [];
-
-  async function walk(current: string): Promise<void> {
-    const entries = await readdir(current, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
-      const absolutePath = join(current, entry.name);
-      if (entry.isDirectory()) {
-        await walk(absolutePath);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      const fileStat = await lstat(absolutePath).catch(() => null);
-      if (fileStat === null || !fileStat.isFile()) continue;
-      results.push({
-        path: toPosixPath(relative(dir, absolutePath)),
-        absolutePath,
-        size: fileStat.size,
-        mtimeMs: fileStat.mtimeMs,
-      });
-    }
-  }
-
-  await walk(dir);
-  return results.toSorted((a, b) => a.path.localeCompare(b.path));
-}
-
 function fingerprintEntries(entries: readonly PackageEntry[]): string {
   const hash = createHash('sha256');
   for (const entry of entries) {
@@ -144,8 +94,4 @@ function fingerprintEntries(entries: readonly PackageEntry[]): string {
     hash.update('\n');
   }
   return hash.digest('hex');
-}
-
-function toPosixPath(value: string): string {
-  return value.split('\\').join('/');
 }

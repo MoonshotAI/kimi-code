@@ -17,7 +17,7 @@ import {
   type AuthStatus,
   type BearerTokenProvider,
   type FetchCompleteFeedbackUploadResult,
-  type FetchCreateFeedbackUploadUrlResult,
+  type FetchFeedbackUploadError,
   type FetchSubmitFeedbackResult,
   type KimiHostIdentity,
   type KimiOAuthLoginOptions,
@@ -53,6 +53,23 @@ export interface KimiAuthCompleteFeedbackUploadInput {
   readonly uploadId: number;
   readonly parts: readonly KimiAuthCompleteFeedbackUploadPart[];
 }
+
+export interface KimiAuthFeedbackUploadPart {
+  readonly partNumber: number;
+  readonly url: string;
+  readonly method: string;
+  readonly size: number;
+}
+
+export interface KimiAuthCreateFeedbackUploadUrlOk {
+  readonly kind: 'ok';
+  readonly uploadId: number;
+  readonly parts: readonly KimiAuthFeedbackUploadPart[];
+}
+
+export type KimiAuthCreateFeedbackUploadUrlResult =
+  | KimiAuthCreateFeedbackUploadUrlOk
+  | FetchFeedbackUploadError;
 
 export type KimiAuthLoginOptions = Omit<KimiOAuthLoginOptions, 'provisionConfig'>;
 
@@ -184,9 +201,9 @@ export class KimiAuthFacade {
   async createFeedbackUploadUrl(
     input: KimiAuthCreateFeedbackUploadUrlInput,
     providerName?: string | undefined,
-  ): Promise<FetchCreateFeedbackUploadUrlResult> {
+  ): Promise<KimiAuthCreateFeedbackUploadUrlResult> {
     const auth = this.resolveRuntimeManagedAuth(providerName);
-    return this.toolkit.createFeedbackUploadUrl(
+    const result = await this.toolkit.createFeedbackUploadUrl(
       {
         file_hash: input.sha256,
         file_name: input.filename,
@@ -199,6 +216,17 @@ export class KimiAuthFacade {
         baseUrl: auth.baseUrl,
       },
     );
+    if (result.kind !== 'ok') return result;
+    return {
+      kind: 'ok',
+      uploadId: result.upload_id,
+      parts: result.parts.map((part) => ({
+        partNumber: part.part_number,
+        url: part.url,
+        method: part.method,
+        size: part.size,
+      })),
+    };
   }
 
   async completeFeedbackUpload(

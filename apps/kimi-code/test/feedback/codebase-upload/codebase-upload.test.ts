@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   packageCodebase,
-  packageSessionFiles,
   removeStaleFeedbackUploads,
   scanCodebase,
   uploadPackagedCodebase,
@@ -237,39 +236,6 @@ describe('packageCodebase', () => {
   });
 });
 
-describe('packageSessionFiles', () => {
-  it('recursively packs every file under the session directory', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'feedback-session-'));
-    const archivePath = join(tmpdir(), 'feedback-session-test.zip');
-    try {
-      await mkdir(join(sessionDir, 'agents', 'main'), { recursive: true });
-      await mkdir(join(sessionDir, 'logs'));
-      await writeFile(join(sessionDir, 'state.json'), '{}');
-      await writeFile(join(sessionDir, 'agents', 'main', 'wire.jsonl'), 'events');
-      await writeFile(join(sessionDir, 'logs', 'kimi-code.log'), 'logs');
-
-      const archive = await packageSessionFiles(sessionDir, archivePath);
-      expect(archive.fileCount).toBe(3);
-      expect(archive.size).toBeGreaterThan(0);
-      expect(archive.sha256).toMatch(/^[0-9a-f]{64}$/);
-    } finally {
-      await rm(sessionDir, { recursive: true, force: true });
-      await rm(archivePath, { force: true });
-    }
-  });
-
-  it('rejects empty session archives instead of uploading an empty zip', async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), 'feedback-empty-session-'));
-    const archivePath = join(tmpdir(), 'feedback-empty-session.zip');
-    try {
-      await expect(packageSessionFiles(sessionDir, archivePath)).rejects.toThrow(/empty/i);
-      await expect(stat(archivePath)).rejects.toThrow();
-    } finally {
-      await rm(sessionDir, { recursive: true, force: true });
-      await rm(archivePath, { force: true });
-    }
-  });
-});
 
 describe('scanCodebase filtering', () => {
   it('rejects when the scan signal is already aborted', async () => {
