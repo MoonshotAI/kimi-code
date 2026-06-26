@@ -97,6 +97,21 @@ export type {
 } from './managed-feedback';
 
 export {
+  fetchCompleteFeedbackUpload,
+  fetchCreateFeedbackUploadUrl,
+  kimiCodeFeedbackUploadCompleteUrl,
+  kimiCodeFeedbackUploadUrl,
+} from './managed-feedback-upload';
+export type {
+  CompleteFeedbackUploadBody,
+  CreateFeedbackUploadUrlBody,
+  CreateFeedbackUploadUrlResponse,
+  FetchCompleteFeedbackUploadResult,
+  FetchCreateFeedbackUploadUrlResult,
+  FetchFeedbackUploadError,
+} from './managed-feedback-upload';
+
+export {
   applyOpenPlatformConfig,
   capabilitiesForModel,
   fetchOpenPlatformModels,

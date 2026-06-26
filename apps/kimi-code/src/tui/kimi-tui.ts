@@ -1836,6 +1836,9 @@ export class KimiTUI {
         spinner.setText(currentTheme.fg(tone, `${symbol} ${finalLabel}`));
         this.state.ui.requestRender();
       },
+      setLabel: (nextLabel) => {
+        spinner.setLabel(nextLabel);
+      },
     };
   }
 
