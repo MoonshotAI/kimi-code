@@ -352,6 +352,109 @@ describe('Session lifecycle hooks', () => {
       },
     ]);
   });
+
+  it('includes session_dir in hook payload', async () => {
+    const { command, logPath, sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-dir-payload',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      hooks: [{ event: 'SessionStart', matcher: 'startup', command, timeout: 5 }],
+    });
+
+    await session.createMain();
+
+    expect(await readHookPayloads(logPath)).toMatchObject([
+      {
+        hook_event_name: 'SessionStart',
+        session_id: 'session-dir-payload',
+        cwd: workDir,
+        session_dir: sessionDir,
+        source: 'startup',
+      },
+    ]);
+    await session.close();
+  });
+
+  it('injects SessionStart hook stdout into the main agent context', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const hookScriptPath = join(workDir, 'session-start-stdout.cjs');
+    await writeFile(
+      hookScriptPath,
+      "process.stdout.write('recall-block-from-session-start-hook');",
+      'utf-8',
+    );
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-start-inject',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      hooks: [
+        {
+          event: 'SessionStart',
+          matcher: 'startup',
+          command: `node ${JSON.stringify(hookScriptPath)}`,
+          timeout: 5,
+        },
+      ],
+    });
+
+    await session.createMain();
+
+    const mainAgent = session.getReadyAgent('main');
+    const injected = mainAgent?.context.history.find(
+      (message) =>
+        message.origin?.kind === 'hook_result' &&
+        message.origin?.event === 'SessionStart' &&
+        message.content.some(
+          (part) => part.type === 'text' && part.text.includes('recall-block-from-session-start-hook'),
+        ),
+    );
+    expect(injected).toBeDefined();
+    await session.close();
+  });
+
+  it('does not inject stdout from a failing SessionStart hook', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const hookScriptPath = join(workDir, 'session-start-fail.cjs');
+    await writeFile(
+      hookScriptPath,
+      "process.stdout.write('should-not-be-injected'); process.exit(1);",
+      'utf-8',
+    );
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-start-fail',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      hooks: [
+        {
+          event: 'SessionStart',
+          matcher: 'startup',
+          command: `node ${JSON.stringify(hookScriptPath)}`,
+          timeout: 5,
+        },
+      ],
+    });
+
+    await session.createMain();
+
+    const mainAgent = session.getReadyAgent('main');
+    const injected = mainAgent?.context.history.find(
+      (message) =>
+        message.origin?.kind === 'hook_result' &&
+        message.origin?.event === 'SessionStart' &&
+        message.content.some(
+          (part) => part.type === 'text' && part.text.includes('should-not-be-injected'),
+        ),
+    );
+    expect(injected).toBeUndefined();
+    await session.close();
+  });
 });
 
 async function hookFixture(): Promise<{
