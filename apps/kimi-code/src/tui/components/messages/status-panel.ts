@@ -5,7 +5,7 @@
  * separate from the TUI orchestration layer.
  */
 
-import type { ModelAlias, PermissionMode, SessionStatus } from '@moonshot-ai/kimi-code-sdk';
+import type { GoalSnapshot, ModelAlias, PermissionMode, ProviderConfig, SessionStatus } from '@moonshot-ai/kimi-code-sdk';
 
 import { PRODUCT_NAME } from '#/constant/app';
 import { currentTheme } from '#/tui/theme';
@@ -33,14 +33,18 @@ export interface StatusReportOptions {
   readonly thinking: boolean;
   readonly permissionMode: PermissionMode;
   readonly planMode: boolean;
+  readonly swarmMode: boolean;
   readonly contextUsage: number;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly availableModels: Record<string, ModelAlias>;
+  readonly availableProviders: Record<string, ProviderConfig>;
   readonly status?: SessionStatus;
   readonly statusError?: string;
   readonly managedUsage?: ManagedUsageReport;
   readonly managedUsageError?: string;
+  readonly mcpServersSummary?: string | null;
+  readonly goal?: GoalSnapshot | null;
 }
 
 type Colorize = (text: string) => string;
@@ -58,6 +62,29 @@ function formatModelStatus(options: StatusReportOptions): string {
     ? 'off'
     : 'on';
   return `${displayModelName(model, options.availableModels)} (thinking ${thinking})`;
+}
+
+function formatPermissionMode(permission: PermissionMode, value: Colorize, errorStyle: Colorize): string {
+  if (permission === 'yolo') return errorStyle('yolo');
+  if (permission === 'auto') return value('auto');
+  return value(permission);
+}
+
+function formatPlanMode(planMode: boolean, value: Colorize, muted: Colorize): string {
+  return planMode ? value('on') : muted('off');
+}
+
+function formatSwarmMode(swarmMode: boolean, value: Colorize, muted: Colorize): string {
+  return swarmMode ? value('on') : muted('off');
+}
+
+function formatGoalStatus(goal: GoalSnapshot | null | undefined): string | undefined {
+  if (goal === null || goal === undefined) return undefined;
+  // Truncate by Unicode code points so a surrogate pair (e.g. an emoji) is
+  // never split in half at the cut boundary.
+  const chars = Array.from(goal.objective);
+  const objective = chars.length > 40 ? `${chars.slice(0, 40).join('')}…` : goal.objective;
+  return `${objective} · ${goal.status}`;
 }
 
 function addFieldRows(
@@ -96,16 +123,33 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
 
   const permission = options.status?.permission ?? options.permissionMode;
   const planMode = options.status?.planMode ?? options.planMode;
+  const swarmMode = options.status?.swarmMode ?? options.swarmMode;
   const sessionId = options.sessionId.trim().length > 0 ? options.sessionId : 'none';
+  const modelCount = Object.keys(options.availableModels).length;
+  const providerCount = Object.keys(options.availableProviders).length;
+  const mcpSummary = options.mcpServersSummary?.trim();
+  const goalStatus = formatGoalStatus(options.goal);
+
   const rows: FieldRow[] = [
     { label: 'Model', value: formatModelStatus(options) },
     { label: 'Directory', value: options.workDir },
-    { label: 'Permissions', value: permission },
-    { label: 'Plan mode', value: planMode ? 'on' : 'off' },
+    { label: 'Permissions', value: formatPermissionMode(permission, value, errorStyle) },
+    { label: 'Plan mode', value: formatPlanMode(planMode, value, muted) },
+    { label: 'Swarm', value: formatSwarmMode(swarmMode, value, muted) },
     { label: 'Session', value: sessionId },
   ];
   const title = options.sessionTitle?.trim();
   if (title !== undefined && title.length > 0) rows.push({ label: 'Title', value: title });
+  if (goalStatus !== undefined) {
+    rows.push({ label: 'Goal', value: goalStatus });
+  }
+  rows.push(
+    { label: 'Providers', value: `${providerCount}` },
+    { label: 'Models', value: `${modelCount}` },
+  );
+  if (mcpSummary !== undefined && mcpSummary.length > 0) {
+    rows.push({ label: 'MCP servers', value: mcpSummary });
+  }
   if (options.statusError !== undefined) {
     rows.push({ label: 'Warning', value: options.statusError, severity: 'error' });
   }

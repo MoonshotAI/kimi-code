@@ -17,6 +17,7 @@ describe('status panel report lines', () => {
       thinking: true,
       permissionMode: 'manual',
       planMode: false,
+      swarmMode: false,
       contextUsage: 0.25,
       contextTokens: 2500,
       maxContextTokens: 10000,
@@ -26,6 +27,33 @@ describe('status panel report lines', () => {
           model: 'kimi-k2',
           maxContextSize: 10000,
           displayName: 'Kimi K2',
+        },
+      },
+      availableProviders: {
+        'managed:kimi-code': {
+          type: 'kimi',
+          apiKey: 'sk-test',
+        },
+      },
+      mcpServersSummary: '2 connected',
+      goal: {
+        goalId: 'goal-1',
+        objective: 'Ship the status card',
+        status: 'active',
+        turnsUsed: 3,
+        tokensUsed: 1200,
+        wallClockMs: 45000,
+        budget: {
+          tokenBudget: null,
+          turnBudget: null,
+          wallClockBudgetMs: null,
+          remainingTokens: null,
+          remainingTurns: null,
+          remainingWallClockMs: null,
+          tokenBudgetReached: false,
+          turnBudgetReached: false,
+          wallClockBudgetReached: false,
+          overBudget: false,
         },
       },
       status: {
@@ -56,8 +84,13 @@ describe('status panel report lines', () => {
     expect(output).toContain('Directory    /tmp/project');
     expect(output).toContain('Permissions  auto');
     expect(output).toContain('Plan mode    on');
+    expect(output).toContain('Swarm        off');
     expect(output).toContain('Session      ses-1');
     expect(output).toContain('Title        Implement status');
+    expect(output).toContain('Goal         Ship the status card · active');
+    expect(output).toContain('Providers    1');
+    expect(output).toContain('Models       1');
+    expect(output).toContain('MCP servers  2 connected');
     expect(output).toContain('Context window');
     expect(output).toContain('25.0%');
     expect(output).toContain('(3.0k / 12.0k)');
@@ -65,7 +98,6 @@ describe('status panel report lines', () => {
     expect(output).toContain('8% used');
     expect(output).not.toContain('Account');
     expect(output).not.toContain('AGENTS.md');
-    expect(output).not.toContain('Runtime');
   });
 
   it('falls back to app state and shows status load errors as warnings', () => {
@@ -78,10 +110,12 @@ describe('status panel report lines', () => {
       thinking: false,
       permissionMode: 'manual',
       planMode: false,
+      swarmMode: false,
       contextUsage: 0,
       contextTokens: 0,
       maxContextTokens: 0,
       availableModels: {},
+      availableProviders: {},
       statusError: 'No active session',
     }).map(strip);
 
@@ -90,5 +124,72 @@ describe('status panel report lines', () => {
     expect(output).toContain('Session      none');
     expect(output).toContain('Warning      No active session');
     expect(output).toContain('No context window data available.');
+  });
+
+  it('reads swarm mode from runtime status over stale app state', () => {
+    const lines = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinking: false,
+      permissionMode: 'manual',
+      planMode: false,
+      swarmMode: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+      availableProviders: {},
+      status: { swarmMode: true },
+    }).map(strip);
+
+    expect(lines.join('\n')).toContain('Swarm        on');
+  });
+
+  it('truncates a long goal objective without splitting a surrogate pair', () => {
+    // 50 rocket emojis (each a surrogate pair); the truncation point at 40
+    // code points must fall between pairs, never inside one.
+    const objective = '🚀'.repeat(50);
+    const lines = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinking: false,
+      permissionMode: 'manual',
+      planMode: false,
+      swarmMode: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+      availableProviders: {},
+      goal: {
+        goalId: 'g1',
+        objective,
+        status: 'active',
+        turnsUsed: 0,
+        tokensUsed: 0,
+        wallClockMs: 0,
+        budget: {
+          tokenBudget: null,
+          turnBudget: null,
+          wallClockBudgetMs: null,
+          remainingTokens: null,
+          remainingTurns: null,
+          remainingWallClockMs: null,
+          tokenBudgetReached: false,
+          turnBudgetReached: false,
+          wallClockBudgetReached: false,
+          overBudget: false,
+        },
+      },
+    }).map(strip);
+
+    // 40 emojis + ellipsis, and every emoji intact (no lone surrogate halves).
+    expect(lines.join('\n')).toContain('🚀'.repeat(40) + '…');
   });
 });

@@ -135,14 +135,18 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     thinking: appState.thinking,
     permissionMode: appState.permissionMode,
     planMode: appState.planMode,
+    swarmMode: appState.swarmMode,
     contextUsage: appState.contextUsage,
     contextTokens: appState.contextTokens,
     maxContextTokens: appState.maxContextTokens,
     availableModels: appState.availableModels,
+    availableProviders: appState.availableProviders,
     status: runtimeStatus.status,
     statusError: runtimeStatus.error,
     managedUsage: managedUsage?.usage,
     managedUsageError: managedUsage?.error,
+    mcpServersSummary: appState.mcpServersSummary,
+    goal: appState.goal,
   };
   const panel = new UsagePanelComponent(() => buildStatusReportLines(reportArgs), 'primary', ' Status ');
   host.state.transcriptContainer.addChild(panel);
