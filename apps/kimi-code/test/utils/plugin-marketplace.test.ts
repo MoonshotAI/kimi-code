@@ -124,7 +124,7 @@ describe('loadPluginMarketplace', () => {
     });
   });
 
-  it('includes Superpowers in the repository marketplace fixture', async () => {
+  it('pins Superpowers to the upstream release in the repository marketplace fixture', async () => {
     const fetchImpl = vi.fn(async (input: string | URL) => {
       const url = String(input);
       if (url.endsWith('/releases/latest')) {
@@ -148,8 +148,8 @@ describe('loadPluginMarketplace', () => {
         id: 'superpowers',
         displayName: 'Superpowers',
         tier: 'curated',
-        source: 'https://github.com/obra/superpowers',
         version: '6.0.3',
+        source: 'https://github.com/obra/superpowers/releases/tag/v6.0.3',
       }),
     );
     expect(marketplace.plugins).toContainEqual(
@@ -211,7 +211,7 @@ describe('loadPluginMarketplace', () => {
       expect(marketplace.plugins).toContainEqual(
         expect.objectContaining({
           id: 'superpowers',
-          source: 'https://github.com/obra/superpowers',
+          source: 'https://github.com/obra/superpowers/releases/tag/v6.0.3',
         }),
       );
     } finally {
