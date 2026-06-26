@@ -80,6 +80,12 @@ export type {
 } from '@moonshot-ai/agent-core';
 
 export type {
+  KimiAuthCompleteFeedbackUploadInput,
+  KimiAuthCompleteFeedbackUploadPart,
+  KimiAuthCreateFeedbackUploadUrlInput,
+  KimiAuthCreateFeedbackUploadUrlOk,
+  KimiAuthCreateFeedbackUploadUrlResult,
+  KimiAuthFeedbackUploadPart,
   KimiAuthLoginResult,
   KimiAuthLogoutResult,
   KimiAuthSubmitFeedbackInput,
