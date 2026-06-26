@@ -104,6 +104,10 @@ function toggleExpand(): void {
   void nextTick(() => {
     autosize();
     recomputeGrown();
+    // Return focus to the textarea so the user can keep typing right away;
+    // otherwise focus stays on the toggle button and the next Enter would
+    // activate it again instead of inserting a newline.
+    textareaRef.value?.focus();
   });
 }
 
