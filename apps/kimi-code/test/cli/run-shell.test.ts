@@ -594,7 +594,7 @@ describe('runShell', () => {
         '1.2.3-test',
       );
       const [tui] = mocks.kimiTuiConstructor.mock.calls[0]!;
-      const openedUrl = 'http://127.0.0.1:58627/sessions/ses-1';
+      const openedUrl = 'http://127.0.0.1:58627/sessions/ses-1#token=tok-1';
       (tui as { exitOpenUrl?: string }).exitOpenUrl = openedUrl;
 
       await expect((tui as { onExit: () => Promise<void> }).onExit()).rejects.toBeInstanceOf(
