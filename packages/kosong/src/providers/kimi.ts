@@ -518,7 +518,12 @@ export class KimiChatProvider implements ChatProvider {
         reasoningEffort = 'high';
         break;
     }
-    return this._withGenerationKwargs({ reasoning_effort: reasoningEffort }).withExtraBody({
+    // Moonshot API requires temperature=1.0 when thinking is enabled and
+    // temperature=0.6 when thinking is disabled. Set a default here so users
+    // don't hit 400 errors after toggling thinking off; KIMI_MODEL_TEMPERATURE
+    // env var (applied later via applyKimiEnvSamplingParams) can still override.
+    const temperature = effort === 'off' ? 0.6 : 1.0;
+    return this._withGenerationKwargs({ reasoning_effort: reasoningEffort, temperature }).withExtraBody({
       thinking,
     });
   }
