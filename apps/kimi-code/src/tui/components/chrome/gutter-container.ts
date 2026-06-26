@@ -14,8 +14,6 @@ import type { Component } from '@earendil-works/pi-tui';
 
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
-const PERF_LOG = process.env['KIMI_TUI_PERF'] === '1';
-
 interface TranscriptRenderCache {
   width: number;
   childRefs: Component[];
@@ -41,7 +39,6 @@ export class GutterContainer extends Container {
   override render(width: number): string[] {
     const inner = Math.max(1, width - this.leftPad - this.rightPad);
     const lead = ' '.repeat(this.leftPad);
-    const t0 = PERF_LOG ? performance.now() : 0;
 
     const cache = this.renderCache;
     const cacheValid =
@@ -84,12 +81,6 @@ export class GutterContainer extends Container {
       this.renderCache = { width, childRefs, childRenderRefs, prefixed, out };
     }
 
-    if (PERF_LOG) {
-      const ms = (performance.now() - t0).toFixed(2);
-      process.stderr.write(
-        `[tui-perf] transcript render: ${this.children.length} children, ${out.length} lines, ${ms}ms\n`,
-      );
-    }
     return out;
   }
 }
