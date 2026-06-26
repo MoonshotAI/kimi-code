@@ -14,6 +14,7 @@ export type SpinnerStyle = 'moon' | 'braille';
 export class MoonLoader extends Text {
   private currentFrame = 0;
   private intervalId: ReturnType<typeof setInterval> | null = null;
+  private renderThrottleTimer: ReturnType<typeof setTimeout> | null = null;
   private ui: TUI;
   private frames: string[];
   private interval: number;
@@ -42,7 +43,7 @@ export class MoonLoader extends Text {
     this.updateDisplay();
     this.intervalId = setInterval(() => {
       this.currentFrame = (this.currentFrame + 1) % this.frames.length;
-      this.updateDisplay();
+      this.scheduleRender();
     }, this.interval);
   }
 
@@ -51,6 +52,23 @@ export class MoonLoader extends Text {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
+    if (this.renderThrottleTimer) {
+      clearTimeout(this.renderThrottleTimer);
+      this.renderThrottleTimer = null;
+    }
+  }
+
+  /**
+   * Coalesce interval-driven spinner renders to avoid a full TUI re-render on
+   * every animation frame. State changes (label/tip/width/color) still render
+   * immediately via updateDisplay().
+   */
+  private scheduleRender(): void {
+    if (this.renderThrottleTimer !== null) return;
+    this.renderThrottleTimer = setTimeout(() => {
+      this.renderThrottleTimer = null;
+      this.updateDisplay();
+    }, 200);
   }
 
   setLabel(label: string): void {

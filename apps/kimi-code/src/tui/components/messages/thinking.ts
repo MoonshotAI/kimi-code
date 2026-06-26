@@ -26,6 +26,7 @@ export class ThinkingComponent implements Component {
   private readonly ui: TUI | undefined;
   private spinnerFrame = 0;
   private spinnerInterval: ReturnType<typeof setInterval> | undefined;
+  private spinnerRenderTimer: ReturnType<typeof setTimeout> | null = null;
   // Hold a single Text instance so pi-tui's (text, width) → lines cache
   // actually survives across renders. Re-constructing per render destroys
   // the cache and forces full re-wrap on every frame, which dominates CPU
@@ -122,13 +123,32 @@ export class ThinkingComponent implements Component {
     if (this.ui === undefined || this.spinnerInterval !== undefined) return;
     this.spinnerInterval = setInterval(() => {
       this.spinnerFrame = (this.spinnerFrame + 1) % BRAILLE_SPINNER_FRAMES.length;
-      this.ui?.requestRender();
+      this.scheduleSpinnerRender();
     }, BRAILLE_SPINNER_INTERVAL_MS);
+  }
+
+  /**
+   * Throttle spinner renders to avoid full transcript re-layout on every
+   * animation frame. The frame index advances at the animation interval, but
+   * the expensive requestRender is coalesced to ~200ms — matching the pattern
+   * used by AgentGroupComponent.
+   */
+  private scheduleSpinnerRender(): void {
+    if (this.spinnerRenderTimer !== null) return;
+    this.spinnerRenderTimer = setTimeout(() => {
+      this.spinnerRenderTimer = null;
+      this.ui?.requestRender();
+    }, 200);
   }
 
   private stopSpinner(): void {
     if (this.spinnerInterval === undefined) return;
     clearInterval(this.spinnerInterval);
     this.spinnerInterval = undefined;
+    if (this.spinnerRenderTimer !== null) {
+      clearTimeout(this.spinnerRenderTimer);
+      this.spinnerRenderTimer = null;
+    }
+    this.ui?.requestRender();
   }
 }
