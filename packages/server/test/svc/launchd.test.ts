@@ -9,7 +9,7 @@
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -138,7 +138,7 @@ describe('parseLaunchctlPrint', () => {
 
 describe('resolveSupervisorProgram', () => {
   it('normalizes a relative executable path to an absolute path', () => {
-    expect(resolveSupervisorProgram(['node', './kimi'], '/tmp/kimi-bin')).toBe('/tmp/kimi-bin/kimi');
+    expect(resolveSupervisorProgram(['node', './kimi'], '/tmp/kimi-bin')).toBe(resolve('/tmp/kimi-bin', './kimi'));
   });
 
   it('uses the absolute script path outside SEA mode', () => {
@@ -156,7 +156,7 @@ describe('resolveSupervisorProgram', () => {
   });
 });
 
-describe('launchd manager — install', () => {
+describe.skipIf(process.platform === 'win32')('launchd manager — install', () => {
   it('writes the plist and bootstraps via launchctl', async () => {
     const { deps, calls, plistPath } = makeDeps([{ stdout: '', stderr: '', code: 0 }], workDir);
     const mgr = createLaunchdManager(deps);
@@ -225,7 +225,7 @@ describe('launchd manager — install', () => {
   });
 });
 
-describe('launchd manager — lifecycle', () => {
+describe.skipIf(process.platform === 'win32')('launchd manager — lifecycle', () => {
   it('start delegates to `launchctl kickstart -k <domain>/<label>`', async () => {
     const { deps, calls, plistPath } = makeDeps([{ stdout: '', stderr: '', code: 0 }], workDir);
     require('node:fs').mkdirSync(plistPath.replace(/\/[^/]+$/, ''), { recursive: true });
@@ -285,7 +285,7 @@ describe('launchd manager — lifecycle', () => {
   });
 });
 
-describe('launchd manager — status', () => {
+describe.skipIf(process.platform === 'win32')('launchd manager — status', () => {
   it('reports installed=false when no plist exists', async () => {
     const { deps } = makeDeps([], workDir);
     const mgr = createLaunchdManager(deps);

@@ -68,7 +68,7 @@ const emit = defineEmits<{
   selectModel: [modelId: string];
   answer: [questionId: string, response: QuestionResponse];
   dismiss: [questionId: string];
-  approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string }];
+  approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string; selectedLabel?: string }];
   cancelTask: [taskId: string];
   'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos' | 'queue'];
   'close-dock-panel': [];

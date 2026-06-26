@@ -26,6 +26,11 @@ import { i18n } from '../../i18n';
 
 const OPTIMISTIC_USER_MESSAGE_METADATA_KEY = 'kimiWeb.optimisticUserMessage';
 
+/** Tail cap for accumulated output of non-subagent (bash / background tool)
+ *  tasks, whose stdout can be noisy and unbounded. Subagent progress is kept
+ *  in full (small synthesized lines). */
+const MAX_BACKGROUND_OUTPUT_LINES = 40;
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -43,6 +48,10 @@ export interface KimiClientState {
   activeSessionId?: string;
   messagesBySession: Record<string, AppMessage[]>;
   approvalsBySession: Record<string, AppApprovalRequest[]>;
+  /** Preserved `plan_review` displays keyed by toolCallId. Plan content survives
+   *  approval resolution so the ExitPlanMode tool card can keep rendering the
+   *  plan (approved / rejected / revised) instead of losing it. */
+  planReviewByToolCallId: Record<string, { plan: string; path?: string }>;
   questionsBySession: Record<string, AppQuestionRequest[]>;
   tasksBySession: Record<string, AppTask[]>;
   goalBySession: Record<string, AppGoal>;
@@ -58,6 +67,7 @@ export function createInitialState(): KimiClientState {
     activeSessionId: undefined,
     messagesBySession: {},
     approvalsBySession: {},
+    planReviewByToolCallId: {},
     questionsBySession: {},
     tasksBySession: {},
     goalBySession: {},
@@ -74,9 +84,16 @@ export function createInitialState(): KimiClientState {
 function cloneState(s: KimiClientState): KimiClientState {
   return {
     ...s,
-    sessions: [...s.sessions],
+    // Reuse the `sessions` array reference when an event does not touch it.
+    // Every session-mutating case below already builds its own array via
+    // `[...]` / `.map` / `.filter`, so sharing the reference is safe — and it
+    // keeps `rawState.sessions` stable for events that don't change sessions,
+    // so the sidebar computeds (sessionsForView / workspaceGroups /
+    // mergedWorkspaces) are not dirtied by unrelated events.
+    sessions: s.sessions,
     messagesBySession: { ...s.messagesBySession },
     approvalsBySession: { ...s.approvalsBySession },
+    planReviewByToolCallId: { ...s.planReviewByToolCallId },
     questionsBySession: { ...s.questionsBySession },
     tasksBySession: { ...s.tasksBySession },
     goalBySession: { ...s.goalBySession },
@@ -454,6 +471,21 @@ export function reduceAppEvent(
       if (!exists) {
         next.approvalsBySession[sid] = [...list, event.approval];
       }
+      // Preserve a plan_review display so the plan stays visible in the
+      // ExitPlanMode tool card after the approval resolves.
+      const display = event.approval.display as
+        | { kind?: unknown; plan?: unknown; path?: unknown }
+        | null
+        | undefined;
+      if (display?.kind === 'plan_review' && typeof display.plan === 'string' && display.plan.length > 0) {
+        next.planReviewByToolCallId = {
+          ...next.planReviewByToolCallId,
+          [event.approval.toolCallId]: {
+            plan: display.plan,
+            path: typeof display.path === 'string' ? display.path : undefined,
+          },
+        };
+      }
       break;
     }
 
@@ -497,7 +529,9 @@ export function reduceAppEvent(
         next.tasksBySession[sid] = [...list, event.task];
       } else {
         const patched = [...list];
-        patched[idx] = event.task;
+        // The projected task does not carry reducer-owned accumulated progress;
+        // preserve it across the replacement so subagent output keeps growing.
+        patched[idx] = { ...event.task, outputLines: list[idx]!.outputLines };
         next.tasksBySession[sid] = patched;
       }
       break;
@@ -511,9 +545,13 @@ export function reduceAppEvent(
         if (t.id !== event.taskId) return t;
         const outputLines = t.outputLines ?? [];
         if (outputLines.at(-1) === event.outputChunk) return t;
+        const lines = [...outputLines, event.outputChunk];
         return {
           ...t,
-          outputLines: [...outputLines, event.outputChunk].slice(-40),
+          // Keep subagent progress in full (small synthesized lines) so the
+          // panel shows the whole process; cap background bash/tool output,
+          // which can grow without bound.
+          outputLines: t.kind === 'subagent' ? lines : lines.slice(-MAX_BACKGROUND_OUTPUT_LINES),
         };
       });
       break;

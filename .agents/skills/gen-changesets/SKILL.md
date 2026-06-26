@@ -59,12 +59,25 @@ If you believe a change qualifies as major, stop first, explain why, and ask the
 ## Wording Rules
 
 - Changelog entries **must be written in English**.
-- **Keep it short — ideally a single sentence that states what was done.** Do not write a paragraph, do not pile on technical detail, and do not enumerate every sub-change.
+- **Keep the whole entry concise.** Aim for one short sentence that states what was done; at most a short sentence plus a one-line usage hint. Do not write a paragraph, do not pile on technical detail, and do not enumerate every sub-change.
+- **For new user-facing features, append a brief usage hint** so users know how to try it. Keep it to a single short line — a command name, a subcommand, a flag, or a one-line "how to use". Do not explain design rationale or list edge cases. Skip the hint for bug fixes, internal changes, and refactors.
+  - Slash command: `Add the /foo slash command to list active sessions. Run /foo to see them.`
+  - CLI subcommand: `Add the kimi web subcommand to open the web UI. Run kimi web to launch it.`
+  - Flag: `Add a --bar flag to skip confirmation prompts. Pass --bar to skip.`
+  - Too long: `Add the /foo command to list active sessions. It accepts an optional --all flag to include background sessions, supports filtering by name with /foo <name>, and writes the result to the transcript...`
 - User-facing CLI wording should only be used when CLI users can perceive the change.
 - Internal changes that do not affect CLI users can still share a changeset with the CLI, but the wording must describe the real change honestly and must not present it as a user-facing feature.
 - Do not mention file names, class names, function names, PR numbers, or commit hashes.
 - Do not include real internal endpoints, key names, account names, or service names. If an example is needed, use neutral placeholders such as `example.com`, `example.test`, or `YOUR_API_KEY`.
 - Avoid vague words such as `refactor`, `optimize`, and `improve`. Describe the actual change, or use more specific wording.
+
+## When You Are Unsure About a Change
+
+Generate the changeset from what the diff clearly shows. If part of a change is unclear and you cannot confidently describe what it does for users, do not guess or pad the entry with vague wording.
+
+1. Finish the changeset for the parts that are clear.
+2. Then ask the user once, in a short list: name the specific change(s) you do not understand, and ask whether you may dig into the repository (read related source, tests, or call sites) to describe it more accurately.
+3. Only read more code after the user agrees. If the user says no or does not reply, keep the concise wording you already have and do not invent detail.
 
 ## Common Examples
 
@@ -76,6 +89,36 @@ An internal package fixes a bug visible to CLI users:
 ---
 
 Fix occasional loss of tool call results in long conversations.
+```
+
+A new user-facing slash command (note the short usage hint):
+
+```markdown
+---
+"@moonshot-ai/kimi-code": minor
+---
+
+Add the /foo slash command to list active sessions. Run /foo to see them.
+```
+
+A new CLI subcommand:
+
+```markdown
+---
+"@moonshot-ai/kimi-code": minor
+---
+
+Add the kimi web subcommand to open the web UI. Run kimi web to launch it.
+```
+
+A new flag on an existing command:
+
+```markdown
+---
+"@moonshot-ai/kimi-code": patch
+---
+
+Add a --bar flag to skip confirmation prompts. Pass --bar to skip.
 ```
 
 An internal package has an internal-only change, but it enters the CLI bundle:
@@ -136,6 +179,8 @@ Add the server REST and WebSocket APIs that power the web UI.
 ## Red Flags
 
 - You are about to write `major` without asking the user.
+- A new user-facing feature entry has no usage hint, or the hint runs to multiple lines and explains design rationale.
+- You guessed wording for a change you do not understand instead of asking the user whether you may dig into the repo.
 - Internal package source enters the CLI bundle, but `@moonshot-ai/kimi-code` is missing.
 - A changeset frontmatter mixes ignored internal packages with non-ignored packages.
 - `packages/node-sdk` was not changed, but `@moonshot-ai/kimi-code-sdk` was listed for "internal package sync".

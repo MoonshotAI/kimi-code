@@ -44,6 +44,22 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run test
 
+  test-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run test
+
   lint:
     runs-on: ubuntu-latest
 

@@ -656,8 +656,8 @@ export interface KimiWebApi {
   openInApp(sessionId: string, appId: string, path: string, line?: number): Promise<void>;
   connectEvents(handlers: KimiEventHandlers): KimiEventConnection;
 
-  // Workspaces + daemon folder browser
-  // PRESUMED — falls back until the daemon ships /workspaces, /fs:browse, /fs:home.
+  // Workspaces + daemon folder browser. /workspaces now ships and includes
+  // derived workspaces (cwds with sessions that were never explicitly registered).
   listWorkspaces(): Promise<AppWorkspace[]>;
   addWorkspace(input: { root: string; name?: string }): Promise<AppWorkspace>;
   deleteWorkspace(id: string): Promise<void>;

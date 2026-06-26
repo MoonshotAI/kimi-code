@@ -21,8 +21,9 @@ import {
   undoSessionRequestSchema,
   undoSessionResponseSchema,
   workspaceIdSchema,
+  type Event,
 } from '@moonshot-ai/protocol';
-import { IPromptService, ISessionService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IWorkspaceRegistry, WorkspaceNotFoundError, type IInstantiationService, type SessionClientTelemetry } from '@moonshot-ai/agent-core';
+import { IPromptService, ISessionService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IWorkspaceRegistry, WorkspaceNotFoundError, IEventService, type IInstantiationService, type SessionClientTelemetry } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -375,6 +376,20 @@ export function registerSessionsRoutes(
         const session = await ix.invokeFunction((a) =>
           a.get(ISessionService).update(session_id, body),
         );
+        // Broadcast the title change to every connection (including clients not
+        // subscribed to this session, and covering inactive sessions whose rename
+        // does not go through the live Session path), so session lists stay in sync.
+        if (typeof body.title === 'string' && body.title.trim().length > 0) {
+          ix.invokeFunction((a) =>
+            a.get(IEventService).publish({
+              type: 'session.meta.updated',
+              agentId: 'main',
+              sessionId: session_id,
+              title: session.title,
+              patch: { title: session.title, isCustomTitle: true },
+            } as Event),
+          );
+        }
         reply.send(okEnvelope(session, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);

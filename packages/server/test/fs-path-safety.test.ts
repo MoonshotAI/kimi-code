@@ -36,7 +36,7 @@ describe('resolveSafePath', () => {
   it('resolves a one-level child', async () => {
     const r = await resolveSafePath(cwd, 'hello.txt');
     expect(r.relative).toBe('hello.txt');
-    expect(r.absolute.endsWith('/hello.txt')).toBe(true);
+    expect(r.absolute).toMatch(/[/\\]hello.txt$/);
   });
 
   it('resolves a nested path', async () => {

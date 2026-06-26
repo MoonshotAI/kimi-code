@@ -1,6 +1,6 @@
 
 
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
@@ -248,7 +248,7 @@ async function runCommand(
     };
     if (options.timeoutMs !== undefined) {
       timer = setTimeout(() => {
-        child.kill();
+        killChild(child);
         finish({ exitCode: -1, stdout, stderr });
       }, options.timeoutMs);
       timer.unref?.();
@@ -268,6 +268,28 @@ async function runCommand(
       finish({ exitCode: code ?? -1, stdout, stderr });
     });
   });
+}
+
+function killChild(child: ChildProcess): void {
+  // On Windows, `ChildProcess.kill()` only signals the direct child (e.g. the
+  // `cmd.exe` wrapper when `shell` is involved, or the `git`/`gh` parent),
+  // leaving grandchildren alive and holding the cwd. Terminate the whole
+  // process tree so the working directory is released promptly.
+  if (process.platform === 'win32' && child.pid !== undefined) {
+    try {
+      const killer = spawn('taskkill', ['/T', '/F', '/PID', String(child.pid)], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      killer.once('error', () => {});
+      return;
+    } catch {
+      // fall through to the direct kill below
+    }
+  }
+  try {
+    child.kill();
+  } catch {}
 }
 
 function parsePullRequest(stdout: string): FsPullRequest | null {

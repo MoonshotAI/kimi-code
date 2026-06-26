@@ -101,6 +101,12 @@ const props = withDefaults(
      */
     isFollowing?: boolean;
     /**
+     * When true, clicking an Edit/Write tool card opens the right-side diff
+     * panel. Off in contexts that don't wire the panel (e.g. the side chat), so
+     * cards there expand inline instead.
+     */
+    toolDiffPanel?: boolean;
+    /**
      * @deprecated No longer used — Composer is rendered by ConversationPane.
      */
   }>(),
@@ -116,6 +122,7 @@ const props = withDefaults(
     loadingMore: false,
     loadingMoreError: false,
     isFollowing: false,
+    toolDiffPanel: false,
   },
 );
 
@@ -196,6 +203,8 @@ const emit = defineEmits<{
   openCompaction: [target: { turnId: string }];
   /** Show a subagent's full detail in the right-side panel. */
   openAgent: [target: { turnId: string; blockIndex: number; memberId: string }];
+  /** Show an Edit/Write tool call's diff in the right-side panel. */
+  openToolDiff: [id: string];
   /** Edit + resend the last user message (parent undoes, then refills composer). */
   editMessage: [text: string];
   /** Fetch the next older page of messages (triggered by top sentinel visibility or click). */
@@ -376,6 +385,20 @@ function copyAssistantRun(index: number): void {
   }).catch(() => {/* ignore */});
 }
 
+function copyUserMessage(turn: ChatTurn): void {
+  const text = turn.text;
+  if (!text.trim()) return;
+  void copyTextToClipboard(text).then((ok) => {
+    if (!ok) return;
+    copiedTurn.value = turn.id;
+    if (copiedTimer !== null) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => {
+      copiedTimer = null;
+      copiedTurn.value = null;
+    }, 1400);
+  }).catch(() => {/* ignore */});
+}
+
 function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }): boolean {
   if (turn.id !== streamingTurnId.value) return false;
   return block.sourceIndex === turnBlocks(turn).length - 1;
@@ -489,6 +512,21 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
             </div>
           </div>
           <button
+            v-if="turn.text.trim().length > 0"
+            type="button"
+            class="u-copy"
+            :data-tooltip="t('filePreview.copy')"
+            @click.stop="copyUserMessage(turn)"
+          >
+            <svg v-if="copiedTurn !== turn.id" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="9" height="9" rx="1.5"/>
+              <path d="M6 1h7a1 1 0 0 1 1 1v7"/>
+            </svg>
+            <svg v-else viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="3,8 6.5,11.5 13,5"/>
+            </svg>
+          </button>
+          <button
             v-if="turn.createdAt"
             type="button"
             class="u-time"
@@ -522,11 +560,11 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" :mobile="childBubble" :streaming="isStreamingRenderBlock(turn, blk)" @open="emit('openThinking', { turnId: turn.id, blockIndex: blk.sourceIndex })" />
           <div v-else-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :open-file="(target) => emit('openFile', target)" /></div>
           <div v-else-if="blk.kind === 'tool-stack'" class="tool-stack">
-            <ToolCall v-for="(item, si) in blk.tools" :key="toolStackKey(item)" :tool="item.tool" :mobile="childBubble" :stack-position="toolStackPosition(si, blk.tools.length)" @open-media="emit('openMedia', $event)" />
+            <ToolCall v-for="(item, si) in blk.tools" :key="toolStackKey(item)" :tool="item.tool" :mobile="childBubble" :stack-position="toolStackPosition(si, blk.tools.length)" :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" />
           </div>
           <AgentCard v-else-if="blk.kind === 'agent'" :member="blk.member" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
           <AgentGroup v-else-if="blk.kind === 'agentGroup'" :members="blk.members" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
-          <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" :mobile="childBubble" @open-media="emit('openMedia', $event)" />
+          <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" :mobile="childBubble" :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" />
         </template>
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turn.durationMs !== undefined)" class="a-msg-ft">
           <span v-if="turn.durationMs !== undefined" class="a-duration" :title="`${turn.durationMs} ms`">{{ formatDuration(turn.durationMs) }}</span>
@@ -664,11 +702,11 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
               <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" :streaming="isStreamingRenderBlock(turn, blk)" @open="emit('openThinking', { turnId: turn.id, blockIndex: blk.sourceIndex })" />
               <Markdown v-else-if="blk.kind === 'text' && blk.text" :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :open-file="(target) => emit('openFile', target)" />
               <div v-else-if="blk.kind === 'tool-stack'" class="tool-stack">
-                <ToolCall v-for="(item, si) in blk.tools" :key="toolStackKey(item)" :tool="item.tool" :stack-position="toolStackPosition(si, blk.tools.length)" @open-media="emit('openMedia', $event)" />
+                <ToolCall v-for="(item, si) in blk.tools" :key="toolStackKey(item)" :tool="item.tool" :stack-position="toolStackPosition(si, blk.tools.length)" :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" />
               </div>
               <AgentCard v-else-if="blk.kind === 'agent'" :member="blk.member" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
               <AgentGroup v-else-if="blk.kind === 'agentGroup'" :members="blk.members" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
-              <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" @open-media="emit('openMedia', $event)" />
+              <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" />
             </template>
           </template>
         </div>
@@ -1020,13 +1058,33 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 }
 .u-edit span { line-height: 1; }
 .u-edit:hover { opacity: 1; color: var(--blue); background: var(--hover); }
+/* Copy button — icon-only, shares the undo button's muted→hover style. */
+.u-copy {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 5px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--muted);
+  font: inherit;
+  font-size: calc(var(--ui-font-size) - 3px);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
+  min-height: 22px;
+  box-sizing: border-box;
+}
+.u-copy svg { display: block; flex: none; }
+.u-copy:hover { opacity: 1; color: var(--blue); background: var(--hover); }
 /* Custom tooltip for the undo button: appears faster than the native title
    tooltip and avoids duplicating the browser's long default delay. */
-.u-edit[data-tooltip] {
+.u-meta [data-tooltip] {
   position: relative;
 }
-.u-edit[data-tooltip]::after,
-.u-edit[data-tooltip]::before {
+.u-meta [data-tooltip]::after,
+.u-meta [data-tooltip]::before {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
@@ -1037,7 +1095,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   transition-delay: 0s;
   z-index: 100;
 }
-.u-edit[data-tooltip]::after {
+.u-meta [data-tooltip]::after {
   content: attr(data-tooltip);
   bottom: calc(100% + 6px);
   padding: 4px 8px;
@@ -1048,17 +1106,17 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   border-radius: 5px;
   white-space: nowrap;
 }
-.u-edit[data-tooltip]::before {
+.u-meta [data-tooltip]::before {
   content: '';
   bottom: calc(100% + 2px);
   border-width: 4px;
   border-style: solid;
   border-color: var(--ink) transparent transparent transparent;
 }
-.u-edit[data-tooltip]:hover::after,
-.u-edit[data-tooltip]:hover::before,
-.u-edit[data-tooltip]:focus-visible::after,
-.u-edit[data-tooltip]:focus-visible::before {
+.u-meta [data-tooltip]:hover::after,
+.u-meta [data-tooltip]:hover::before,
+.u-meta [data-tooltip]:focus-visible::after,
+.u-meta [data-tooltip]:focus-visible::before {
   opacity: 1;
   visibility: visible;
   transition-delay: 0.25s;

@@ -4,9 +4,11 @@ import { isAbsolute, join, resolve } from 'node:path';
 import type { PluginInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
 import {
+  PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
   PluginRemoveConfirmComponent,
   PluginsPanelComponent,
+  type PluginInstallTrustConfirmResult,
   type PluginMcpSelection,
   type PluginRemoveConfirmResult,
   type PluginsPanelSelection,
@@ -18,7 +20,7 @@ import {
 } from '../components/messages/plugins-status-panel';
 import { UsagePanelComponent } from '../components/messages/usage-panel';
 import { formatErrorMessage } from '../utils/event-payload';
-import { formatPluginSourceLabel } from '../utils/plugin-source-label';
+import { formatPluginSourceLabel, isOfficialPluginSource } from '../utils/plugin-source-label';
 import { loadPluginMarketplace } from '#/utils/plugin-marketplace';
 import type { SlashCommandHost } from './dispatch';
 
@@ -61,6 +63,10 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
       const source = rest.join(' ').trim();
       if (source.length === 0) {
         host.showError('Usage: /plugins install <local-path-or-zip-url>');
+        return;
+      }
+      if (!(await confirmInstallTrust(host, source, isOfficialPluginSource(source)))) {
+        host.showStatus('Install cancelled.');
         return;
       }
       const spinner = host.showProgressSpinner(`Installing plugin from ${truncateForStatus(source)}…`);
@@ -266,6 +272,67 @@ async function confirmRemovePlugin(host: SlashCommandHost, id: string): Promise<
   });
 }
 
+async function confirmInstallTrust(
+  host: SlashCommandHost,
+  label: string,
+  official: boolean,
+): Promise<boolean> {
+  // Kimi-built official plugins are trusted implicitly; anything else requires
+  // the user to explicitly opt in via the trust prompt.
+  if (official) return true;
+  return new Promise((resolveConfirmed) => {
+    host.mountEditorReplacement(
+      new PluginInstallTrustConfirmComponent({
+        label,
+        onDone: (result: PluginInstallTrustConfirmResult) => {
+          host.restoreEditor();
+          resolveConfirmed(result.kind === 'confirm');
+        },
+      }),
+    );
+  });
+}
+
+async function installFromPanel(
+  host: SlashCommandHost,
+  panel: PluginsPanelComponent,
+  source: string,
+  label: string,
+  official: boolean,
+): Promise<void> {
+  if (!(await confirmInstallTrust(host, label, official))) {
+    host.showStatus(`Install cancelled: ${label}.`);
+    host.restoreEditor();
+    return;
+  }
+  // Official installs keep the panel mounted and show the inline installing
+  // state; third-party installs pass through a trust prompt that replaces the
+  // panel, so fall back to a transcript status for those.
+  if (official) {
+    panel.setInstalling(truncateForStatus(label));
+  } else {
+    host.showStatus(`Installing or updating ${label} from marketplace...`);
+  }
+  host.state.ui.requestRender();
+  try {
+    await installPluginFromSource(host, source);
+  } catch (error) {
+    if (official) {
+      panel.clearInstalling();
+      host.state.ui.requestRender();
+    } else {
+      // The trust prompt replaced the panel; re-mount it so the user can retry
+      // instead of being dropped back at the editor.
+      host.mountEditorReplacement(panel);
+    }
+    host.showError(`Failed to install ${label}: ${formatErrorMessage(error)}`);
+    return;
+  }
+  // Close the panel after installing so the result status and the
+  // "/reload or /new" tip are visible in the transcript.
+  host.restoreEditor();
+}
+
 async function applyPluginEnabled(
   host: SlashCommandHost,
   id: string,
@@ -326,36 +393,24 @@ async function handlePluginsPanelSelection(
       await reloadPlugins(host);
       await showPluginsPicker(host, { initialTab: 'installed' });
       return;
-    case 'install': {
-      panel.setInstalling(selection.entry.displayName);
-      host.state.ui.requestRender();
-      try {
-        await installPluginFromSource(host, selection.entry.source);
-      } catch (error) {
-        panel.clearInstalling();
-        host.state.ui.requestRender();
-        host.showError(`Failed to install ${selection.entry.displayName}: ${formatErrorMessage(error)}`);
-        return;
-      }
-      // Close the panel after installing so the success notice and the
-      // "/reload or /new" / post-install tip are visible in the transcript.
-      host.restoreEditor();
+    case 'install':
+      await installFromPanel(
+        host,
+        panel,
+        selection.entry.source,
+        selection.entry.displayName,
+        isOfficialPluginSource(selection.entry.source),
+      );
       return;
-    }
-    case 'install-source': {
-      panel.setInstalling(truncateForStatus(selection.source));
-      host.state.ui.requestRender();
-      try {
-        await installPluginFromSource(host, selection.source);
-      } catch (error) {
-        panel.clearInstalling();
-        host.state.ui.requestRender();
-        host.showError(`Failed to install from ${truncateForStatus(selection.source)}: ${formatErrorMessage(error)}`);
-        return;
-      }
-      host.restoreEditor();
+    case 'install-source':
+      await installFromPanel(
+        host,
+        panel,
+        selection.source,
+        selection.source,
+        isOfficialPluginSource(selection.source),
+      );
       return;
-    }
   }
 }
 

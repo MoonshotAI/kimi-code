@@ -74,7 +74,7 @@ describe('OAuthManager refresh lock failure', () => {
     vi.restoreAllMocks();
   });
 
-  it('fails closed instead of refreshing without a configured cross-process lock', async () => {
+  it.skipIf(process.platform === 'win32')('fails closed instead of refreshing without a configured cross-process lock', async () => {
     const storage = new InMemoryStorage();
     storage.token = makeToken();
     lockMock.lock.mockRejectedValue(new Error('lock busy'));

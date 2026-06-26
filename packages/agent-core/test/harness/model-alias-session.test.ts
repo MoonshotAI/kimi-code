@@ -451,7 +451,7 @@ max_context_size = 1000000
   async function findWireFile(root: string): Promise<string> {
     const suffix = join('agents', 'main', 'wire.jsonl');
     const entries = await readdir(root, { recursive: true });
-    const match = entries.find((entry) => entry.endsWith(suffix));
+    const match = entries.find((entry) => entry.replaceAll('\\', '/').endsWith(suffix));
     if (match === undefined) {
       throw new Error('wire.jsonl not found under session home');
     }

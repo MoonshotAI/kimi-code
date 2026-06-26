@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 describe('atomicWrite', () => {
-  it('writes the target file with private 0600 permissions', async () => {
+  it.skipIf(process.platform === 'win32')('writes the target file with private 0600 permissions', async () => {
     // Migrated config files carry provider API keys — they must not be
     // group/world-readable regardless of the target directory's mode.
     const path = join(dir, 'config.toml');
