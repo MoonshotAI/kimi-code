@@ -82,10 +82,9 @@ default_effort = "high"
 export type ThinkingLevel = 'off' | 'on' | (string & {});
 //                                            ^^^^^^^^^^^^
 //                              模型声明的 effort 档，运行时 string
-
-// 保留 ThinkingEffort 作为 ThinkingLevel 的别名（向后兼容 import），或逐步替换。
-export type ThinkingEffort = ThinkingLevel;
 ```
+
+`ThinkingEffort` 类型**直接删除**，所有引用在同一个 PR 内全量替换为 `ThinkingLevel`，**不留别名、不留兼容层**。
 
 `ThinkingLevel` 在 TS 里塌缩成 `string`，主要作为**语义标注**：告诉调用者这里应该是 `'off'` / `'on'` / 模型 effort 档。运行时就是 `string`，不做强约束。
 
@@ -253,15 +252,15 @@ export function thinkingLevelToConfig(level: ThinkingLevel): ThinkingConfigPatch
 
 删除 `config.ts` / `provider.ts` 里两处重复的 `level !== 'on' && level !== 'off' ? level : undefined`。
 
-## 6. 分阶段实施
+## 6. 实施步骤（单个 PR）
 
-四个独立 PR，每个可单独 review / 回滚。
+所有改动合并成**一个 PR** 一次性完成，不留兼容层、不留别名、不留 TODO 债。PR 内按以下顺序执行（仅用于把控改动节奏，不是独立 PR）：
 
-### PR-1：类型与 `'on'` 圈禁（无配置 breaking）
+### 步骤 1：类型与 `'on'` 圈禁
 
 目标：消除 `AppState.thinking` 双字段，把 `'on'` 圈禁在 UI 层。
 
-- kosong 导出 `ThinkingLevel = 'off' | 'on' | (string & {})`，`ThinkingEffort` 保留为别名。
+- kosong 导出 `ThinkingLevel = 'off' | 'on' | (string & {})`，**直接删除 `ThinkingEffort`**，本 PR 内全量替换所有引用，不留别名。
 - node-sdk `setThinking(level: ThinkingLevel)`：保留透传，不做运行时校验（按决策）。
 - TUI 删 `AppState.thinking: boolean`，统一用 `thinkingLevel: ThinkingLevel`：
   - `types.ts` 改字段
@@ -273,7 +272,7 @@ export function thinkingLevelToConfig(level: ThinkingLevel): ThinkingConfigPatch
 
 验证：现有测试通过；新增 `'on'` 归一、`isThinkingOn` helper 测试。
 
-### PR-2：配置收敛（breaking）
+### 步骤 2：配置收敛
 
 目标：删 `default_thinking` 和 `thinking.mode`，收敛到 `[thinking] { enabled, effort }`。
 
@@ -288,34 +287,33 @@ export function thinkingLevelToConfig(level: ThinkingLevel): ThinkingConfigPatch
 
 验证：老 config.toml（含 `default_thinking`、`mode`）按 major 迁移说明手动改写后行为一致；新写入只产 `[thinking] enabled/effort`。
 
-### PR-3：always_thinking 集中 + provider 归一
+### 步骤 3：always_thinking 集中 + provider 归一
 
 目标：删三处 clamp，删 `kimiEffort` / `wireEffortToThinkingEffort` 映射。
 
-- `thinking.ts` `resolveThinkingLevel`：加 `always_thinking` clamp（已在 PR-2 一并写入，本 PR 验证 + 删其它 clamp）。
+- `thinking.ts` `resolveThinkingLevel`：加 `always_thinking` clamp（在步骤 2 一并写入，本步骤验证 + 删其它 clamp）。
 - `config/index.ts` `thinkingLevel` getter：删 `alwaysThinkingModel` clamp，直接返回 `_thinkingLevel`。
 - `acp-adapter/session.ts` `setThinking`：删 `currentModelAlwaysThinking()` clamp；`THINKING_ON_LEVEL = 'high'` 改为 `defaultLevelFor(currentModel)` 或从 agent-core status 取。
-- `kimi.ts` `withThinking`：按 4.5 重写；删 `kimiEffort()` 函数；`reasoning_effort` 暂保留（与 effort 同值）。
+- `kimi.ts` `withThinking`：按 4.5 重写；删 `kimiEffort()` 函数；`reasoning_effort` 双发本步骤保留，待服务端全量后在步骤 4 删除（唯一依赖服务端的收尾项）。
 - `kimi.ts` `thinkingEffort` getter：删 `wireEffortToThinkingEffort()`，直接读 `thinking.effort`，无 effort 返回 `'on'`。
 - UI `model-selector.ts` `renderThinkingControl`：保留 `Off (Unsupported)` 纯展示（不承担 clamp）。
 
 验证：always_thinking 模型设 `'off'` 仍开启（agent-core clamp）；effort 模型传 `'xhigh'` / `'foo'` wire 不带 effort；`kimiEffort` / `wireEffortToThinkingEffort` 无引用。
 
-### PR-4：清理
+### 步骤 4：清理
 
 目标：删除过渡期代码。
 
-- 删 kimi `reasoning_effort` 双发（待新 wire 格式全量上线）。
-- 删 `ThinkingEffort` 别名（全量替换为 `ThinkingLevel`）。
+- 删 kimi `reasoning_effort` 双发（确认服务端所有 kimi 模型已接受新 wire 格式后执行；这是唯一依赖服务端的收尾项）。
 - 删 `effectiveDefaultEffort`（被 `defaultLevelFor` 覆盖，确认无引用后删除）。
-- 删 acp `THINKING_ON_LEVEL` 常量（如 PR-3 未删）。
+- 删 acp `THINKING_ON_LEVEL` 常量（如步骤 3 未删）。
 - 文档最终校对。
 
 ## 7. 逐文件改动清单
 
 | 包 | 文件 | 改动 |
 |---|---|---|
-| kosong | `src/provider.ts` | `ThinkingLevel` 类型；`ThinkingEffort` 改别名 |
+| kosong | `src/provider.ts` | 删 `ThinkingEffort`；新增 `ThinkingLevel` |
 | kosong | `src/providers/kimi.ts` | `withThinking` 重写；删 `kimiEffort` / `wireEffortToThinkingEffort`；getter 简化 |
 | node-sdk | `src/session.ts` | `setThinking(level: ThinkingLevel)` |
 | node-sdk | `src/types.ts` | 导出 `ThinkingLevel` |
