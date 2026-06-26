@@ -840,8 +840,15 @@ export class AcpServer implements Agent {
     if (typeof this.harness.getConfig !== 'function') return false;
     try {
       const config = await this.harness.getConfig();
-      const enabled = (config as { thinking?: { enabled?: unknown } }).thinking?.enabled;
-      return typeof enabled === 'boolean' ? enabled : false;
+      const thinking = (config as { thinking?: { enabled?: unknown; effort?: unknown } })
+        .thinking;
+      if (typeof thinking?.enabled === 'boolean') return thinking.enabled;
+      // A non-empty effort with no explicit enabled flag still means thinking
+      // is on — agent-core's resolveThinkingEffort treats config.effort as
+      // enabled unless enabled === false, so mirror that here to keep the
+      // toggle consistent with the runtime.
+      if (typeof thinking?.effort === 'string' && thinking.effort.length > 0) return true;
+      return false;
     } catch (err) {
       log.warn('acp: harness.getConfig threw during thinking toggle resolution; defaulting to off', {
         error: err instanceof Error ? err.message : String(err),

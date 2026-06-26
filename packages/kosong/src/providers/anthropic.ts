@@ -336,6 +336,18 @@ function clampEffort(effort: ThinkingEffort, model: string, adaptive: boolean): 
   if (effort === 'max' && !adaptive) {
     return 'high';
   }
+  // 'on' (boolean models) or any effort Anthropic does not recognize: fall
+  // back to 'high' so budgetTokensForEffort / output_config.effort never see
+  // an unsupported value.
+  if (
+    effort !== 'low' &&
+    effort !== 'medium' &&
+    effort !== 'high' &&
+    effort !== 'xhigh' &&
+    effort !== 'max'
+  ) {
+    return 'high';
+  }
   return effort;
 }
 

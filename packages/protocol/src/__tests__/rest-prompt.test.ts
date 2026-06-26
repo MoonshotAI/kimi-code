@@ -85,11 +85,20 @@ describe('promptSubmissionSchema', () => {
     expect(promptSubmissionSchema.safeParse({} as unknown).success).toBe(false);
   });
 
-  it('rejects unknown thinking effort', () => {
+  it('accepts any non-empty thinking effort (provider normalizes)', () => {
     expect(
       promptSubmissionSchema.safeParse({
         content: [{ type: 'text', text: 'hi' }],
         thinking: 'mega' as unknown,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects empty thinking effort', () => {
+    expect(
+      promptSubmissionSchema.safeParse({
+        content: [{ type: 'text', text: 'hi' }],
+        thinking: '' as unknown,
       }).success,
     ).toBe(false);
   });
