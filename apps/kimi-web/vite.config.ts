@@ -4,8 +4,8 @@ import tailwindcss from '@tailwindcss/vite';
 import { readFileSync } from 'node:fs';
 
 const webPort = Number(process.env.WEB_PORT) || 5175;
-// Where the dev proxy forwards server traffic. Defaults to the local server
-// (or `pnpm dev:stub`). Override to point dev at another server instance.
+// Where the dev proxy forwards server traffic. Defaults to the local server.
+// Override to point dev at another server instance.
 const serverTarget = process.env.KIMI_SERVER_URL || 'http://127.0.0.1:58627';
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8')) as {
   version: string;
