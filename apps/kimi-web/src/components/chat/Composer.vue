@@ -274,6 +274,9 @@ function handleSubmit(): void {
     if (parsed && known) {
       text.value = '';
       slashOpen.value = false;
+      // Slash commands are a successful send too — collapse the expanded editor
+      // so an empty 70vh box isn't left behind.
+      if (expanded.value) expanded.value = false;
       emit('command', parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd);
       return;
     }
