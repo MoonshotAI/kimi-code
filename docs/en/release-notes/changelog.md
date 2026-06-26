@@ -6,6 +6,29 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.20.1 (2026-06-26)
+
+### Features
+
+- Plugins now support declaring lifecycle hooks in `kimi.plugin.json` to run scripts at specific stages. See [Hooks in Plugins](../customization/plugins.md#hooks-in-plugins).
+- `/feedback` now supports attaching diagnostic logs and codebase context.
+- Add the `kimi update` command, equivalent to `kimi upgrade`, for upgrading to the latest version.
+- `kimi web` adds the `--allowed-host <host>` option to add a specified Host to the DNS-rebinding allowlist; 403 errors now explain how to allow it via `--allowed-host` or `KIMI_CODE_ALLOWED_HOSTS`, e.g. `kimi web --allowed-host example.com`.
+
+### Bug Fixes
+
+- Fix kimi server failing to start on Windows after the first run.
+- Fix the Web UI opened by the `/web` command not signing in automatically; the terminal now prints the access token.
+- Cap chat-completions providers' `max_tokens` to the remaining context window, avoiding context overflow and invalid parameter errors.
+
+### Polish
+
+- Optimize the default system prompt and built-in tool descriptions to stop the agent from blocking background tasks, unify tool guidance across profiles, and surface previously missing tool-result details (fetched-page mode, Grep match totals).
+- Cache rendered message lines to keep the terminal responsive in long conversations.
+- Retain only recent turns in the transcript and collapse older steps within each turn to keep long sessions responsive.
+- Make the web chat input grow with its content and add an expandable editor for longer messages.
+- Show the done / in progress / pending breakdown of hidden todos in the collapsed todo panel.
+
 ## 0.20.0 (2026-06-26)
 
 ### Features

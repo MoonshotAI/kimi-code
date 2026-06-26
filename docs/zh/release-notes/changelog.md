@@ -6,6 +6,29 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.20.1（2026-06-26）
+
+### 新功能
+
+- 插件现支持在 `kimi.plugin.json` 中声明生命周期 hooks，在指定阶段运行脚本。详见[插件 Hooks](../customization/plugins.md#插件中的-hooks)。
+- `/feedback` 现支持附加诊断日志与代码库上下文。
+- 新增 `kimi update` 命令，等价于 `kimi upgrade`，可用于升级到最新版本。
+- `kimi web` 新增 `--allowed-host <host>` 选项，可将指定 Host 加入 DNS 重绑定白名单；403 错误会提示如何通过 `--allowed-host` 或 `KIMI_CODE_ALLOWED_HOSTS` 放行，例如 `kimi web --allowed-host example.com`。
+
+### 修复
+
+- 修复 Windows 上 kimi server 首次运行后无法启动的问题。
+- 修复 `/web` 命令打开的 Web UI 不会自动登录的问题，现在终端会打印访问 token。
+- chat-completions 供应商的 `max_tokens` 现在不超过剩余上下文窗口，避免上下文溢出与无效参数错误。
+
+### 优化
+
+- 优化默认系统提示词与内置工具描述，避免 Agent 阻塞后台任务，统一各 profile 的工具指引，并补充展示工具结果详情（fetched-page 模式、Grep 匹配总数）。
+- 缓存已渲染消息行，提升长对话下终端的响应速度。
+- transcript 仅保留最近轮次并折叠早期步骤，保持长会话响应流畅。
+- Web 聊天输入框支持随内容自动增高，长消息可使用可展开编辑器。
+- 折叠待办面板时显示隐藏待办的状态明细（已完成 / 进行中 / 待处理）。
+
 ## 0.20.0（2026-06-26）
 
 ### 新功能
