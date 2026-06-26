@@ -9,5 +9,6 @@ Read media content from a file.
 - If the file doesn't exist or path is invalid, an error will be returned.
 - The maximum size that can be read is {{ MAX_MEDIA_MEGABYTES }}MB. An error will be returned if the file is larger than this limit.
 - The media content will be returned in a form that you can directly view and understand.
+- **For video files provided by the user, always prefer this tool over writing Python scripts or shell commands to extract frames or process the video. ReadMediaFile handles video input natively when the model supports it.**
 
 **Capabilities**
