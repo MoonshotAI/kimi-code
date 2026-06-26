@@ -6,7 +6,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import {
   Disposable,
 } from "#/_base/di";
-import { ErrorCodes, KimiError } from "#/_base/errors";
+import { ErrorCodes, KimiError } from "#/errors";
 import type { ContextMessage } from '#/contextMemory';
 import { IContextMemory } from '#/contextMemory';
 import { IDynamicInjector } from '#/dynamicInjector';
@@ -80,7 +80,7 @@ export class GoalService extends Disposable implements IGoalService {
     @IContextMemory private readonly context: IContextMemory,
     @IReplayBuilderService private readonly replayBuilder: IReplayBuilderService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IDynamicInjector dynamicInjector: IDynamicInjector,
+    @IDynamicInjector private readonly dynamicInjector: IDynamicInjector,
   ) {
     super();
     this._register(

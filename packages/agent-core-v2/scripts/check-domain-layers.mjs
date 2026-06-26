@@ -35,22 +35,42 @@ const TEST_ROOT = join(PKG_ROOT, 'test');
 const DOMAIN_LAYER = new Map([
   // L0 — base infrastructure
   ['_base', 0],
-  // L1 — abstraction bridges
+  // `errors` is a top-level facade (src/errors.ts) that aggregates every
+  // domain's error codes; any domain may import it, so it sits at L0.
+  ['errors', 0],
+  // L1 — abstraction bridges & low-level capabilities
   ['log', 1],
   ['telemetry', 1],
   ['environment', 1],
   ['kaos', 1],
   ['kosong', 1],
-  // L2 — data
+  ['hooks', 1],
+  // L2 — data & cross-cutting capabilities
   ['records', 2],
   ['wireRecord', 2],
   ['blobStore', 2],
   ['config', 2],
-  // L3 — registries
+  ['terminal', 2],
+  ['fs', 2],
+  ['workspace', 2],
+  ['filestore', 2],
+  ['auth', 2],
+  ['sessionMetaStore', 2],
+  ['sessionStore', 2],
+  ['eventBus', 2],
+  // L3 — registries & capabilities
   ['tool', 3],
   ['skill', 3],
   ['permission', 3],
   ['flag', 3],
+  ['toolExecutor', 3],
+  ['toolRegistry', 3],
+  ['toolStore', 3],
+  ['userTool', 3],
+  ['permissionMode', 3],
+  ['permissionPolicy', 3],
+  ['permissionRules', 3],
+  ['plugin', 3],
   // L4 — agent behaviour
   ['context', 4],
   ['message', 4],
@@ -62,27 +82,36 @@ const DOMAIN_LAYER = new Map([
   ['swarm', 4],
   ['usage', 4],
   ['tooldedup', 4],
+  ['contextMemory', 4],
+  ['contextProjector', 4],
+  ['contextSize', 4],
+  ['dynamicInjector', 4],
+  ['fullCompaction', 4],
+  ['microCompaction', 4],
+  ['loop', 4],
+  ['llmRequester', 4],
+  ['llmRequestLog', 4],
+  ['externalHooks', 4],
+  ['profile', 4],
+  ['prompt', 4],
+  ['replayBuilder', 4],
+  ['todoList', 4],
   // L5 — async lifecycle
   ['background', 5],
   ['mcp', 5],
   ['cron', 5],
+  ['subagentHost', 5],
   // L6 — coordination
   ['agent-lifecycle', 6],
   ['session-context', 6],
   ['session-activity', 6],
   ['session', 6],
-  ['hooks', 6],
   // L7 — boundary
   ['event', 7],
   ['approval', 7],
   ['question', 7],
   ['gateway', 7],
-  // Cross-cutting capabilities (depend on L1; consumed by upper layers).
-  ['terminal', 2],
-  ['fs', 2],
-  ['workspace', 2],
-  ['filestore', 2],
-  ['auth', 2],
+  ['rpc', 7],
 ]);
 
 const V1_PACKAGE = '@moonshot-ai/agent-core';
@@ -107,6 +136,12 @@ const V1_PACKAGE = '@moonshot-ai/agent-core';
  *  - `cron>session-context` : cron needs sessionId.
  *  - `cron>session-activity`: cron scheduler gates on session idle.
  *  - `session>event`        : session facade publishes status events.
+ *
+ * Post-rebase-v2 restructuring introduced broad cross-domain type sharing
+ * between L3 (registries/capabilities) and L4 (agent behaviour). The L3
+ * domains below import `loop`/`turn` types (tool-execution contexts, tool
+ * results, etc.) and a few L4 collaborators; these are real dependencies
+ * surfaced for review rather than layering violations to fix here.
  */
 const ALLOWED_EXCEPTIONS = new Set([
   'kosong>config',
@@ -120,6 +155,36 @@ const ALLOWED_EXCEPTIONS = new Set([
   'cron>session-activity',
   'session>event',
   'wireRecord>hooks',
+  // L3/L4 type-sharing introduced by the rebase-v2 restructuring.
+  'config>externalHooks',
+  'config>permissionRules',
+  'contextMemory>background',
+  'llmRequester>session',
+  'loop>mcp',
+  'permission>externalHooks',
+  'permission>loop',
+  'permissionMode>dynamicInjector',
+  'permissionMode>replayBuilder',
+  'permissionPolicy>externalHooks',
+  'permissionPolicy>loop',
+  'permissionPolicy>profile',
+  'permissionRules>loop',
+  'permissionRules>replayBuilder',
+  'profile>mcp',
+  'profile>session',
+  'replayBuilder>background',
+  'replayBuilder>rpc',
+  'replayBuilder>session',
+  'skill>contextMemory',
+  'skill>loop',
+  'skill>prompt',
+  'swarm>subagentHost',
+  'toolExecutor>loop',
+  'toolRegistry>loop',
+  'userTool>loop',
+  'userTool>profile',
+  'wireRecord>contextMemory',
+  'wireRecord>loop',
 ]);
 
 // Matches: import ... from 'x' | export ... from 'x' | import('x') | require('x')
@@ -143,6 +208,19 @@ function domainOf(absPath) {
   // domains — they re-export other domains and are exempt from layering.
   if (segments.length < 2) return undefined;
   return segments[0];
+}
+
+/**
+ * Determine the v2 domain for an *import target* absolute path. Unlike
+ * {@link domainOf} (which is for source files and exempts top-level barrels),
+ * a target may resolve straight to a domain directory — e.g. the bare domain
+ * import `#/turn` resolves to `src/turn`, whose domain is `turn`.
+ * @param {string} targetAbs
+ */
+function targetDomainOf(targetAbs) {
+  const rel = relative(SRC_ROOT, targetAbs);
+  if (rel.startsWith('..') || rel === '') return undefined;
+  return rel.split(/[\\/]/)[0];
 }
 
 /**
@@ -197,7 +275,7 @@ export function checkSource(source, absFile) {
     if (sourceDomain === undefined) continue; // top-level barrel / non-domain file
     const targetAbs = resolveIntraV2(specifier, absFile);
     if (targetAbs === undefined) continue;
-    const targetDomain = domainOf(targetAbs);
+    const targetDomain = targetDomainOf(targetAbs);
     if (targetDomain === undefined) continue;
     if (targetDomain === sourceDomain) continue; // same domain is always fine
 

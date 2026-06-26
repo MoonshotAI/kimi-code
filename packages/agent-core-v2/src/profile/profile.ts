@@ -60,6 +60,7 @@ export interface ProfileSetModelResult {
 }
 
 export interface IProfileService {
+  readonly _serviceBrand: undefined;
   configure(options: ProfileServiceOptions): void;
   update(changed: ProfileUpdateData): void;
   setModel(model: string): ProfileSetModelResult;

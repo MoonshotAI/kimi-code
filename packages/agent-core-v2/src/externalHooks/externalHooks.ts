@@ -60,6 +60,7 @@ export type PermissionResultHookPayload =
     };
 
 export interface IExternalHooksService {
+  readonly _serviceBrand: undefined;
   triggerPreToolUse(
     payload: {
       readonly toolCallId: string;

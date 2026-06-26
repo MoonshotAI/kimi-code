@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentRecords } from '#/records';
-import { ITelemetryService } from '#/telemetry';
+import { IEventBus } from '#/eventBus';
 import { IUsageService } from '#/usage';
 import { UsageService } from '#/usage/usageService';
+import { IWireRecord } from '#/wireRecord';
+
+import { stubWireRecord } from '../contextMemory/stubs';
 
 describe('UsageService', () => {
   let disposables: DisposableStore;
@@ -15,16 +17,27 @@ describe('UsageService', () => {
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentRecords, { _serviceBrand: undefined });
-    ix.stub(ITelemetryService, { _serviceBrand: undefined });
+    ix.stub(IWireRecord, stubWireRecord());
+    ix.stub(IEventBus, { emit: () => {}, on: () => toDisposable(() => {}) });
     ix.set(IUsageService, new SyncDescriptor(UsageService));
   });
   afterEach(() => disposables.dispose());
 
-  it('accumulates input/output tokens', () => {
+  it('accumulates input/output tokens per model', () => {
     const svc = ix.get(IUsageService);
-    svc.record(10, 5);
-    svc.record(3, 2);
-    expect(svc.totals).toEqual({ inputTokens: 13, outputTokens: 7 });
+    svc.record('m', { inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0 });
+    svc.record('m', { inputOther: 3, output: 2, inputCacheRead: 0, inputCacheCreation: 0 });
+    expect(svc.data().byModel?.['m']).toEqual({
+      inputOther: 13,
+      output: 7,
+      inputCacheRead: 0,
+      inputCacheCreation: 0,
+    });
+    expect(svc.data().total).toEqual({
+      inputOther: 13,
+      output: 7,
+      inputCacheRead: 0,
+      inputCacheCreation: 0,
+    });
   });
 });

@@ -3,7 +3,7 @@
  * `CancellationError`, and related control-flow errors.
  */
 
-import { ErrorCodes } from './codes';
+import { CoreErrors } from './codes';
 import type { ErrorCode } from './codes';
 
 export class CancellationError extends Error {
@@ -70,7 +70,7 @@ export function isKimiError(error: unknown): error is KimiError {
 export class NotImplementedError extends KimiError {
   constructor(feature?: string) {
     super(
-      ErrorCodes.NOT_IMPLEMENTED,
+      CoreErrors.codes.NOT_IMPLEMENTED,
       feature ? `Not implemented: ${feature}` : 'Not implemented',
     );
     this.name = 'NotImplementedError';

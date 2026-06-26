@@ -12,7 +12,7 @@ import {
 } from './prompt';
 import { Disposable,
 } from "#/_base/di";
-import { ErrorCodes, KimiError } from "#/_base/errors";
+import { ErrorCodes, KimiError } from "#/errors";
 import type { ExecutableToolResult } from '#/loop';
 import {
   isInlineSkillType,

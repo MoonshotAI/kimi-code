@@ -1,5 +1,5 @@
 import type { McpRemoteServerConfig, McpServerConfig } from '#/config/schema';
-import { ErrorCodes, KimiError } from '#/_base/errors';
+import { ErrorCodes, KimiError } from '#/errors';
 
 export function buildMcpRemoteHeaders(
   config: McpRemoteServerConfig,

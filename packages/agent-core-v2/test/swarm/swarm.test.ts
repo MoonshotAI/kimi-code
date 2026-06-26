@@ -1,13 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentLifecycleService } from '#/agent-lifecycle/agentLifecycle';
-import { IPermissionService } from '#/permission';
-import { IAgentRecords } from '#/records';
+import { IContextMemory } from '#/contextMemory';
+import { IEventBus } from '#/eventBus';
+import { ISubagentHost } from '#/subagentHost';
 import { ISwarmService } from '#/swarm';
 import { SwarmService } from '#/swarm/swarmService';
+import { IToolRegistry } from '#/toolRegistry';
+import { ITurnService } from '#/turn';
+import { IWireRecord } from '#/wireRecord';
+
+import { stubContextMemory, stubWireRecord } from '../contextMemory/stubs';
+import { stubTurnWithHooks } from '../turn/stubs';
 
 describe('SwarmService', () => {
   let disposables: DisposableStore;
@@ -16,19 +22,22 @@ describe('SwarmService', () => {
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentRecords, {});
-    ix.stub(IAgentLifecycleService, {});
-    ix.stub(IPermissionService, {});
+    ix.stub(IContextMemory, stubContextMemory());
+    ix.stub(IWireRecord, stubWireRecord());
+    ix.stub(IEventBus, { emit: () => {}, on: () => toDisposable(() => {}) });
+    ix.stub(ITurnService, stubTurnWithHooks());
+    ix.stub(IToolRegistry, {});
+    ix.stub(ISubagentHost, {});
     ix.set(ISwarmService, new SyncDescriptor(SwarmService));
   });
   afterEach(() => disposables.dispose());
 
-  it('enter / exit toggle active', async () => {
+  it('enter / exit toggle isActive', async () => {
     const swarm = ix.get(ISwarmService);
-    expect(swarm.active).toBe(false);
-    await swarm.enter();
-    expect(swarm.active).toBe(true);
+    expect(swarm.isActive).toBe(false);
+    swarm.enter('manual');
+    expect(swarm.isActive).toBe(true);
     swarm.exit();
-    expect(swarm.active).toBe(false);
+    expect(swarm.isActive).toBe(false);
   });
 });

@@ -13,7 +13,7 @@ import {
   UNKNOWN_CAPABILITY,
 } from '@moonshot-ai/kosong';
 
-import { ErrorCodes, isKimiError, KimiError } from '#/_base/errors';
+import { ErrorCodes, isKimiError, KimiError } from '#/errors';
 import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig } from '#/config';
 
 export interface BearerTokenProvider {

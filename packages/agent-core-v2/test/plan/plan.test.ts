@@ -3,18 +3,23 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { ISessionConfigService } from '#/config';
-import { IContextService } from '#/context';
-import { ContextService } from '#/context/contextService';
-import { IInjectionService } from '#/injection';
-import { InjectionService } from '#/injection/injectionService';
+import { IContextMemory } from '#/contextMemory';
+import { IDynamicInjector } from '#/dynamicInjector';
+import { IEventBus } from '#/eventBus';
 import { IKaosService } from '#/kaos';
 import { IPlanService } from '#/plan';
 import { PlanService } from '#/plan/planService';
-import { IAgentRecords } from '#/records';
-import { stubAgentRecords } from '../records/stubs';
-import { ITurnService } from '#/turn';
-import { stubTurn } from '../turn/stubs';
+import { IProfileService } from '#/profile';
+import { IReplayBuilderService } from '#/replayBuilder';
+import { ITelemetryService } from '#/telemetry';
+import { IToolRegistry } from '#/toolRegistry';
+import { IWireRecord } from '#/wireRecord';
+
+import {
+  stubContextMemory,
+  stubReplayBuilder,
+  stubWireRecord,
+} from '../contextMemory/stubs';
 
 describe('PlanService', () => {
   let disposables: DisposableStore;
@@ -23,34 +28,57 @@ describe('PlanService', () => {
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentRecords, stubAgentRecords());
-    ix.stub(IKaosService, {});
-    ix.stub(ISessionConfigService, {});
-    ix.stub(ITurnService, stubTurn());
-    ix.set(IContextService, new SyncDescriptor(ContextService));
-    ix.set(IInjectionService, new SyncDescriptor(InjectionService));
+
+    // Real in-memory collaborators shared with other domain tests.
+    ix.set(IWireRecord, stubWireRecord());
+    ix.set(IContextMemory, stubContextMemory());
+    ix.set(IReplayBuilderService, stubReplayBuilder());
+
+    // No-op collaborators — only the members exercised by PlanService.
+    ix.stub(IEventBus, { emit() {} });
+    ix.stub(ITelemetryService, { track() {} });
+    ix.stub(IToolRegistry, { register: () => ({ dispose() {} }) });
+    ix.stub(IDynamicInjector, { register: () => ({ dispose() {} }) });
+    // kaos undefined → filesystem access short-circuits via optional chaining.
+    ix.stub(IKaosService, { kaos: undefined });
+    // PlanService.currentCwd() reads profile.data().cwd.
+    ix.stub(IProfileService, 'data', () => ({ cwd: '/tmp' }));
+
+    // System under test, registered by interface.
     ix.set(IPlanService, new SyncDescriptor(PlanService));
   });
   afterEach(() => disposables.dispose());
 
-  it('enter sets active and pushes a plan injection', async () => {
+  it('enter activates plan mode and cancel deactivates it', async () => {
     const plan = ix.get(IPlanService);
-    const injection = ix.get(IInjectionService);
-    expect(plan.active).toBe(false);
+
+    expect(plan.isActive).toBe(false);
+    expect(plan.planFilePath).toBeNull();
+
     await plan.enter();
-    expect(plan.active).toBe(true);
-    expect(injection.flush()).toEqual([
-      { kind: 'plan', content: 'Plan mode active — propose a plan before acting.' },
-    ]);
+    expect(plan.isActive).toBe(true);
+    expect(plan.planFilePath).not.toBeNull();
+
     plan.cancel();
-    expect(plan.active).toBe(false);
+    expect(plan.isActive).toBe(false);
+    expect(plan.planFilePath).toBeNull();
   });
 
-  it('resets active on turn end', async () => {
+  it('exit deactivates plan mode', async () => {
     const plan = ix.get(IPlanService);
-    const turn = ix.get(ITurnService);
+
     await plan.enter();
-    await turn.prompt('go');
-    expect(plan.active).toBe(false);
+    expect(plan.isActive).toBe(true);
+
+    plan.exit();
+    expect(plan.isActive).toBe(false);
+    expect(plan.planFilePath).toBeNull();
+  });
+
+  it('enter throws when plan mode is already active', async () => {
+    const plan = ix.get(IPlanService);
+
+    await plan.enter();
+    await expect(plan.enter()).rejects.toThrow('Already in plan mode');
   });
 });

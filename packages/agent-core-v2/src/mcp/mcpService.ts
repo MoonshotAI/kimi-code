@@ -6,7 +6,7 @@ import {
   Disposable,
   type IDisposable,
 } from "#/_base/di";
-import { ErrorCodes, makeErrorPayload } from "#/_base/errors";
+import { ErrorCodes, makeErrorPayload } from "#/errors";
 import type { ExecutableTool, ExecutableToolResult } from '#/loop';
 import { IEventBus } from '#/eventBus';
 import { IToolRegistry } from '#/toolRegistry';

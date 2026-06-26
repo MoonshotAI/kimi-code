@@ -3,40 +3,62 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IContextService } from '#/context';
-import { ContextService } from '#/context/contextService';
-import { IMessageService } from '#/message';
-import { MessageService } from '#/message/messageService';
-import { IAgentRecords } from '#/records';
-import { stubAgentRecords } from '../records/stubs';
+import { IContextMemory, type ContextMessage } from '#/contextMemory';
+import { ContextMemoryService } from '#/contextMemory/contextMemoryService';
+import { IReplayBuilderService } from '#/replayBuilder';
+import { IWireRecord } from '#/wireRecord';
+import { stubReplayBuilder, stubWireRecord } from '../contextMemory/stubs';
 
-describe('MessageService', () => {
+function textMessage(role: ContextMessage['role'], text: string): ContextMessage {
+  return {
+    role,
+    content: [{ type: 'text', text }],
+    toolCalls: [],
+  };
+}
+
+function textOf(message: ContextMessage): string {
+  return message.content
+    .map((part) => (part.type === 'text' ? part.text : ''))
+    .join('');
+}
+
+// NOTE: the legacy `IMessageService` (which projected context history into
+// `ProtocolMessage`s with derived `msg-N` ids) was removed
+// (see commit `chore: remove IMessageService`). Message history now lives on
+// `IContextMemory`, so these cases exercise that history directly instead of
+// the deleted derived-id projection.
+
+describe('message history (IContextMemory)', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    // Dependencies: real ContextService (itself backed by a stubbed IAgentRecords).
-    ix.stub(IAgentRecords, stubAgentRecords());
-    ix.set(IContextService, new SyncDescriptor(ContextService));
-    // System under test, registered by interface so the binding is exercised.
-    ix.set(IMessageService, new SyncDescriptor(MessageService));
+    ix.stub(IWireRecord, stubWireRecord());
+    ix.stub(IReplayBuilderService, stubReplayBuilder());
+    ix.set(IContextMemory, new SyncDescriptor(ContextMemoryService));
   });
   afterEach(() => disposables.dispose());
 
-  it('projects context messages with stable derived ids', () => {
-    const ctx = ix.get(IContextService);
-    ctx.appendMessage({ role: 'user', content: 'a' });
-    ctx.appendMessage({ role: 'assistant', content: 'b' });
+  it('round-trips user/assistant messages with their text content', () => {
+    const ctx = ix.get(IContextMemory);
+    ctx.spliceHistory(0, 0, [textMessage('user', 'a')]);
+    ctx.spliceHistory(1, 0, [textMessage('assistant', 'b')]);
 
-    const msg = ix.get(IMessageService);
-    const list = msg.list();
-    expect(list).toEqual([
-      { id: 'msg-0', role: 'user', content: 'a' },
-      { id: 'msg-1', role: 'assistant', content: 'b' },
-    ]);
-    expect(msg.get('msg-1')).toEqual({ id: 'msg-1', role: 'assistant', content: 'b' });
-    expect(msg.get('missing')).toBeUndefined();
+    const history = ctx.getHistory();
+    expect(history.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(history.map(textOf)).toEqual(['a', 'b']);
+  });
+
+  it('returns a defensive copy from getHistory', () => {
+    const ctx = ix.get(IContextMemory);
+    ctx.spliceHistory(0, 0, [textMessage('user', 'keep')]);
+
+    const view = ctx.getHistory();
+    (view as ContextMessage[]).splice(0, view.length);
+
+    expect(ctx.getHistory().map(textOf)).toEqual(['keep']);
   });
 });

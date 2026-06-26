@@ -86,7 +86,7 @@ export class CronService
     @IWireRecord private readonly wireRecord: IWireRecord,
     @ITurnService private readonly turnService: ITurnService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IToolRegistry toolRegistry: IToolRegistry,
+    @IToolRegistry private readonly toolRegistry: IToolRegistry,
   ) {
     super();
     this.enabled = options.isSubagent !== true;

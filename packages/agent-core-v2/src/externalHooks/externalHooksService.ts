@@ -1,4 +1,4 @@
-import { toKimiErrorPayload } from "#/_base/errors";
+import { toKimiErrorPayload } from "#/errors";
 import {
   IExternalHooksService,
   type ExternalHooksServiceOptions,
@@ -29,6 +29,8 @@ function fireAndForget(
 }
 
 export class ExternalHooksService implements IExternalHooksService {
+  declare readonly _serviceBrand: undefined;
+
   constructor(private readonly options: ExternalHooksServiceOptions = {}) { }
 
   async triggerPreToolUse(

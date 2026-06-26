@@ -1,4 +1,4 @@
-import { ErrorCodes, KimiError } from '#/_base/errors';
+import { ErrorCodes, KimiError } from '#/errors';
 import type { McpServerStdioConfig } from '#/config/schema';
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';

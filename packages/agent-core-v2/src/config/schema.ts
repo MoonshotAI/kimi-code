@@ -5,7 +5,7 @@
 import type { ModelCapability, ProviderConfig as KosongProviderConfig } from '@moonshot-ai/kosong';
 import { z } from 'zod';
 
-import { ErrorCodes, KimiError } from '#/_base/errors';
+import { ErrorCodes, KimiError } from '#/errors';
 import { HOOK_EVENT_TYPES } from '#/externalHooks/types';
 import { parsePermissionPattern } from '#/permissionRules';
 

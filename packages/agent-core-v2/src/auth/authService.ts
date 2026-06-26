@@ -30,8 +30,7 @@ import type {
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { ErrorCodes } from '#/_base/errors/codes';
-import { KimiError } from '#/_base/errors/errors';
+import { ErrorCodes, KimiError } from '#/errors';
 import { IConfigRegistry, IConfigService } from '#/config/config';
 import { IEnvironmentService } from '#/environment/environment';
 import { ITelemetryService } from '#/telemetry/telemetry';

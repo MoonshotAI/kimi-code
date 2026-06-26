@@ -1,6 +1,6 @@
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { ErrorCodes, KimiError, makeErrorPayload } from "#/_base/errors";
+import { ErrorCodes, KimiError, makeErrorPayload } from "#/errors";
 
 import { IContextMemory, USER_PROMPT_ORIGIN, type ContextMessage } from '#/contextMemory';
 import { IEventBus } from '#/eventBus';

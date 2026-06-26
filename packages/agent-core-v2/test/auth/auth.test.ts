@@ -10,8 +10,7 @@ import type { KimiOAuthToolkit } from '@moonshot-ai/kimi-code-oauth';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { ErrorCodes } from '#/_base/errors/codes';
-import { KimiError } from '#/_base/errors/errors';
+import { ErrorCodes, KimiError } from '#/errors';
 import { IAuthSummaryService, IOAuthService } from '#/auth/auth';
 import { AuthSummaryService, OAuthService } from '#/auth/authService';
 import { PROVIDERS_SECTION, type ProvidersSection } from '#/auth/oauthSchemas';

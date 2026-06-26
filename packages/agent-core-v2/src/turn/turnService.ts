@@ -3,7 +3,7 @@ import {
 } from "#/_base/di";
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { toKimiErrorPayload, type KimiErrorPayload } from "#/_base/errors";
+import { toKimiErrorPayload, type KimiErrorPayload } from "#/errors";
 import { isUserCancellation, userCancellationReason } from "#/_base/utils/abort";
 import type { ContextMessage, PromptOrigin } from '#/contextMemory';
 import { IContextMemory, USER_PROMPT_ORIGIN } from '#/contextMemory';

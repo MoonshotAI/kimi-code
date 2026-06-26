@@ -8,7 +8,7 @@ import {
 import { IMicroCompactionService } from '#/microCompaction';
 import type { ContentPart, TextPart } from '@moonshot-ai/kosong';
 import { IContextProjector } from './contextProjector';
-import { ErrorCodes, KimiError } from '#/_base/errors';
+import { ErrorCodes, KimiError } from '#/errors';
 import type { ContextMessage } from '#/contextMemory/types';
 
 

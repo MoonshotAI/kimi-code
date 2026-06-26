@@ -7,7 +7,7 @@ import { type IScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/agent-lifecycle/agentLifecycle';
 import { IEventService } from '#/event';
-import { ISessionMetaStore } from '#/records';
+import { ISessionMetaStore } from '#/sessionMetaStore';
 import { ISessionActivity } from '#/session-activity/sessionActivity';
 import { ISessionService } from '#/session';
 import { SessionService } from '#/session/sessionService';

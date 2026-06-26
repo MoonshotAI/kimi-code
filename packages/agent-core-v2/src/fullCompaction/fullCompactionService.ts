@@ -12,7 +12,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import {
   Disposable,
 } from "#/_base/di";
-import { ErrorCodes, KimiError, isKimiError, toKimiErrorPayload } from "#/_base/errors";
+import { ErrorCodes, KimiError, isKimiError, toKimiErrorPayload } from "#/errors";
 import { renderPrompt } from "#/_base/utils/render-prompt";
 import { estimateTokens, estimateTokensForMessages } from "#/_base/utils/tokens";
 import { IContextMemory } from '#/contextMemory';

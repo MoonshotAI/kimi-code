@@ -26,6 +26,8 @@ declare module '#/wireRecord' {
 }
 
 export class PermissionRulesService extends Disposable implements IPermissionRulesService {
+  declare readonly _serviceBrand: undefined;
+
   private localRules: PermissionRule[];
   private readonly localSessionApprovalRulePatterns = new Set<string>();
   private readonly parent: IPermissionRulesService | undefined;

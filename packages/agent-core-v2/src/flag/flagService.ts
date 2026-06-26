@@ -49,7 +49,7 @@ export class FlagService extends Disposable implements IFlagService {
   constructor(
     env: Readonly<Record<string, string | undefined>> = process.env,
     registry: FlagRegistry = new FlagRegistry(),
-    @IConfigRegistry configRegistry: IConfigRegistry,
+    @IConfigRegistry private readonly configRegistry: IConfigRegistry,
     @IConfigService private readonly config: IConfigService,
   ) {
     super();

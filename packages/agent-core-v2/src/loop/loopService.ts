@@ -40,7 +40,7 @@ import {
   isKimiError,
   toKimiErrorPayload,
   type KimiErrorPayload,
-} from "#/_base/errors";
+} from "#/errors";
 import { abortable } from "#/_base/utils/abort";
 import {
   canonicalTelemetryArgs,

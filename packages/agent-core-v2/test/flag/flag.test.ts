@@ -38,7 +38,15 @@ describe('FlagService', () => {
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    ix.stub(IEnvironmentService, stubEnvironment());
+    // Isolate the config file per test: ConfigService reads/writes
+    // env.configPath, so a shared path leaks [experimental] overrides across
+    // tests (and runs) and shadows the registry default.
+    ix.stub(
+      IEnvironmentService,
+      stubEnvironment(
+        `/tmp/kimi-code-flag-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      ),
+    );
     ix.stub(ILogService, stubLog());
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
     ix.set(IConfigService, new SyncDescriptor(ConfigService));

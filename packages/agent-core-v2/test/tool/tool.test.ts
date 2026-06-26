@@ -3,87 +3,125 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { ISessionConfigService } from '#/config';
-import { IKaosService } from '#/kaos';
-import { ILLMService } from '#/kosong';
-import { IPermissionService } from '#/permission';
-import { IAgentRecords } from '#/records';
-import {
-  IToolDefinitionRegistry,
-  IToolService,
-  type ToolCallResult,
-  type ToolDefinition,
-} from '#/tool';
-import { ToolDefinitionRegistry, ToolService } from '#/tool/toolService';
+import type { ExecutableTool, ToolExecution } from '#/loop';
+import { IToolExecutor, ToolExecutorService } from '#/toolExecutor';
+import type { ToolCall } from '#/toolRegistry';
+import { IToolRegistry, ToolRegistryService } from '#/toolRegistry';
 
-const echoDef: ToolDefinition = {
+const echoTool: ExecutableTool = {
   name: 'echo',
-  factory: () => ({
-    execute: (args: unknown): Promise<ToolCallResult> =>
-      Promise.resolve({ output: JSON.stringify(args) }),
+  description: 'echoes its input',
+  parameters: {},
+  resolveExecution: (input) => ({
+    approvalRule: 'echo(*)',
+    execute: () => Promise.resolve({ output: JSON.stringify(input) }),
   }),
 };
 
-describe('ToolDefinitionRegistry', () => {
-  it('registers and retrieves definitions', () => {
-    const reg = new ToolDefinitionRegistry();
-    reg.register(echoDef);
-    expect(reg.get('echo')).toBe(echoDef);
-    expect(reg.get('missing')).toBeUndefined();
-    expect(reg.list()).toEqual([echoDef]);
-  });
-});
+const userTool: ExecutableTool = {
+  name: 'user-tool',
+  description: 'a user-registered tool',
+  parameters: {},
+  resolveExecution: () => ({
+    approvalRule: 'user-tool(*)',
+    execute: () => Promise.resolve({ output: 'user' }),
+  }),
+};
 
-describe('ToolService', () => {
+const mcpTool: ExecutableTool = {
+  name: 'mcp-tool',
+  description: 'an mcp tool',
+  parameters: {},
+  resolveExecution: () => ({
+    approvalRule: 'mcp-tool(*)',
+    execute: () => Promise.resolve({ output: 'mcp' }),
+  }),
+};
+
+describe('ToolRegistryService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
-  let reg: ToolDefinitionRegistry;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    reg = new ToolDefinitionRegistry();
-    reg.register(echoDef);
-    ix.set(IToolDefinitionRegistry, reg);
-    ix.stub(ISessionConfigService, {});
-    ix.stub(IAgentRecords, {});
-    ix.stub(IKaosService, {});
-    ix.stub(IPermissionService, {});
-    ix.stub(ILLMService, {});
-    ix.set(IToolService, new SyncDescriptor(ToolService));
+    ix.set(IToolRegistry, new SyncDescriptor(ToolRegistryService));
   });
   afterEach(() => disposables.dispose());
 
-  function make(): { svc: IToolService; reg: ToolDefinitionRegistry } {
-    const svc = ix.get(IToolService);
-    return { svc, reg };
+  it('registers and resolves a tool by name', () => {
+    const reg = ix.get(IToolRegistry);
+    reg.register(echoTool);
+    expect(reg.resolve('echo')).toBe(echoTool);
+    expect(reg.resolve('missing')).toBeUndefined();
+  });
+
+  it('records the registration source on list()', () => {
+    const reg = ix.get(IToolRegistry);
+    reg.register(userTool, { source: 'user' });
+    expect(reg.list().find((tool) => tool.name === 'user-tool')?.source).toBe('user');
+  });
+
+  it('list() aggregates builtin, user, and mcp tools sorted by name', () => {
+    const reg = ix.get(IToolRegistry);
+    reg.register(echoTool);
+    reg.register(userTool, { source: 'user' });
+    reg.register(mcpTool, { source: 'mcp' });
+    expect(reg.list().map((tool) => tool.name)).toEqual([
+      'echo',
+      'mcp-tool',
+      'user-tool',
+    ]);
+  });
+});
+
+describe('ToolExecutorService', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.set(IToolExecutor, new SyncDescriptor(ToolExecutorService));
+  });
+  afterEach(() => disposables.dispose());
+
+  function call(name: string, args: unknown): ToolCall {
+    return { id: `call-${name}`, name, arguments: args };
   }
 
-  it('executes a builtin tool from the registry', async () => {
-    const { svc } = make();
-    const result = await svc.execute('echo', { msg: 'hi' });
-    expect(result).toEqual({ output: '{"msg":"hi"}' });
+  it('executes a tool and returns its normalized output', async () => {
+    const executor = ix.get(IToolExecutor);
+    const execution = await echoTool.resolveExecution({ msg: 'hi' });
+    const result = await executor.execute(call('echo', { msg: 'hi' }), execution);
+    expect(result).toMatchObject({ output: '{"msg":"hi"}' });
+    expect(result.isError).toBeUndefined();
   });
 
-  it('routes a user-registered tool', async () => {
-    const { svc } = make();
-    const userDef: ToolDefinition = {
-      name: 'user-tool',
-      factory: () => ({ execute: (): Promise<ToolCallResult> => Promise.resolve({ output: 'user' }) }),
+  it('returns an error result when execution rejects', async () => {
+    const executor = ix.get(IToolExecutor);
+    const execution: ToolExecution = {
+      approvalRule: 'boom(*)',
+      execute: () => Promise.reject(new Error('kaboom')),
     };
-    svc.registerUserTool(userDef);
-    expect(await svc.execute('user-tool', {})).toEqual({ output: 'user' });
+    const result = await executor.execute(call('boom', {}), execution);
+    expect(result).toEqual({
+      output: 'Tool "boom" failed: kaboom',
+      isError: true,
+    });
   });
 
-  it('throws on unknown tool', async () => {
-    const { svc } = make();
-    await expect(svc.execute('nope', {})).rejects.toThrow(/unknown tool/);
-  });
-
-  it('list aggregates builtin + user + mcp', () => {
-    const { svc } = make();
-    svc.registerUserTool({ name: 'u', factory: () => ({ execute: () => Promise.resolve({ output: '' }) }) });
-    svc.registerMcpTools('srv', [{ name: 'm', factory: () => ({ execute: () => Promise.resolve({ output: '' }) }) }]);
-    expect(svc.list().map((d) => d.name).sort()).toEqual(['echo', 'm', 'u']);
+  it('returns an aborted result when the signal is already aborted', async () => {
+    const executor = ix.get(IToolExecutor);
+    const controller = new AbortController();
+    controller.abort();
+    const execution = await echoTool.resolveExecution({});
+    const result = await executor.execute(call('echo', {}), execution, {
+      signal: controller.signal,
+    });
+    expect(result).toEqual({
+      output: 'Tool "echo" was aborted',
+      isError: true,
+    });
   });
 });

@@ -12,6 +12,8 @@ export interface HookSlot<TContext> {
   ): IDisposable;
 
   delete(id: string): boolean;
+
+  run(context: TContext, terminal?: () => Promise<void>): Promise<void>;
 }
 
 export type HookHandler<TContext> = (

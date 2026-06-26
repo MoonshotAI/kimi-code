@@ -9,7 +9,7 @@ import {
 } from '@moonshot-ai/kosong';
 import picomatch from 'picomatch';
 
-import { ErrorCodes, KimiError } from "#/_base/errors";
+import { ErrorCodes, KimiError } from "#/errors";
 import { resolveThinkingEffort, type ThinkingEffort } from '#/config/thinking';
 import type { KimiConfig } from '#/config';
 import {
@@ -44,6 +44,8 @@ declare module '#/wireRecord' {
 }
 
 export class ProfileService implements IProfileService {
+  declare readonly _serviceBrand: undefined;
+
   private optionsValue: ProfileServiceOptions = {};
   private cwdValue: string | undefined;
   private modelAliasValue: string | undefined;

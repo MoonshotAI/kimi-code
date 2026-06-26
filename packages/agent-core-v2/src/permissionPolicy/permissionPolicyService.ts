@@ -8,11 +8,6 @@ import {
   type PermissionGitWorkTreeMarker,
   type PermissionServiceOptions,
 } from '#/permission';
-import { IExternalHooksService } from '#/externalHooks';
-import { IPermissionModeService } from '#/permissionMode';
-import { IPermissionRulesService } from '#/permissionRules';
-import { IProfileService } from '#/profile';
-import { ITelemetryService } from '#/telemetry';
 import { AgentSwarmExclusiveDenyPermissionPolicyService } from './policies/agent-swarm-exclusive-deny';
 import { AutoModeApprovePermissionPolicyService } from './policies/auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicyService } from './policies/auto-mode-ask-user-question-deny';
@@ -68,35 +63,27 @@ export class PermissionPolicyService
     @IInstantiationService private readonly instantiation: IInstantiationService,
   ) {
     super();
-    this.policies = this.instantiation.invokeFunction((accessor) => {
-      const modeService = accessor.get(IPermissionModeService);
-      const rulesService = accessor.get(IPermissionRulesService);
-      const profile = accessor.get(IProfileService);
-      const telemetry = accessor.get(ITelemetryService);
-      const externalHooks = accessor.get(IExternalHooksService);
-
-      return [
-        new PreToolCallHookPermissionPolicyService(externalHooks),
-        new AgentSwarmExclusiveDenyPermissionPolicyService(),
-        new AutoModeAskUserQuestionDenyPermissionPolicyService(modeService),
-        new PlanModeGuardDenyPermissionPolicyService(this),
-        new UserConfiguredDenyPermissionPolicyService(this, rulesService),
-        new AutoModeApprovePermissionPolicyService(modeService),
-        new SessionApprovalHistoryPermissionPolicyService(rulesService),
-        new UserConfiguredAskPermissionPolicyService(this, rulesService),
-        new UserConfiguredAllowPermissionPolicyService(this, rulesService),
-        new ExitPlanModeReviewAskPermissionPolicyService(this, modeService, telemetry),
-        new GoalStartReviewAskPermissionPolicyService(modeService),
-        new PlanModeToolApprovePermissionPolicyService(this),
-        new SensitiveFileAccessAskPermissionPolicyService(),
-        new GitControlPathAccessAskPermissionPolicyService(this, profile),
-        new YoloModeApprovePermissionPolicyService(modeService),
-        new SwarmModeAgentSwarmApprovePermissionPolicyService(this),
-        new DefaultToolApprovePermissionPolicyService(),
-        new GitCwdWriteApprovePermissionPolicyService(this, profile),
-        new FallbackAskPermissionPolicyService(),
-      ];
-    });
+    this.policies = [
+      this.instantiation.createInstance(PreToolCallHookPermissionPolicyService),
+      new AgentSwarmExclusiveDenyPermissionPolicyService(),
+      this.instantiation.createInstance(AutoModeAskUserQuestionDenyPermissionPolicyService),
+      new PlanModeGuardDenyPermissionPolicyService(this),
+      this.instantiation.createInstance(UserConfiguredDenyPermissionPolicyService, this),
+      this.instantiation.createInstance(AutoModeApprovePermissionPolicyService),
+      this.instantiation.createInstance(SessionApprovalHistoryPermissionPolicyService),
+      this.instantiation.createInstance(UserConfiguredAskPermissionPolicyService, this),
+      this.instantiation.createInstance(UserConfiguredAllowPermissionPolicyService, this),
+      this.instantiation.createInstance(ExitPlanModeReviewAskPermissionPolicyService, this),
+      this.instantiation.createInstance(GoalStartReviewAskPermissionPolicyService),
+      new PlanModeToolApprovePermissionPolicyService(this),
+      new SensitiveFileAccessAskPermissionPolicyService(),
+      this.instantiation.createInstance(GitControlPathAccessAskPermissionPolicyService, this),
+      this.instantiation.createInstance(YoloModeApprovePermissionPolicyService),
+      new SwarmModeAgentSwarmApprovePermissionPolicyService(this),
+      new DefaultToolApprovePermissionPolicyService(),
+      this.instantiation.createInstance(GitCwdWriteApprovePermissionPolicyService, this),
+      new FallbackAskPermissionPolicyService(),
+    ];
   }
 
   get options(): PermissionServiceOptions {

@@ -23,6 +23,8 @@ declare module '#/wireRecord' {
 }
 
 export class PermissionModeService extends Disposable implements IPermissionModeService {
+  declare readonly _serviceBrand: undefined;
+
   private currentMode: PermissionMode = 'manual';
 
   readonly hooks = {

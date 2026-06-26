@@ -3,7 +3,7 @@ import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 
 import { resolveKimiHome } from '#/config/path';
 import { McpServerConfigSchema, type McpServerConfig } from '#/config/schema';
-import { ErrorCodes, KimiError } from '#/_base/errors';
+import { ErrorCodes, KimiError } from '#/errors';
 import { z } from 'zod';
 
 const McpJsonFileSchema = z.object({

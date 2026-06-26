@@ -1,4 +1,4 @@
-import { ErrorCodes, KimiError } from '#/_base/errors';
+import { ErrorCodes, KimiError } from '#/errors';
 import type { McpServerConfig } from '#/config/schema';
 import type { ILogger as Logger } from '#/log';
 import type { Tool } from '@moonshot-ai/kosong';

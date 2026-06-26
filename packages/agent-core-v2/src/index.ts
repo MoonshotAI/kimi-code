@@ -4,7 +4,7 @@
  */
 
 export * from './_base/di/index';
-export * from './_base/errors/index';
+export * from './errors';
 
 export * from './log/index';
 export * from './telemetry/index';

@@ -47,6 +47,7 @@ export interface PermissionRule {
 }
 
 export interface IPermissionRulesService {
+  readonly _serviceBrand: undefined;
   readonly rules: readonly PermissionRule[];
   readonly sessionApprovalRulePatterns: readonly string[];
 

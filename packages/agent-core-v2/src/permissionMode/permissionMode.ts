@@ -9,6 +9,7 @@ export interface PermissionModeChangedContext {
 }
 
 export interface IPermissionModeService {
+  readonly _serviceBrand: undefined;
   readonly mode: PermissionMode;
   setMode(mode: PermissionMode): void;
 

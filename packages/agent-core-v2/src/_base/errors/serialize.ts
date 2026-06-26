@@ -3,7 +3,7 @@
  * portable `ErrorPayload` that crosses process / language boundaries.
  */
 
-import { ErrorCodes, errorInfo, isErrorCode } from './codes';
+import { CoreErrors, errorInfo, isErrorCode } from './codes';
 import type { ErrorCode } from './codes';
 import { KimiError, isCancellationError } from './errors';
 
@@ -51,7 +51,7 @@ export function makeErrorPayload(
 
 export function toErrorPayload(error: unknown): ErrorPayload {
   if (isCancellationError(error)) {
-    return makeErrorPayload(ErrorCodes.INTERNAL, error.message);
+    return makeErrorPayload(CoreErrors.codes.INTERNAL, error.message);
   }
   if (isCodedError(error)) {
     return {
@@ -63,9 +63,9 @@ export function toErrorPayload(error: unknown): ErrorPayload {
     };
   }
   if (error instanceof Error) {
-    return makeErrorPayload(ErrorCodes.INTERNAL, error.message, { name: error.name });
+    return makeErrorPayload(CoreErrors.codes.INTERNAL, error.message, { name: error.name });
   }
-  return makeErrorPayload(ErrorCodes.INTERNAL, String(error));
+  return makeErrorPayload(CoreErrors.codes.INTERNAL, String(error));
 }
 
 export const toKimiErrorPayload = toErrorPayload;
