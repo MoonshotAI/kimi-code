@@ -641,6 +641,19 @@ describe('KimiChatProvider', () => {
       expect(body['max_tokens']).toBeUndefined();
     });
 
+    it('withMaxCompletionTokens sizes the cap to the remaining context window', async () => {
+      const provider = createProvider().withMaxCompletionTokens(100000, {
+        usedContextTokens: 30000,
+        maxContextTokens: 100000,
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_completion_tokens']).toBe(70000);
+    });
+
     it('passes constructor generation kwargs into the request body', async () => {
       const provider = new KimiChatProvider({
         model: 'kimi-k2-turbo-preview',

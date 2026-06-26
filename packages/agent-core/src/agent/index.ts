@@ -244,6 +244,7 @@ export class Agent {
       capability: this.config.modelCapabilities,
       generate: this.generate,
       completionBudgetConfig,
+      usedContextTokens: () => this.context.tokenCount,
     });
   }
 
