@@ -162,7 +162,13 @@ function makeBridge(
   const sessions = opts.sessions ?? [mkSummary()];
 
   const rpc: Partial<CoreRPC> = {
-    listSessions: vi.fn().mockImplementation(async () => sessions),
+    listSessions: vi.fn().mockImplementation(async (payload) => {
+      // Mirror the store's `sessionId` filter: a filtered lookup returns
+      // only the matching summary (or [] when unknown), which is what
+      // `_requireSession` now relies on for its existence check.
+      const id = (payload as { sessionId?: string } | undefined)?.sessionId;
+      return id === undefined ? sessions : sessions.filter((s) => s.id === id);
+    }),
     resumeSession: vi.fn().mockResolvedValue(undefined as unknown as never),
     prompt: vi.fn().mockImplementation(async (payload) => {
       record.promptCalls.push(payload);

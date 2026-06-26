@@ -646,6 +646,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     activeSessionId: rawState.activeSessionId,
     messagesBySession: rawState.messagesBySession,
     approvalsBySession: rawState.approvalsBySession,
+    planReviewByToolCallId: rawState.planReviewByToolCallId,
     questionsBySession: rawState.questionsBySession,
     tasksBySession: rawState.tasksBySession,
     goalBySession: rawState.goalBySession,
@@ -660,6 +661,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   setActiveSessionId(next.activeSessionId);
   setMessagesBySession(next.messagesBySession);
   rawState.approvalsBySession = next.approvalsBySession;
+  rawState.planReviewByToolCallId = next.planReviewByToolCallId;
   rawState.questionsBySession = next.questionsBySession;
   rawState.tasksBySession = next.tasksBySession;
   rawState.goalBySession = next.goalBySession;
@@ -1045,6 +1047,20 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       ...rawState.approvalsBySession,
       [sessionId]: snap.pendingApprovals,
     };
+    // Preserve plan_review paths from the snapshot so the ExitPlanMode tool
+    // card can link to the plan file even after a reload.
+    for (const a of snap.pendingApprovals) {
+      const display = a.display as { kind?: unknown; plan?: unknown; path?: unknown } | null | undefined;
+      if (display?.kind === 'plan_review' && typeof display.plan === 'string' && display.plan.length > 0) {
+        rawState.planReviewByToolCallId = {
+          ...rawState.planReviewByToolCallId,
+          [a.toolCallId]: {
+            plan: display.plan,
+            path: typeof display.path === 'string' ? display.path : undefined,
+          },
+        };
+      }
+    }
     rawState.questionsBySession = {
       ...rawState.questionsBySession,
       [sessionId]: snap.pendingQuestions,
@@ -1262,6 +1278,23 @@ function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
     return { kind: 'todo', items };
   }
 
+  // plan_review — finalised plan presented at plan-mode exit
+  if (kind === 'plan_review') {
+    const plan = typeof d.plan === 'string' ? d.plan : '';
+    const path = typeof d.path === 'string' ? d.path : undefined;
+    const rawOptions = Array.isArray(d.options) ? d.options : [];
+    const options = rawOptions
+      .map((item: unknown): { label: string; description?: string } | null => {
+        const it = (item ?? {}) as Record<string, unknown>;
+        const label = typeof it.label === 'string' ? it.label : '';
+        if (!label) return null;
+        const description = typeof it.description === 'string' ? it.description : undefined;
+        return { label, description };
+      })
+      .filter((o): o is { label: string; description?: string } => o !== null);
+    return { kind: 'plan_review', plan, path, options: options.length > 0 ? options : undefined };
+  }
+
   // Unknown daemon display.kind → 'generic' with summary = action
   return { kind: 'generic', summary: a.action };
 }
@@ -1454,6 +1487,7 @@ const turns = computed<ChatTurn[]>(() => {
     (fileId) => getKimiWebApi().getFileUrl(fileId),
     activity.value !== 'idle',
     activeAppTasks.value,
+    rawState.planReviewByToolCallId,
   );
 });
 
@@ -1749,7 +1783,9 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
 
   // Order: real workspaces in listWorkspaces order, then derived workspaces
   // sorted by root path so the order is stable (not tied to session activity).
-  const realRoots = rawState.workspaces.map((w) => w.root);
+  // Hidden roots must be excluded here too — `byRoot` skips them, so a hidden
+  // real workspace would otherwise make `byRoot.get(root)` return undefined.
+  const realRoots = rawState.workspaces.filter((w) => !hidden.has(w.root)).map((w) => w.root);
   const derivedRoots = [...byRoot.keys()].filter((r) => !realRoots.includes(r));
   derivedRoots.sort((a, b) => a.localeCompare(b));
 

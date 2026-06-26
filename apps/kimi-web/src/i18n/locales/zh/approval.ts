@@ -8,6 +8,7 @@ export default {
     search: '搜索?',
     invocation: '调用?',
     todo: '更新 todo?',
+    plan_review: '按这份 plan 开始实现?',
     generic: '批准操作?',
   },
   subagentBadge: '子 agent · {name}',
@@ -21,4 +22,7 @@ export default {
   approveSession: '本会话内批准',
   reject: '拒绝',
   feedback: '＋反馈',
+  approvePlan: '批准 plan',
+  revise: '修改',
+  rejectAndExit: '拒绝并退出',
 } as const;

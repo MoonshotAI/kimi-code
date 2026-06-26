@@ -48,6 +48,7 @@ const appState: AppState = {
   streamingPhase: 'idle',
   streamingStartTime: 0,
   planMode: false,
+  inputMode: 'prompt',
   swarmMode: false,
   theme: 'dark',
   editorCommand: null,

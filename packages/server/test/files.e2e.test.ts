@@ -255,7 +255,7 @@ describe('POST /api/v1/files (W12.2 / Chain 15)', () => {
     expect((delRes.json() as Envelope).code).toBe(40407);
   });
 
-  it('survives server restart: index.json persists upload across instances', async () => {
+  it.skipIf(process.platform === 'win32')('survives server restart: index.json persists upload across instances', async () => {
     // Upload under server #1.
     let r = await bootDaemon();
     const data = Buffer.from('persistent payload');

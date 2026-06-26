@@ -165,9 +165,16 @@ describe('end-to-end FS reverse-RPC', () => {
     // The client saw exactly one fs/readTextFile request with the
     // expected path and matching sessionId.
     expect(bufferClient.readRequests).toHaveLength(1);
+
+    // AcpKaos forwards paths in client-native separators: when the inner
+    // LocalKaos reports pathClass 'win32' (Windows), '/' is converted to '\\'
+    // before the fs/readTextFile RPC (see kaos-acp.test.ts "uses win32-native
+    // separators"). Mirror that here so the assertion holds on every platform.
+    const expectedWirePath =
+      process.platform === 'win32' ? targetPath.replaceAll('/', '\\') : targetPath;
     expect(bufferClient.readRequests[0]).toMatchObject({
       sessionId: capturedSessionId,
-      path: targetPath,
+      path: expectedWirePath,
     });
 
     // Give the agent a tick to flush the queued sessionUpdate write

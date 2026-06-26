@@ -23,6 +23,18 @@ let bridgeHome: string;
 let workspace: string;
 let server: RunningServer | undefined;
 
+function rmSyncRobust(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 60, retryDelay: 250 });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY') throw error;
+    // Best-effort cleanup: a child process may still hold the cwd or be
+    // writing into the dir after server.close(); the OS reclaims the temp dir
+    // later and a cleanup hiccup must not fail an otherwise-passing test.
+  }
+}
+
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'kimi-server-fs-git-test-'));
   lockPath = join(tmpDir, 'lock');
@@ -38,9 +50,15 @@ afterEach(async () => {
 
   }
   server = undefined;
-  rmSync(tmpDir, { recursive: true, force: true });
-  rmSync(bridgeHome, { recursive: true, force: true });
-});
+  // On Windows the git/gh child processes and the session core process spawned
+  // during a test can outlive `server.close()` (their disposal is not fully
+  // awaited) and keep the temp workspace as their cwd, which makes rmSync fail
+  // with EPERM. Retry generously to ride out the asynchronous teardown, and if
+  // the cwd is still locked, swallow the error — temp dirs are reclaimed by the
+  // OS and a cleanup hiccup must not fail an otherwise-passing test.
+  rmSyncRobust(tmpDir);
+  rmSyncRobust(bridgeHome);
+}, 20_000);
 
 async function bootDaemon(): Promise<RunningServer> {
   server = await startServer({
@@ -133,7 +151,8 @@ function initRepo(): void {
   git(['commit', '-m', 'seed', '--no-gpg-sign']);
 }
 
-describe('POST /api/v1/sessions/{sid}/fs:git_status (W11.2)', () => {
+// oxlint-disable-next-line eslint-plugin-jest(valid-describe-callback)
+describe('POST /api/v1/sessions/{sid}/fs:git_status (W11.2)', { timeout: process.platform === 'win32' ? 20_000 : 5_000 }, () => {
   it('clean repo: empty entries, branch populated', async () => {
     initRepo();
 
@@ -160,7 +179,9 @@ describe('POST /api/v1/sessions/{sid}/fs:git_status (W11.2)', () => {
     // Clean tree → no line stats.
     expect(env.data!.additions).toBe(0);
     expect(env.data!.deletions).toBe(0);
-  });
+    // First server-booting test in the file: on Windows, cold module load
+    // plus the `git`/`gh` child-process spawns can exceed the default 5s.
+  }, 20_000);
 
   it('dirty repo: aggregate additions/deletions vs HEAD', async () => {
     initRepo();

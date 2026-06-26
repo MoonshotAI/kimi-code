@@ -182,10 +182,13 @@ describe('startServer — lock + healthz smoke', () => {
       });
       running.push(r);
 
-      // Bound to the next port, and the lock advertises it so status/kill/ps work.
-      expect(r.address).toBe(`http://127.0.0.1:${String(next)}`);
+      // Bound to the next available port (>= next); the lock advertises it so
+      // status/kill/ps work. On Windows a recently-closed probe port can linger
+      // in TIME_WAIT, so the retry may land on port+2 instead of port+1.
+      const boundPort = Number(new URL(r.address).port);
+      expect(boundPort).toBeGreaterThanOrEqual(next);
       const stored = JSON.parse(readFileSync(thirdPartyLockPath, 'utf8')) as LockContents;
-      expect(stored.port).toBe(next);
+      expect(stored.port).toBe(boundPort);
     } finally {
       await closeNetServer(occupant);
     }

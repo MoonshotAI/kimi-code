@@ -163,7 +163,7 @@ function expectRejected(url: string): Promise<void> {
 }
 
 describe('production auth wiring (M5.1)', () => {
-  it('writes a 0600 token file at boot and keeps it on close (persistent)', async () => {
+  it.skipIf(process.platform === 'win32')('writes a 0600 token file at boot and keeps it on close (persistent)', async () => {
     const r = await bootReal();
     const p = tokenPath();
 

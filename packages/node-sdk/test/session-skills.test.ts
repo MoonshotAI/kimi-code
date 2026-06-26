@@ -13,6 +13,7 @@ import {
 } from '#/index';
 import type { SDKRpcClientBase } from '#/rpc';
 
+import { normalizeWorkDir } from '../../agent-core/src/session/store';
 import {
   makeTempDir,
   removeTempDirs,
@@ -172,7 +173,7 @@ describe('Session skills', () => {
       expect(state['isCustomTitle']).toBe(false);
       expect(state['lastPrompt']).toBe('/review src/app.ts');
 
-      const skillDir = await realpath(join(workDir, '.kimi-code', 'skills', 'review'));
+      const skillDir = normalizeWorkDir(await realpath(join(workDir, '.kimi-code', 'skills', 'review')));
       await expect(
         waitForAgentWireEvent(
           homeDir,
