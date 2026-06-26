@@ -1,0 +1,22 @@
+diff --git a/dist/components/editor.js b/dist/components/editor.js
+index 50f92259fa88f4efe406a60b7db8e54a9eedace6..a8cd036a627209ea462153535fa5f029de32fd32 100644
+--- a/dist/components/editor.js
++++ b/dist/components/editor.js
+@@ -125,6 +125,17 @@ export function wordWrapLine(line, maxWidth, preSegmented) {
+             // in a narrow terminal). Re-wrap it at grapheme granularity.
+             // The segment remains logically atomic for cursor
+             // movement / editing — the split is purely visual for word-wrap layout.
++            //
++            // Guard: when maxWidth is 1 (terminal extremely narrow) a wide
++            // grapheme cannot be split further; re-wrapping would recurse
++            // forever. Emit the grapheme as its own overflow chunk instead.
++            if (maxWidth <= 1) {
++                chunks.push({ text: grapheme, startIndex: charIndex, endIndex: charIndex + grapheme.length });
++                chunkStart = charIndex + grapheme.length;
++                currentWidth = 0;
++                wrapOppIndex = -1;
++                continue;
++            }
+             const subChunks = wordWrapLine(grapheme, maxWidth);
+             for (let j = 0; j < subChunks.length - 1; j++) {
+                 const sc = subChunks[j];

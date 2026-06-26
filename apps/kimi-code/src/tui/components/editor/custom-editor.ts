@@ -230,6 +230,15 @@ export class CustomEditor extends Editor {
   }
 
   override render(width: number): string[] {
+    // pi-tui's editor wordWrapLine recurses infinitely when the layout
+    // width becomes 1 and the text contains a wide grapheme (e.g. CJK).
+    // At widths below our paddingX, the editor clamps padding to 0 and
+    // can produce a 1-column layout width. Skip rendering entirely in
+    // that case rather than crashing.
+    if (width < this.getPaddingX()) {
+      return [''];
+    }
+
     const lines = super.render(width);
     if (lines.length < 3) return lines;
     const firstContentIdx = 1;

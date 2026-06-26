@@ -80,6 +80,8 @@ export class ThinkingComponent implements Component {
     const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
     const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
 
+    let result: string[];
+
     if (this.mode === 'live') {
       const visibleLines =
         contentLines.length > THINKING_PREVIEW_LINES
@@ -89,33 +91,37 @@ export class ThinkingComponent implements Component {
         'textDim',
         `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
       );
-      return [
+      result = [
         '',
         spinner + currentTheme.fg('textDim', 'thinking...'),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
       ];
+    } else {
+      const rendered: string[] = [''];
+      for (let i = 0; i < contentLines.length; i++) {
+        const p = i === 0 && this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
+        rendered.push(p + contentLines[i]);
+      }
+
+      if (this.expanded || contentLines.length <= THINKING_PREVIEW_LINES) {
+        result = rendered;
+      } else {
+        // Leading blank + first PREVIEW_LINES content lines + hint line.
+        const truncated = rendered.slice(0, 1 + THINKING_PREVIEW_LINES);
+        const remaining = contentLines.length - THINKING_PREVIEW_LINES;
+        const hint = `... (${String(remaining)} more lines, ctrl+o to expand)`;
+        const indentWidth = Math.min(MESSAGE_INDENT.length, Math.max(0, width));
+        const hintWidth = Math.max(0, width - indentWidth);
+        truncated.push(
+          ' '.repeat(indentWidth) + currentTheme.dim(truncateToWidth(hint, hintWidth, '…')),
+        );
+        result = truncated;
+      }
     }
 
-    const rendered: string[] = [''];
-    for (let i = 0; i < contentLines.length; i++) {
-      const p = i === 0 && this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
-      rendered.push(p + contentLines[i]);
-    }
-
-    if (this.expanded || contentLines.length <= THINKING_PREVIEW_LINES) {
-      return rendered;
-    }
-
-    // Leading blank + first PREVIEW_LINES content lines + hint line.
-    const truncated = rendered.slice(0, 1 + THINKING_PREVIEW_LINES);
-    const remaining = contentLines.length - THINKING_PREVIEW_LINES;
-    const hint = `... (${String(remaining)} more lines, ctrl+o to expand)`;
-    const indentWidth = Math.min(MESSAGE_INDENT.length, Math.max(0, width));
-    const hintWidth = Math.max(0, width - indentWidth);
-    truncated.push(
-      ' '.repeat(indentWidth) + currentTheme.dim(truncateToWidth(hint, hintWidth, '…')),
-    );
-    return truncated;
+    // Final guard: pi-tui requires every returned line to fit within the
+    // requested width, even when the terminal is extremely narrow.
+    return result.map((line) => truncateToWidth(line, width, '…'));
   }
 
   private startSpinner(): void {

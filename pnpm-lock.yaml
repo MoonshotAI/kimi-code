@@ -14,6 +14,11 @@ overrides:
   ssh2@1.17.0>cpu-features: '-'
   ssh2@1.17.0>nan: '-'
 
+patchedDependencies:
+  '@earendil-works/pi-tui@0.74.0':
+    hash: 09ee31c81aedf5144bed54fca31c852f66b28f03e6650e0e3286b9089951cb45
+    path: patches/@earendil-works__pi-tui@0.74.0.patch
+
 importers:
 
   .:
@@ -74,7 +79,7 @@ importers:
     devDependencies:
       '@earendil-works/pi-tui':
         specifier: ^0.74.0
-        version: 0.74.0
+        version: 0.74.0(patch_hash=09ee31c81aedf5144bed54fca31c852f66b28f03e6650e0e3286b9089951cb45)
       '@moonshot-ai/acp-adapter':
         specifier: workspace:^
         version: link:../../packages/acp-adapter
@@ -6863,7 +6868,7 @@ snapshots:
     transitivePeerDependencies:
       - '@algolia/client-search'
 
-  '@earendil-works/pi-tui@0.74.0':
+  '@earendil-works/pi-tui@0.74.0(patch_hash=09ee31c81aedf5144bed54fca31c852f66b28f03e6650e0e3286b9089951cb45)':
     dependencies:
       '@types/mime-types': 2.1.4
       chalk: 5.6.2

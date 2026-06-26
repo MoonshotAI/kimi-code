@@ -89,4 +89,14 @@ describe('ThinkingComponent', () => {
       expect(visibleWidth(line)).toBeLessThanOrEqual(37);
     }
   });
+
+  it('keeps every live line within the requested render width, even when very narrow', () => {
+    const component = new ThinkingComponent('step', true, 'live');
+
+    for (const width of [80, 13, 12, 5, 1]) {
+      for (const line of component.render(width)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
 });

@@ -28,12 +28,20 @@ describe('GutterContainer', () => {
     expect(seenWidth).toHaveBeenCalledWith(15);
   });
 
-  it('clamps inner width to at least 1 when gutters would otherwise consume it', () => {
+  it('returns an empty placeholder when gutters consume the whole width', () => {
     const seenWidth = vi.fn<(w: number) => string[]>(() => ['x']);
     const c = new GutterContainer(5, 5);
     c.addChild(new FakeChild(seenWidth));
-    c.render(2);
-    expect(seenWidth).toHaveBeenCalledWith(1);
+    expect(c.render(2)).toEqual(['']);
+    expect(seenWidth).not.toHaveBeenCalled();
+  });
+
+  it('keeps emitted lines within the requested width when gutters fit exactly', () => {
+    const c = new GutterContainer(3, 2);
+    c.addChild(new FakeChild((w) => ['a'.repeat(w)]));
+    const lines = c.render(6);
+    expect(lines.length).toBe(1);
+    expect(lines[0]).toBe('   a');
   });
 
   it('stacks lines from multiple children in order', () => {

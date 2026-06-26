@@ -79,12 +79,13 @@ export class GoalCompletionMessageComponent implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
+    const safeWidth = Math.max(0, width);
     const [headline = '', ...details] = this.message.trim().split(/\r?\n/);
     if (headline.length === 0) return [];
 
     const bullet = currentTheme.boldFg('success', STATUS_BULLET);
     const bulletWidth = visibleWidth(STATUS_BULLET);
-    const contentWidth = Math.max(1, width - bulletWidth);
+    const contentWidth = Math.max(1, safeWidth - bulletWidth);
     const lines: string[] = [''];
 
     const headlineText = new Text(currentTheme.boldFg('success', headline), 0, 0);
@@ -103,7 +104,7 @@ export class GoalCompletionMessageComponent implements Component {
       }
     }
 
-    return lines;
+    return lines.map((line) => truncateToWidth(line, safeWidth, '…'));
   }
 }
 

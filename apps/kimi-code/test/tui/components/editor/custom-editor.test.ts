@@ -4,6 +4,7 @@ import type {
   AutocompleteSuggestions,
   TUI,
 } from '@earendil-works/pi-tui';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';
@@ -637,5 +638,36 @@ describe('CustomEditor bash mode via paste', () => {
 
     expect(editor.inputMode).toBe('bash');
     expect(editor.getText()).toBe('');
+  });
+});
+
+describe('CustomEditor narrow width safety', () => {
+  it('does not crash when rendered at extremely narrow widths with wide characters', () => {
+    const editor = makeEditor();
+    editor.setText('你好世界');
+
+    for (const width of [0, 1, 2, 3]) {
+      const lines = editor.render(width);
+      for (const line of lines) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(Math.max(0, width));
+      }
+    }
+  });
+
+  it('does not crash when recalling history at an extremely narrow width', () => {
+    const editor = makeEditor();
+    editor.setText('你好世界');
+    editor.addToHistory('你好世界');
+    editor.setText('');
+
+    // Simulate that the last render happened at a 1-column layout width.
+    (editor as unknown as { lastWidth: number }).lastWidth = 1;
+
+    expect(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (editor as any).navigateHistory(-1);
+    }).not.toThrow();
+
+    expect(editor.getText()).toBe('你好世界');
   });
 });

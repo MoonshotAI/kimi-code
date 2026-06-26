@@ -20,7 +20,12 @@ export class GutterContainer extends Container {
   }
 
   override render(width: number): string[] {
-    const inner = Math.max(1, width - this.leftPad - this.rightPad);
+    // If the terminal is narrower than the gutters themselves, skip content
+    // rather than clamping the inner width to 1 and producing an over-wide line.
+    if (width < this.leftPad + this.rightPad) {
+      return [''];
+    }
+    const inner = width - this.leftPad - this.rightPad;
     const lead = ' '.repeat(this.leftPad);
     const out: string[] = [];
     for (const child of this.children) {
