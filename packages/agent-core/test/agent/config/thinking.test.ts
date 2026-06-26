@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveThinkingEffort } from '../../../src/agent/config/thinking';
+import { effectiveDefaultEffort, resolveThinkingEffort } from '../../../src/agent/config/thinking';
 
 describe('resolveThinkingEffort', () => {
   describe('without explicit request', () => {
@@ -65,5 +65,50 @@ describe('resolveThinkingEffort', () => {
       expect(resolveThinkingEffort(undefined, undefined)).toBe('high');
       expect(resolveThinkingEffort('on', undefined)).toBe('high');
     });
+  });
+
+  describe('model default effort fallback', () => {
+    it('uses modelDefaultEffort when thinking.effort is unset', () => {
+      expect(resolveThinkingEffort(undefined, undefined, 'max')).toBe('max');
+      expect(resolveThinkingEffort('on', undefined, 'max')).toBe('max');
+    });
+
+    it('uses modelDefaultEffort when thinking.effort is invalid', () => {
+      expect(resolveThinkingEffort(undefined, { effort: 'bogus' }, 'max')).toBe('max');
+    });
+
+    it('prefers a valid thinking.effort over modelDefaultEffort', () => {
+      expect(resolveThinkingEffort(undefined, { effort: 'low' }, 'max')).toBe('low');
+    });
+
+    it('falls back to high when neither thinking.effort nor modelDefaultEffort is usable', () => {
+      expect(resolveThinkingEffort(undefined, undefined, 'bogus')).toBe('high');
+      expect(resolveThinkingEffort(undefined, { effort: 'bogus' }, 'bogus')).toBe('high');
+    });
+
+    it('honours off regardless of modelDefaultEffort', () => {
+      expect(resolveThinkingEffort('off', undefined, 'max')).toBe('off');
+      expect(resolveThinkingEffort(undefined, { mode: 'off' }, 'max')).toBe('off');
+    });
+  });
+});
+
+describe('effectiveDefaultEffort', () => {
+  it('returns the declared defaultEffort when present', () => {
+    expect(effectiveDefaultEffort({ defaultEffort: 'max', supportEfforts: ['low', 'high', 'max'] })).toBe(
+      'max',
+    );
+  });
+
+  it('falls back to the middle supportEfforts entry when defaultEffort is absent', () => {
+    expect(effectiveDefaultEffort({ supportEfforts: ['low', 'high', 'max'] })).toBe('high');
+    expect(effectiveDefaultEffort({ supportEfforts: ['low', 'medium', 'high'] })).toBe('medium');
+    expect(effectiveDefaultEffort({ supportEfforts: ['low', 'high'] })).toBe('high');
+    expect(effectiveDefaultEffort({ supportEfforts: ['low'] })).toBe('low');
+  });
+
+  it('returns undefined when neither defaultEffort nor supportEfforts are present', () => {
+    expect(effectiveDefaultEffort({})).toBeUndefined();
+    expect(effectiveDefaultEffort({ supportEfforts: [] })).toBeUndefined();
   });
 });

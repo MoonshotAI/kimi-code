@@ -185,6 +185,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'effort',
+    aliases: ['thinking'],
+    description: 'Switch thinking effort level',
+    priority: 95,
+    availability: 'always',
+  },
+  {
     name: 'provider',
     aliases: ['providers'],
     description: 'Manage AI providers (add / delete / refresh)',

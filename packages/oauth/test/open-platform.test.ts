@@ -319,6 +319,45 @@ describe('applyOpenPlatformConfig', () => {
     expect(config.models?.['moonshot-cn/stale']).toBeUndefined();
     expect(config.models?.['other/model']).toBeDefined();
   });
+
+  it('preserves hand-edited fields that upstream does not declare', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        'moonshot-cn': { type: 'kimi', baseUrl: 'https://api.moonshot.cn/v1', apiKey: 'sk-old' },
+      },
+      models: {
+        'moonshot-cn/kimi-k2-0712-preview': {
+          provider: 'moonshot-cn',
+          model: 'kimi-k2-0712-preview',
+          maxContextSize: 256000,
+          maxOutputSize: 8192,
+          supportEfforts: ['low', 'high'],
+        } as Record<string, unknown>,
+      },
+    };
+    const platform = getOpenPlatformById('moonshot-cn')!;
+    const models = [
+      {
+        id: 'kimi-k2-0712-preview',
+        contextLength: 256000,
+        supportsReasoning: true,
+        supportsImageIn: true,
+        supportsVideoIn: true,
+      },
+    ];
+
+    applyOpenPlatformConfig(config, {
+      platform,
+      models,
+      selectedModel: models[0]!,
+      thinking: false,
+      apiKey: 'sk-new',
+    });
+
+    const alias = config.models?.['moonshot-cn/kimi-k2-0712-preview'];
+    expect(alias?.['maxOutputSize']).toBe(8192);
+    expect(alias?.['supportEfforts']).toEqual(['low', 'high']);
+  });
 });
 
 describe('removeOpenPlatformConfig', () => {

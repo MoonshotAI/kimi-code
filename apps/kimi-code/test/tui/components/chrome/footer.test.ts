@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FooterComponent } from '#/tui/components/chrome/footer';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
+import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import type { AppState } from '#/tui/types';
 
 const TRUECOLOR_PATTERN = /\[38;2;(\d+);(\d+);(\d+)m/g;
@@ -103,5 +104,44 @@ describe('FooterComponent', () => {
     } finally {
       currentTheme.setPalette(darkColors);
     }
+  });
+
+  it('shows the effort level for an effort-capable model', () => {
+    const effortModel: ModelAlias = {
+      provider: 'managed:kimi-code',
+      model: 'kimi-k2',
+      maxContextSize: 262144,
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'high',
+    };
+    const state: AppState = {
+      ...appState,
+      thinking: true,
+      thinkingLevel: 'max',
+      availableModels: { 'kimi-k2': effortModel },
+    };
+    const footer = new FooterComponent(state);
+
+    expect(footer.render(120).join('\n')).toContain('thinking:max');
+  });
+
+  it('does not show the effort level for a legacy boolean model', () => {
+    const plainModel: ModelAlias = {
+      provider: 'managed:kimi-code',
+      model: 'kimi-k2',
+      maxContextSize: 262144,
+      capabilities: ['thinking'],
+    };
+    const state: AppState = {
+      ...appState,
+      thinking: true,
+      thinkingLevel: 'high',
+      availableModels: { 'kimi-k2': plainModel },
+    };
+    const footer = new FooterComponent(state);
+    const rendered = footer.render(120).join('\n');
+
+    expect(rendered).toContain('thinking');
+    expect(rendered).not.toContain('thinking:high');
   });
 });

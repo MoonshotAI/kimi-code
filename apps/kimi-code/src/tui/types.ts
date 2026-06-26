@@ -32,6 +32,9 @@ export interface AppState {
   planMode: boolean;
   swarmMode: boolean;
   thinking: boolean;
+  /** Live thinking level of the active session (e.g. 'off', 'on', 'high');
+   * mirrors the runtime so the model picker can highlight the active segment. */
+  thinkingLevel?: string;
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;

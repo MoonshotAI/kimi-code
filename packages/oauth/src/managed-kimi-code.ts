@@ -28,6 +28,8 @@ export interface ManagedKimiCodeModelInfo {
   readonly supportsVideoIn: boolean;
   readonly supportsToolUse?: boolean;
   readonly supportsThinkingType?: SupportsThinkingType;
+  readonly supportEfforts?: readonly string[];
+  readonly defaultEffort?: string;
   readonly displayName?: string | undefined;
 }
 
@@ -118,6 +120,8 @@ export interface ManagedKimiModelAlias {
   model: string;
   maxContextSize: number;
   capabilities?: string[] | undefined;
+  supportEfforts?: readonly string[] | undefined;
+  defaultEffort?: string | undefined;
   displayName?: string | undefined;
   readonly [key: string]: unknown;
 }
@@ -375,6 +379,11 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
   const supportsToolUse = Object.hasOwn(item, 'supports_tool_use')
     ? Boolean(item['supports_tool_use'])
     : true;
+  const rawDefaultEffort = item['default_effort'];
+  const defaultEffort =
+    typeof rawDefaultEffort === 'string' && rawDefaultEffort.length > 0
+      ? rawDefaultEffort
+      : undefined;
   return {
     id: item['id'],
     contextLength,
@@ -383,8 +392,16 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
     supportsVideoIn: Boolean(item['supports_video_in']),
     supportsToolUse,
     supportsThinkingType: parseSupportsThinkingType(item['supports_thinking_type']),
+    supportEfforts: parseStringArray(item['support_efforts']),
+    defaultEffort,
     displayName: normalizedDisplayName,
   };
+}
+
+export function parseStringArray(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out = value.filter((v): v is string => typeof v === 'string' && v.length > 0);
+  return out.length > 0 ? out : undefined;
 }
 
 // Unknown or missing values resolve to undefined so callers fall back to the
@@ -461,19 +478,34 @@ export function applyManagedKimiCodeConfig(
     oauth,
   };
 
+  // Selectively merge upstream models into the existing config so any fields
+  // the user added by hand (or that upstream does not declare) survive a
+  // refresh. Managed models that upstream no longer lists are removed; the
+  // rest are merged field-by-field — upstream-owned fields are overwritten,
+  // everything else is preserved.
+  const upstreamKeys = new Set(options.models.map((m) => managedModelKey(m.id)));
   for (const [key, model] of Object.entries(existingModels)) {
-    if (isRecord(model) && model['provider'] === KIMI_CODE_PROVIDER_NAME) {
+    if (
+      isRecord(model) &&
+      model['provider'] === KIMI_CODE_PROVIDER_NAME &&
+      !upstreamKeys.has(key)
+    ) {
       delete existingModels[key];
     }
   }
   for (const model of options.models) {
     const capabilities = capabilitiesForModel(model);
-    existingModels[managedModelKey(model.id)] = {
+    const key = managedModelKey(model.id);
+    const existing = isRecord(existingModels[key]) ? existingModels[key] : {};
+    existingModels[key] = {
+      ...existing,
       provider: KIMI_CODE_PROVIDER_NAME,
       model: model.id,
       maxContextSize: model.contextLength,
       capabilities,
-      displayName: model.displayName,
+      ...(model.displayName !== undefined ? { displayName: model.displayName } : {}),
+      ...(model.supportEfforts !== undefined ? { supportEfforts: model.supportEfforts } : {}),
+      ...(model.defaultEffort !== undefined ? { defaultEffort: model.defaultEffort } : {}),
     };
   }
 

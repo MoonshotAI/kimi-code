@@ -11,7 +11,7 @@ import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '#/config/k
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { AgentConfigData, AgentConfigUpdateData } from './types';
-import { resolveThinkingEffort, type ThinkingEffort } from './thinking';
+import { effectiveDefaultEffort, resolveThinkingEffort, type ThinkingEffort } from './thinking';
 import type { ResolvedRuntimeProvider } from '../../session/provider-manager';
 
 export * from './types';
@@ -54,6 +54,7 @@ export class ConfigState {
       this._thinkingLevel = resolveThinkingEffort(
         changed.thinkingLevel,
         this.agent.kimiConfig?.thinking,
+        this.modelDefaultEffort,
       );
     }
     if (changed.systemPrompt !== undefined) {
@@ -125,13 +126,20 @@ export class ConfigState {
     // events, and subagent inheritance consistent, and re-applies after a
     // later model switch onto an always-thinking alias.
     if (this._thinkingLevel === 'off' && this.alwaysThinkingModel) {
-      return resolveThinkingEffort('on', this.agent.kimiConfig?.thinking);
+      return resolveThinkingEffort('on', this.agent.kimiConfig?.thinking, this.modelDefaultEffort);
     }
     return this._thinkingLevel;
   }
 
   private get alwaysThinkingModel(): boolean {
     return this.tryResolvedProviderConfig()?.alwaysThinking === true;
+  }
+
+  private get modelDefaultEffort(): string | undefined {
+    const alias = this._modelAlias;
+    if (alias === undefined) return undefined;
+    const model = this.agent.kimiConfig?.models?.[alias];
+    return model === undefined ? undefined : effectiveDefaultEffort(model);
   }
 
   get profileName(): string | undefined {

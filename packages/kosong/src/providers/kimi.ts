@@ -26,7 +26,6 @@ import {
   normalizeOpenAIFinishReason,
   type OpenAIContentPart,
   type OpenAIToolParam,
-  reasoningEffortToThinkingEffort,
   toolToOpenAI,
 } from './openai-common';
 import {
@@ -46,6 +45,10 @@ export interface KimiOptions {
   stream?: boolean | undefined;
   defaultHeaders?: Record<string, string> | undefined;
   generationKwargs?: GenerationKwargs | undefined;
+  /** Effort levels the model advertises (e.g. ["low", "high", "max"]). When
+   * present and non-empty, withThinking sends the chosen effort on the wire;
+   * when absent/empty, only thinking.type is sent. */
+  supportEfforts?: readonly string[] | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => OpenAI;
 }
 
@@ -73,6 +76,7 @@ export interface GenerationKwargs {
 
 export interface ThinkingConfig {
   type?: 'enabled' | 'disabled';
+  effort?: string;
   keep?: unknown;
   [key: string]: unknown;
 }
@@ -213,6 +217,37 @@ export function extractUsageFromChunk(
     return choiceUsage as Record<string, unknown>;
   }
   return null;
+}
+
+/** Map a normalized ThinkingEffort to the Kimi wire effort value. Kimi has no
+ * xhigh, so xhigh clamps down to high; everything else passes through. */
+function kimiEffort(effort: Exclude<ThinkingEffort, 'off'>): string {
+  switch (effort) {
+    case 'low':
+      return 'low';
+    case 'medium':
+      return 'medium';
+    case 'high':
+      return 'high';
+    case 'xhigh':
+      return 'high';
+    case 'max':
+      return 'max';
+  }
+}
+
+function wireEffortToThinkingEffort(effort: unknown): ThinkingEffort | undefined {
+  if (typeof effort !== 'string') return undefined;
+  switch (effort) {
+    case 'low':
+    case 'medium':
+    case 'high':
+    case 'xhigh':
+    case 'max':
+      return effort;
+    default:
+      return undefined;
+  }
 }
 
 class KimiStreamedMessage implements StreamedMessage {
@@ -364,6 +399,7 @@ export class KimiChatProvider implements ChatProvider {
   private _baseUrl: string;
   private _defaultHeaders: Record<string, string> | undefined;
   private _generationKwargs: GenerationKwargs;
+  private readonly _supportEfforts: readonly string[];
   private _client: OpenAI | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
   private _files: KimiFiles | undefined;
@@ -377,6 +413,7 @@ export class KimiChatProvider implements ChatProvider {
     this._model = options.model;
     this._stream = options.stream ?? true;
     this._generationKwargs = { ...options.generationKwargs };
+    this._supportEfforts = options.supportEfforts ?? [];
     this._client =
       this._apiKey === undefined
         ? undefined
@@ -413,7 +450,10 @@ export class KimiChatProvider implements ChatProvider {
   }
 
   get thinkingEffort(): ThinkingEffort | null {
-    return reasoningEffortToThinkingEffort(this._generationKwargs.reasoning_effort);
+    const thinking = this._generationKwargs.extra_body?.thinking;
+    if (thinking === undefined) return null;
+    if (thinking.type === 'disabled') return 'off';
+    return wireEffortToThinkingEffort(thinking.effort) ?? 'high';
   }
 
   get modelParameters(): Record<string, unknown> {
@@ -498,28 +538,34 @@ export class KimiChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): KimiChatProvider {
-    const thinking: ThinkingConfig = {
-      type: effort === 'off' ? 'disabled' : 'enabled',
-    };
+    const supportsEffort = this._supportEfforts.length > 0;
+    let thinking: ThinkingConfig;
     let reasoningEffort: string | undefined;
-    switch (effort) {
-      case 'off':
-        reasoningEffort = undefined;
-        break;
-      case 'low':
-        reasoningEffort = 'low';
-        break;
-      case 'medium':
-        reasoningEffort = 'medium';
-        break;
-      case 'high':
-      case 'xhigh':
-      case 'max':
-        reasoningEffort = 'high';
-        break;
+    if (effort === 'off') {
+      thinking = { type: 'disabled' };
+    } else if (supportsEffort) {
+      const mapped = kimiEffort(effort);
+      thinking = { type: 'enabled', effort: mapped };
+      // TODO: drop reasoning_effort once the new thinking.effort wire format is
+      // fully rolled out across all kimi models. Until then mirror the same
+      // value so both code paths agree (only for effort-capable models).
+      reasoningEffort = mapped;
+    } else {
+      thinking = { type: 'enabled' };
     }
-    return this._withGenerationKwargs({ reasoning_effort: reasoningEffort }).withExtraBody({
-      thinking,
+    // Replace extra_body.thinking wholesale so a stale `effort` from a previous
+    // withThinking call can never linger on a disabled or non-effort thinking
+    // object — but carry over a `keep` set earlier via withExtraBody (the
+    // KIMI_MODEL_THINKING_KEEP path applies keep after withThinking and merges
+    // on top, so it is unaffected either way).
+    const oldExtra = this._generationKwargs.extra_body ?? {};
+    const keep = oldExtra.thinking?.keep;
+    if (keep !== undefined) {
+      thinking = { ...thinking, keep };
+    }
+    return this._withGenerationKwargs({
+      reasoning_effort: reasoningEffort,
+      extra_body: { ...oldExtra, thinking },
     });
   }
 

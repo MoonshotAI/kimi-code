@@ -167,11 +167,11 @@ export function runModelSelector(
     const selector = new ModelSelectorComponent({
       models: modelDict,
       currentValue: firstAlias,
-      currentThinking: initialThinking,
+      currentThinkingLevel: initialThinking ? 'on' : 'off',
       searchable: true,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
-        resolve({ alias, thinking });
+        resolve({ alias, thinking: thinking !== 'off' });
       },
       onCancel: () => {
         host.restoreEditor();

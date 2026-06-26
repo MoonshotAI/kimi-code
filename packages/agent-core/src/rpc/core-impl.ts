@@ -9,7 +9,7 @@ import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
 import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
-import { resolveThinkingLevel } from '../agent/config/thinking';
+import { effectiveDefaultEffort, resolveThinkingLevel } from '../agent/config/thinking';
 import { Agent } from '../agent';
 import {
   ensureKimiHome,
@@ -220,7 +220,16 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const workDir = requiredWorkDir('createSession', options.workDir);
     const config = this.reloadProviderManager();
     const id = options.id ?? createSessionId();
-    const thinkingLevel = resolveThinkingLevel(options.thinking, config);
+    const modelAlias = options.model ?? config.defaultModel;
+    const modelDefaultEffort = (() => {
+      if (modelAlias === undefined) return undefined;
+      const model = config.models?.[modelAlias];
+      return model === undefined ? undefined : effectiveDefaultEffort(model);
+    })();
+    const thinkingLevel = resolveThinkingLevel(options.thinking, {
+      ...config,
+      modelDefaultEffort,
+    });
     const permissionMode = options.permission ?? config.defaultPermissionMode;
     const baseMcpConfig = await resolveSessionMcpConfig({
       cwd: workDir,

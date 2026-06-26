@@ -49,6 +49,12 @@ export const ModelAliasSchema = z.object({
   // model-name version inference. Needed for custom-named Anthropic endpoints
   // whose model name does not encode a parseable Claude version.
   adaptiveThinking: z.boolean().optional(),
+  // Effort levels (e.g. ["low", "high", "max"]) the model supports for
+  // extended thinking, plus the catalog default. Generic to any provider:
+  // managed models fill these from the catalog, others can be set by hand in
+  // config.toml. The user's chosen level is stored globally in thinking.effort.
+  supportEfforts: z.array(z.string()).optional(),
+  defaultEffort: z.string().optional(),
 });
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;

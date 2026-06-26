@@ -60,9 +60,8 @@ export class AuthFlowController {
     this.host.setStartupReady();
   }
 
-  async activateModelAfterLogin(model: string, thinking?: boolean): Promise<void> {
+  async activateModelAfterLogin(model: string, level?: string): Promise<void> {
     const { host } = this;
-    const level = thinking === undefined ? undefined : thinking ? 'on' : 'off';
     if (host.session !== undefined) {
       await host.session.setModel(model);
       if (level !== undefined) {
@@ -122,7 +121,7 @@ export class AuthFlowController {
       return;
     }
 
-    await this.activateModelAfterLogin(defaultModel, config.defaultThinking);
+    await this.activateModelAfterLogin(defaultModel, config.defaultThinking === false ? 'off' : undefined);
     const appStatePatch: Partial<AppState> = {
       availableModels,
       availableProviders,

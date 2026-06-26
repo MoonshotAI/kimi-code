@@ -112,6 +112,7 @@ export class ProviderManager implements ModelProvider {
       alias.reasoningKey,
       this.options.promptCacheKey,
       alias.adaptiveThinking,
+      alias.supportEfforts,
     );
 
     return {
@@ -224,6 +225,7 @@ function toKosongProviderConfig(
   reasoningKey: string | undefined,
   promptCacheKey: string | undefined,
   adaptiveThinking: boolean | undefined,
+  supportEfforts: readonly string[] | undefined,
 ): KosongProviderConfig {
   switch (provider.type) {
     case 'anthropic':
@@ -252,6 +254,7 @@ function toKosongProviderConfig(
         baseUrl: providerValue(provider.baseUrl, provider.env, 'KIMI_BASE_URL'),
         apiKey: providerApiKey(provider),
         generationKwargs: { prompt_cache_key: promptCacheKey },
+        supportEfforts,
         ...defaultHeadersField({ ...kimiRequestHeaders, ...provider.customHeaders }),
       };
     case 'google-genai':

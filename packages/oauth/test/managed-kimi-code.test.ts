@@ -1068,3 +1068,171 @@ describe('supports_thinking_type', () => {
     expect(config.defaultThinking).toBe(false);
   });
 });
+
+describe('support_efforts / default_effort', () => {
+  function makeEffortModelsResponse(): Response {
+    return new Response(
+      JSON.stringify({
+        data: [
+          {
+            id: 'kimi-for-coding',
+            context_length: 262144,
+            supports_reasoning: true,
+            supports_thinking_type: 'both',
+            support_efforts: ['low', 'high', 'max'],
+            default_effort: 'high',
+            display_name: 'Kimi For Coding',
+          },
+          {
+            // Empty / non-string entries are filtered; absent fields stay undefined.
+            id: 'kimi-plain',
+            context_length: 128000,
+            supports_reasoning: true,
+            support_efforts: ['low', '', 42],
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  it('parses support_efforts and default_effort from the models endpoint', async () => {
+    const models = await fetchManagedKimiCodeModels({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeEffortModelsResponse()) as unknown as typeof fetch,
+    });
+
+    expect(models[0]?.supportEfforts).toEqual(['low', 'high', 'max']);
+    expect(models[0]?.defaultEffort).toBe('high');
+    // The empty string and number are filtered out of support_efforts.
+    expect(models[1]?.supportEfforts).toEqual(['low']);
+    expect(models[1]?.defaultEffort).toBeUndefined();
+  });
+
+  it('writes supportEfforts and defaultEffort onto the provisioned model entry', async () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+
+    await provisionManagedKimiCodeConfig({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeEffortModelsResponse()) as unknown as typeof fetch,
+      adapter: {
+        read: () => config,
+        write: vi.fn(),
+        apply: applyManagedKimiCodeConfig,
+      },
+    });
+
+    const alias = config.models?.['kimi-code/kimi-for-coding'];
+    expect(alias?.['supportEfforts']).toEqual(['low', 'high', 'max']);
+    expect(alias?.['defaultEffort']).toBe('high');
+  });
+});
+
+describe('selective merge', () => {
+  const baseOptions = {
+    baseUrl: 'https://api.example.test/coding/v1',
+    oauthKey: 'test-key',
+  };
+
+  it('preserves hand-edited fields that upstream does not declare', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {},
+      models: {
+        'kimi-code/kimi-k2': {
+          provider: 'kimi-code',
+          model: 'kimi-k2',
+          maxContextSize: 262144,
+          capabilities: ['thinking'],
+          maxOutputSize: 4096,
+          supportEfforts: ['low', 'high', 'max'],
+        } as Record<string, unknown>,
+      },
+    };
+
+    applyManagedKimiCodeConfig(config, {
+      ...baseOptions,
+      models: [
+        {
+          id: 'kimi-k2',
+          contextLength: 262144,
+          supportsReasoning: true,
+          supportsImageIn: false,
+          supportsVideoIn: false,
+          supportsThinkingType: 'both',
+        },
+      ],
+    });
+
+    const alias = config.models?.['kimi-code/kimi-k2'];
+    expect(alias?.['maxOutputSize']).toBe(4096);
+    expect(alias?.['supportEfforts']).toEqual(['low', 'high', 'max']);
+    expect(alias?.['maxContextSize']).toBe(262144);
+  });
+
+  it('overwrites hand-edited fields when upstream declares them', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {},
+      models: {
+        'kimi-code/kimi-k2': {
+          provider: 'kimi-code',
+          model: 'kimi-k2',
+          maxContextSize: 262144,
+          supportEfforts: ['low'],
+        } as Record<string, unknown>,
+      },
+    };
+
+    applyManagedKimiCodeConfig(config, {
+      ...baseOptions,
+      models: [
+        {
+          id: 'kimi-k2',
+          contextLength: 262144,
+          supportsReasoning: true,
+          supportsImageIn: false,
+          supportsVideoIn: false,
+          supportEfforts: ['low', 'high', 'max'],
+          defaultEffort: 'high',
+        },
+      ],
+    });
+
+    const alias = config.models?.['kimi-code/kimi-k2'];
+    expect(alias?.['supportEfforts']).toEqual(['low', 'high', 'max']);
+    expect(alias?.['defaultEffort']).toBe('high');
+  });
+
+  it('removes managed models that upstream no longer lists', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {},
+      models: {
+        'kimi-code/kimi-k2': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-k2',
+          maxContextSize: 262144,
+        },
+        'kimi-code/removed': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'removed',
+          maxContextSize: 128000,
+        },
+      },
+    };
+
+    applyManagedKimiCodeConfig(config, {
+      ...baseOptions,
+      models: [
+        {
+          id: 'kimi-k2',
+          contextLength: 262144,
+          supportsReasoning: true,
+          supportsImageIn: false,
+          supportsVideoIn: false,
+        },
+      ],
+    });
+
+    expect(config.models?.['kimi-code/kimi-k2']).toBeDefined();
+    expect(config.models?.['kimi-code/removed']).toBeUndefined();
+  });
+});

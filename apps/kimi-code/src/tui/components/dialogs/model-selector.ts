@@ -30,7 +30,9 @@ interface ModelChoice {
 
 export interface ModelSelection {
   readonly alias: string;
-  readonly thinking: boolean;
+  /** Chosen thinking level: 'off', 'on' (legacy boolean models), or a concrete
+   * effort such as 'low' / 'high' / 'max'. */
+  readonly thinking: string;
 }
 
 export function modelDisplayName(alias: string, model: ModelAlias | undefined): string {
@@ -56,7 +58,9 @@ export interface ModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
   readonly currentValue: string;
   readonly selectedValue?: string;
-  readonly currentThinking: boolean;
+  /** Live thinking level of the currently active model (e.g. 'off', 'on',
+   * 'high'). Used to highlight the active segment for the current model. */
+  readonly currentThinkingLevel: string;
   /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
   readonly searchable?: boolean;
   /** Items per page. Lists longer than this paginate (PgUp/PgDn). */
@@ -79,18 +83,37 @@ function createModelChoices(models: Record<string, ModelAlias>): readonly ModelC
   });
 }
 
-function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
+export function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
   const caps = model.capabilities ?? [];
   if (caps.includes('always_thinking')) return 'always-on';
   if (caps.includes('thinking') || model.adaptiveThinking === true) return 'toggle';
   return 'unsupported';
 }
 
-function effectiveThinking(model: ModelAlias, thinkingDraft: boolean): boolean {
+export function effortsOf(model: ModelAlias): readonly string[] {
+  return model.supportEfforts ?? [];
+}
+
+/**
+ * Ordered list of selectable thinking levels for a model. Effort-capable models
+ * expose their declared efforts (with an 'off' entry when the model is not
+ * always-on); legacy boolean models expose 'on'/'off'; single-segment lists
+ * mean the control is effectively locked.
+ */
+export function segmentsFor(model: ModelAlias): readonly string[] {
+  const efforts = effortsOf(model);
   const availability = thinkingAvailability(model);
-  if (availability === 'always-on') return true;
-  if (availability === 'unsupported') return false;
-  return thinkingDraft;
+  if (efforts.length > 0) {
+    return availability === 'always-on' ? efforts : ['off', ...efforts];
+  }
+  if (availability === 'always-on') return ['on'];
+  if (availability === 'unsupported') return ['off'];
+  return ['on', 'off'];
+}
+
+export function levelLabel(level: string): string {
+  if (level.length === 0) return level;
+  return level.charAt(0).toUpperCase() + level.slice(1);
 }
 
 /**
@@ -105,8 +128,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
   focused = false;
   private readonly opts: ModelSelectorOptions;
   private readonly list: SearchableList<ModelChoice>;
-  /** Per-model thinking override set by ←/→; absent → the capability default. */
-  private readonly thinkingOverrides = new Map<string, boolean>();
+  /** Per-model thinking-level override set by ←/→; absent → the default. */
+  private readonly thinkingOverrides = new Map<string, string>();
 
   constructor(opts: ModelSelectorOptions) {
     super();
@@ -124,15 +147,31 @@ export class ModelSelectorComponent extends Container implements Focusable {
   }
 
   /**
-   * Thinking draft for a model: an explicit ←/→ override when set, otherwise
-   * the live thinking state for the active model, otherwise On for any other
-   * thinking-capable model (a capable model should default to thinking on).
+   * Thinking level for a model: an explicit ←/→ override when set, otherwise
+   * the live level for the active model, otherwise the model's default effort
+   * (effort-capable) or 'on' (other thinking-capable models).
    */
-  private draftFor(choice: ModelChoice): boolean {
+  private draftFor(choice: ModelChoice): string {
     const override = this.thinkingOverrides.get(choice.alias);
     if (override !== undefined) return override;
-    if (choice.alias === this.opts.currentValue) return this.opts.currentThinking;
-    return thinkingAvailability(choice.model) !== 'unsupported';
+    if (choice.alias === this.opts.currentValue) return this.opts.currentThinkingLevel;
+    const efforts = effortsOf(choice.model);
+    if (efforts.length > 0) {
+      // A model with support_efforts but no default_effort defaults to the
+      // middle entry of its supported efforts.
+      const def = choice.model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)];
+      if (def !== undefined && efforts.includes(def)) return def;
+      return efforts[0]!;
+    }
+    return thinkingAvailability(choice.model) !== 'unsupported' ? 'on' : 'off';
+  }
+
+  /** Draft coerced onto the model's segment list so rendering/selection never
+   * reference a level the model cannot actually select. */
+  private effectiveLevel(choice: ModelChoice): string {
+    const draft = this.draftFor(choice);
+    const segments = segmentsFor(choice.model);
+    return segments.includes(draft) ? draft : segments[0]!;
   }
 
   handleInput(data: string): void {
@@ -147,11 +186,27 @@ export class ModelSelectorComponent extends Container implements Focusable {
       return;
     }
 
-    // Left/Right toggle the thinking draft for models that support it.
+    // Left/Right move the active thinking level within the model's segments.
     if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
       const selected = this.selectedChoice();
-      if (selected !== undefined && thinkingAvailability(selected.model) === 'toggle') {
-        this.thinkingOverrides.set(selected.alias, !this.draftFor(selected));
+      if (selected !== undefined) {
+        const segments = segmentsFor(selected.model);
+        if (segments.length > 1) {
+          const current = this.effectiveLevel(selected);
+          const idx = segments.indexOf(current);
+          // The two-segment case is the legacy boolean On/Off control: both
+          // arrows flip it. With more segments (effort levels), ←/→ step.
+          let next: number;
+          if (segments.length === 2) {
+            next = idx === 0 ? 1 : 0;
+          } else {
+            const delta = matchesKey(data, Key.left) ? -1 : 1;
+            next = Math.max(0, Math.min(segments.length - 1, idx + delta));
+          }
+          if (next !== idx) {
+            this.thinkingOverrides.set(selected.alias, segments[next]!);
+          }
+        }
       }
       return;
     }
@@ -161,7 +216,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (selected === undefined) return;
       this.opts.onSelect({
         alias: selected.alias,
-        thinking: effectiveThinking(selected.model, this.draftFor(selected)),
+        thinking: this.effectiveLevel(selected),
       });
       return;
     }
@@ -171,7 +226,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (selected === undefined) return;
       this.opts.onSessionOnlySelect({
         alias: selected.alias,
-        thinking: effectiveThinking(selected.model, this.draftFor(selected)),
+        thinking: this.effectiveLevel(selected),
       });
     }
   }
@@ -255,8 +310,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
     lines.push('');
     const selected = this.selectedChoice();
     if (selected !== undefined) {
-      const availability = thinkingAvailability(selected.model);
-      const thinkingHeader = availability === 'toggle' ? ' Thinking  (←→ to switch)' : ' Thinking';
+      const canSwitch = segmentsFor(selected.model).length > 1;
+      const thinkingHeader = canSwitch ? ' Thinking  (←→ to switch)' : ' Thinking';
       lines.push(currentTheme.fg('textMuted', thinkingHeader));
       lines.push(this.renderThinkingControl(selected));
     }
@@ -279,16 +334,26 @@ export class ModelSelectorComponent extends Container implements Focusable {
     const unavailable = (label: string): string =>
       currentTheme.fg('textMuted', `  ${label} (Unsupported)  `);
 
-    // On stays left and Off right in all three states so the control never
-    // shifts while the cursor moves across models.
+    // Non-effort always-on / unsupported models keep the original On/Off layout
+    // so the control never shifts while moving across legacy models.
+    const efforts = effortsOf(choice.model);
     const availability = thinkingAvailability(choice.model);
-    if (availability === 'always-on') {
+    if (efforts.length === 0 && availability === 'always-on') {
       return `  ${segment('On', true)} ${unavailable('Off')}`;
     }
-    if (availability === 'unsupported') {
+    if (efforts.length === 0 && availability === 'unsupported') {
       return `  ${unavailable('On')} ${segment('Off', true)}`;
     }
-    const draft = this.draftFor(choice);
-    return `  ${segment('On', draft)}  ${segment('Off', !draft)}`;
+
+    const segments = segmentsFor(choice.model);
+    const active = this.effectiveLevel(choice);
+    const rendered = segments.map((level) => segment(levelLabel(level), level === active));
+    // Always-on models (including effort-capable ones) additionally surface an
+    // unsupported Off so it's explicit that thinking cannot be disabled — same
+    // shape as the legacy always-on control.
+    if (availability === 'always-on') {
+      rendered.push(unavailable('Off'));
+    }
+    return `  ${rendered.join('  ')}`;
   }
 }

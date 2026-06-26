@@ -8,9 +8,30 @@ const DEFAULT_THINKING_EFFORT: ThinkingEffort = 'high';
 
 const THINKING_EFFORTS = new Set<ThinkingEffort>(['low', 'medium', 'high', 'xhigh', 'max']);
 
+/**
+ * Resolve the effective default effort for a model: the declared
+ * `default_effort` when present, otherwise the middle entry of
+ * `support_efforts` (so we never hardcode a level the model does not support).
+ * Returns undefined when the model declares no efforts at all.
+ */
+export function effectiveDefaultEffort(model: {
+  readonly defaultEffort?: string | undefined;
+  readonly supportEfforts?: readonly string[] | undefined;
+}): string | undefined {
+  if (model.defaultEffort !== undefined) return model.defaultEffort;
+  const efforts = model.supportEfforts;
+  if (efforts !== undefined && efforts.length > 0) {
+    return efforts[Math.floor(efforts.length / 2)];
+  }
+  return undefined;
+}
+
 export interface ResolveThinkingLevelOptions {
   readonly defaultThinking?: boolean | undefined;
   readonly thinking?: ThinkingConfig | undefined;
+  /** Model-declared default effort (catalog `default_effort`). Used as a
+   * fallback when the global `thinking.effort` is unset or invalid. */
+  readonly modelDefaultEffort?: string | undefined;
 }
 
 export function resolveThinkingLevel(
@@ -24,14 +45,19 @@ export function resolveThinkingLevel(
         ? 'off'
         : undefined;
 
-  return resolveThinkingEffort(resolvedRequest, options.thinking);
+  return resolveThinkingEffort(resolvedRequest, options.thinking, options.modelDefaultEffort);
 }
 
 export function resolveThinkingEffort(
   requested: string | undefined,
   defaults: ThinkingConfig | undefined,
+  modelDefaultEffort?: string,
 ): ThinkingEffort {
-  const configEffort = parseEffort(defaults?.effort) ?? DEFAULT_THINKING_EFFORT;
+  // Global thinking.effort wins when it is a valid effort; otherwise fall back
+  // to the model's declared default_effort; the hardcoded 'high' is the final
+  // safety net when neither is usable.
+  const configEffort =
+    parseEffort(defaults?.effort) ?? parseEffort(modelDefaultEffort) ?? DEFAULT_THINKING_EFFORT;
   const normalized = requested?.trim().toLowerCase();
   if (!normalized) {
     if (defaults?.mode === 'off') return 'off';

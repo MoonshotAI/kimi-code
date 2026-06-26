@@ -233,7 +233,8 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     models: mergedModels,
     currentValue: host.state.appState.model,
     selectedValue: Object.keys(mergedModels).find((a) => a.startsWith(`${providerId}/`)),
-    currentThinking: host.state.appState.thinking,
+    currentThinkingLevel:
+      host.state.appState.thinkingLevel ?? (host.state.appState.thinking ? 'on' : 'off'),
     initialTabId: providerId,
     onSelect: ({ alias, thinking }) => {
       host.restoreEditor();
@@ -251,15 +252,17 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
 async function setDefaultModel(
   host: SlashCommandHost,
   alias: string,
-  thinking: boolean,
+  level: string,
 ): Promise<void> {
+  const concreteEffort = level !== 'on' && level !== 'off' ? level : undefined;
   await host.harness.setConfig({
     defaultModel: alias,
-    defaultThinking: thinking,
+    defaultThinking: level !== 'off',
+    thinking: concreteEffort !== undefined ? { effort: concreteEffort } : undefined,
   });
   await host.authFlow.refreshConfigAfterLogin();
   host.track('model_switch', { model: alias });
-  host.showStatus(`Default model set to ${alias} with thinking ${thinking ? 'on' : 'off'}.`);
+  host.showStatus(`Default model set to ${alias} with thinking ${level}.`);
 }
 
 async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise<boolean> {
@@ -323,7 +326,8 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     models: stateModels,
     currentValue: host.state.appState.model,
     selectedValue: firstNewAlias,
-    currentThinking: host.state.appState.thinking,
+    currentThinkingLevel:
+      host.state.appState.thinkingLevel ?? (host.state.appState.thinking ? 'on' : 'off'),
     initialTabId: firstNewProvider,
     onSelect: ({ alias, thinking }) => {
       host.restoreEditor();
