@@ -76,6 +76,7 @@ export async function runPrompt(
     uiMode: PROMPT_UI_MODE,
     skillDirs: opts.skillsDirs,
     telemetry: telemetryClient,
+    strictConfig: opts.strictConfig,
     onOAuthRefresh: (outcome) => {
       if (outcome.success) {
         track('oauth_refresh', { success: true });

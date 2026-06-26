@@ -143,6 +143,7 @@ function opts(overrides: Partial<Parameters<typeof runPrompt>[0]> = {}) {
     yolo: false,
     auto: false,
     plan: false,
+    strictConfig: false,
     model: undefined,
     outputFormat: undefined,
     prompt: '/goal Ship feature X',

@@ -13,6 +13,7 @@ import { resolveThinkingLevel } from '../agent/config/thinking';
 import { Agent } from '../agent';
 import {
   ensureKimiHome,
+  loadRuntimeConfig,
   loadRuntimeConfigSafe,
   mergeConfigPatch,
   readConfigFileForUpdate,
@@ -135,6 +136,7 @@ export interface KimiCoreOptions {
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly appVersion?: string;
+  readonly strictConfig?: boolean;
 }
 
 export class KimiCore implements PromisableMethods<CoreAPI> {
@@ -159,6 +161,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private pluginsLoadError: Error | undefined;
   private readonly appVersion: string | undefined;
   private readonly experimentalFlags: FlagResolver;
+  private readonly strictConfig: boolean;
 
   constructor(
     protected readonly rpcClient: CoreRPCClient,
@@ -177,20 +180,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.skillDirs = options.skillDirs ?? [];
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.appVersion = options.appVersion;
+    this.strictConfig = options.strictConfig ?? false;
     ensureKimiHome(this.homeDir);
-    // Schema errors degrade (invalid sections are dropped with warnings) so a
-    // typo cannot prevent startup, but a file that cannot be used at all —
-    // TOML syntax error, unreadable — fails fast: defaults-only would start
-    // the app looking logged out, which is worse than the parse error.
-    const loaded = loadRuntimeConfigSafe(this.configPath);
-    if (loaded.fileError !== undefined) {
-      throw loaded.fileError;
-    }
-    this.config = loaded.config;
-    this.configWarnings = [...loaded.fileWarnings, ...loaded.envWarnings];
-    if (this.configWarnings.length > 0) {
-      log.warn('config load degraded', { warnings: this.configWarnings });
-    }
+    this.config = this.loadInitialConfig();
     this.experimentalFlags = new FlagResolver(
       process.env,
       FLAG_DEFINITIONS,
@@ -988,10 +980,30 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   private readConfigForWrite(): KimiConfig {
-    return readConfigFileForUpdate(this.configPath);
+    return readConfigFileForUpdate(this.configPath, { strict: this.strictConfig });
+  }
+
+  private loadInitialConfig(): KimiConfig {
+    if (this.strictConfig) {
+      return loadRuntimeConfig(this.configPath, process.env, { strict: true });
+    }
+    const loaded = loadRuntimeConfigSafe(this.configPath);
+    if (loaded.fileError !== undefined) {
+      throw loaded.fileError;
+    }
+    this.configWarnings = [...loaded.fileWarnings, ...loaded.envWarnings];
+    if (this.configWarnings.length > 0) {
+      log.warn('config load degraded', { warnings: this.configWarnings });
+    }
+    return loaded.config;
   }
 
   private reloadRuntimeConfig(): KimiConfig {
+    if (this.strictConfig) {
+      return this.setRuntimeConfig(
+        loadRuntimeConfig(this.configPath, process.env, { strict: true }),
+      );
+    }
     const loaded = loadRuntimeConfigSafe(this.configPath);
     if (loaded.fileWarnings.length > 0) {
       // Keep the last good config: adopting a salvaged config mid-run could

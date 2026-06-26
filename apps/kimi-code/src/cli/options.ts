@@ -11,6 +11,7 @@ export interface CLIOptions {
   outputFormat: PromptOutputFormat | undefined;
   prompt: string | undefined;
   skillsDirs: string[];
+  strictConfig: boolean;
   addDirs?: string[];
 }
 

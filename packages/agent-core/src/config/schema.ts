@@ -128,6 +128,13 @@ export const MoonshotServiceConfigSchema = z.object({
 
 export type MoonshotServiceConfig = z.infer<typeof MoonshotServiceConfigSchema>;
 
+export const ServicesConfigStrictSchema = z.object({
+  moonshotSearch: MoonshotServiceConfigSchema.strict().optional(),
+  moonshotFetch: MoonshotServiceConfigSchema.strict().optional(),
+}).strict();
+
+export type ServicesConfigStrict = z.infer<typeof ServicesConfigStrictSchema>;
+
 export const ServicesConfigSchema = z.object({
   moonshotSearch: MoonshotServiceConfigSchema.optional(),
   moonshotFetch: MoonshotServiceConfigSchema.optional(),
@@ -222,6 +229,18 @@ export const KimiConfigSchema = z.object({
   telemetry: z.boolean().optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });
+
+/**
+ * Strict variant used by `--strict-config`. Rejects unknown keys at the
+ * section level while keeping provider/model aliases open for custom fields.
+ */
+export const KimiConfigStrictSchema = KimiConfigSchema.extend({
+  permission: PermissionConfigSchema.strict().optional(),
+  services: ServicesConfigStrictSchema.optional(),
+  loopControl: LoopControlSchema.strict().optional(),
+  background: BackgroundConfigSchema.strict().optional(),
+  thinking: ThinkingConfigSchema.strict().optional(),
+}).strict();
 
 export type KimiConfig = z.infer<typeof KimiConfigSchema>;
 

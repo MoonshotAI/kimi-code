@@ -84,7 +84,8 @@ export function createProgram(
     )
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
-    .option('--plan', 'Start in plan mode.', false);
+    .option('--plan', 'Start in plan mode.', false)
+    .option('--strict-config', 'Reject unknown keys in config.toml.', false);
 
   registerExportCommand(program);
   registerProviderCommand(program);
@@ -133,6 +134,7 @@ export function createProgram(
       outputFormat: raw['outputFormat'] as CLIOptions['outputFormat'],
       prompt: raw['prompt'] as string | undefined,
       skillsDirs: raw['skillsDir'] as string[],
+      strictConfig: raw['strictConfig'] as boolean,
       addDirs: raw['addDir'] as string[],
     };
 

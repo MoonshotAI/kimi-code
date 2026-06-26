@@ -177,6 +177,7 @@ describe('runShell', () => {
       yolo: true,
       auto: false,
       plan: true,
+      strictConfig: false,
       model: undefined,
       outputFormat: undefined,
       prompt: undefined,
@@ -260,6 +261,7 @@ describe('runShell', () => {
         yolo: false,
         auto: false,
         plan: false,
+        strictConfig: false,
         model: undefined,
         outputFormat: undefined,
         prompt: undefined,
@@ -300,6 +302,7 @@ describe('runShell', () => {
         yolo: false,
         auto: false,
         plan: false,
+        strictConfig: false,
         model: undefined,
         outputFormat: undefined,
         prompt: undefined,
@@ -320,6 +323,49 @@ describe('runShell', () => {
       expect.objectContaining({ homeDir: '/tmp/kimi-code-test-home' }),
     );
     expect(mocks.harnessTrack).toHaveBeenCalledWith('first_launch');
+  });
+
+  it('passes session flags into session_started telemetry properties', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+    mocks.tuiGetCurrentSessionId.mockReturnValue('ses-1');
+
+    await runShell(
+      {
+        session: 'ses-1',
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        strictConfig: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: [],
+      },
+      '1.2.3-test',
+    );
+
+    expect(mocks.kimiHarnessConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionStartedProperties: {
+          yolo: false,
+          auto: false,
+          plan: false,
+          afk: false,
+        },
+      }),
+    );
+    expect(mocks.lifecycleTrack).toHaveBeenCalledWith('startup_perf', {
+      duration_ms: expect.any(Number),
+      config_ms: expect.any(Number),
+      init_ms: expect.any(Number),
+      mcp_ms: 0,
+    });
   });
 
   it('binds startup_perf to the session captured before MCP metrics resolve', async () => {
@@ -343,6 +389,7 @@ describe('runShell', () => {
         yolo: false,
         auto: false,
         plan: false,
+        strictConfig: false,
         model: undefined,
         outputFormat: undefined,
         prompt: undefined,
@@ -376,6 +423,7 @@ describe('runShell', () => {
         yolo: false,
         auto: false,
         plan: false,
+        strictConfig: false,
         model: undefined,
         outputFormat: undefined,
         prompt: undefined,
@@ -427,6 +475,7 @@ describe('runShell', () => {
         yolo: false,
         auto: false,
         plan: false,
+        strictConfig: false,
         model: undefined,
         outputFormat: undefined,
         prompt: undefined,
@@ -465,6 +514,7 @@ describe('runShell', () => {
         yolo: false,
         auto: false,
         plan: false,
+        strictConfig: false,
         model: undefined,
         outputFormat: undefined,
         prompt: undefined,
@@ -495,6 +545,7 @@ describe('runShell', () => {
           yolo: false,
           auto: false,
           plan: false,
+          strictConfig: false,
           model: undefined,
           outputFormat: undefined,
           prompt: undefined,
@@ -532,6 +583,7 @@ describe('runShell', () => {
           yolo: false,
           auto: false,
           plan: false,
+          strictConfig: false,
           model: undefined,
           outputFormat: undefined,
           prompt: undefined,
@@ -632,6 +684,7 @@ describe('runShell', () => {
           yolo: false,
           auto: false,
           plan: false,
+          strictConfig: false,
           model: undefined,
           outputFormat: undefined,
           prompt: undefined,
