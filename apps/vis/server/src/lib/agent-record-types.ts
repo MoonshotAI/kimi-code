@@ -109,7 +109,7 @@ export interface WireResponse {
   sessionId: string;
   agentId: string;
   protocolVersion: string;
-  metadata: { protocolVersion: string; createdAt: number };
+  metadata: { protocolVersion: string; createdAt: number; appVersion?: string };
   records: readonly WireEntry[];
   warnings: string[];
 }

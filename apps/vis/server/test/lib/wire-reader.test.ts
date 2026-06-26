@@ -17,6 +17,7 @@ describe('wire-reader', () => {
     cleanup = c;
     const result = await readAgentWire(join(sessionDir, 'agents', 'main', 'wire.jsonl'));
     expect(result.metadata.protocolVersion).toBe('1.1');
+    expect(result.metadata.appVersion).toBe('1.2.3');
     expect(result.records[0]!.lineNo).toBe(2); // metadata is line 1, first record is line 2
     expect(result.records.at(-1)!.lineNo).toBe(10);
     expect(result.records.map((r) => r.data.type)).toEqual([

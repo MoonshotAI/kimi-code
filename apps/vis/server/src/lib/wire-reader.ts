@@ -10,7 +10,7 @@ import {
 import type { AgentRecord, WireEntry } from './agent-record-types';
 
 export interface WireReadResult {
-  metadata: { protocolVersion: string; createdAt: number };
+  metadata: { protocolVersion: string; createdAt: number; appVersion?: string };
   records: ReadonlyArray<WireEntry>;
   warnings: string[];
 }
@@ -69,6 +69,7 @@ export async function readAgentWire(path: string): Promise<WireReadResult> {
       }
       const pv = parsed['protocol_version'];
       const ca = parsed['created_at'];
+      const av = parsed['app_version'];
       if (typeof pv !== 'string' || typeof ca !== 'number') {
         throw new TypeError(`Wire metadata malformed at line ${lineNo}`);
       }
@@ -80,7 +81,7 @@ export async function readAgentWire(path: string): Promise<WireReadResult> {
         );
         migrations = bestEffortMigrations();
       }
-      metadata = { protocolVersion: pv, createdAt: ca };
+      metadata = { protocolVersion: pv, createdAt: ca, appVersion: typeof av === 'string' ? av : undefined };
       continue;
     }
     const raw = parsed as Record<string, unknown>;
