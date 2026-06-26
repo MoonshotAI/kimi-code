@@ -14,6 +14,7 @@ const fixture = join(here, 'fixtures', 'mock-stdio-server.mjs');
 const cwdFixture = join(here, 'fixtures', 'cwd-stdio-server.mjs');
 const stderrThenExitFixture = join(here, 'fixtures', 'stderr-then-exit-stdio-server.mjs');
 const crashAfterConnectFixture = join(here, 'fixtures', 'crash-after-connect-stdio-server.mjs');
+const unicodeFixture = join(here, 'fixtures', 'unicode-stdio-server.mjs');
 
 describe('StdioMcpClient', () => {
   it('rejects unsupported executor at construction time', () => {
@@ -100,6 +101,46 @@ describe('StdioMcpClient', () => {
       const result = await client.callTool('echo', { text: 'hello mcp' });
       expect(result.isError).toBe(false);
       expect(result.content).toEqual([{ type: 'text', text: 'hello mcp' }]);
+    } finally {
+      await client.close();
+    }
+  }, 15000);
+
+  it('round-trips Unicode (UTF-8) in tool metadata and results', async () => {
+    const client = new StdioMcpClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [unicodeFixture],
+    });
+    try {
+      await client.connect();
+      const tools = await client.listTools();
+      const unicodeEcho = tools.find((t) => t.name === 'unicode_echo');
+      expect(unicodeEcho).toBeDefined();
+      // The description contains a literal U+2713 checkmark; if the stdio
+      // reader interpreted bytes through cp1252/charmap this would be mangled.
+      expect(unicodeEcho?.description).toContain('✓');
+
+      const result = await client.callTool('unicode_echo', { text: 'hello' });
+      expect(result.isError).toBe(false);
+      expect(result.content).toEqual([{ type: 'text', text: '✓ hello' }]);
+    } finally {
+      await client.close();
+    }
+  }, 15000);
+
+  it('injects PYTHONUTF8=1 and PYTHONIOENCODING=utf-8 into the child env', async () => {
+    const client = new StdioMcpClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [unicodeFixture],
+    });
+    try {
+      await client.connect();
+      const pythonUtf8 = await client.callTool('read_env', { name: 'PYTHONUTF8' });
+      expect(pythonUtf8.content).toEqual([{ type: 'text', text: '1' }]);
+      const pythonIoEncoding = await client.callTool('read_env', { name: 'PYTHONIOENCODING' });
+      expect(pythonIoEncoding.content).toEqual([{ type: 'text', text: 'utf-8' }]);
     } finally {
       await client.close();
     }
@@ -297,6 +338,31 @@ describe('StdioMcpClient', () => {
 });
 
 describe('mergeStdioEnv', () => {
+  it('defaults Python stdio to UTF-8 so Windows cp1252/charmap crashes do not occur', () => {
+    const merged = mergeStdioEnv(undefined, { PATH: '/usr/bin' });
+    expect(merged['PYTHONUTF8']).toBe('1');
+    expect(merged['PYTHONIOENCODING']).toBe('utf-8');
+  });
+
+  it('lets parent env override the UTF-8 defaults', () => {
+    const merged = mergeStdioEnv(undefined, {
+      PATH: '/usr/bin',
+      PYTHONUTF8: '0',
+      PYTHONIOENCODING: 'latin-1',
+    });
+    expect(merged['PYTHONUTF8']).toBe('0');
+    expect(merged['PYTHONIOENCODING']).toBe('latin-1');
+  });
+
+  it('lets config.env override the UTF-8 defaults', () => {
+    const merged = mergeStdioEnv(
+      { PYTHONUTF8: '0', PYTHONIOENCODING: 'latin-1' },
+      { PATH: '/usr/bin' },
+    );
+    expect(merged['PYTHONUTF8']).toBe('0');
+    expect(merged['PYTHONIOENCODING']).toBe('latin-1');
+  });
+
   it('enables NODE_USE_ENV_PROXY for a proxy set only in the server config.env', () => {
     const merged = mergeStdioEnv({ HTTP_PROXY: 'http://corp:3128' }, { PATH: '/usr/bin' });
     expect(merged['HTTP_PROXY']).toBe('http://corp:3128');

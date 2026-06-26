@@ -233,11 +233,21 @@ function resolveStdioCwd(configCwd: string | undefined, defaultCwd: string | und
 // MERGED env so a proxy declared only in `config.env` is honored too.
 // `reconcileChildNoProxy` then mirrors a single-casing `NO_PROXY` override onto
 // both casings so it isn't shadowed by the injected value.
+//
+// Python MCP servers on Windows default to the console codepage (e.g. cp1252)
+// for stdout/stderr, which crashes with `UnicodeEncodeError` when they emit
+// UTF-8 characters such as U+2713. Setting PYTHONUTF8=1 and
+// PYTHONIOENCODING=utf-8 as defaults forces UTF-8 regardless of the active
+// Windows codepage. They are applied as defaults so a parent env or config.env
+// value can still override them intentionally.
 export function mergeStdioEnv(
   configEnv?: Record<string, string>,
   parentEnv: Readonly<Record<string, string | undefined>> = process.env,
 ): Record<string, string> {
-  const merged: Record<string, string> = {};
+  const merged: Record<string, string> = {
+    PYTHONUTF8: '1',
+    PYTHONIOENCODING: 'utf-8',
+  };
   for (const [key, value] of Object.entries(parentEnv)) {
     if (value !== undefined) merged[key] = value;
   }
