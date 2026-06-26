@@ -74,7 +74,7 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
-  it('uses model max output size as the LLM completion cap', async () => {
+  it('clamps the LLM completion cap to 128k for openai-compatible providers', async () => {
     let requestMaxTokens: unknown;
     const ctx = testAgent({
       generate: async (provider) => {
@@ -121,7 +121,9 @@ describe('ConfigState model capabilities', () => {
       signal: new AbortController().signal,
     });
 
-    expect(requestMaxTokens).toBe(384000);
+    // maxOutputSize (384000) is clamped to the 128k ceiling applied to
+    // non-Kimi chat-completions providers.
+    expect(requestMaxTokens).toBe(131072);
   });
 
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {

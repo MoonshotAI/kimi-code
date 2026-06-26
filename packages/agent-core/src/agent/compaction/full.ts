@@ -267,6 +267,7 @@ export class FullCompaction {
           reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
         }),
         capability: this.agent.config.modelCapabilities,
+        usedContextTokens: this.agent.context.tokenCount,
       });
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
