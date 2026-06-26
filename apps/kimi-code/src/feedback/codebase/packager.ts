@@ -5,7 +5,8 @@ import { dirname } from 'node:path';
 
 import { ZipFile } from 'yazl';
 
-import type { FeedbackCodebaseArchive, FeedbackCodebaseScanResult } from './types';
+import type { FeedbackArchive } from '../archive';
+import type { FeedbackCodebaseScanResult } from './types';
 
 interface PackageEntry {
   readonly absolutePath: string;
@@ -20,7 +21,7 @@ interface PackageEntry {
 export async function packageCodebase(
   scan: FeedbackCodebaseScanResult,
   archivePath: string,
-): Promise<FeedbackCodebaseArchive> {
+): Promise<FeedbackArchive> {
   const entries: PackageEntry[] = scan.files.map((file) => ({
     absolutePath: file.absolutePath,
     archivePath: file.path,
@@ -33,7 +34,7 @@ export async function packageCodebase(
 async function packageEntries(
   entries: readonly PackageEntry[],
   archivePath: string,
-): Promise<FeedbackCodebaseArchive> {
+): Promise<FeedbackArchive> {
   if (entries.length === 0) {
     throw new Error('Cannot package an empty feedback archive.');
   }

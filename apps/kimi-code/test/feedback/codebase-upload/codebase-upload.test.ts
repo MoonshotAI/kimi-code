@@ -7,12 +7,9 @@ import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  packageCodebase,
-  removeStaleFeedbackUploads,
-  scanCodebase,
-  uploadPackagedCodebase,
-} from '../../../src/feedback/codebase-upload';
+import { removeStaleFeedbackUploads } from '../../../src/feedback/archive';
+import { packageCodebase, scanCodebase } from '../../../src/feedback/codebase';
+import { uploadArchive } from '../../../src/feedback/upload';
 
 const execFileAsync = promisify(execFile);
 
@@ -21,7 +18,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('uploadPackagedCodebase', () => {
+describe('uploadArchive', () => {
   it('requests upload parts, PUTs each part, and completes with etags', async () => {
     const workRoot = await mkdtemp(join(tmpdir(), 'feedback-upload-direct-'));
     const archivePath = join(workRoot, 'repo.zip');
@@ -40,7 +37,7 @@ describe('uploadPackagedCodebase', () => {
     };
 
     try {
-      await uploadPackagedCodebase(
+      await uploadArchive(
         api,
         {
           path: archivePath,
@@ -50,6 +47,7 @@ describe('uploadPackagedCodebase', () => {
           fileCount: 1,
         },
         3,
+        { filename: 'repo.zip' },
       );
 
       expect(api.createUploadUrl).toHaveBeenCalledWith({
@@ -94,7 +92,7 @@ describe('uploadPackagedCodebase', () => {
     };
 
     try {
-      await uploadPackagedCodebase(
+      await uploadArchive(
         api,
         {
           path: archivePath,
@@ -104,6 +102,7 @@ describe('uploadPackagedCodebase', () => {
           fileCount: 1,
         },
         3,
+        { filename: 'repo.zip' },
       );
 
       const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -128,7 +127,9 @@ describe('uploadPackagedCodebase', () => {
         }
         signal?.addEventListener(
           'abort',
-          () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+          () => {
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          },
           { once: true },
         );
       }),
@@ -144,7 +145,7 @@ describe('uploadPackagedCodebase', () => {
 
     vi.useFakeTimers();
     try {
-      const upload = uploadPackagedCodebase(
+      const upload = uploadArchive(
         api,
         {
           path: archivePath,
@@ -154,7 +155,7 @@ describe('uploadPackagedCodebase', () => {
           fileCount: 1,
         },
         3,
-        { timeoutMs: 25, maxRetries: 0 },
+        { filename: 'repo.zip', timeoutMs: 25, maxRetries: 0 },
       );
       const expectation = expect(upload).rejects.toThrow(/timed out/);
       await vi.advanceTimersByTimeAsync(25);
@@ -188,7 +189,7 @@ describe('uploadPackagedCodebase', () => {
 
     vi.useFakeTimers();
     try {
-      const upload = uploadPackagedCodebase(
+      const upload = uploadArchive(
         api,
         {
           path: archivePath,
@@ -198,7 +199,7 @@ describe('uploadPackagedCodebase', () => {
           fileCount: 1,
         },
         3,
-        { timeoutMs: 10_000 },
+        { filename: 'repo.zip', timeoutMs: 10_000 },
       );
       await vi.advanceTimersByTimeAsync(1_000);
       await upload;

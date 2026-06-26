@@ -1,55 +1,51 @@
 import { createReadStream } from 'node:fs';
-import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 
-import { getCacheDir } from '../../utils/paths';
-import { packageCodebase } from './packager';
-import type {
-  CompletedUploadPart,
-  FeedbackCodebaseArchive,
-  FeedbackCodebaseScanResult,
-  FeedbackUploadPart,
-  FeedbackUploadUrlApi,
-} from './types';
-
-export const CODEBASE_ARCHIVE_FILENAME = 'repo.zip';
-export const SESSION_ARCHIVE_FILENAME = 'session.zip';
+import type { FeedbackArchive } from './archive';
 
 const MAX_ARCHIVE_SIZE = 524_288_000; // 500 MiB, matches the backend limit.
-const STALE_ARCHIVE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours.
 const DEFAULT_CONCURRENCY = 3;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_PART_TIMEOUT_MS = 60_000;
 const RETRY_BASE_DELAY_MS = 1_000;
 
-export async function packageCurrentCodebase(
-  scan: FeedbackCodebaseScanResult,
-): Promise<FeedbackCodebaseArchive> {
-  const archivePath = await createArchivePath(CODEBASE_ARCHIVE_FILENAME);
-  const archive = await packageCodebase(scan, archivePath);
-  return { ...archive, cleanupDir: archivePathCleanupDir(archivePath) };
+export interface FeedbackUploadPart {
+  readonly partNumber: number;
+  readonly url: string;
+  readonly method: string;
+  readonly size: number;
 }
 
-export async function createFeedbackArchivePath(filename: string): Promise<{
-  readonly archivePath: string;
-  readonly cleanupDir: string;
-}> {
-  const archivePath = await createArchivePath(filename);
-  return { archivePath, cleanupDir: archivePathCleanupDir(archivePath) };
+export interface CreateFeedbackUploadUrlInput {
+  readonly feedbackId: number;
+  readonly filename: string;
+  readonly size: number;
+  readonly sha256: string;
 }
 
-export async function removePackagedCodebaseArchive(archive: FeedbackCodebaseArchive): Promise<void> {
-  if (archive.cleanupDir !== undefined) {
-    await rm(archive.cleanupDir, { recursive: true, force: true });
-    return;
-  }
-  await rm(archive.path, { force: true });
+export interface CreateFeedbackUploadUrlResult {
+  readonly uploadId: number;
+  readonly parts: readonly FeedbackUploadPart[];
 }
 
-export interface UploadPackagedCodebaseOptions {
-  /** Zip entry name sent to the backend (defaults to `repo.zip`). */
-  readonly filename?: string;
+export interface CompletedUploadPart {
+  readonly partNumber: number;
+  readonly etag: string;
+}
+
+export interface CompleteFeedbackUploadUrlInput {
+  readonly uploadId: number;
+  readonly parts: readonly CompletedUploadPart[];
+}
+
+export interface FeedbackUploadUrlApi {
+  createUploadUrl(input: CreateFeedbackUploadUrlInput): Promise<CreateFeedbackUploadUrlResult>;
+  completeUpload(input: CompleteFeedbackUploadUrlInput): Promise<void>;
+}
+
+export interface UploadArchiveOptions {
+  /** Zip entry name sent to the backend. */
+  readonly filename: string;
   /** Abort a single part PUT if it does not complete within this many milliseconds. */
   readonly timeoutMs?: number;
   /** Number of parts to upload concurrently (defaults to 3). */
@@ -60,20 +56,20 @@ export interface UploadPackagedCodebaseOptions {
   readonly onProgress?: (uploadedBytes: number, totalBytes: number) => void;
 }
 
-export async function uploadPackagedCodebase(
+export async function uploadArchive(
   api: FeedbackUploadUrlApi,
-  archive: FeedbackCodebaseArchive,
+  archive: FeedbackArchive,
   feedbackId: number,
-  options: UploadPackagedCodebaseOptions = {},
+  options: UploadArchiveOptions,
 ): Promise<void> {
   if (archive.size > MAX_ARCHIVE_SIZE) {
     throw new Error(
-      `Failed to upload codebase archive: size ${archive.size} exceeds maximum allowed size ${MAX_ARCHIVE_SIZE}.`,
+      `Failed to upload archive: size ${archive.size} exceeds maximum allowed size ${MAX_ARCHIVE_SIZE}.`,
     );
   }
   const created = await api.createUploadUrl({
     feedbackId,
-    filename: options.filename ?? CODEBASE_ARCHIVE_FILENAME,
+    filename: options.filename,
     size: archive.size,
     sha256: archive.sha256,
   });
@@ -100,7 +96,7 @@ async function uploadParts(
   filePath: string,
   parts: readonly FeedbackUploadPart[],
   totalBytes: number,
-  options: UploadPackagedCodebaseOptions,
+  options: UploadArchiveOptions,
 ): Promise<CompletedUploadPart[]> {
   const layout = layoutParts(parts);
   const results: CompletedUploadPart[] = Array.from({ length: layout.length });
@@ -129,7 +125,7 @@ async function uploadParts(
 async function uploadOnePartWithRetry(
   filePath: string,
   layout: PartLayout,
-  options: UploadPackagedCodebaseOptions,
+  options: UploadArchiveOptions,
 ): Promise<CompletedUploadPart> {
   const maxRetries = Math.max(0, options.maxRetries ?? DEFAULT_MAX_RETRIES);
   let lastError: unknown;
@@ -148,7 +144,7 @@ async function uploadOnePartWithRetry(
 async function uploadOnePart(
   filePath: string,
   layout: PartLayout,
-  options: UploadPackagedCodebaseOptions,
+  options: UploadArchiveOptions,
 ): Promise<CompletedUploadPart> {
   const { part, start } = layout;
   const timeoutMs = options.timeoutMs ?? DEFAULT_PART_TIMEOUT_MS;
@@ -209,47 +205,4 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-/**
- * Remove feedback-upload archive directories older than 24 hours. Packaging
- * cleans up its own archive on success and on failure, but a killed process
- * or an empty parent dir can still leave leftovers behind; this is a
- * best-effort backstop so the cache dir does not grow without bound.
- *
- * `dir` is injectable for tests; production callers leave it as the default.
- */
-export async function removeStaleFeedbackUploads(
-  options: { readonly now?: number; readonly dir?: string } = {},
-): Promise<void> {
-  const now = options.now ?? Date.now();
-  const dir = options.dir ?? join(getCacheDir(), 'feedback-uploads');
-  const entries = await readdir(dir, { withFileTypes: true }).catch((error: unknown) => {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  });
-  if (entries === null) return;
-
-  const cutoff = now - STALE_ARCHIVE_MAX_AGE_MS;
-  await Promise.all(
-    entries.map(async (entry) => {
-      if (!entry.isDirectory() && !entry.isSymbolicLink()) return;
-      const target = join(dir, entry.name);
-      const targetStat = await stat(target).catch(() => null);
-      if (targetStat === null || targetStat.mtimeMs >= cutoff) return;
-      await rm(target, { recursive: true, force: true }).catch(() => {});
-    }),
-  );
-}
-
-async function createArchivePath(filename: string): Promise<string> {
-  await removeStaleFeedbackUploads();
-  const root = join(getCacheDir(), 'feedback-uploads');
-  await mkdir(root, { recursive: true });
-  const dir = await mkdtemp(join(root, 'upload-'));
-  return join(dir, filename);
-}
-
-function archivePathCleanupDir(archivePath: string): string {
-  return dirname(archivePath);
 }

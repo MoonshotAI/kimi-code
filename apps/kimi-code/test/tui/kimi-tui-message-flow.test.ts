@@ -31,11 +31,8 @@ import {
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
-import {
-  packageCurrentCodebase,
-  scanCodebase,
-  uploadPackagedCodebase,
-} from '../../src/feedback/codebase-upload';
+import { packageCodebase, scanCodebase } from '../../src/feedback/codebase';
+import { uploadArchive } from '../../src/feedback/upload';
 import {
   promptFeedbackAttachment,
   promptFeedbackInput,
@@ -54,15 +51,18 @@ vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   };
 });
 
-vi.mock('../../src/feedback/codebase-upload', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/feedback/codebase-upload')>();
+vi.mock('../../src/feedback/codebase', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/feedback/codebase')>();
   return {
     ...actual,
     scanCodebase: vi.fn().mockResolvedValue(undefined),
-    packageCurrentCodebase: vi.fn(),
-    uploadPackagedCodebase: vi.fn(),
+    packageCodebase: vi.fn(),
   };
 });
+
+vi.mock('../../src/feedback/upload', () => ({
+  uploadArchive: vi.fn(),
+}));
 
 // /feedback falls back to opening GitHub Issues in a browser when not signed in
 // or when submission fails — stub it out so the test suite never spawns a
@@ -614,8 +614,8 @@ command = "vim"
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
     harness.exportSession.mockReset();
-    vi.mocked(packageCurrentCodebase).mockReset();
-    vi.mocked(uploadPackagedCodebase).mockReset();
+    vi.mocked(packageCodebase).mockReset();
+    vi.mocked(uploadArchive).mockReset();
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
     harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
@@ -636,7 +636,7 @@ command = "vim"
       sessionDir: '/tmp/session-a',
       manifest: {},
     });
-    vi.mocked(packageCurrentCodebase).mockResolvedValueOnce({
+    vi.mocked(packageCodebase).mockResolvedValueOnce({
       path: '/tmp/fake-codebase.zip',
       size: 4,
       sha256: 'hash-123',
@@ -648,7 +648,7 @@ command = "vim"
     const codebaseUploadBlocked = new Promise<void>((resolve) => {
       resolveCodebaseUpload = resolve;
     });
-    vi.mocked(uploadPackagedCodebase).mockImplementation((_api, archive) => {
+    vi.mocked(uploadArchive).mockImplementation((_api, archive) => {
       if (archive.path === sessionZipPath) return Promise.resolve();
       return codebaseUploadBlocked;
     });
@@ -659,20 +659,20 @@ command = "vim"
     });
 
     await vi.waitFor(() => {
-      expect(uploadPackagedCodebase).toHaveBeenCalledTimes(2);
+      expect(uploadArchive).toHaveBeenCalledTimes(2);
     });
     expect(settled).toBe(false);
 
     resolveCodebaseUpload();
     await command;
     expect(settled).toBe(true);
-    expect(uploadPackagedCodebase).toHaveBeenCalledWith(
+    expect(uploadArchive).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ path: sessionZipPath }),
       3,
       { filename: 'session.zip' },
     );
-    expect(uploadPackagedCodebase).toHaveBeenCalledWith(
+    expect(uploadArchive).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ path: '/tmp/fake-codebase.zip' }),
       3,
@@ -701,8 +701,8 @@ command = "vim"
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
     harness.exportSession.mockReset();
-    vi.mocked(packageCurrentCodebase).mockReset();
-    vi.mocked(uploadPackagedCodebase).mockReset();
+    vi.mocked(packageCodebase).mockReset();
+    vi.mocked(uploadArchive).mockReset();
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
     harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
@@ -721,8 +721,8 @@ command = "vim"
     expect(harness.exportSession).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'ses-1', includeGlobalLog: true }),
     );
-    expect(packageCurrentCodebase).not.toHaveBeenCalled();
-    expect(uploadPackagedCodebase).toHaveBeenCalledWith(
+    expect(packageCodebase).not.toHaveBeenCalled();
+    expect(uploadArchive).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ path: sessionZipPath }),
       3,
@@ -750,9 +750,9 @@ command = "vim"
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
     vi.mocked(scanCodebase).mockReset();
-    vi.mocked(packageCurrentCodebase).mockReset();
+    vi.mocked(packageCodebase).mockReset();
     harness.exportSession.mockReset();
-    vi.mocked(uploadPackagedCodebase).mockReset();
+    vi.mocked(uploadArchive).mockReset();
     vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
     vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
     harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
@@ -771,13 +771,13 @@ command = "vim"
       sessionDir: '/tmp/session-a',
       manifest: {},
     });
-    vi.mocked(packageCurrentCodebase).mockRejectedValueOnce(new Error('zip failed'));
+    vi.mocked(packageCodebase).mockRejectedValueOnce(new Error('zip failed'));
 
     await handleFeedbackCommand(feedbackDriver as any);
 
     const calls = harness.auth.submitFeedback.mock.calls as unknown as Array<[Record<string, unknown>]>;
     expect(calls[0]?.[0]?.['info']).toBeUndefined();
-    expect(uploadPackagedCodebase).toHaveBeenCalledWith(
+    expect(uploadArchive).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ path: sessionZipPath }),
       3,
@@ -814,14 +814,14 @@ command = "vim"
       fingerprint: 'fp-123',
       usedGitIgnore: false,
     } as any);
-    vi.mocked(packageCurrentCodebase).mockResolvedValueOnce({
+    vi.mocked(packageCodebase).mockResolvedValueOnce({
       path: '/tmp/fake-codebase.zip',
       size: 4,
       sha256: 'hash-123',
       fingerprint: 'fp-123',
       fileCount: 1,
     });
-    vi.mocked(uploadPackagedCodebase).mockRejectedValueOnce(new Error('upload failed'));
+    vi.mocked(uploadArchive).mockRejectedValueOnce(new Error('upload failed'));
 
     await handleFeedbackCommand(feedbackDriver as any);
 
