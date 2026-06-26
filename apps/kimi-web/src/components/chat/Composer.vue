@@ -102,14 +102,24 @@ function toggleExpand(): void {
 // The expand toggle is hidden at the resting height and only appears once the
 // box has grown past it (multi-line content) — keeps the empty composer
 // uncluttered. While expanded it always shows so the user can collapse back.
-const RESTING_HEIGHT_PX = 56;
+//
+// The resting height equals the textarea's computed `min-height`, which varies
+// by theme (the modern/kimi global override in style.css sets 40px; the scoped
+// default is 56px). We read it from the element instead of hard-coding so the
+// threshold matches whatever theme is active.
+const RESTING_HEIGHT_FALLBACK_PX = 56;
+function restingHeightPx(el: HTMLTextAreaElement): number {
+  if (typeof getComputedStyle === 'undefined') return RESTING_HEIGHT_FALLBACK_PX;
+  const min = Number.parseFloat(getComputedStyle(el).minHeight);
+  return Number.isFinite(min) && min > 0 ? min : RESTING_HEIGHT_FALLBACK_PX;
+}
 const isGrown = ref(false);
 watch(text, () => {
   void nextTick(() => {
     const el = textareaRef.value;
     // Registered after useComposerDraft's autosize watcher, so the inline
     // height already reflects the latest content when this reads scrollHeight.
-    isGrown.value = !!el && el.scrollHeight > RESTING_HEIGHT_PX;
+    isGrown.value = !!el && el.scrollHeight > restingHeightPx(el);
   });
 });
 
@@ -209,7 +219,7 @@ onMounted(() => {
     void nextTick(() => {
       autosize();
       const el = textareaRef.value;
-      isGrown.value = !!el && el.scrollHeight > RESTING_HEIGHT_PX;
+      isGrown.value = !!el && el.scrollHeight > restingHeightPx(el);
     });
   }
 });
