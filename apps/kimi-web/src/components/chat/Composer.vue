@@ -95,8 +95,16 @@ const { text, textareaRef, autosize, loadForEdit } = useComposerDraft({
 const expanded = ref(false);
 function toggleExpand(): void {
   expanded.value = !expanded.value;
-  // Re-fit the textarea after the min/max-height swap between modes.
-  void nextTick(autosize);
+  // Re-fit the textarea after the min/max-height swap between modes, then
+  // recompute growth against the *post-toggle* resting height. Without this,
+  // collapsing would keep the isGrown measured against the expanded 70vh
+  // min-height, hiding the toggle even though the collapsed draft is still
+  // multi-line. (This does not affect the expanded state itself — once
+  // expanded, it stays at 70vh until toggled back or sent.)
+  void nextTick(() => {
+    autosize();
+    recomputeGrown();
+  });
 }
 
 // The expand toggle is hidden at the resting height and only appears once the
@@ -114,13 +122,14 @@ function restingHeightPx(el: HTMLTextAreaElement): number {
   return Number.isFinite(min) && min > 0 ? min : RESTING_HEIGHT_FALLBACK_PX;
 }
 const isGrown = ref(false);
+function recomputeGrown(): void {
+  const el = textareaRef.value;
+  isGrown.value = !!el && el.scrollHeight > restingHeightPx(el);
+}
 watch(text, () => {
-  void nextTick(() => {
-    const el = textareaRef.value;
-    // Registered after useComposerDraft's autosize watcher, so the inline
-    // height already reflects the latest content when this reads scrollHeight.
-    isGrown.value = !!el && el.scrollHeight > restingHeightPx(el);
-  });
+  // Registered after useComposerDraft's autosize watcher, so the inline height
+  // already reflects the latest content when this reads scrollHeight.
+  void nextTick(recomputeGrown);
 });
 
 // The component instance is reused across session switches (it is not keyed by
@@ -218,8 +227,7 @@ onMounted(() => {
   if (text.value) {
     void nextTick(() => {
       autosize();
-      const el = textareaRef.value;
-      isGrown.value = !!el && el.scrollHeight > restingHeightPx(el);
+      recomputeGrown();
     });
   }
 });
