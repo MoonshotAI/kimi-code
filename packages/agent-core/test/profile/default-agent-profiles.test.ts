@@ -108,6 +108,9 @@ describe('default agent profiles', () => {
       // Reversibility / blast-radius principle generalized beyond the git rule.
       expect(prompt).toContain('reversibility and blast radius');
       expect(prompt).toContain('A one-time approval covers that one action');
+      // The "do local work freely" clause is role-scoped: read-only subagents (explore/plan)
+      // render this same paragraph, so it must not tell them editing files is free.
+      expect(prompt).toContain('Local, reversible work your role permits');
       // Concrete one-line examples anchoring high-frequency abstract rules.
       expect(prompt).toContain('locate the method in the code'); // ambiguous instruction -> edit code, not echo text
       expect(prompt).toContain('update the related tests'); // preamble phrasing example

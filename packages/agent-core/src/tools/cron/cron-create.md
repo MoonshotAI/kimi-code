@@ -9,7 +9,7 @@ Pin minute/hour/day-of-month/month to specific values:
   "remind me at 2:30pm today to check the deploy" → cron: "30 14 <today_dom> <today_month> *", recurring: false
   "tomorrow morning, run the smoke test" → cron: "57 8 <tomorrow_dom> <tomorrow_month> *", recurring: false
 
-Pick a day/month that is still ahead this year: if the pinned day/month has already passed this year, the next occurrence is over a year out and the task is rejected — choose a future date or use wildcards instead.
+One-shots are best for near-term reminders. A task only fires while its session is still alive (see Session lifetime below), so favor near times — within hours or a few days — rather than scheduling weeks or months ahead.
 
 ## Recurring jobs (recurring: true, the default)
 

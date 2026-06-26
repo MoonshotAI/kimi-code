@@ -122,10 +122,15 @@ describe('CronCreateTool', () => {
     vi.unstubAllEnvs();
   });
 
-  it('documents the session task cap and pinned-date guard, without bench env vars', () => {
+  it('documents the session task cap and near-term one-shot guidance, without bench env vars', () => {
     const { tool } = makeHarness();
     expect(tool.description).toContain('50 live cron tasks');
-    expect(tool.description).toContain('already passed this year');
+    // One-shot guidance nudges the model toward near-term reminders; the hard future-window
+    // limit lives in code (ONE_SHOT_MAX_FUTURE_MS) and must NOT be surfaced as a prompt rule,
+    // and the year-boundary heuristic — wrong across Dec 31 → Jan 1 — must be gone.
+    expect(tool.description).toContain('near-term reminders');
+    expect(tool.description).not.toContain('already passed this year');
+    expect(tool.description).not.toContain('350 days');
     // Bench/CI-only env knobs the model never sets must not appear in the prompt.
     expect(tool.description).not.toContain('KIMI_CRON_NO_STALE');
     expect(tool.description).not.toContain('KIMI_CRON_NO_JITTER');
