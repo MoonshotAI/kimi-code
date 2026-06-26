@@ -722,7 +722,22 @@ describe('KimiChatProvider', () => {
 
       expect(body['reasoning_effort']).toBeUndefined();
       expect(body['thinking']).toEqual({ type: 'disabled' });
+      expect(body['temperature']).toBe(0.6);
       expect(body['extra_body']).toBeUndefined();
+    });
+
+    it('does not overwrite an explicit temperature when thinking is off', async () => {
+      const provider = createProvider()
+        .withGenerationKwargs({ temperature: 0.7 })
+        .withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBeUndefined();
+      expect(body['thinking']).toEqual({ type: 'disabled' });
+      expect(body['temperature']).toBe(0.7);
     });
 
     it('thinkingEffort property reflects current state', () => {
