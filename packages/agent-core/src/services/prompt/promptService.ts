@@ -984,8 +984,8 @@ export class PromptService
   }
 
   private async _requireSession(sid: string): Promise<void> {
-    const all = await this.core.rpc.listSessions({});
-    if (!all.some((s) => s.id === sid)) {
+    const matches = await this.core.rpc.listSessions({ sessionId: sid });
+    if (matches.length === 0) {
       throw new SessionNotFoundError(sid);
     }
   }

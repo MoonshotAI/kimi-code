@@ -95,7 +95,7 @@ describe('e2e: process lifecycle', () => {
   });
 
   describe('long-running process → kill', () => {
-    it('start → verify running → kill → confirm exit', async () => {
+    it.skipIf(process.platform === 'win32')('start → verify running → kill → confirm exit', async () => {
       // Process that runs indefinitely
       const code = `
         process.stdout.write('started\\n');

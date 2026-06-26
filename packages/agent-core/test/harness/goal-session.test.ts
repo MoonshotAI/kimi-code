@@ -527,7 +527,7 @@ describe('goal session end-to-end', () => {
         {
           event: 'UserPromptSubmit',
           matcher: 'blocked objective',
-          command: "echo 'blocked by policy' >&2; exit 2",
+          command: 'node -e "process.stderr.write(\'blocked by policy\'); process.exit(2)"',
         },
       ],
     );

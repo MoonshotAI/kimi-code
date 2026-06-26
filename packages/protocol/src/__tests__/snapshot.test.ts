@@ -132,11 +132,13 @@ describe('events — volatile classification', () => {
       'thinking.delta',
       'tool.call.delta',
       'tool.progress',
+      'shell.output',
+      'shell.started',
       'agent.status.updated',
     ]) {
       expect(isVolatileEventType(type)).toBe(true);
     }
-    expect(VOLATILE_EVENT_TYPES).toHaveLength(5);
+    expect(VOLATILE_EVENT_TYPES).toHaveLength(7);
   });
 
   it('keeps timeline-bearing events durable', () => {

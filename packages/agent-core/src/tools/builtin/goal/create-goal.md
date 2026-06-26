@@ -16,5 +16,5 @@ Include a `completionCriterion` when the user provides one, or when it can be st
 inventing new requirements. Keep `objective` concise; reference long task descriptions by file
 path rather than pasting them.
 
-Use `replace: true` only when the user explicitly wants to abandon the current goal and start a
-new one.
+Creating a goal fails if one already exists, so use `replace: true` only when the user explicitly
+wants to abandon the current goal and start a new one.

@@ -13,6 +13,11 @@ import {
 } from '../../agent-core/src/config';
 import { TEST_IDENTITY } from './test-identity';
 
+// node-sdk/agent-core normalize paths to forward slashes (pathe). Mirror that
+// in path assertions so they hold on Windows, where node:path produces
+// backslashes.
+const toPosix = (p: string): string => p.replaceAll('\\', '/');
+
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -89,7 +94,7 @@ describe('SDK config TOML', () => {
     const dir = await makeTempDir();
     const rpc = createKimiConfigRpc();
 
-    await expect(rpc.resolveConfigPath({ homeDir: dir })).resolves.toBe(join(dir, 'config.toml'));
+    await expect(rpc.resolveConfigPath({ homeDir: dir })).resolves.toBe(toPosix(join(dir, 'config.toml')));
   });
 
   it('returns structured validation issues through the config RPC wrapper', async () => {
@@ -390,5 +395,24 @@ micro_compaction = false
     expect(harness.getSession(session.id)).toBe(session);
     expect(session.getResumeState()?.agents['main']).toBeDefined();
     await expect(session.getStatus()).resolves.toMatchObject({ model: 'kimi-for-coding' });
+  });
+
+  it('forwards forcePluginSessionStartReminder to the active session reload', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = join(homeDir, 'work');
+    const configPath = join(homeDir, 'config.toml');
+    await writeFile(configPath, COMPLETE_TOML, 'utf-8');
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const session = await harness.createSession({
+      id: 'session-sdk-reload-forward',
+      workDir,
+      model: 'kimi-for-coding',
+    });
+
+    const reloadSpy = vi.spyOn(session, 'reloadSession').mockResolvedValue({} as never);
+
+    await harness.reloadSession({ id: session.id, forcePluginSessionStartReminder: true });
+
+    expect(reloadSpy).toHaveBeenCalledWith({ forcePluginSessionStartReminder: true });
   });
 });

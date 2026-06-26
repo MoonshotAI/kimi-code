@@ -231,6 +231,51 @@ Chinese page requirements:
 - Translate only entry body text. Do not add entries that are not present in English.
 - Follow `docs/AGENTS.md` for Chinese typography: full-width punctuation, spaces between Chinese and English, and the glossary.
 
+#### Chinese wording style
+
+Structural fidelity does not mean literal translation. The Chinese entries should read like a concise, idiomatic Chinese changelog. Keep the same facts as the English entry, but rephrase for natural Chinese prose.
+
+Guidelines:
+
+- **One entry, one sentence.** Avoid chaining multiple effects with commas or semicolons. If the English entry is long, split it into shorter sentences or keep only the most important effect.
+- **Prefer common changelog verbs**: 新增、支持、修复、优化、改进、调整.
+- **Avoid indirect "through... make..." structures**. Do not write "通过 X，使 Y"; prefer direct cause-effect or just state the result.
+  - Bad: `通过缓存已渲染消息行，使终端在长篇对话中保持响应。`
+  - Better: `缓存已渲染消息行，提升长对话下终端的响应速度。`
+- **Be specific, not vague**. Prefer concrete actions over abstract quality words.
+  - Bad: `加固默认系统提示词和内置工具描述。`
+  - Better: `优化默认系统提示词与内置工具描述，避免 Agent 阻塞后台任务。`
+- **Name concrete files or config keys when it helps clarity**.
+  - Bad: `插件现在可以在其清单中声明 hooks。`
+  - Better: `插件现支持在 kimi.plugin.json 中声明生命周期 hooks。`
+- **Include required argument placeholders in CLI options**.
+  - Bad: `--allowed-host`
+  - Better: `--allowed-host <host>`
+- **Keep usage hints to one short clause**.
+  - Bad: `传入 --allowed-host 以允许额外的 host。例如 ... （多句展开）`
+  - Better: `例如 kimi web --allowed-host example.com。`
+- **Do not translate technical identifiers**: keep command names, flag names, file names, env vars, and config keys as-is.
+
+Example — translating a feature entry:
+
+English source:
+
+```markdown
+- Add a --allowed-host flag to kimi web that lets extra Host header values pass the DNS-rebinding check, and include allow guidance in the 403 error message. Pass --allowed-host <host> to allow an extra host.
+```
+
+Before (literal, wordy):
+
+```markdown
+- 为 `kimi web` 新增 `--allowed-host` 标志，允许额外的 Host 请求头值通过 DNS 重绑定检查，并在 403 错误消息中包含允许指引。传入 `--allowed-host <host>` 以允许额外的 host。例如 `kimi web --allowed-host example.com`。
+```
+
+After (concise, idiomatic):
+
+```markdown
+- `kimi web` 新增 `--allowed-host <host>` 选项，可将指定 Host 加入 DNS 重绑定白名单；403 错误会提示如何通过 `--allowed-host` 或 `KIMI_CODE_ALLOWED_HOSTS` 放行，例如 `kimi web --allowed-host example.com`。
+```
+
 ### 7. Verify
 
 Review:

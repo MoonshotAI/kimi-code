@@ -158,6 +158,8 @@ tiers.
   `403 Invalid Host header` (DNS-rebinding protection).
 - **`KIMI_CODE_ALLOWED_HOSTS`** — comma-separated extra hosts. A leading dot matches
   a subdomain wildcard, e.g. `KIMI_CODE_ALLOWED_HOSTS=.example.com,kimi.local`.
+- **`kimi server run --allowed-host <host...>`** — CLI equivalent for appending
+  extra allowed hosts; repeatable or comma-separated.
 - **`KIMI_CODE_CORS_ORIGINS`** — comma-separated list of allowed cross-origin values
   (full `scheme://host[:port]`). No `*` wildcard. Matched origins get
   `Access-Control-Allow-Origin` echoed; `OPTIONS` preflight short-circuits to `204`.

@@ -48,7 +48,10 @@ export async function createTokenStore(homeDir: string): Promise<TokenStore> {
     }
     // Changed: re-read, but refuse a too-permissive file and never let an
     // empty/partial read clobber the last good token.
-    if ((st.mode & 0o077) !== 0) {
+    // Skip the check on Windows: fs.stat mode is synthesised from the
+    // read-only attribute and does not reflect real ACLs, so it would always
+    // appear too permissive and prevent legitimate token reloads.
+    if (process.platform !== 'win32' && (st.mode & 0o077) !== 0) {
       return cache.token;
     }
     try {

@@ -1,10 +1,11 @@
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { basename as posixBasename } from 'pathe';
 import type { Stats } from 'node:fs';
 
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
-import { encodeWorkDirKey } from '../../session/store';
+import { encodeWorkDirKey, normalizeWorkDir } from '../../session/store';
 import { readSessionIndex } from '../../session/store/session-index';
 import { IEnvironmentService } from '../environment/environment';
 import { IEventService } from '../event/event';
@@ -90,7 +91,7 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       result.push(
         await this.hydrate(
           id,
-          { root: workDir, name: basename(workDir), created_at: '', last_opened_at: '' },
+          { root: workDir, name: posixBasename(workDir), created_at: '', last_opened_at: '' },
           sessionCount,
         ),
       );
@@ -111,9 +112,9 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
   }
 
   async createOrTouch(root: string, name?: string): Promise<Workspace> {
-    let realRoot: string;
+    let stat: Stats;
     try {
-      realRoot = await fsp.realpath(root);
+      stat = await fsp.stat(root);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'ENOTDIR') {
@@ -121,7 +122,15 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       }
       throw err;
     }
-    const workspaceId = encodeWorkDirKey(realRoot);
+    if (!stat.isDirectory()) {
+      throw new WorkspaceRootNotFoundError(root);
+    }
+    // Normalize with pathe (NOT realpath) so the workspace id matches the
+    // session store's `encodeWorkDirKey`, which also normalizes via pathe and
+    // never resolves symlinks or 8.3 short names. Using `fsp.realpath` here
+    // diverged from the session store on Windows and orphaned legacy sessions.
+    const normalizedRoot = normalizeWorkDir(root);
+    const workspaceId = encodeWorkDirKey(normalizedRoot);
     await fsp.mkdir(join(this.sessionsDir, workspaceId), { recursive: true, mode: 0o700 });
 
     const now = new Date().toISOString();
@@ -132,8 +141,8 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         existing !== undefined
           ? { ...existing, last_opened_at: now }
           : {
-              root: realRoot,
-              name: name ?? basename(realRoot),
+              root: normalizedRoot,
+              name: name ?? posixBasename(normalizedRoot),
               created_at: now,
               last_opened_at: now,
             };

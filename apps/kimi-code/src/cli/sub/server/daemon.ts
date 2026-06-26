@@ -27,6 +27,7 @@ import { DEFAULT_LOCK_DIR, getLiveLock, type LockContents } from '@moonshot-ai/s
 import {
   DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
+  LOCAL_SERVER_HOST,
   isServerHealthy,
   serverOrigin,
   waitForServerHealthy,
@@ -58,6 +59,8 @@ export interface EnsureDaemonOptions {
   allowRemoteShutdown?: boolean;
   /** Keep the PTY `/api/v1/terminals/*` routes enabled on a non-loopback bind. */
   allowRemoteTerminals?: boolean;
+  /** Extra `Host` header values to allow through the DNS-rebinding check. */
+  allowedHosts?: readonly string[];
   /** Idle-shutdown grace in ms for the spawned daemon (daemon mode only). */
   idleGraceMs?: number;
 }
@@ -78,8 +81,8 @@ export function daemonLogPath(): string {
 }
 
 export function lockConnectHost(lock: LockContents): string {
-  const host = lock.host ?? DEFAULT_SERVER_HOST;
-  return host === '0.0.0.0' ? DEFAULT_SERVER_HOST : host;
+  const host = lock.host ?? LOCAL_SERVER_HOST;
+  return host === '0.0.0.0' ? LOCAL_SERVER_HOST : host;
 }
 
 /** True when `host:port` is currently free to bind (nothing listening). */
@@ -199,6 +202,7 @@ interface SpawnDaemonChildOptions {
   insecureNoTls?: boolean;
   allowRemoteShutdown?: boolean;
   allowRemoteTerminals?: boolean;
+  allowedHosts?: readonly string[];
   idleGraceMs?: number;
 }
 
@@ -233,6 +237,9 @@ export function spawnDaemonChild(options: SpawnDaemonChildOptions): ChildProcess
   }
   if (options.idleGraceMs !== undefined) {
     args.push('--idle-grace-ms', String(options.idleGraceMs));
+  }
+  if (options.allowedHosts !== undefined && options.allowedHosts.length > 0) {
+    args.push('--allowed-host', ...options.allowedHosts);
   }
   // On Windows `.mjs` files are not executable PE binaries, so we must run
   // the script through the Node binary rather than spawning it directly. In
@@ -313,6 +320,7 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
     allowRemoteTerminals: options.allowRemoteTerminals,
+    allowedHosts: options.allowedHosts,
     idleGraceMs: options.idleGraceMs,
   });
 

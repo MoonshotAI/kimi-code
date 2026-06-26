@@ -5,6 +5,8 @@ import {
   parseFilePathLinkCandidate,
 } from '../src/lib/filePathLinks';
 import { parseDiff } from '../src/lib/parseDiff';
+import { buildDiffLines } from '../src/lib/diffLines';
+import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 
@@ -36,6 +38,72 @@ describe('parseDiff', () => {
       { type: 'del', text: '-- old comment', oldNo: 5 },
       { type: 'add', text: '++ new comment', newNo: 5 },
     ]);
+  });
+});
+
+describe('buildDiffLines', () => {
+  it('lines up context, deletions and additions with old/new line numbers', () => {
+    const before = 'a\nb\nc';
+    const after = 'a\nB\nc\nd';
+    expect(buildDiffLines(before, after)).toEqual([
+      { type: 'context', text: 'a', oldNo: 1, newNo: 1 },
+      { type: 'del', text: 'b', oldNo: 2 },
+      { type: 'add', text: 'B', newNo: 2 },
+      { type: 'context', text: 'c', oldNo: 3, newNo: 3 },
+      { type: 'add', text: 'd', newNo: 4 },
+    ]);
+  });
+
+  it('treats an empty before as an all-addition write', () => {
+    expect(buildDiffLines('', 'x\ny')).toEqual([
+      { type: 'add', text: 'x', newNo: 1 },
+      { type: 'add', text: 'y', newNo: 2 },
+    ]);
+  });
+
+  it('returns all context for identical texts and empty for two empties', () => {
+    expect(buildDiffLines('a\nb', 'a\nb')).toEqual([
+      { type: 'context', text: 'a', oldNo: 1, newNo: 1 },
+      { type: 'context', text: 'b', oldNo: 2, newNo: 2 },
+    ]);
+    expect(buildDiffLines('', '')).toEqual([]);
+  });
+
+  it('returns null when the LCS matrix would be too large', () => {
+    const big = Array.from({ length: 2000 }, (_, i) => `line${i}`).join('\n');
+    expect(buildDiffLines(big, `${big}\nextra`)).toBeNull();
+  });
+
+  it('returns null when one side is huge even though the matrix is small', () => {
+    const huge = Array.from({ length: 6000 }, (_, i) => `line${i}`).join('\n');
+    expect(buildDiffLines('one line', huge)).toBeNull();
+  });
+});
+
+describe('buildEditDiffLines', () => {
+  it('builds a diff for a single Edit', () => {
+    const arg = JSON.stringify({ path: 'a.ts', old_string: 'a\nb', new_string: 'a\nB' });
+    expect(buildEditDiffLines({ name: 'Edit', arg })).toEqual([
+      { type: 'context', text: 'a', oldNo: 1, newNo: 1 },
+      { type: 'del', text: 'b', oldNo: 2 },
+      { type: 'add', text: 'B', newNo: 2 },
+    ]);
+  });
+
+  it('falls back to output for replace_all edits', () => {
+    const arg = JSON.stringify({ path: 'a.ts', old_string: 'a', new_string: 'b', replace_all: true });
+    expect(buildEditDiffLines({ name: 'Edit', arg })).toBeNull();
+  });
+
+  it('falls back to output for every Write (new file or overwrite)', () => {
+    expect(buildEditDiffLines({ name: 'Write', arg: JSON.stringify({ path: 'a.ts', content: 'x' }) })).toBeNull();
+    expect(
+      buildEditDiffLines({ name: 'Write', arg: JSON.stringify({ path: 'a.ts', content: 'x', mode: 'append' }) }),
+    ).toBeNull();
+  });
+
+  it('returns null for non-edit/write tools', () => {
+    expect(buildEditDiffLines({ name: 'Bash', arg: JSON.stringify({ command: 'ls' }) })).toBeNull();
   });
 });
 

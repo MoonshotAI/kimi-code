@@ -79,7 +79,7 @@ describe('acquireLock — basic acquire / release', () => {
     expect(() => handle.release()).not.toThrow();
   });
 
-  it('creates the lock file with 0600 permissions (ROADMAP M5.2)', () => {
+  it.skipIf(process.platform === 'win32')('creates the lock file with 0600 permissions (ROADMAP M5.2)', () => {
     const handle = acquireLock({ lockPath, port: 58627 });
     // The lock file lives next to the per-pid bearer token; it must not be
     // group/world readable.
