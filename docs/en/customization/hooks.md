@@ -153,5 +153,5 @@ This example only demonstrates the blocking mechanism — it is not a production
 
 ## Next steps
 
-- [Configuration files](../configuration/config-files.md#hooks) — Full field reference for `[[hooks]]` in `config.toml`
+- [Configuration files](../configuration/config-files.md) — full reference for `config.toml` fields
 - [Agents and sub-agents](./agents.md) — Use the `SubagentStop` event to trigger notifications after a sub-agent completes

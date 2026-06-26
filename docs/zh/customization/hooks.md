@@ -153,5 +153,5 @@ process.stdin.on('end', () => {
 
 ## 下一步
 
-- [配置文件](../configuration/config-files.md#hooks) — `[[hooks]]` 在 `config.toml` 中的完整字段声明
+- [配置文件](../configuration/config-files.md) — `config.toml` 各字段的完整说明
 - [Agent 与子 Agent](./agents.md) — 利用 `SubagentStop` 事件在子 Agent 完成后触发通知

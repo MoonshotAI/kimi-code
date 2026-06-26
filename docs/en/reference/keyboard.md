@@ -72,7 +72,7 @@ When collapsed tool call results exist in the history, press `Ctrl-O` to toggle 
 
 ## Approval Panel
 
-When the Agent initiates a tool call that requires confirmation, the TUI displays an approval panel. For the full approval workflow, see [Interaction & Input](../guides/interaction.md#审批流程). The available keys inside the panel are:
+When the Agent initiates a tool call that requires confirmation, the TUI displays an approval panel. For the full approval workflow, see [Interaction & Input](../guides/interaction.md#approval-flow). The available keys inside the panel are:
 
 | Shortcut | Function |
 | --- | --- |
