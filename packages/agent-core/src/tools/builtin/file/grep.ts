@@ -57,7 +57,7 @@ export const GrepInputSchema = z.object({
     .enum(['content', 'files_with_matches', 'count_matches'])
     .optional()
     .describe(
-      'Shape of the result. `content` shows matching lines (honors `-A`, `-B`, `-C`, `-n`, and `head_limit`); `files_with_matches` shows only the paths of files that contain a match, most-recently-modified first (honors `head_limit`); `count_matches` shows per-file match counts as `path:count` lines, with the aggregate total reported separately. Defaults to `files_with_matches`.',
+      'Shape of the result. `content` shows matching lines (honors `-A`, `-B`, `-C`, `-n`, and `head_limit`); `files_with_matches` shows only the paths of files that contain a match, most-recently-modified first (honors `head_limit`); `count_matches` shows per-file match counts as `path:count` lines, followed by an aggregate total line. Defaults to `files_with_matches`.',
     ),
   '-i': z.boolean().optional().describe('Perform a case-insensitive search. Defaults to false.'),
   '-n': z
@@ -290,13 +290,12 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     const limited = limitActive ? afterOffset.slice(0, headLimit) : afterOffset;
     const paginationTruncated = limitActive && afterOffset.length > headLimit;
 
-    // Human-readable annotations are appended after visible matches.
-    // In count mode, the data stream must stay pure `path:count` lines
-    // — the count summary and pagination notice move to a side channel
-    // (returned via `result.message`) so they don't contaminate it.
-    // Other modes keep these notices inline in `output`.
+    // Human-readable annotations (filter notices, the count-mode summary,
+    // pagination, truncation, timeout) are appended to `output` after the
+    // visible matches. `result.message` is dropped before the result reaches
+    // the model, so anything it must act on — totals, "use offset=N to see
+    // more" — has to ride in `output`, not a side channel.
     const messages: string[] = [];
-    const sideChannelMessages: string[] = [];
     if (filteredSensitive.size > 0) {
       const displayedFilteredPaths = [...filteredSensitive].map((path) =>
         relativizeIfUnder(path, this.workspace.workspaceDir, pathClass),
@@ -306,17 +305,14 @@ export class GrepTool implements BuiltinTool<GrepInput> {
       );
     }
     if (mode === 'count_matches' && orderedLines.length > 0) {
-      sideChannelMessages.push(formatCountSummary(orderedLines, filteredSensitive.size > 0));
+      messages.push(formatCountSummary(orderedLines, filteredSensitive.size > 0));
     }
     if (paginationTruncated) {
       const total = afterOffset.length + offset;
       const nextOffset = offset + headLimit;
-      const paginationNotice = `Results truncated to ${String(headLimit)} lines (total: ${String(total)}). Use offset=${String(nextOffset)} to see more.`;
-      if (mode === 'count_matches') {
-        sideChannelMessages.push(paginationNotice);
-      } else {
-        messages.push(paginationNotice);
-      }
+      messages.push(
+        `Results truncated to ${String(headLimit)} lines (total: ${String(total)}). Use offset=${String(nextOffset)} to see more.`,
+      );
     }
     if (bufferTruncated) {
       messages.push(
@@ -357,7 +353,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
 
     const builder = new ToolResultBuilder();
     builder.write(combined);
-    return builder.ok(sideChannelMessages.join('\n'));
+    return builder.ok();
   }
 
 }
