@@ -54,6 +54,12 @@ async function runWithLLM(llm: LLM): Promise<{
   return { sink, context };
 }
 
+function abortError(): Error {
+  const error = new Error('aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
 describe('runTurn — streaming callbacks', () => {
   it('routes onTextDelta into text.delta events', async () => {
     const llm = new StreamingLLM(async (params) => {
@@ -68,6 +74,257 @@ describe('runTurn — streaming callbacks', () => {
     const { sink } = await runWithLLM(llm);
     const deltas = sink.byType('text.delta').map((e) => e.delta);
     expect(deltas).toEqual(['hel', 'lo']);
+  });
+
+  it('persists buffered text deltas as content when a step is aborted', async () => {
+    const controller = new AbortController();
+    const llm = new StreamingLLM(async (params) => {
+      params.onTextDelta?.('partial ');
+      params.onTextDelta?.('answer');
+      controller.abort();
+      throw abortError();
+    });
+    const sink = new CollectingSink();
+    const context = new RecordingContext();
+    const result = await runTurn({
+      turnId: 'turn-1',
+      signal: controller.signal,
+      llm,
+      buildMessages: context.buildMessages,
+      dispatchEvent: createLoopEventDispatcher({
+        appendTranscriptRecord: context.appendTranscriptRecord,
+        emitLiveEvent: sink.emit,
+      }),
+    });
+
+    expect(result.stopReason).toBe('aborted');
+    expect(sink.byType('text.delta').map((e) => e.delta)).toEqual([
+      'partial ',
+      'answer',
+    ]);
+    expect(context.contentParts().map((e) => e.part)).toEqual([
+      { type: 'text', text: 'partial answer' },
+    ]);
+    expect(context.stepEnds()).toEqual([]);
+  });
+
+  it('does not persist thinking deltas when a step is aborted', async () => {
+    const controller = new AbortController();
+    const llm = new StreamingLLM(async (params) => {
+      params.onThinkDelta?.('partial reasoning');
+      controller.abort();
+      throw abortError();
+    });
+    const sink = new CollectingSink();
+    const context = new RecordingContext();
+    const result = await runTurn({
+      turnId: 'turn-1',
+      signal: controller.signal,
+      llm,
+      buildMessages: context.buildMessages,
+      dispatchEvent: createLoopEventDispatcher({
+        appendTranscriptRecord: context.appendTranscriptRecord,
+        emitLiveEvent: sink.emit,
+      }),
+    });
+
+    expect(result.stopReason).toBe('aborted');
+    expect(sink.byType('thinking.delta').map((e) => e.delta)).toEqual([
+      'partial reasoning',
+    ]);
+    expect(context.contentParts()).toEqual([]);
+    expect(context.stepEnds()).toEqual([]);
+  });
+
+  it('persists buffered thinking before text when a step is aborted after visible text starts', async () => {
+    const controller = new AbortController();
+    const llm = new StreamingLLM(async (params) => {
+      params.onThinkDelta?.('complete reasoning');
+      params.onTextDelta?.('partial answer');
+      controller.abort();
+      throw abortError();
+    });
+    const sink = new CollectingSink();
+    const context = new RecordingContext();
+    const result = await runTurn({
+      turnId: 'turn-1',
+      signal: controller.signal,
+      llm,
+      buildMessages: context.buildMessages,
+      dispatchEvent: createLoopEventDispatcher({
+        appendTranscriptRecord: context.appendTranscriptRecord,
+        emitLiveEvent: sink.emit,
+      }),
+    });
+
+    expect(result.stopReason).toBe('aborted');
+    expect(sink.byType('thinking.delta').map((e) => e.delta)).toEqual([
+      'complete reasoning',
+    ]);
+    expect(sink.byType('text.delta').map((e) => e.delta)).toEqual([
+      'partial answer',
+    ]);
+    expect(context.contentParts().map((e) => e.part)).toEqual([
+      { type: 'think', think: 'complete reasoning' },
+      { type: 'text', text: 'partial answer' },
+    ]);
+    expect(context.stepEnds()).toEqual([]);
+  });
+
+  it('preserves buffered thinking signatures when a step is aborted after visible text starts', async () => {
+    const controller = new AbortController();
+    const llm = new StreamingLLM(async (params) => {
+      params.onThinkDelta?.('complete reasoning', {
+        type: 'think',
+        think: 'complete reasoning',
+      });
+      params.onThinkDelta?.('', {
+        type: 'think',
+        think: '',
+        encrypted: 'sig-abc',
+      });
+      params.onTextDelta?.('partial answer');
+      controller.abort();
+      throw abortError();
+    });
+    const sink = new CollectingSink();
+    const context = new RecordingContext();
+    const result = await runTurn({
+      turnId: 'turn-1',
+      signal: controller.signal,
+      llm,
+      buildMessages: context.buildMessages,
+      dispatchEvent: createLoopEventDispatcher({
+        appendTranscriptRecord: context.appendTranscriptRecord,
+        emitLiveEvent: sink.emit,
+      }),
+    });
+
+    expect(result.stopReason).toBe('aborted');
+    expect(sink.byType('thinking.delta').map((e) => e.delta)).toEqual([
+      'complete reasoning',
+      '',
+    ]);
+    expect(sink.byType('text.delta').map((e) => e.delta)).toEqual([
+      'partial answer',
+    ]);
+    expect(context.contentParts().map((e) => e.part)).toEqual([
+      {
+        type: 'think',
+        think: 'complete reasoning',
+        encrypted: 'sig-abc',
+      },
+      { type: 'text', text: 'partial answer' },
+    ]);
+    expect(context.stepEnds()).toEqual([]);
+  });
+
+  it('does not persist buffered text deltas when a step fails without aborting', async () => {
+    const llm = new StreamingLLM(async (params) => {
+      params.onTextDelta?.('partial answer');
+      throw new Error('provider failed');
+    });
+    const sink = new CollectingSink();
+    const context = new RecordingContext();
+
+    await expect(
+      runTurn({
+        turnId: 'turn-1',
+        signal: new AbortController().signal,
+        llm,
+        buildMessages: context.buildMessages,
+        dispatchEvent: createLoopEventDispatcher({
+          appendTranscriptRecord: context.appendTranscriptRecord,
+          emitLiveEvent: sink.emit,
+        }),
+      }),
+    ).rejects.toThrow('provider failed');
+
+    expect(sink.byType('text.delta').map((e) => e.delta)).toEqual(['partial answer']);
+    expect(context.contentParts()).toEqual([]);
+    expect(context.stepEnds()).toEqual([]);
+  });
+
+  it('drops buffered deltas from a failed retry attempt before abort flush', async () => {
+    const controller = new AbortController();
+    const retryableError = new Error('retryable provider failure');
+    let attempts = 0;
+    const llm: LLM = {
+      systemPrompt: 'streaming system prompt',
+      modelName: 'streaming',
+      isRetryableError: (error) => error === retryableError,
+      async chat(params) {
+        attempts += 1;
+        if (attempts === 1) {
+          params.onThinkDelta?.('discarded thinking');
+          params.onTextDelta?.('discarded text ');
+          throw retryableError;
+        }
+
+        params.onThinkDelta?.('kept thinking');
+        params.onTextDelta?.('kept text');
+        controller.abort();
+        throw abortError();
+      },
+    };
+    const sink = new CollectingSink();
+    const context = new RecordingContext();
+    const result = await runTurn({
+      turnId: 'turn-1',
+      signal: controller.signal,
+      llm,
+      buildMessages: context.buildMessages,
+      dispatchEvent: createLoopEventDispatcher({
+        appendTranscriptRecord: context.appendTranscriptRecord,
+        emitLiveEvent: sink.emit,
+      }),
+      maxRetryAttempts: 2,
+    });
+
+    expect(result.stopReason).toBe('aborted');
+    expect(attempts).toBe(2);
+    expect(sink.byType('step.retrying')).toHaveLength(1);
+    expect(sink.byType('text.delta').map((e) => e.delta)).toEqual([
+      'discarded text ',
+      'kept text',
+    ]);
+    expect(context.contentParts().map((e) => e.part)).toEqual([
+      { type: 'think', think: 'kept thinking' },
+      { type: 'text', text: 'kept text' },
+    ]);
+    expect(context.stepEnds()).toEqual([]);
+  });
+
+  it('does not duplicate buffered text after an emitted text part is recorded', async () => {
+    const controller = new AbortController();
+    const llm = new StreamingLLM(async (params) => {
+      params.onTextDelta?.('complete');
+      await params.onTextPart?.({
+        type: 'text',
+        text: 'complete',
+      });
+      controller.abort();
+      throw abortError();
+    });
+    const sink = new CollectingSink();
+    const context = new RecordingContext();
+    const result = await runTurn({
+      turnId: 'turn-1',
+      signal: controller.signal,
+      llm,
+      buildMessages: context.buildMessages,
+      dispatchEvent: createLoopEventDispatcher({
+        appendTranscriptRecord: context.appendTranscriptRecord,
+        emitLiveEvent: sink.emit,
+      }),
+    });
+
+    expect(result.stopReason).toBe('aborted');
+    expect(sink.byType('text.delta').map((e) => e.delta)).toEqual(['complete']);
+    expect(context.contentParts().map((e) => e.part)).toEqual([
+      { type: 'text', text: 'complete' },
+    ]);
+    expect(context.stepEnds()).toEqual([]);
   });
 
   it('routes onThinkDelta into thinking.delta events', async () => {

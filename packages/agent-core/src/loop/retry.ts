@@ -22,6 +22,7 @@ export interface ChatWithRetryInput {
   readonly currentStep: number;
   readonly stepUuid: string;
   readonly maxAttempts?: number;
+  readonly onRetrying?: () => void;
   readonly log?: Logger | undefined;
 }
 
@@ -51,6 +52,7 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
 
       const delayMs = delays[attempt - 1] ?? 0;
       input.params.signal.throwIfAborted();
+      input.onRetrying?.();
       input.dispatchEvent({
         type: 'step.retrying',
         turnId: input.turnId,

@@ -9,10 +9,11 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { TokenUsage } from '@moonshot-ai/kosong';
+import { mergeInPlace, type ThinkPart, type TokenUsage } from '@moonshot-ai/kosong';
 import type { Logger } from '#/logging/types';
 
 import type { LoopEventDispatcher } from './events';
+import { isAbortError } from './errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 import { chatWithRetry } from './retry';
 import { runToolCallBatch, type ToolCallStepContext } from './tool-call';
@@ -99,27 +100,37 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     step: currentStep,
   });
 
-  const chatParams: LLMChatParams = {
-    messages,
-    tools: tools ?? [],
-    signal,
-    ...createChatStreamingCallbacks({
-      dispatchEvent,
-      turnId,
-      currentStep,
-      stepUuid,
-    }),
-  };
-  const response: LLMChatResponse = await chatWithRetry({
-    llm,
-    params: chatParams,
+  const streamingCallbacks = createChatStreamingCallbacks({
     dispatchEvent,
     turnId,
     currentStep,
     stepUuid,
-    maxAttempts: maxRetryAttempts,
-    log,
   });
+  const chatParams: LLMChatParams = {
+    messages,
+    tools: tools ?? [],
+    signal,
+    ...streamingCallbacks.callbacks,
+  };
+  let response: LLMChatResponse;
+  try {
+    response = await chatWithRetry({
+      llm,
+      params: chatParams,
+      dispatchEvent,
+      turnId,
+      currentStep,
+      stepUuid,
+      maxAttempts: maxRetryAttempts,
+      onRetrying: streamingCallbacks.clearBuffer,
+      log,
+    });
+  } catch (error) {
+    if (signal.aborted || isAbortError(error)) {
+      await streamingCallbacks.flushOnAbort();
+    }
+    throw error;
+  }
   const usage = response.usage;
   const usageResult = await recordUsage(usage);
   const stopTurnAfterUsage = usageResult?.stopTurn === true;
@@ -211,10 +222,8 @@ function stepEndProviderDiagnostics(
   }
 
   return {
-    ...(providerFinishReason !== undefined ? { providerFinishReason } : {}),
-    ...(response.rawFinishReason !== undefined
-      ? { rawFinishReason: response.rawFinishReason }
-      : {}),
+    providerFinishReason,
+    rawFinishReason: response.rawFinishReason,
   };
 }
 
@@ -223,43 +232,93 @@ function createChatStreamingCallbacks(deps: {
   readonly turnId: string;
   readonly currentStep: number;
   readonly stepUuid: string;
-}): ChatStreamingCallbacks {
+}) {
   const { dispatchEvent, turnId, currentStep, stepUuid } = deps;
 
+  let bufferedText = '';
+  const bufferedThinkParts: ThinkPart[] = [];
+
+  const clearBuffer = (): void => {
+    bufferedText = '';
+    bufferedThinkParts.length = 0;
+  };
+
+  const bufferThinkPart = (part: ThinkPart): void => {
+    if (part.think.length === 0 && part.encrypted === undefined) return;
+
+    const next: ThinkPart = { ...part };
+    const last = bufferedThinkParts.at(-1);
+    if (last === undefined || !mergeInPlace(last, next)) {
+      bufferedThinkParts.push(next);
+    }
+  };
+
+  const flushOnAbort = async (): Promise<void> => {
+    const text = bufferedText;
+    if (text.length === 0) return;
+    for (const part of bufferedThinkParts) {
+      await dispatchEvent({
+        type: 'content.part',
+        uuid: randomUUID(),
+        turnId,
+        step: currentStep,
+        stepUuid,
+        part,
+      });
+    }
+    await dispatchEvent({
+      type: 'content.part',
+      uuid: randomUUID(),
+      turnId,
+      step: currentStep,
+      stepUuid,
+      part: { type: 'text', text },
+    });
+    clearBuffer();
+  };
+
   return {
-    onTextDelta: (delta) => {
-      dispatchEvent({ type: 'text.delta', delta });
-    },
-    onThinkDelta: (delta) => {
-      dispatchEvent({ type: 'thinking.delta', delta });
-    },
-    onToolCallDelta: (delta) => {
-      dispatchEvent({
-        type: 'tool.call.delta',
-        toolCallId: delta.toolCallId,
-        name: delta.name,
-        argumentsPart: delta.argumentsPart,
-      });
-    },
-    onTextPart: async (part) => {
-      await dispatchEvent({
-        type: 'content.part',
-        uuid: randomUUID(),
-        turnId,
-        step: currentStep,
-        stepUuid,
-        part,
-      });
-    },
-    onThinkPart: async (part) => {
-      await dispatchEvent({
-        type: 'content.part',
-        uuid: randomUUID(),
-        turnId,
-        step: currentStep,
-        stepUuid,
-        part,
-      });
-    },
+    callbacks: {
+      onTextDelta: (delta) => {
+        bufferedText += delta;
+        dispatchEvent({ type: 'text.delta', delta });
+      },
+      onThinkDelta: (delta, part) => {
+        bufferThinkPart(part ?? { type: 'think', think: delta });
+        dispatchEvent({ type: 'thinking.delta', delta });
+      },
+      onToolCallDelta: (delta) => {
+        dispatchEvent({
+          type: 'tool.call.delta',
+          toolCallId: delta.toolCallId,
+          name: delta.name,
+          argumentsPart: delta.argumentsPart,
+        });
+      },
+      onTextPart: async (part) => {
+        clearBuffer();
+        await dispatchEvent({
+          type: 'content.part',
+          uuid: randomUUID(),
+          turnId,
+          step: currentStep,
+          stepUuid,
+          part,
+        });
+      },
+      onThinkPart: async (part) => {
+        clearBuffer();
+        await dispatchEvent({
+          type: 'content.part',
+          uuid: randomUUID(),
+          turnId,
+          step: currentStep,
+          stepUuid,
+          part,
+        });
+      },
+    } satisfies ChatStreamingCallbacks,
+    clearBuffer,
+    flushOnAbort,
   };
 }

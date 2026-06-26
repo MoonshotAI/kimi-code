@@ -12,6 +12,16 @@ import { createKimiHarness, type Event, type KimiHarness } from '#/index';
 
 import { TEST_IDENTITY } from './test-identity';
 
+type FakeStreamScript =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'textThenAbort'; readonly text: string }
+  | { readonly kind: 'thinkThenAbort'; readonly think: string }
+  | {
+      readonly kind: 'thinkThenTextThenAbort';
+      readonly think: string;
+      readonly text: string;
+    };
+
 const fakeProviderState = vi.hoisted(() => ({
   calls: [] as Array<{
     readonly systemPrompt: string;
@@ -19,10 +29,23 @@ const fakeProviderState = vi.hoisted(() => ({
   }>,
   providerConfigs: [] as unknown[],
   responseText: 'hello from fake provider',
+  scripts: [] as FakeStreamScript[],
 }));
 
 vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
   const actual = await importOriginal<typeof KosongModule>();
+  const waitForAbort = async (signal: AbortSignal | undefined): Promise<void> => {
+    if (signal === undefined) {
+      throw new Error('Expected fake provider to receive an abort signal');
+    }
+    if (signal.aborted) return;
+    await new Promise<void>((resolve) => {
+      signal.addEventListener('abort', () => resolve(), { once: true });
+    });
+  };
+  const throwAbortError = (): never => {
+    throw new DOMException('The operation was aborted.', 'AbortError');
+  };
   return {
     ...actual,
     createProvider: (config: unknown) => {
@@ -31,8 +54,17 @@ vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
         name: 'fake',
         modelName: 'fake-model',
         thinkingEffort: null,
-        async generate(systemPrompt: string, _tools: unknown, history: unknown) {
+        async generate(
+          systemPrompt: string,
+          _tools: unknown,
+          history: unknown,
+          options?: { readonly signal?: AbortSignal },
+        ) {
           fakeProviderState.calls.push({ systemPrompt, history });
+          const script = fakeProviderState.scripts.shift() ?? {
+            kind: 'text',
+            text: fakeProviderState.responseText,
+          };
           return {
             id: 'fake-response',
             usage: {
@@ -44,7 +76,31 @@ vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
             finishReason: 'completed',
             rawFinishReason: 'stop',
             async *[Symbol.asyncIterator]() {
-              yield { type: 'text', text: fakeProviderState.responseText };
+              switch (script.kind) {
+                case 'text':
+                  yield { type: 'text', text: script.text };
+                  return;
+                case 'textThenAbort':
+                  yield { type: 'text', text: script.text };
+                  await waitForAbort(options?.signal);
+                  throwAbortError();
+                  return;
+                case 'thinkThenAbort':
+                  yield { type: 'think', think: script.think };
+                  await waitForAbort(options?.signal);
+                  throwAbortError();
+                  return;
+                case 'thinkThenTextThenAbort':
+                  yield { type: 'think', think: script.think };
+                  yield { type: 'text', text: script.text };
+                  await waitForAbort(options?.signal);
+                  throwAbortError();
+                  return;
+                default: {
+                  const _exhaustive: never = script;
+                  return _exhaustive;
+                }
+              }
             },
           };
         },
@@ -62,6 +118,7 @@ beforeEach(() => {
   fakeProviderState.calls.length = 0;
   fakeProviderState.providerConfigs.length = 0;
   fakeProviderState.responseText = 'hello from fake provider';
+  fakeProviderState.scripts.length = 0;
 });
 
 afterEach(async () => {
@@ -245,6 +302,191 @@ describe('Session.prompt events', () => {
       await done;
 
       expect(unsubscribedEvents).toEqual([]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('resumes visible text streamed before cancel without resuming thinking-only deltas', async () => {
+    const homeDir = await makeTempDir();
+    const textWorkDir = await makeTempDir();
+    const thinkWorkDir = await makeTempDir();
+    const mixedWorkDir = await makeTempDir();
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+
+    try {
+      await configureFakeProvider(harness);
+
+      fakeProviderState.scripts.push({
+        kind: 'textThenAbort',
+        text: 'Partial answer before cancel.',
+      });
+      const textSession = await harness.createSession({
+        id: 'ses_prompt_resume_cancel_text',
+        workDir: textWorkDir,
+      });
+      const textDelta = waitForEvent(
+        textSession,
+        (event) =>
+          event.type === 'assistant.delta' &&
+          event.delta === 'Partial answer before cancel.',
+      );
+      const textEnded = waitForEvent(textSession, (event) => event.type === 'turn.ended');
+
+      await textSession.prompt('Start streaming');
+      await textDelta;
+      await textSession.cancel();
+      await expect(textEnded).resolves.toMatchObject({
+        type: 'turn.ended',
+        reason: 'cancelled',
+      });
+      await textSession.close();
+
+      const resumedText = await harness.resumeSession({ id: textSession.id });
+      fakeProviderState.scripts.push({
+        kind: 'text',
+        text: 'Fresh response after text resume.',
+      });
+      const resumedTextEnded = waitForEvent(
+        resumedText,
+        (event) => event.type === 'turn.ended',
+      );
+      await resumedText.prompt('Follow up');
+      await resumedTextEnded;
+
+      expect(fakeProviderState.calls.at(-1)?.history).toMatchObject([
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Start streaming' }],
+          toolCalls: [],
+        },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Partial answer before cancel.' }],
+          toolCalls: [],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Follow up' }],
+          toolCalls: [],
+        },
+      ]);
+      await resumedText.close();
+
+      fakeProviderState.scripts.push({
+        kind: 'thinkThenAbort',
+        think: 'Partial reasoning before cancel.',
+      });
+      const thinkSession = await harness.createSession({
+        id: 'ses_prompt_resume_cancel_think',
+        workDir: thinkWorkDir,
+      });
+      const thinkDelta = waitForEvent(
+        thinkSession,
+        (event) =>
+          event.type === 'thinking.delta' &&
+          event.delta === 'Partial reasoning before cancel.',
+      );
+      const thinkEnded = waitForEvent(thinkSession, (event) => event.type === 'turn.ended');
+
+      await thinkSession.prompt('Start thinking');
+      await thinkDelta;
+      await thinkSession.cancel();
+      await expect(thinkEnded).resolves.toMatchObject({
+        type: 'turn.ended',
+        reason: 'cancelled',
+      });
+      await thinkSession.close();
+
+      const resumedThink = await harness.resumeSession({ id: thinkSession.id });
+      fakeProviderState.scripts.push({
+        kind: 'text',
+        text: 'Fresh response after thinking resume.',
+      });
+      const resumedThinkEnded = waitForEvent(
+        resumedThink,
+        (event) => event.type === 'turn.ended',
+      );
+      await resumedThink.prompt('Follow up');
+      await resumedThinkEnded;
+
+      expect(fakeProviderState.calls.at(-1)?.history).toMatchObject([
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Start thinking\n\nFollow up' }],
+          toolCalls: [],
+        },
+      ]);
+      await resumedThink.close();
+
+      fakeProviderState.scripts.push({
+        kind: 'thinkThenTextThenAbort',
+        think: 'Completed reasoning before answer.',
+        text: 'Partial answer after reasoning.',
+      });
+      const mixedSession = await harness.createSession({
+        id: 'ses_prompt_resume_cancel_mixed',
+        workDir: mixedWorkDir,
+      });
+      const mixedThinkDelta = waitForEvent(
+        mixedSession,
+        (event) =>
+          event.type === 'thinking.delta' &&
+          event.delta === 'Completed reasoning before answer.',
+      );
+      const mixedTextDelta = waitForEvent(
+        mixedSession,
+        (event) =>
+          event.type === 'assistant.delta' &&
+          event.delta === 'Partial answer after reasoning.',
+      );
+      const mixedEnded = waitForEvent(mixedSession, (event) => event.type === 'turn.ended');
+
+      await mixedSession.prompt('Start mixed streaming');
+      await mixedThinkDelta;
+      await mixedTextDelta;
+      await mixedSession.cancel();
+      await expect(mixedEnded).resolves.toMatchObject({
+        type: 'turn.ended',
+        reason: 'cancelled',
+      });
+      await mixedSession.close();
+
+      const resumedMixed = await harness.resumeSession({ id: mixedSession.id });
+      fakeProviderState.scripts.push({
+        kind: 'text',
+        text: 'Fresh response after mixed resume.',
+      });
+      const resumedMixedEnded = waitForEvent(
+        resumedMixed,
+        (event) => event.type === 'turn.ended',
+      );
+      await resumedMixed.prompt('Follow up');
+      await resumedMixedEnded;
+
+      expect(fakeProviderState.calls.at(-1)?.history).toMatchObject([
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Start mixed streaming' }],
+          toolCalls: [],
+        },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'Completed reasoning before answer.' },
+            { type: 'text', text: 'Partial answer after reasoning.' },
+          ],
+          toolCalls: [],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Follow up' }],
+          toolCalls: [],
+        },
+      ]);
     } finally {
       await harness.close();
     }

@@ -39,7 +39,12 @@ export interface LLMChatParams {
   signal: AbortSignal;
   requestLogFields?: LLMRequestLogFields;
   onTextDelta?: ((delta: string) => void) | undefined;
-  onThinkDelta?: ((delta: string) => void) | undefined;
+  /**
+   * Streams visible thinking text for UI updates. Adapters may pass the
+   * matching raw `ThinkPart` as the second argument so abort recovery can keep
+   * provider metadata such as encrypted thinking signatures.
+   */
+  onThinkDelta?: ((delta: string, part?: ThinkPart) => void) | undefined;
   onToolCallDelta?: ((delta: ToolCallDelta) => void) | undefined;
   /**
    * Fires once per completed text block. Additive relative to

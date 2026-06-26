@@ -109,7 +109,12 @@ function _typeOnlyChecks(): void {
     tools: [],
     signal: _signal,
     onTextDelta: (_delta: string) => {},
-    onThinkDelta: (_delta: string) => {},
+    onThinkDelta: (_delta: string, _part) => {
+      const thinking: string | undefined = _part?.think;
+      const encrypted: string | undefined = _part?.encrypted;
+      void thinking;
+      void encrypted;
+    },
     onToolCallDelta: (_delta) => {},
     onTextPart: async (_part) => {
       const text: string = _part.text;
