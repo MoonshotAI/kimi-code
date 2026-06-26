@@ -11,11 +11,11 @@ import type { JsonObject, ListSessionsPayload, SessionSummary } from '#/rpc/core
 import { FileSystemAgentRecordPersistence, type AgentRecordOf } from '../../agent/records';
 
 const SessionSummaryStateSchema = z.object({
-  archived: z.boolean().optional(),
   customTitle: z.string().optional(),
   isCustomTitle: z.boolean().optional(),
   lastPrompt: z.string().optional(),
   title: z.string().optional(),
+  archived: z.boolean().optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -142,6 +142,14 @@ export class SessionStore {
   }
 
   async archive(id: string): Promise<SessionSummary> {
+    return this.setArchived(id, true);
+  }
+
+  async unarchive(id: string): Promise<SessionSummary> {
+    return this.setArchived(id, false);
+  }
+
+  private async setArchived(id: string, archived: boolean): Promise<SessionSummary> {
     const entry = await this.findExistingSessionEntry(id);
     const statePath = join(entry.sessionDir, 'state.json');
     let parsed: unknown;
@@ -152,17 +160,23 @@ export class SessionStore {
         cause: error,
       });
     }
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    if (!isRecord(parsed)) {
       throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, `Session "${id}" state.json is invalid`);
     }
     const now = new Date().toISOString();
     const next: Record<string, unknown> = {
-      ...(parsed as Record<string, unknown>),
-      archived: true,
+      ...parsed,
+      archived,
       updatedAt: now,
     };
     await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
-    return this.summaryFromDir(id, entry.sessionDir, entry.workDir);
+    await appendSessionIndexEntry(this.homeDir, {
+      sessionId: entry.sessionId,
+      sessionDir: entry.sessionDir,
+      workDir: entry.workDir,
+      archived,
+    });
+    return this.summaryFromDir(entry.sessionId, entry.sessionDir, entry.workDir);
   }
 
   async list(options: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
@@ -233,6 +247,7 @@ export class SessionStore {
     const sessions: SessionSummary[] = [];
     for (const entry of index.values()) {
       if (!(await isDirectory(entry.sessionDir))) continue;
+      if (!includeArchive && entry.archived === true) continue;
       const summary = await this.summaryFromDir(entry.sessionId, entry.sessionDir, entry.workDir);
       if (!includeArchive && summary.archived === true) continue;
       sessions.push(summary);

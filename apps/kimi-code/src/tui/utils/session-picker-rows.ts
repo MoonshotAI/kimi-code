@@ -8,6 +8,7 @@ export function sessionRowsForPicker(
   currentSessionHasContent: boolean,
 ): SessionRow[] {
   return sessions
+    .filter((session) => !session.archived)
     .filter((session) => currentSessionHasContent || session.id !== currentSessionId)
     .map((session) => ({
       id: session.id,
@@ -15,6 +16,7 @@ export function sessionRowsForPicker(
       last_prompt: session.lastPrompt ?? null,
       work_dir: session.workDir,
       updated_at: session.updatedAt ?? session.createdAt ?? 0,
+      archived: session.archived === true,
       metadata: session.metadata,
     }));
 }

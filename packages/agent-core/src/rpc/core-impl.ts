@@ -79,6 +79,7 @@ import type {
   GetPluginInfoPayload,
   InstallPluginPayload,
   ListSessionsPayload,
+  UnarchiveSessionPayload,
   McpServerInfo,
   McpStartupMetrics,
   PluginInfo,
@@ -346,11 +347,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
   }
 
-  async archiveSession({ sessionId }: ArchiveSessionPayload): Promise<void> {
-    await this.closeSession({ sessionId });
-    await this.sessionStore.archive(sessionId);
-  }
-
   async resumeSession(input: ResumeSessionPayload): Promise<ResumeSessionResult> {
     return this.resumeSessionWithOverrides(input, {});
   }
@@ -496,6 +492,26 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async listSessions(input: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
     return this.sessionStore.list(input);
+  }
+
+  async archiveSession({ sessionId }: ArchiveSessionPayload): Promise<SessionSummary> {
+    const summary = await this.sessionStore.archive(sessionId);
+    // Keep the active session's in-memory metadata in sync so a later
+    // metadata write does not clobber the archived flag in state.json.
+    const active = this.sessions.get(sessionId);
+    if (active !== undefined) {
+      active.metadata.archived = true;
+    }
+    return summary;
+  }
+
+  async unarchiveSession({ sessionId }: UnarchiveSessionPayload): Promise<SessionSummary> {
+    const summary = await this.sessionStore.unarchive(sessionId);
+    const active = this.sessions.get(sessionId);
+    if (active !== undefined) {
+      active.metadata.archived = false;
+    }
+    return summary;
   }
 
   async renameSession({ sessionId, ...payload }: RenameSessionRequest): Promise<void> {

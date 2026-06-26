@@ -208,6 +208,26 @@ export class KimiHarness {
     this.activeSessions.get(input.id)?.emitMetaUpdated({ title: input.title });
   }
 
+  async archiveSession(id: string): Promise<SessionSummary> {
+    const normalized = normalizeSessionId(id);
+    const summary = await this.rpc.archiveSession({ sessionId: normalized });
+    const active = this.activeSessions.get(normalized);
+    if (active !== undefined) {
+      active.summary = summary;
+    }
+    return summary;
+  }
+
+  async unarchiveSession(id: string): Promise<SessionSummary> {
+    const normalized = normalizeSessionId(id);
+    const summary = await this.rpc.unarchiveSession({ sessionId: normalized });
+    const active = this.activeSessions.get(normalized);
+    if (active !== undefined) {
+      active.summary = summary;
+    }
+    return summary;
+  }
+
   async exportSession(input: ExportSessionInput): Promise<ExportSessionResult> {
     const result = await this.rpc.exportSession({
       ...input,

@@ -214,6 +214,18 @@ export class Session {
     await this.rpc.setPermission({ sessionId: this.id, mode });
   }
 
+  async archive(): Promise<void> {
+    this.ensureOpen();
+    const summary = await this.rpc.archiveSession({ sessionId: this.id });
+    this.summary = summary;
+  }
+
+  async unarchive(): Promise<void> {
+    this.ensureOpen();
+    const summary = await this.rpc.unarchiveSession({ sessionId: this.id });
+    this.summary = summary;
+  }
+
   async setPlanMode(enabled: boolean): Promise<void> {
     this.ensureOpen();
     if (typeof enabled !== 'boolean') {

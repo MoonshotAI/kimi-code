@@ -5,6 +5,7 @@ export interface SessionIndexEntry {
   readonly sessionId: string;
   readonly sessionDir: string;
   readonly workDir: string;
+  readonly archived?: boolean | undefined;
 }
 
 export function sessionIndexPath(homeDir: string): string {
@@ -46,6 +47,7 @@ export async function readSessionIndex(
       sessionId: entry.sessionId,
       sessionDir,
       workDir: resolve(entry.workDir),
+      archived: entry.archived,
     });
   }
   return result;
@@ -67,6 +69,7 @@ function parseIndexLine(line: string): SessionIndexEntry | undefined {
       sessionId: entry.sessionId,
       sessionDir: entry.sessionDir,
       workDir: entry.workDir,
+      archived: entry.archived === true,
     };
   } catch {
     return undefined;

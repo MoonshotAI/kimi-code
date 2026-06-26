@@ -312,6 +312,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'archive',
+    aliases: [],
+    description: 'Archive or unarchive the current session',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'usage',
     aliases: [],
     description: 'Show session tokens + context window + plan quotas',

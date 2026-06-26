@@ -157,6 +157,42 @@ export async function handleExportDebugZipCommand(host: SlashCommandHost): Promi
   }
 }
 
+export async function handleArchiveCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const session = host.session;
+  if (session === undefined) {
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    return;
+  }
+
+  const subcmd = args.trim().toLowerCase();
+  const currentlyArchived = session.summary?.archived === true;
+  const shouldArchive = subcmd !== 'off' && subcmd !== 'unarchive';
+
+  if (shouldArchive && currentlyArchived) {
+    host.showStatus('Session is already archived.');
+    return;
+  }
+  if (!shouldArchive && !currentlyArchived) {
+    host.showStatus('Session is not archived.');
+    return;
+  }
+
+  try {
+    if (shouldArchive) {
+      await session.archive();
+      host.track('session_archived', { session_id: session.id });
+      host.showNotice('Session archived', 'Hidden from the default session picker.');
+    } else {
+      await session.unarchive();
+      host.track('session_unarchived', { session_id: session.id });
+      host.showNotice('Session unarchived', 'Visible in the default session picker.');
+    }
+  } catch (error) {
+    const msg = formatErrorMessage(error);
+    host.showError(`Failed to update archive state: ${msg}`);
+  }
+}
+
 export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
   const session = host.session;
   if (host.state.appState.model.trim().length === 0 || session === undefined) {

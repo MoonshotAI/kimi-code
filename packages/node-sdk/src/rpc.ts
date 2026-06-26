@@ -190,6 +190,16 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async archiveSession(input: SessionIdRpcInput): Promise<SessionSummary> {
+    const rpc = await this.getRpc();
+    return rpc.archiveSession({ sessionId: input.sessionId });
+  }
+
+  async unarchiveSession(input: SessionIdRpcInput): Promise<SessionSummary> {
+    const rpc = await this.getRpc();
+    return rpc.unarchiveSession({ sessionId: input.sessionId });
+  }
+
   async exportSession(input: ExportSessionInput): Promise<ExportSessionResult> {
     const rpc = await this.getRpc();
     return rpc.exportSession({

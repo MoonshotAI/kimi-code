@@ -117,6 +117,7 @@ export interface SessionMeta {
   forkedFrom?: string;
   agents: Record<string, AgentMeta>;
   custom: Record<string, any>;
+  archived?: boolean;
 }
 
 const BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';

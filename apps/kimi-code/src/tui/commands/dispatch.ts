@@ -44,6 +44,7 @@ import type { BuiltinSlashCommandName } from './registry';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
 import { resolveSlashCommandInput, slashBusyMessage } from './resolve';
 import {
+  handleArchiveCommand,
   handleExportDebugZipCommand,
   handleExportMdCommand,
   handleForkCommand,
@@ -80,6 +81,7 @@ export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
 export { handleGoalCommand } from './goal';
 export {
+  handleArchiveCommand,
   handleExportDebugZipCommand,
   handleExportMdCommand,
   handleForkCommand,
@@ -293,6 +295,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'title':
       await handleTitleCommand(host, args);
+      return;
+    case 'archive':
+      await handleArchiveCommand(host, args);
       return;
     case 'yolo':
       await handleYoloCommand(host, args);
