@@ -234,6 +234,23 @@ describe('FetchURLTool', () => {
     expect(toolContentString(result)).toMatch(/due to network error/i);
   });
 
+  it('reports an image-specific message for image content', async () => {
+    const fetcher: UrlFetcher = {
+      fetch: vi.fn().mockResolvedValue({ content: '![image](data:image/png;base64,abc123)', kind: 'image' }),
+    };
+    const tool = new FetchURLTool(fetcher);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-image',
+      args: { url: 'https://example.com/image.png' },
+      signal,
+    });
+    expect(result.isError).toBe(false);
+    expect((result as { message?: string }).message).toBe(
+      'The returned content is an image encoded as base64 markdown.',
+    );
+  });
+
   it('passes through markdown content verbatim instead of running text extraction', async () => {
     // py: when the server returns text/markdown, extraction is skipped and
     // the body is returned as-is with a different status message. The
