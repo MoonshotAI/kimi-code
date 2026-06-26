@@ -113,6 +113,14 @@ watch(text, () => {
   });
 });
 
+// The component instance is reused across session switches (it is not keyed by
+// session), so reset the per-session expanded preference when the active
+// session changes. Without this, expanding in one chat would leave the next
+// session's draft stuck in the tall editor with Enter inserting newlines.
+watch(() => props.sessionId, () => {
+  expanded.value = false;
+});
+
 // ---------------------------------------------------------------------------
 // Sent-message history recall (shell-style ↑/↓). See useInputHistory for the
 // implementation; the composer keeps the keydown orchestration (which also
