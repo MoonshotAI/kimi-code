@@ -10,7 +10,9 @@ import { join } from 'node:path';
 
 import type { ServerLogLevel } from '@moonshot-ai/server';
 
-export const DEFAULT_SERVER_HOST = '127.0.0.1';
+export const LOCAL_SERVER_HOST = '127.0.0.1';
+export const DEFAULT_LAN_HOST = '0.0.0.0';
+export const DEFAULT_SERVER_HOST = LOCAL_SERVER_HOST;
 export const DEFAULT_SERVER_PORT = 58627;
 export const DEFAULT_SERVER_ORIGIN = serverOrigin(DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT);
 
@@ -55,7 +57,7 @@ export interface ParsedServerOptions {
 }
 
 export interface ServerCliOptions {
-  host?: string;
+  host?: string | boolean;
   port?: string;
   logLevel?: string;
   debugEndpoints?: boolean;
@@ -73,16 +75,22 @@ export interface ServerCliOptions {
 
 export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions {
   return {
-    host: opts.host ?? DEFAULT_SERVER_HOST,
+    host: parseHost(opts.host),
     port: parsePort(opts.port, '--port', DEFAULT_SERVER_PORT),
     logLevel: parseLogLevel(opts.logLevel ?? DEFAULT_FOREGROUND_LOG_LEVEL),
     debugEndpoints: opts.debugEndpoints === true,
-    insecureNoTls: opts.insecureNoTls === true,
+    insecureNoTls: opts.insecureNoTls !== false,
     allowRemoteShutdown: opts.allowRemoteShutdown === true,
     allowRemoteTerminals: opts.allowRemoteTerminals === true,
     daemon: opts.daemon === true,
     idleGraceMs: parseIdleGraceMs(opts.idleGraceMs),
   };
+}
+
+function parseHost(raw: string | boolean | undefined): string {
+  if (raw === undefined || raw === false) return DEFAULT_SERVER_HOST;
+  if (raw === true || raw === '') return DEFAULT_LAN_HOST;
+  return raw;
 }
 
 function parseIdleGraceMs(raw: string | undefined): number {

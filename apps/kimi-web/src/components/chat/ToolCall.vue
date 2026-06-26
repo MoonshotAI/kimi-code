@@ -1,8 +1,10 @@
 <!-- apps/kimi-web/src/components/chat/ToolCall.vue -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../types';
-import { toolLabel, toolGlyph, toolChip, toolSummary } from '../../lib/toolMeta';
+import type { DiffViewLine, FilePreviewRequest, ToolCall, ToolMedia } from '../../types';
+import { normalizeToolName, toolLabel, toolGlyph, toolChip, toolSummary } from '../../lib/toolMeta';
+import { diffStats } from '../../lib/diffLines';
+import { buildEditDiffLines } from '../../lib/toolDiff';
 
 const props = withDefaults(
   defineProps<{
@@ -11,19 +13,35 @@ const props = withDefaults(
     mobile?: boolean;
     /** Position inside a consecutive run of non-media tool cards. */
     stackPosition?: 'single' | 'first' | 'middle' | 'last';
+    /**
+     * When true, clicking an Edit/Write card opens the right-side diff panel.
+     * When false (e.g. inside the side chat, where the panel isn't wired), the
+     * card expands inline instead so its output stays reachable.
+     */
+    toolDiffPanel?: boolean;
   }>(),
-  { mobile: false, stackPosition: 'single' },
+  { mobile: false, stackPosition: 'single', toolDiffPanel: false },
 );
 const emit = defineEmits<{
   openMedia: [media: ToolMedia];
   openFile: [target: FilePreviewRequest];
+  openToolDiff: [id: string];
 }>();
 const isRunningBash = computed(() => props.tool.status === 'running' && /^bash$/i.test(props.tool.name));
 const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
 const canExpand = computed(() => hasOutput.value || isRunningBash.value);
 const open = ref(props.tool.defaultExpanded === true && canExpand.value);
 
+const isEditWrite = computed(() => {
+  const kind = normalizeToolName(props.tool.name);
+  return kind === 'edit' || kind === 'write';
+});
+
 function toggle() {
+  if (isEditWrite.value && props.toolDiffPanel) {
+    emit('openToolDiff', props.tool.id);
+    return;
+  }
   if (canExpand.value) open.value = !open.value;
 }
 
@@ -43,16 +61,27 @@ const glyph = () => toolGlyph(props.tool.name);
 const summary = () => toolSummary(props.tool.name, props.tool.arg);
 // Expanded body has room to wrap → show the full, un-clipped summary (no `…`).
 const summaryFull = () => toolSummary(props.tool.name, props.tool.arg, true);
-const chip = () => toolChip({
-  name: props.tool.name,
-  arg: props.tool.arg,
-  output: props.tool.output,
-  timing: props.tool.timing,
-  status: props.tool.status,
-});
+const chip = () => {
+  const diff = editDiff.value;
+  if (diff && props.tool.status !== 'error') {
+    const { added, removed } = diffStats(diff);
+    if (added || removed) return `+${added} −${removed}`;
+  }
+  return toolChip({
+    name: props.tool.name,
+    arg: props.tool.arg,
+    output: props.tool.output,
+    timing: props.tool.timing,
+    status: props.tool.status,
+  });
+};
 
 const isError = () => props.tool.status === 'error';
 const media = computed(() => (props.tool.status === 'ok' ? props.tool.media : undefined));
+
+/** Line diff for an Edit/Write tool call (drives the +/- chip); null for any
+ *  other tool or when a from-args diff can't represent the operation. */
+const editDiff = computed<DiffViewLine[] | null>(() => buildEditDiffLines(props.tool));
 
 // ExitPlanMode: expose the plan file as a clickable link (opens file preview).
 const isExitPlan = computed(() => props.tool.name === 'ExitPlanMode');

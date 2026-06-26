@@ -177,6 +177,22 @@ export interface FilePreviewRequest {
   line?: number;
 }
 
+/**
+ * Payload for opening an Edit/Write tool-call diff in the right-side detail
+ * panel. `lines` carries the synthesized diff for single edits / new writes;
+ * it is null for operations a from-args diff can't represent (replace_all,
+ * append, multi-edit, errors), in which case `output` (the tool result) is
+ * shown instead.
+ */
+export interface ToolDiffTarget {
+  /** Tool-call id; used so clicking the same card again toggles the panel closed. */
+  id: string;
+  title: string;
+  path?: string;
+  lines: DiffViewLine[] | null;
+  output?: string[];
+}
+
 /** One ordered piece of an assistant turn: a thinking segment, a text segment
  * OR a tool card. Built in call order so every piece renders inline where it
  * happened (a turn can think → act → think again — nothing is hoisted). */

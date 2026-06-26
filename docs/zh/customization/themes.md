@@ -26,6 +26,7 @@ Kimi Code CLI 可以使用内置配色，也可以使用自定义 JSON 主题文
 | `diffGutter` | `#6B6B6B` | `#737373` | diff 行号槽 |
 | `diffMeta` | `#888888` | `#5F5F5F` | diff 元信息 / hunk 头 |
 | `roleUser` | `#FFCB6B` | `#9A4A00` | 用户消息的子弹头与文字、技能激活名 |
+| `shellMode` | `#BD93F9` | `#7C3AED` | Shell 模式（`!`）的提示符、编辑器边框，以及回显的 `$ 命令` 行 |
 
 ## 使用 custom-theme skill
 
