@@ -9,15 +9,17 @@ import {
   Spacer,
 } from '@earendil-works/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import type {
-  ApprovalRequest,
-  ApprovalResponse,
-  BackgroundTaskInfo,
-  CreateSessionOptions,
-  KimiHarness,
-  PermissionMode,
-  PromptPart,
-  Session,
+import {
+  ErrorCodes,
+  isKimiError,
+  type ApprovalRequest,
+  type ApprovalResponse,
+  type BackgroundTaskInfo,
+  type CreateSessionOptions,
+  type KimiHarness,
+  type PermissionMode,
+  type PromptPart,
+  type Session,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import { resolve } from 'pathe';
@@ -698,7 +700,13 @@ export class KimiTUI {
         session = await this.harness.createSession(createSessionOptions);
       }
       if (session !== undefined && shouldReplayHistory) {
-        await this.applyStartupModesToResumedSession(session);
+        const modesApplied = await this.applyStartupModesToResumedSession(session);
+        if (!modesApplied) {
+          throw new Error(
+            `Session "${session.id}" disappeared while applying startup modes. ` +
+              `Try running the command again, or start a fresh session.`,
+          );
+        }
         if (startup.model !== undefined) {
           await session.setModel(startup.model);
         }
@@ -1375,18 +1383,32 @@ export class KimiTUI {
   // session may already be in plan mode from its persisted records, and
   // re-entering plan mode throws, so only enable it when it is not active yet.
   // setPermission is idempotent and needs no such guard.
-  private async applyStartupModesToResumedSession(session: Session): Promise<void> {
+  private async applyStartupModesToResumedSession(session: Session): Promise<boolean> {
     const { startup } = this.options;
-    if (startup.auto) {
-      await session.setPermission('auto');
-    } else if (startup.yolo) {
-      await session.setPermission('yolo');
-    }
-    if (startup.plan) {
-      const status = await session.getStatus();
-      if (!status.planMode) {
-        await session.setPlanMode(true);
+    try {
+      if (startup.auto) {
+        await session.setPermission('auto');
+      } else if (startup.yolo) {
+        await session.setPermission('yolo');
       }
+      if (startup.plan) {
+        const status = await session.getStatus();
+        if (!status.planMode) {
+          await session.setPlanMode(true);
+        }
+      }
+      return true;
+    } catch (error) {
+      if (isKimiError(error) && error.code === ErrorCodes.SESSION_NOT_FOUND) {
+        this.showError(
+          `Session disappeared during startup. ` +
+            `This usually means the session was closed while initialization was still running ` +
+            `(for example, an MCP server failed to start). ` +
+            `Try running the command again, or start a fresh session.`,
+        );
+        return false;
+      }
+      throw error;
     }
   }
 
@@ -2428,7 +2450,12 @@ export class KimiTUI {
     const switched = await this.resumeSession(session.id);
     if (!switched) return;
     if (applyStartupModes) {
-      await this.applyStartupModesToResumedSession(this.requireSession());
+      const modesApplied = await this.applyStartupModesToResumedSession(this.requireSession());
+      if (!modesApplied) {
+        // The resumed session disappeared while applying startup modes.
+        // Leave the picker open so the user can choose another session.
+        return;
+      }
       this.applyStartupPermissionAndPlanToAppState();
     }
     this.hideSessionPicker();
