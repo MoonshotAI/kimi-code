@@ -359,7 +359,15 @@ function transformProviderData(data: Record<string, unknown>): Record<string, un
 }
 
 function transformModelData(data: Record<string, unknown>): Record<string, unknown> {
-  return transformPlainObject(data);
+  const out = transformPlainObject(data);
+  if (!('maxOutputSize' in out)) {
+    if ('maxOutputTokens' in out && typeof out['maxOutputTokens'] === 'number') {
+      out['maxOutputSize'] = out['maxOutputTokens'];
+    } else if ('maxTokens' in out && typeof out['maxTokens'] === 'number') {
+      out['maxOutputSize'] = out['maxTokens'];
+    }
+  }
+  return out;
 }
 
 function transformPermissionData(data: Record<string, unknown>): Record<string, unknown> {
