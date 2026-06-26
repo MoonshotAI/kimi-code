@@ -28,6 +28,7 @@ const MAX_VISIBLE = 5;
 export interface VisibleTodos {
   readonly rows: readonly TodoItem[];
   readonly hidden: number;
+  readonly hiddenCounts: Record<TodoStatus, number>;
 }
 
 /**
@@ -49,7 +50,11 @@ export interface VisibleTodos {
  */
 export function selectVisibleTodos(todos: readonly TodoItem[]): VisibleTodos {
   if (todos.length <= MAX_VISIBLE) {
-    return { rows: [...todos], hidden: 0 };
+    return {
+      rows: [...todos],
+      hidden: 0,
+      hiddenCounts: { done: 0, in_progress: 0, pending: 0 },
+    };
   }
 
   const inProgress: number[] = [];
@@ -91,9 +96,18 @@ export function selectVisibleTodos(todos: readonly TodoItem[]): VisibleTodos {
   }
 
   const sortedIdx = [...picked].toSorted((a, b) => a - b);
+
+  const hiddenCounts: Record<TodoStatus, number> = { done: 0, in_progress: 0, pending: 0 };
+  for (const [i, todo] of todos.entries()) {
+    if (!picked.has(i)) {
+      hiddenCounts[todo.status] += 1;
+    }
+  }
+
   return {
     rows: sortedIdx.map((i) => todos[i] as TodoItem),
     hidden: todos.length - sortedIdx.length,
+    hiddenCounts,
   };
 }
 
@@ -151,12 +165,16 @@ export class TodoPanelComponent implements Component {
         );
       }
     } else {
-      const { rows, hidden } = selectVisibleTodos(this.todos);
+      const { rows, hidden, hiddenCounts } = selectVisibleTodos(this.todos);
       for (const todo of rows) {
         lines.push(renderRow(todo, c));
       }
       if (hidden > 0) {
-        lines.push(chalk.hex(c.textDim)(`  … +${hidden} more · ctrl+t to expand`));
+        const distribution = formatHiddenCounts(hiddenCounts);
+        const suffix = distribution.length > 0 ? ` (${distribution})` : '';
+        lines.push(
+          chalk.hex(c.textDim)(`  … +${hidden} more${suffix} · ctrl+t to expand`),
+        );
       }
     }
 
@@ -190,4 +208,16 @@ function styleTitle(title: string, status: TodoStatus, colors: ColorPalette): st
     case 'pending':
       return chalk.hex(colors.text)(title);
   }
+}
+
+const STATUS_LABELS: readonly { status: TodoStatus; label: string }[] = [
+  { status: 'done', label: 'done' },
+  { status: 'in_progress', label: 'in progress' },
+  { status: 'pending', label: 'pending' },
+];
+
+export function formatHiddenCounts(counts: Record<TodoStatus, number>): string {
+  return STATUS_LABELS.filter(({ status }) => counts[status] > 0)
+    .map(({ status, label }) => `${counts[status]} ${label}`)
+    .join(' · ');
 }
