@@ -56,7 +56,10 @@ export class MoonshotFetchURLProvider implements UrlFetcher {
       const content = await this.fetchViaMoonshot(url, options?.toolCallId, options?.signal);
       // The service returns text it has already extracted from the page.
       return { content, kind: 'extracted' };
-    } catch {
+    } catch (error) {
+      if (options?.signal?.aborted === true) {
+        throw error;
+      }
       // Forward an explicit options object even when the caller passed
       // none, so downstream consumers always see a defined second arg.
       return this.localFallback.fetch(url, options ?? {});

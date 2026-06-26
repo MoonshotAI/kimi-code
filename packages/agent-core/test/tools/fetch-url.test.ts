@@ -286,4 +286,22 @@ describe('MoonshotFetchURLProvider', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(localFallback.fetch).toHaveBeenCalledWith('https://example.com/page', {});
   });
+  it('propagates an abort instead of falling back to the local fetcher', async () => {
+    const controller = new AbortController();
+    const localFallback = fakeFetcher('fallback content');
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(new DOMException('The operation was aborted', 'AbortError'));
+    });
+    const provider = new MoonshotFetchURLProvider({
+      apiKey: 'test-key',
+      baseUrl: 'https://fetch.example/v1',
+      localFallback,
+      fetchImpl,
+    });
+    await expect(
+      provider.fetch('https://example.com/page', { signal: controller.signal }),
+    ).rejects.toThrow(/abort/i);
+    expect(localFallback.fetch).not.toHaveBeenCalled();
+  });
 });
