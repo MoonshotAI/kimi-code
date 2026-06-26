@@ -98,7 +98,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 
 | Event | Matcher matches | Supports blocking? | Description |
 | --- | --- | --- | --- |
-| `UserPromptSubmit` | The text submitted by the user | ✓ | Triggered when the user sends a message; returned text is appended to context; if blocked, the model is not called for this turn |
+| `UserPromptSubmit` | The text submitted by the user | ✓ | Triggered when the user sends a message; the payload includes a `prompt` field of type `ContentPart[]` (see note below); returned text is appended to context; if blocked, the model is not called for this turn |
 | `PreToolUse` | Tool name | ✓ | Triggered before a tool call (before permission checks); the tool will not execute if blocked |
 | `Stop` | Empty string | ✓ | Triggered when the model is about to end the current turn; if blocked, a message can be appended to let the model continue |
 | `PostToolUse` | Tool name | — | Triggered after a tool executes successfully (observation only) |
@@ -114,6 +114,30 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `PreCompact` | `manual` or `auto` | — | Triggered before context compaction begins; return values are completely ignored |
 | `PostCompact` | `manual` or `auto` | — | Triggered after context compaction completes (observation only) |
 | `Notification` | Notification type (e.g. `task.completed`) | — | Triggered when a background task status changes (observation only) |
+
+::: tip `UserPromptSubmit` payload: `prompt` is a `ContentPart[]`, not a string
+The `UserPromptSubmit` payload's `prompt` field is the raw `ContentPart[]` array, **not** a plain string:
+
+```json
+{
+  "hook_event_name": "UserPromptSubmit",
+  "session_id": "session_abc",
+  "cwd": "/path/to/project",
+  "prompt": [{ "type": "text", "text": "user's message" }]
+}
+```
+
+The `matcher` regex is applied to the **joined text** of those parts (all `text` parts joined with a space), which is why the Event Reference says "The text submitted by the user" — that describes the matcher subject, not the payload field.
+
+To recover the plain text string in your hook:
+
+```js
+const text = payload.prompt
+  .filter((p) => p.type === 'text')
+  .map((p) => p.text)
+  .join(' ');
+```
+:::
 
 ## Example: Blocking Dangerous Shell Commands
 
