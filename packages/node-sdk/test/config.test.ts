@@ -80,7 +80,8 @@ api_key = "sk-fetch"
 claim_stale_after_ms = 15000
 
 [thinking]
-enabled = false
+enabled = true
+effort = "high"
 `;
 
 describe('SDK config TOML', () => {
@@ -122,7 +123,8 @@ max_context_size = "large"
     const config = parseConfigString(COMPLETE_TOML, 'complete.toml');
 
     expect(config.defaultModel).toBe('kimi-for-coding');
-    expect(config.thinking?.enabled).toBe(false);
+    expect(config.thinking?.enabled).toBe(true);
+    expect(config.thinking?.effort).toBe('high');
     expect(config.defaultPermissionMode).toBe('auto');
     expect(config.defaultPlanMode).toBe(false);
     expect(config.mergeAllAvailableSkills).toBe(true);
