@@ -122,6 +122,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
 
 - [Issues](https://github.com/MoonshotAI/kimi-code/issues)
 - For security vulnerabilities, see [SECURITY.md](SECURITY.md).
+- Community project: [kimi-skill](https://github.com/ghyghoo8/kimi-skill) — Agent Skills for using Kimi Code CLI as a headless sub-agent.
 
 ## Acknowledgements
 
