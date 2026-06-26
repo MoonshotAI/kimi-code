@@ -17,7 +17,10 @@ const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
 export interface PreparedSystemPromptContext
-  extends Pick<SystemPromptContext, 'cwdListing' | 'agentsMd' | 'additionalDirsInfo'> {
+  extends Pick<
+    SystemPromptContext,
+    'cwdListing' | 'agentsMd' | 'worktreeInfo' | 'additionalDirsInfo'
+  > {
   /** Present when the combined AGENTS.md content exceeds the recommended size. */
   readonly agentsMdWarning?: string;
 }

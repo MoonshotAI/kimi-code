@@ -233,6 +233,27 @@ describe('default agent profiles', () => {
     expect(second).toContain('/workspace/two');
     expect(second).not.toContain('/workspace/one');
   });
+
+  it('renders worktree info in the default prompt when provided', () => {
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt({
+      ...promptContext,
+      worktreeInfo: {
+        worktreePath: '/repo/.kimi/worktrees/test-worktree',
+        parentRepoPath: '/repo',
+      },
+    });
+
+    expect(prompt).toContain('You are running inside a git worktree');
+    expect(prompt).toContain('Worktree path: /repo/.kimi/worktrees/test-worktree');
+    expect(prompt).toContain('Parent repository: /repo');
+  });
+
+  it('omits worktree info from the default prompt when not provided', () => {
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext);
+
+    expect(prompt).not.toContain('You are running inside a git worktree');
+    expect(prompt).not.toContain('Worktree path:');
+  });
 });
 
 async function write(fileName: string, content: string): Promise<string> {
