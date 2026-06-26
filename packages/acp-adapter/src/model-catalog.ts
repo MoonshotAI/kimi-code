@@ -38,7 +38,7 @@ export interface AcpModelEntry {
   /** Declared 'always_thinking' capability — thinking cannot be turned off. */
   readonly alwaysThinking?: boolean;
   /**
-   * The thinking level to send when the binary ACP toggle flips on: the
+   * The thinking effort to send when the binary ACP toggle flips on: the
    * model's declared `default_effort`, else the middle `support_efforts`
    * entry, else `'on'` for boolean models. Mirrors agent-core's
    * `defaultThinkingEffortFor` so the ACP on-state matches the TUI.

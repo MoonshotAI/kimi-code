@@ -211,7 +211,7 @@ describe('sessionUpdateSchema', () => {
     });
   });
 
-  it('rejects an unknown thinking level in agent_config', () => {
+  it('rejects an unknown thinking effort in agent_config', () => {
     expect(
       sessionUpdateSchema.safeParse({
         agent_config: { thinking: 'mega' as unknown },

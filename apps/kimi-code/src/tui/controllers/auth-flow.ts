@@ -60,12 +60,12 @@ export class AuthFlowController {
     this.host.setStartupReady();
   }
 
-  async activateModelAfterLogin(model: string, level?: string): Promise<void> {
+  async activateModelAfterLogin(model: string, effort?: string): Promise<void> {
     const { host } = this;
     if (host.session !== undefined) {
       await host.session.setModel(model);
-      if (level !== undefined) {
-        await host.session.setThinking(level);
+      if (effort !== undefined) {
+        await host.session.setThinking(effort);
       }
       return;
     }
@@ -73,7 +73,7 @@ export class AuthFlowController {
     const options: MutableCreateSessionOptions = {
       workDir: host.state.appState.workDir,
       model,
-      thinking: level,
+      thinking: effort,
       permission: host.options.startup.auto
         ? 'auto'
         : host.options.startup.yolo

@@ -30,8 +30,8 @@ interface ModelChoice {
 
 export interface ModelSelection {
   readonly alias: string;
-  /** Chosen thinking level: 'off', or a concrete effort such as 'low' /
-   * 'high' / 'max'. Boolean 'on' is normalized to the model's default level
+  /** Chosen thinking effort: 'off', or a concrete effort such as 'low' /
+   * 'high' / 'max'. Boolean 'on' is normalized to the model's default effort
    * before the selection is committed (see commitLevel). */
   readonly thinking: ThinkingEffort;
 }
@@ -59,7 +59,7 @@ export interface ModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
   readonly currentValue: string;
   readonly selectedValue?: string;
-  /** Live thinking level of the currently active model (e.g. 'off', 'on',
+  /** Live thinking effort of the currently active model (e.g. 'off', 'on',
    * 'high'). Used to highlight the active segment for the current model. */
   readonly currentThinkingEffort: ThinkingEffort;
   /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
@@ -96,7 +96,7 @@ export function effortsOf(model: ModelAlias): readonly string[] {
 }
 
 /**
- * Ordered list of selectable thinking levels for a model. Effort-capable models
+ * Ordered list of selectable thinking efforts for a model. Effort-capable models
  * expose their declared efforts (with an 'off' entry when the model is not
  * always-on); legacy boolean models expose 'on'/'off'; single-segment lists
  * mean the control is effectively locked.
@@ -112,13 +112,13 @@ export function segmentsFor(model: ModelAlias): readonly string[] {
   return ['on', 'off'];
 }
 
-export function levelLabel(level: string): string {
-  if (level.length === 0) return level;
-  return level.charAt(0).toUpperCase() + level.slice(1);
+export function levelLabel(effort: string): string {
+  if (effort.length === 0) return effort;
+  return effort.charAt(0).toUpperCase() + effort.slice(1);
 }
 
 /**
- * Default thinking level for a model: declared `default_effort`, else the
+ * Default thinking effort for a model: declared `default_effort`, else the
  * middle `support_efforts` entry, else `'on'` for boolean models, `'off'` when
  * thinking is unsupported.
  */
@@ -132,8 +132,8 @@ function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
 }
 
 /**
- * Normalize a draft level before committing a selection. A boolean `'on'`
- * never leaks past the UI boundary — it becomes the model's default level
+ * Normalize a draft effort before committing a selection. A boolean `'on'`
+ * never leaks past the UI boundary — it becomes the model's default effort
  * (a concrete effort for effort-capable models, `'on'` only for genuine
  * boolean models).
  */
@@ -154,7 +154,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
   focused = false;
   private readonly opts: ModelSelectorOptions;
   private readonly list: SearchableList<ModelChoice>;
-  /** Per-model thinking-level override set by ←/→; absent → the default. */
+  /** Per-model thinking-effort override set by ←/→; absent → the default. */
   private readonly thinkingOverrides = new Map<string, string>();
 
   constructor(opts: ModelSelectorOptions) {
@@ -173,8 +173,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
   }
 
   /**
-   * Thinking level for a model: an explicit ←/→ override when set, otherwise
-   * the live level for the active model, otherwise the model's default effort
+   * Thinking effort for a model: an explicit ←/→ override when set, otherwise
+   * the live effort for the active model, otherwise the model's default effort
    * (effort-capable) or 'on' (other thinking-capable models).
    */
   private draftFor(choice: ModelChoice): string {
@@ -193,7 +193,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
   }
 
   /** Draft coerced onto the model's segment list so rendering/selection never
-   * reference a level the model cannot actually select. */
+   * reference a effort the model cannot actually select. */
   private effectiveLevel(choice: ModelChoice): string {
     const draft = this.draftFor(choice);
     const segments = segmentsFor(choice.model);
@@ -212,7 +212,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       return;
     }
 
-    // Left/Right move the active thinking level within the model's segments.
+    // Left/Right move the active thinking effort within the model's segments.
     if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
       const selected = this.selectedChoice();
       if (selected !== undefined) {
@@ -373,7 +373,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
     const segments = segmentsFor(choice.model);
     const active = this.effectiveLevel(choice);
-    const rendered = segments.map((level) => segment(levelLabel(level), level === active));
+    const rendered = segments.map((effort) => segment(levelLabel(effort), effort === active));
     // Always-on models (including effort-capable ones) additionally surface an
     // unsupported Off so it's explicit that thinking cannot be disabled — same
     // shape as the legacy always-on control.

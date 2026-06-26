@@ -3,7 +3,7 @@ import type { Tool } from './tool';
 import type { TokenUsage } from './usage';
 
 /**
- * Thinking level passed to {@link ChatProvider.withThinking}.
+ * Thinking effort passed to {@link ChatProvider.withThinking}.
  *
  * `'off'` and `'on'` are the only reserved values: `'off'` disables thinking,
  * and `'on'` is the on-signal for boolean models (models that do not declare
@@ -137,7 +137,7 @@ export interface ChatProvider {
   readonly name: string;
   /** Model name passed to the upstream API (e.g. `"moonshot-v1-auto"`). */
   readonly modelName: string;
-  /** Current thinking level, or `null` if thinking is not configured. */
+  /** Current thinking effort, or `null` if thinking is not configured. */
   readonly thinkingEffort: ThinkingEffort | null;
   /**
    * Send a conversation to the LLM and return a streamed response.
@@ -153,8 +153,8 @@ export interface ChatProvider {
     history: Message[],
     options?: GenerateOptions,
   ): Promise<StreamedMessage>;
-  /** Return a shallow copy of this provider with the given thinking level. */
-  withThinking(level: ThinkingEffort): ChatProvider;
+  /** Return a shallow copy of this provider with the given thinking effort. */
+  withThinking(effort: ThinkingEffort): ChatProvider;
   /**
    * Return a shallow copy of this provider with the per-request completion
    * budget clamped to `maxCompletionTokens`. Optional because not every

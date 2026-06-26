@@ -654,7 +654,7 @@ export class PromptService
       this._recordDispatch(sid, 'setModel', payload, promptId, source);
     }
     if (patch.thinking !== undefined && patch.thinking !== shadow.thinking) {
-      const payload = { sessionId: sid, agentId, level: patch.thinking as PromptThinking };
+      const payload = { sessionId: sid, agentId, effort: patch.thinking as PromptThinking };
       await this.core.rpc.setThinking(payload);
       shadow.thinking = patch.thinking;
       this._recordDispatch(sid, 'setThinking', payload, promptId, source);

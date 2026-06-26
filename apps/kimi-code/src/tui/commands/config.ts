@@ -233,7 +233,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
   }
   if (!segments.includes(arg)) {
     host.showError(
-      `Unsupported thinking level "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
+      `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
     );
     return;
   }
@@ -252,13 +252,13 @@ function showEffortPicker(
     new EffortSelectorComponent({
       levels: segments,
       currentValue,
-      onSelect: (level) => {
+      onSelect: (effort) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, level, true);
+        void performModelSwitch(host, alias, effort, true);
       },
-      onSessionOnlySelect: (level) => {
+      onSessionOnlySelect: (effort) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, level, false);
+        void performModelSwitch(host, alias, effort, false);
       },
       onCancel: () => {
         host.restoreEditor();
@@ -386,7 +386,7 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
 async function performModelSwitch(
   host: SlashCommandHost,
   alias: string,
-  level: ThinkingEffort,
+  effort: ThinkingEffort,
   persist: boolean,
 ): Promise<void> {
   if (host.state.appState.streamingPhase !== 'idle') {
@@ -397,20 +397,20 @@ async function performModelSwitch(
   const prevModel = host.state.appState.model;
   const prevLevel = host.state.appState.thinkingEffort;
   const modelChanged = alias !== prevModel;
-  const levelChanged = level !== prevLevel;
+  const levelChanged = effort !== prevLevel;
   const runtimeChanged = modelChanged || levelChanged;
   const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
 
   const session = host.session;
   try {
     if (session === undefined && runtimeChanged) {
-      await host.authFlow.activateModelAfterLogin(alias, level);
+      await host.authFlow.activateModelAfterLogin(alias, effort);
     } else if (session !== undefined) {
       if (alias !== prevModel) {
         await session.setModel(alias);
       }
-      if (level !== prevLevel) {
-        await session.setThinking(level);
+      if (effort !== prevLevel) {
+        await session.setThinking(effort);
       }
     }
   } catch (error) {
@@ -419,20 +419,20 @@ async function performModelSwitch(
     return;
   }
 
-  host.setAppState({ model: alias, thinkingEffort: level });
+  host.setAppState({ model: alias, thinkingEffort: effort });
   if (session === undefined && runtimeChanged) {
     if (alias !== prevModel) {
       host.track('model_switch', { model: alias });
     }
-    if (level !== prevLevel) {
-      host.track('thinking_toggle', { level });
+    if (effort !== prevLevel) {
+      host.track('thinking_toggle', { effort });
     }
   }
 
   let persisted = false;
   if (persist) {
     try {
-      persisted = await persistModelSelection(host, alias, level);
+      persisted = await persistModelSelection(host, alias, effort);
     } catch (error) {
       const msg = formatErrorMessage(error);
       host.showError(`Switched to ${displayName}, but failed to save default: ${msg}`);
@@ -443,16 +443,16 @@ async function performModelSwitch(
   let status: string;
   if (modelChanged) {
     status = persist
-      ? `Switched to ${displayName} with thinking ${level}.`
-      : `Switched to ${displayName} with thinking ${level} for this session only.`;
+      ? `Switched to ${displayName} with thinking ${effort}.`
+      : `Switched to ${displayName} with thinking ${effort} for this session only.`;
   } else if (levelChanged) {
     status = persist
-      ? `Thinking set to ${level}.`
-      : `Thinking set to ${level} for this session only.`;
+      ? `Thinking set to ${effort}.`
+      : `Thinking set to ${effort} for this session only.`;
   } else if (persist && persisted) {
-    status = `Saved ${displayName} with thinking ${level} as default.`;
+    status = `Saved ${displayName} with thinking ${effort} as default.`;
   } else {
-    status = `Already using ${displayName} with thinking ${level}.`;
+    status = `Already using ${displayName} with thinking ${effort}.`;
   }
   host.showStatus(status, 'success');
 }
@@ -460,10 +460,10 @@ async function performModelSwitch(
 async function persistModelSelection(
   host: SlashCommandHost,
   alias: string,
-  level: ThinkingEffort,
+  effort: ThinkingEffort,
 ): Promise<boolean> {
   const config = await host.harness.getConfig({ reload: true });
-  const patch = thinkingEffortToConfig(level);
+  const patch = thinkingEffortToConfig(effort);
   if (
     config.defaultModel === alias &&
     config.thinking?.enabled === patch.enabled &&

@@ -79,8 +79,8 @@ function makeFakeSession(sessionId: string): FakeSessionHandle {
     setModel: async (model: string) => {
       setModelCalls.push(model);
     },
-    setThinking: async (level: string) => {
-      setThinkingCalls.push(level);
+    setThinking: async (effort: string) => {
+      setThinkingCalls.push(effort);
     },
   } as unknown as Session;
   return { session, planModeCalls, setPermissionCalls, setModelCalls, setThinkingCalls };

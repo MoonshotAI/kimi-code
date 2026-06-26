@@ -366,15 +366,15 @@ export class AcpSession {
    */
   async setThinking(enabled: boolean): Promise<void> {
     if (typeof this.session.setThinking === 'function') {
-      const level = enabled ? await this.thinkingOnEffort() : THINKING_OFF_LEVEL;
-      await this.session.setThinking(level);
+      const effort = enabled ? await this.thinkingOnEffort() : THINKING_OFF_EFFORT;
+      await this.session.setThinking(effort);
     }
     this.currentThinkingEnabledInternal = enabled;
     await this.emitConfigOptionUpdate();
   }
 
   /**
-   * The level to send when the ACP thinking toggle flips on: the current
+   * The effort to send when the ACP thinking toggle flips on: the current
    * model's declared default effort (or middle `support_efforts`), falling
    * back to `'on'` for boolean models or when the catalog is unavailable
    * (harness-less unit tests). The `always_thinking` constraint is enforced
@@ -1547,12 +1547,12 @@ function authRequiredFromUnknown(err: unknown): RequestError | undefined {
 }
 
 /**
- * Level string passed to {@link Session.setThinking} when the ACP `thinking`
- * toggle flips off. The on-state level is resolved per-model via
+ * Effort string passed to {@link Session.setThinking} when the ACP `thinking`
+ * toggle flips off. The on-state effort is resolved per-model via
  * {@link AcpSession.thinkingOnEffort} (declared default effort / middle
  * `support_efforts` / `'on'`), so only the off sentinel is a constant here.
  */
-const THINKING_OFF_LEVEL = 'off';
+const THINKING_OFF_EFFORT = 'off';
 
 /**
  * Identifier the agent-core session emits for the main (user-facing)

@@ -54,8 +54,8 @@ function formatModelStatus(options: StatusReportOptions): string {
   const model = options.status?.model ?? options.model;
   if (model.trim().length === 0) return 'not set';
 
-  const level = options.status?.thinkingEffort ?? options.thinkingEffort;
-  const thinking = level === 'off' ? 'off' : 'on';
+  const effort = options.status?.thinkingEffort ?? options.thinkingEffort;
+  const thinking = effort === 'off' ? 'off' : 'on';
   return `${displayModelName(model, options.availableModels)} (thinking ${thinking})`;
 }
 

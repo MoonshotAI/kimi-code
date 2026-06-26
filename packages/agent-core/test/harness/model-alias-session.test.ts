@@ -386,7 +386,7 @@ max_context_size = 1000000
     const resumeRecords: TelemetryContextRecord[] = [];
     const resumeRpc = await createTestRpc({ telemetry: recordingContextTelemetry(resumeRecords) });
     await resumeRpc.resumeSession({ sessionId: created.id });
-    await resumeRpc.setThinking({ sessionId: created.id, agentId: 'main', level: 'off' });
+    await resumeRpc.setThinking({ sessionId: created.id, agentId: 'main', effort: 'off' });
 
     expect(resumeRecords).toContainEqual({
       event: 'thinking_toggle',

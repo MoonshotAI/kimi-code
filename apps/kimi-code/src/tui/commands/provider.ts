@@ -253,15 +253,15 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
 async function setDefaultModel(
   host: SlashCommandHost,
   alias: string,
-  level: ThinkingEffort,
+  effort: ThinkingEffort,
 ): Promise<void> {
   await host.harness.setConfig({
     defaultModel: alias,
-    thinking: thinkingEffortToConfig(level),
+    thinking: thinkingEffortToConfig(effort),
   });
   await host.authFlow.refreshConfigAfterLogin();
   host.track('model_switch', { model: alias });
-  host.showStatus(`Default model set to ${alias} with thinking ${level}.`);
+  host.showStatus(`Default model set to ${alias} with thinking ${effort}.`);
 }
 
 async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise<boolean> {

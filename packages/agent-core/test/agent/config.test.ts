@@ -6,7 +6,7 @@ import { createCommandKaos, testAgent } from './harness/agent';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from './harness/snapshots';
 
 describe('Agent config', () => {
-  it('exposes provider, system prompt, thinking level, and model capability updates', async () => {
+  it('exposes provider, system prompt, thinking effort, and model capability updates', async () => {
     const ctx = testAgent();
     const initialProvider: ProviderConfig = {
       type: 'openai',

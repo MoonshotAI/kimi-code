@@ -14,13 +14,13 @@ import { levelLabel } from './model-selector';
 
 export interface EffortSelectorOptions {
   readonly title?: string;
-  /** Selectable thinking levels for the current model (e.g. ["off","low","high","max"]). */
+  /** Selectable thinking efforts for the current model (e.g. ["off","low","high","max"]). */
   readonly levels: readonly ThinkingEffort[];
-  /** Currently active level (highlighted). */
+  /** Currently active effort (highlighted). */
   readonly currentValue: ThinkingEffort;
-  readonly onSelect: (level: ThinkingEffort) => void;
+  readonly onSelect: (effort: ThinkingEffort) => void;
   /** When provided, Alt+S applies the choice to the current session only. */
-  readonly onSessionOnlySelect?: (level: ThinkingEffort) => void;
+  readonly onSessionOnlySelect?: (effort: ThinkingEffort) => void;
   readonly onCancel: () => void;
 }
 
@@ -74,13 +74,13 @@ export class EffortSelectorComponent extends Container implements Focusable {
 
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
-      currentTheme.boldFg('primary', ` ${this.opts.title ?? 'Select thinking level'}`),
+      currentTheme.boldFg('primary', ` ${this.opts.title ?? 'Select thinking effort'}`),
       currentTheme.fg('textMuted', ` ${hintParts.join(' · ')}`),
       '',
     ];
 
-    const segments = this.opts.levels.map((level, index) => {
-      const label = levelLabel(level);
+    const segments = this.opts.levels.map((effort, index) => {
+      const label = levelLabel(effort);
       return index === this.activeIndex
         ? currentTheme.boldFg('primary', `[ ${label} ]`)
         : currentTheme.fg('text', `  ${label}  `);

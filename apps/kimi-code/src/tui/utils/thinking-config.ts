@@ -1,18 +1,18 @@
 import type { ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
 
-/** Whether a thinking level represents "thinking enabled" (anything but 'off'). */
-export function isThinkingOn(level: ThinkingEffort): boolean {
-  return level !== 'off';
+/** Whether a thinking effort represents "thinking enabled" (anything but 'off'). */
+export function isThinkingOn(effort: ThinkingEffort): boolean {
+  return effort !== 'off';
 }
 
 /**
- * Project a thinking level to the `[thinking]` config patch persisted to
- * config.toml. `'off'` disables thinking; any other level enables it and
- * records the level as the global effort preference.
+ * Project a thinking effort to the `[thinking]` config patch persisted to
+ * config.toml. `'off'` disables thinking; any other effort enables it and
+ * records the effort as the global effort preference.
  */
-export function thinkingEffortToConfig(level: ThinkingEffort): {
+export function thinkingEffortToConfig(effort: ThinkingEffort): {
   enabled: boolean;
   effort?: string;
 } {
-  return level === 'off' ? { enabled: false } : { enabled: true, effort: level };
+  return effort === 'off' ? { enabled: false } : { enabled: true, effort: effort };
 }

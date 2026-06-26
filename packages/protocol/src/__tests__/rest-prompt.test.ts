@@ -85,7 +85,7 @@ describe('promptSubmissionSchema', () => {
     expect(promptSubmissionSchema.safeParse({} as unknown).success).toBe(false);
   });
 
-  it('rejects unknown thinking level', () => {
+  it('rejects unknown thinking effort', () => {
     expect(
       promptSubmissionSchema.safeParse({
         content: [{ type: 'text', text: 'hi' }],

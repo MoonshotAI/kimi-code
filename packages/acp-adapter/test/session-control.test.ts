@@ -104,8 +104,8 @@ function makeFakeSession(
     setModel: async (model: string) => {
       setModelCalls.push(model);
     },
-    setThinking: async (level: string) => {
-      setThinkingCalls.push(level);
+    setThinking: async (effort: string) => {
+      setThinkingCalls.push(effort);
     },
   } as unknown as Session;
   return { session, planModeCalls, setPermissionCalls, setModelCalls, setThinkingCalls };
@@ -286,7 +286,7 @@ describe('AcpServer session/unstable_setSessionModel', () => {
     });
 
     // SDK receives the bare model key for setModel and the model's default
-    // thinking level for setThinking — Phase 15 routes thinking through the
+    // thinking effort for setThinking — Phase 15 routes thinking through the
     // dedicated SDK channel instead of dropping the suffix on the floor. This
     // fixture declares no support_efforts, so the default level is 'on'.
     expect(handle.setModelCalls).toEqual(['kimi-v2-something']);

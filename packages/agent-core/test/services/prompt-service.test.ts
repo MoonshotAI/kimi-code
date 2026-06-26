@@ -1161,7 +1161,7 @@ describe('PromptService stateless controls — diff dispatch', () => {
     expect(impl._agentStateForTest(SID)?.model).toBe('kimi-code/k1');
   });
 
-  it('issues setThinking only when the body level differs from the shadow', async () => {
+  it('issues setThinking only when the body effort differs from the shadow', async () => {
     const { bridge, record } = makeBridge({ config: { thinkingEffort: 'off' } });
     const { bus, triggerSubscribers } = makeBus();
     const impl = newSvc(bridge, bus);
@@ -1185,7 +1185,7 @@ describe('PromptService stateless controls — diff dispatch', () => {
 
     await impl.submit(SID, mkBody({ thinking: 'high' }));
     expect(record.setThinkingCalls).toEqual([
-      { sessionId: SID, agentId: 'main', level: 'high' },
+      { sessionId: SID, agentId: 'main', effort: 'high' },
     ]);
     expect(impl._agentStateForTest(SID)?.thinking).toBe('high');
   });
@@ -1636,7 +1636,7 @@ describe('PromptService.applyAgentState (POST /sessions/{sid}/profile path)', ()
     const impl = newSvc(bridge, bus);
     await impl.applyAgentState(SID, { thinking: 'high' }, 'meta');
     expect(record.setThinkingCalls).toEqual([
-      { sessionId: SID, agentId: 'main', level: 'high' },
+      { sessionId: SID, agentId: 'main', effort: 'high' },
     ]);
     expect(impl._agentStateForTest(SID)?.thinking).toBe('high');
     const log = impl._dispatchLogForTest(SID);
