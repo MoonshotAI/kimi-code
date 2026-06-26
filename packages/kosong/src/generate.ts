@@ -111,7 +111,21 @@ export async function generate(
   // the stream.
   await throwIfAborted(options?.signal, stream);
 
+  // Idle timeout: if no chunk arrives within this period, abort the stream
+  // to prevent indefinite hangs when the connection stalls without closing.
+  const IDLE_TIMEOUT_MS = 60_000;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const resetIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      stream.return?.(undefined);
+    }, IDLE_TIMEOUT_MS);
+  };
+  resetIdleTimer();
+
+  try {
   for await (const part of stream) {
+    resetIdleTimer();
     await throwIfAborted(options?.signal, stream);
 
     // Notify raw part callback (deep copy to avoid aliasing mutations).
@@ -154,6 +168,9 @@ export async function generate(
       flushPart(message, pendingPart, toolCallIndexMap);
       pendingPart = part;
     }
+  }
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer);
   }
 
   await throwIfAborted(options?.signal, stream);
