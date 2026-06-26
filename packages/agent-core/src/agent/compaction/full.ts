@@ -261,9 +261,19 @@ export class FullCompaction {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
       const model = this.agent.config.model;
+      const maxOutputSize = this.agent.config.maxOutputSize;
+      const maxCtx = this.agent.config.modelCapabilities.max_context_tokens ?? 0;
+      // When maxOutputSize is not configured (the default), fall back to a
+      // conservative cap so compaction never requests the full context window
+      // as max_completion_tokens. 1/4 of the context window (capped at 8192)
+      // is generous for a summary while preventing overflow on providers that
+      // do not auto-clamp max_tokens server-side.
+      const compactionOutputCap =
+        maxOutputSize ?? (maxCtx > 0 ? Math.min(Math.floor(maxCtx / 4), 8192) : undefined);
       const provider = applyCompletionBudget({
         provider: this.agent.config.provider,
         budget: resolveCompletionBudget({
+          maxOutputSize: compactionOutputCap,
           reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
         }),
         capability: this.agent.config.modelCapabilities,
