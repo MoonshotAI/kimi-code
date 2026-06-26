@@ -94,6 +94,12 @@ export interface ServerStartOptions {
 
   webAssetsDir?: string;
 
+  /**
+   * Extra `Host` header values to allow, in addition to the default allowlist
+   * and `KIMI_CODE_ALLOWED_HOSTS`. A leading dot matches a domain suffix.
+   */
+  allowedHosts?: readonly string[];
+
   serviceOverrides?: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>;
 }
 
@@ -140,9 +146,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   // D3) — even on loopback — so behavior does not depend on how the server is
   // reached. The default-allow set keeps `app.inject` (`Host: localhost:80`)
   // and real `fetch` to `127.0.0.1:<port>` working.
+  const allowedHosts = [...parseAllowedHosts(process.env), ...(opts.allowedHosts ?? [])];
   const hostCheck = createHostCheck({
     boundHost: opts.host,
-    extra: parseAllowedHosts(process.env),
+    extra: allowedHosts,
     disable: isHostCheckDisabled(process.env),
   });
   const originHook = createOriginHook({ allowedOrigins: parseCorsOrigins(process.env) });
@@ -262,7 +269,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         ...opts.wsGatewayOptions,
         hostCheck: opts.wsGatewayOptions?.hostCheck ?? {
           boundHost: opts.host,
-          extra: parseAllowedHosts(process.env),
+          extra: allowedHosts,
           disable: isHostCheckDisabled(process.env),
         },
         allowedOrigins:

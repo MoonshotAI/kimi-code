@@ -33,7 +33,6 @@ import { errEnvelope } from '#/envelope';
 
 /** Daemon-reserved "invalid Host" code (not in the protocol `ErrorCode` enum). */
 const HOST_ERROR_CODE = 40301;
-const HOST_ERROR_MSG = 'Invalid Host header';
 
 export interface HostCheckOptions {
   /** The host the server bound to; always allowed (port stripped both sides). */
@@ -104,6 +103,13 @@ export function stripPort(host: string): string {
   return host.toLowerCase();
 }
 
+export function formatHostErrorMessage(host: string | undefined): string {
+  const normalizedHost = host === undefined || host.length === 0 ? undefined : stripPort(host);
+  const hostLabel = normalizedHost ?? '<missing>';
+  const hostArg = normalizedHost ?? '<host>';
+  return `Invalid Host header: ${hostLabel}; allow this host with KIMI_CODE_ALLOWED_HOSTS=${hostArg} or 'kimi server run --allowed-host ${hostArg}'.`;
+}
+
 /**
  * Decide whether a `Host` value is allowed under the given options.
  *
@@ -159,7 +165,7 @@ export function createHostCheck(opts: HostCheckOptions): HostCheck {
     reply: FastifyReply,
   ): Promise<FastifyReply | void> => {
     if (!isAllowed(req.headers.host)) {
-      return reply.code(403).send(errEnvelope(HOST_ERROR_CODE, HOST_ERROR_MSG, req.id));
+      return reply.code(403).send(errEnvelope(HOST_ERROR_CODE, formatHostErrorMessage(req.headers.host), req.id));
     }
   };
   return { onRequest, isAllowed };

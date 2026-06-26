@@ -116,6 +116,10 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
       `Bind host. Omit to bind ${DEFAULT_SERVER_HOST} (this machine only); pass --host to bind ${DEFAULT_LAN_HOST} (all interfaces), or --host <host> for a specific host. The bearer token is printed at startup.`,
     )
     .option(
+      '--allowed-host <host...>',
+      'Extra Host header value to allow through the DNS-rebinding check. Repeat or comma-separate; a leading dot matches a domain suffix (e.g. .example.com).',
+    )
+    .option(
       '--insecure-no-tls',
       'Allow a non-loopback bind without a TLS-terminating reverse proxy. Defaults to true; only relevant for non-loopback binds.',
       true,
@@ -247,6 +251,7 @@ export async function startServerBackground(
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
     allowRemoteTerminals: options.allowRemoteTerminals,
+    allowedHosts: options.allowedHosts,
     idleGraceMs: options.idleGraceMs,
   });
 }
@@ -325,6 +330,7 @@ async function runServerInProcess(
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
     allowRemoteTerminals: options.allowRemoteTerminals,
+    allowedHosts: options.allowedHosts,
     webAssetsDir: serverWebAssetsDir(),
     coreProcessOptions: {
       identity: createKimiCodeHostIdentity(version),

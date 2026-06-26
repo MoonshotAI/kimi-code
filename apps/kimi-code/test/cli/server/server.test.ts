@@ -708,6 +708,36 @@ describe('default bind (M6.3)', () => {
   });
 });
 
+describe('--allowed-host threading', () => {
+  it('parses comma-separated --allowed-host values', async () => {
+    const { parseAllowedHostArgs } = await import('#/cli/sub/server/shared');
+    expect(parseAllowedHostArgs(['.example.com, app.example.com'])).toEqual([
+      '.example.com',
+      'app.example.com',
+    ]);
+  });
+
+  it('threads --allowed-host to the background daemon options', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let parsed: unknown;
+
+    await handleRunCommand(
+      { port: '58627', allowedHost: ['.example.com'] },
+      {
+        startServerBackground: async (options) => {
+          parsed = options;
+          return { origin: 'http://127.0.0.1:58627' };
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(parsed).toMatchObject({ allowedHosts: ['.example.com'] });
+  });
+});
+
 describe('lockConnectHost (M6.2 connect side)', () => {
   it('maps a 0.0.0.0 bind to 127.0.0.1 so the CLI connects over loopback', async () => {
     const { lockConnectHost } = await import('#/cli/sub/server/daemon');
@@ -983,6 +1013,19 @@ describe('spawnDaemonChild', () => {
 
     const [, args] = spawnMock.mock.calls[0]!;
     expect(args).toEqual(expect.arrayContaining(['--insecure-no-tls']));
+  });
+
+  it('passes --allowed-host through to the daemon child args', async () => {
+    const { spawn } = await import('node:child_process');
+    const spawnMock = vi.mocked(spawn);
+    spawnMock.mockClear();
+    spawnMock.mockReturnValue({ unref: vi.fn(), once: vi.fn() } as unknown as ChildProcess);
+
+    const { spawnDaemonChild } = await import('#/cli/sub/server/daemon');
+    spawnDaemonChild({ port: 58627, logLevel: 'info', allowedHosts: ['.example.com'] });
+
+    const [, args] = spawnMock.mock.calls[0]!;
+    expect(args).toEqual(expect.arrayContaining(['--allowed-host', '.example.com']));
   });
 });
 
