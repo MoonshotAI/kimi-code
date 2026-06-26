@@ -93,20 +93,28 @@ export async function handleMainCommand(
     }
   }
 
+  let promptSessionCreated = false;
   try {
     if (validated.uiMode === 'print') {
-      await runPrompt(validated.options, version, { worktree });
+      await runPrompt(validated.options, version, {
+        worktree,
+        onSessionCreated: () => {
+          promptSessionCreated = true;
+        },
+      });
       return { headlessCompleted: true };
     }
 
     await runShell(validated.options, version, { worktree });
     return { headlessCompleted: false };
   } catch (error) {
-    // If the shell runner failed during startup after we created a worktree,
-    // the worktree is still empty (no session ran), so clean it up to avoid
-    // leaks. Print mode intentionally leaves the worktree inspectable even on
-    // failure, so we do not clean it up here.
-    if (validated.uiMode !== 'print') {
+    // Clean up a worktree that never carried a session so failed startups do
+    // not leak empty worktrees. The shell runner only fails before a session
+    // has content, so any failure there is safe to clean up. Print mode is
+    // different: once a prompt session exists it is documented to leave the
+    // worktree inspectable, so only clean up when the failure happened before
+    // session creation.
+    if (validated.uiMode !== 'print' || !promptSessionCreated) {
       cleanupEmptyWorktree(worktree);
     }
     throw error;

@@ -87,6 +87,12 @@ export interface PromptRunIO {
   readonly process?: PromptProcess;
   /** The git worktree this prompt session runs in, when launched with --worktree. */
   readonly worktree?: WorktreeRuntime;
+  /**
+   * Called once the prompt session has been created or resumed. Lets the caller
+   * distinguish a startup failure (before any session exists) from a later turn
+   * failure, e.g. to decide whether an empty worktree should be cleaned up.
+   */
+  readonly onSessionCreated?: () => void;
 }
 
 export interface PromptProcess {
@@ -190,6 +196,8 @@ export async function runPrompt(
         },
       );
     restorePromptSessionPermission = restorePermission;
+    // A session now exists; a later turn failure must not delete its worktree.
+    io.onSessionCreated?.();
 
     initializeCliTelemetry({
       harness,

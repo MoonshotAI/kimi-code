@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, mkdtempSync, realpathSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -142,7 +142,7 @@ describe('createWorktree', () => {
     expect(status.trim()).toBe('');
   });
 
-  it('adds .kimi/ to .git/info/exclude so the parent checkout stays clean', () => {
+  it('adds .kimi/worktrees/ to .git/info/exclude so the parent checkout stays clean', () => {
     const dir = makeTempDir('kimi-exclude-wt-');
     initRepo(dir);
 
@@ -150,12 +150,35 @@ describe('createWorktree', () => {
 
     const excludePath = join(dir, '.git', 'info', 'exclude');
     expect(existsSync(excludePath)).toBe(true);
-    const exclude = execSync('git check-ignore -v .kimi/', { cwd: dir, encoding: 'utf8', stdio: 'pipe' });
+    const exclude = execSync('git check-ignore -v .kimi/worktrees/', {
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
     expect(exclude).toContain('.git/info/exclude');
-    expect(exclude).toContain('.kimi/');
+    expect(exclude).toContain('.kimi/worktrees/');
   });
 
-  it('excludes .kimi/ via the common git dir when repoRoot is a linked worktree', () => {
+  it('leaves unrelated .kimi/ content visible to git status', () => {
+    const dir = makeTempDir('kimi-exclude-unrelated-');
+    initRepo(dir);
+
+    createWorktree(dir, 'feature-x');
+
+    // Another tool's untracked file under .kimi/ must NOT be hidden: the
+    // exclude marker is scoped to the worktree storage dir, not all of .kimi/.
+    // (-uall reports files individually rather than collapsing the dir.)
+    writeFileSync(join(dir, '.kimi', 'other-tool-data'), 'keep me visible\n');
+    const status = execSync('git status --porcelain -uall', {
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    expect(status).toContain('.kimi/other-tool-data');
+    expect(status).not.toContain('.kimi/worktrees/');
+  });
+
+  it('excludes .kimi/worktrees/ via the common git dir when repoRoot is a linked worktree', () => {
     const dir = makeTempDir('kimi-exclude-mainwt-');
     initRepo(dir);
     // From a linked worktree, `git rev-parse --git-dir` points at
@@ -165,15 +188,16 @@ describe('createWorktree', () => {
 
     createWorktree(linked, 'feature-x');
 
-    // check-ignore from inside the linked worktree only matches if .kimi/ was
-    // written to the common info/exclude (not the per-worktree git dir).
-    const exclude = execSync('git check-ignore -v .kimi/', {
+    // check-ignore from inside the linked worktree only matches if
+    // .kimi/worktrees/ was written to the common info/exclude (not the
+    // per-worktree git dir).
+    const exclude = execSync('git check-ignore -v .kimi/worktrees/', {
       cwd: linked,
       encoding: 'utf8',
       stdio: 'pipe',
     });
     expect(exclude).toContain('info/exclude');
-    expect(exclude).toContain('.kimi/');
+    expect(exclude).toContain('.kimi/worktrees/');
   });
 });
 

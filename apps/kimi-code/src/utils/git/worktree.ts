@@ -172,14 +172,17 @@ function ensureWorktreeStorageIgnored(worktreesDir: string): void {
 }
 
 /**
- * Ensures the parent `.kimi/` directory does not dirty the repository checkout.
+ * Ensures the worktree storage dir does not dirty the repository checkout.
  *
- * We add `.kimi/` to `.git/info/exclude` (local to this clone) rather than
- * modifying any tracked `.gitignore` file. This keeps the worktree storage
- * entirely out of `git status` without polluting the repo with untracked
- * ignore rules.
+ * We add `.kimi/worktrees/` to `.git/info/exclude` (local to this clone) rather
+ * than modifying any tracked `.gitignore` file. This keeps the worktree storage
+ * out of `git status` without polluting the repo with untracked ignore rules.
+ *
+ * The marker is scoped to `.kimi/worktrees/` rather than the whole `.kimi/`
+ * directory so unrelated untracked content another tool may keep under `.kimi/`
+ * still shows up in `git status` instead of being silently hidden.
  */
-function ensureKimiDirIgnored(repoRoot: string): void {
+function ensureWorktreeStorageExcluded(repoRoot: string): void {
   // Resolve the exclude file via `--git-path` so that when `repoRoot` is itself
   // a linked worktree we target the common git dir's `info/exclude` (where Git
   // actually reads it from) rather than `.git/worktrees/<name>/info/exclude`,
@@ -189,7 +192,7 @@ function ensureKimiDirIgnored(repoRoot: string): void {
     return;
   }
   const excludePath = resolve(repoRoot, excludePathResult.stdout);
-  const marker = '.kimi/';
+  const marker = `${WORKTREE_SUBDIR}/`;
 
   let existing = '';
   if (existsSync(excludePath)) {
@@ -238,7 +241,7 @@ export function createWorktree(repoRoot: string, name?: string): string {
   // Ensure parent directory exists; git does not create nested parent dirs.
   mkdirSync(worktreesDir, { recursive: true });
   ensureWorktreeStorageIgnored(worktreesDir);
-  ensureKimiDirIgnored(repoRoot);
+  ensureWorktreeStorageExcluded(repoRoot);
 
   const { stderr, status } = runGit(repoRoot, ['worktree', 'add', '--detach', worktreePath]);
   if (status !== 0) {
