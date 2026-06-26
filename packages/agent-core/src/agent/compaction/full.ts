@@ -264,6 +264,7 @@ export class FullCompaction {
       const provider = applyCompletionBudget({
         provider: this.agent.config.provider,
         budget: resolveCompletionBudget({
+          maxOutputSize: this.agent.config.maxOutputSize,
           reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
         }),
         capability: this.agent.config.modelCapabilities,
