@@ -868,7 +868,7 @@ async function runTelemetryCrashScript(body: string): Promise<number> {
   );
 
   return new Promise((resolve, reject) => {
-    const child = spawn(tsxCli, [scriptPath], {
+    const child = spawn(process.execPath, [tsxCli, scriptPath], {
       cwd: join(testDir, '../../..'),
       stdio: ['ignore', 'ignore', 'pipe'],
     });

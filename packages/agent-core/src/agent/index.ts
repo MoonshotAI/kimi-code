@@ -282,6 +282,8 @@ export class Agent {
       prompt: (payload) => {
         this.turn.prompt(payload.input);
       },
+      runShellCommand: (payload) => this.tools.runShellCommand(payload.command, payload.commandId),
+      cancelShellCommand: (payload) => this.tools.cancelShellCommand(payload.commandId),
       steer: (payload) => {
         this.telemetry.track('input_steer', { parts: payload.input.length });
         this.turn.steer(payload.input);

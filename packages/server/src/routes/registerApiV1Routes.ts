@@ -46,6 +46,17 @@ interface ApiV1RouteHost {
 export interface RegisterApiV1RoutesOptions {
   readonly serverVersion: string;
   readonly debugEndpoints?: boolean;
+  /**
+   * Mount `POST /api/v1/shutdown`. Defaults to true (backward compatible);
+   * `start.ts` sets it false on a public bind unless `--allow-remote-shutdown`.
+   */
+  readonly enableShutdown?: boolean;
+  /**
+   * Mount the PTY `/api/v1/terminals/*` routes. Defaults to true (backward
+   * compatible); `start.ts` sets it false on a public bind unless
+   * `--allow-remote-terminals`.
+   */
+  readonly enableTerminals?: boolean;
 }
 
 export async function registerApiV1Routes(
@@ -76,10 +87,12 @@ export async function registerApiV1Routes(
       ix,
     );
     registerSessionsRoutes(apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0], ix);
-    registerShutdownRoutes(
-      apiV1 as unknown as Parameters<typeof registerShutdownRoutes>[0],
-      ix,
-    );
+    if (opts.enableShutdown !== false) {
+      registerShutdownRoutes(
+        apiV1 as unknown as Parameters<typeof registerShutdownRoutes>[0],
+        ix,
+      );
+    }
     registerSnapshotRoutes(apiV1 as unknown as Parameters<typeof registerSnapshotRoutes>[0], ix);
     registerMessagesRoutes(apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0], ix);
     registerPromptsRoutes(apiV1 as unknown as Parameters<typeof registerPromptsRoutes>[0], ix);
@@ -94,10 +107,12 @@ export async function registerApiV1Routes(
     registerToolsRoutes(apiV1 as unknown as Parameters<typeof registerToolsRoutes>[0], ix);
     registerSkillsRoutes(apiV1 as unknown as Parameters<typeof registerSkillsRoutes>[0], ix);
     registerTasksRoutes(apiV1 as unknown as Parameters<typeof registerTasksRoutes>[0], ix);
-    registerTerminalsRoutes(
-      apiV1 as unknown as Parameters<typeof registerTerminalsRoutes>[0],
-      ix,
-    );
+    if (opts.enableTerminals !== false) {
+      registerTerminalsRoutes(
+        apiV1 as unknown as Parameters<typeof registerTerminalsRoutes>[0],
+        ix,
+      );
+    }
     registerFsRoutes(apiV1 as unknown as Parameters<typeof registerFsRoutes>[0], ix);
     registerFilesRoutes(apiV1 as unknown as Parameters<typeof registerFilesRoutes>[0], ix);
     registerWorkspacesRoutes(

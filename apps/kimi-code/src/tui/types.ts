@@ -31,6 +31,8 @@ export interface AppState {
   sessionId: string;
   permissionMode: PermissionMode;
   planMode: boolean;
+  /** 'bash' when the editor is in `!` shell-command mode. */
+  inputMode: 'prompt' | 'bash';
   swarmMode: boolean;
   thinking: boolean;
   contextUsage: number;
@@ -38,7 +40,7 @@ export interface AppState {
   maxContextTokens: number;
   isCompacting: boolean;
   isReplaying: boolean;
-  streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing';
+  streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing' | 'shell';
   streamingStartTime: number;
   theme: ThemeName;
   version: string;
@@ -151,6 +153,8 @@ export interface TranscriptEntry {
   content: string;
   color?: ColorToken;
   detail?: string;
+  /** Optional override for the leading bullet of a 'user' message entry. An empty string suppresses the bullet entirely (used by shell-command echoes so `$` replaces the sparkles marker). */
+  bullet?: string;
   toolCallData?: ToolCallBlockData;
   backgroundAgentStatus?: BackgroundAgentStatusData;
   compactionData?: CompactionTranscriptData;
@@ -181,6 +185,9 @@ export interface QueuedMessage {
   readonly agentId?: string;
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
+  /** `bash` for a `!` shell command queued while another command is running;
+   *  undefined (=`prompt`) for a normal message. */
+  readonly mode?: 'prompt' | 'bash';
 }
 
 export const INITIAL_LIVE_PANE: LivePaneState = {

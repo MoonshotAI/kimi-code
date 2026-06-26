@@ -47,6 +47,7 @@ import {
   type LockContents,
   type RunningServer,
 } from '../src';
+import { authHeaders, fixedTokenAuth } from './helpers/serverHarness';
 
 let tmpDir: string;
 let lockPath: string;
@@ -123,6 +124,7 @@ function addrInUse(): NodeJS.ErrnoException {
 
 async function spawn(): Promise<RunningServer> {
   const r = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -171,6 +173,7 @@ describe('startServer — lock + healthz smoke', () => {
     const thirdPartyLockPath = join(tmpDir, 'lock-third-party');
     try {
       const r = await startServer({
+        serviceOverrides: [fixedTokenAuth()],
         host: '127.0.0.1',
         port,
         lockPath: thirdPartyLockPath,
@@ -179,10 +182,13 @@ describe('startServer — lock + healthz smoke', () => {
       });
       running.push(r);
 
-      // Bound to the next port, and the lock advertises it so status/kill/ps work.
-      expect(r.address).toBe(`http://127.0.0.1:${String(next)}`);
+      // Bound to the next available port (>= next); the lock advertises it so
+      // status/kill/ps work. On Windows a recently-closed probe port can linger
+      // in TIME_WAIT, so the retry may land on port+2 instead of port+1.
+      const boundPort = Number(new URL(r.address).port);
+      expect(boundPort).toBeGreaterThanOrEqual(next);
       const stored = JSON.parse(readFileSync(thirdPartyLockPath, 'utf8')) as LockContents;
-      expect(stored.port).toBe(next);
+      expect(stored.port).toBe(boundPort);
     } finally {
       await closeNetServer(occupant);
     }
@@ -303,6 +309,7 @@ describe('startServer — web assets', () => {
     writeFileSync(join(assetsDir, 'app.js'), 'console.log("kimi web");', 'utf8');
 
     const r = await startServer({
+      serviceOverrides: [fixedTokenAuth()],
       host: '127.0.0.1',
       port: 0,
       lockPath,
@@ -325,7 +332,7 @@ describe('startServer — web assets', () => {
     const health = await fetch(`${r.address}/api/v1/healthz`);
     await expect(health.json()).resolves.toMatchObject({ code: 0 });
 
-    const openApi = await fetch(`${r.address}/openapi.json`);
+    const openApi = await fetch(`${r.address}/openapi.json`, { headers: authHeaders() });
     expect(openApi.status).toBe(200);
     expect(openApi.headers.get('content-type')).toContain('application/json');
     await expect(openApi.json()).resolves.toMatchObject({
@@ -338,7 +345,7 @@ describe('startServer — web assets', () => {
       },
     });
 
-    const asyncApi = await fetch(`${r.address}/asyncapi.json`);
+    const asyncApi = await fetch(`${r.address}/asyncapi.json`, { headers: authHeaders() });
     expect(asyncApi.status).toBe(200);
     expect(asyncApi.headers.get('content-type')).toContain('application/json');
     await expect(asyncApi.json()).resolves.toMatchObject({
@@ -362,6 +369,7 @@ describe('startServer — web assets', () => {
 
   it('does not expose the Swagger UI while keeping /openapi.json available', async () => {
     const r = await startServer({
+      serviceOverrides: [fixedTokenAuth()],
       host: '127.0.0.1',
       port: 0,
       lockPath,
@@ -370,7 +378,7 @@ describe('startServer — web assets', () => {
     });
     running.push(r);
 
-    const openApi = await fetch(`${r.address}/openapi.json`);
+    const openApi = await fetch(`${r.address}/openapi.json`, { headers: authHeaders() });
     expect(openApi.status).toBe(200);
 
     const res = await fetch(`${r.address}/documentation`);
@@ -433,11 +441,14 @@ describe('POST /api/v1/shutdown', () => {
       coreProcessOptions: { homeDir: bridgeHome },
       // Override the real shutdown service so the route does not exit the
       // test runner via `process.exit(0)`.
-      serviceOverrides: [[IServerShutdownService, fake] as const],
+      serviceOverrides: [fixedTokenAuth(), [IServerShutdownService, fake] as const],
     });
     running.push(r);
 
-    const res = await fetch(`${r.address}/api/v1/shutdown`, { method: 'POST' });
+    const res = await fetch(`${r.address}/api/v1/shutdown`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body['code']).toBe(0);

@@ -174,7 +174,7 @@ describe('WSBroadcastService (WS transport pump)', () => {
   });
 
   afterEach(async () => {
-    await rm(homeDir, { recursive: true, force: true });
+    await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   it('publishes event with seq=1, broadcasts to subscribers, advances seq monotonically per session', async () => {
@@ -318,6 +318,7 @@ describe('WSBroadcastService (WS transport pump)', () => {
     expect(replay.events.map((e) => e.seq)).toEqual([3, 4, 5]);
     expect(replay.currentSeq).toBe(5);
     expect(replay.epoch).toMatch(/^ep_/);
+    await broadcast._drainForTest('sid_test');
     broadcast.dispose();
     bus.dispose();
   });

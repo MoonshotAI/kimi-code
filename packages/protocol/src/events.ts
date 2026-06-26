@@ -52,6 +52,14 @@ export interface InjectionOrigin {
   readonly variant: string;
 }
 
+export interface ShellCommandOrigin {
+  readonly kind: 'shell_command';
+  readonly phase: 'input' | 'output';
+  /** Only present on `phase: 'output'` — whether the command failed, so replay
+   *  can colour stderr red only for actual failures (not warnings). */
+  readonly isError?: boolean;
+}
+
 export interface CompactionSummaryOrigin {
   readonly kind: 'compaction_summary';
 }
@@ -105,6 +113,7 @@ export type PromptOrigin =
   | UserPromptOrigin
   | SkillActivationOrigin
   | InjectionOrigin
+  | ShellCommandOrigin
   | CompactionSummaryOrigin
   | SystemTriggerOrigin
   | BackgroundTaskOrigin
@@ -474,6 +483,28 @@ export interface ToolProgressEvent {
   readonly update: ToolUpdate;
 }
 
+/**
+ * Live stdout/stderr chunk from a user-initiated `!` shell command. Transient
+ * (never persisted, never replayed) — the final output is still recorded once
+ * via `context.append_message` on completion. `commandId` lets the TUI route
+ * chunks to the matching live entry and drop stale events from a prior run.
+ */
+export interface ShellOutputEvent {
+  readonly type: 'shell.output';
+  readonly commandId: string;
+  readonly update: ToolUpdate;
+}
+
+/**
+ * Fired once when a `!` shell command's foreground process task is registered,
+ * carrying the task id so the client can detach (ctrl+b) it. Transient.
+ */
+export interface ShellStartedEvent {
+  readonly type: 'shell.started';
+  readonly commandId: string;
+  readonly taskId: string;
+}
+
 export interface ToolResultEvent {
   readonly type: 'tool.result';
   readonly turnId: number;
@@ -611,6 +642,8 @@ export type AgentEvent =
   | ToolCallDeltaEvent
   | ToolCallStartedEvent
   | ToolProgressEvent
+  | ShellOutputEvent
+  | ShellStartedEvent
   | ToolResultEvent
   | ToolListUpdatedEvent
   | McpServerStatusEvent
@@ -676,6 +709,12 @@ export const injectionOriginSchema = z.object({
   variant: z.string(),
 }) satisfies z.ZodType<InjectionOrigin>;
 
+export const shellCommandOriginSchema = z.object({
+  kind: z.literal('shell_command'),
+  phase: z.enum(['input', 'output']),
+  isError: z.boolean().optional(),
+}) satisfies z.ZodType<ShellCommandOrigin>;
+
 export const compactionSummaryOriginSchema = z.object({
   kind: z.literal('compaction_summary'),
 }) satisfies z.ZodType<CompactionSummaryOrigin>;
@@ -730,6 +769,7 @@ export const promptOriginSchema = z.discriminatedUnion('kind', [
   userPromptOriginSchema,
   skillActivationOriginSchema,
   injectionOriginSchema,
+  shellCommandOriginSchema,
   compactionSummaryOriginSchema,
   systemTriggerOriginSchema,
   backgroundTaskOriginSchema,
@@ -1101,6 +1141,18 @@ export const toolProgressEventSchema = z.object({
   update: toolUpdateSchema,
 }) satisfies z.ZodType<ToolProgressEvent>;
 
+export const shellOutputEventSchema = z.object({
+  type: z.literal('shell.output'),
+  commandId: z.string(),
+  update: toolUpdateSchema,
+}) satisfies z.ZodType<ShellOutputEvent>;
+
+export const shellStartedEventSchema = z.object({
+  type: z.literal('shell.started'),
+  commandId: z.string(),
+  taskId: z.string(),
+}) satisfies z.ZodType<ShellStartedEvent>;
+
 export const toolResultEventSchema = z.object({
   type: z.literal('tool.result'),
   turnId: z.number(),
@@ -1241,6 +1293,8 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   toolCallDeltaEventSchema,
   toolCallStartedEventSchema,
   toolProgressEventSchema,
+  shellOutputEventSchema,
+  shellStartedEventSchema,
   toolResultEventSchema,
   toolListUpdatedEventSchema,
   mcpServerStatusEventSchema,
@@ -1283,6 +1337,8 @@ export const VOLATILE_EVENT_TYPES = [
   'thinking.delta',
   'tool.call.delta',
   'tool.progress',
+  'shell.output',
+  'shell.started',
   'agent.status.updated',
 ] as const satisfies readonly AgentEvent['type'][];
 

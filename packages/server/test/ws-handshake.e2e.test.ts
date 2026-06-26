@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { IConnectionRegistry, IWSGateway, startServer, type RunningServer } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 import { rawDataToString } from '../src/ws/rawData';
 
 interface TelemetryRecord {
@@ -84,6 +85,7 @@ afterEach(async () => {
 
 async function spawn(): Promise<RunningServer> {
   const r = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -122,7 +124,7 @@ interface Conn {
 
 function openConn(url: string): Promise<Conn> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, ['kimi-code.bearer.test-token']);
     const queue: WsFrame[] = [];
     const waiters: Array<(frame: WsFrame) => void> = [];
     let closedResolve: (v: { code: number; reason: string }) => void;
@@ -284,6 +286,7 @@ describe('WS gateway connection-count observer', () => {
   it('reports size 1 after a connect and size 0 after the last disconnect', async () => {
     const counts: number[] = [];
     const r = await startServer({
+      serviceOverrides: [fixedTokenAuth()],
       host: '127.0.0.1',
       port: 0,
       lockPath,
@@ -313,6 +316,7 @@ describe('WS gateway connection-count observer', () => {
   it('tracks multiple concurrent connections independently', async () => {
     const counts: number[] = [];
     const r = await startServer({
+      serviceOverrides: [fixedTokenAuth()],
       host: '127.0.0.1',
       port: 0,
       lockPath,
@@ -350,6 +354,7 @@ describe('WS gateway telemetry (ws_connected / ws_disconnected)', () => {
   it('emits ws_connected on connect and ws_disconnected on close', async () => {
     const records: TelemetryRecord[] = [];
     const r = await startServer({
+      serviceOverrides: [fixedTokenAuth()],
       host: '127.0.0.1',
       port: 0,
       lockPath,

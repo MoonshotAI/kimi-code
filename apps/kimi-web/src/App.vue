@@ -8,6 +8,7 @@ import ConversationPane from './components/chat/ConversationPane.vue';
 import FilePreview from './components/FilePreview.vue';
 import ThinkingPanel from './components/chat/ThinkingPanel.vue';
 import AgentDetailPanel from './components/chat/AgentDetailPanel.vue';
+import ToolDiffPanel from './components/chat/ToolDiffPanel.vue';
 import SideChatPanel from './components/chat/SideChatPanel.vue';
 import DiffView from './components/chat/DiffView.vue';
 import ModelPicker from './components/settings/ModelPicker.vue';
@@ -33,7 +34,15 @@ import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
+import ServerAuthDialog from './components/ServerAuthDialog.vue';
+import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
+
+// Hydrate the server-transport credential (fragment token or sessionStorage)
+// BEFORE the client connects, so the first REST/WS calls already carry it.
+const hasServerCredential = initServerAuth();
+const showServerAuth = ref(!hasServerCredential);
+let offAuthRequired: (() => void) | null = null;
 
 const client = useKimiWebClient();
 provide('resolveImage', client.resolveImageUrl);
@@ -98,10 +107,17 @@ onMounted(() => {
   // Capture-phase so Escape closes the side detail layer BEFORE the
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
+  offAuthRequired = onAuthRequired(() => {
+    showServerAuth.value = true;
+  });
 });
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
+  if (offAuthRequired !== null) {
+    offAuthRequired();
+    offAuthRequired = null;
+  }
 });
 
 function onGlobalKeydown(e: KeyboardEvent): void {
@@ -180,6 +196,9 @@ const {
   agentPanelMember,
   openAgentPanel,
   closeAgentPanel,
+  toolDiffTarget,
+  openToolDiff,
+  closeToolDiff,
   detailDiffMode,
   detailDiffPath,
   openDiffDetail,
@@ -504,6 +523,7 @@ function openPr(url: string): void {
 
 <template>
   <div class="app-shell">
+    <ServerAuthDialog v-if="showServerAuth" />
     <section v-if="showAuthGate" class="auth-page">
       <div class="auth-page-inner">
         <svg ref="authLogoRef" class="auth-page-logo ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @mousedown.prevent @click="blinkAuthLogo">
@@ -562,6 +582,8 @@ function openPr(url: string): void {
         @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
         @delete-workspace="(id) => client.deleteWorkspace(id)"
         @reorder-workspaces="client.reorderWorkspaces($event)"
+        @load-more-sessions="(id) => void client.loadMoreSessions(id)"
+        @load-all-sessions="void client.loadAllSessions()"
         @select-workspaces="handleSelectWorkspaces"
         @open-settings="showSettings = true"
         @collapse="toggleSidebarCollapse"
@@ -682,6 +704,7 @@ function openPr(url: string): void {
       @open-thinking="openThinkingPanel($event)"
       @open-compaction="openCompactionPanel($event)"
       @open-agent="openAgentPanel($event)"
+      @open-tool-diff="openToolDiff($event)"
       @edit-message="handleEditMessage"
     />
 
@@ -752,6 +775,11 @@ function openPr(url: string): void {
         @open="selectDiffFile"
         @back="detailDiffMode = 'list'; detailDiffPath = null; client.clearFileDiff()"
         @close="closeDiffDetail"
+      />
+      <ToolDiffPanel
+        v-else-if="detailTarget === 'toolDiff' && toolDiffTarget"
+        :target="toolDiffTarget"
+        @close="closeToolDiff"
       />
       <FilePreview
         v-else-if="detailTarget === 'file'"
@@ -899,6 +927,7 @@ function openPr(url: string): void {
       @rename="(id, title) => client.renameSession(id, title)"
       @archive="(id) => client.archiveSession(id)"
       @delete-workspace="(id) => client.deleteWorkspace(id)"
+      @load-more="(id) => void client.loadMoreSessions(id)"
     />
 
     <!-- Mobile settings bottom-sheet: session controls + app prefs + auth -->

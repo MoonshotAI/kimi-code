@@ -138,7 +138,7 @@ describe('createPerIdJsonStore', () => {
     await expect(store.remove('aaaa')).resolves.toBeUndefined();
   });
 
-  it('write creates the subdir with mode 0700', async () => {
+  it.skipIf(process.platform === 'win32')('write creates the subdir with mode 0700', async () => {
     const store = newStore();
     await store.write('aaaa', { id: 'aaaa', payload: 'x' });
     const st = await stat(join(rootDir, 'things'));

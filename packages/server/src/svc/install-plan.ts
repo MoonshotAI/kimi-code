@@ -49,6 +49,8 @@ export function buildInstallPlan(input: BuildInstallPlanInput): InstallPlan {
       String(input.port),
       '--log-level',
       input.logLevel,
+      '--host',
+      SUPERVISED_SERVER_HOST,
     ],
     logPath: input.logPath,
     installedAt: input.nowIso ?? new Date().toISOString(),
