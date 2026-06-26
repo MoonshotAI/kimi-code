@@ -345,7 +345,7 @@ describe('GrepTool', () => {
 
     expect(toolContentString(contentResult)).toBe('/extra/pkg/b.ts:10:hit');
     expect(toolContentString(countResult)).toBe(
-      ['/extra/pkg/b.ts:2', 'Found 2 total occurrences across 1 file.'].join('\n'),
+      ['Found 2 total occurrences across 1 file.', '/extra/pkg/b.ts:2'].join('\n'),
     );
   });
 
@@ -1220,7 +1220,7 @@ describe('GrepTool', () => {
     const result = await executeTool(tool, context({ pattern: 'hit', output_mode: 'count_matches' }));
 
     expect(toolContentString(result)).toBe(
-      ['src/a.ts:3', 'src/b.ts:7', 'Found 10 total occurrences across 2 files.'].join('\n'),
+      ['Found 10 total occurrences across 2 files.', 'src/a.ts:3', 'src/b.ts:7'].join('\n'),
     );
   });
 
@@ -1237,9 +1237,9 @@ describe('GrepTool', () => {
 
     expect(toolContentString(result)).toBe(
       [
+        'Found 3 total non-sensitive occurrences across 1 file.',
         'src/a.ts:3',
         'Filtered 1 sensitive file(s): .env',
-        'Found 3 total non-sensitive occurrences across 1 file.',
       ].join('\n'),
     );
   });
@@ -1263,13 +1263,37 @@ describe('GrepTool', () => {
 
     expect(toolContentString(result)).toBe(
       [
+        'Found 11 total non-sensitive occurrences across 3 files.',
+        'Results truncated to 2 lines (total: 3). Use offset=2 to see more.',
         'src/a.ts:3',
         'src/b.ts:7',
         'Filtered 1 sensitive file(s): .env',
-        'Found 11 total non-sensitive occurrences across 3 files.',
-        'Results truncated to 2 lines (total: 3). Use offset=2 to see more.',
       ].join('\n'),
     );
+  });
+
+  it('keeps the count summary ahead of the body so the char cap cannot drop it', async () => {
+    // With head_limit: 0 the count rows are unbounded and can exceed ToolResultBuilder's
+    // char cap. The aggregate total must still reach the model, so it leads the output
+    // (a header before the rows) — truncation can only eat the rows, never the total.
+    const fileCount = 5000;
+    const stdout =
+      Array.from({ length: fileCount }, (_, i) => `/workspace/f${String(i)}.txt:3`).join('\n') + '\n';
+    const tool = new GrepTool(
+      createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout)) }),
+      { workspaceDir: '/workspace', additionalDirs: [] },
+    );
+
+    const result = await executeTool(tool,
+      context({ pattern: 'hit', output_mode: 'count_matches', head_limit: 0 }),
+    );
+
+    const output = toolContentString(result);
+    const summary = `Found ${String(fileCount * 3)} total occurrences across ${String(fileCount)} files.`;
+    expect(output).toContain(summary);
+    // The body was large enough to truncate; the summary survives because it leads it.
+    expect(output).toContain('[...truncated]');
+    expect(output.indexOf(summary)).toBeLessThan(output.indexOf('[...truncated]'));
   });
 
   it('does not add a zero count summary when every count result is sensitive', async () => {
@@ -1317,7 +1341,7 @@ describe('GrepTool', () => {
       '/workspace/src/only.ts',
     );
     expect(toolContentString(result)).toBe(
-      ['src/only.ts:25850', 'Found 25850 total occurrences across 1 file.'].join('\n'),
+      ['Found 25850 total occurrences across 1 file.', 'src/only.ts:25850'].join('\n'),
     );
   });
 

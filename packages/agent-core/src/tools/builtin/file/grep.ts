@@ -57,7 +57,7 @@ export const GrepInputSchema = z.object({
     .enum(['content', 'files_with_matches', 'count_matches'])
     .optional()
     .describe(
-      'Shape of the result. `content` shows matching lines (honors `-A`, `-B`, `-C`, `-n`, and `head_limit`); `files_with_matches` shows only the paths of files that contain a match, most-recently-modified first (honors `head_limit`); `count_matches` shows per-file match counts as `path:count` lines, followed by an aggregate total line. Defaults to `files_with_matches`.',
+      'Shape of the result. `content` shows matching lines (honors `-A`, `-B`, `-C`, `-n`, and `head_limit`); `files_with_matches` shows only the paths of files that contain a match, most-recently-modified first (honors `head_limit`); `count_matches` shows per-file match counts as `path:count` lines, preceded by an aggregate total line. Defaults to `files_with_matches`.',
     ),
   '-i': z.boolean().optional().describe('Perform a case-insensitive search. Defaults to false.'),
   '-n': z
@@ -290,11 +290,13 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     const limited = limitActive ? afterOffset.slice(0, headLimit) : afterOffset;
     const paginationTruncated = limitActive && afterOffset.length > headLimit;
 
-    // Human-readable annotations (filter notices, the count-mode summary,
-    // pagination, truncation, timeout) are appended to `output` after the
-    // visible matches. `result.message` is dropped before the result reaches
-    // the model, so anything it must act on — totals, "use offset=N to see
-    // more" — has to ride in `output`, not a side channel.
+    // Notices ride in `output` (not `result.message`, which is dropped before the
+    // result reaches the model). The count-mode aggregate — the total and the
+    // "use offset=N to see more" cue — leads the output as a HEADER, written before
+    // the rows, so ToolResultBuilder's char cap can only ever truncate the rows, not
+    // the total (count rows are unbounded with head_limit: 0). Incidental notices
+    // trail the body.
+    const headerLines: string[] = [];
     const messages: string[] = [];
     if (filteredSensitive.size > 0) {
       const displayedFilteredPaths = [...filteredSensitive].map((path) =>
@@ -305,14 +307,17 @@ export class GrepTool implements BuiltinTool<GrepInput> {
       );
     }
     if (mode === 'count_matches' && orderedLines.length > 0) {
-      messages.push(formatCountSummary(orderedLines, filteredSensitive.size > 0));
+      headerLines.push(formatCountSummary(orderedLines, filteredSensitive.size > 0));
     }
     if (paginationTruncated) {
       const total = afterOffset.length + offset;
       const nextOffset = offset + headLimit;
-      messages.push(
-        `Results truncated to ${String(headLimit)} lines (total: ${String(total)}). Use offset=${String(nextOffset)} to see more.`,
-      );
+      const paginationNotice = `Results truncated to ${String(headLimit)} lines (total: ${String(total)}). Use offset=${String(nextOffset)} to see more.`;
+      if (mode === 'count_matches') {
+        headerLines.push(paginationNotice);
+      } else {
+        messages.push(paginationNotice);
+      }
     }
     if (bufferTruncated) {
       messages.push(
@@ -342,14 +347,11 @@ export class GrepTool implements BuiltinTool<GrepInput> {
         : contentBody;
     const emptyResultMessage =
       SENSITIVE_GLOBS_TO_EXCLUDE.length > 0 ? 'No non-sensitive matches found' : 'No matches found';
-    const combined =
-      visibleBody === '' && messages.length === 0
+    const body =
+      visibleBody === '' && headerLines.length === 0 && messages.length === 0
         ? emptyResultMessage
-        : messages.length > 0
-          ? visibleBody === ''
-            ? messages.join('\n')
-            : `${visibleBody}\n${messages.join('\n')}`
-          : visibleBody;
+        : visibleBody;
+    const combined = [...headerLines, body, ...messages].filter((part) => part !== '').join('\n');
 
     const builder = new ToolResultBuilder();
     builder.write(combined);
