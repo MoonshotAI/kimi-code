@@ -153,7 +153,7 @@ describe('skill discovery', () => {
     expect(registry.listInvocableSkills()).toEqual([]);
   });
 
-  it('skips directory skills with missing frontmatter metadata', async () => {
+  it('falls back to directory name and body for missing directory skill metadata', async () => {
     const { repoDir } = await makeWorkspace();
     const projectRoot = path.join(repoDir, '.kimi-code', 'skills');
     await writeSkill(projectRoot, path.join('valid', 'SKILL.md'), [
@@ -190,11 +190,20 @@ describe('skill discovery', () => {
       onWarning: (message) => warnings.push(message),
     });
 
-    expect(skills.map((skill) => skill.name)).toEqual(['valid']);
-    expect(warnings).toHaveLength(3);
-    expect(warnings.some((message) => message.includes('Missing frontmatter'))).toBe(true);
-    expect(warnings.some((message) => message.includes('"name"'))).toBe(true);
-    expect(warnings.some((message) => message.includes('"description"'))).toBe(true);
+    const names = skills.map((skill) => skill.name).sort();
+    expect(names).toEqual([
+      'missing-description',
+      'missing-name',
+      'no-frontmatter',
+      'valid',
+    ]);
+    expect(warnings).toHaveLength(0);
+
+    const missingNameSkill = skills.find((s) => s.name === 'missing-name');
+    expect(missingNameSkill?.description).toBe('Missing name');
+
+    const noFrontmatterSkill = skills.find((s) => s.name === 'no-frontmatter');
+    expect(noFrontmatterSkill?.description).toBe('# Heading should not become a description');
   });
 });
 
