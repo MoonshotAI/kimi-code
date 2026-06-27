@@ -21,6 +21,11 @@ describe('deriveThinkingSupported', () => {
     expect(deriveThinkingSupported(alias('some-thinking-model'))).toBe(true);
     expect(deriveThinkingSupported(alias('plain-model'))).toBe(false);
   });
+
+  it('matches toggleable model names case-insensitively', () => {
+    expect(deriveThinkingSupported(alias('Kimi-Code'))).toBe(true);
+    expect(deriveThinkingSupported(alias('Kimi-For-Coding'))).toBe(true);
+  });
 });
 
 describe('deriveAlwaysThinking', () => {

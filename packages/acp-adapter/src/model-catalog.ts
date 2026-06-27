@@ -52,7 +52,7 @@ export function deriveThinkingSupported(alias: ModelAlias): boolean {
   if (declared.includes('thinking') || declared.includes('always_thinking')) return true;
   const lower = alias.model.toLowerCase();
   if (lower.includes('thinking') || lower.includes('reason')) return true;
-  if (TOGGLEABLE_THINKING_MODELS.has(alias.model)) return true;
+  if (TOGGLEABLE_THINKING_MODELS.has(lower)) return true;
   return false;
 }
 
