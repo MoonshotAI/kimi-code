@@ -171,19 +171,26 @@ describe('buildPermissionToolCallUpdate (Phase 5.2 content shape)', () => {
     });
   });
 
-  it('emits only the action summary for non-diff display kinds (e.g. command)', () => {
+  it('includes the concrete command before the action summary', () => {
     const update = buildPermissionToolCallUpdate(
       5,
       {
         toolCallId: 'tc-cmd',
         toolName: 'Bash',
         action: 'run shell command',
-        display: { kind: 'command', command: 'ls -la' },
+        display: { kind: 'command', command: 'ls -la', cwd: '/tmp/project' },
       },
     );
-    expect(update.content).toHaveLength(1);
-    const [only] = update.content as [ToolCallContent];
-    expect(only).toEqual({
+    expect(update.title).toBe('ls -la');
+    expect(update.kind).toBe('execute');
+    expect(update.rawInput).toEqual({ command: 'ls -la', cwd: '/tmp/project' });
+    expect(update.content).toHaveLength(2);
+    const [command, action] = update.content as [ToolCallContent, ToolCallContent];
+    expect(command).toEqual({
+      type: 'content',
+      content: { type: 'text', text: 'ls -la' },
+    });
+    expect(action).toEqual({
       type: 'content',
       content: { type: 'text', text: 'Requesting approval to run shell command' },
     });
