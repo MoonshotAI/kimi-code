@@ -125,6 +125,42 @@ describe('isRetryableGenerateError', () => {
     expect(isRetryableGenerateError(new APIStatusError(statusCode, 'non-retryable'))).toBe(false);
   });
 
+  it('retries APIStatusError whose message matches a transient provider pattern', () => {
+    // Some reverse proxies (e.g. Xunfei) wrap upstream transient failures with
+    // non-5xx status codes while putting the real failure in the body. Match
+    // on message so those still get retried.
+    expect(
+      isRetryableGenerateError(
+        new APIStatusError(
+          200,
+          'Anthropic error: Xunfei claude request failed with Sid: cht000d code: 10012, msg: EngineInternalError:1105',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableGenerateError(
+        new APIStatusError(
+          400,
+          'Anthropic error: Xunfei claude request failed with code: 10015, msg: upstream busy',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableGenerateError(new APIStatusError(400, 'server is overloaded')),
+    ).toBe(true);
+  });
+
+  it('does not retry APIStatusError with non-transient 4xx message', () => {
+    expect(
+      isRetryableGenerateError(
+        new APIStatusError(
+          400,
+          'Anthropic error: Xunfei claude request failed with code: 10001, msg: invalid api key',
+        ),
+      ),
+    ).toBe(false);
+  });
+
   it('does not retry context overflow or unknown errors', () => {
     expect(
       isRetryableGenerateError(new APIContextOverflowError(400, 'Context length exceeded')),
@@ -157,6 +193,54 @@ describe('isRetryableGenerateError', () => {
     expect(
       isRetryableGenerateError(new ChatProviderError('quota exceeded')),
     ).toBe(true);
+  });
+
+  it('retries ChatProviderError with Xunfei reverse-proxy failure message', () => {
+    expect(
+      isRetryableGenerateError(
+        new ChatProviderError(
+          'Anthropic error: {"error":{"message":"Xunfei claude request failed with Sid: abc123 code: 11210, msg: internal error"}}',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableGenerateError(
+        new ChatProviderError(
+          'Anthropic error: {"error":{"message":"Xunfei claude request failed with Sid: cht000d code: 10012, msg: EngineInternalError:1105|{\\"Code\\":1105,\\"Message\\":\\"The system is busy, please try again later.\\"}"}}',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableGenerateError(
+        new ChatProviderError(
+          'Anthropic error: Xunfei claude request failed with code: 10015, msg: upstream engine error',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not retry ChatProviderError with non-transient Xunfei failure messages', () => {
+    expect(
+      isRetryableGenerateError(
+        new ChatProviderError(
+          'Anthropic error: Xunfei claude request failed with code: 10001, msg: invalid api key',
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableGenerateError(
+        new ChatProviderError(
+          'Anthropic error: Xunfei request failed with code: 10002, msg: insufficient balance',
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableGenerateError(
+        new ChatProviderError(
+          'Anthropic error: Xunfei claude request failed with code: 10001, msg: invalid api key. Also saw code: 11210 earlier',
+        ),
+      ),
+    ).toBe(false);
   });
 
   it('does not retry ChatProviderError with unknown message', () => {

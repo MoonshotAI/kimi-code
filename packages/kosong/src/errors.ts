@@ -96,7 +96,15 @@ export function isRetryableGenerateError(error: unknown): boolean {
     return true;
   }
   if (error instanceof APIStatusError) {
-    return [429, 500, 502, 503, 504].includes(error.statusCode);
+    if ([429, 500, 502, 503, 504].includes(error.statusCode)) {
+      return true;
+    }
+    // Status-code fallback: some reverse proxies (e.g. Xunfei) wrap upstream
+    // transient failures with non-5xx status codes (200 / 4xx) while embedding
+    // the real failure in the message body. Match the same overload /
+    // rate-limit / known-transient-code patterns we use for status-less errors
+    // so those still get retried.
+    return isRetryableProviderMessage(error.message);
   }
   // Heuristic fallback: generic ChatProviderErrors whose message matches
   // known transient/server-overload patterns — classified as retryable
@@ -113,9 +121,22 @@ export const PROVIDER_OVERLOAD_MESSAGE_PATTERN =
 export const PROVIDER_RATE_LIMIT_MESSAGE_PATTERN =
   /\b(?:rate[ _-]?limit(?:ed)?|too\s+many\s+requests|quota\s+exceeded)\b/i;
 
+// Transient Xunfei reverse-proxy failure codes:
+//   11210 - upstream/engine internal error
+//   10012 - "The system is busy, please try again later." (EngineInternalError:1105)
+//   10015 - upstream engine transient failure
+//
+// Uses a tempered greedy token `(?:(?!\bcode\s*[:=]).)*` to match "code: 11210"
+// only when it is the FIRST code= occurrence after "xunfei request failed".
+// This prevents false positives like "code: 10001 ... code: 11210" where the
+// first code is non-transient (e.g. invalid api key).
+export const PROVIDER_REVERSE_PROXY_ERROR_PATTERN =
+  /\bxunfei\s+(?:claude\s+)?request\s+failed\b(?:(?!\bcode\s*[:=]).)*\bcode\s*[:=]\s*(?:11210|10012|10015)\b/i;
+
 const RETRYABLE_PROVIDER_MESSAGE_PATTERNS: readonly RegExp[] = [
   PROVIDER_OVERLOAD_MESSAGE_PATTERN,
   PROVIDER_RATE_LIMIT_MESSAGE_PATTERN,
+  PROVIDER_REVERSE_PROXY_ERROR_PATTERN,
 ];
 
 function isRetryableProviderMessage(message: string): boolean {

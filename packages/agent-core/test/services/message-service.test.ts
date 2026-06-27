@@ -26,6 +26,7 @@ import type {
   SessionSummary,
 } from '../../src';
 
+import { ErrorCodes, KimiError } from '../../src/errors';
 import {
   type ICoreProcessService,
   MessageNotFoundError,
@@ -45,7 +46,13 @@ function makeFakeBridge(
 ): ICoreProcessService {
   const rpc: Partial<CoreRPC> = {
     listSessions: vi.fn().mockImplementation(async () => sessions),
-    resumeSession: vi.fn().mockResolvedValue(undefined as unknown as never),
+    resumeSession: vi.fn().mockImplementation(async ({ sessionId }: { sessionId: string }) => {
+      const found = sessions.find((s) => s.id === sessionId);
+      if (found === undefined) {
+        throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session "${sessionId}" was not found`);
+      }
+      return found;
+    }),
     getContext: vi.fn().mockImplementation(async (): Promise<AgentContextData> => {
       return { history, tokenCount: 0 };
     }),

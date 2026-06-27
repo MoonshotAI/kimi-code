@@ -461,6 +461,16 @@ describe('FsSearchService direct: rg fallback + grep timeout (W11.1)', () => {
           await import('@moonshot-ai/agent-core')
         ).FsGrepTimeoutError(Date.now() - startedAt);
       }
+      protected override async grepWithNative(
+        _cwd: string,
+        _req: import('@moonshot-ai/protocol').FsGrepRequest,
+        _signal: AbortSignal,
+        startedAt: number,
+      ): Promise<import('@moonshot-ai/protocol').FsGrepResponse> {
+        throw new (
+          await import('@moonshot-ai/agent-core')
+        ).FsGrepTimeoutError(Date.now() - startedAt);
+      }
       public override probeRg(): Promise<string | null> {
 
         this.rgPath = null;

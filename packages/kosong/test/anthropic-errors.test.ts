@@ -116,6 +116,26 @@ describe('convertAnthropicError', () => {
     expect((result as APIStatusError).statusCode).toBe(429);
   });
 
+  it('AnthropicError "Xunfei request failed" → APIStatusError(503)', () => {
+    const err = new AnthropicError(
+      '{"error":{"message":"Xunfei claude request failed with Sid: abc123 code: 11210, msg: internal error"}}',
+    );
+    const result = convertAnthropicError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).statusCode).toBe(503);
+    expect(result.message).toContain('Xunfei claude request failed');
+  });
+
+  it('AnthropicError "Xunfei auth failure" → ChatProviderError', () => {
+    const err = new AnthropicError(
+      '{"error":{"message":"Xunfei claude request failed with code: 10001, msg: invalid api key. Also saw code: 11210 earlier"}}',
+    );
+    const result = convertAnthropicError(err);
+    expect(result).toBeInstanceOf(ChatProviderError);
+    expect(result).not.toBeInstanceOf(APIStatusError);
+    expect(result.message).toContain('invalid api key');
+  });
+
   it('plain Error -> ChatProviderError', () => {
     const err = new Error('unexpected');
     const result = convertAnthropicError(err);

@@ -5,6 +5,7 @@ import {
   ChatProviderError,
   PROVIDER_OVERLOAD_MESSAGE_PATTERN,
   PROVIDER_RATE_LIMIT_MESSAGE_PATTERN,
+  PROVIDER_REVERSE_PROXY_ERROR_PATTERN,
   normalizeAPIStatusError,
 } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
@@ -581,6 +582,9 @@ function classifyAnthropicSdkError(message: string): ChatProviderError {
   const lower = message.toLowerCase();
   // Provider-side overload / transient failures — map to 503 so the
   // retry loop picks them up automatically.
+  if (PROVIDER_REVERSE_PROXY_ERROR_PATTERN.test(lower)) {
+    return new APIStatusError(503, `Anthropic error: ${message}`, null);
+  }
   if (PROVIDER_OVERLOAD_MESSAGE_PATTERN.test(lower)) {
     return new APIStatusError(503, `Anthropic error: ${message}`, null);
   }

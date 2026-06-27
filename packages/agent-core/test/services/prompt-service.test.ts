@@ -51,6 +51,7 @@ import {
   PromptService,
   SessionNotFoundError,
 } from '../../src/services';
+import { ErrorCodes, KimiError } from '../../src/errors';
 
 const SID = 'sess_01PT';
 const SESSION_CREATED_AT = 1_700_000_000_000;
@@ -586,6 +587,11 @@ describe('PromptService.submit', () => {
     const { bridge } = makeBridge();
     const { bus } = makeBus();
     const impl = newSvc(bridge, bus);
+    // resumeSession is the single source of truth for session existence now;
+    // it throws KimiError(SESSION_NOT_FOUND) which _resumeSession translates.
+    (bridge.rpc.resumeSession as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new KimiError(ErrorCodes.SESSION_NOT_FOUND, 'session not found'),
+    );
     await expect(impl.submit('sess_missing', mkBody())).rejects.toBeInstanceOf(
       SessionNotFoundError,
     );
@@ -1621,6 +1627,9 @@ describe('PromptService.applyAgentState (POST /sessions/{sid}/profile path)', ()
     const { bridge } = makeBridge();
     const { bus } = makeBus();
     const impl = newSvc(bridge, bus);
+    (bridge.rpc.resumeSession as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new KimiError(ErrorCodes.SESSION_NOT_FOUND, 'session not found'),
+    );
     await expect(
       impl.applyAgentState('sess_missing', { model: 'kimi-code/k1' }, 'meta'),
     ).rejects.toBeInstanceOf(SessionNotFoundError);
