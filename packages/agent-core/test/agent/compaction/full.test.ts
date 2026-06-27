@@ -1637,6 +1637,132 @@ describe('FullCompaction', () => {
     });
   });
 
+  it('uses loop_control.compaction_model for full-history compaction', async () => {
+    const authProviderNames: string[] = [];
+    const compactionProviders: Array<{
+      readonly name: string;
+      readonly modelName: string;
+      readonly maxCompletionTokens: unknown;
+      readonly authApiKey?: string;
+    }> = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, _callbacks, options) => {
+      compactionProviders.push({
+        name: provider.name,
+        modelName: provider.modelName,
+        maxCompletionTokens: providerMaxCompletionTokens(provider),
+        authApiKey: options?.auth?.apiKey,
+      });
+      return textResult('Compacted with the configured model.');
+    };
+    const ctx = testAgent({
+      generate,
+      compactionStrategy: alwaysCompactOnce,
+      initialConfig: {
+        providers: {
+          compact: {
+            type: 'kimi',
+            oauth: { storage: 'file', key: 'oauth/compact' },
+          },
+        },
+        models: {
+          'compact-alias': {
+            provider: 'compact',
+            model: 'compact-wire',
+            maxContextSize: 12_345,
+            maxOutputSize: 1_234,
+          },
+        },
+        loopControl: {
+          compactionModel: 'compact-alias',
+        },
+      },
+      providerManagerOverrides: {
+        resolveOAuthTokenProvider: (providerName) => {
+          authProviderNames.push(providerName);
+          return {
+            getAccessToken: async () => `${providerName}-token`,
+          };
+        },
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+
+    const compacted = ctx.once('context.apply_compaction');
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+
+    expect(compactionProviders).toEqual([
+      {
+        name: 'kimi',
+        modelName: 'compact-wire',
+        maxCompletionTokens: 1_234,
+        authApiKey: 'compact-token',
+      },
+    ]);
+    expect(authProviderNames).toEqual(['compact']);
+    const usage = ctx.agent.usage.data().byModel;
+    expect(usage?.['compact-alias']).toEqual(
+      expect.objectContaining({
+        output: 1,
+      }),
+    );
+    expect(usage?.['kimi-code']).toBeUndefined();
+  });
+
+  it('fits compaction request history to the compaction model window', async () => {
+    let compactionText = '';
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      compactionText = history.map(messageText).join('\n');
+      return textResult('Compacted with a smaller model window.');
+    };
+    const ctx = testAgent({
+      generate,
+      initialConfig: {
+        providers: {
+          compact: {
+            type: 'kimi',
+            apiKey: 'compact-key',
+          },
+        },
+        models: {
+          'compact-alias': {
+            provider: 'compact',
+            model: 'compact-wire',
+            maxContextSize: 80,
+          },
+        },
+        loopControl: {
+          compactionModel: 'compact-alias',
+        },
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'small old user', 'small old assistant', 20);
+    ctx.appendExchange(
+      2,
+      `large middle user ${'x'.repeat(4_000)}`,
+      `large middle assistant ${'y'.repeat(4_000)}`,
+      20,
+    );
+    ctx.appendExchange(3, 'small recent user', 'small recent assistant', 20);
+
+    const compacted = ctx.once('context.apply_compaction');
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+
+    expect(compactionText).toContain('small old user');
+    expect(compactionText).toContain('small old assistant');
+    expect(compactionText).not.toContain('large middle user');
+    expect(compactionText).not.toContain('large middle assistant');
+  });
+
   it('compacts provider overflow when model context size is unknown', async () => {
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];

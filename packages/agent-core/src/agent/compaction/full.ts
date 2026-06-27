@@ -6,14 +6,21 @@ import {
 } from '#/errors';
 import {
   APIEmptyResponseError,
+  type ChatProvider,
+  createProvider,
   isRetryableGenerateError,
   type GenerateResult,
+  type Message,
+  type ModelCapability,
   type TokenUsage,
   APIContextOverflowError,
   createUserMessage,
 } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
+import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '#/config/kimi-env-params';
+import { resolveThinkingEffort } from '../config';
+import type { GenerateOptionsWithRequestLogFields } from '../llm-request-logger';
 import { isAbortError } from '../../loop/errors';
 import {
   retryBackoffDelays,
@@ -28,6 +35,7 @@ import {
   applyCompletionBudget,
   resolveCompletionBudget,
 } from '../../utils/completion-budget';
+import type { ResolvedRuntimeProvider } from '../../session/provider-manager';
 import compactionInstructionTemplate from './compaction-instruction.md?raw';
 import { renderTodoList, type TodoItem } from '../../tools/builtin/state/todo-list';
 import type { CompactionBeginData, CompactionResult } from './types';
@@ -38,6 +46,13 @@ import {
 } from './strategy';
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
+
+interface CompactionRuntimeConfig {
+  readonly model: string;
+  readonly provider: ChatProvider;
+  readonly capability: ModelCapability;
+  readonly maxOutputSize?: number;
+}
 
 class CompactionTruncatedError extends Error {
   constructor() {
@@ -202,9 +217,24 @@ export class FullCompaction {
   private async compactionWorker(
     signal: AbortSignal,
     data: Readonly<CompactionBeginData>,
-    compactedCount: number,
+    initialCompactedCount: number,
   ): Promise<void> {
     try {
+      const runtime = this.resolveCompactionRuntimeConfig();
+      const requestStrategy = this.createRequestCompactionStrategy(runtime);
+      let compactedCount = this.computeRuntimeCompactCount(
+        requestStrategy,
+        this.agent.context.history,
+        data.source,
+        initialCompactedCount,
+      );
+      if (compactedCount === 0) {
+        throw new KimiError(
+          ErrorCodes.COMPACTION_UNABLE,
+          'No prefix that can be compacted in current history.',
+        );
+      }
+
       const finalResult = {
         summary: '',
         compactedCount: 1,
@@ -213,7 +243,14 @@ export class FullCompaction {
       };
 
       for (let round = 1; ; round++) {
-        const result = await this.compactionRound(round, signal, data, compactedCount);
+        const result = await this.compactionRound(
+          round,
+          signal,
+          data,
+          runtime,
+          requestStrategy,
+          compactedCount,
+        );
         if (!result) return;
 
         finalResult.summary = result.summary;
@@ -223,7 +260,12 @@ export class FullCompaction {
 
         if (result.tokensBefore - result.tokensAfter < 1024) break;
         if (!this.strategy.shouldBlock(result.tokensAfter)) break;
-        compactedCount = this.strategy.computeCompactCount(this.agent.context.history, data.source);
+        compactedCount = this.computeRuntimeCompactCount(
+          requestStrategy,
+          this.agent.context.history,
+          data.source,
+          this.strategy.computeCompactCount(this.agent.context.history, data.source),
+        );
         if (compactedCount === 0) break;
       }
       this.markCompleted();
@@ -249,6 +291,8 @@ export class FullCompaction {
     round: number,
     signal: AbortSignal,
     data: Readonly<CompactionBeginData>,
+    runtime: CompactionRuntimeConfig,
+    requestStrategy: CompactionStrategy,
     initialCompactedCount: number,
   ) {
     const startedAt = Date.now();
@@ -260,13 +304,13 @@ export class FullCompaction {
 
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
-      const model = this.agent.config.model;
       const provider = applyCompletionBudget({
-        provider: this.agent.config.provider,
+        provider: runtime.provider,
         budget: resolveCompletionBudget({
+          maxOutputSize: runtime.maxOutputSize,
           reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
         }),
-        capability: this.agent.config.modelCapabilities,
+        capability: runtime.capability,
       });
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
@@ -276,8 +320,16 @@ export class FullCompaction {
         const messagesToCompact = originalHistory.slice(0, compactedCount);
         const messages = [
           ...this.agent.context.project(messagesToCompact),
-          createUserMessage(renderPrompt(compactionInstructionTemplate, { customInstruction: data.instruction ?? '' })),
+          createUserMessage(
+            renderPrompt(compactionInstructionTemplate, {
+              customInstruction: data.instruction ?? '',
+            }),
+          ),
         ];
+        const options: GenerateOptionsWithRequestLogFields = {
+          signal,
+          requestModelAlias: runtime.model,
+        };
         try {
           const response = await this.agent.generate(
             provider,
@@ -285,7 +337,7 @@ export class FullCompaction {
             [...this.agent.tools.loopTools],
             messages,
             undefined,
-            { signal },
+            options,
           );
           if (response.finishReason === 'truncated') {
             throw new CompactionTruncatedError();
@@ -299,7 +351,7 @@ export class FullCompaction {
             error instanceof CompactionTruncatedError ||
             error instanceof APIEmptyResponseError // e.g. think-only
           ) {
-            compactedCount = this.strategy.reduceCompactOnOverflow(messagesToCompact);
+            compactedCount = requestStrategy.reduceCompactOnOverflow(messagesToCompact);
           }
           else if (!isRetryableGenerateError(error)) {
             throw error;
@@ -313,7 +365,7 @@ export class FullCompaction {
       }
 
       if (usage !== null) {
-        this.agent.usage.record(model, usage);
+        this.agent.usage.record(runtime.model, usage);
       }
 
       const newHistory = this.agent.context.history;
@@ -381,6 +433,66 @@ export class FullCompaction {
       },
     });
     signal.throwIfAborted();
+  }
+
+  private resolveCompactionRuntimeConfig(): CompactionRuntimeConfig {
+    const compactionModel = this.agent.kimiConfig?.loopControl?.compactionModel;
+    if (compactionModel === undefined) {
+      return {
+        model: this.agent.config.model,
+        provider: this.agent.config.provider,
+        capability: this.agent.config.modelCapabilities,
+        maxOutputSize: undefined,
+      };
+    }
+
+    const resolved = this.agent.modelProvider?.resolveProviderConfig(compactionModel);
+    if (resolved === undefined) {
+      throw new KimiError(
+        ErrorCodes.CONFIG_INVALID,
+        'loop_control.compaction_model requires a model provider.',
+      );
+    }
+    return {
+      model: compactionModel,
+      provider: this.createCompactionProvider(resolved),
+      capability: resolved.modelCapabilities,
+      maxOutputSize: resolved.maxOutputSize,
+    };
+  }
+
+  private createRequestCompactionStrategy(runtime: CompactionRuntimeConfig): CompactionStrategy {
+    const compactionModel = this.agent.kimiConfig?.loopControl?.compactionModel;
+    if (compactionModel === undefined) return this.strategy;
+    return new DefaultCompactionStrategy(
+      () => runtime.capability.max_context_tokens,
+      {
+        ...DEFAULT_COMPACTION_CONFIG,
+        reservedContextSize:
+          this.agent.kimiConfig?.loopControl?.reservedContextSize ??
+          DEFAULT_COMPACTION_CONFIG.reservedContextSize,
+      },
+    );
+  }
+
+  private computeRuntimeCompactCount(
+    requestStrategy: CompactionStrategy,
+    history: readonly Message[],
+    source: CompactionBeginData['source'],
+    fallbackCount: number,
+  ): number {
+    const compactionModel = this.agent.kimiConfig?.loopControl?.compactionModel;
+    if (compactionModel === undefined) return fallbackCount;
+    return requestStrategy.computeCompactCount(history, source);
+  }
+
+  private createCompactionProvider(resolved: ResolvedRuntimeProvider): ChatProvider {
+    const thinkingLevel =
+      this.agent.config.thinkingLevel === 'off' && resolved.alwaysThinking === true
+        ? resolveThinkingEffort('on', this.agent.kimiConfig?.thinking)
+        : this.agent.config.thinkingLevel;
+    const provider = createProvider(resolved.provider).withThinking(thinkingLevel);
+    return applyKimiEnvThinkingKeep(applyKimiEnvSamplingParams(provider), thinkingLevel);
   }
 
   private triggerPostCompactHook(

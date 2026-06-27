@@ -161,6 +161,7 @@ max_context_size = 1047576
 | `max_steps_per_turn` | `integer` | — | 单轮最大步数；不设或设为 `0` 则无上限 |
 | `max_retries_per_step` | `integer` | `3` | 单步失败后的最大重试次数 |
 | `reserved_context_size` | `integer` | — | 预留给模型输出的 token 数；上下文窗口剩余量低于此值时触发自动压缩 |
+| `compaction_model` | `string` | — | 可选的 `[models]` 模型别名，仅用于全量上下文压缩；不设置时回退到当前对话模型 |
 
 ## `background`
 

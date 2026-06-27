@@ -97,6 +97,7 @@ max_steps_per_run = 42
 max_retries_per_step = 3
 reserved_context_size = 50000
 compaction_trigger_ratio = 0.85
+compaction_model = "kimi-code/compact"
 
 [background]
 max_running_tasks = 4
@@ -174,6 +175,7 @@ describe('harness config TOML loader', () => {
       maxRetriesPerStep: 3,
       reservedContextSize: 50000,
       compactionTriggerRatio: 0.85,
+      compactionModel: 'kimi-code/compact',
     });
     expect(config.background).toMatchObject({
       maxRunningTasks: 4,
@@ -334,6 +336,7 @@ removed_flag = true
     expect(text).toContain('pattern = "Read(src/**)"');
     expect(text).not.toContain('[[permission.allow]]');
     expect(text).toContain('max_steps_per_turn = 7');
+    expect(text).toContain('compaction_model = "kimi-code/compact"');
     expect(text).toContain('GOOGLE_CLOUD_PROJECT = "project-1"');
     expect(text).toContain('theme = "dark"');
     expect(text).toContain('claim_stale_after_ms = 15000');
@@ -343,6 +346,7 @@ removed_flag = true
 
     const reloaded = readConfigFile(configPath);
     expect(reloaded.loopControl?.maxStepsPerTurn).toBe(7);
+    expect(reloaded.loopControl?.compactionModel).toBe('kimi-code/compact');
     expect(reloaded.hooks?.[0]?.event).toBe('PreToolUse');
     expect(reloaded.raw?.['theme']).toBe('dark');
   });
