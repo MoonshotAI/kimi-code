@@ -16,7 +16,6 @@ import ProviderManager from './components/settings/ProviderManager.vue';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
 import NewSessionDialog from './components/dialogs/NewSessionDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
-import SessionsDialog from './components/dialogs/SessionsDialog.vue';
 import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
 import StatusPanel from './components/chat/StatusPanel.vue';
 import WarningToasts from './components/WarningToasts.vue';
@@ -229,7 +228,6 @@ const showModelPicker = ref(false);
 const showProviders = ref(false);
 const showLogin = ref(false);
 const showNewSession = ref(false);
-const showSessions = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
@@ -249,7 +247,6 @@ const anyOverlayOpen = computed<boolean>(() =>
   showProviders.value ||
   showLogin.value ||
   showNewSession.value ||
-  showSessions.value ||
   showAddWorkspace.value ||
   showStatusPanel.value ||
   showSettings.value ||
@@ -399,9 +396,6 @@ function handleCommand(cmd: string): void {
     case '/new':
     case '/clear':
       handleCreateSession();
-      break;
-    case '/sessions':
-      showSessions.value = true;
       break;
     case '/fork':
       void client.forkSession();
@@ -866,17 +860,6 @@ function openPr(url: string): void {
       :recent-cwds="client.recentCwds.value"
       @create="({ cwd, title }) => { showNewSession = false; void client.createSession(cwd, { title }); }"
       @close="showNewSession = false"
-    />
-
-    <!-- Sessions browser overlay (/sessions) — client-side list, click to switch -->
-    <SessionsDialog
-      v-if="showSessions"
-      :sessions="client.sessions.value"
-      :workspace-groups="client.workspaceGroups.value"
-      :attention-by-session="client.attentionBySession.value"
-      :active-id="client.activeSessionId.value"
-      @select="(id) => { void client.selectSession(id); showSessions = false; }"
-      @close="showSessions = false"
     />
 
     <!-- Status panel overlay (/status) — renders current client state, no daemon call -->
