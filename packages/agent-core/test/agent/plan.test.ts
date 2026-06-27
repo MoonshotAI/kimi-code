@@ -128,7 +128,7 @@ describe('plan clear', () => {
 });
 
 describe('plan exit tool', () => {
-  it('reads the current plan file and exits plan mode directly in auto mode', async () => {
+  it('requests plan review before exiting plan mode in auto mode', async () => {
     const files = new Map<string, string>();
     const readText = vi.fn(async (path: string) => files.get(path) ?? '');
     const ctx = testAgent({
@@ -152,10 +152,10 @@ describe('plan exit tool', () => {
     ctx.mockNextResponse({ type: 'text', text: 'I can execute after approval.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Show the plan' }] });
 
+    const approval = await ctx.takeApprovalRequest();
+    approval.respond({ decision: 'approved' });
+
     await ctx.untilTurnEnd();
-    expect(
-      ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
-    ).toBe(false);
     expect(readText).toHaveBeenCalledWith(planPath);
     expect(ctx.agent.planMode.isActive).toBe(false);
     const llmInput = ctx.llmCalls[1]!;

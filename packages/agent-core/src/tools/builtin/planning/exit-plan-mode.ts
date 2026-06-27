@@ -136,7 +136,7 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     const failed = this.exitPlanMode();
     if (failed !== undefined) return failed;
 
-    this.agent.telemetry.track('plan_resolved', { outcome: 'auto_approved' });
+    this.agent.telemetry.track('plan_resolved', { outcome: 'approved' });
 
     return {
       isError: false,

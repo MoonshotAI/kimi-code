@@ -37,6 +37,8 @@ export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy
     new PlanModeGuardDenyPermissionPolicy(agent),
     // User-configured deny rule matches → deny.
     new UserConfiguredDenyPermissionPolicy(agent),
+    // ExitPlanMode with active plan_review + non-empty plan → ask (tracks plan_submitted/plan_resolved itself). Runs before session history so a stale session approval can't bypass review of a new plan body and before auto mode permission policy so auto mode cannot bypass review of a new plan body.
+    new ExitPlanModeReviewAskPermissionPolicy(agent),
     // auto mode → approve (any auto-mode block must be a deny rule above this).
     new AutoModeApprovePermissionPolicy(agent),
     // Approve-for-session memorized rule matches → approve. Runs before user-configured ask rules so an in-session grant beats a still-matching ask rule on later calls.
@@ -45,8 +47,6 @@ export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy
     new UserConfiguredAskPermissionPolicy(agent),
     // User-configured allow rule matches → approve.
     new UserConfiguredAllowPermissionPolicy(agent),
-    // ExitPlanMode with active plan_review + non-empty plan + non-auto → ask (tracks plan_submitted/plan_resolved itself). Runs before session history so a stale session approval can't bypass review of a new plan body.
-    new ExitPlanModeReviewAskPermissionPolicy(agent),
     // CreateGoal (non-auto) → ask with the same start menu as /goal: choose the
     // permission mode to run the goal under, or decline. Applies the mode, then
     // lets the tool create the goal.
