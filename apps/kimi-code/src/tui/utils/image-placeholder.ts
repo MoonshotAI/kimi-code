@@ -7,13 +7,18 @@
  *     A literal `[image #999 ...]` the user typed themselves stays in
  *     the text (we can't hallucinate files for it).
  *   - Order is preserved for text/image/video segments. Image placeholders
- *     expand to image content parts so the prompt reaches the provider
- *     without relying on a model tool call. Video placeholders still expand
- *     to file-path tags so `ReadMediaFile` can own video upload behavior.
+ *     expand to image content parts when the model can see images. For
+ *     text-only models they can instead expand to file-path tags, matching
+ *     the video path flow.
  *   - Adjacent text segments are flattened — empty / whitespace-only
  *     segments drop out so we never emit `{type:'text', text:' '}`
  *     noise between two media parts.
  */
+
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { PromptPart } from '@moonshot-ai/kimi-code-sdk';
 
@@ -24,6 +29,15 @@ import type {
 } from './image-attachment-store';
 
 const PLACEHOLDER_REGEX = /\[(image|video) #(\d+) (?:(\(\d+×\d+\))|([^\]]+))\]/g;
+const PASTED_IMAGE_DIR_PREFIX = join(tmpdir(), 'kimi-code-pasted-images-');
+let pastedImageDir: string | undefined;
+
+export type ImageExtractionMode = 'content-part' | 'file-tag';
+
+export interface ExtractionOptions {
+  readonly imageMode?: ImageExtractionMode;
+  readonly writeImageAttachment?: (attachment: ImageAttachment) => string;
+}
 
 export interface ExtractionResult {
   /** Flat list of parts in input order; empty array when no media matched. */
@@ -42,6 +56,7 @@ export interface ExtractionResult {
 export function extractMediaAttachments(
   text: string,
   store: ImageAttachmentStore,
+  options?: ExtractionOptions,
 ): ExtractionResult {
   const parts: PromptPart[] = [];
   const imageAttachmentIds: number[] = [];
@@ -66,7 +81,11 @@ export function extractMediaAttachments(
       pushText(parts, mediaText);
       videoAttachmentIds.push(id);
     } else {
-      parts.push(imagePartForAttachment(attachment));
+      if ((options?.imageMode ?? 'content-part') === 'file-tag') {
+        pushText(parts, tagTextForImage(attachment, options));
+      } else {
+        parts.push(imagePartForAttachment(attachment));
+      }
       imageAttachmentIds.push(id);
     }
     hasMedia = true;
@@ -113,8 +132,49 @@ function tagTextForVideo(att: VideoAttachment): string {
   return formatMediaTag('video', att.sourcePath);
 }
 
+function tagTextForImage(att: ImageAttachment, options: ExtractionOptions | undefined): string {
+  const path = options?.writeImageAttachment?.(att) ?? writeImageAttachmentToTempFile(att);
+  return formatMediaTag('image', path);
+}
+
 function formatMediaTag(tag: 'image' | 'video', path: string): string {
   return `<${tag} path="${escapeAttribute(path)}"></${tag}>`;
+}
+
+function writeImageAttachmentToTempFile(att: ImageAttachment): string {
+  const path = join(
+    getPastedImageDir(),
+    `pasted-${String(Date.now())}-${String(att.id)}-${randomUUID()}${extensionForMime(att.mime)}`,
+  );
+  writeFileSync(path, att.bytes, { mode: 0o600 });
+  return path;
+}
+
+function getPastedImageDir(): string {
+  pastedImageDir ??= mkdtempSync(PASTED_IMAGE_DIR_PREFIX);
+  return pastedImageDir;
+}
+
+function extensionForMime(mime: string): string {
+  const [type] = mime.toLowerCase().split(';', 1);
+  switch (type ?? '') {
+    case 'image/png':
+      return '.png';
+    case 'image/jpeg':
+      return '.jpg';
+    case 'image/gif':
+      return '.gif';
+    case 'image/webp':
+      return '.webp';
+    case 'image/bmp':
+      return '.bmp';
+    case 'image/heic':
+      return '.heic';
+    case 'image/heif':
+      return '.heif';
+    default:
+      return '.img';
+  }
 }
 
 function escapeAttribute(value: string): string {

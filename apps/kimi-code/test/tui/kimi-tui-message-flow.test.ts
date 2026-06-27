@@ -1513,6 +1513,50 @@ command = "vim"
     ]);
   });
 
+  it('sends pasted images as file tags when the selected model is text-only', async () => {
+    const { driver, session } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            model: 'moonshot-v1',
+            maxContextSize: 100,
+            capabilities: ['thinking', 'tool_use'],
+          },
+        },
+      })),
+    });
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+
+    driver.handleUserInput(`describe ${attachment.placeholder}`);
+
+    const promptCalls = (session.prompt as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    const promptArg = promptCalls[0]?.[0];
+    expect(promptArg).toEqual([
+      {
+        type: 'text',
+        text: expect.stringMatching(
+          /^describe <image path=".*kimi-code-pasted-images.*\.png"><\/image>$/,
+        ),
+      },
+    ]);
+    expect(JSON.stringify(promptArg)).not.toContain('image_url');
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: `describe ${attachment.placeholder}`,
+        imageAttachmentIds: [attachment.id],
+      }),
+    ]);
+
+    const text = (promptArg as Array<{ text?: string }>)[0]?.text;
+    const path = text?.match(/<image path="([^"]+)"><\/image>/)?.[1];
+    if (path !== undefined) {
+      await rm(path, { force: true });
+    }
+  });
+
   it('queues editor input instead of prompting while a turn is already streaming', async () => {
     const { driver, session, harness } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
