@@ -8,6 +8,7 @@ import type { useKimiWebClient } from './useKimiWebClient';
 import { buildEditDiffLines, extractEditPath, findToolCallById } from '../lib/toolDiff';
 import { toolLabel } from '../lib/toolMeta';
 import { clampPanelWidth, panelMaxWidth, useViewportWidth } from './useViewportWidth';
+import { streamingBySession } from './client/streamingStore';
 
 type KimiWebClient = ReturnType<typeof useKimiWebClient>;
 
@@ -64,11 +65,32 @@ export function useDetailPanel({
   // ---------------------------------------------------------------------------
   // Thinking panel
   // ---------------------------------------------------------------------------
-  const thinkingTarget = ref<{ turnId: string; blockIndex: number } | null>(null);
+  const thinkingTarget = ref<{ turnId: string; blockIndex: number; live?: boolean } | null>(null);
 
   const thinkingPanelText = computed<string | null>(() => {
     const target = thinkingTarget.value;
     if (!target) return null;
+    // A live (still-streaming) thinking block is not in `client.turns` — its
+    // text lives in the streaming store. Read it there so the panel shows the
+    // growing text while the reply is still streaming (reactive: updates on
+    // each delta).
+    if (target.live) {
+      const sid = client.activeSessionId.value;
+      const live = streamingBySession[sid]?.blocks.find(
+        (b) => b.kind === 'thinking' && b.contentIndex === target.blockIndex,
+      );
+      if (live?.text) return live.text;
+      // The store is cleared at every `messageUpdated` (tool slot / step end /
+      // turn end) so the committed content takes over in the chat. The last
+      // deltas and that clear land in the same tick and coalesce, so without a
+      // fallback the panel would close *before* rendering the final chunk.
+      // Fall back to the committed thinking block in the turn — it already
+      // holds the full text — so the panel keeps showing the complete content
+      // through the boundary instead of flickering closed.
+      const turn = client.turns.value.find((tn) => tn.id === target.turnId);
+      const committed = turn?.blocks?.find((b) => b.kind === 'thinking');
+      return committed?.kind === 'thinking' ? committed.thinking : null;
+    }
     const turn = client.turns.value.find((tn) => tn.id === target.turnId);
     const blk = turn?.blocks?.[target.blockIndex];
     return blk?.kind === 'thinking' ? blk.thinking : null;
@@ -76,9 +98,14 @@ export function useDetailPanel({
 
   const thinkingVisible = computed(() => thinkingPanelText.value !== null);
 
-  function openThinkingPanel(target: { turnId: string; blockIndex: number }): void {
+  function openThinkingPanel(target: { turnId: string; blockIndex: number; live?: boolean }): void {
     const current = thinkingTarget.value;
-    if (current && current.turnId === target.turnId && current.blockIndex === target.blockIndex) {
+    if (
+      current &&
+      current.turnId === target.turnId &&
+      current.blockIndex === target.blockIndex &&
+      current.live === target.live
+    ) {
       thinkingTarget.value = null;
       if (detailTarget.value === 'thinking') detailTarget.value = null;
       return;
