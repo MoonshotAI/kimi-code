@@ -31,6 +31,7 @@ import {
   convertChatCompletionStreamToolCall,
   type BufferedChatCompletionToolCall,
 } from './chat-completions-stream';
+import { createSharedAgent } from '../http/undici-agent';
 import {
   mergeRequestHeaders,
   requireProviderApiKey,
@@ -478,7 +479,10 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     this._generationKwargs =
       options.maxTokens !== undefined ? completionTokenKwargs(this._model, options.maxTokens) : {};
     this._toolMessageConversion = options.toolMessageConversion ?? null;
-    this._httpClient = options.httpClient;
+    // Default to the process-wide shared undici Agent so every OpenAI
+    // Chat Completions call routes through the same connection pool.
+    // Callers can still override by passing `httpClient` explicitly.
+    this._httpClient = options.httpClient ?? createSharedAgent();
     this._clientFactory = options.clientFactory;
 
     this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
