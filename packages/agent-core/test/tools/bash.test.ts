@@ -328,6 +328,18 @@ describe('BashTool', () => {
     }
   });
 
+  it('does not expose sandbox permissions before execution supports them', () => {
+    const tool = bashTool(createFakeKaos({ osEnv: posixEnv }), '/workspace');
+    const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
+
+    expect(properties).not.toHaveProperty('sandbox_permissions');
+    expect(properties).not.toHaveProperty('additional_permissions');
+    expect(properties).not.toHaveProperty('justification');
+    expect(tool.description).not.toContain('sandbox_permissions');
+    expect(tool.description).not.toContain('additional_permissions');
+    expect(tool.description).not.toContain('require_escalated');
+  });
+
   it('exposes a default timeout in the JSON Schema', () => {
     const tool = bashTool(createFakeKaos({ osEnv: posixEnv }), '/workspace');
     const properties = (tool.parameters as { properties: Record<string, { default?: number }> })
@@ -667,6 +679,56 @@ describe('BashTool', () => {
     await expect(manager.wait(task.taskId)).resolves.toMatchObject({
       status: 'completed',
     });
+  });
+
+  it('does not yield a foreground task when background tools are disabled', async () => {
+    vi.useFakeTimers();
+    try {
+      const { proc, finish } = pendingProcess();
+      const manager = createBackgroundManager().manager;
+      const tool = bashTool(
+        createFakeKaos({
+          execWithEnv: vi.fn().mockResolvedValue(proc),
+          osEnv: posixEnv,
+        }),
+        '/workspace',
+        manager,
+        { allowBackground: false },
+      );
+
+      const running = executeTool(
+        tool,
+        context({ command: 'sleep 10', timeout: 60, yield_time_ms: 250 }),
+      );
+      let settled = false;
+      void running.finally(() => {
+        settled = true;
+      });
+
+      await vi.waitFor(() => {
+        expect(manager.list(false)).toHaveLength(1);
+      });
+      await vi.advanceTimersByTimeAsync(250);
+
+      expect(settled).toBe(false);
+      const task = manager.list(false)[0]!;
+      expect(task).toMatchObject({ detached: false });
+
+      (proc.stdout as PassThrough).write('done\n');
+      finish();
+      const result = await running;
+
+      expect(result).toMatchObject({
+        isError: false,
+        message: 'Command executed successfully.',
+      });
+      expect(result.output).toContain('done\n');
+      expect(result.output).not.toContain('task_id:');
+      expect(result.output).not.toContain('TaskOutput');
+      expect(result.output).not.toContain('TaskStop');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps task metadata independent when noisy foreground output is capped before detach', async () => {
@@ -1300,5 +1362,19 @@ describe('BashTool prompt / runtime consistency', () => {
     // The implementation reports failures as plain text inside the output
     // (`Command failed with exit code: N`), never via a system tag.
     expect(tool.description).not.toMatch(/exit code will be provided in a system tag/);
+  });
+
+  it('documents yield_time_ms without task polling when background tools are disabled', () => {
+    const tool = bashTool(
+      createFakeKaos({ osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+      { allowBackground: false },
+    );
+
+    expect(tool.description).toContain('**yield_time_ms:**');
+    expect(tool.description).toContain('foreground commands do not yield a `task_id`');
+    expect(tool.description).not.toContain('TaskOutput');
+    expect(tool.description).not.toContain('TaskStop');
   });
 });

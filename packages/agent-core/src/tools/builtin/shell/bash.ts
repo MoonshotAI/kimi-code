@@ -23,10 +23,12 @@
  */
 
 import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
+import { sleep } from '@antfu/utils';
 import { z } from 'zod';
 
 import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/background';
 import type { BuiltinTool } from '../../../agent/tool';
+import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { toInputJsonSchema } from '../../support/input-schema';
@@ -77,6 +79,15 @@ export const BashInputSchema = z
       .optional()
       .describe(
         'If true, do not apply a timeout to the command. Only applies when run_in_background is true.',
+      ),
+    yield_time_ms: z
+      .number()
+      .int()
+      .min(250)
+      .max(30000)
+      .optional()
+      .describe(
+        'Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms. The command continues running during this wait.',
       ),
   })
   .superRefine((val, ctx) => {
@@ -147,6 +158,10 @@ function withoutBackgroundDescription(description: string): string {
     .replace(
       /\r?\n- Prefer `run_in_background=true`[\s\S]*?conversation to continue before the command finishes\./,
       '\n- Do not set `run_in_background=true`; background task management tools are not available.',
+    )
+    .replace(
+      /\n\n\*\*yield_time_ms:\*\*[\s\S]*?Otherwise, partial output is returned with a `task_id` you can use to poll or stop the command\./,
+      '\n\n**yield_time_ms:** Background task tools are disabled for this agent, so foreground commands do not yield a `task_id`; they wait for completion, timeout, detach, or cancellation.',
     );
 }
 
@@ -176,6 +191,7 @@ export class BashTool implements BuiltinTool<BashInput> {
   resolveExecution(args: BashInput): ToolExecution {
     const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
     return {
+      accesses: ToolAccesses.all(),
       description: args.run_in_background
         ? `Starting background: ${preview}`
         : `Running: ${preview}`,
@@ -303,7 +319,33 @@ export class BashTool implements BuiltinTool<BashInput> {
     }
 
     try {
-      const release = await this.backgroundManager.waitForForegroundRelease(taskId);
+      const completionOrDetach = this.backgroundManager.waitForForegroundRelease(taskId);
+      // Only yield a foreground command when the model can actually manage the
+      // resulting task. Subagent profiles can expose Bash without TaskOutput or
+      // TaskStop, so returning a task_id there would strand the command result.
+      const release = this.allowBackground
+        ? await Promise.race([
+            completionOrDetach,
+            sleep(args.yield_time_ms ?? 10_000).then(() => 'yielded' as const),
+          ])
+        : await completionOrDetach;
+      if (release === 'yielded') {
+        // Command is still running after yield_time_ms.  Return partial output
+        // with wall_time_seconds so the caller knows how long we waited.
+        collectForegroundOutput = false;
+        const partialResult = builder.ok('');
+        const wallSeconds = ((args.yield_time_ms ?? 10_000) / 1000).toFixed(1);
+        const partialOutput = partialResult.output;
+        return {
+          isError: false,
+          output:
+            (partialOutput.length > 0 ? partialOutput + '\n\n' : '') +
+            `<system>Command still running after ${wallSeconds}s yield. ` +
+            `task_id: ${taskId}\n` +
+            `Use TaskOutput(task_id="${taskId}", block=false) to poll for more output, ` +
+            `or TaskStop(task_id="${taskId}") to cancel.</system>`,
+        };
+      }
       if (release === 'detached') {
         collectForegroundOutput = false;
         return this.backgroundStartedResult(
