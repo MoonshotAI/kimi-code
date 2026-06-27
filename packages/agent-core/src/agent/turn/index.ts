@@ -760,10 +760,19 @@ export class TurnFlow {
 
         return result.stopReason;
       } catch (error) {
-        if (
+        const isContextOverflow =
           error instanceof APIContextOverflowError ||
-          (isKimiError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW)
+          (isKimiError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW);
+        const estimatedRequestTokens = isContextOverflow
+          ? this.agent.fullCompaction.estimateCurrentRequestTokens()
+          : undefined;
+        if (
+          isContextOverflow ||
+          this.agent.fullCompaction.shouldRecoverFromContextOverflow(error, estimatedRequestTokens)
         ) {
+          this.agent.fullCompaction.observeContextOverflow(
+            estimatedRequestTokens ?? this.agent.fullCompaction.estimateCurrentRequestTokens(),
+          );
           await this.agent.fullCompaction.handleOverflowError(signal, error);
           continue; // Retry with compacted context
         }
