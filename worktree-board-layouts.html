@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>看板布局方案 · kimi-web</title>
+<style>
+  :root {
+    --ink: #14171c; --text: #262626; --dim: #595959; --muted: #8a8a8a; --faint: #b5b5b5;
+    --line: #e7eaee; --line2: #eef1f4; --panel: #fafbfc; --panel2: #f3f5f8; --bg: #ffffff;
+    --blue: #1783ff; --blue2: #0f6fe0; --soft: #e8f3ff; --bd: #cfe6ff;
+    --ok: #0e7a38; --warn: #92660a; --err: #b91c1c;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --ui: 14px; --sh: 0 4px 16px rgba(20, 23, 28, 0.08);
+  }
+  [data-dark] {
+    --ink: #e8eaed; --text: #c9cdd4; --dim: #9aa0a8; --muted: #727983; --faint: #525960;
+    --line: #2d333b; --line2: #22272e; --panel: #1c2128; --panel2: #161b22; --bg: #0d1117;
+    --blue: #58a6ff; --blue2: #79b8ff; --soft: #1f2937; --bd: #1f6feb;
+    --ok: #3fb950; --warn: #d29922; --err: #f85149;
+    --sh: 0 6px 20px rgba(0,0,0,0.35);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--panel); color: var(--text); font-family: var(--mono); font-size: var(--ui); line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  header { padding: 16px 28px; border-bottom: 1px solid var(--line); background: var(--bg); position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; color: var(--ink); font-weight: 600; }
+  header nav { display: flex; gap: 6px; margin-left: 4px; flex-wrap: wrap; }
+  header nav a { color: var(--dim); text-decoration: none; font-size: 12px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 7px; }
+  header nav a:hover { color: var(--ink); border-color: var(--blue); }
+  .toggle { margin-left: auto; background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; font-family: var(--mono); font-size: 12px; cursor: pointer; }
+  .toggle:hover { border-color: var(--blue); }
+
+  section { padding: 26px 28px; border-bottom: 1px solid var(--line); }
+  section h2 { font-size: 17px; color: var(--ink); margin: 0 0 4px; }
+  section .desc { color: var(--muted); font-size: 12px; margin: 0 0 16px; max-width: 820px; }
+  .frame { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 14px; box-shadow: var(--sh); }
+
+  /* shared bits */
+  .pr { flex: none; border: 1px solid transparent; border-radius: 9px; padding: 0 6px; height: 18px; line-height: 16px; font-size: 12px; background: transparent; font-family: var(--mono); display: inline-flex; align-items: center; }
+  .pr-open { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 38%, var(--bg)); }
+  .pr-merged { color: #8957e5; border-color: color-mix(in srgb, #8957e5 38%, var(--bg)); }
+  .tag { flex: none; height: 18px; border-radius: 9px; padding: 0 6px; line-height: 18px; font-size: 11px; display: inline-flex; align-items: center; border: 1px solid transparent; }
+  .tag-approve { background: color-mix(in srgb, var(--warn) 16%, var(--bg)); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 38%, var(--bg)); }
+  .spin { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--blue); border-radius: 50%; animation: sp .8s linear infinite; flex: none; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .unread { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); flex: none; }
+  .badge { font-size: 11px; color: var(--faint); border: 1px solid var(--line); border-radius: 8px; padding: 0 5px; }
+  .mini { font-size: 11px; color: var(--muted); }
+  .card-sess { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; cursor: pointer; transition: border-color .12s, box-shadow .12s; }
+  .card-sess:hover { border-color: var(--blue); box-shadow: var(--sh); }
+  .card-sess .tline { display: flex; align-items: center; gap: 6px; }
+  .card-sess .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-weight: 500; font-size: 13px; }
+  .card-sess .meta { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+  .card-sess .time { color: var(--faint); font-size: 11px; margin-right: auto; }
+
+  /* ===== V1 自动填充列（扁平，所有 worktree 平铺成列，自动换行填满） ===== */
+  .v1 { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; align-items: start; }
+  .v1 .col { border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 10px; overflow: hidden; background: var(--bg); }
+  .v1 .col-head { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  .v1 .col-head .br { color: var(--c); font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .v1 .col-head .ws { color: var(--faint); font-size: 11px; margin-top: 3px; }
+  .v1 .col-body { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+  .v1 .col-foot { padding: 8px; border-top: 1px solid var(--line); }
+  .add { width: 100%; text-align: center; color: var(--faint); font-size: 12px; padding: 6px; border: 1px dashed var(--line); border-radius: 8px; background: transparent; font-family: var(--mono); }
+
+  /* ===== V2 卡片画廊（每个 worktree 一张卡，2D 网格填满） ===== */
+  .v2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+  .v2 .g { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 10px; padding: 12px 13px; background: var(--bg); }
+  .v2 .g .head { display: flex; align-items: center; gap: 7px; }
+  .v2 .g .br { color: var(--c); font-weight: 600; font-size: 14px; }
+  .v2 .g .ws { color: var(--faint); font-size: 11px; }
+  .v2 .g .stat { display: flex; gap: 8px; margin: 8px 0; font-size: 11px; color: var(--muted); }
+  .v2 .g .sess { display: flex; flex-direction: column; gap: 5px; border-top: 1px solid var(--line); padding-top: 8px; }
+  .v2 .g .sr { display: flex; align-items: center; gap: 7px; padding: 5px 4px; border-radius: 6px; cursor: pointer; }
+  .v2 .g .sr:hover { background: var(--panel2); }
+  .v2 .g .sr .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 13px; }
+  .v2 .g .sr .time { color: var(--faint); font-size: 11px; }
+
+  /* ===== V3 泳道（每个 workspace 一条横向泳道，宽度填满） ===== */
+  .v3 { display: flex; flex-direction: column; gap: 12px; }
+  .v3 .lane { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); }
+  .v3 .lane-head { padding: 8px 13px; border-bottom: 1px solid var(--line); font-weight: 600; color: var(--ink); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .v3 .lane-head .path { color: var(--faint); font-size: 11px; font-weight: 400; }
+  .v3 .lane-body { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; padding: 10px; }
+  .v3 .cell { border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 8px; padding: 9px 10px; }
+  .v3 .cell .br { color: var(--c); font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  .v3 .cell .sess { display: flex; flex-direction: column; gap: 5px; margin-top: 7px; }
+  .v3 .cell .sr { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink); }
+  .v3 .cell .sr .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ===== V4 紧凑表格（每行一个 worktree，最密） ===== */
+  .v4 { width: 100%; border-collapse: collapse; }
+  .v4 th { text-align: left; font-size: 11px; color: var(--faint); font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .v4 td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; font-size: 13px; }
+  .v4 tr:hover td { background: var(--panel2); }
+  .v4 .br { color: var(--c); font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .v4 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex: none; }
+  .v4 .ws { color: var(--dim); }
+  .v4 .sess { display: flex; flex-direction: column; gap: 3px; }
+  .v4 .sess .sr { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink); }
+  .v4 .act { color: var(--blue); cursor: pointer; font-size: 12px; }
+
+  /* ===== V5 大列（更宽更饱满的列，session 卡信息更全） ===== */
+  .v5 { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; align-items: start; }
+  .v5 .col { border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 10px; overflow: hidden; background: var(--bg); }
+  .v5 .col-head { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .v5 .col-head .br { color: var(--c); font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 7px; }
+  .v5 .col-head .ws { color: var(--faint); font-size: 11px; margin-top: 4px; }
+  .v5 .col-body { padding: 10px; display: flex; flex-direction: column; gap: 9px; }
+  .v5 .card-sess { padding: 11px 12px; }
+  .v5 .card-sess .preview { color: var(--muted); font-size: 11px; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>看板布局方案</h1>
+  <nav>
+    <a href="#v1">V1 · 自动填充列</a>
+    <a href="#v2">V2 · 卡片画廊</a>
+    <a href="#v3">V3 · 泳道</a>
+    <a href="#v4">V4 · 紧凑表格</a>
+    <a href="#v5">V5 · 大列</a>
+  </nav>
+  <button class="toggle" id="toggle">切换暗色</button>
+</header>
+
+<!-- V1 -->
+<section id="v1">
+  <h2>V1 · 自动填充列（扁平）</h2>
+  <p class="desc">所有 worktree（跨 workspace）平铺成列，按宽度自动换行填满。每列标题带 workspace 名。比「按 workspace 分段堆叠」更满，没有右侧大片空白。</p>
+  <div class="frame">
+    <div class="v1">
+      <div class="col" style="--c:oklch(0.6 0.17 250)"><div class="col-head"><div class="br">main <span class="badge">main</span></div><div class="ws">kimi-code-web</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="spin"></span><span class="t">Refactor auth middleware</span></div><div class="meta"><span class="time">now</span></div></div></div><div class="col-foot"><button class="add">+ session</button></div></div>
+      <div class="col" style="--c:oklch(0.6 0.17 150)"><div class="col-head"><div class="br">feat-login <span class="pr pr-open">#12</span></div><div class="ws">kimi-code-web</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="unread"></span><span class="t">Add login flow</span></div><div class="meta"><span class="time">3m</span></div></div><div class="card-sess"><div class="tline"><span class="t">Fix login redirect</span></div><div class="meta"><span class="time">12m</span></div></div></div><div class="col-foot"><button class="add">+ session</button></div></div>
+      <div class="col" style="--c:oklch(0.6 0.17 300)"><div class="col-head"><div class="br">fix-perf <span class="pr pr-merged">#8</span></div><div class="ws">kimi-code-web</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="t">Optimize dashboard query</span><span class="tag tag-approve">Approve</span></div><div class="meta"><span class="time">28m</span></div></div></div><div class="col-foot"><button class="add">+ session</button></div></div>
+      <div class="col" style="--c:oklch(0.6 0.17 70)"><div class="col-head"><div class="br">docs</div><div class="ws">kimi-code-web</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="t">Update API docs</span></div><div class="meta"><span class="time">1h</span></div></div></div><div class="col-foot"><button class="add">+ session</button></div></div>
+      <div class="col" style="--c:oklch(0.6 0.17 220)"><div class="col-head"><div class="br">main <span class="badge">main</span></div><div class="ws">kimi-server</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="t">Graceful shutdown</span></div><div class="meta"><span class="time">2h</span></div></div></div><div class="col-foot"><button class="add">+ session</button></div></div>
+      <div class="col" style="--c:oklch(0.6 0.17 110)"><div class="col-head"><div class="br">feat-cache <span class="pr pr-open">#5</span></div><div class="ws">kimi-server</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="t">Add Redis cache</span></div><div class="meta"><span class="time">40m</span></div></div></div><div class="col-foot"><button class="add">+ session</button></div></div>
+      <div class="col" style="--c:oklch(0.6 0.17 330)"><div class="col-head"><div class="br">fix-race</div><div class="ws">kimi-server</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="t">Fix race in worker</span></div><div class="meta"><span class="time">5h</span></div></div></div><div class="col-foot"><button class="add">+ session</button></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- V2 -->
+<section id="v2">
+  <h2>V2 · 卡片画廊</h2>
+  <p class="desc">每个 worktree 一张卡，2D 网格填满整个区域。卡里顶部是分支/PR/状态，下面是该 worktree 的 session 紧凑列表。最「满」，信息密度高。</p>
+  <div class="frame">
+    <div class="v2">
+      <div class="g" style="--c:oklch(0.6 0.17 250)"><div class="head"><span class="br">main</span><span class="badge">main</span><span class="ws">kimi-code-web</span></div><div class="stat"><span>clean</span><span>·</span><span>1 session</span></div><div class="sess"><div class="sr"><span class="spin"></span><span class="t">Refactor auth middleware</span><span class="time">now</span></div></div></div>
+      <div class="g" style="--c:oklch(0.6 0.17 150)"><div class="head"><span class="br">feat-login</span><span class="pr pr-open">#12</span><span class="ws">kimi-code-web</span></div><div class="stat"><span>dirty · 3 files</span><span>·</span><span>↑2</span></div><div class="sess"><div class="sr"><span class="unread"></span><span class="t">Add login flow</span><span class="time">3m</span></div><div class="sr"><span class="t">Fix login redirect</span><span class="time">12m</span></div></div></div>
+      <div class="g" style="--c:oklch(0.6 0.17 300)"><div class="head"><span class="br">fix-perf</span><span class="pr pr-merged">#8</span><span class="ws">kimi-code-web</span></div><div class="stat"><span>clean</span></div><div class="sess"><div class="sr"><span class="t">Optimize dashboard query</span><span class="tag tag-approve">Approve</span><span class="time">28m</span></div></div></div>
+      <div class="g" style="--c:oklch(0.6 0.17 70)"><div class="head"><span class="br">docs</span><span class="ws">kimi-code-web</span></div><div class="stat"><span>dirty · 1 file</span></div><div class="sess"><div class="sr"><span class="t">Update API docs</span><span class="time">1h</span></div></div></div>
+      <div class="g" style="--c:oklch(0.6 0.17 220)"><div class="head"><span class="br">main</span><span class="badge">main</span><span class="ws">kimi-server</span></div><div class="stat"><span>clean</span></div><div class="sess"><div class="sr"><span class="t">Graceful shutdown</span><span class="time">2h</span></div></div></div>
+      <div class="g" style="--c:oklch(0.6 0.17 110)"><div class="head"><span class="br">feat-cache</span><span class="pr pr-open">#5</span><span class="ws">kimi-server</span></div><div class="stat"><span>dirty · 2 files</span></div><div class="sess"><div class="sr"><span class="t">Add Redis cache</span><span class="time">40m</span></div></div></div>
+      <div class="g" style="--c:oklch(0.6 0.17 330)"><div class="head"><span class="br">fix-race</span><span class="ws">kimi-server</span></div><div class="stat"><span>clean</span></div><div class="sess"><div class="sr"><span class="t">Fix race in worker</span><span class="time">5h</span></div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- V3 -->
+<section id="v3">
+  <h2>V3 · 泳道（每个 workspace 一条）</h2>
+  <p class="desc">每个 workspace 一条横向泳道，宽度填满；泳道内 worktree 单元格自动换行。既保留 workspace 分组，又填满宽度，不会像「分段堆叠窄列」那样空。</p>
+  <div class="frame">
+    <div class="v3">
+      <div class="lane">
+        <div class="lane-head">kimi-code-web <span class="path">~/code/kimi-code-web</span></div>
+        <div class="lane-body">
+          <div class="cell" style="--c:oklch(0.6 0.17 250)"><div class="br">main <span class="badge">main</span></div><div class="sess"><div class="sr"><span class="spin"></span><span class="t">Refactor auth middleware</span></div></div></div>
+          <div class="cell" style="--c:oklch(0.6 0.17 150)"><div class="br">feat-login <span class="pr pr-open">#12</span></div><div class="sess"><div class="sr"><span class="unread"></span><span class="t">Add login flow</span></div><div class="sr"><span class="t">Fix login redirect</span></div></div></div>
+          <div class="cell" style="--c:oklch(0.6 0.17 300)"><div class="br">fix-perf <span class="pr pr-merged">#8</span></div><div class="sess"><div class="sr"><span class="t">Optimize dashboard query</span><span class="tag tag-approve">Approve</span></div></div></div>
+          <div class="cell" style="--c:oklch(0.6 0.17 70)"><div class="br">docs</div><div class="sess"><div class="sr"><span class="t">Update API docs</span></div></div></div>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="lane-head">kimi-server <span class="path">~/code/kimi-server</span></div>
+        <div class="lane-body">
+          <div class="cell" style="--c:oklch(0.6 0.17 220)"><div class="br">main <span class="badge">main</span></div><div class="sess"><div class="sr"><span class="t">Graceful shutdown</span></div></div></div>
+          <div class="cell" style="--c:oklch(0.6 0.17 110)"><div class="br">feat-cache <span class="pr pr-open">#5</span></div><div class="sess"><div class="sr"><span class="t">Add Redis cache</span></div></div></div>
+          <div class="cell" style="--c:oklch(0.6 0.17 330)"><div class="br">fix-race</div><div class="sess"><div class="sr"><span class="t">Fix race in worker</span></div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- V4 -->
+<section id="v4">
+  <h2>V4 · 紧凑表格</h2>
+  <p class="desc">每行一个 worktree，最密、最不空。列：分支 / workspace / PR / 状态 / session / 操作。适合 worktree 很多时快速扫描。</p>
+  <div class="frame">
+    <table class="v4">
+      <thead><tr><th>分支</th><th>workspace</th><th>PR</th><th>状态</th><th>session</th><th></th></tr></thead>
+      <tbody>
+        <tr style="--c:oklch(0.6 0.17 250)"><td><span class="br"><span class="dot"></span>main <span class="badge">main</span></span></td><td class="ws">kimi-code-web</td><td></td><td class="mini">clean</td><td><div class="sess"><div class="sr"><span class="spin"></span>Refactor auth middleware</div></div></td><td><span class="act">+ session</span></td></tr>
+        <tr style="--c:oklch(0.6 0.17 150)"><td><span class="br"><span class="dot"></span>feat-login</span></td><td class="ws">kimi-code-web</td><td><span class="pr pr-open">#12</span></td><td class="mini">dirty · 3 · ↑2</td><td><div class="sess"><div class="sr"><span class="unread"></span>Add login flow</div><div class="sr">Fix login redirect</div></div></td><td><span class="act">+ session</span></td></tr>
+        <tr style="--c:oklch(0.6 0.17 300)"><td><span class="br"><span class="dot"></span>fix-perf</span></td><td class="ws">kimi-code-web</td><td><span class="pr pr-merged">#8</span></td><td class="mini">clean</td><td><div class="sess"><div class="sr">Optimize dashboard query <span class="tag tag-approve">Approve</span></div></div></td><td><span class="act">+ session</span></td></tr>
+        <tr style="--c:oklch(0.6 0.17 70)"><td><span class="br"><span class="dot"></span>docs</span></td><td class="ws">kimi-code-web</td><td></td><td class="mini">dirty · 1</td><td><div class="sess"><div class="sr">Update API docs</div></div></td><td><span class="act">+ session</span></td></tr>
+        <tr style="--c:oklch(0.6 0.17 220)"><td><span class="br"><span class="dot"></span>main <span class="badge">main</span></span></td><td class="ws">kimi-server</td><td></td><td class="mini">clean</td><td><div class="sess"><div class="sr">Graceful shutdown</div></div></td><td><span class="act">+ session</span></td></tr>
+        <tr style="--c:oklch(0.6 0.17 110)"><td><span class="br"><span class="dot"></span>feat-cache</span></td><td class="ws">kimi-server</td><td><span class="pr pr-open">#5</span></td><td class="mini">dirty · 2</td><td><div class="sess"><div class="sr">Add Redis cache</div></div></td><td><span class="act">+ session</span></td></tr>
+        <tr style="--c:oklch(0.6 0.17 330)"><td><span class="br"><span class="dot"></span>fix-race</span></td><td class="ws">kimi-server</td><td></td><td class="mini">clean</td><td><div class="sess"><div class="sr">Fix race in worker</div></div></td><td><span class="act">+ session</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- V5 -->
+<section id="v5">
+  <h2>V5 · 大列（更宽更饱满）</h2>
+  <p class="desc">更宽的列（约 380px），session 卡信息更全（带最后一条 prompt 预览），列数少一些但每列更饱满，减少「很多小空列」的感觉。</p>
+  <div class="frame">
+    <div class="v5">
+      <div class="col" style="--c:oklch(0.6 0.17 250)"><div class="col-head"><div class="br">main <span class="badge">main</span></div><div class="ws">kimi-code-web</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="spin"></span><span class="t">Refactor auth middleware</span></div><div class="preview">正在编辑 src/auth.ts …</div><div class="meta"><span class="time">now</span></div></div></div></div>
+      <div class="col" style="--c:oklch(0.6 0.17 150)"><div class="col-head"><div class="br">feat-login <span class="pr pr-open">#12</span></div><div class="ws">kimi-code-web</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="unread"></span><span class="t">Add login flow</span></div><div class="preview">完成 OAuth 回调处理</div><div class="meta"><span class="time">3m</span></div></div><div class="card-sess"><div class="tline"><span class="t">Fix login redirect</span></div><div class="preview">redirect_uri 白名单</div><div class="meta"><span class="time">12m</span></div></div></div></div>
+      <div class="col" style="--c:oklch(0.6 0.17 300)"><div class="col-head"><div class="br">fix-perf <span class="pr pr-merged">#8</span></div><div class="ws">kimi-code-web</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="t">Optimize dashboard query</span><span class="tag tag-approve">Approve</span></div><div class="preview">需要审批: prisma migrate</div><div class="meta"><span class="time">28m</span></div></div></div></div>
+      <div class="col" style="--c:oklch(0.6 0.17 70)"><div class="col-head"><div class="br">docs</div><div class="ws">kimi-code-web</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="t">Update API docs</span></div><div class="preview">补充 worktree 端点说明</div><div class="meta"><span class="time">1h</span></div></div></div></div>
+      <div class="col" style="--c:oklch(0.6 0.17 220)"><div class="col-head"><div class="br">main <span class="badge">main</span></div><div class="ws">kimi-server</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="t">Graceful shutdown</span></div><div class="preview">SIGTERM 处理</div><div class="meta"><span class="time">2h</span></div></div></div></div>
+      <div class="col" style="--c:oklch(0.6 0.17 110)"><div class="col-head"><div class="br">feat-cache <span class="pr pr-open">#5</span></div><div class="ws">kimi-server</div></div><div class="col-body"><div class="card-sess"><div class="tline"><span class="t">Add Redis cache</span></div><div class="preview">cache-aside 策略</div><div class="meta"><span class="time">40m</span></div></div></div></div>
+    </div>
+  </div>
+</section>
+
+<script>
+  const root = document.documentElement;
+  document.getElementById('toggle').addEventListener('click', (e) => {
+    const dark = root.hasAttribute('data-dark');
+    if (dark) { root.removeAttribute('data-dark'); e.target.textContent = '切换暗色'; }
+    else { root.setAttribute('data-dark', ''); e.target.textContent = '切换亮色'; }
+  });
+</script>
+</body>
+</html>

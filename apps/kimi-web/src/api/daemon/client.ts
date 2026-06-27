@@ -20,6 +20,7 @@ import type {
   AppTaskStatus,
   AppTerminal,
   AppWorkspace,
+  AppWorktree,
   ApprovalResponse,
   FsBrowseResult,
   FsEntry,
@@ -50,6 +51,7 @@ import {
   toWireQuestionResponse,
   toWireSessionStatus,
   toAppWorkspace,
+  toAppWorktree,
   wireEventSeq,
   wireEventSessionId,
 } from './mappers';
@@ -79,6 +81,7 @@ import type {
   WireSessionRuntimeStatus,
   WireSessionSnapshot,
   WireWorkspace,
+  WireWorktree,
   WireLogoutResult,
 } from './wire';
 import { DaemonEventSocket } from './ws';
@@ -983,6 +986,57 @@ export class DaemonKimiWebApi implements KimiWebApi {
    */
   async deleteWorkspace(id: string): Promise<void> {
     await this.http.delete(`/workspaces/${encodeURIComponent(id)}`);
+  }
+
+  // -------------------------------------------------------------------------
+  // Worktrees — git worktrees of a workspace repository
+  // -------------------------------------------------------------------------
+
+  async listWorktrees(workspaceId: string): Promise<AppWorktree[]> {
+    const data = await this.http.get<{ worktrees: WireWorktree[] }>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/worktrees`,
+    );
+    return (data.worktrees ?? []).map(toAppWorktree);
+  }
+
+  async createWorktree(
+    workspaceId: string,
+    input?: { branch?: string; baseRef?: string; path?: string },
+  ): Promise<AppWorktree> {
+    const body: Record<string, unknown> = {};
+    if (input?.branch !== undefined) body['branch'] = input.branch;
+    if (input?.baseRef !== undefined) body['base_ref'] = input.baseRef;
+    if (input?.path !== undefined) body['path'] = input.path;
+    const data = await this.http.post<WireWorktree>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/worktrees`,
+      body,
+    );
+    return toAppWorktree(data);
+  }
+
+  async removeWorktree(
+    workspaceId: string,
+    input: { path: string; force?: boolean; deleteBranch?: boolean },
+  ): Promise<{ removed: true }> {
+    const body: Record<string, unknown> = { path: input.path };
+    if (input.force !== undefined) body['force'] = input.force;
+    if (input.deleteBranch !== undefined) body['delete_branch'] = input.deleteBranch;
+    await this.http.post<{ removed: true }>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/worktrees/remove`,
+      body,
+    );
+    return { removed: true };
+  }
+
+  async openWorktreeInApp(
+    workspaceId: string,
+    appId: string,
+    path: string,
+  ): Promise<void> {
+    await this.http.post<{ opened: true }>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/worktrees/open-in`,
+      { app_id: appId, path },
+    );
   }
 
   /**

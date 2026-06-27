@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kimi Code Web 消息同步逻辑形状</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --panel2: #1e2230;
+      --text: #e7eaf0;
+      --muted: #a7b0c0;
+      --line: #343b4d;
+      --blue: #6aa6ff;
+      --green: #61d095;
+      --yellow: #f2c14e;
+      --red: #ff7a7a;
+      --purple: #b39dff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.65;
+    }
+    header {
+      padding: 40px 24px 24px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #151a24 0%, var(--bg) 100%);
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    h2 { margin: 34px 0 12px; font-size: 22px; }
+    h3 { margin: 22px 0 8px; font-size: 17px; }
+    p { margin: 8px 0; }
+    main { max-width: 1120px; margin: 0 auto; padding: 26px 24px 60px; }
+    .subtitle { color: var(--muted); max-width: 820px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      margin: 14px 0;
+    }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
+    .span4 { grid-column: span 4; }
+    .span6 { grid-column: span 6; }
+    .span12 { grid-column: span 12; }
+    .box {
+      border: 1px solid var(--line);
+      background: var(--panel2);
+      border-radius: 12px;
+      padding: 12px 14px;
+      min-height: 74px;
+    }
+    .box b { display: block; margin-bottom: 4px; }
+    .box span { color: var(--muted); font-size: 14px; }
+    .arrow { text-align: center; color: var(--muted); font-size: 22px; margin: 6px 0; }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 9px;
+      font-size: 12px;
+      margin-right: 6px;
+      border: 1px solid var(--line);
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .rest { background: rgba(106,166,255,.14); border-color: rgba(106,166,255,.4); }
+    .ws { background: rgba(97,208,149,.14); border-color: rgba(97,208,149,.4); }
+    .bus { background: rgba(179,157,255,.14); border-color: rgba(179,157,255,.4); }
+    .state { background: rgba(242,193,78,.14); border-color: rgba(242,193,78,.4); }
+    .bad { background: rgba(255,122,122,.14); border-color: rgba(255,122,122,.4); }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    pre {
+      overflow-x: auto;
+      background: #0b0d12;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      color: #d7e0ee;
+      font-size: 13px;
+    }
+    ul { margin: 8px 0 8px 20px; padding: 0; }
+    li { margin: 4px 0; }
+    .muted { color: var(--muted); }
+    .timeline {
+      border-left: 2px solid var(--line);
+      margin-left: 10px;
+      padding-left: 18px;
+    }
+    .timeline div { margin: 12px 0; position: relative; }
+    .timeline div::before {
+      content: "";
+      position: absolute;
+      left: -25px;
+      top: 7px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--blue);
+    }
+    .ok::before { background: var(--green) !important; }
+    .warn::before { background: var(--yellow) !important; }
+    .badstep::before { background: var(--red) !important; }
+    @media (max-width: 820px) {
+      .span4, .span6 { grid-column: span 12; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Kimi Code Web 消息同步逻辑形状</h1>
+    <div class="subtitle">这份图说明 Web UI 如何通过 REST snapshot + WebSocket 增量事件来显示消息，以及为什么会出现短时间多次 <code>resync_required</code> / snapshot 请求风暴。</div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>0. 图例</h2>
+      <p>
+        <span class="pill rest">REST</span> HTTP 请求/响应，例如 <code>GET /snapshot</code>、<code>POST /prompts</code>。
+      </p>
+      <p>
+        <span class="pill ws">WebSocket</span> 长连接，服务端把事件增量推给前端。
+      </p>
+      <p>
+        <span class="pill bus">Event Bus</span> agent-core 内部事件总线，所有会话事件都先进入这里。
+      </p>
+      <p>
+        <span class="pill state">Client State</span> 前端 composable 里的响应式状态，驱动 UI 渲染。
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>1. 总体组件</h2>
+      <div class="grid">
+        <div class="box span4">
+          <b>Browser UI</b>
+          <span>Vue 组件、会话列表、聊天面板、输入框。</span>
+        </div>
+        <div class="box span4">
+          <b>useKimiWebClient</b>
+          <span>前端状态中枢：保存 sessions、messages、lastSeq、epoch、WS connection。</span>
+        </div>
+        <div class="box span4">
+          <b>Daemon API Client</b>
+          <span>REST client + WebSocket client，负责和本地 server 通信。</span>
+        </div>
+        <div class="arrow span12">↓ HTTP / WS</div>
+        <div class="box span4">
+          <b>REST Routes</b>
+          <span><code>/snapshot</code>、<code>/prompts</code> 等。</span>
+        </div>
+        <div class="box span4">
+          <b>WSBroadcastService</b>
+          <span>把事件总线事件转成 WS frame，并维护 per-session seq / epoch。</span>
+        </div>
+        <div class="box span4">
+          <b>SessionEventJournal</b>
+          <span>每个 session 一个 JSONL journal，记录 durable events 和 seq。</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2. 打开一个 session：snapshot 全量同步</h2>
+      <pre>selectSession(sessionId)
+  └─ syncSessionFromSnapshot(sessionId)
+      ├─ GET /api/v1/sessions/{id}/snapshot
+      ├─ SnapshotService 读取 SessionStore / state.json / wire.jsonl
+      ├─ WSBroadcastService.getSnapshotState() 返回当前 seq / epoch / inFlightTurn
+      ├─ 前端写入 messages / approvals / questions / lastSeq / epoch
+      ├─ eventConn.seedSnapshot(...) 恢复正在进行的 turn
+      └─ eventConn.subscribe({ seq: as_of_seq, epoch })</pre>
+      <p class="muted">关键点：snapshot 是“当前水位的全量状态”，WebSocket 负责从这个水位之后开始增量同步。</p>
+    </section>
+
+    <section class="card">
+      <h2>3. 接收实时消息：WebSocket 增量事件</h2>
+      <pre>agent-core 内部产生事件
+  └─ IEventService.publish(event)
+      └─ WSBroadcastService
+          ├─ durable event：分配 seq，写入 journal，加入内存 tail
+          ├─ volatile event：不分配新 seq，只带当前 watermark 直接广播
+          └─ 对订阅了该 session 的 WS 连接 fan-out</pre>
+      <p>前端收到 WS frame 后：</p>
+      <pre>DaemonEventSocket
+  └─ classifyFrame / agentEventProjector / eventReducer
+      └─ 更新 rawState.messagesBySession / lastSeqBySession / status
+          └─ Vue 组件重新渲染</pre>
+      <p class="muted">durable event 推进 <code>lastSeq</code>；volatile delta（如 thinking.delta）用于实时显示，不推进 durable seq。</p>
+    </section>
+
+    <section class="card">
+      <h2>4. 发送消息：从输入框到事件流</h2>
+      <pre>Composer 提交 prompt
+  └─ POST /api/v1/sessions/{id}/prompts
+      └─ agent-core 开始处理
+          └─ 产生 message.created / turn.started / assistant.delta / tool.* / turn.ended 等事件
+              └─ 这些事件重新进入 Event Bus → WSBroadcast → WebSocket → 前端渲染</pre>
+      <p class="muted">所以“发送消息”的写入路径是 REST；发送之后看到的过程和结果，主要通过 WebSocket 事件流回来。</p>
+    </section>
+
+    <section class="card">
+      <h2>5. 什么时候会 <code>resync_required</code>？</h2>
+      <p>客户端 subscribe / client_hello 会带上自己的同步游标：</p>
+      <pre>{ seq: lastSeq, epoch: lastEpoch }</pre>
+      <p>服务端在 <code>getBufferedSince()</code> 里判断能不能继续增量回放：</p>
+      <ul>
+        <li><b>epoch 不一致</b>：客户端拿着旧 journal 的 epoch，必须重建。</li>
+        <li><b>客户端 seq 比服务端还新</b>：cursor 不可信，强制重建。</li>
+        <li><b>落后超过 1000 条 durable events</b>：回放成本太高，改用 snapshot 重建。</li>
+      </ul>
+      <pre>subscribe(cursor)
+  └─ syncSessions()
+      ├─ 先把订阅注册上（live events 可以立刻流过来）
+      └─ getBufferedSince(cursor)
+          ├─ 可回放：发送漏掉的 durable events
+          └─ 不可回放：发送 resync_required</pre>
+    </section>
+
+    <section class="card">
+      <h2>6. 实际运行形状：为什么会短时间多个 resync？</h2>
+      <p>正常应该是：</p>
+      <pre>subscribe(old cursor) → resync_required → snapshot → subscribe(new cursor)</pre>
+      <p>但前端有多条路径都会触发 subscribe，并且可能都使用旧 cursor：</p>
+      <ul>
+        <li>切回 session 时重新订阅；</li>
+        <li>WebSocket 断线重连后重新 client_hello；</li>
+        <li>路由 popstate / active session 变化；</li>
+        <li>上一次 snapshot 还没回来时，又有别的路径触发 subscribe。</li>
+      </ul>
+      <div class="timeline">
+        <div class="warn">1. 切回 running session，前端用旧 <code>lastSeq</code> subscribe。</div>
+        <div class="warn">2. 服务端发现落后太多，回 <code>resync_required</code>。</div>
+        <div>3. 旧前端开始 <code>GET /snapshot</code>。</div>
+        <div class="badstep">4. snapshot 还没回来，另一条路径又带着旧 cursor subscribe。</div>
+        <div class="badstep">5. 服务端再次回 <code>resync_required</code>。</div>
+        <div class="badstep">6. 旧前端再次 <code>GET /snapshot</code>，形成并发/堆积。</div>
+      </div>
+      <p class="muted">所以问题不是“单个 snapshot 慢”，而是多个旧 cursor 订阅触发多个 resync，多个 resync 又触发多个 snapshot。</p>
+    </section>
+
+    <section class="card">
+      <h2>7. 修复后的形状：coalesced snapshot sync</h2>
+      <p>修复加入了一个按 session 去重的 runner：</p>
+      <pre>createCoalescedAsyncRunner(syncSessionFromSnapshot)</pre>
+      <p>规则：</p>
+      <ul>
+        <li>同一个 session 已有 snapshot 在加载：不重复发起。</li>
+        <li>加载期间又来 resync：只记录“需要再跑一次”。</li>
+        <li>当前加载完成后：最多再补跑一次，拿最新状态。</li>
+      </ul>
+      <div class="timeline">
+        <div class="ok">resync_required A → 开始 snapshot #1</div>
+        <div class="ok">resync_required B → snapshot #1 还在跑，只排队一次</div>
+        <div class="ok">resync_required C → 不重复排队</div>
+        <div class="ok">snapshot #1 完成 → 再跑 snapshot #2，拿到最新水位</div>
+      </div>
+      <p class="muted">结果：最多只有 1 个 in-flight snapshot + 1 个 queued rerun，不会再出现请求风暴。</p>
+    </section>
+
+    <section class="card">
+      <h2>8. 一句话总结</h2>
+      <p>
+        <b>snapshot 是“全量重建”，WebSocket 是“增量同步”。</b>
+        当客户端 cursor 过期或落后太多时，服务端会发 <code>resync_required</code> 让前端重新 snapshot。
+        旧前端没有对同 session 的 snapshot 去重，所以短时间多次 resync 会放大成并发 snapshot 请求风暴；
+        修复后同 session 的 snapshot sync 被串行化，并最多保留一次后续刷新。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

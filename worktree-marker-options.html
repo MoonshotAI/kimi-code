@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Session 颜色标记方案对比 · kimi-web</title>
+<style>
+  :root {
+    --ink: #14171c; --text: #262626; --dim: #595959; --muted: #8a8a8a; --faint: #b5b5b5;
+    --line: #e7eaee; --line2: #eef1f4; --panel: #fafbfc; --panel2: #f3f5f8; --bg: #ffffff;
+    --blue: #1783ff; --blue2: #0f6fe0; --soft: #e8f3ff; --bd: #cfe6ff;
+    --ok: #0e7a38; --warn: #92660a; --err: #b91c1c;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --ui: 14px;
+  }
+  [data-dark] {
+    --ink: #e8eaed; --text: #c9cdd4; --dim: #9aa0a8; --muted: #727983; --faint: #525960;
+    --line: #2d333b; --line2: #22272e; --panel: #1c2128; --panel2: #161b22; --bg: #0d1117;
+    --blue: #58a6ff; --blue2: #79b8ff; --soft: #1f2937; --bd: #1f6feb;
+    --ok: #3fb950; --warn: #d29922; --err: #f85149;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--panel); color: var(--text);
+    font-family: var(--mono); font-size: var(--ui); line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    transition: background .2s, color .2s;
+  }
+  header {
+    padding: 22px 28px 14px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 16px; background: var(--bg);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; margin: 0; color: var(--ink); font-weight: 600; }
+  header p { margin: 0; color: var(--muted); font-size: 12px; }
+  .toggle {
+    margin-left: auto; background: var(--panel2); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 12px; font-family: var(--mono); font-size: 12px; cursor: pointer;
+  }
+  .toggle:hover { border-color: var(--blue); }
+
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 18px; padding: 22px 28px 40px;
+  }
+  .card { display: flex; flex-direction: column; }
+  .card .meta { margin-bottom: 8px; }
+  .card .meta h2 { font-size: 13px; margin: 0 0 2px; color: var(--ink); font-weight: 600; }
+  .card .meta h2 .no { color: var(--blue); margin-right: 6px; }
+  .card .meta p { font-size: 11px; color: var(--muted); margin: 0; }
+
+  /* ---- the mini sidebar ---- */
+  .side {
+    border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+    overflow: hidden; padding-bottom: 8px;
+  }
+  .gh { padding: 10px 12px 4px; }
+  .gh-top { display: flex; align-items: center; gap: 6px; }
+  .gh-folder { color: var(--muted); flex: none; }
+  .gh-name { flex: 1; font-weight: 500; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gh-add { color: var(--faint); flex: none; }
+  .gh-path { color: var(--faint); font-size: 12px; padding-left: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---- base session row ---- */
+  .se {
+    display: flex; align-items: center; gap: 6px; padding: 7px 12px; cursor: pointer;
+    position: relative; color: var(--text);
+  }
+  .se:hover { background: var(--panel2); }
+  .lead { width: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+  .spin { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--blue); border-radius: 50%; animation: sp .8s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .unread { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); }
+  .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+  .ts { color: var(--muted); font-size: 11px; flex: none; }
+  .se:hover .ts { display: none; }
+  .pr {
+    flex: none; border: 1px solid transparent; border-radius: 9px; padding: 0 6px; height: 18px; line-height: 16px;
+    font-size: 12px; background: transparent; cursor: pointer; font-family: var(--mono);
+  }
+  .pr-open { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 38%, var(--bg)); }
+  .pr-merged { color: #8957e5; border-color: color-mix(in srgb, #8957e5 38%, var(--bg)); }
+  .tag { flex: none; height: 18px; border-radius: 9px; padding: 0 6px; line-height: 18px; font-size: 12px;
+    background: color-mix(in srgb, var(--warn) 16%, var(--bg)); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 38%, var(--bg)); }
+
+  /* per-row color variable */
+  .se { --c: transparent; }
+
+  /* ===== A: leading dot ===== */
+  .A .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--c); }
+
+  /* ===== B: left bar ===== */
+  .B .se { border-left: 3px solid var(--c); padding-left: 9px; }
+  .B .se.on { background: color-mix(in srgb, var(--c) 8%, transparent); }
+
+  /* ===== C: row tint ===== */
+  .C .se { background: color-mix(in srgb, var(--c) 7%, transparent); }
+  .C .se:hover { background: color-mix(in srgb, var(--c) 13%, transparent); }
+  .C .se.on { background: color-mix(in srgb, var(--c) 18%, transparent); }
+
+  /* ===== D: colored pill ===== */
+  .D .pill {
+    flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    background: var(--c); color: #fff; border-radius: 8px; padding: 0 7px; height: 18px; line-height: 18px; font-size: 11px;
+  }
+  [data-dark] .D .pill { color: #0d1117; }
+
+  /* ===== E: initial badge ===== */
+  .E .badge {
+    flex: none; width: 18px; height: 18px; border-radius: 5px; background: var(--c); color: #fff;
+    font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;
+  }
+  [data-dark] .E .badge { color: #0d1117; }
+
+  /* ===== F: wide gutter strip ===== */
+  .F .se { box-shadow: inset 6px 0 0 var(--c); padding-left: 14px; }
+  .F .se.on { background: color-mix(in srgb, var(--c) 8%, transparent); }
+
+  /* ===== G: two-line ===== */
+  .G .se { align-items: flex-start; padding-top: 8px; padding-bottom: 8px; }
+  .G .col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .G .tline { display: flex; align-items: center; gap: 6px; }
+  .G .sub { display: flex; align-items: center; gap: 5px; padding-left: 22px; }
+  .G .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c); flex: none; }
+  .G .brname { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ===== H: right tab ===== */
+  .H .se::after {
+    content: ""; position: absolute; right: 0; top: 7px; bottom: 7px; width: 4px; border-radius: 3px; background: var(--c);
+  }
+  .H .se.on { background: color-mix(in srgb, var(--c) 7%, transparent); }
+
+  /* ===== I: grouped under labeled dividers (lightweight, no card) ===== */
+  .I .grp { margin-top: 8px; }
+  .I .grp:first-child { margin-top: 0; }
+  .I .grp-h { display: flex; align-items: center; gap: 6px; padding: 3px 12px 3px 34px; background: none; border: none; font-size: 12px; color: var(--c); font-weight: 600; }
+  .I .grp-h .ln { flex: 1; height: 1px; background: color-mix(in srgb, var(--c) 45%, var(--line)); }
+  .I .grp-h .badge { font-size: 11px; color: var(--faint); border: 1px solid var(--line); border-radius: 8px; padding: 0 5px; line-height: 14px; font-weight: 400; }
+  .I .se { padding-left: 12px; padding-right: 12px; }
+
+  /* legend */
+  .legend { padding: 0 28px 30px; color: var(--muted); font-size: 12px; }
+  .legend .sw { display: inline-flex; align-items: center; gap: 6px; margin-right: 16px; }
+  .legend .sw i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Session 颜色标记方案对比</h1>
+    <p>同一组 session、同一组 worktree/分支，用 9 种方式标记。颜色由分支名派生（同色 = 同一 worktree）。</p>
+  </div>
+  <button class="toggle" id="toggle">切换暗色</button>
+</header>
+
+<div class="grid">
+
+  <!-- A -->
+  <div class="card">
+    <div class="meta"><h2><span class="no">A</span>标题前彩色圆点</h2><p>最小侵入，标题对齐稳定；颜色信息量最小。</p></div>
+    <div class="side A">
+      <div class="gh"><div class="gh-top"><span class="gh-folder">▾</span><span class="gh-name">kimi-code-web</span><span class="gh-add">＋</span></div><div class="gh-path">~/code/kimi-code-web</div></div>
+      <div class="se on" style="--c:#1783ff"><span class="lead"><span class="spin"></span></span><span class="dot"></span><span class="t">Refactor auth middleware</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"><span class="unread"></span></span><span class="dot"></span><span class="t">Add login flow</span><span class="pr pr-open">#12</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"></span><span class="dot"></span><span class="t">Fix login redirect</span></div>
+      <div class="se" style="--c:#c62828"><span class="lead"></span><span class="dot"></span><span class="t">Optimize dashboard query</span><span class="tag">Approve</span><span class="pr pr-merged">#8</span></div>
+      <div class="se" style="--c:#6a1b9a"><span class="lead"></span><span class="dot"></span><span class="t">Update API docs</span></div>
+    </div>
+  </div>
+
+  <!-- B -->
+  <div class="card">
+    <div class="meta"><h2><span class="no">B</span>左侧彩色竖条</h2><p>整行左边一条色带，分组感强、识别快。</p></div>
+    <div class="side B">
+      <div class="gh"><div class="gh-top"><span class="gh-folder">▾</span><span class="gh-name">kimi-code-web</span><span class="gh-add">＋</span></div><div class="gh-path">~/code/kimi-code-web</div></div>
+      <div class="se on" style="--c:#1783ff"><span class="lead"><span class="spin"></span></span><span class="t">Refactor auth middleware</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"><span class="unread"></span></span><span class="t">Add login flow</span><span class="pr pr-open">#12</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"></span><span class="t">Fix login redirect</span></div>
+      <div class="se" style="--c:#c62828"><span class="lead"></span><span class="t">Optimize dashboard query</span><span class="tag">Approve</span><span class="pr pr-merged">#8</span></div>
+      <div class="se" style="--c:#6a1b9a"><span class="lead"></span><span class="t">Update API docs</span></div>
+    </div>
+  </div>
+
+  <!-- C -->
+  <div class="card">
+    <div class="meta"><h2><span class="no">C</span>整行浅色着色</h2><p>整行染上分支色的浅色，分组最强；颜色多时会显花。</p></div>
+    <div class="side C">
+      <div class="gh"><div class="gh-top"><span class="gh-folder">▾</span><span class="gh-name">kimi-code-web</span><span class="gh-add">＋</span></div><div class="gh-path">~/code/kimi-code-web</div></div>
+      <div class="se on" style="--c:#1783ff"><span class="lead"><span class="spin"></span></span><span class="t">Refactor auth middleware</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"><span class="unread"></span></span><span class="t">Add login flow</span><span class="pr pr-open">#12</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"></span><span class="t">Fix login redirect</span></div>
+      <div class="se" style="--c:#c62828"><span class="lead"></span><span class="t">Optimize dashboard query</span><span class="tag">Approve</span><span class="pr pr-merged">#8</span></div>
+      <div class="se" style="--c:#6a1b9a"><span class="lead"></span><span class="t">Update API docs</span></div>
+    </div>
+  </div>
+
+  <!-- D -->
+  <div class="card">
+    <div class="meta"><h2><span class="no">D</span>彩色分支胶囊</h2><p>分支名做成彩色胶囊，可读分支名；占空间、长名会截断。</p></div>
+    <div class="side D">
+      <div class="gh"><div class="gh-top"><span class="gh-folder">▾</span><span class="gh-name">kimi-code-web</span><span class="gh-add">＋</span></div><div class="gh-path">~/code/kimi-code-web</div></div>
+      <div class="se on" style="--c:#1783ff"><span class="lead"><span class="spin"></span></span><span class="t">Refactor auth middleware</span><span class="pill">main</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"><span class="unread"></span></span><span class="t">Add login flow</span><span class="pill">feat-login</span><span class="pr pr-open">#12</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"></span><span class="t">Fix login redirect</span><span class="pill">feat-login</span></div>
+      <div class="se" style="--c:#c62828"><span class="lead"></span><span class="t">Optimize dashboard query</span><span class="pill">fix-perf</span><span class="tag">Approve</span><span class="pr pr-merged">#8</span></div>
+      <div class="se" style="--c:#6a1b9a"><span class="lead"></span><span class="t">Update API docs</span><span class="pill">docs</span></div>
+    </div>
+  </div>
+
+  <!-- E -->
+  <div class="card">
+    <div class="meta"><h2><span class="no">E</span>分支首字母徽章</h2><p>彩色方块 + 分支首字母，紧凑且有字符提示；首字母会撞。</p></div>
+    <div class="side E">
+      <div class="gh"><div class="gh-top"><span class="gh-folder">▾</span><span class="gh-name">kimi-code-web</span><span class="gh-add">＋</span></div><div class="gh-path">~/code/kimi-code-web</div></div>
+      <div class="se on" style="--c:#1783ff"><span class="badge">M</span><span class="t">Refactor auth middleware</span><span class="lead"><span class="spin"></span></span></div>
+      <div class="se" style="--c:#2e7d32"><span class="badge">F</span><span class="t">Add login flow</span><span class="lead"><span class="unread"></span></span><span class="pr pr-open">#12</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="badge">F</span><span class="t">Fix login redirect</span></div>
+      <div class="se" style="--c:#c62828"><span class="badge">F</span><span class="t">Optimize dashboard query</span><span class="tag">Approve</span><span class="pr pr-merged">#8</span></div>
+      <div class="se" style="--c:#6a1b9a"><span class="badge">D</span><span class="t">Update API docs</span></div>
+    </div>
+  </div>
+
+  <!-- F -->
+  <div class="card">
+    <div class="meta"><h2><span class="no">F</span>宽左侧色带</h2><p>更粗的左侧色带（inset shadow），比 B 更醒目。</p></div>
+    <div class="side F">
+      <div class="gh"><div class="gh-top"><span class="gh-folder">▾</span><span class="gh-name">kimi-code-web</span><span class="gh-add">＋</span></div><div class="gh-path">~/code/kimi-code-web</div></div>
+      <div class="se on" style="--c:#1783ff"><span class="lead"><span class="spin"></span></span><span class="t">Refactor auth middleware</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"><span class="unread"></span></span><span class="t">Add login flow</span><span class="pr pr-open">#12</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"></span><span class="t">Fix login redirect</span></div>
+      <div class="se" style="--c:#c62828"><span class="lead"></span><span class="t">Optimize dashboard query</span><span class="tag">Approve</span><span class="pr pr-merged">#8</span></div>
+      <div class="se" style="--c:#6a1b9a"><span class="lead"></span><span class="t">Update API docs</span></div>
+    </div>
+  </div>
+
+  <!-- G -->
+  <div class="card">
+    <div class="meta"><h2><span class="no">G</span>双行：圆点 + 分支小字</h2><p>标题下面一行小字分支名 + 圆点，信息全；行变高。</p></div>
+    <div class="side G">
+      <div class="gh"><div class="gh-top"><span class="gh-folder">▾</span><span class="gh-name">kimi-code-web</span><span class="gh-add">＋</span></div><div class="gh-path">~/code/kimi-code-web</div></div>
+      <div class="se on" style="--c:#1783ff"><span class="lead"><span class="spin"></span></span><div class="col"><div class="tline"><span class="t">Refactor auth middleware</span></div><div class="sub"><span class="dot"></span><span class="brname">main</span></div></div></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"><span class="unread"></span></span><div class="col"><div class="tline"><span class="t">Add login flow</span><span class="pr pr-open">#12</span></div><div class="sub"><span class="dot"></span><span class="brname">feat-login</span></div></div></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"></span><div class="col"><div class="tline"><span class="t">Fix login redirect</span></div><div class="sub"><span class="dot"></span><span class="brname">feat-login</span></div></div></div>
+      <div class="se" style="--c:#c62828"><span class="lead"></span><div class="col"><div class="tline"><span class="t">Optimize dashboard query</span><span class="tag">Approve</span><span class="pr pr-merged">#8</span></div><div class="sub"><span class="dot"></span><span class="brname">fix-perf</span></div></div></div>
+      <div class="se" style="--c:#6a1b9a"><span class="lead"></span><div class="col"><div class="tline"><span class="t">Update API docs</span></div><div class="sub"><span class="dot"></span><span class="brname">docs</span></div></div></div>
+    </div>
+  </div>
+
+  <!-- H -->
+  <div class="card">
+    <div class="meta"><h2><span class="no">H</span>右侧彩色小 tab</h2><p>右侧一条小色块，不挤标题；hover 时才明显的克制方案。</p></div>
+    <div class="side H">
+      <div class="gh"><div class="gh-top"><span class="gh-folder">▾</span><span class="gh-name">kimi-code-web</span><span class="gh-add">＋</span></div><div class="gh-path">~/code/kimi-code-web</div></div>
+      <div class="se on" style="--c:#1783ff"><span class="lead"><span class="spin"></span></span><span class="t">Refactor auth middleware</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"><span class="unread"></span></span><span class="t">Add login flow</span><span class="pr pr-open">#12</span></div>
+      <div class="se" style="--c:#2e7d32"><span class="lead"></span><span class="t">Fix login redirect</span></div>
+      <div class="se" style="--c:#c62828"><span class="lead"></span><span class="t">Optimize dashboard query</span><span class="tag">Approve</span><span class="pr pr-merged">#8</span></div>
+      <div class="se" style="--c:#6a1b9a"><span class="lead"></span><span class="t">Update API docs</span></div>
+    </div>
+  </div>
+
+  <!-- I -->
+  <div class="card">
+    <div class="meta"><h2><span class="no">I</span>按 worktree 分组（细分隔线 + 等明度区分色）</h2><p>每组一条带分支名的小标题 + 尾部细线，颜色用 OKLCH 固定明度/彩度、只变色调：亮度一致、区分度大、无纯红。session 行保持干净。</p></div>
+    <div class="side I">
+      <div class="gh"><div class="gh-top"><span class="gh-folder">▾</span><span class="gh-name">kimi-code-web</span><span class="gh-add">＋</span></div><div class="gh-path">~/code/kimi-code-web</div></div>
+      <div class="grp" style="--c:oklch(0.6 0.17 250)"><div class="grp-h">main<span class="badge">main</span><span class="ln"></span></div>
+        <div class="se on"><span class="lead"><span class="spin"></span></span><span class="t">Refactor auth middleware</span></div></div>
+      <div class="grp" style="--c:oklch(0.6 0.17 150)"><div class="grp-h">feat-login<span class="ln"></span><span class="pr pr-open">#12</span></div>
+        <div class="se"><span class="lead"><span class="unread"></span></span><span class="t">Add login flow</span></div>
+        <div class="se"><span class="lead"></span><span class="t">Fix login redirect</span></div></div>
+      <div class="grp" style="--c:oklch(0.6 0.17 300)"><div class="grp-h">fix-perf<span class="ln"></span><span class="pr pr-merged">#8</span></div>
+        <div class="se"><span class="lead"></span><span class="t">Optimize dashboard query</span><span class="tag">Approve</span></div></div>
+      <div class="grp" style="--c:oklch(0.6 0.17 70)"><div class="grp-h">docs<span class="ln"></span></div>
+        <div class="se"><span class="lead"></span><span class="t">Update API docs</span></div></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="legend">
+  <strong style="color:var(--ink)">颜色图例（OKLCH 等明度 / 等彩度，仅变色调，无纯红）：</strong>
+  <span class="sw"><i style="background:oklch(0.6 0.17 250)"></i>main</span>
+  <span class="sw"><i style="background:oklch(0.6 0.17 150)"></i>feat-login（2 个 session 同色）</span>
+  <span class="sw"><i style="background:oklch(0.6 0.17 300)"></i>fix-perf</span>
+  <span class="sw"><i style="background:oklch(0.6 0.17 70)"></i>docs</span>
+</div>
+
+<script>
+  const root = document.documentElement;
+  const btn = document.getElementById('toggle');
+  btn.addEventListener('click', () => {
+    const dark = root.hasAttribute('data-dark');
+    if (dark) { root.removeAttribute('data-dark'); btn.textContent = '切换暗色'; }
+    else { root.setAttribute('data-dark', ''); btn.textContent = '切换亮色'; }
+  });
+</script>
+</body>
+</html>

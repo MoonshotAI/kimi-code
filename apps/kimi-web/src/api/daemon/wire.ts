@@ -136,6 +136,21 @@ export interface WireWorkspace {
   session_count: number;
 }
 
+/** A git worktree of a workspace repository (snake_case wire DTO). */
+export interface WireWorktree {
+  path: string;
+  branch: string;
+  head: string;
+  is_main: boolean;
+  locked: boolean;
+  prunable: boolean;
+  dirty: boolean;
+  ahead: number;
+  behind: number;
+  session_id: string | null;
+  pull_request: { number: number; state: string; url: string } | null;
+}
+
 export interface WireFsBrowseEntry {
   name: string;
   path: string;

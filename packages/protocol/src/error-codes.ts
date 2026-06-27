@@ -57,6 +57,8 @@ export const ErrorCode = {
   TERMINAL_NOT_FOUND: 40414,
   /** skill_name 不存在 */
   SKILL_NOT_FOUND: 40415,
+  /** worktree path 不存在 */
+  WORKTREE_NOT_FOUND: 40416,
 
   /** session 有正在进行的 prompt，拒绝新请求 */
   SESSION_BUSY: 40901,
@@ -82,6 +84,8 @@ export const ErrorCode = {
   SESSION_UNDO_UNAVAILABLE: 40911,
   /** skill 存在但类型不支持用户激活（如 reference 类型） */
   SKILL_NOT_ACTIVATABLE: 40912,
+  /** worktree 操作冲突（分支已被占用、worktree 有未提交改动等） */
+  WORKTREE_CONFLICT: 40920,
 
   /** 当前会话已存在活跃 goal */
   GOAL_ALREADY_EXISTS: 40913,
@@ -170,6 +174,7 @@ export const ErrorCodeReason: Readonly<Record<ErrorCode, string>> = {
   [ErrorCode.MODEL_NOT_FOUND]: 'model.not_found',
   [ErrorCode.TERMINAL_NOT_FOUND]: 'terminal.not_found',
   [ErrorCode.SKILL_NOT_FOUND]: 'skill.not_found',
+  [ErrorCode.WORKTREE_NOT_FOUND]: 'worktree.not_found',
 
   [ErrorCode.SESSION_BUSY]: 'session.busy',
   [ErrorCode.APPROVAL_ALREADY_RESOLVED]: 'approval.already_resolved',
@@ -183,6 +188,7 @@ export const ErrorCodeReason: Readonly<Record<ErrorCode, string>> = {
   [ErrorCode.COMPACTION_UNABLE]: 'compaction.unable',
   [ErrorCode.SESSION_UNDO_UNAVAILABLE]: 'session.undo_unavailable',
   [ErrorCode.SKILL_NOT_ACTIVATABLE]: 'skill.not_activatable',
+  [ErrorCode.WORKTREE_CONFLICT]: 'worktree.conflict',
 
   [ErrorCode.GOAL_ALREADY_EXISTS]: 'goal.already_exists',
   [ErrorCode.GOAL_NOT_FOUND]: 'goal.not_found',

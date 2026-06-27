@@ -24,6 +24,7 @@ import en_tools from './en/tools';
 import en_layout from './en/layout';
 import en_mobile from './en/mobile';
 import en_theme from './en/theme';
+import en_worktree from './en/worktree';
 
 import zh_common from './zh/common';
 import zh_app from './zh/app';
@@ -51,6 +52,7 @@ import zh_tools from './zh/tools';
 import zh_layout from './zh/layout';
 import zh_mobile from './zh/mobile';
 import zh_theme from './zh/theme';
+import zh_worktree from './zh/worktree';
 import en_onboarding from './en/onboarding';
 import zh_onboarding from './zh/onboarding';
 import en_settings from './en/settings';
@@ -88,6 +90,7 @@ export const messages = {
     layout: en_layout,
     mobile: en_mobile,
     theme: en_theme,
+    worktree: en_worktree,
     onboarding: en_onboarding,
     settings: en_settings,
     header: en_header,
@@ -120,6 +123,7 @@ export const messages = {
     layout: zh_layout,
     mobile: zh_mobile,
     theme: zh_theme,
+    worktree: zh_worktree,
     onboarding: zh_onboarding,
     settings: zh_settings,
     header: zh_header,

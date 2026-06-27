@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Worktree UX 方案 · kimi-web</title>
+<style>
+  :root {
+    --ink: #14171c; --text: #262626; --dim: #595959; --muted: #8a8a8a; --faint: #b5b5b5;
+    --line: #e7eaee; --line2: #eef1f4; --panel: #fafbfc; --panel2: #f3f5f8; --bg: #ffffff;
+    --blue: #1783ff; --blue2: #0f6fe0; --soft: #e8f3ff; --bd: #cfe6ff;
+    --ok: #0e7a38; --warn: #92660a; --err: #b91c1c;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --ui: 14px; --sh: 0 4px 16px rgba(20, 23, 28, 0.08);
+  }
+  [data-dark] {
+    --ink: #e8eaed; --text: #c9cdd4; --dim: #9aa0a8; --muted: #727983; --faint: #525960;
+    --line: #2d333b; --line2: #22272e; --panel: #1c2128; --panel2: #161b22; --bg: #0d1117;
+    --blue: #58a6ff; --blue2: #79b8ff; --soft: #1f2937; --bd: #1f6feb;
+    --ok: #3fb950; --warn: #d29922; --err: #f85149;
+    --sh: 0 6px 20px rgba(0,0,0,0.35);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--panel); color: var(--text); font-family: var(--mono); font-size: var(--ui); line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  header { padding: 18px 28px; border-bottom: 1px solid var(--line); background: var(--bg); position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 14px; }
+  header h1 { font-size: 16px; margin: 0; color: var(--ink); font-weight: 600; }
+  header nav { display: flex; gap: 6px; margin-left: 8px; }
+  header nav a { color: var(--dim); text-decoration: none; font-size: 12px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 7px; }
+  header nav a:hover { color: var(--ink); border-color: var(--blue); }
+  .toggle { margin-left: auto; background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; font-family: var(--mono); font-size: 12px; cursor: pointer; }
+  .toggle:hover { border-color: var(--blue); }
+
+  section { padding: 28px; border-bottom: 1px solid var(--line); }
+  section h2 { font-size: 18px; color: var(--ink); margin: 0 0 4px; }
+  section .desc { color: var(--muted); font-size: 12px; margin: 0 0 18px; max-width: 720px; }
+
+  /* shared bits */
+  .pr { flex: none; border: 1px solid transparent; border-radius: 9px; padding: 0 6px; height: 18px; line-height: 16px; font-size: 12px; background: transparent; cursor: pointer; font-family: var(--mono); }
+  .pr-open { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 38%, var(--bg)); }
+  .pr-merged { color: #8957e5; border-color: color-mix(in srgb, #8957e5 38%, var(--bg)); }
+  .tag { flex: none; height: 18px; border-radius: 9px; padding: 0 6px; line-height: 18px; font-size: 12px; background: color-mix(in srgb, var(--warn) 16%, var(--bg)); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 38%, var(--bg)); }
+  .spin { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--blue); border-radius: 50%; animation: sp .8s linear infinite; flex: none; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .unread { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); flex: none; }
+  .btn { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--dim); border-radius: 7px; padding: 5px 11px; cursor: pointer; }
+  .btn:hover { color: var(--ink); background: var(--panel2); }
+  .btn.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .btn.primary:hover { background: var(--blue2); }
+  .bar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .bar h3 { font-size: 14px; color: var(--ink); margin: 0; font-weight: 600; }
+
+  /* ============ A: Kanban ============ */
+  .board { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 10px; }
+  .col { width: 284px; flex: none; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; max-height: 66vh; box-shadow: var(--sh); }
+  .col-head { padding: 11px 13px; border-bottom: 1px solid var(--line); }
+  .col-head .row1 { display: flex; align-items: center; gap: 7px; }
+  .col-head .br { color: var(--c); font-weight: 600; font-size: 14px; }
+  .col-head .badge { font-size: 11px; color: var(--faint); border: 1px solid var(--line); border-radius: 8px; padding: 0 5px; }
+  .col-head .meta { display: flex; gap: 8px; margin-top: 6px; font-size: 11px; color: var(--muted); }
+  .col-head .count { margin-left: auto; color: var(--faint); font-size: 12px; }
+  .col-body { padding: 9px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .sess-card { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 10px 11px; cursor: pointer; transition: border-color .12s, box-shadow .12s, transform .12s; }
+  .sess-card:hover { border-color: var(--blue); box-shadow: var(--sh); transform: translateY(-1px); }
+  .sess-card.on { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--bd); }
+  .sess-card .tline { display: flex; align-items: center; gap: 6px; }
+  .sess-card .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-weight: 500; font-size: 13px; }
+  .sess-card .preview { color: var(--muted); font-size: 11px; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sess-card .foot { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
+  .sess-card .time { color: var(--faint); font-size: 11px; }
+  .col-foot { padding: 9px; border-top: 1px solid var(--line); }
+  .col-foot .add { width: 100%; text-align: center; color: var(--faint); font-size: 12px; padding: 6px; border: 1px dashed var(--line); border-radius: 8px; cursor: pointer; background: transparent; font-family: var(--mono); }
+  .col-foot .add:hover { color: var(--blue); border-color: var(--blue); }
+
+  /* ============ B: Dashboard ============ */
+  .dash { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 16px; }
+  .wtc { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: var(--sh); }
+  .wtc .head { padding: 12px 15px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 9px; }
+  .wtc .head .br { color: var(--c); font-weight: 600; font-size: 15px; }
+  .wtc .head .path { color: var(--faint); font-size: 11px; margin-left: auto; }
+  .wtc .stat { display: flex; gap: 8px; padding: 8px 15px; border-bottom: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+  .wtc .stat b { color: var(--dim); font-weight: 500; }
+  .wtc .body { padding: 4px 0; }
+  .wtc .sess-row { display: flex; align-items: center; gap: 8px; padding: 8px 15px; cursor: pointer; }
+  .wtc .sess-row:hover { background: var(--panel2); }
+  .wtc .sess-row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+  .wtc .sess-row .time { color: var(--faint); font-size: 11px; }
+  .wtc .foot { padding: 9px 15px; border-top: 1px solid var(--line); display: flex; gap: 8px; }
+  .wtc .empty { padding: 14px 15px; color: var(--faint); font-size: 12px; }
+
+  /* ============ C: Chat header clickable workspace ============ */
+  .phone { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--bg); box-shadow: var(--sh); max-width: 760px; }
+  .chat-head { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-bottom: 1px solid var(--line); position: relative; }
+  .chat-head .title { font-weight: 500; color: var(--ink); font-size: 14px; }
+  .ws-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--c); cursor: pointer; font-size: 12px; font-weight: 500; background: var(--bg); }
+  .ws-chip:hover { border-color: var(--c); background: var(--panel2); }
+  .ws-chip .caret { color: var(--muted); font-size: 10px; }
+  .ws-chip .pr { margin-left: 2px; }
+  .ws-pop { position: absolute; top: 44px; left: 16px; width: 280px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--sh); overflow: hidden; display: none; z-index: 20; }
+  .ws-pop.open { display: block; }
+  .ws-pop .sec { padding: 6px 0; }
+  .ws-pop .sec + .sec { border-top: 1px solid var(--line); }
+  .ws-pop .item { display: flex; align-items: center; gap: 8px; padding: 7px 13px; cursor: pointer; font-size: 12px; color: var(--text); }
+  .ws-pop .item:hover { background: var(--panel2); }
+  .ws-pop .item .brname { color: var(--c); font-weight: 500; }
+  .ws-pop .item .muted { color: var(--muted); margin-left: auto; font-size: 11px; }
+  .ws-pop .head-lbl { padding: 4px 13px; color: var(--faint); font-size: 11px; }
+  .chat-body { padding: 26px 20px; color: var(--faint); font-size: 12px; min-height: 160px; }
+  .hint { margin-top: 14px; color: var(--muted); font-size: 12px; }
+  .hint b { color: var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Worktree UX 方案</h1>
+  <nav>
+    <a href="#kanban">A · 看板</a>
+    <a href="#dashboard">B · Worktrees 面板</a>
+    <a href="#chat">C · Chat 标题区可点击</a>
+  </nav>
+  <button class="toggle" id="toggle">切换暗色</button>
+</header>
+
+<!-- ============ A: Kanban ============ -->
+<section id="kanban">
+  <h2>A · 看板（Kanban）</h2>
+  <p class="desc">列 = worktree，卡片 = session。最适合「同时跑很多并行任务、一眼看进度、拖拽流转」。每列头部固定展示分支 / main 标记 / PR / 状态 / session 数。</p>
+  <div class="bar">
+    <h3>kimi-code-web</h3>
+    <button class="btn primary">+ New worktree</button>
+  </div>
+  <div class="board">
+    <div class="col" style="--c:oklch(0.6 0.17 250)">
+      <div class="col-head"><div class="row1"><span class="br">main</span><span class="badge">main</span><span class="count">1</span></div><div class="meta"><span>clean</span></div></div>
+      <div class="col-body">
+        <div class="sess-card on"><div class="tline"><span class="spin"></span><span class="t">Refactor auth middleware</span></div><div class="preview">正在编辑 src/auth.ts …</div><div class="foot"><span class="time">now</span></div></div>
+      </div>
+      <div class="col-foot"><button class="add">+ session</button></div>
+    </div>
+
+    <div class="col" style="--c:oklch(0.6 0.17 150)">
+      <div class="col-head"><div class="row1"><span class="br">feat-login</span><span class="pr pr-open">#12</span><span class="count">2</span></div><div class="meta"><span>dirty · 3 files</span><span>↑2</span></div></div>
+      <div class="col-body">
+        <div class="sess-card"><div class="tline"><span class="unread"></span><span class="t">Add login flow</span></div><div class="preview">完成 OAuth 回调处理</div><div class="foot"><span class="time">3m</span></div></div>
+        <div class="sess-card"><div class="tline"><span class="t">Fix login redirect</span></div><div class="preview">redirect_uri 白名单</div><div class="foot"><span class="time">12m</span></div></div>
+      </div>
+      <div class="col-foot"><button class="add">+ session</button></div>
+    </div>
+
+    <div class="col" style="--c:oklch(0.6 0.17 300)">
+      <div class="col-head"><div class="row1"><span class="br">fix-perf</span><span class="pr pr-merged">#8</span><span class="count">1</span></div><div class="meta"><span>clean</span></div></div>
+      <div class="col-body">
+        <div class="sess-card"><div class="tline"><span class="t">Optimize dashboard query</span><span class="tag">Approve</span></div><div class="preview">需要审批: prisma migrate</div><div class="foot"><span class="time">28m</span></div></div>
+      </div>
+      <div class="col-foot"><button class="add">+ session</button></div>
+    </div>
+
+    <div class="col" style="--c:oklch(0.6 0.17 70)">
+      <div class="col-head"><div class="row1"><span class="br">docs</span><span class="count">1</span></div><div class="meta"><span>dirty · 1 file</span></div></div>
+      <div class="col-body">
+        <div class="sess-card"><div class="tline"><span class="t">Update API docs</span></div><div class="preview">补充 worktree 端点说明</div><div class="foot"><span class="time">1h</span></div></div>
+      </div>
+      <div class="col-foot"><button class="add">+ session</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ B: Dashboard ============ -->
+<section id="dashboard">
+  <h2>B · Worktrees 面板（dashboard / rich list）</h2>
+  <p class="desc">全宽一个页面，每个 worktree 一张卡片，里面展开它的 session、分支 / PR / 脏净 / ahead-behind / 路径 / 操作。侧边栏只做轻量切换。比看板轻、更直接，不一定要拖拽。</p>
+  <div class="bar">
+    <h3>Worktrees · kimi-code-web</h3>
+    <button class="btn primary">+ New worktree</button>
+  </div>
+  <div class="dash">
+
+    <div class="wtc" style="--c:oklch(0.6 0.17 250)">
+      <div class="head"><span class="br">main</span><span class="badge" style="font-size:11px;color:var(--faint);border:1px solid var(--line);border-radius:8px;padding:0 5px;">main</span><span class="path">~/code/kimi-code-web</span></div>
+      <div class="stat"><span><b>clean</b></span><span>·</span><span>1 session</span></div>
+      <div class="body">
+        <div class="sess-row"><span class="spin"></span><span class="t">Refactor auth middleware</span><span class="time">now</span></div>
+      </div>
+      <div class="foot"><button class="btn">New session here</button></div>
+    </div>
+
+    <div class="wtc" style="--c:oklch(0.6 0.17 150)">
+      <div class="head"><span class="br">feat-login</span><span class="pr pr-open">#12</span><span class="path">.worktrees/feat-login</span></div>
+      <div class="stat"><span><b>dirty</b> · 3 files</span><span>·</span><span>↑2 ahead</span><span>·</span><span>2 sessions</span></div>
+      <div class="body">
+        <div class="sess-row"><span class="unread"></span><span class="t">Add login flow</span><span class="time">3m</span></div>
+        <div class="sess-row"><span class="t">Fix login redirect</span><span class="time">12m</span></div>
+      </div>
+      <div class="foot"><button class="btn">New session here</button><button class="btn">Push</button><button class="btn">Delete</button></div>
+    </div>
+
+    <div class="wtc" style="--c:oklch(0.6 0.17 300)">
+      <div class="head"><span class="br">fix-perf</span><span class="pr pr-merged">#8</span><span class="path">.worktrees/fix-perf</span></div>
+      <div class="stat"><span><b>clean</b></span><span>·</span><span>merged</span><span>·</span><span>1 session</span></div>
+      <div class="body">
+        <div class="sess-row"><span class="t">Optimize dashboard query</span><span class="tag">Approve</span><span class="time">28m</span></div>
+      </div>
+      <div class="foot"><button class="btn">New session here</button><button class="btn">Delete</button></div>
+    </div>
+
+    <div class="wtc" style="--c:oklch(0.6 0.17 70)">
+      <div class="head"><span class="br">docs</span><span class="path">.worktrees/docs</span></div>
+      <div class="stat"><span><b>dirty</b> · 1 file</span><span>·</span><span>1 session</span></div>
+      <div class="body">
+        <div class="sess-row"><span class="t">Update API docs</span><span class="time">1h</span></div>
+      </div>
+      <div class="foot"><button class="btn">New session here</button><button class="btn">Delete</button></div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============ C: Chat header clickable ============ -->
+<section id="chat">
+  <h2>C · Chat 标题区的 workspace 可点击</h2>
+  <p class="desc">当前 session 所在 worktree 在 chat 标题区其实是一个「闲置」的入口。把它做成可点击的 chip：点击展开一个快捷菜单（查看全部 worktree / 切换 worktree / 新建 worktree / 打开 PR）。让「当前 session 属于哪个 worktree」既是展示，也是入口。</p>
+  <div class="phone">
+    <div class="chat-head">
+      <span class="title">Fix login redirect</span>
+      <span class="ws-chip" id="wsChip" style="--c:oklch(0.6 0.17 150)">⎇ feat-login<span class="pr pr-open">#12</span><span class="caret">▾</span></span>
+      <div class="ws-pop" id="wsPop">
+        <div class="sec">
+          <div class="head-lbl">当前 worktree</div>
+          <div class="item"><span class="brname">feat-login</span><span class="pr pr-open">#12</span></div>
+        </div>
+        <div class="sec">
+          <div class="head-lbl">切换 worktree</div>
+          <div class="item" style="--c:oklch(0.6 0.17 250)"><span class="brname">main</span><span class="muted">1 session</span></div>
+          <div class="item" style="--c:oklch(0.6 0.17 300)"><span class="brname">fix-perf</span><span class="pr pr-merged">#8</span></div>
+          <div class="item" style="--c:oklch(0.6 0.17 70)"><span class="brname">docs</span><span class="muted">1 session</span></div>
+        </div>
+        <div class="sec">
+          <div class="item">＋ New worktree</div>
+          <div class="item">⊞ 查看全部 worktree</div>
+        </div>
+      </div>
+    </div>
+    <div class="chat-body">… conversation …</div>
+  </div>
+  <p class="hint">提示：点上面标题区的 <b>⎇ feat-login ▾</b> chip，会弹出快捷菜单（这个 demo 里真的可点）。</p>
+</section>
+
+<script>
+  const root = document.documentElement;
+  document.getElementById('toggle').addEventListener('click', (e) => {
+    const dark = root.hasAttribute('data-dark');
+    if (dark) { root.removeAttribute('data-dark'); e.target.textContent = '切换暗色'; }
+    else { root.setAttribute('data-dark', ''); e.target.textContent = '切换亮色'; }
+  });
+  const chip = document.getElementById('wsChip');
+  const pop = document.getElementById('wsPop');
+  chip.addEventListener('click', (e) => { e.stopPropagation(); pop.classList.toggle('open'); });
+  document.addEventListener('click', () => pop.classList.remove('open'));
+</script>
+</body>
+</html>

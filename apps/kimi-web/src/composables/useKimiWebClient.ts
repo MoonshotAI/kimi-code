@@ -7,6 +7,8 @@ import { i18n } from '../i18n';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import { reconcileWorkspaceOrder, sortByWorkspaceOrder } from '../lib/workspaceOrder';
+import { mergeWorktreeGroups } from '../lib/worktreeGroups';
+import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
   loadWorkspaceOrder,
@@ -42,6 +44,7 @@ import type {
   AppTask,
   AppWarning,
   AppWorkspace,
+  AppWorktree,
   ApprovalDecision,
   KimiEventConnection,
   ThinkingLevel,
@@ -72,6 +75,7 @@ import type {
   Workspace,
   WorkspaceGroup,
   WorkspaceView,
+  WorktreeGroup,
 } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -295,6 +299,11 @@ export interface ExtendedState extends KimiClientState {
   activeWorkspaceId: string | null;
   fsHome: string | null;
   recentRoots: string[];
+  /** Git worktrees per workspace id, loaded on demand for the worktree panel. */
+  worktreesByWorkspace: Record<string, AppWorktree[]>;
+  /** Pending draft cwd for a workspace (e.g. a just-created worktree path).
+   *  Consumed by the next session created in that workspace, then cleared. */
+  draftCwdByWorkspace: Record<string, string>;
   // Root paths the user removed from the sidebar (see HIDDEN_WORKSPACES_KEY).
   hiddenWorkspaceRoots: string[];
   /** Installed external apps that can be used with "Open in app". */
@@ -340,6 +349,8 @@ const rawState: ExtendedState = reactive({
   activeWorkspaceId: loadActiveWorkspaceFromStorage(),
   fsHome: null,
   recentRoots: [],
+  worktreesByWorkspace: {},
+  draftCwdByWorkspace: {},
   hiddenWorkspaceRoots: loadHiddenWorkspacesFromStorage(),
   availableOpenInApps: [],
   config: null,
@@ -685,6 +696,13 @@ function connectEventsIfNeeded(): void {
         return;
       }
 
+      // Worktree lifecycle events are global too — refresh that workspace's
+      // worktree list so the panel stays in sync across clients.
+      if (appEvent.type === 'worktreeChanged') {
+        void loadWorktrees(appEvent.workspaceId, { silent: true });
+        return;
+      }
+
       // meta carries wire-level seq/sessionId so the reducer can advance
       // lastSeqBySession[sessionId] = seq. Compaction completion appends a
       // persistent divider marker in the reducer (TUI parity: the scrollback
@@ -747,7 +765,7 @@ function connectEventsIfNeeded(): void {
       // returns the authoritative {asOfSeq, epoch} and re-subscribes.
       if (epoch !== undefined) epochBySession[sessionId] = epoch;
       void currentSeq;
-      void syncSessionFromSnapshot(sessionId);
+      snapshotSyncRunner.request(sessionId);
     },
 
     onError(_code: number, msg: string, _fatal: boolean) {
@@ -1008,6 +1026,8 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     return 'failed';
   }
 }
+
+const snapshotSyncRunner = createCoalescedAsyncRunner(syncSessionFromSnapshot);
 
 function hasLoadedMessages(sessionId: string): boolean {
   return Object.prototype.hasOwnProperty.call(rawState.messagesBySession, sessionId);
@@ -1622,12 +1642,29 @@ const changesByPath = computed<Record<string, string>>(() => {
 // ---------------------------------------------------------------------------
 
 /**
+ * Map a session cwd to the workspace root that "owns" it. A worktree checkout
+ * lives at `<root>/.worktrees/<branch>`; such a cwd is owned by the main
+ * workspace root, so its sessions group under the main workspace instead of
+ * spawning a separate derived workspace. Returns the cwd unchanged when no
+ * registered workspace owns it.
+ */
+function owningWorkspaceRoot(cwd: string): string {
+  for (const w of rawState.workspaces) {
+    if (cwd === w.root) return w.root;
+    const prefix = w.root.replace(/\/+$/, '') + '/.worktrees/';
+    if (cwd.startsWith(prefix)) return w.root;
+  }
+  return cwd;
+}
+
+/**
  * The workspace id a session belongs to: prefer the daemon-provided
  * session.workspaceId; otherwise map by cwd (in derived/fallback mode the
  * workspace id IS the cwd).
  */
 function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string {
-  return rawState.workspaces.find((w) => w.root === s.cwd)?.id ?? s.workspaceId ?? s.cwd;
+  const root = owningWorkspaceRoot(s.cwd);
+  return rawState.workspaces.find((w) => w.root === root)?.id ?? s.workspaceId ?? s.cwd;
 }
 
 /**
@@ -1644,9 +1681,10 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
     if (hidden.has(w.root)) continue;
     byRoot.set(w.root, { ...w });
   }
-  // Derive from sessions for any cwd without a real workspace.
+  // Derive from sessions for any cwd without a real workspace. Worktree cwds
+  // fold into their owning workspace root so they don't spawn a separate group.
   for (const s of rawState.sessions) {
-    const root = s.cwd;
+    const root = owningWorkspaceRoot(s.cwd);
     if (!root) continue;
     if (hidden.has(root)) continue; // removed from the sidebar — keep it hidden
     if (!byRoot.has(root)) {
@@ -1735,6 +1773,7 @@ const workspacesView = computed<WorkspaceView[]>(() => {
     root: w.root,
     shortPath: shortenHome(w.root, rawState.fsHome),
     branch: w.branch,
+    isGitRepo: w.isGitRepo,
     sessionCount: w.sessionCount,
   }));
   return sortByWorkspaceOrder(views, workspaceOrder.value);
@@ -1757,8 +1796,25 @@ const visibleWorkspace = computed<WorkspaceView | null>(() => {
   return workspacesView.value.find((w) => w.id === id) ?? null;
 });
 
+/** Build a sidebar Session view from an AppSession, enriching it with the
+ *  cached git status (branch + PR) when available. */
+function toSessionView(s: AppSession): Session {
+  const g = rawState.gitStatusBySession[s.id];
+  return {
+    id: s.id,
+    title: s.title,
+    time: formatTime(s.updatedAt, s.status),
+    status: s.status,
+    busy: isSessionEffectivelyRunning(s.id),
+    updatedAt: s.updatedAt,
+    lastPrompt: s.lastPrompt,
+    branch: g?.branch && g.branch.length > 0 ? g.branch : undefined,
+    pullRequest: g?.pullRequest,
+  };
+}
+
 /**
- * All sessions for the sidebar (grouped by workspace via workspaceGroups).
+ * All sessions for the sidebar (flat list used by search / mobile switcher).
  */
 const sessionsForView = computed<Session[]>(() => {
   void sessionTimeClock.value;
@@ -1769,14 +1825,7 @@ const sessionsForView = computed<Session[]>(() => {
   // and sidebar search can't resurrect sessions from a removed workspace.
   return rawState.sessions
     .filter((s) => !s.parentSessionId && visibleWorkspaceIds.has(workspaceIdForSession(s)))
-    .map((s) => ({
-      id: s.id,
-      title: s.title,
-      time: formatTime(s.updatedAt, s.status),
-      status: s.status,
-      busy: isSessionEffectivelyRunning(s.id),
-      lastPrompt: s.lastPrompt,
-    }));
+    .map(toSessionView);
 });
 
 /** Per-workspace groups for the 'all workspaces' scope. */
@@ -1788,16 +1837,8 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
   )) {
     if (s.parentSessionId) continue; // child sessions stay out of the list
     const wid = workspaceIdForSession(s);
-    const view: Session = {
-      id: s.id,
-      title: s.title,
-      time: formatTime(s.updatedAt, s.status),
-      status: s.status,
-      busy: isSessionEffectivelyRunning(s.id),
-      updatedAt: s.updatedAt,
-    };
     const list = byId.get(wid) ?? [];
-    list.push(view);
+    list.push(toSessionView(s));
     byId.set(wid, list);
   }
   return workspacesView.value.map((w) => ({
@@ -1815,6 +1856,89 @@ function reorderWorkspaces(ids: string[]): void {
   workspaceOrder.value = ids;
   saveWorkspaceOrder(ids);
 }
+
+/**
+ * Worktree-centric groups for the sidebar. Sessions are grouped by
+ * (workspace + branch) — each group is one worktree checkout of a repo — then
+ * merged with the workspace's known git worktrees so empty checkouts still show
+ * up. Groups are sorted so those with running / awaiting-input sessions float
+ * to the top, then by most recent activity. Sessions whose branch isn't known
+ * yet (git status still loading) fall into a per-workspace "pending" group.
+ */
+const worktreeGroups = computed<WorktreeGroup[]>(() => {
+  void sessionTimeClock.value;
+  const wsById = new Map(workspacesView.value.map((w) => [w.id, w]));
+  const visibleWorkspaceIds = new Set(workspacesView.value.map((w) => w.id));
+  const byKey = new Map<
+    string,
+    { ws: WorkspaceView | undefined; branch: string; sessions: Session[]; cwd: string; dirty: boolean }
+  >();
+  for (const s of rawState.sessions) {
+    if (s.parentSessionId) continue;
+    const wid = workspaceIdForSession(s);
+    if (!visibleWorkspaceIds.has(wid)) continue;
+    const g = rawState.gitStatusBySession[s.id];
+    const branch = g?.branch && g.branch.length > 0 ? g.branch : '';
+    const key = `${wid}:${branch}`;
+    let entry = byKey.get(key);
+    if (entry === undefined) {
+      entry = { ws: wsById.get(wid), branch, sessions: [], cwd: s.cwd, dirty: false };
+      byKey.set(key, entry);
+    }
+    entry.sessions.push(toSessionView(s));
+    if (g !== undefined && Object.keys(g.entries).length > 0) entry.dirty = true;
+  }
+  const groups: WorktreeGroup[] = [];
+  for (const [key, entry] of byKey) {
+    const ws = entry.ws;
+    const sessions = entry.sessions.toSorted(
+      (a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime(),
+    );
+    const hasRunning = sessions.some((s) => s.busy);
+    const hasPending = sessions.some(
+      (s) => s.status === 'awaitingApproval' || s.status === 'awaitingQuestion',
+    );
+    const latestAt = sessions.reduce(
+      (m, s) => Math.max(m, s.updatedAt ? new Date(s.updatedAt).getTime() : 0),
+      0,
+    );
+    const pullRequest =
+      sessions.find((s) => s.pullRequest !== null && s.pullRequest !== undefined)?.pullRequest ?? null;
+    groups.push({
+      key,
+      workspaceId: ws?.id ?? '',
+      workspaceName: ws?.name ?? '',
+      branch: entry.branch,
+      isMain: entry.branch !== '' && ws?.branch === entry.branch,
+      path: entry.cwd,
+      dirty: entry.dirty,
+      pullRequest,
+      sessions,
+      hasRunning,
+      hasPending,
+      latestAt,
+    });
+  }
+  // Merge in known git worktrees so checkouts without any sessions still show
+  // up in the sidebar (and can be opened) instead of only appearing on the
+  // board. Done before sorting so empty groups land in the idle/recency order.
+  const merged = mergeWorktreeGroups(groups, workspacesView.value, rawState.worktreesByWorkspace);
+  // Sort active groups first, then by recency bucketed into 30s windows, then
+  // by stable key. The bucket keeps two actively-updating groups from swapping
+  // back and forth on every new message (sub-30s changes land in the same
+  // bucket and fall through to the stable key order).
+  const BUCKET_MS = 30_000;
+  merged.sort((a, b) => {
+    const aa = a.hasRunning || a.hasPending ? 1 : 0;
+    const bb = b.hasRunning || b.hasPending ? 1 : 0;
+    if (aa !== bb) return bb - aa;
+    const ba = Math.floor(b.latestAt / BUCKET_MS);
+    const bk = Math.floor(a.latestAt / BUCKET_MS);
+    if (ba !== bk) return ba - bk;
+    return a.key.localeCompare(b.key);
+  });
+  return merged;
+});
 
 /**
  * Per-session pending-attention count = pending approvals + pending questions.
@@ -2007,6 +2131,140 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
 }
 
 // ---------------------------------------------------------------------------
+// Worktrees — git worktrees of a workspace repository. State lives in
+// rawState.worktreesByWorkspace and is loaded on demand for the panel; a
+// background refresh runs when the daemon broadcasts worktree.changed.
+// ---------------------------------------------------------------------------
+
+const worktreesByWorkspace = computed(() => rawState.worktreesByWorkspace);
+
+async function loadWorktrees(
+  workspaceId: string,
+  opts?: { silent?: boolean },
+): Promise<AppWorktree[]> {
+  try {
+    const api = getKimiWebApi();
+    const items = await api.listWorktrees(workspaceId);
+    rawState.worktreesByWorkspace = {
+      ...rawState.worktreesByWorkspace,
+      [workspaceId]: items,
+    };
+    return items;
+  } catch (error) {
+    if (opts?.silent === true) return rawState.worktreesByWorkspace[workspaceId] ?? [];
+    throw error;
+  }
+}
+
+async function createWorktree(
+  workspaceId: string,
+  input?: { branch?: string; baseRef?: string; path?: string },
+): Promise<AppWorktree> {
+  const api = getKimiWebApi();
+  const created = await api.createWorktree(workspaceId, input);
+  // Re-list so enrichment (session correlation, dirty, PR) is authoritative.
+  void loadWorktrees(workspaceId, { silent: true });
+  return created;
+}
+
+async function removeWorktree(
+  workspaceId: string,
+  input: { path: string; force?: boolean; deleteBranch?: boolean },
+): Promise<void> {
+  const api = getKimiWebApi();
+  await api.removeWorktree(workspaceId, input);
+  const next = (rawState.worktreesByWorkspace[workspaceId] ?? []).filter(
+    (w) => w.path !== input.path,
+  );
+  rawState.worktreesByWorkspace = { ...rawState.worktreesByWorkspace, [workspaceId]: next };
+}
+
+async function openWorktreeInApp(
+  workspaceId: string,
+  appId: string,
+  path: string,
+): Promise<void> {
+  try {
+    await getKimiWebApi().openWorktreeInApp(workspaceId, appId, path);
+  } catch (err) {
+    pushOperationFailure('openWorktreeInApp', err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Git status for listed sessions — the sidebar rows show branch + PR chips,
+// but git status is only fetched for the active session by default. Load it
+// (once, cached) for every session currently listed so the chips populate.
+// Concurrency is bounded to avoid stampeding the daemon.
+// ---------------------------------------------------------------------------
+
+const GIT_STATUS_CONCURRENCY = 4;
+
+async function loadGitStatusForSessions(ids: string[]): Promise<void> {
+  const pending = Array.from(new Set(ids)).filter(
+    (id) => !(id in rawState.gitStatusBySession),
+  );
+  if (pending.length === 0) return;
+  const queue = [...pending];
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const id = queue.shift();
+      if (id === undefined) return;
+      try {
+        const result = await getKimiWebApi().getGitStatus(id);
+        rawState.gitStatusBySession = { ...rawState.gitStatusBySession, [id]: result };
+      } catch {
+        // Stale / non-git sessions may fail — leave uncached, no crash.
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(GIT_STATUS_CONCURRENCY, queue.length) }, worker),
+  );
+}
+
+const listedSessionIds = computed(() =>
+  workspaceGroups.value.flatMap((g) => g.sessions.map((s) => s.id)).join(','),
+);
+
+watch(
+  listedSessionIds,
+  () => {
+    const ids = workspaceGroups.value.flatMap((g) => g.sessions.map((s) => s.id));
+    void loadGitStatusForSessions(ids);
+  },
+  { immediate: true },
+);
+
+// Load git worktrees for every git workspace once (cached per workspace), so the
+// worktree-centric sidebar can show checkouts that have no sessions yet — not
+// just the ones already backing a session. Re-runs when the set of git
+// workspaces changes (e.g. a repo workspace is added).
+const loadedWorktreeWorkspaceIds = new Set<string>();
+const gitWorkspaceIdsKey = computed(() =>
+  workspacesView.value
+    .filter((w) => w.isGitRepo === true)
+    .map((w) => w.id)
+    .join(','),
+);
+
+watch(
+  gitWorkspaceIdsKey,
+  () => {
+    for (const w of workspacesView.value) {
+      if (w.isGitRepo !== true) continue;
+      if (loadedWorktreeWorkspaceIds.has(w.id)) continue;
+      loadedWorktreeWorkspaceIds.add(w.id);
+      void loadWorktrees(w.id, { silent: true }).catch(() => {
+        // Allow a retry on the next change if the load failed.
+        loadedWorktreeWorkspaceIds.delete(w.id);
+      });
+    }
+  },
+  { immediate: true },
+);
+
+// ---------------------------------------------------------------------------
 // Composable return
 // ---------------------------------------------------------------------------
 
@@ -2025,11 +2283,13 @@ export function useKimiWebClient() {
     activeWorkspaceId,
     sessionsForView,
     workspaceGroups,
+    worktreeGroups,
     attentionBySession,
     pendingBySession,
     attentionByWorkspace,
     unreadBySession,
     recentRoots,
+    worktreesByWorkspace,
 
     turns,
     tasks,
@@ -2117,6 +2377,10 @@ export function useKimiWebClient() {
     addWorkspaceByPath: workspaceState.addWorkspaceByPath,
     browseFs: workspaceState.browseFs,
     getFsHome: workspaceState.getFsHome,
+    loadWorktrees,
+    createWorktree,
+    removeWorktree,
+    openWorktreeInApp,
 
     sendPrompt: workspaceState.sendPrompt,
     steerPrompt: workspaceState.steerPrompt,

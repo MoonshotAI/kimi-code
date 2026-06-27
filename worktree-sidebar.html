@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>侧边栏 · worktree 维度 · kimi-web</title>
+<style>
+  :root {
+    --ink: #14171c; --text: #262626; --dim: #595959; --muted: #8a8a8a; --faint: #b5b5b5;
+    --line: #e7eaee; --line2: #eef1f4; --panel: #fafbfc; --panel2: #f3f5f8; --bg: #ffffff;
+    --blue: #1783ff; --blue2: #0f6fe0; --soft: #e8f3ff; --bd: #cfe6ff;
+    --ok: #0e7a38; --warn: #92660a; --err: #b91c1c;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --ui: 14px;
+  }
+  [data-dark] {
+    --ink: #e8eaed; --text: #c9cdd4; --dim: #9aa0a8; --muted: #727983; --faint: #525960;
+    --line: #2d333b; --line2: #22272e; --panel: #1c2128; --panel2: #161b22; --bg: #0d1117;
+    --blue: #58a6ff; --blue2: #79b8ff; --soft: #1f2937; --bd: #1f6feb;
+    --ok: #3fb950; --warn: #d29922; --err: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--panel); color: var(--text); font-family: var(--mono); font-size: var(--ui); line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  header { padding: 16px 28px; border-bottom: 1px solid var(--line); background: var(--bg); display: flex; align-items: center; gap: 14px; }
+  header h1 { font-size: 16px; margin: 0; color: var(--ink); font-weight: 600; }
+  header p { margin: 0; color: var(--muted); font-size: 12px; }
+  .toggle { margin-left: auto; background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; font-family: var(--mono); font-size: 12px; cursor: pointer; }
+  .wrap { display: flex; gap: 28px; padding: 28px; align-items: flex-start; flex-wrap: wrap; }
+
+  /* sidebar shell */
+  .side { width: 300px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .side-head { padding: 12px 12px 8px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; }
+  .btn-new { flex: 1; display: inline-flex; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--dim); font-family: var(--mono); font-size: 13px; cursor: pointer; }
+  .btn-icon { flex: none; width: 38px; justify-content: center; }
+  .btn-new:hover { background: var(--panel2); border-color: var(--bd); color: var(--ink); }
+  .label { font-size: 11px; color: var(--faint); padding: 10px 14px 4px; }
+  .divider { height: 1px; background: var(--line); margin: 6px 12px; }
+
+  .pr { flex: none; border: 1px solid transparent; border-radius: 9px; padding: 0 6px; height: 18px; line-height: 16px; font-size: 12px; background: transparent; font-family: var(--mono); display: inline-flex; align-items: center; }
+  .pr-open { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 38%, var(--bg)); }
+  .pr-merged { color: #8957e5; border-color: color-mix(in srgb, #8957e5 38%, var(--bg)); }
+  .tag { flex: none; height: 18px; border-radius: 9px; padding: 0 6px; line-height: 18px; font-size: 11px; display: inline-flex; align-items: center; border: 1px solid transparent; }
+  .tag-ask { background: var(--soft); color: var(--blue2); border-color: var(--bd); }
+  .tag-approve { background: color-mix(in srgb, var(--warn) 16%, var(--bg)); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 38%, var(--bg)); }
+  .spin { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--blue); border-radius: 50%; animation: sp .8s linear infinite; flex: none; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .unread { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); flex: none; }
+
+  /* ===== worktree-centric group ===== */
+  .wg { padding: 6px 0; }
+  .wg + .wg { border-top: 1px solid var(--line); }
+  .wg-head { display: flex; align-items: center; gap: 7px; padding: 7px 12px 4px; }
+  .wg-head .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); flex: none; }
+  .wg-head .repo { color: var(--ink); font-weight: 500; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wg-head .sep { color: var(--faint); font-size: 13px; }
+  .wg-head .br { color: var(--c); font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wg-head .spacer { flex: 1; }
+  .wg-head .attn { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .wg-head .attn-running { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
+  .wg-head .attn-pending { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 18%, transparent); }
+  .wg-row { display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 30px; cursor: pointer; }
+  .wg-row:hover { background: var(--panel2); }
+  .wg-row.on { background: color-mix(in srgb, var(--blue) 7%, transparent); }
+  .wg-row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 13px; }
+  .wg-row .time { color: var(--muted); font-size: 11px; }
+  .wg-row:hover .time { display: none; }
+
+  .note { max-width: 340px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+  .note h3 { color: var(--ink); font-size: 14px; margin: 0 0 8px; }
+  .note code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>侧边栏 · 按 worktree 维度组织</h1>
+  <p>顶层 = worktree（分支 + 所属 repo），活跃的排在最前；workspace 不再作为分组。</p>
+  <button class="toggle" id="toggle">切换暗色</button>
+</header>
+
+<div class="wrap">
+  <div class="side">
+    <div class="side-head">
+      <button class="btn-new">＋ New Chat</button>
+      <button class="btn-new btn-icon" title="Worktree 看板">▦</button>
+    </div>
+
+    <!-- active worktrees -->
+    <div class="wg" style="--c:oklch(0.6 0.17 150)">
+      <div class="wg-head"><span class="repo">kimi-code-web</span><span class="sep">›</span><span class="br">feat-login</span><span class="spacer"></span><span class="pr pr-open">#12</span><span class="attn attn-running" title="有 session 运行中"></span></div>
+      <div class="wg-row on"><span class="spin"></span><span class="t">Add login flow</span><span class="time">now</span></div>
+      <div class="wg-row"><span class="t">Fix login redirect</span><span class="time">12m</span></div>
+    </div>
+
+    <div class="wg" style="--c:oklch(0.6 0.17 110)">
+      <div class="wg-head"><span class="repo">kimi-server</span><span class="sep">›</span><span class="br">feat-cache</span><span class="spacer"></span><span class="pr pr-open">#5</span><span class="attn attn-pending" title="有 session 等待输入"></span></div>
+      <div class="wg-row"><span class="unread"></span><span class="t">Add Redis cache</span><span class="tag tag-ask">Answer</span><span class="time">3m</span></div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- idle worktrees -->
+    <div class="wg" style="--c:oklch(0.6 0.17 300)">
+      <div class="wg-head"><span class="repo">kimi-code-web</span><span class="sep">›</span><span class="br">fix-perf</span><span class="spacer"></span><span class="pr pr-merged">#8</span></div>
+      <div class="wg-row"><span class="t">Optimize dashboard query</span><span class="tag tag-approve">Approve</span><span class="time">28m</span></div>
+    </div>
+
+    <div class="wg" style="--c:oklch(0.6 0.17 70)">
+      <div class="wg-head"><span class="repo">kimi-code-web</span><span class="sep">›</span><span class="br">docs</span><span class="spacer"></span></div>
+      <div class="wg-row"><span class="t">Update API docs</span><span class="time">1h</span></div>
+    </div>
+
+    <div class="wg" style="--c:oklch(0.6 0.17 250)">
+      <div class="wg-head"><span class="repo">kimi-code-web</span><span class="sep">›</span><span class="br">main</span><span class="spacer"></span></div>
+      <div class="wg-row"><span class="t">Refactor auth middleware</span><span class="time">2h</span></div>
+    </div>
+
+    <div class="wg" style="--c:oklch(0.6 0.17 330)">
+      <div class="wg-head"><span class="repo">kimi-server</span><span class="sep">›</span><span class="br">fix-race</span><span class="spacer"></span></div>
+      <div class="wg-row"><span class="t">Fix race in worker</span><span class="time">5h</span></div>
+    </div>
+  </div>
+
+  <div class="note">
+    <h3>设计要点</h3>
+    <p>· 顶层每一项是一个 <b>worktree</b>（<code>分支名 + 所属 repo</code>），不再是 workspace。</p>
+    <p>· 排序：有运行中 / 待处理 session 的 worktree 归到「活跃」区置顶；其余按最近 session 时间倒序。</p>
+    <p>· 每个 worktree 头部显示 <b>分支 + repo + PR</b>，颜色圆点来自分支（等明度）；有运行 session 时多一个绿色 live 点。</p>
+    <p>· main checkout 也作为一个 worktree 项（分支 <code>main</code>），但默认排在活跃 worktree 之后。</p>
+    <p>· 这是「合二为一」：workspace 退化为 worktree 头上的 repo 小字，侧边栏只剩 worktree 这一层。</p>
+    <p>· 非 git / 还没识别出分支的 session 可放在末尾一个「未归类」组。</p>
+  </div>
+</div>
+
+<script>
+  const root = document.documentElement;
+  document.getElementById('toggle').addEventListener('click', (e) => {
+    const dark = root.hasAttribute('data-dark');
+    if (dark) { root.removeAttribute('data-dark'); e.target.textContent = '切换暗色'; }
+    else { root.setAttribute('data-dark', ''); e.target.textContent = '切换亮色'; }
+  });
+</script>
+</body>
+</html>

@@ -245,7 +245,8 @@ function isGlobalSessionEvent(type: string): boolean {
     // the '__global__' watermark and fan out to every connection.
     type === 'event.workspace.created' ||
     type === 'event.workspace.updated' ||
-    type === 'event.workspace.deleted'
+    type === 'event.workspace.deleted' ||
+    type === 'event.worktree.changed'
   );
 }
 

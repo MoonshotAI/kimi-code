@@ -134,6 +134,28 @@ export interface FsBrowseEntry {
   branch?: string;
 }
 
+/** A git worktree belonging to a workspace's repository. */
+export interface AppWorktree {
+  /** Absolute path of the worktree checkout. */
+  path: string;
+  /** Current branch name (empty when detached / no commits). */
+  branch: string;
+  /** HEAD commit SHA. */
+  head: string;
+  /** True for the primary (main) checkout of the repository. */
+  isMain: boolean;
+  locked: boolean;
+  prunable: boolean;
+  /** True when the worktree has uncommitted changes. */
+  dirty: boolean;
+  ahead: number;
+  behind: number;
+  /** Id of a session whose cwd falls inside this worktree, if any. */
+  sessionId: string | null;
+  /** GitHub pull request for the current branch, when known. */
+  pullRequest: { number: number; state: string; url: string } | null;
+}
+
 export interface FsBrowseResult {
   path: string;
   parent: string | null;
@@ -391,6 +413,7 @@ export type AppEvent =
   | { type: 'workspaceCreated'; workspace: AppWorkspace }
   | { type: 'workspaceUpdated'; workspace: AppWorkspace }
   | { type: 'workspaceDeleted'; workspaceId: string; root: string }
+  | { type: 'worktreeChanged'; workspaceId: string; path?: string; change: 'created' | 'removed' }
   | { type: 'sessionUpdated'; session: AppSession; changedFields: string[] }
   | { type: 'sessionDeleted'; sessionId: string }
   | { type: 'sessionStatusChanged'; sessionId: string; status: AppSessionStatus; previousStatus: AppSessionStatus; currentPromptId?: string }
@@ -665,6 +688,19 @@ export interface KimiWebApi {
   deleteWorkspace(id: string): Promise<void>;
   browseFs(path?: string): Promise<FsBrowseResult>;
   getFsHome(): Promise<{ home: string; recentRoots: string[] }>;
+
+  // Worktrees — git worktrees of a workspace repository
+  listWorktrees(workspaceId: string): Promise<AppWorktree[]>;
+  createWorktree(
+    workspaceId: string,
+    input?: { branch?: string; baseRef?: string; path?: string },
+  ): Promise<AppWorktree>;
+  removeWorktree(
+    workspaceId: string,
+    input: { path: string; force?: boolean; deleteBranch?: boolean },
+  ): Promise<{ removed: true }>;
+  /** Open a worktree folder in an external application (Cursor, VS Code, Finder, etc.). */
+  openWorktreeInApp(workspaceId: string, appId: string, path: string): Promise<void>;
 
   // PRESUMED — not in current daemon docs; isolated in adapter, swap when backend defines them.
   listModels(): Promise<AppModel[]>;

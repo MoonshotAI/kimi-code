@@ -14,6 +14,8 @@ const props = defineProps<{
   workDir?: string;
   /** Installed app IDs from the daemon; when empty/unset the menu falls back to platform defaults. */
   availableApps?: string[];
+  /** Hide the path label and render only the quick-open + caret (for tight layouts). */
+  compact?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -175,6 +177,7 @@ async function copyPath(): Promise<void> {
 <template>
   <div v-if="isMac" class="open-group">
     <span
+      v-if="!compact"
       class="open-label"
       :class="{ muted: !hasWorkDir }"
       :title="workDir ?? ''"

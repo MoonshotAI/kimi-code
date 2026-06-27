@@ -10,6 +10,7 @@ export * from './asyncapi';
 
 export * from './session';
 export * from './workspace';
+export * from './worktree';
 export * from './message';
 export * from './approval';
 export * from './question';
@@ -26,6 +27,7 @@ export * from './rest/oauth';
 export * from './rest/session';
 export * from './rest/snapshot';
 export * from './rest/workspace';
+export * from './rest/worktree';
 export * from './rest/fsBrowse';
 export * from './rest/message';
 export * from './rest/prompt';

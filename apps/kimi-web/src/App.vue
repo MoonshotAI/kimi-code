@@ -17,6 +17,9 @@ import NewSessionDialog from './components/dialogs/NewSessionDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
 import SessionsDialog from './components/dialogs/SessionsDialog.vue';
 import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
+import WorktreeBoard from './components/WorktreeBoard.vue';
+import WorktreeCompleteDialog from './components/dialogs/WorktreeCompleteDialog.vue';
+import NewWorktreeDialog from './components/dialogs/NewWorktreeDialog.vue';
 import StatusPanel from './components/chat/StatusPanel.vue';
 import WarningToasts from './components/WarningToasts.vue';
 import MobileTopBar from './components/mobile/MobileTopBar.vue';
@@ -34,6 +37,7 @@ import { useFilePreview, type DetailTarget } from './composables/useFilePreview'
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
 import type { AppConfig, ThinkingLevel } from './api/types';
+import type { BoardSection, CompleteWorktreeTarget, WorkspaceView } from './types';
 
 const client = useKimiWebClient();
 provide('resolveImage', client.resolveImageUrl);
@@ -214,6 +218,19 @@ const showSessions = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
+const mainView = ref<'chat' | 'board'>('chat');
+const boardLoading = ref(false);
+// Global board: one section per git workspace, each carrying its worktrees and
+// sessions. Recomputed reactively as worktrees load or change.
+const boardSections = computed<BoardSection[]>(() =>
+  client.workspacesView.value
+    .filter((ws) => ws.isGitRepo === true)
+    .map((ws) => ({
+      workspace: ws,
+      worktrees: client.worktreesByWorkspace.value[ws.id] ?? [],
+      sessions: client.workspaceGroups.value.find((g) => g.workspace.id === ws.id)?.sessions ?? [],
+    })),
+);
 
 type SubmitPayload = {
   text: string;
@@ -235,6 +252,7 @@ const anyOverlayOpen = computed<boolean>(() =>
   showStatusPanel.value ||
   showSettings.value ||
   showOnboarding.value ||
+  showNewWorktree.value ||
   showMobileSwitcher.value ||
   showMobileSettings.value,
 );
@@ -500,6 +518,63 @@ function handleCreateSessionInWorkspace(workspaceId: string): void {
 function openPr(url: string): void {
   if (url) window.open(url, '_blank', 'noopener');
 }
+
+// Sidebar worktree button (per-workspace) also opens the global board.
+function handleManageWorktrees(_workspace: WorkspaceView): void {
+  void openGlobalBoard();
+}
+
+// Open the global worktree board: load worktrees for every git workspace, then
+// show the board. Per-worktree loads are independent and best-effort.
+async function openGlobalBoard(): Promise<void> {
+  mainView.value = 'board';
+  boardLoading.value = true;
+  try {
+    const gitWs = client.workspacesView.value.filter((w) => w.isGitRepo === true);
+    await Promise.allSettled(gitWs.map((w) => client.loadWorktrees(w.id)));
+  } finally {
+    boardLoading.value = false;
+  }
+}
+
+// Board "+ session" on a column: open a draft session scoped to that worktree,
+// then return to the chat so the user can type the first message.
+function handleOpenWorktreeFromBoard(workspaceId: string, path: string): void {
+  client.openWorkspaceDraft(workspaceId, path);
+  mainView.value = 'chat';
+}
+
+// Sidebar "+ session" on a worktree group: open a draft session scoped to that
+// worktree checkout. The chat is already showing, so no view switch is needed.
+function handleNewSessionInWorktree(workspaceId: string, path: string): void {
+  client.openWorkspaceDraft(workspaceId, path);
+}
+
+// Open a worktree folder in an external application (Cursor, VS Code, Finder, etc.).
+function handleOpenWorktreeInApp(workspaceId: string, path: string, appId: string): void {
+  void client.openWorktreeInApp(workspaceId, appId, path);
+}
+
+// "Complete" a worktree — opens a confirmation dialog; the dialog itself calls
+// removeWorktree and reports errors, then closes on success.
+const completeTarget = ref<CompleteWorktreeTarget | null>(null);
+
+function handleCompleteWorktree(target: CompleteWorktreeTarget): void {
+  completeTarget.value = target;
+}
+
+// Quick-create a worktree and jump straight into a draft session in it.
+const showNewWorktree = ref(false);
+
+function handleOpenNewWorktree(): void {
+  showNewWorktree.value = true;
+}
+
+function handleNewWorktreeCreated(workspaceId: string, path: string): void {
+  showNewWorktree.value = false;
+  mainView.value = 'chat';
+  client.openWorkspaceDraft(workspaceId, path);
+}
 </script>
 
 <template>
@@ -546,11 +621,12 @@ function openPr(url: string): void {
         :active-workspace="client.visibleWorkspace.value"
         :active-workspace-id="client.activeWorkspaceId.value"
         :sessions="client.sessionsForView.value"
-        :groups="client.workspaceGroups.value"
+        :groups="client.worktreeGroups.value"
         :active-id="client.activeSessionId.value"
         :attention-by-session="client.attentionBySession.value"
         :pending-by-session="client.pendingBySession.value"
         :unread-by-session="client.unreadBySession.value"
+        :available-open-in-apps="client.availableOpenInApps.value"
         @select="client.selectSession($event)"
         @create="handleCreateSession"
         @create-in-workspace="handleCreateSessionInWorkspace($event)"
@@ -562,6 +638,13 @@ function openPr(url: string): void {
         @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
         @delete-workspace="(id) => client.deleteWorkspace(id)"
         @reorder-workspaces="client.reorderWorkspaces($event)"
+        @manage-worktrees="handleManageWorktrees"
+        @open-pr="openPr"
+        @open-board="openGlobalBoard"
+        @open-new-worktree="handleOpenNewWorktree"
+        @open-worktree="(wsId, path) => handleNewSessionInWorktree(wsId, path)"
+        @complete-worktree="handleCompleteWorktree"
+        @open-in-app="(wsId, path, appId) => handleOpenWorktreeInApp(wsId, path, appId)"
         @select-workspaces="handleSelectWorkspaces"
         @open-settings="showSettings = true"
         @collapse="toggleSidebarCollapse"
@@ -604,8 +687,25 @@ function openPr(url: string): void {
       @open-settings="showMobileSettings = true"
     />
 
+    <WorktreeBoard
+      v-if="mainView === 'board'"
+      :sections="boardSections"
+      :active-session-id="client.activeSessionId.value"
+      :pending-by-session="client.pendingBySession.value"
+      :unread-by-session="client.unreadBySession.value"
+      :loading="boardLoading"
+      :available-open-in-apps="client.availableOpenInApps.value"
+      @back="mainView = 'chat'"
+      @select-session="client.selectSession($event); mainView = 'chat'"
+      @open-worktree="(wsId, path) => handleOpenWorktreeFromBoard(wsId, path)"
+      @complete="handleCompleteWorktree"
+      @open-new-worktree="handleOpenNewWorktree"
+      @open-pr="openPr"
+      @open-in-app="(wsId, path, appId) => handleOpenWorktreeInApp(wsId, path, appId)"
+    />
+
     <ConversationPane
-      v-if="!hasMultiSelect"
+      v-else-if="!hasMultiSelect"
       ref="conversationPaneRef"
       :mobile="isMobile"
       :modern="client.theme.value === 'modern' || client.theme.value === 'kimi'"
@@ -860,6 +960,21 @@ function openPr(url: string): void {
       :default-path="client.visibleWorkspace.value?.root ?? client.status.value.cwd"
       @add="handleAddWorkspace($event)"
       @close="handleCloseAddWorkspace"
+    />
+
+    <WorktreeCompleteDialog
+      :target="completeTarget"
+      :remove-worktree="client.removeWorktree"
+      @cancel="completeTarget = null"
+    />
+
+    <NewWorktreeDialog
+      v-if="showNewWorktree"
+      :workspaces="client.workspacesView.value"
+      :default-workspace-id="client.activeWorkspaceId.value"
+      :create-worktree="client.createWorktree"
+      @created="(wsId, path) => handleNewWorktreeCreated(wsId, path)"
+      @cancel="showNewWorktree = false"
     />
 
     <!-- Global connecting splash on first load (until the daemon round-trips) -->

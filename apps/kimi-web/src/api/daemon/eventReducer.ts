@@ -589,11 +589,12 @@ export function reduceAppEvent(
       break;
     }
 
-    // Workspace lifecycle events are handled in the composable (rawState), not
-    // here — listed explicitly to keep the switch exhaustive.
+    // Workspace + worktree lifecycle events are handled in the composable
+    // (rawState), not here — listed explicitly to keep the switch exhaustive.
     case 'workspaceCreated':
     case 'workspaceUpdated':
     case 'workspaceDeleted':
+    case 'worktreeChanged':
       break;
 
     default: {

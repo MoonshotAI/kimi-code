@@ -333,6 +333,16 @@ export interface WorkspaceDeletedEvent {
   readonly root: string;
 }
 
+export interface WorktreeChangedEvent {
+  readonly type: 'event.worktree.changed';
+  /** Workspace whose repository's worktree set changed. */
+  readonly workspace_id: string;
+  /** Absolute path of the affected worktree, when applicable. */
+  readonly path?: string;
+  /** Why the change happened. */
+  readonly change: 'created' | 'removed';
+}
+
 export interface SessionStatusChangedEvent {
   readonly type: 'event.session.status_changed';
   readonly status: SessionStatus;
@@ -595,6 +605,7 @@ export type AgentEvent =
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent
+  | WorktreeChangedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | GoalUpdatedEvent

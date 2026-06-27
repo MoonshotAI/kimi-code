@@ -20,6 +20,7 @@ import type {
   AppTask,
   AppTaskStatus,
   AppWorkspace,
+  AppWorktree,
   ApprovalResponse,
   ImageSource,
   PromptSubmission,
@@ -49,6 +50,7 @@ import type {
   WireSessionStatus,
   WireSessionUsage,
   WireWorkspace,
+  WireWorktree,
   WireEvent,
   WireConfig,
 } from './wire';
@@ -122,6 +124,22 @@ export function toAppWorkspace(wire: WireWorkspace): AppWorkspace {
     branch: wire.branch ?? undefined,
     lastOpenedAt: wire.last_opened_at,
     sessionCount: wire.session_count,
+  };
+}
+
+export function toAppWorktree(wire: WireWorktree): AppWorktree {
+  return {
+    path: wire.path,
+    branch: wire.branch,
+    head: wire.head,
+    isMain: wire.is_main,
+    locked: wire.locked,
+    prunable: wire.prunable,
+    dirty: wire.dirty,
+    ahead: wire.ahead,
+    behind: wire.behind,
+    sessionId: wire.session_id,
+    pullRequest: wire.pull_request ?? null,
   };
 }
 
@@ -506,6 +524,14 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         type: 'workspaceDeleted',
         workspaceId: w.payload.workspace_id,
         root: w.payload.root,
+      };
+
+    case 'event.worktree.changed':
+      return {
+        type: 'worktreeChanged',
+        workspaceId: w.payload.workspace_id,
+        path: w.payload.path,
+        change: w.payload.change,
       };
 
     case 'event.session.status_changed':

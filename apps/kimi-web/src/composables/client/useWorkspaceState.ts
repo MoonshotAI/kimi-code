@@ -480,11 +480,31 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   /** Enter the "new session draft" state for a workspace: select it, clear the
    *  active session, and show the onboarding composer. No backend session is
-   *  created until the user sends the first message. */
-  function openWorkspaceDraft(workspaceId: string): void {
+   *  created until the user sends the first message. When `cwd` is provided
+   *  (e.g. a worktree path), the next session created in this workspace uses
+   *  it as its working directory instead of the workspace root. */
+  function openWorkspaceDraft(workspaceId: string, cwd?: string): void {
     selectWorkspace(workspaceId);
     clearActiveSession();
     clearFileDiff();
+    if (cwd !== undefined && cwd.length > 0) {
+      rawState.draftCwdByWorkspace = { ...rawState.draftCwdByWorkspace, [workspaceId]: cwd };
+    } else if (workspaceId in rawState.draftCwdByWorkspace) {
+      const next = { ...rawState.draftCwdByWorkspace };
+      delete next[workspaceId];
+      rawState.draftCwdByWorkspace = next;
+    }
+  }
+
+  /** Consume (and clear) any pending draft cwd for a workspace. Returns
+   *  undefined when none is pending, so callers fall back to the root. */
+  function takeDraftCwd(workspaceId: string): string | undefined {
+    const cwd = rawState.draftCwdByWorkspace[workspaceId];
+    if (cwd === undefined) return undefined;
+    const next = { ...rawState.draftCwdByWorkspace };
+    delete next[workspaceId];
+    rawState.draftCwdByWorkspace = next;
+    return cwd;
   }
 
   /**
@@ -497,21 +517,34 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (!ws) return undefined;
     try {
       const api = getKimiWebApi();
+      const draftCwd = takeDraftCwd(workspaceId);
       let workspaceIdForCreate: string | undefined;
-      let cwdForCreate = ws.root;
-      try {
-        const registered = await api.addWorkspace({ root: ws.root });
-        workspaceIdForCreate = registered.id;
-        cwdForCreate = registered.root;
-        upsertWorkspacePreserveOrder(registered);
-      } catch {
-        // Older daemons may not have /workspaces. In that mode, sending a local
-        // path-like workspace id as workspace_id would fail validation, so use
-        // metadata.cwd only.
+      let cwdForCreate: string;
+      if (draftCwd !== undefined) {
+        // Worktree session: the daemon ties workspace_id to cwd, so send cwd
+        // only and let it derive the workspace. The UI folds the session back
+        // under this launching workspace (see owningWorkspaceRoot).
+        cwdForCreate = draftCwd;
+      } else {
+        cwdForCreate = ws.root;
+        try {
+          const registered = await api.addWorkspace({ root: ws.root });
+          workspaceIdForCreate = registered.id;
+          cwdForCreate = registered.root;
+          upsertWorkspacePreserveOrder(registered);
+        } catch {
+          // Older daemons may not have /workspaces. In that mode, sending a
+          // local path-like workspace id as workspace_id would fail validation,
+          // so use metadata.cwd only.
+        }
       }
       const session = await api.createSession({ workspaceId: workspaceIdForCreate, cwd: cwdForCreate });
       upsertSessionFront(session);
-      selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
+      selectWorkspace(
+        draftCwd !== undefined
+          ? workspaceId
+          : (session.workspaceId ?? workspaceIdForCreate ?? workspaceId),
+      );
       // Locally created sessions start empty; trust that so the empty-composer
       // renders immediately instead of flashing a loading state.
       sessionsKnownEmpty.add(session.id);
@@ -537,15 +570,22 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (!ws) return;
     try {
       const api = getKimiWebApi();
+      const draftCwd = takeDraftCwd(workspaceId);
       let workspaceIdForCreate: string | undefined;
-      let cwdForCreate = ws.root;
-      try {
-        const registered = await api.addWorkspace({ root: ws.root });
-        workspaceIdForCreate = registered.id;
-        cwdForCreate = registered.root;
-        upsertWorkspacePreserveOrder(registered);
-      } catch {
-        // Older daemons may not have /workspaces.
+      let cwdForCreate: string;
+      if (draftCwd !== undefined) {
+        // Worktree session: send cwd only (see createSessionInWorkspace).
+        cwdForCreate = draftCwd;
+      } else {
+        cwdForCreate = ws.root;
+        try {
+          const registered = await api.addWorkspace({ root: ws.root });
+          workspaceIdForCreate = registered.id;
+          cwdForCreate = registered.root;
+          upsertWorkspacePreserveOrder(registered);
+        } catch {
+          // Older daemons may not have /workspaces.
+        }
       }
       const draftPick = modelProvider.draftModel.value ?? undefined;
       const session = await api.createSession({
@@ -561,7 +601,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           ? { ...session, model: draftPick }
           : session;
       upsertSessionFront(created);
-      selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
+      selectWorkspace(
+        draftCwd !== undefined
+          ? workspaceId
+          : (session.workspaceId ?? workspaceIdForCreate ?? workspaceId),
+      );
       // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
       // session" (createSession), here we immediately send a prompt: keeping
       // sessionLoading=true through the snapshot avoids flashing the empty-session

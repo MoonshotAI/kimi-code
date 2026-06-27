@@ -3,15 +3,13 @@
      The old workspace rail and workspace tabs have been removed;
      workspace switching, folding and renaming all live in the group header. -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { serverEndpointLabel } from '../api/config';
-import { copyTextToClipboard } from '../lib/clipboard';
 import { loadCollapsedWorkspaces, saveCollapsedWorkspaces } from '../lib/storage';
-import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
-import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
+import type { CompleteWorktreeTarget, Session, WorkspaceView, WorktreeGroup as WorktreeGroupType } from '../types';
 import SessionRow from './SessionRow.vue';
-import WorkspaceGroup from './WorkspaceGroup.vue';
+import WorktreeGroup from './WorktreeGroup.vue';
 
 const { t } = useI18n();
 
@@ -26,7 +24,7 @@ const props = withDefaults(
     activeWorkspace: WorkspaceView | null;
     activeWorkspaceId: string | null;
     sessions: Session[];
-    groups: WorkspaceGroupType[];
+    groups: WorktreeGroupType[];
     activeId: string;
     attentionBySession?: Record<string, number>;
     /** Per-session pending counts split by kind, for the coloured tags. */
@@ -34,6 +32,8 @@ const props = withDefaults(
     unreadBySession?: Record<string, boolean>;
     /** Width (px) of the session column, driven by the App resize handle. */
     colWidth?: number;
+    /** Installed external-app IDs from the daemon; forwarded to each group's open-in menu. */
+    availableOpenInApps?: string[];
   }>(),
   {
     activeWorkspace: null,
@@ -58,6 +58,15 @@ const emit = defineEmits<{
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
   reorderWorkspaces: [ids: string[]];
+  manageWorktrees: [workspace: WorkspaceView];
+  openPr: [url: string];
+  openBoard: [];
+  openNewWorktree: [];
+  /** Open a draft session scoped to a worktree checkout (sidebar "+ session"). */
+  openWorktree: [workspaceId: string, path: string];
+  completeWorktree: [target: CompleteWorktreeTarget];
+  /** Open a worktree folder in an external application. */
+  openInApp: [workspaceId: string, path: string, appId: string];
   openSettings: [];
   collapse: [];
 }>();
@@ -114,54 +123,6 @@ function toggleCollapse(id: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Workspace drag-to-reorder
-// ---------------------------------------------------------------------------
-// The header of each group is the drag handle (see WorkspaceGroup). We track
-// which group is being dragged and where the insertion marker sits (before or
-// after the group under the pointer), then on drop we emit the new id order
-// upward — the parent persists it and the computed `groups` re-sorts. Using the
-// pointer's position within the target (top half = before, bottom half = after)
-// is what lets a workspace be dropped at the very bottom of the list.
-const draggingWsId = ref<string | null>(null);
-const dragOver = ref<{ id: string; position: DropPosition } | null>(null);
-
-function onWsDragstart(id: string): void {
-  draggingWsId.value = id;
-}
-
-function onWsDragend(): void {
-  draggingWsId.value = null;
-  dragOver.value = null;
-}
-
-function dropPosition(event: DragEvent): DropPosition {
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
-}
-
-function onGroupDragOver(event: DragEvent, targetId: string): void {
-  if (draggingWsId.value === null || draggingWsId.value === targetId) return;
-  event.preventDefault();
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-  dragOver.value = { id: targetId, position: dropPosition(event) };
-}
-
-function onGroupDrop(targetId: string): void {
-  const fromId = draggingWsId.value;
-  const position = dragOver.value?.id === targetId ? dragOver.value.position : 'before';
-  dragOver.value = null;
-  draggingWsId.value = null;
-  if (!fromId || fromId === targetId) return;
-  const next = moveInOrder(
-    props.groups.map((g) => g.workspace.id),
-    fromId,
-    targetId,
-    position,
-  );
-  emit('reorderWorkspaces', next);
-}
-
-// ---------------------------------------------------------------------------
 // Session list truncation per workspace
 // ---------------------------------------------------------------------------
 const DEFAULT_VISIBLE_COUNT = 10;
@@ -192,241 +153,13 @@ function visibleSessions(sessions: Session[], expanded: boolean, activeId?: stri
   return visible;
 }
 
-// ---------------------------------------------------------------------------
-// Shift-multi-select workspaces
-// ---------------------------------------------------------------------------
-const selectedIds = ref<Set<string>>(new Set());
-
-function handleGhClick(wsId: string, e: MouseEvent): void {
-  if (e.shiftKey) {
-    e.stopPropagation();
-    const next = new Set(selectedIds.value);
-    if (next.has(wsId)) next.delete(wsId);
-    else next.add(wsId);
-    selectedIds.value = next;
-    emit('selectWorkspaces', Array.from(next));
-    return;
-  }
-  // Normal click: clear multi-selection then toggle collapse
-  selectedIds.value = new Set();
-  emit('selectWorkspaces', []);
-  toggleCollapse(wsId);
-}
+// Active worktree groups (running / awaiting input) float above the rest.
+const activeGroups = computed(() => props.groups.filter((g) => g.hasRunning || g.hasPending));
+const idleGroups = computed(() => props.groups.filter((g) => !g.hasRunning && !g.hasPending));
 
 function onSelectSession(sessionId: string): void {
-  selectedIds.value = new Set();
-  emit('selectWorkspaces', []);
   emit('select', sessionId);
 }
-
-// ---------------------------------------------------------------------------
-// Rename workspace (inline, like SessionRow)
-// ---------------------------------------------------------------------------
-const renamingId = ref<string | null>(null);
-const renameValue = ref('');
-const renameInputRef = ref<HTMLInputElement | null>(null);
-
-// Hand the rename-input ref OBJECT (not its unwrapped value) down to
-// WorkspaceGroup: top-level refs are auto-unwrapped in templates, so a getter
-// keeps the ref intact. The child writes its input element back, and Sidebar
-// keeps owning focus (startRenameWorkspace focuses it on nextTick).
-function getRenameInputRef() {
-  return renameInputRef;
-}
-
-function startRenameWorkspace(id: string, name: string): void {
-  renamingId.value = id;
-  renameValue.value = name;
-  void nextTick().then(() => renameInputRef.value?.focus());
-}
-
-function confirmRenameWorkspace(): void {
-  const id = renamingId.value;
-  const name = renameValue.value.trim();
-  if (id && name) {
-    emit('renameWorkspace', id, name);
-  }
-  renamingId.value = null;
-}
-
-function cancelRenameWorkspace(): void {
-  renamingId.value = null;
-}
-
-function onUpdateRenameValue(value: string): void {
-  renameValue.value = value;
-}
-
-// ---------------------------------------------------------------------------
-// Workspace right-click menu (copy path, rename)
-// ---------------------------------------------------------------------------
-const ghMenuOpen = ref(false);
-const ghMenuTarget = ref<WorkspaceView | null>(null);
-const ghMenuStyle = ref<Record<string, string>>({});
-const ghMenuRef = ref<HTMLElement | null>(null);
-
-function onGhMenuDocClick(e: MouseEvent): void {
-  if (ghMenuRef.value && !ghMenuRef.value.contains(e.target as Node)) {
-    closeGhMenu();
-  }
-}
-
-function openGhMenu(ws: WorkspaceView, e: MouseEvent): void {
-  if (e.shiftKey) {
-    // shift+right-click = multi-select (same as shift+click)
-    e.stopPropagation();
-    const next = new Set(selectedIds.value);
-    if (next.has(ws.id)) next.delete(ws.id);
-    else next.add(ws.id);
-    selectedIds.value = next;
-    emit('selectWorkspaces', Array.from(next));
-    return;
-  }
-  e.preventDefault();
-  e.stopPropagation();
-  ghMenuTarget.value = ws;
-  ghMenuStyle.value = {
-    top: `${e.clientY}px`,
-    left: `${e.clientX}px`,
-  };
-  ghMenuOpen.value = true;
-  document.addEventListener('mousedown', onGhMenuDocClick, true);
-}
-
-function closeGhMenu(): void {
-  ghMenuOpen.value = false;
-  document.removeEventListener('mousedown', onGhMenuDocClick, true);
-  ghMenuTarget.value = null;
-  disarmDeleteWs();
-}
-
-function copyPathFromMenu(): void {
-  if (ghMenuTarget.value) {
-    void copyTextToClipboard(ghMenuTarget.value.root);
-  }
-  closeGhMenu();
-}
-
-function startRenameFromMenu(): void {
-  if (ghMenuTarget.value) {
-    startRenameWorkspace(ghMenuTarget.value.id, ghMenuTarget.value.name);
-  }
-  closeGhMenu();
-}
-
-function deleteFromMenu(): void {
-  const ws = ghMenuTarget.value;
-  if (!ws) return;
-  if (!armDeleteWs(ws.id)) return; // first click arms ("confirm?"), keep menu open
-  emit('deleteWorkspace', ws.id);
-  closeGhMenu();
-}
-
-// ---------------------------------------------------------------------------
-// Two-step workspace delete (shared by the kebab menu and the context menu):
-// the first click arms the item — it turns into a "confirm" label — and a
-// second click within 2.5s actually deletes; otherwise the item reverts.
-// ---------------------------------------------------------------------------
-const deleteArmedWsId = ref<string | null>(null);
-let deleteArmTimer: ReturnType<typeof setTimeout> | undefined;
-
-function disarmDeleteWs(): void {
-  clearTimeout(deleteArmTimer);
-  deleteArmedWsId.value = null;
-}
-
-/** Returns true when the delete is confirmed (second click while armed). */
-function armDeleteWs(id: string): boolean {
-  if (deleteArmedWsId.value === id) {
-    disarmDeleteWs();
-    return true;
-  }
-  clearTimeout(deleteArmTimer);
-  deleteArmedWsId.value = id;
-  deleteArmTimer = setTimeout(() => {
-    deleteArmedWsId.value = null;
-  }, 2500);
-  return false;
-}
-
-// ---------------------------------------------------------------------------
-// Workspace inline more-menu (kebab, hover-triggered). Rendered position:fixed
-// and anchored to the ⋯ button so the scrolling session list can't clip it;
-// it doesn't follow the anchor, so scroll/resize simply close it.
-// ---------------------------------------------------------------------------
-const wsMenuOpenId = ref<string | null>(null);
-const wsMenuTarget = ref<WorkspaceView | null>(null);
-const wsMenuStyle = ref<Record<string, string>>({});
-const wsMenuRef = ref<HTMLElement | null>(null);
-
-function onWsMenuDocClick(e: MouseEvent): void {
-  const target = e.target as Element;
-  if (target.closest('.gh-more') || target.closest('.ws-menu')) return;
-  closeWsMenu();
-}
-
-async function toggleWsMenu(ws: WorkspaceView, e: MouseEvent): Promise<void> {
-  if (wsMenuOpenId.value === ws.id) {
-    closeWsMenu();
-    return;
-  }
-  const btn = e.currentTarget as HTMLElement;
-  wsMenuTarget.value = ws;
-  wsMenuOpenId.value = ws.id;
-  document.addEventListener('mousedown', onWsMenuDocClick);
-  document.addEventListener('scroll', closeWsMenu, true);
-  window.addEventListener('resize', closeWsMenu);
-  await nextTick();
-  const menu = wsMenuRef.value;
-  const r = btn.getBoundingClientRect();
-  const gap = 4;
-  const margin = 8;
-  const menuH = menu?.offsetHeight ?? 0;
-  const menuW = menu?.offsetWidth ?? 0;
-  let top = r.bottom + gap;
-  if (top + menuH > window.innerHeight - margin) {
-    top = Math.max(margin, r.top - menuH - gap);
-  }
-  let left = r.right - menuW;
-  if (left < margin) left = margin;
-  wsMenuStyle.value = {
-    top: `${Math.round(top)}px`,
-    left: `${Math.round(left)}px`,
-  };
-}
-
-function closeWsMenu(): void {
-  wsMenuOpenId.value = null;
-  wsMenuTarget.value = null;
-  disarmDeleteWs();
-  document.removeEventListener('mousedown', onWsMenuDocClick);
-  document.removeEventListener('scroll', closeWsMenu, true);
-  window.removeEventListener('resize', closeWsMenu);
-}
-
-function copyWsPath(ws: WorkspaceView): void {
-  void copyTextToClipboard(ws.root);
-  closeWsMenu();
-}
-
-function startRenameWs(ws: WorkspaceView): void {
-  startRenameWorkspace(ws.id, ws.name);
-  closeWsMenu();
-}
-
-function deleteWs(ws: WorkspaceView): void {
-  if (!armDeleteWs(ws.id)) return; // first click arms ("confirm?"), keep menu open
-  emit('deleteWorkspace', ws.id);
-  closeWsMenu();
-}
-
-onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onGhMenuDocClick, true);
-  document.removeEventListener('mousedown', onWsMenuDocClick);
-  document.removeEventListener('scroll', closeWsMenu, true);
-  window.removeEventListener('resize', closeWsMenu);
-  clearTimeout(deleteArmTimer);
-});
 
 // Logo easter-egg: clicking the Kimi mark plays one quick blink. It's a one-shot
 // animation — force a reflow so rapid clicks restart it, then drop the class so
@@ -534,6 +267,33 @@ function blinkOnce(): void {
           <span>{{ t('sidebar.newChat') }}</span>
         </button>
         <button
+          type="button"
+          class="btn-board"
+          :title="t('worktree.boardTitle')"
+          :aria-label="t('worktree.boardTitle')"
+          @click.stop="emit('openBoard')"
+        >
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="1.5" y="2.5" width="3.5" height="11" rx="1"/>
+            <rect x="6.25" y="2.5" width="3.5" height="7" rx="1"/>
+            <rect x="11" y="2.5" width="3.5" height="9" rx="1"/>
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="btn-new-wt"
+          :title="t('worktree.newTitle')"
+          :aria-label="t('worktree.newTitle')"
+          @click.stop="emit('openNewWorktree')"
+        >
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="4.5" cy="3.5" r="1.6"/>
+            <circle cx="4.5" cy="12.5" r="1.6"/>
+            <path d="M4.5 5.1v5.8M4.5 5.1c0 2.6 1.6 4.2 4.2 4.2h2"/>
+            <path d="M12.5 5v5M10 7.5h5"/>
+          </svg>
+        </button>
+        <button
           v-if="showNewWorkspaceButton"
           type="button"
           class="btn-new-ws"
@@ -575,95 +335,57 @@ function blinkOnce(): void {
         <!-- Empty state — only when no workspace is registered at all; empty
              workspaces still render their group header (with the + button). -->
         <div v-if="groups.length === 0" class="empty">
-          {{ t('workspace.noWorkspace') }}
+          {{ t('sidebar.noSessions') }}
         </div>
 
         <template v-else>
-          <div
-            v-for="g in groups"
-            :key="g.workspace.id"
-            class="ws-drop-target"
-            :class="{
-              'drop-before': dragOver?.id === g.workspace.id && dragOver.position === 'before',
-              'drop-after': dragOver?.id === g.workspace.id && dragOver.position === 'after',
-            }"
-            @dragover="onGroupDragOver($event, g.workspace.id)"
-            @drop="onGroupDrop(g.workspace.id)"
-          >
-            <WorkspaceGroup
-              :group="g"
-              :active-workspace-id="activeWorkspaceId"
-              :active-id="activeId"
-              :selected-ids="selectedIds"
-              :renaming-id="renamingId"
-              :rename-value="renameValue"
-              :rename-input-ref="getRenameInputRef()"
-              :pending-by-session="pendingBySession"
-              :unread-by-session="unreadBySession"
-              :ws-menu-open-id="wsMenuOpenId"
-              :dragging="draggingWsId === g.workspace.id"
-              :is-collapsed="isCollapsed"
-              :is-expanded="isExpanded"
-              :visible-sessions="visibleSessions"
-              @group-click="handleGhClick"
-              @group-contextmenu="openGhMenu"
-              @toggle-ws-menu="toggleWsMenu"
-              @create-in-workspace="(id) => emit('createInWorkspace', id)"
-              @select-session="onSelectSession"
-              @rename-session="(id, title) => emit('rename', id, title)"
-              @archive-session="(id) => emit('archive', id)"
-              @fork-session="(id) => emit('fork', id)"
-              @toggle-expand="toggleExpand"
-              @confirm-rename="confirmRenameWorkspace"
-              @cancel-rename="cancelRenameWorkspace"
-              @update-rename-value="onUpdateRenameValue"
-              @ws-dragstart="onWsDragstart"
-              @ws-dragend="onWsDragend"
-            />
-          </div>
+          <WorktreeGroup
+            v-for="g in activeGroups"
+            :key="g.key"
+            :group="g"
+            :active-id="activeId"
+            :pending-by-session="pendingBySession"
+            :unread-by-session="unreadBySession"
+            :is-collapsed="isCollapsed(g.key)"
+            :is-expanded="isExpanded(g.key)"
+            :visible-sessions="visibleSessions"
+            :available-open-in-apps="availableOpenInApps"
+            @select-session="onSelectSession"
+            @rename-session="(id, title) => emit('rename', id, title)"
+            @archive-session="(id) => emit('archive', id)"
+            @fork-session="(id) => emit('fork', id)"
+            @open-pr="(url) => emit('openPr', url)"
+            @new-session="(wsId, path) => emit('openWorktree', wsId, path)"
+            @complete="(target) => emit('completeWorktree', target)"
+            @open-in-app="(wsId, path, appId) => emit('openInApp', wsId, path, appId)"
+            @toggle-collapse="toggleCollapse"
+            @toggle-expand="toggleExpand"
+          />
+          <div v-if="activeGroups.length > 0 && idleGroups.length > 0" class="sec-divider" />
+          <WorktreeGroup
+            v-for="g in idleGroups"
+            :key="g.key"
+            :group="g"
+            :active-id="activeId"
+            :pending-by-session="pendingBySession"
+            :unread-by-session="unreadBySession"
+            :is-collapsed="isCollapsed(g.key)"
+            :is-expanded="isExpanded(g.key)"
+            :visible-sessions="visibleSessions"
+            :available-open-in-apps="availableOpenInApps"
+            @select-session="onSelectSession"
+            @rename-session="(id, title) => emit('rename', id, title)"
+            @archive-session="(id) => emit('archive', id)"
+            @fork-session="(id) => emit('fork', id)"
+            @open-pr="(url) => emit('openPr', url)"
+            @new-session="(wsId, path) => emit('openWorktree', wsId, path)"
+            @complete="(target) => emit('completeWorktree', target)"
+            @open-in-app="(wsId, path, appId) => emit('openInApp', wsId, path, appId)"
+            @toggle-collapse="toggleCollapse"
+            @toggle-expand="toggleExpand"
+          />
         </template>
       </div>
-    </div>
-
-    <!-- Workspace right-click menu (position:fixed) -->
-    <div
-      v-if="ghMenuOpen"
-      ref="ghMenuRef"
-      class="gh-menu"
-      :style="ghMenuStyle"
-      @click.stop
-    >
-      <button type="button" class="ghm-item" @click="copyPathFromMenu">
-        {{ t('sidebar.copyPath') }}
-      </button>
-      <button type="button" class="ghm-item" @click="startRenameFromMenu">
-        {{ t('sidebar.rename') }}
-      </button>
-      <button type="button" class="ghm-item del" @click="deleteFromMenu">
-        {{ ghMenuTarget && deleteArmedWsId === ghMenuTarget.id ? t('sidebar.confirm') : t('sidebar.removeWorkspace') }}
-      </button>
-    </div>
-
-    <!-- Workspace kebab menu (position:fixed, anchored to the ⋯ button so the
-         scrolling session list cannot clip it) -->
-    <div
-      v-if="wsMenuOpenId !== null && wsMenuTarget"
-      ref="wsMenuRef"
-      class="ws-menu"
-      :style="wsMenuStyle"
-      @click.stop
-    >
-      <button class="ws-menu-item" @click.stop="copyWsPath(wsMenuTarget)">
-        {{ t('sidebar.copyPath') }}
-      </button>
-      <div class="ws-menu-divider" />
-      <button class="ws-menu-item" @click.stop="startRenameWs(wsMenuTarget)">
-        {{ t('sidebar.rename') }}
-      </button>
-      <div class="ws-menu-divider" />
-      <button class="ws-menu-item del" @click.stop="deleteWs(wsMenuTarget)">
-        {{ deleteArmedWsId === wsMenuTarget.id ? t('sidebar.confirm') : t('sidebar.removeWorkspace') }}
-      </button>
     </div>
   </aside>
 </template>
@@ -833,6 +555,34 @@ function blinkOnce(): void {
   border-color: var(--bd);
   color: var(--dim);
 }
+.btn-board {
+  flex: none;
+  justify-content: center;
+  aspect-ratio: 1;
+  padding: 9px 10px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+.btn-board:hover {
+  background: var(--panel);
+  border-color: var(--bd);
+  color: var(--blue);
+}
+.btn-new-wt {
+  flex: none;
+  justify-content: center;
+  aspect-ratio: 1;
+  padding: 9px 10px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+.btn-new-wt:hover {
+  background: var(--panel);
+  border-color: var(--bd);
+  color: var(--blue);
+}
 
 /* Session search */
 .search {
@@ -902,18 +652,17 @@ function blinkOnce(): void {
 }
 .sessions::-webkit-scrollbar-thumb:hover { background: var(--bd); }
 
-/* Workspace drag-to-reorder: a line at the top (drop-before) or bottom
-   (drop-after) of the group under the cursor marks where the dragged workspace
-   will land. Inset shadows avoid layout shift. */
-.ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--blue); }
-.ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--blue); }
-
 .empty {
   padding: 24px 12px;
   text-align: center;
   color: var(--faint);
   font-size: calc(var(--ui-font-size) - 3px);
   line-height: 1.6;
+}
+.sec-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 6px 12px;
 }
 
 /* Workspace kebab dropdown menu — fixed so the scroll container can't clip it;

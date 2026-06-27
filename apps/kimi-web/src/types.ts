@@ -38,6 +38,12 @@ export interface Session {
   updatedAt?: string;
   /** Text of the most recent user prompt, used by sidebar search. */
   lastPrompt?: string;
+  /** Current git branch, when known (populated for visible sessions). */
+  branch?: string;
+  /** GitHub pull request for the current branch, when known. */
+  pullRequest?: { number: number; state: string; url: string } | null;
+  /** True when the session's cwd is a linked worktree (not the main checkout). */
+  isWorktree?: boolean;
 }
 
 export interface Workspace {
@@ -59,6 +65,8 @@ export interface WorkspaceView {
   shortPath: string;
   /** Current branch, when known. */
   branch?: string;
+  /** Whether the workspace root is inside a git repository. */
+  isGitRepo?: boolean;
   /** Number of sessions in this workspace. */
   sessionCount: number;
 }
@@ -70,6 +78,53 @@ export interface WorkspaceView {
 export interface WorkspaceGroup {
   workspace: WorkspaceView;
   sessions: Session[];
+}
+
+/**
+ * One worktree group for the worktree-centric sidebar: a branch checkout of a
+ * repo, with its sessions. Active groups (running / awaiting input) sort to
+ * the top.
+ */
+export interface WorktreeGroup {
+  /** Stable key: `<workspaceId>:<branch>`. */
+  key: string;
+  workspaceId: string;
+  /** Repo / workspace display name. */
+  workspaceName: string;
+  /** Branch name. Empty when git status hasn't loaded yet. */
+  branch: string;
+  /** True for the main checkout of the repo. */
+  isMain: boolean;
+  /** Absolute path of the worktree checkout (from a member session's cwd). */
+  path: string;
+  /** True when the worktree has uncommitted changes. */
+  dirty: boolean;
+  pullRequest: { number: number; state: string; url: string } | null;
+  sessions: Session[];
+  /** True when any session in the group is running. */
+  hasRunning: boolean;
+  /** True when any session is awaiting approval / a question answer. */
+  hasPending: boolean;
+  /** Most recent session activity (ms epoch), used for sorting. */
+  latestAt: number;
+}
+
+/** One workspace section of the global worktree board: the workspace, its
+ *  git worktrees, and its sessions (grouped into columns by the board). */
+export interface BoardSection {
+  workspace: WorkspaceView;
+  worktrees: import('./api/types').AppWorktree[];
+  sessions: Session[];
+}
+
+/** Target of the "complete worktree" confirmation dialog. */
+export interface CompleteWorktreeTarget {
+  workspaceId: string;
+  path: string;
+  branch: string;
+  dirty: boolean;
+  sessionCount: number;
+  isMain: boolean;
 }
 
 /** Sidebar session-list scope: only the active workspace, or all workspaces. */

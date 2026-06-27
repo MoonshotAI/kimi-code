@@ -97,6 +97,15 @@ export {
 export { WorkspaceFsService } from './workspace/workspaceFsService';
 
 export {
+  IWorktreeService,
+  WorktreeError,
+  WorktreeGitUnavailableError,
+  WorktreeNotFoundError,
+  WorktreeConflictError,
+} from './worktree/worktree';
+export { WorktreeService } from './worktree/worktreeService';
+
+export {
   IAuthSummaryService,
   AuthProvisioningRequiredError,
   AuthTokenMissingError,

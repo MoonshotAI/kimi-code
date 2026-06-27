@@ -24,6 +24,7 @@ import { registerTerminalsRoutes } from './terminals';
 import { registerToolsRoutes } from './tools';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
+import { registerWorktreesRoutes } from './worktrees';
 
 interface ApiV1AppHost {
   register(
@@ -106,6 +107,10 @@ export async function registerApiV1Routes(
     );
     registerWorkspaceFsRoutes(
       apiV1 as unknown as Parameters<typeof registerWorkspaceFsRoutes>[0],
+      ix,
+    );
+    registerWorktreesRoutes(
+      apiV1 as unknown as Parameters<typeof registerWorktreesRoutes>[0],
       ix,
     );
 
