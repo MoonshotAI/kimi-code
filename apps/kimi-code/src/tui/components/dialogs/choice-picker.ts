@@ -17,7 +17,7 @@ import {
   type Focusable,
 } from '@earendil-works/pi-tui';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
-import { currentTheme } from '#/tui/theme';
+import { currentTheme, type ColorToken } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
@@ -30,6 +30,9 @@ export interface ChoiceOption {
   readonly tone?: 'danger';
   /** Optional explanatory text shown below the label. */
   readonly description?: string | undefined;
+  /** Color token applied to the description while this option is selected, drawing
+   *  attention to important details. Falls back to `textMuted` when unset or not selected. */
+  readonly descriptionTone?: ColorToken;
 }
 
 export interface ChoicePickerOptions {
@@ -174,8 +177,10 @@ export class ChoicePickerComponent extends Container implements Focusable {
       lines.push(line);
       if (opt.description !== undefined && opt.description.length > 0) {
         const descriptionWidth = Math.max(1, width - 4);
+        const descriptionColor =
+          isSelected && opt.descriptionTone !== undefined ? opt.descriptionTone : 'textMuted';
         for (const descLine of wrapDescription(opt.description, descriptionWidth)) {
-          lines.push(currentTheme.fg('textMuted', `    ${descLine}`));
+          lines.push(currentTheme.fg(descriptionColor, `    ${descLine}`));
         }
       }
     }

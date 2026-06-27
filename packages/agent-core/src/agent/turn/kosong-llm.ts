@@ -55,6 +55,12 @@ export interface KosongLLMConfig {
    * final cap is applied to each request.
    */
   readonly completionBudgetConfig?: CompletionBudgetConfig | undefined;
+  /**
+   * Returns the number of context tokens already consumed by the latest
+   * completed step (API-reported input + output). Used by chat-completions
+   * providers to size the completion budget to the remaining context window.
+   */
+  readonly usedContextTokens?: (() => number) | undefined;
 }
 
 export class KosongLLM implements LLM {
@@ -65,6 +71,7 @@ export class KosongLLM implements LLM {
   private readonly provider: ChatProvider;
   private readonly generate: GenerateFn;
   private readonly completionBudgetConfig: CompletionBudgetConfig | undefined;
+  private readonly usedContextTokens: (() => number) | undefined;
 
   constructor(config: KosongLLMConfig) {
     this.provider = config.provider;
@@ -73,6 +80,7 @@ export class KosongLLM implements LLM {
     this.capability = config.capability;
     this.generate = config.generate ?? kosongGenerate;
     this.completionBudgetConfig = config.completionBudgetConfig;
+    this.usedContextTokens = config.usedContextTokens;
   }
 
   async chat(params: LLMChatParams): Promise<LLMChatResponse> {
@@ -98,6 +106,7 @@ export class KosongLLM implements LLM {
       provider: this.provider,
       budget: this.completionBudgetConfig,
       capability: this.capability,
+      usedContextTokens: this.usedContextTokens?.(),
     });
     const options: GenerateOptionsWithRequestLogFields = {
       signal: params.signal,

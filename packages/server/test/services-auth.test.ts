@@ -44,14 +44,14 @@ describe('privateFiles', () => {
     expect(statSync(join(tmpDir, 'nested', 'dir')).mode & 0o777).toBe(0o700);
   });
 
-  it.skipIf(process.platform === 'win32')('round-trips string content through readPrivateFile', async () => {
+  it('round-trips string content through readPrivateFile', async () => {
     const p = join(tmpDir, 'secret');
     await writePrivateFile(p, 's3cr3t-value');
     const buf = await readPrivateFile(p);
     expect(buf.toString('utf8')).toBe('s3cr3t-value');
   });
 
-  it.skipIf(process.platform === 'win32')('round-trips Buffer content through readPrivateFile', async () => {
+  it('round-trips Buffer content through readPrivateFile', async () => {
     const p = join(tmpDir, 'bin');
     const data = Buffer.from([0, 1, 2, 254, 255]);
     await writePrivateFile(p, data);
@@ -59,7 +59,7 @@ describe('privateFiles', () => {
     expect(buf.equals(data)).toBe(true);
   });
 
-  it('readPrivateFile throws on a 0644 file', async () => {
+  it.skipIf(process.platform === 'win32')('readPrivateFile throws on a 0644 file', async () => {
     const p = join(tmpDir, 'leaky');
     writeFileSync(p, 'x', { mode: 0o644 });
     chmodSync(p, 0o644);
@@ -84,7 +84,7 @@ describe('tokenStore', () => {
     await b.dispose();
   });
 
-  it.skipIf(process.platform === 'win32')('reuses the same persistent token across stores in one home dir', async () => {
+  it('reuses the same persistent token across stores in one home dir', async () => {
     const home = join(tmpDir, 'home');
     const a = await createTokenStore(home);
     const token = a.getToken();
@@ -123,7 +123,7 @@ describe('tokenStore', () => {
     expect(existsSync(store.tokenPath)).toBe(true);
   });
 
-  it.skipIf(process.platform === 'win32')('re-reads the token after the file is rewritten (live rotation)', async () => {
+  it('re-reads the token after the file is rewritten (live rotation)', async () => {
     const home = join(tmpDir, 'home');
     const store = await createTokenStore(home);
     const original = store.getToken();
@@ -142,11 +142,16 @@ describe('tokenStore', () => {
 });
 
 describe('persistentToken', () => {
-  it.skipIf(process.platform === 'win32')('loadOrCreateServerToken generates once and reuses thereafter', async () => {
+  it('loadOrCreateServerToken generates once and reuses thereafter', async () => {
     const home = join(tmpDir, 'home');
     const a = await loadOrCreateServerToken(home);
     const b = await loadOrCreateServerToken(home);
     expect(a).toBe(b);
+  });
+
+  it.skipIf(process.platform === 'win32')('writes server.token with mode 0600', async () => {
+    const home = join(tmpDir, 'home');
+    await loadOrCreateServerToken(home);
     expect(statSync(join(home, 'server.token')).mode & 0o777).toBe(0o600);
   });
 

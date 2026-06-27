@@ -50,6 +50,8 @@ export interface ParsedServerOptions {
   allowRemoteShutdown: boolean;
   /** Allow PTY `/api/v1/terminals/*` routes on a non-loopback bind. */
   allowRemoteTerminals: boolean;
+  /** Extra `Host` header values to allow through the DNS-rebinding check. */
+  allowedHosts: readonly string[];
   /** Internal: run as an idle-exiting background daemon instead of foreground. */
   daemon: boolean;
   /** Internal: idle-shutdown grace in ms (daemon mode only). */
@@ -67,6 +69,8 @@ export interface ServerCliOptions {
   allowRemoteShutdown?: boolean;
   /** Allow remote terminals on a non-loopback bind (`--allow-remote-terminals`). */
   allowRemoteTerminals?: boolean;
+  /** Extra `Host` header values to allow (`--allowed-host`). */
+  allowedHost?: string[];
   /** Internal flag set by the daemon spawner (`kimi web`). */
   daemon?: boolean;
   /** Internal flag set by the daemon spawner / tests. */
@@ -82,9 +86,18 @@ export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions 
     insecureNoTls: opts.insecureNoTls !== false,
     allowRemoteShutdown: opts.allowRemoteShutdown === true,
     allowRemoteTerminals: opts.allowRemoteTerminals === true,
+    allowedHosts: parseAllowedHostArgs(opts.allowedHost),
     daemon: opts.daemon === true,
     idleGraceMs: parseIdleGraceMs(opts.idleGraceMs),
   };
+}
+
+export function parseAllowedHostArgs(raw: readonly string[] | undefined): string[] {
+  if (raw === undefined) return [];
+  return raw
+    .flatMap((entry) => entry.split(','))
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 }
 
 function parseHost(raw: string | boolean | undefined): string {

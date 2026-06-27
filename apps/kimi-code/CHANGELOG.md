@@ -1,5 +1,33 @@
 # @moonshot-ai/kimi-code
 
+## 0.20.1
+
+### Patch Changes
+
+- [#1125](https://github.com/MoonshotAI/kimi-code/pull/1125) [`e9a3b7c`](https://github.com/MoonshotAI/kimi-code/commit/e9a3b7c83a623c7323da509ba885567c465093fc) - Add an `update` alias for the `kimi upgrade` command. Run `kimi update` to upgrade to the latest version.
+
+- [#1122](https://github.com/MoonshotAI/kimi-code/pull/1122) [`820d77a`](https://github.com/MoonshotAI/kimi-code/commit/820d77ab4cfad7752358a4692fd3d7def49f005d) - Show the done / in progress / pending breakdown of hidden todos in the collapsed todo panel.
+
+- [#1131](https://github.com/MoonshotAI/kimi-code/pull/1131) [`76c643b`](https://github.com/MoonshotAI/kimi-code/commit/76c643bcb6da447c8c47728b4f58512a7a11cfa6) - Cap completion tokens to the remaining context window for chat-completions providers, avoiding context-overflow and invalid max_tokens errors.
+
+- [#1120](https://github.com/MoonshotAI/kimi-code/pull/1120) [`e736349`](https://github.com/MoonshotAI/kimi-code/commit/e736349a7c8ff55b73e05cc0192dfaf0114745fa) - Add optional feedback attachments for diagnostic logs and codebase context.
+
+- [#1135](https://github.com/MoonshotAI/kimi-code/pull/1135) [`bf51fb7`](https://github.com/MoonshotAI/kimi-code/commit/bf51fb7a105b2f34a59ed4e83d2588e790cfb086) - Fix the local server failing to start on Windows after the first run because the persistent token file's synthesized mode was rejected as too permissive.
+
+- [#1102](https://github.com/MoonshotAI/kimi-code/pull/1102) [`9c97161`](https://github.com/MoonshotAI/kimi-code/commit/9c9716125e104b217540d0591229d03c6d676ead) - Harden the default system prompt and built-in tool descriptions: stop the agent from blocking on background tasks it should let run, keep its guidance matched to the tools each profile actually provides, and surface tool-result details (fetched-page mode, Grep match totals) it previously missed.
+
+- [#1127](https://github.com/MoonshotAI/kimi-code/pull/1127) [`184acf5`](https://github.com/MoonshotAI/kimi-code/commit/184acf5db521a964a8af9dfdb1502121a9be76dc) - Plugins can now declare hooks in their manifest to run scripts on lifecycle events.
+
+- [#1128](https://github.com/MoonshotAI/kimi-code/pull/1128) [`0886bff`](https://github.com/MoonshotAI/kimi-code/commit/0886bff2bcd3aed954990c948201d84787c0f3f3) - Add a --allowed-host flag to kimi server run that lets extra Host header values pass the DNS-rebinding check, and include allow guidance in the 403 error message. Pass --allowed-host <host> to allow an extra host.
+
+- [#1119](https://github.com/MoonshotAI/kimi-code/pull/1119) [`b0b2aee`](https://github.com/MoonshotAI/kimi-code/commit/b0b2aee8c5a496c2b679fc9dbbc05e3d1934d5d9) - Keep the terminal responsive in long conversations by caching rendered message lines.
+
+- [#1119](https://github.com/MoonshotAI/kimi-code/pull/1119) [`b0b2aee`](https://github.com/MoonshotAI/kimi-code/commit/b0b2aee8c5a496c2b679fc9dbbc05e3d1934d5d9) - Keep long sessions responsive by retaining only recent turns in the transcript and collapsing older steps within each turn.
+
+- [#1121](https://github.com/MoonshotAI/kimi-code/pull/1121) [`81ba48f`](https://github.com/MoonshotAI/kimi-code/commit/81ba48f45534e133947c4e5e78907c2ad0db0b90) - Make the web chat input grow with its content and add an expandable editor for longer messages.
+
+- [#1133](https://github.com/MoonshotAI/kimi-code/pull/1133) [`f1c8175`](https://github.com/MoonshotAI/kimi-code/commit/f1c8175f9c5766f6a928fd07fb680e3159c564b0) - Fix the /web slash command not carrying the server token, so the opened web UI signs in automatically and the token is shown before the terminal exits.
+
 ## 0.20.0
 
 ### Minor Changes
