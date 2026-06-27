@@ -18,6 +18,8 @@ import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { TaskListTool } from '../../src/tools/background/task-list';
 import { compileToolArgsValidator, validateToolArgs } from '../../src/tools/args-validator';
 import { AskUserQuestionTool } from '../../src/tools/builtin/collaboration/ask-user';
+import { ReadInputSchema } from '../../src/tools/builtin/file/read';
+import { toInputJsonSchema } from '../../src/tools/support/input-schema';
 
 /** Collect every `required` array nested anywhere inside a JSON Schema. */
 function collectRequired(schema: unknown, acc: string[] = []): string[] {
@@ -94,5 +96,57 @@ describe('builtin tool input JSON Schema', () => {
     };
     // The closed-object guard must hold at every nesting level.
     expect(validateToolArgs(validator, { questions: [question] })).not.toBeNull();
+  });
+});
+
+describe('tool argument validation errors', () => {
+  it('lists valid properties for unknown arguments', () => {
+    const validator = compileToolArgsValidator(toInputJsonSchema(ReadInputSchema));
+
+    expect(validateToolArgs(validator, { path: '/tmp/a.txt', offset: 10 })).toBe(
+      "must NOT have additional property 'offset'; valid properties: path, line_offset, n_lines",
+    );
+  });
+
+  it('includes the expected type for missing required arguments', () => {
+    const validator = compileToolArgsValidator(toInputJsonSchema(ReadInputSchema));
+
+    expect(validateToolArgs(validator, { n_lines: 10 })).toBe(
+      "must have required property 'path' (expected string)",
+    );
+  });
+
+  it('uses the nested object schema for unknown nested arguments', () => {
+    const validator = compileToolArgsValidator({
+      type: 'object',
+      properties: {
+        root: { type: 'string' },
+        nested: {
+          type: 'object',
+          properties: {
+            child: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    });
+
+    expect(validateToolArgs(validator, { nested: { child: 'ok', root: 'wrong level' } })).toBe(
+      "must NOT have additional property 'root'; valid properties: child",
+    );
+  });
+
+  it('keeps the old required message when the expected type is unknown', () => {
+    const validator = compileToolArgsValidator({
+      type: 'object',
+      properties: {
+        path: { description: 'A path-like value accepted by the tool.' },
+      },
+      required: ['path'],
+      additionalProperties: false,
+    });
+
+    expect(validateToolArgs(validator, {})).toBe("must have required property 'path'");
   });
 });
