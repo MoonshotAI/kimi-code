@@ -184,7 +184,7 @@ describe('GET /api/v1/fs:browse', () => {
     expect(envelopeOf(res.json()).code).toBe(40409);
   });
 
-  it('returns 40411 when path is unreadable (chmod 000)', async () => {
+  it.skipIf(process.platform === 'win32')('returns 40411 when path is unreadable (chmod 000)', async () => {
     if (process.getuid?.() === 0) {
       // Root bypasses permission checks; skip.
       return;
@@ -213,7 +213,7 @@ describe('GET /api/v1/fs:browse', () => {
     // realpath of $HOME on macOS may differ from os.homedir() (e.g. /Users vs
     // /System/Volumes/Data/Users). Just sanity-check the response has an
     // absolute path.
-    expect(env.data!.path.startsWith('/')).toBe(true);
+    expect(/^([A-Za-z]:[\\\/]|\/)/.test(env.data!.path)).toBe(true);
   });
 });
 

@@ -19,7 +19,10 @@ describe('getNativeCacheBase precedence', () => {
       env: { KIMI_CODE_HOME: '/legacy' },
       platform: 'darwin',
     });
-    expect(got).toBe('/home/u/Library/Caches/kimi-code');
+    // Resolve the expected path with pathe's normalizer so the test is
+    // host-platform-agnostic: on Windows hosts, `node:path.join` would
+    // otherwise return backslashes even for a mocked-posix platform.
+    expect(got.replace(/\\/g, '/')).toBe('/home/u/Library/Caches/kimi-code');
   });
 
   it('uses platform default on macOS when no env set', () => {
@@ -28,7 +31,7 @@ describe('getNativeCacheBase precedence', () => {
       env: {},
       platform: 'darwin',
     });
-    expect(got).toBe('/home/u/Library/Caches/kimi-code');
+    expect(got.replace(/\\/g, '/')).toBe('/home/u/Library/Caches/kimi-code');
   });
 
   it('uses XDG_CACHE_HOME on Linux when set', () => {
@@ -37,7 +40,7 @@ describe('getNativeCacheBase precedence', () => {
       env: { XDG_CACHE_HOME: '/xdg' },
       platform: 'linux',
     });
-    expect(got).toBe('/xdg/kimi-code');
+    expect(got.replace(/\\/g, '/')).toBe('/xdg/kimi-code');
   });
 
   it('uses LOCALAPPDATA on Windows when set', () => {

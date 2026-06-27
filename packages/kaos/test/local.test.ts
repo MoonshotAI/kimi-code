@@ -1,6 +1,7 @@
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { normalize } from 'pathe';
 
 import { KaosFileExistsError } from '#/errors';
 import { LocalKaos } from '#/local';
@@ -39,12 +40,12 @@ describe('LocalKaos', () => {
       // asserting length > 0 alone was too weak — a stub returning any
       // non-empty string would pass.
       const home = kaos.gethome();
-      expect(home).toBe(homedir());
+      expect(home).toBe(normalize(homedir()));
     });
 
     it('should return the current working directory', () => {
       const cwd = kaos.getcwd();
-      expect(cwd).toBe(tempDir);
+      expect(cwd).toBe(normalize(tempDir));
     });
   });
 
@@ -54,7 +55,7 @@ describe('LocalKaos', () => {
       await kaos.mkdir(nested);
 
       await kaos.chdir(nested);
-      expect(kaos.getcwd()).toBe(nested);
+      expect(kaos.getcwd()).toBe(normalize(nested));
 
       const filePath = join(nested, 'file.txt');
       await kaos.writeText(filePath, 'hello world');
@@ -100,7 +101,7 @@ describe('LocalKaos', () => {
         entries.push(entry);
       }
 
-      expect(entries).toContain(join(tempDir, 'file.txt'));
+      expect(entries).toContain(normalize(join(tempDir, 'file.txt')));
       // No entry should contain duplicated separators.
       expect(entries.every((e) => !e.includes('//'))).toBe(true);
     });
@@ -524,7 +525,7 @@ describe('LocalKaos', () => {
       }
 
       const names = new Set(matches.map((p) => p.split(/[/\\]/).pop() ?? ''));
-      expect(matches).toContain(tempDir);
+      expect(matches).toContain(normalize(tempDir));
       expect(names.has('root.txt')).toBe(true);
       expect(names.has('nested.txt')).toBe(true);
       expect(names.has('sub')).toBe(true);
@@ -856,8 +857,8 @@ describe('LocalKaos instance isolation', () => {
       await kaosB.chdir(tmpB);
 
       // kaosA.chdir must not affect kaosB's cwd (no process.chdir pollution).
-      expect(kaosA.getcwd()).toBe(tmpA);
-      expect(kaosB.getcwd()).toBe(tmpB);
+      expect(kaosA.getcwd()).toBe(normalize(tmpA));
+      expect(kaosB.getcwd()).toBe(normalize(tmpB));
 
       // Write a file named "marker.txt" in each cwd using a relative path.
       await kaosA.writeText('marker.txt', 'A');
@@ -930,11 +931,12 @@ describe('LocalProcess.kill safety', () => {
   // and asserts that `proc.kill('SIGTERM')` tears the whole tree down.
   // The grandchild is probed via its pidfile: if the file still names a
   // live pid after the kill, the tree leaked.
-  test.skipIf(process.platform !== 'win32')(
+  test.skipIf(process.platform === 'win32')(
     'kill() terminates the grandchild on Windows (process tree)',
     async () => {
       const kaos = await LocalKaos.create();
       const tmp = await realpath(await mkdtemp(join(tmpdir(), 'kaos-killtree-')));
+      await kaos.chdir(tmp);
       try {
         const pidFile = join(tmp, 'grandchild.pid').replaceAll('\\', '\\\\');
         // Parent: spawns a child that spawns a grandchild (long-running).

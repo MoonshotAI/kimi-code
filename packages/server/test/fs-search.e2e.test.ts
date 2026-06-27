@@ -248,7 +248,7 @@ describe('POST /api/v1/sessions/{sid}/fs:grep (W11.1)', () => {
       elapsed_ms: number;
     }>(res.json());
     expect(env.code).toBe(0);
-    const fileHit = env.data!.files.find((f) => f.path === 'a.txt');
+    const fileHit = env.data!.files.find((f) => f.path.replace(/^\.[\\\/]/, '') === 'a.txt');
     expect(fileHit).toBeDefined();
     const m = fileHit!.matches[0]!;
     expect(m.line).toBe(2);
@@ -312,7 +312,7 @@ describe('POST /api/v1/sessions/{sid}/fs:grep (W11.1)', () => {
       files: { path: string }[];
     }>(res.json());
     expect(env.code).toBe(0);
-    const paths = env.data!.files.map((f) => f.path);
+    const paths = env.data!.files.map((f) => f.path.replace(/^\.[\\\/]/, ''));
     expect(paths).toContain('visible.txt');
     expect(paths).not.toContain('ignored.txt');
   });

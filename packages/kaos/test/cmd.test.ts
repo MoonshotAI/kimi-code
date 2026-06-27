@@ -95,7 +95,9 @@ describe.skipIf(process.platform !== 'win32')('LocalKaos cmd.exe', () => {
     // byte-for-byte so any CRLF drift is caught immediately.
     const filePath = join(tmpDir, 'test_file.txt').replaceAll('/', '\\');
 
-    const write = await runCmd(kaos, `echo Test content> "${filePath}"`);
+    // Use `echo >` (space before `>`) — without it, cmd.exe treats the
+    // `>` as part of the literal text and the redirect is silently dropped.
+    const write = await runCmd(kaos, `echo Test content > "${filePath}"`);
     expect(write.exitCode).toBe(0);
     expect(write.stdout).toBe('');
     expect(write.stderr).toBe('');
