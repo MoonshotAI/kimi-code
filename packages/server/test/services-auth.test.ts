@@ -32,13 +32,13 @@ afterEach(() => {
 });
 
 describe('privateFiles', () => {
-  it('writes a file with mode 0600', async () => {
+  it.skipIf(process.platform === 'win32')('writes a file with mode 0600', async () => {
     const p = join(tmpDir, 'secret');
     await writePrivateFile(p, 'hello');
     expect(statSync(p).mode & 0o777).toBe(0o600);
   });
 
-  it('creates an absent parent dir with mode 0700', async () => {
+  it.skipIf(process.platform === 'win32')('creates an absent parent dir with mode 0700', async () => {
     const p = join(tmpDir, 'nested', 'dir', 'secret');
     await writePrivateFile(p, 'hello');
     expect(statSync(join(tmpDir, 'nested', 'dir')).mode & 0o777).toBe(0o700);
@@ -94,7 +94,7 @@ describe('tokenStore', () => {
     await b.dispose();
   });
 
-  it('writes the token file with mode 0600 at server.token', async () => {
+  it.skipIf(process.platform === 'win32')('writes the token file with mode 0600 at server.token', async () => {
     const home = join(tmpDir, 'home');
     const store = await createTokenStore(home);
     expect(store.tokenPath).toBe(join(home, 'server.token'));

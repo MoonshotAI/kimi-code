@@ -9,6 +9,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { platform } from 'node:process';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -78,7 +80,7 @@ afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-describe('buildSystemdUnit', () => {
+describe.skipIf(platform !== 'linux')('buildSystemdUnit', () => {
   it('renders the standard [Unit]/[Service]/[Install] triple', () => {
     const unit = buildSystemdUnit({
       programArguments: ['/usr/local/bin/kimi', 'server', 'run', '--port', '58627'],
@@ -115,7 +117,7 @@ describe('buildSystemdUnit', () => {
   });
 });
 
-describe('parseSystemctlShow', () => {
+describe.skipIf(platform !== 'linux')('parseSystemctlShow', () => {
   it('parses KEY=VALUE lines into a map', () => {
     const out = ['ActiveState=active', 'SubState=running', 'MainPID=4321', 'ExecStart={ path=/x }'].join('\n');
     const fields = parseSystemctlShow(out);
@@ -132,7 +134,7 @@ describe('parseSystemctlShow', () => {
   });
 });
 
-describe('systemd manager — install', () => {
+describe.skipIf(platform !== 'linux')('systemd manager — install', () => {
   it('writes the unit, daemon-reloads, enables --now', async () => {
     const { deps, calls, unitPath } = makeDeps(
       [
@@ -241,7 +243,7 @@ describe('systemd manager — install', () => {
   });
 });
 
-describe('systemd manager — lifecycle', () => {
+describe.skipIf(platform !== 'linux')('systemd manager — lifecycle', () => {
   it('start delegates to `systemctl --user start`', async () => {
     const { deps, calls, unitPath } = makeDeps([{ stdout: '', stderr: '', code: 0 }], workDir);
     mkdirSync(unitPath.replace(/\/[^/]+$/, ''), { recursive: true });
@@ -308,7 +310,7 @@ describe('systemd manager — lifecycle', () => {
   });
 });
 
-describe('systemd manager — status', () => {
+describe.skipIf(platform !== 'linux')('systemd manager — status', () => {
   it('reports installed=false when no unit exists', async () => {
     const { deps } = makeDeps([], workDir);
     const mgr = createSystemdManager(deps);

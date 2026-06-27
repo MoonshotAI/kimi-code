@@ -48,7 +48,7 @@ describe('JsonFileStore', () => {
     expect(store.read('missing.json')).toBeUndefined();
   });
 
-  it('writes files with 0600 permissions on POSIX', async () => {
+  it.skipIf(process.platform === 'win32')('writes files with 0600 permissions on POSIX', async () => {
     if (process.platform === 'win32') return; // file modes unreliable on Windows
     const store = new JsonFileStore(dir);
     store.write('secret.json', { token: 'abc' });

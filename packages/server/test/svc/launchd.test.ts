@@ -11,6 +11,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { platform } from 'node:process';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildLaunchAgentPlist } from '../../src/svc/launchd-plist';
@@ -81,7 +83,7 @@ afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-describe('buildLaunchAgentPlist', () => {
+describe.skipIf(platform !== 'darwin')('buildLaunchAgentPlist', () => {
   it('renders a well-formed plist with label, ProgramArguments, and stdio paths', () => {
     const xml = buildLaunchAgentPlist({
       label: KIMI_SERVER_LABEL,
@@ -113,7 +115,7 @@ describe('buildLaunchAgentPlist', () => {
   });
 });
 
-describe('parseLaunchctlPrint', () => {
+describe.skipIf(platform !== 'darwin')('parseLaunchctlPrint', () => {
   it('extracts state + pid from a `launchctl print` block', () => {
     const sample = [
       `${'gui/501/' + KIMI_SERVER_LABEL} = {`,
@@ -136,7 +138,7 @@ describe('parseLaunchctlPrint', () => {
   });
 });
 
-describe('resolveSupervisorProgram', () => {
+describe.skipIf(platform !== 'darwin')('resolveSupervisorProgram', () => {
   it('normalizes a relative executable path to an absolute path', () => {
     expect(resolveSupervisorProgram(['node', './kimi'], '/tmp/kimi-bin')).toBe('/tmp/kimi-bin/kimi');
   });
@@ -156,7 +158,7 @@ describe('resolveSupervisorProgram', () => {
   });
 });
 
-describe('launchd manager — install', () => {
+describe.skipIf(platform !== 'darwin')('launchd manager — install', () => {
   it('writes the plist and bootstraps via launchctl', async () => {
     const { deps, calls, plistPath } = makeDeps([{ stdout: '', stderr: '', code: 0 }], workDir);
     const mgr = createLaunchdManager(deps);
@@ -225,7 +227,7 @@ describe('launchd manager — install', () => {
   });
 });
 
-describe('launchd manager — lifecycle', () => {
+describe.skipIf(platform !== 'darwin')('launchd manager — lifecycle', () => {
   it('start delegates to `launchctl kickstart -k <domain>/<label>`', async () => {
     const { deps, calls, plistPath } = makeDeps([{ stdout: '', stderr: '', code: 0 }], workDir);
     require('node:fs').mkdirSync(plistPath.replace(/\/[^/]+$/, ''), { recursive: true });
@@ -285,7 +287,7 @@ describe('launchd manager — lifecycle', () => {
   });
 });
 
-describe('launchd manager — status', () => {
+describe.skipIf(platform !== 'darwin')('launchd manager — status', () => {
   it('reports installed=false when no plist exists', async () => {
     const { deps } = makeDeps([], workDir);
     const mgr = createLaunchdManager(deps);
