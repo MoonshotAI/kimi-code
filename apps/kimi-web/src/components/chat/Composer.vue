@@ -83,7 +83,7 @@ const { t } = useI18n();
 // ---------------------------------------------------------------------------
 // Textarea + per-session draft persistence — see useComposerDraft.
 // ---------------------------------------------------------------------------
-const { text, textareaRef, autosize, loadForEdit } = useComposerDraft({
+const { text, textareaRef, autosize, loadForEdit, clearDraft } = useComposerDraft({
   sessionId: () => props.sessionId,
 });
 
@@ -180,6 +180,7 @@ const {
   skills: () => props.skills,
   emitCommand: (cmd) => emit('command', cmd),
   historyPush: (entry) => history.push(entry),
+  clearDraft,
 });
 
 // ---------------------------------------------------------------------------
@@ -288,6 +289,7 @@ function handleSubmit(): void {
       : false;
     if (parsed && known) {
       text.value = '';
+      clearDraft();
       slashOpen.value = false;
       collapseAndRefit();
       emit('command', parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd);
@@ -305,6 +307,7 @@ function handleSubmit(): void {
   clearAfterSubmit();
 
   text.value = '';
+  clearDraft();
   slashOpen.value = false;
   mentionOpen.value = false;
   collapseAndRefit();
@@ -331,6 +334,7 @@ function handleSteer(): void {
   clearAfterSubmit();
   history.push(trimmed);
   text.value = '';
+  clearDraft();
   slashOpen.value = false;
   mentionOpen.value = false;
   collapseAndRefit();
