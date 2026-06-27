@@ -19,7 +19,6 @@ export class ExitPlanModeReviewAskPermissionPolicy implements PermissionPolicy {
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
     if (context.toolCall.name !== 'ExitPlanMode') return;
-    if (this.agent.permission.mode === 'auto') return;
     if (!this.agent.planMode.isActive) return;
     const display = context.execution.display;
     if (display?.kind !== 'plan_review') return;

@@ -123,7 +123,7 @@ function permissionContext(args: ExitPlanModeInput): PermissionPolicyContext {
 }
 
 describe('ExitPlanMode telemetry', () => {
-  it('tracks submitted without options and auto approval', async () => {
+  it('tracks submitted without options and review approval in auto mode', async () => {
     const { agent, telemetryTrack, exitPlanMode } = makeAgent({ mode: 'auto' });
 
     const result = await execute(agent);
@@ -132,7 +132,7 @@ describe('ExitPlanMode telemetry', () => {
     expect(exitPlanMode).toHaveBeenCalledTimes(1);
     expect(telemetryTrack).toHaveBeenCalledWith('plan_submitted', { has_options: false });
     expect(telemetryTrack).toHaveBeenCalledWith('plan_resolved', {
-      outcome: 'auto_approved',
+      outcome: 'approved',
     });
   });
 
