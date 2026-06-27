@@ -299,7 +299,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const items: AppSession[] = [];
     let beforeId: string | undefined;
     for (;;) {
-      const page = await api.listSessions({ pageSize: SESSION_PAGE_SIZE, beforeId });
+      const page = await api.listSessions({
+        pageSize: SESSION_PAGE_SIZE,
+        beforeId,
+        excludeEmpty: true,
+      });
       items.push(...page.items);
       if (!page.hasMore || page.items.length === 0) break;
       beforeId = page.items[page.items.length - 1]!.id;
@@ -326,7 +330,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const pages = await Promise.all(
       workspaces.map((w) =>
         api
-          .listSessions({ workspaceId: w.id, pageSize: SESSIONS_INITIAL_PAGE_SIZE })
+          .listSessions({
+            workspaceId: w.id,
+            pageSize: SESSIONS_INITIAL_PAGE_SIZE,
+            excludeEmpty: true,
+          })
           .then((page) => ({ workspaceId: w.id, page }))
           .catch(() => ({
             workspaceId: w.id,
@@ -372,6 +380,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         workspaceId,
         pageSize: SESSIONS_LOAD_MORE_SIZE,
         beforeId,
+        excludeEmpty: true,
       });
       // Append de-duped against the latest list so a concurrently added/removed
       // session is respected.
