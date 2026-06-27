@@ -60,15 +60,25 @@ async function importEngine(): Promise<HookEngineCtor> {
 describe('HookEngine integration', () => {
   it('blocks a dangerous Shell command and allows a safe one via a PreToolUse script hook', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-hooks-int-'));
-    const script = join(dir, 'block-rm.sh');
-    // Use node for the body to keep the test runtime-agnostic.
+    // Use a `.js` script invoked through `node` so the test is fully
+    // host-agnostic: no `#!/bin/bash` shebang, no `>&2` POSIX redirection,
+    // no `cmd.exe` `@echo off` quirks.
+    const script = join(dir, 'block-rm.js');
     writeFileSync(
       script,
       [
-        '#!/bin/bash',
-        'CMD=$(node -e "let s=\\"\\";process.stdin.on(\\"data\\",d=>s+=d);process.stdin.on(\\"end\\",()=>{try{const o=JSON.parse(s);process.stdout.write((o.tool_input&&o.tool_input.command)||\\"\\");}catch(e){}})")',
-        'if echo "$CMD" | grep -q "rm -rf"; then echo "Blocked: rm -rf" >&2; exit 2; fi',
-        'exit 0',
+        'let s = "";',
+        'process.stdin.on("data", (d) => (s += d));',
+        'process.stdin.on("end", () => {',
+        '  try {',
+        '    const o = JSON.parse(s);',
+        '    const c = (o.tool_input && o.tool_input.command) || "";',
+        '    if (/rm -rf/.test(c)) {',
+        '      process.stderr.write("Blocked: rm -rf");',
+        '      process.exit(2);',
+        '    }',
+        '  } catch {}',
+        '});',
         '',
       ].join('\n'),
       'utf-8',
@@ -77,7 +87,7 @@ describe('HookEngine integration', () => {
 
     const HookEngine = await importEngine();
     const engine = new HookEngine(
-      [{ event: 'PreToolUse', matcher: 'Shell', command: script, timeout: 5 }],
+      [{ event: 'PreToolUse', matcher: 'Shell', command: `node "${script}"`, timeout: 5 }],
       { cwd: dir },
     );
 
@@ -100,8 +110,7 @@ describe('HookEngine integration', () => {
     const engine = new HookEngine([
       {
         event: 'Stop',
-        command:
-          'echo \'{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"tests not written"}}\'',
+        command: `node -e "process.stdout.write(JSON.stringify({hookSpecificOutput:{permissionDecision:'deny',permissionDecisionReason:'tests not written'}}))"`,
         timeout: 5,
       },
     ]);
@@ -223,7 +232,8 @@ timeout = 5
     const engine = new HookEngine([
       {
         event: 'UserPromptSubmit',
-        command: "echo 'no profanity' >&2; exit 2",
+        // node-based so this works on Windows where `>&2` is bash-only.
+        command: `node -e "process.stderr.write('no profanity');process.exit(2)"`,
         timeout: 5,
       },
     ]);
