@@ -464,7 +464,7 @@ export class SessionService extends Disposable implements ISessionService {
     return {
       status: this._computeStatus(id),
       model: config.modelAlias ?? config.provider?.model,
-      thinking_level: config.thinkingLevel,
+      thinking_level: config.thinkingEffort,
       permission: permission.mode,
       plan_mode: plan !== null,
       swarm_mode: agentState?.swarmMode ?? false,

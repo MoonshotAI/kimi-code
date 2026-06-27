@@ -199,7 +199,7 @@ export interface CancelPayload {
   readonly turnId?: number;
 }
 export interface SetThinkingPayload {
-  readonly level: string;
+  readonly effort: string;
 }
 export interface SetPermissionPayload {
   readonly mode: PermissionMode;

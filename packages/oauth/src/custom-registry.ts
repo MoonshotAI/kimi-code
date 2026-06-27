@@ -295,10 +295,15 @@ export function applyCustomRegistryProvider(
   };
 
   const existingModels = config.models ?? {};
-  // Drop stale aliases for the same provider before re-populating, mirroring
-  // applyOpenPlatformConfig's refresh semantics.
+  // Selectively merge upstream models into the existing config so any fields
+  // the user added by hand (or that upstream does not declare) survive a
+  // refresh. Models that upstream no longer lists are removed; the rest are
+  // merged field-by-field.
+  const upstreamKeys = new Set(
+    Object.keys(entry.models).map((modelKey) => `${providerKey}/${modelKey}`),
+  );
   for (const [key, alias] of Object.entries(existingModels)) {
-    if (isRecord(alias) && alias['provider'] === providerKey) {
+    if (isRecord(alias) && alias['provider'] === providerKey && !upstreamKeys.has(key)) {
       delete existingModels[key];
     }
   }
@@ -309,8 +314,10 @@ export function applyCustomRegistryProvider(
     const capabilities = resolveCapabilities(model);
     const displayName =
       typeof model.name === 'string' && model.name.length > 0 ? model.name : model.id;
+    const existing = isRecord(existingModels[aliasKey]) ? existingModels[aliasKey] : {};
 
     existingModels[aliasKey] = {
+      ...existing,
       provider: providerKey,
       model: model.id,
       maxContextSize,

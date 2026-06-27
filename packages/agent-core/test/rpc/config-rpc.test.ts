@@ -81,7 +81,7 @@ max_steps_per_turn = "nope"
     // Write paths stay strict: changing settings on top of a broken file
     // must fail with a short, actionable message — not raw validation JSON —
     // and must leave the file untouched.
-    const write = core.setKimiConfig({ defaultThinking: true });
+    const write = core.setKimiConfig({ thinking: { enabled: true } });
     await expect(write).rejects.toThrow(/fix it first/i);
     await expect(write).rejects.toThrow(/kimi doctor/);
     await expect(write).rejects.not.toThrow(/invalid_type/);
@@ -102,9 +102,9 @@ max_steps_per_turn = "nope"
     expect(degraded.warnings.some((w) => w.includes('Invalid TOML'))).toBe(true);
     expect(degraded.warnings.some((w) => w.includes('previous'))).toBe(true);
 
-    await writeFile(configPath, `default_thinking = true\n${VALID_TOML}`, 'utf-8');
+    await writeFile(configPath, `[thinking]\nenabled = true\n${VALID_TOML}`, 'utf-8');
     const adopted = await core.getKimiConfig({ reload: true });
-    expect(adopted.defaultThinking).toBe(true);
+    expect(adopted.thinking?.enabled).toBe(true);
     await expect(core.getConfigDiagnostics({})).resolves.toEqual({ warnings: [] });
   });
 });

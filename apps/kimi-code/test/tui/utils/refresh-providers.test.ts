@@ -476,7 +476,7 @@ describe('refreshAllProviderModels', () => {
         },
       },
       defaultModel: 'my-b',
-      defaultThinking: true,
+      thinking: { enabled: true },
       telemetry: true,
     } as unknown as KimiConfig);
 
@@ -523,7 +523,7 @@ describe('refreshAllProviderModels', () => {
     expect(host.current().models?.['b/m1']).toBeUndefined();
     expect(host.current().models?.['my-b']).toBeUndefined();
     expect(host.current().defaultModel).toBeUndefined();
-    expect(host.current().defaultThinking).toBeUndefined();
+    expect(host.current().thinking).toBeUndefined();
   });
 
   it('coalesces duplicate custom-registry source URLs without reporting config-only changes', async () => {
@@ -664,7 +664,7 @@ describe('refreshAllProviderModels', () => {
         [userAlias]: userAliasModel,
       },
       defaultModel: userAlias,
-      defaultThinking: false,
+      thinking: { enabled: false },
       telemetry: true,
     } as unknown as KimiConfig);
 
@@ -709,7 +709,7 @@ describe('refreshAllProviderModels', () => {
     expect(host.setConfig).not.toHaveBeenCalled();
     expect(host.current().models?.[userAlias]).toEqual(userAliasModel);
     expect(host.current().defaultModel).toBe(userAlias);
-    expect(host.current().defaultThinking).toBe(false);
+    expect(host.current().thinking?.enabled).toBe(false);
   });
 
   it('forces default thinking on when the refreshed default model cannot disable thinking', async () => {
@@ -730,7 +730,7 @@ describe('refreshAllProviderModels', () => {
         },
       },
       defaultModel: 'kimi-code/kimi-deep-coder',
-      defaultThinking: false,
+      thinking: { enabled: false },
       telemetry: true,
     } as unknown as KimiConfig);
 
@@ -766,6 +766,6 @@ describe('refreshAllProviderModels', () => {
       'tool_use',
     ]);
     expect(host.current().defaultModel).toBe('kimi-code/kimi-deep-coder');
-    expect(host.current().defaultThinking).toBe(true);
+    expect(host.current().thinking?.enabled).toBe(true);
   });
 });

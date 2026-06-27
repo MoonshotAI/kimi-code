@@ -386,7 +386,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     );
     return {
       model: data.model && data.model.length > 0 ? data.model : null,
-      thinkingLevel: data.thinking_level,
+      thinkingEffort: data.thinking_level,
       permission: data.permission,
       planMode: data.plan_mode === true,
       swarmMode: data.swarm_mode === true,

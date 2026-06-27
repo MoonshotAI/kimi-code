@@ -17,7 +17,7 @@ async function main(): Promise<void> {
 
   await harness.setConfig({
     defaultModel: 'kimi-code/kimi-for-coding',
-    defaultThinking: true,
+    thinking: { enabled: true },
     defaultPermissionMode: 'manual',
     defaultPlanMode: false,
     providers: {

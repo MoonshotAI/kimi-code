@@ -138,7 +138,7 @@ export class ModelCatalogService
         next,
         preserveUserProviderAliases(config, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys),
       );
-      restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
+      restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
       clampDanglingDefault(next);
 
       if (providerModelsEqual(config, next, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys)) {
@@ -153,7 +153,7 @@ export class ModelCatalogService
           providers: next.providers,
           models: next.models,
           defaultModel: next.defaultModel,
-          defaultThinking: next.defaultThinking,
+          thinking: next.thinking,
         });
         changed.push({
           provider_id: KIMI_CODE_PROVIDER_NAME,
@@ -341,13 +341,14 @@ function restoreDefaultSelection(
   if (defaultModel === undefined || config.models?.[defaultModel] === undefined) return;
   config.defaultModel = defaultModel;
   const capabilities = config.models[defaultModel]?.capabilities ?? [];
-  config.defaultThinking = capabilities.includes('always_thinking') ? true : defaultThinking;
+  const enabled = capabilities.includes('always_thinking') ? true : defaultThinking;
+  config.thinking = { ...config.thinking, ...(enabled !== undefined ? { enabled } : {}) };
 }
 
 function clampDanglingDefault(config: KimiConfig): void {
   if (config.defaultModel !== undefined && config.models?.[config.defaultModel] === undefined) {
     config.defaultModel = undefined;
-    config.defaultThinking = undefined;
+    config.thinking = undefined;
   }
 }
 

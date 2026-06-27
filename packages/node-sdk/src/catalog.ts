@@ -120,6 +120,6 @@ export function applyCatalogProvider(
 
   const defaultModel = `${options.providerId}/${options.selectedModelId}`;
   config.defaultModel = defaultModel;
-  config.defaultThinking = options.thinking;
+  config.thinking = { ...config.thinking, enabled: options.thinking };
   return { defaultModel };
 }

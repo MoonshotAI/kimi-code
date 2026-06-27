@@ -3,15 +3,20 @@ import type { Tool } from './tool';
 import type { TokenUsage } from './usage';
 
 /**
- * Normalized thinking effort level used across providers.
+ * Thinking effort passed to {@link ChatProvider.withThinking}.
  *
- * Values above `high` are provider/model-specific and may be clamped by the
- * adapter when the native API has no matching level. OpenAI maps `max` to its
- * `xhigh` ceiling; Kimi and Gemini cap `xhigh`/`max` at `high`; Anthropic
- * supports `xhigh`/`max` only on selected models and otherwise clamps to
- * `high`.
+ * `'off'` and `'on'` are the only reserved values: `'off'` disables thinking,
+ * and `'on'` is the on-signal for boolean models (models that do not declare
+ * `support_efforts`). Everything else is a model-declared effort (e.g.
+ * `"low"`, `"high"`, `"max"`) carried as an open string. The type collapses to
+ * `string` at runtime; it exists purely as a semantic marker that a value is
+ * expected to be `'off'`, `'on'`, or a model-declared effort.
+ *
+ * The model's `support_efforts` is the single source of truth for which
+ * efforts are valid — providers normalize any unrecognized effort by omitting
+ * the effort on the wire rather than rejecting it.
  */
-export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ThinkingEffort = 'off' | 'on' | (string & {});
 
 /**
  * Optional context passed to {@link ChatProvider.withMaxCompletionTokens} so a
@@ -148,7 +153,7 @@ export interface ChatProvider {
   readonly name: string;
   /** Model name passed to the upstream API (e.g. `"moonshot-v1-auto"`). */
   readonly modelName: string;
-  /** Current thinking-effort level, or `null` if thinking is not configured. */
+  /** Current thinking effort, or `null` if thinking is not configured. */
   readonly thinkingEffort: ThinkingEffort | null;
   /**
    * Send a conversation to the LLM and return a streamed response.

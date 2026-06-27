@@ -338,7 +338,7 @@ describe('AcpSession slash routing', () => {
     // reads from it; we don't need the rest of the SDK surface here.
     (session as unknown as { getStatus: () => Promise<unknown> }).getStatus = async () => ({
       model: 'mock-model',
-      thinkingLevel: 'low',
+      thinkingEffort: 'low',
       permission: 'ask',
       planMode: false,
       contextTokens: 1234,

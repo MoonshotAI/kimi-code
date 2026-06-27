@@ -50,7 +50,7 @@ export class AuthFlowController {
     this.host.setAppState({
       sessionId: '',
       model: '',
-      thinking: false,
+      thinkingEffort: 'off',
       contextTokens: 0,
       maxContextTokens: 0,
       contextUsage: 0,
@@ -60,13 +60,12 @@ export class AuthFlowController {
     this.host.setStartupReady();
   }
 
-  async activateModelAfterLogin(model: string, thinking?: boolean): Promise<void> {
+  async activateModelAfterLogin(model: string, effort?: string): Promise<void> {
     const { host } = this;
-    const level = thinking === undefined ? undefined : thinking ? 'on' : 'off';
     if (host.session !== undefined) {
       await host.session.setModel(model);
-      if (level !== undefined) {
-        await host.session.setThinking(level);
+      if (effort !== undefined) {
+        await host.session.setThinking(effort);
       }
       return;
     }
@@ -74,7 +73,7 @@ export class AuthFlowController {
     const options: MutableCreateSessionOptions = {
       workDir: host.state.appState.workDir,
       model,
-      thinking: level,
+      thinking: effort,
       permission: host.options.startup.auto
         ? 'auto'
         : host.options.startup.yolo
@@ -122,16 +121,13 @@ export class AuthFlowController {
       return;
     }
 
-    await this.activateModelAfterLogin(defaultModel, config.defaultThinking);
+    await this.activateModelAfterLogin(defaultModel, config.thinking?.enabled === false ? 'off' : undefined);
     const appStatePatch: Partial<AppState> = {
       availableModels,
       availableProviders,
       model: defaultModel,
       maxContextTokens: selected.maxContextSize,
     };
-    if (config.defaultThinking !== undefined) {
-      appStatePatch.thinking = config.defaultThinking;
-    }
     host.setAppState(appStatePatch);
   }
 
@@ -141,7 +137,7 @@ export class AuthFlowController {
       availableModels: config.models ?? {},
       availableProviders: config.providers ?? {},
       model: '',
-      thinking: false,
+      thinkingEffort: 'off',
       maxContextTokens: 0,
       contextUsage: 0,
       contextTokens: 0,

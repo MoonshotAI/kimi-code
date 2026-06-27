@@ -230,7 +230,8 @@ function restoreDefaultSelection(
   // A refresh may have just learned that the default model cannot disable
   // thinking — never restore a stale thinking-off selection onto it.
   const capabilities = config.models[defaultModel]?.capabilities ?? [];
-  config.defaultThinking = capabilities.includes('always_thinking') ? true : defaultThinking;
+  const enabled = capabilities.includes('always_thinking') ? true : defaultThinking;
+  config.thinking = { ...config.thinking, ...(enabled !== undefined ? { enabled } : {}) };
 }
 
 // `apply*` may leave `defaultModel` pointing at an alias that no longer exists
@@ -240,16 +241,16 @@ function restoreDefaultSelection(
 function clampDanglingDefault(config: KimiConfig): void {
   if (config.defaultModel !== undefined && config.models?.[config.defaultModel] === undefined) {
     config.defaultModel = undefined;
-    config.defaultThinking = undefined;
+    config.thinking = undefined;
   }
 }
 
-function clearDefaultThinkingWhenDefaultRemoved(
+function clearThinkingWhenDefaultRemoved(
   config: KimiConfig,
   previousDefaultModel: string | undefined,
 ): void {
   if (previousDefaultModel !== undefined && config.defaultModel === undefined) {
-    config.defaultThinking = undefined;
+    config.thinking = undefined;
   }
 }
 
@@ -319,9 +320,9 @@ export async function refreshAllProviderModels(
           next,
           preserveUserProviderAliases(config, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys),
         );
-        restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
+        restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
         clampDanglingDefault(next);
-        clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
+        clearThinkingWhenDefaultRemoved(next, config.defaultModel);
 
         if (providerModelsEqual(config, next, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys)) {
           unchanged.push(KIMI_CODE_PROVIDER_NAME);
@@ -335,7 +336,7 @@ export async function refreshAllProviderModels(
             providers: next.providers,
             models: next.models,
             defaultModel: next.defaultModel,
-            defaultThinking: next.defaultThinking,
+            thinking: next.thinking,
           });
           changed.push({
             providerId: KIMI_CODE_PROVIDER_NAME,
@@ -393,9 +394,9 @@ export async function refreshAllProviderModels(
         `${providerId}/`,
       );
       restoreProviderAliases(next, preserveUserProviderAliases(config, providerId, refreshedAliasKeys));
-      restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
+      restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
       clampDanglingDefault(next);
-      clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
+      clearThinkingWhenDefaultRemoved(next, config.defaultModel);
 
       if (providerModelsEqual(config, next, providerId, refreshedAliasKeys)) {
         unchanged.push(providerId);
@@ -409,7 +410,7 @@ export async function refreshAllProviderModels(
           providers: next.providers,
           models: next.models,
           defaultModel: next.defaultModel,
-          defaultThinking: next.defaultThinking,
+          thinking: next.thinking,
         });
         changed.push({
           providerId,
@@ -530,9 +531,9 @@ export async function refreshAllProviderModels(
       }
 
       if (changedProviders.length > 0 || hasUnreportedConfigChange) {
-        restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
+        restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
         clampDanglingDefault(next);
-        clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
+        clearThinkingWhenDefaultRemoved(next, config.defaultModel);
         for (const providerId of providersToRemoveBeforeSet) {
           await host.removeProvider(providerId);
         }
@@ -540,7 +541,7 @@ export async function refreshAllProviderModels(
           providers: next.providers,
           models: next.models,
           defaultModel: next.defaultModel,
-          defaultThinking: next.defaultThinking,
+          thinking: next.thinking,
         });
         for (const change of changedProviders) {
           changed.push({

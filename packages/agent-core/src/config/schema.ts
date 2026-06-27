@@ -49,12 +49,18 @@ export const ModelAliasSchema = z.object({
   // model-name version inference. Needed for custom-named Anthropic endpoints
   // whose model name does not encode a parseable Claude version.
   adaptiveThinking: z.boolean().optional(),
+  // Efforts (e.g. ["low", "high", "max"]) the model supports for
+  // extended thinking, plus the catalog default. Generic to any provider:
+  // managed models fill these from the catalog, others can be set by hand in
+  // config.toml. The user's chosen effort is stored globally in thinking.effort.
+  supportEfforts: z.array(z.string()).optional(),
+  defaultEffort: z.string().optional(),
 });
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;
 
 export const ThinkingConfigSchema = z.object({
-  mode: z.enum(['auto', 'on', 'off']).optional(),
+  enabled: z.boolean().optional(),
   effort: z.string().optional(),
 });
 
@@ -208,7 +214,6 @@ export const KimiConfigSchema = z.object({
   thinking: ThinkingConfigSchema.optional(),
   planMode: z.boolean().optional(),
   yolo: z.boolean().optional(),
-  defaultThinking: z.boolean().optional(),
   defaultPermissionMode: PermissionModeSchema.optional(),
   defaultPlanMode: z.boolean().optional(),
   permission: PermissionConfigSchema.optional(),
@@ -247,7 +252,6 @@ export const KimiConfigPatchSchema = z
     thinking: ThinkingConfigPatchSchema.optional(),
     planMode: z.boolean().optional(),
     yolo: z.boolean().optional(),
-    defaultThinking: z.boolean().optional(),
     defaultPermissionMode: PermissionModeSchema.optional(),
     defaultPlanMode: z.boolean().optional(),
     permission: PermissionConfigPatchSchema.optional(),

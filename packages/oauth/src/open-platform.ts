@@ -1,6 +1,6 @@
 import { readApiErrorMessage } from './api-error';
 import { isRecord } from './utils';
-import { parseSupportsThinkingType } from './managed-kimi-code';
+import { parseSupportsThinkingType, parseThinkEfforts } from './managed-kimi-code';
 import type {
   ManagedKimiCodeModelInfo,
   ManagedKimiConfigShape,
@@ -55,6 +55,9 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
   const supportsToolUse = Object.hasOwn(item, 'supports_tool_use')
     ? Boolean(item['supports_tool_use'])
     : true;
+  // Effort levels come from the nested `think_efforts` object
+  // ({ support, valid_efforts, default_effort }) returned by /models.
+  const thinkEfforts = parseThinkEfforts(item['think_efforts']);
   return {
     id: item['id'],
     contextLength,
@@ -63,6 +66,8 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
     supportsVideoIn: Boolean(item['supports_video_in']),
     supportsToolUse,
     supportsThinkingType: parseSupportsThinkingType(item['supports_thinking_type']),
+    supportEfforts: thinkEfforts.supportEfforts,
+    defaultEffort: thinkEfforts.defaultEffort,
     displayName: normalizedDisplayName,
   };
 }
@@ -164,26 +169,35 @@ export function applyOpenPlatformConfig(
   };
 
   const existingModels = config.models ?? {};
+  // Selectively merge upstream models into the existing config so any fields
+  // the user added by hand (or that upstream does not declare) survive a
+  // refresh. Models that upstream no longer lists are removed; the rest are
+  // merged field-by-field.
+  const upstreamKeys = new Set(options.models.map((m) => `${providerKey}/${m.id}`));
   for (const [key, model] of Object.entries(existingModels)) {
-    if (isRecord(model) && model['provider'] === providerKey) {
+    if (isRecord(model) && model['provider'] === providerKey && !upstreamKeys.has(key)) {
       delete existingModels[key];
     }
   }
 
   for (const model of options.models) {
     const aliasKey = `${providerKey}/${model.id}`;
+    const existing = isRecord(existingModels[aliasKey]) ? existingModels[aliasKey] : {};
     existingModels[aliasKey] = {
+      ...existing,
       provider: providerKey,
       model: model.id,
       maxContextSize: model.contextLength,
       capabilities: capabilitiesForModel(model),
-      displayName: model.displayName,
+      ...(model.displayName !== undefined ? { displayName: model.displayName } : {}),
+      ...(model.supportEfforts !== undefined ? { supportEfforts: model.supportEfforts } : {}),
+      ...(model.defaultEffort !== undefined ? { defaultEffort: model.defaultEffort } : {}),
     };
   }
 
   config.models = existingModels;
   config.defaultModel = modelKey;
-  config.defaultThinking = options.thinking;
+  config.thinking = { ...config.thinking, enabled: options.thinking };
 
   return { defaultModel: modelKey, defaultThinking: options.thinking };
 }

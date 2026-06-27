@@ -57,7 +57,7 @@ function makeCore(configRef: { current: KimiConfig }): {
         next.models = payload.models as KimiConfig['models'];
       }
       if (payload.defaultModel !== undefined) next.defaultModel = payload.defaultModel;
-      if (payload.defaultThinking !== undefined) next.defaultThinking = payload.defaultThinking;
+      if (payload.thinking !== undefined) next.thinking = payload.thinking;
       configRef.current = next;
       return configRef.current;
     }),
@@ -231,7 +231,7 @@ describe('ModelCatalogService', () => {
           },
         },
         defaultModel: 'kimi-code/kimi-for-coding',
-        defaultThinking: false,
+        thinking: { enabled: false },
         models: {
           'kimi-code/kimi-for-coding': {
             provider: KIMI_CODE_PROVIDER_NAME,
@@ -266,7 +266,7 @@ describe('ModelCatalogService', () => {
     expect(removeCalls).toEqual([KIMI_CODE_PROVIDER_NAME]);
     expect(setCalls.at(-1)).toMatchObject({
       defaultModel: 'kimi-code/kimi-for-coding',
-      defaultThinking: true,
+      thinking: { enabled: true },
       models: {
         'kimi-code/kimi-for-coding': {
           capabilities: ['thinking', 'always_thinking', 'tool_use'],

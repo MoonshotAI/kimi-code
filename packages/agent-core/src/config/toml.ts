@@ -460,6 +460,8 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
   delete out['default_yolo'];
   delete out['defaultYolo'];
   delete out['defaultPermissionMode'];
+  delete out['default_thinking'];
+  delete out['defaultThinking'];
 
   // Top-level scalar fields
   const scalarFields: (keyof KimiConfig)[] = [
@@ -467,7 +469,6 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
     'defaultModel',
     'planMode',
     'yolo',
-    'defaultThinking',
     'defaultPermissionMode',
     'defaultPlanMode',
     'mergeAllAvailableSkills',
@@ -562,6 +563,7 @@ function modelToToml(model: ModelAlias, rawModel: unknown): Record<string, unkno
 
 function thinkingToToml(thinking: ThinkingConfig, rawThinking: unknown): Record<string, unknown> {
   const out = cloneRecord(rawThinking);
+  delete out['mode'];
   for (const [key, value] of Object.entries(thinking)) {
     setDefined(out, camelToSnake(key), value);
   }
