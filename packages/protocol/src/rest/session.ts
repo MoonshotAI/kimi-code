@@ -86,7 +86,14 @@ export const startBtwSessionResponseSchema = z.object({
 });
 export type StartBtwSessionResponse = z.infer<typeof startBtwSessionResponseSchema>;
 
-export const listSessionChildrenQuerySchema = listSessionsQuerySchema;
+// Child lists intentionally omit exclude_empty: the /sessions/{id}/children route
+// does not filter by it, so advertising it would mislead generated clients.
+export const listSessionChildrenQuerySchema = cursorQuerySchema.and(
+  z.object({
+    status: sessionStatusSchema.optional(),
+    include_archive: booleanQueryParam,
+  }),
+);
 export type ListSessionChildrenQuery = z.infer<typeof listSessionChildrenQuerySchema>;
 
 export const listSessionChildrenResponseSchema = pageResponseSchema(sessionSchema);

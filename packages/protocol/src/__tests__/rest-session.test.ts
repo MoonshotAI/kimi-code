@@ -11,6 +11,7 @@ import {
   forkSessionRequestSchema,
   forkSessionResponseSchema,
   getSessionProfileResponseSchema,
+  listSessionChildrenQuerySchema,
   listSessionChildrenResponseSchema,
   listSessionsQuerySchema,
   sessionStatusResponseSchema,
@@ -106,6 +107,13 @@ describe('listSessionsQuerySchema', () => {
     expect(listSessionsQuerySchema.parse({ exclude_empty: 'false' })).toEqual({
       exclude_empty: false,
     });
+  });
+});
+
+describe('listSessionChildrenQuerySchema', () => {
+  it('does not advertise exclude_empty (child lists do not filter by it)', () => {
+    const parsed = listSessionChildrenQuerySchema.parse({ exclude_empty: true });
+    expect(parsed).not.toHaveProperty('exclude_empty');
   });
 });
 
