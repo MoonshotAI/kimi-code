@@ -1,5 +1,25 @@
 # @moonshot-ai/kimi-code
 
+## 0.20.2
+
+### Patch Changes
+
+- [#1156](https://github.com/MoonshotAI/kimi-code/pull/1156) [`794db55`](https://github.com/MoonshotAI/kimi-code/commit/794db55538e01b4bf0c008c493de5d8b8bf67c5d) - Cap compaction output at 128k tokens by default to avoid provider max_tokens errors.
+
+- [#1129](https://github.com/MoonshotAI/kimi-code/pull/1129) [`d02b5c4`](https://github.com/MoonshotAI/kimi-code/commit/d02b5c49844d65e005632fafcb1c172a7d32bfbe) - Fix compaction ignoring the configured max output size.
+
+- [#1163](https://github.com/MoonshotAI/kimi-code/pull/1163) [`ff6e8bb`](https://github.com/MoonshotAI/kimi-code/commit/ff6e8bbd7c328dcc6575902cfd0cb3e522f20948) - Fix the web composer occasionally keeping typed text after sending the first message of a new session.
+
+- [#1159](https://github.com/MoonshotAI/kimi-code/pull/1159) [`23a553b`](https://github.com/MoonshotAI/kimi-code/commit/23a553bb91e9ee794aaf769f78f5acec739aec85) - In the bundled web UI, `/new` and `/clear` are now aliases that open the session onboarding composer and focus the input. iOS auto-zoom is prevented by keeping text inputs at 16px instead of disabling viewport scaling.
+
+- [#1155](https://github.com/MoonshotAI/kimi-code/pull/1155) [`54baf5d`](https://github.com/MoonshotAI/kimi-code/commit/54baf5d07fe718b70b8840e509a905ac48b1ccac) - Upgrade web markdown renderer dependencies (katex, markstream-vue, shiki) for bug fixes and performance improvements.
+
+- [#1162](https://github.com/MoonshotAI/kimi-code/pull/1162) [`b070846`](https://github.com/MoonshotAI/kimi-code/commit/b0708464f4160f7b73f25a520e493bf87e92149f) - Rework the web ask-user-question card into a step-by-step wizard so multi-question navigation and the final Submit action are easier to see.
+
+- [#1165](https://github.com/MoonshotAI/kimi-code/pull/1165) [`f3b1532`](https://github.com/MoonshotAI/kimi-code/commit/f3b15322da518b0e3d0560d19651435793c790d9) - Replace the web composer attach button's plus icon with an image icon.
+
+- [#1161](https://github.com/MoonshotAI/kimi-code/pull/1161) [`d968642`](https://github.com/MoonshotAI/kimi-code/commit/d968642384f672295756394ee07a536dbfdb4dfd) - Show the first five sessions per workspace in the web sidebar instead of ten.
+
 ## 0.20.1
 
 ### Patch Changes
