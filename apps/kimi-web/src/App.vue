@@ -394,9 +394,11 @@ function handleCommand(cmd: string): void {
     return;
   }
   switch (cmd) {
+    // `/new` and `/clear` are aliases: both open the onboarding composer (or
+    // the new-session dialog when no workspace is active).
     case '/new':
     case '/clear':
-      showNewSession.value = true;
+      handleCreateSession();
       break;
     case '/sessions':
       showSessions.value = true;
@@ -496,6 +498,12 @@ function handleCloseAddWorkspace(): void {
   showAddWorkspace.value = false;
 }
 
+function focusComposerAfterDraft(): void {
+  void nextTick(() => {
+    conversationPaneRef.value?.focusComposer();
+  });
+}
+
 // Primary "+ New": enter the draft state in the current workspace so the
 // right pane shows the onboarding composer. The session is only created when
 // the user sends the first message.
@@ -503,6 +511,7 @@ function handleCreateSession(): void {
   const wsId = client.activeWorkspaceId.value;
   if (wsId) {
     client.openWorkspaceDraft(wsId);
+    focusComposerAfterDraft();
   } else {
     showNewSession.value = true;
   }
@@ -513,6 +522,7 @@ function handleCreateSession(): void {
 // actually sends a message.
 function handleCreateSessionInWorkspace(workspaceId: string): void {
   client.openWorkspaceDraft(workspaceId);
+  focusComposerAfterDraft();
 }
 
 // Chat header: open a GitHub PR in a new tab.

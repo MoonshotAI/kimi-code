@@ -257,7 +257,12 @@ onUnmounted(() => {
 // ---------------------------------------------------------------------------
 
 // loadForEdit comes from useComposerDraft (it lives next to the text state).
-defineExpose({ loadForEdit });
+function focus(): void {
+  // preventScroll keeps the pane from jumping if the composer is already in view
+  // or if focus is triggered during an animation/transition.
+  textareaRef.value?.focus({ preventScroll: true });
+}
+defineExpose({ loadForEdit, focus });
 
 function handleSubmit(): void {
   const trimmed = text.value.trim();

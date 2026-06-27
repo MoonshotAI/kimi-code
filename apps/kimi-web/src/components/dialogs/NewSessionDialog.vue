@@ -22,6 +22,7 @@ const emit = defineEmits<{
 
 const cwdInput = ref('');
 const titleInput = ref('');
+const cwdInputEl = ref<HTMLInputElement | null>(null);
 
 // Pre-fill with the first recentCwd if available
 watch(
@@ -57,22 +58,29 @@ function pickRecent(cwd: string): void {
 // Keyboard
 // -------------------------------------------------------------------------
 
-function handleKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape') {
-    emit('close');
-  } else if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) {
+function handleEnter(e: KeyboardEvent): void {
+  if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) {
     handleCreate();
   }
 }
 
-onMounted(() => document.addEventListener('keydown', handleKeydown));
-onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
+function handleEscape(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    emit('close');
+  }
+}
+
+onMounted(() => {
+  cwdInputEl.value?.focus();
+  document.addEventListener('keydown', handleEscape);
+});
+onUnmounted(() => document.removeEventListener('keydown', handleEscape));
 </script>
 
 <template>
   <!-- Backdrop -->
   <div class="backdrop" @click.self="emit('close')">
-    <div class="dialog" role="dialog" :aria-label="t('newSession.title')">
+    <div class="dialog" role="dialog" :aria-label="t('newSession.title')" @keydown="handleEnter">
 
       <!-- Header -->
       <div class="dh">
@@ -92,6 +100,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
           <label class="flabel" for="ns-cwd">{{ t('newSession.cwdLabel') }}</label>
           <input
             id="ns-cwd"
+            ref="cwdInputEl"
             v-model="cwdInput"
             class="finput"
             type="text"
@@ -364,6 +373,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   .finput {
     width: 100%;
     box-sizing: border-box;
+    /* Pinned at 16px to prevent iOS auto-zoom on focus. */
+    font-size: 16px;
   }
   .recent-section {
     padding-left: 0;

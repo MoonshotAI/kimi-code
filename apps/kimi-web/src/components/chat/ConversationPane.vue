@@ -178,8 +178,8 @@ const { t } = useI18n();
 safeRemove(STORAGE_KEYS.contentAlign);
 
 const chatPaneRef = ref<InstanceType<typeof ChatPane> | null>(null);
-const emptyComposerRef = ref<{ loadForEdit: (v: string) => void } | null>(null);
-const dockedComposerRef = ref<{ loadForEdit: (v: string) => void } | null>(null);
+const emptyComposerRef = ref<ComposerHandle | null>(null);
+const dockedComposerRef = ref<ComposerHandle | null>(null);
 const copyConversationCopied = ref(false);
 const goalExpandSignal = ref(0);
 let copyConversationCopiedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -355,7 +355,7 @@ const dockHeight = ref(0);
 const chatDockStyle = computed(() => ({
   '--panes-scrollbar-width': `${panesScrollbarWidth.value}px`,
 }));
-type ComposerHandle = { loadForEdit: (value: string) => void };
+type ComposerHandle = { loadForEdit: (value: string) => void; focus: () => void };
 type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
 
 function toHtmlEl(el: RefArg): HTMLElement | null {
@@ -379,8 +379,15 @@ function bindChatPane(el: RefArg): void {
 function bindChatDock(el: RefArg): void {
   const node = toHtmlEl(el);
   dockRef.value = node ?? null;
-  if (el && 'loadForEdit' in el && typeof el.loadForEdit === 'function') {
-    dockedComposerRef.value = { loadForEdit: el.loadForEdit.bind(el) };
+  if (
+    el &&
+    'loadForEdit' in el && typeof el.loadForEdit === 'function' &&
+    'focus' in el && typeof el.focus === 'function'
+  ) {
+    dockedComposerRef.value = {
+      loadForEdit: el.loadForEdit.bind(el),
+      focus: el.focus.bind(el),
+    };
   } else {
     dockedComposerRef.value = null;
   }
@@ -848,7 +855,11 @@ onUnmounted(() => {
   }
 });
 
-defineExpose({ loadComposerForEdit });
+function focusComposer(): void {
+  (dockedComposerRef.value ?? emptyComposerRef.value)?.focus();
+}
+
+defineExpose({ loadComposerForEdit, focusComposer });
 </script>
 
 <template>
