@@ -691,9 +691,23 @@ export class TurnFlow {
               // 3. The external Stop hook gets exactly one continuation; the cap
               //    is intentionally separate from (and does not cap) goal mode.
               if (!stopHookContinuationUsed) {
+                // Extract the last assistant response text for the Stop hook payload.
+                const lastAssistant = [...this.agent.context.history]
+                  .reverse()
+                  .find((m) => m.role === 'assistant');
+                const responseText = lastAssistant
+                  ? (lastAssistant.content ?? [])
+                      .filter((c) => c.type === 'text')
+                      .map((c) => ('text' in c ? c.text : ''))
+                      .join('')
+                  : null;
+
                 const stopBlock = await this.agent.hooks?.triggerBlock('Stop', {
                   signal,
-                  inputData: { stopHookActive: stopHookContinuationUsed },
+                  inputData: {
+                    stopHookActive: stopHookContinuationUsed,
+                    responseText: responseText || null,
+                  },
                 });
                 signal.throwIfAborted();
                 if (stopBlock !== undefined) {
