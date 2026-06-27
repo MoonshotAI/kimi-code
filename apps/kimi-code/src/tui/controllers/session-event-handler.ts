@@ -106,6 +106,8 @@ export interface SessionEventHost {
   restoreEditor(): void;
   restoreInputText(text: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
+  handleShellOutput(event: { commandId: string; update: { kind: string; text?: string } }): void;
+  handleShellStarted(event: { commandId: string; taskId: string }): void;
   sendNormalUserInput(text: string): void;
   updateTerminalTitle(): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
@@ -242,6 +244,8 @@ export class SessionEventHandler {
       case 'turn.step.completed': this.handleStepCompleted(event); break;
       case 'turn.step.retrying': break;
       case 'tool.progress': this.handleToolProgress(event); break;
+      case 'shell.output': this.host.handleShellOutput(event); break;
+      case 'shell.started': this.host.handleShellStarted(event); break;
       case 'assistant.delta': this.handleAssistantDelta(event); break;
       case 'hook.result': this.handleHookResult(event); break;
       case 'thinking.delta': this.handleThinkingDelta(event); break;

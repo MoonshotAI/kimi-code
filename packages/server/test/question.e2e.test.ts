@@ -25,6 +25,7 @@ import {
 } from '@moonshot-ai/agent-core';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 import { rawDataToString } from '../src/ws/rawData';
 import { QuestionService } from '#/services/question/questionService';
 
@@ -32,6 +33,18 @@ let tmpDir: string;
 let lockPath: string;
 let bridgeHome: string;
 let server: RunningServer | undefined;
+
+function rmSyncRobust(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 60, retryDelay: 250 });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY') throw error;
+    // Best-effort cleanup: a child process may still hold the cwd or be
+    // writing into the dir after server.close(); the OS reclaims the temp dir
+    // later and a cleanup hiccup must not fail an otherwise-passing test.
+  }
+}
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'kimi-server-questions-test-'));
@@ -46,12 +59,13 @@ afterEach(async () => {
     // ignore
   }
   server = undefined;
-  rmSync(tmpDir, { recursive: true, force: true });
-  rmSync(bridgeHome, { recursive: true, force: true });
+  rmSyncRobust(tmpDir);
+  rmSyncRobust(bridgeHome);
 });
 
 async function bootDaemon(): Promise<RunningServer> {
   server = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -65,12 +79,24 @@ async function bootDaemon(): Promise<RunningServer> {
 function appOf(r: RunningServer): {
   inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
 } {
-  return r.services.invokeFunction((a) => {
+  const app = r.services.invokeFunction((a) => {
     const gw = a.get(IRestGateway);
     return gw.app as unknown as {
-      inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
-    };
+  inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
+};
   });
+  // Auto-attach the fixed bearer token so the M5.1 auth hook passes. A
+  // caller-supplied `authorization` header wins, so explicit token tests keep
+  // working; every other header (Range, content-type, …) is preserved.
+  return {
+    inject(req: unknown) {
+      const q = req as { headers?: Record<string, string | string[] | undefined> };
+      return app.inject({
+        ...q,
+        headers: { authorization: 'Bearer test-token', ...q.headers },
+      });
+    },
+  };
 }
 
 function envelopeOf<T>(body: unknown): {
@@ -112,7 +138,7 @@ async function openSubscriber(
   const wsUrl = r.address.replace('http://', 'ws://') + '/api/v1/ws';
   const received: Record<string, unknown>[] = [];
   const ws = await new Promise<WebSocket>((resolve, reject) => {
-    const sock = new WebSocket(wsUrl);
+    const sock = new WebSocket(wsUrl, ['kimi-code.bearer.test-token']);
     sock.on('message', (data) => {
       try {
         received.push(JSON.parse(rawDataToString(data)) as Record<string, unknown>);

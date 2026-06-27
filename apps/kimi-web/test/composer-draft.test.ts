@@ -103,4 +103,33 @@ describe('useComposerDraft', () => {
     draft.loadForEdit('edit me');
     expect(draft.text.value).toBe('edit me');
   });
+
+  it('autosize fits the textarea height to its content', () => {
+    const { draft } = setup('s1');
+    const style: Record<string, string> = {};
+    const el = { scrollHeight: 120, style };
+    draft.textareaRef.value = el as unknown as HTMLTextAreaElement;
+
+    draft.autosize();
+    expect(style.height).toBe('120px');
+  });
+
+  it('autosize shrinks the textarea when content is removed', () => {
+    const { draft } = setup('s1');
+    const style: Record<string, string> = {};
+    const el = { scrollHeight: 120, style };
+    draft.textareaRef.value = el as unknown as HTMLTextAreaElement;
+
+    draft.autosize();
+    el.scrollHeight = 40;
+    draft.autosize();
+    expect(style.height).toBe('40px');
+  });
+
+  it('autosize is a no-op before the textarea mounts', () => {
+    const { draft } = setup('s1');
+    expect(() => {
+      draft.autosize();
+    }).not.toThrow();
+  });
 });

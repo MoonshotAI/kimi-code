@@ -12,9 +12,9 @@ Do not invent limits. Do not call this for vague wording such as "spend some tim
 If the user gives a compound time, convert it to one supported unit before calling this tool.
 For example, "2 hours and 3 minutes" can be set as `value: 123, unit: "minutes"`.
 
-If the requested budget is not reasonable, do not set it. Tell the user that the requested
-budget is not reasonable. Examples include a time budget that is too short to act on, such as
-1 millisecond, or too long for an interactive goal run, such as 1 year.
+A time budget must be between 1 second and 24 hours — the tool rejects anything shorter or
+longer, telling the user it is not a reasonable goal budget. Turn and token budgets are not
+bounded this way; they must be positive and are rounded to the nearest whole number (minimum 1).
 
 Supported units:
 

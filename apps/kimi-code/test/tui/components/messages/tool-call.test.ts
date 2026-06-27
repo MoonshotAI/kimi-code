@@ -855,9 +855,11 @@ describe('ToolCallComponent', () => {
     );
 
     const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('Used Read (apps/kimi-code/src/main.ts)');
+    const expectedReadPath =
+      process.platform === 'win32' ? 'apps\\kimi-code\\src\\main.ts' : 'apps/kimi-code/src/main.ts';
+    expect(out).toContain(`Used Read (${expectedReadPath})`);
     expect(out).not.toContain('/tmp/proj-a/apps');
-    expect(component.getReadSnapshot().filePath).toBe('apps/kimi-code/src/main.ts');
+    expect(component.getReadSnapshot().filePath).toBe(expectedReadPath);
   });
 
   it('keeps Read paths outside the active workspace absolute', () => {

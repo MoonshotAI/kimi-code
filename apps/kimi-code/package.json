@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kimi-code",
-  "version": "0.19.2",
+  "version": "0.20.1",
   "description": "The Starting Point for Next-Gen Agents",
   "license": "MIT",
   "author": "Moonshot AI",
@@ -74,7 +74,7 @@
     "postinstall": "node scripts/postinstall.mjs"
   },
   "optionalDependencies": {
-    "@mariozechner/clipboard": "^0.3.2",
+    "@mariozechner/clipboard": "^0.3.9",
     "koffi": "^2.16.0",
     "node-pty": "^1.1.0"
   },

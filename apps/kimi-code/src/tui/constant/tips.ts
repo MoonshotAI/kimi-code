@@ -32,6 +32,7 @@ export const WORKING_TIPS: readonly ToolbarTip[] = [
   { text: '/goal next to queue follow-up work while the current goal keeps running', solo: true },
   { text: '/web: use the Web UI for a better experience', solo: true },
   { text: '@: mention files', priority: 2 },
+  { text: '! to run a shell command', priority: 2 },
 ];
 
 export const ALL_TIPS: readonly ToolbarTip[] = [

@@ -4,9 +4,11 @@ import { isAbsolute, join, resolve } from 'node:path';
 import type { PluginInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
 import {
+  PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
   PluginRemoveConfirmComponent,
   PluginsPanelComponent,
+  type PluginInstallTrustConfirmResult,
   type PluginMcpSelection,
   type PluginRemoveConfirmResult,
   type PluginsPanelSelection,
@@ -18,7 +20,7 @@ import {
 } from '../components/messages/plugins-status-panel';
 import { UsagePanelComponent } from '../components/messages/usage-panel';
 import { formatErrorMessage } from '../utils/event-payload';
-import { formatPluginSourceLabel } from '../utils/plugin-source-label';
+import { formatPluginSourceLabel, isOfficialPluginSource } from '../utils/plugin-source-label';
 import { loadPluginMarketplace } from '#/utils/plugin-marketplace';
 import type { SlashCommandHost } from './dispatch';
 
@@ -61,6 +63,10 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
       const source = rest.join(' ').trim();
       if (source.length === 0) {
         host.showError('Usage: /plugins install <local-path-or-zip-url>');
+        return;
+      }
+      if (!(await confirmInstallTrust(host, source, isOfficialPluginSource(source)))) {
+        host.showStatus('Install cancelled.');
         return;
       }
       const spinner = host.showProgressSpinner(`Installing plugin from ${truncateForStatus(source)}…`);
@@ -167,22 +173,28 @@ async function showPluginsPicker(
       // Each branch of the handler either mounts the next view or restores the
       // editor itself, so do not pre-restore here — that would flash the editor
       // for in-place actions like toggling a plugin.
-      void handlePluginsPanelSelection(host, selection).catch((error: unknown) => {
+      void handlePluginsPanelSelection(host, panel, selection).catch((error: unknown) => {
         host.showError(`/plugins failed: ${formatErrorMessage(error)}`);
       });
     },
     onCancel: () => {
       host.restoreEditor();
     },
-    // The Official/Third-party tabs fetch their catalog lazily so /plugins
-    // opens instantly and Installed/Custom keep working even when the
-    // marketplace is unreachable.
+    // Every tab except Custom needs the catalog: Official/Third-party list it,
+    // and Installed uses it to show update badges. The Installed/Custom tabs
+    // keep working even when the marketplace is unreachable (badges simply stay
+    // hidden until data arrives).
     onRequestMarketplace: () => {
       void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
     },
   });
   host.mountEditorReplacement(panel);
-  if (options?.initialTab === 'official' || options?.initialTab === 'third-party') {
+  // Kick off the catalog fetch for any tab that needs it: Installed uses it for
+  // update badges, Official/Third-party list it. Custom never reads the catalog,
+  // so skip the fetch there. Done here (after `panel` is initialized) rather
+  // than inside the component constructor, because the callback above closes
+  // over `panel`.
+  if (options?.initialTab !== 'custom') {
     panel.setMarketplaceLoading();
     void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
   }
@@ -260,6 +272,67 @@ async function confirmRemovePlugin(host: SlashCommandHost, id: string): Promise<
   });
 }
 
+async function confirmInstallTrust(
+  host: SlashCommandHost,
+  label: string,
+  official: boolean,
+): Promise<boolean> {
+  // Kimi-built official plugins are trusted implicitly; anything else requires
+  // the user to explicitly opt in via the trust prompt.
+  if (official) return true;
+  return new Promise((resolveConfirmed) => {
+    host.mountEditorReplacement(
+      new PluginInstallTrustConfirmComponent({
+        label,
+        onDone: (result: PluginInstallTrustConfirmResult) => {
+          host.restoreEditor();
+          resolveConfirmed(result.kind === 'confirm');
+        },
+      }),
+    );
+  });
+}
+
+async function installFromPanel(
+  host: SlashCommandHost,
+  panel: PluginsPanelComponent,
+  source: string,
+  label: string,
+  official: boolean,
+): Promise<void> {
+  if (!(await confirmInstallTrust(host, label, official))) {
+    host.showStatus(`Install cancelled: ${label}.`);
+    host.restoreEditor();
+    return;
+  }
+  // Official installs keep the panel mounted and show the inline installing
+  // state; third-party installs pass through a trust prompt that replaces the
+  // panel, so fall back to a transcript status for those.
+  if (official) {
+    panel.setInstalling(truncateForStatus(label));
+  } else {
+    host.showStatus(`Installing or updating ${label} from marketplace...`);
+  }
+  host.state.ui.requestRender();
+  try {
+    await installPluginFromSource(host, source);
+  } catch (error) {
+    if (official) {
+      panel.clearInstalling();
+      host.state.ui.requestRender();
+    } else {
+      // The trust prompt replaced the panel; re-mount it so the user can retry
+      // instead of being dropped back at the editor.
+      host.mountEditorReplacement(panel);
+    }
+    host.showError(`Failed to install ${label}: ${formatErrorMessage(error)}`);
+    return;
+  }
+  // Close the panel after installing so the result status and the
+  // "/reload or /new" tip are visible in the transcript.
+  host.restoreEditor();
+}
+
 async function applyPluginEnabled(
   host: SlashCommandHost,
   id: string,
@@ -287,6 +360,7 @@ async function applyPluginEnabled(
 
 async function handlePluginsPanelSelection(
   host: SlashCommandHost,
+  panel: PluginsPanelComponent,
   selection: PluginsPanelSelection,
 ): Promise<void> {
   switch (selection.kind) {
@@ -319,18 +393,23 @@ async function handlePluginsPanelSelection(
       await reloadPlugins(host);
       await showPluginsPicker(host, { initialTab: 'installed' });
       return;
-    case 'install': {
-      host.showStatus(`Installing or updating ${selection.entry.displayName} from marketplace...`);
-      await installPluginFromSource(host, selection.entry.source, { successNotice: 'marketplace' });
-      // Close the panel after installing so the success notice and the
-      // "/reload or /new" / post-install tip are visible in the transcript.
-      host.restoreEditor();
+    case 'install':
+      await installFromPanel(
+        host,
+        panel,
+        selection.entry.source,
+        selection.entry.displayName,
+        isOfficialPluginSource(selection.entry.source),
+      );
       return;
-    }
     case 'install-source':
-      host.showStatus(`Installing plugin from ${truncateForStatus(selection.source)}…`);
-      await installPluginFromSource(host, selection.source, { successNotice: 'marketplace' });
-      host.restoreEditor();
+      await installFromPanel(
+        host,
+        panel,
+        selection.source,
+        selection.source,
+        isOfficialPluginSource(selection.source),
+      );
       return;
   }
 }
@@ -362,7 +441,8 @@ async function handlePluginMcpSelection(
 
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   await host.requireSession().removePlugin(id);
-  host.showStatus(`Removed ${id}. Run /reload or /new to apply plugin changes.`);
+  host.showStatus(`Removed ${id}.`);
+  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
 
 async function renderPluginsList(
@@ -394,25 +474,21 @@ async function renderPluginInfo(host: SlashCommandHost, id: string): Promise<voi
 async function installPluginFromSource(
   host: SlashCommandHost,
   source: string,
-  options?: {
-    readonly successNotice?: 'marketplace';
-  },
 ): Promise<void> {
   const session = host.requireSession();
   const beforeList = await session.listPlugins();
   const summary = await session.installPlugin(
     resolvePluginInstallSource(source, host.state.appState.workDir),
   );
-  showPluginInstallResult(host, beforeList, summary, options);
+  showPluginInstallResult(host, beforeList, summary);
 }
+
+const PLUGIN_RELOAD_HINT = 'Run /new or /reload to apply plugin changes.';
 
 function showPluginInstallResult(
   host: SlashCommandHost,
   beforeList: readonly PluginSummary[],
   summary: PluginSummary,
-  options?: {
-    readonly successNotice?: 'marketplace';
-  },
 ): void {
   const previous = beforeList.find((entry) => entry.id === summary.id);
   const serverWord = summary.mcpServerCount === 1 ? 'server' : 'servers';
@@ -421,15 +497,8 @@ function showPluginInstallResult(
       ? ` Declares ${summary.mcpServerCount} MCP ${serverWord}; enabled by default and configurable from /plugins.`
       : '';
   const action = describeInstallAction(previous, summary);
-  host.showStatus(
-    `${action} (${summary.id}).${mcpHint} Run /new or /reload to apply plugin changes.`,
-  );
-  if (options?.successNotice === 'marketplace') {
-    host.showNotice(
-      `Installed or updated ${summary.displayName}`,
-      `Marketplace install or update succeeded for ${summary.id}. Run /new or /reload to apply plugin changes.`,
-    );
-  }
+  host.showStatus(`${action} (${summary.id}).${mcpHint}`);
+  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
 }
 
 function describeInstallAction(

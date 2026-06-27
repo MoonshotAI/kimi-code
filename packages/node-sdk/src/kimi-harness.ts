@@ -22,6 +22,7 @@ import type {
   ListSessionsOptions,
   RenameSessionInput,
   ResumeSessionInput,
+  ReloadSessionInput,
   SessionSummary,
   TelemetryClient,
   TelemetryContextPatch,
@@ -142,16 +143,21 @@ export class KimiHarness {
     return session;
   }
 
-  async reloadSession(input: ResumeSessionInput): Promise<Session> {
+  async reloadSession(input: ReloadSessionInput): Promise<Session> {
     const id = normalizeSessionId(input.id);
     const active = this.activeSessions.get(id);
     if (active !== undefined) {
-      await active.reloadSession();
+      await active.reloadSession({
+        forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
+      });
       this.trackSessionEvent(active.id, 'session_reload');
       return active;
     }
 
-    const summary = await this.rpc.reloadSession({ sessionId: id });
+    const summary = await this.rpc.reloadSession({
+      sessionId: id,
+      forcePluginSessionStartReminder: input.forcePluginSessionStartReminder,
+    });
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,

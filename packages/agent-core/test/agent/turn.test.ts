@@ -497,7 +497,7 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: "echo 'hook response 2'",
+        command: 'node -e "process.stdout.write(\'hook response 2\')"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -558,12 +558,12 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: "echo '{}'",
+        command: 'node -e "process.stdout.write(\'{}\')"',
       },
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: 'echo \'{"hookSpecificOutput":{}}\'',
+        command: 'node -e "process.stdout.write(JSON.stringify({hookSpecificOutput:{}}))"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -621,7 +621,7 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'bad words',
-        command: "echo 'no profanity' >&2; exit 2",
+        command: 'node -e "process.stderr.write(\'no profanity\'); process.exit(2)"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -713,7 +713,7 @@ describe('Agent turn flow', () => {
     const hookEngine = new HookEngine([
       {
         event: 'Stop',
-        command: "echo 'continue from hook' >&2; exit 2",
+        command: 'node -e "process.stderr.write(\'continue from hook\'); process.exit(2)"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -1208,6 +1208,7 @@ describe('Agent turn flow', () => {
           reason: 'failed',
           error: expect.objectContaining({
             code: 'loop.max_steps_exceeded',
+            message: expect.stringContaining('config.toml'),
             details: expect.objectContaining({
               maxSteps: 1,
             }),

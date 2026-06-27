@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -163,8 +164,8 @@ describe('TerminalService.create', () => {
     const terminal = await svc.create('sess_a', {});
 
     expect(terminal.session_id).toBe('sess_a');
-    expect(terminal.cwd).toBe(realpathSync(root));
-    expect(backend.spawns[0]!.cwd).toBe(realpathSync(root));
+    expect(terminal.cwd).toBe(await realpath(root));
+    expect(backend.spawns[0]!.cwd).toBe(await realpath(root));
   });
 
   it('supports independent terminals for any number of sessions', async () => {
@@ -185,8 +186,8 @@ describe('TerminalService.create', () => {
     expect((await svc.list('sess_a')).map((t) => t.id)).toEqual([termA.id]);
     expect((await svc.list('sess_b')).map((t) => t.id)).toEqual([termB.id]);
     expect(backend.spawns.map((spawn) => spawn.cwd)).toEqual([
-      realpathSync(rootA),
-      realpathSync(rootB),
+      await realpath(rootA),
+      await realpath(rootB),
     ]);
   });
 
@@ -201,8 +202,8 @@ describe('TerminalService.create', () => {
 
     const terminal = await svc.create('sess_c', { cwd: 'packages/server' });
 
-    expect(terminal.cwd).toBe(realpathSync(nested));
-    expect(backend.spawns[0]!.cwd).toBe(realpathSync(nested));
+    expect(terminal.cwd).toBe(await realpath(nested));
+    expect(backend.spawns[0]!.cwd).toBe(await realpath(nested));
   });
 
   it('rejects cwd overrides that escape the session workspace', async () => {

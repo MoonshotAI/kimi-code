@@ -1,0 +1,10 @@
+# Enforce LF line endings in the working tree on every platform so that
+# raw-imported text (e.g. `*.md?raw` templates) is byte-identical on Windows
+# and POSIX. Without this, Git for Windows' default `core.autocrlf=true`
+# checks text files out as CRLF, which shifts token-count snapshots.
+* text=auto eol=lf
+
+# Binary assets — never normalize line endings.
+*.gif binary
+*.ico binary
+*.png binary

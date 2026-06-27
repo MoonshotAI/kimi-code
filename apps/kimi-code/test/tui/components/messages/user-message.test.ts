@@ -89,4 +89,19 @@ describe('UserMessageComponent', () => {
     expect(imageLine).not.toContain('…');
     expect(imageLine).toContain('\u001B\\'); // intact Kitty terminator
   });
+
+  it('omits the sparkles bullet when an empty bullet is provided', () => {
+    setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+
+    const withBullet = stripAnsi(new UserMessageComponent('hello', []).render(80).join('\n'));
+    expect(withBullet).toContain('✨');
+    expect(withBullet).toContain('hello');
+
+    const lines = new UserMessageComponent('$ ls', [], '').render(80).map(stripAnsi);
+    const contentLine = lines.find((l) => l.includes('$ ls'));
+    expect(contentLine).toBeDefined();
+    expect(stripAnsi(lines.join('\n'))).not.toContain('✨');
+    // The `$` sits at the leading column where the bullet used to be.
+    expect(contentLine?.startsWith('$ ls')).toBe(true);
+  });
 });

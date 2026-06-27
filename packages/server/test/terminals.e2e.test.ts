@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +9,7 @@ import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 import { FakeTerminalBackend } from './terminalTestBackend';
 
 let tmpDir: string;
@@ -41,6 +43,7 @@ async function bootServer(): Promise<RunningServer> {
     logger: pino({ level: 'silent' }),
     coreProcessOptions: { homeDir: bridgeHome },
     serviceOverrides: [
+      fixedTokenAuth(),
       [ITerminalService, new SyncDescriptor(TerminalService, [{ backend }], false)],
     ],
   });
@@ -50,12 +53,24 @@ async function bootServer(): Promise<RunningServer> {
 function appOf(r: RunningServer): {
   inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
 } {
-  return r.services.invokeFunction((a) => {
+  const app = r.services.invokeFunction((a) => {
     const gw = a.get(IRestGateway);
     return gw.app as unknown as {
-      inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
-    };
+  inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
+};
   });
+  // Auto-attach the fixed bearer token so the M5.1 auth hook passes. A
+  // caller-supplied `authorization` header wins, so explicit token tests keep
+  // working; every other header (Range, content-type, …) is preserved.
+  return {
+    inject(req: unknown) {
+      const q = req as { headers?: Record<string, string | string[] | undefined> };
+      return app.inject({
+        ...q,
+        headers: { authorization: 'Bearer test-token', ...q.headers },
+      });
+    },
+  };
 }
 
 function envelopeOf<T>(body: unknown): {
@@ -114,8 +129,8 @@ describe('terminal REST routes', () => {
     expect(termA.session_id).toBe(sidA);
     expect(termB.session_id).toBe(sidB);
     expect(backend.spawns.map((spawn) => spawn.cwd)).toEqual([
-      realpathSync(rootA),
-      realpathSync(rootB),
+      await realpath(rootA),
+      await realpath(rootB),
     ]);
 
     const listA = envelopeOf<{ items: Terminal[] }>(

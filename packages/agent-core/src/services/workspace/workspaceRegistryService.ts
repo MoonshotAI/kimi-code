@@ -1,12 +1,12 @@
-
-
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { basename as posixBasename } from 'pathe';
 import type { Stats } from 'node:fs';
 
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
-import { encodeWorkDirKey } from '../../session/store';
+import { encodeWorkDirKey, normalizeWorkDir } from '../../session/store';
+import { readSessionIndex } from '../../session/store/session-index';
 import { IEnvironmentService } from '../environment/environment';
 import { IEventService } from '../event/event';
 
@@ -33,6 +33,10 @@ interface WorkspaceRegistryEntry {
 interface WorkspaceRegistryFile {
   version: number;
   workspaces: Record<string, WorkspaceRegistryEntry>;
+  /** Workspace ids the user explicitly removed. Their session buckets stay on
+   *  disk, so derived workspaces (computed from the session index) must skip
+   *  them to keep deletion durable. */
+  deleted_workspace_ids: string[];
 }
 
 type WorkspaceRegistryEvent =
@@ -43,6 +47,7 @@ type WorkspaceRegistryEvent =
 export class WorkspaceRegistryService extends Disposable implements IWorkspaceRegistry {
   readonly _serviceBrand: undefined;
 
+  private readonly homeDir: string;
   private readonly sessionsDir: string;
   private readonly registryPath: string;
   private opQueue: Promise<unknown> = Promise.resolve();
@@ -53,18 +58,46 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     @IEventService private readonly eventService: IEventService,
   ) {
     super();
+    this.homeDir = env.homeDir;
     this.sessionsDir = join(env.homeDir, 'sessions');
     this.registryPath = join(env.homeDir, WORKSPACE_REGISTRY_FILE);
   }
 
   async list(): Promise<Workspace[]> {
     const file = await this.runExclusive(() => this.readRegistry());
-    const hydrated = await Promise.all(
-      Object.entries(file.workspaces).map(([workspaceId, entry]) =>
-        this.hydrate(workspaceId, entry),
-      ),
-    );
-    return hydrated.sort((a, b) => (b.last_opened_at < a.last_opened_at ? -1 : 1));
+    const deleted = new Set(file.deleted_workspace_ids);
+
+    const result: Workspace[] = [];
+    // Registered workspaces (explicitly added by the user).
+    for (const [id, entry] of Object.entries(file.workspaces)) {
+      result.push(await this.hydrate(id, entry));
+    }
+
+    // Derived workspaces: cwds that own sessions but were never registered
+    // (e.g. sessions created with cwd only). Computed on the fly from the
+    // session index and never persisted, so the registry cannot drift from the
+    // session store.
+    const index = await readSessionIndex(this.homeDir, this.sessionsDir);
+    const derived = new Map<string, string>(); // workspace id -> workDir
+    for (const entry of index.values()) {
+      const id = encodeWorkDirKey(entry.workDir);
+      if (file.workspaces[id] !== undefined || deleted.has(id)) continue;
+      derived.set(id, entry.workDir);
+    }
+    for (const [id, workDir] of derived) {
+      // Skip archived-only buckets so they don't surface as empty groups.
+      const sessionCount = await countActiveSessions(join(this.sessionsDir, id));
+      if (sessionCount === 0) continue;
+      result.push(
+        await this.hydrate(
+          id,
+          { root: workDir, name: posixBasename(workDir), created_at: '', last_opened_at: '' },
+          sessionCount,
+        ),
+      );
+    }
+
+    return result.sort((a, b) => (b.last_opened_at < a.last_opened_at ? -1 : 1));
   }
 
   async get(workspaceId: string): Promise<Workspace> {
@@ -79,9 +112,9 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
   }
 
   async createOrTouch(root: string, name?: string): Promise<Workspace> {
-    let realRoot: string;
+    let stat: Stats;
     try {
-      realRoot = await fsp.realpath(root);
+      stat = await fsp.stat(root);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'ENOTDIR') {
@@ -89,7 +122,15 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       }
       throw err;
     }
-    const workspaceId = encodeWorkDirKey(realRoot);
+    if (!stat.isDirectory()) {
+      throw new WorkspaceRootNotFoundError(root);
+    }
+    // Normalize with pathe (NOT realpath) so the workspace id matches the
+    // session store's `encodeWorkDirKey`, which also normalizes via pathe and
+    // never resolves symlinks or 8.3 short names. Using `fsp.realpath` here
+    // diverged from the session store on Windows and orphaned legacy sessions.
+    const normalizedRoot = normalizeWorkDir(root);
+    const workspaceId = encodeWorkDirKey(normalizedRoot);
     await fsp.mkdir(join(this.sessionsDir, workspaceId), { recursive: true, mode: 0o700 });
 
     const now = new Date().toISOString();
@@ -100,12 +141,14 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         existing !== undefined
           ? { ...existing, last_opened_at: now }
           : {
-              root: realRoot,
-              name: name ?? basename(realRoot),
+              root: normalizedRoot,
+              name: name ?? posixBasename(normalizedRoot),
               created_at: now,
               last_opened_at: now,
             };
       file.workspaces[workspaceId] = next;
+      // An explicit add clears any prior deletion tombstone.
+      file.deleted_workspace_ids = file.deleted_workspace_ids.filter((id) => id !== workspaceId);
       await this.writeRegistry(file);
       return { entry: next, created: existing === undefined };
     });
@@ -140,12 +183,22 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     const root = await this.runExclusive(async () => {
       const file = await this.readRegistry();
       const existing = file.workspaces[workspaceId];
-      if (existing === undefined) {
-        throw new WorkspaceNotFoundError(workspaceId);
+      let root: string;
+      if (existing !== undefined) {
+        delete file.workspaces[workspaceId];
+        root = existing.root;
+      } else {
+        // Derived workspace: not in the file but a valid list result.
+        // Tombstone it so list() stops surfacing it.
+        const derived = await this.findDerivedWorkDir(workspaceId);
+        if (derived === undefined) throw new WorkspaceNotFoundError(workspaceId);
+        root = derived;
       }
-      delete file.workspaces[workspaceId];
+      if (!file.deleted_workspace_ids.includes(workspaceId)) {
+        file.deleted_workspace_ids.push(workspaceId);
+      }
       await this.writeRegistry(file);
-      return existing.root;
+      return root;
     });
     this.publishWorkspace({
       type: 'event.workspace.deleted',
@@ -159,19 +212,33 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       const file = await this.readRegistry();
       return file.workspaces[workspaceId] ?? null;
     });
-    if (entry === null) {
-      throw new WorkspaceNotFoundError(workspaceId);
+    if (entry !== null) return entry.root;
+
+    // Not registered — may be a derived workspace id, which is the session
+    // bucket key (encodeWorkDirKey(workDir)). Resolve it from the index.
+    const derived = await this.findDerivedWorkDir(workspaceId);
+    if (derived !== undefined) return derived;
+    throw new WorkspaceNotFoundError(workspaceId);
+  }
+
+  /** Look up a derived workspace's workDir from the session index, or undefined
+   *  if the id is not a known derived bucket. */
+  private async findDerivedWorkDir(workspaceId: string): Promise<string | undefined> {
+    const index = await readSessionIndex(this.homeDir, this.sessionsDir);
+    for (const e of index.values()) {
+      if (encodeWorkDirKey(e.workDir) === workspaceId) return e.workDir;
     }
-    return entry.root;
+    return undefined;
   }
 
   private async hydrate(
     workspaceId: string,
     entry: WorkspaceRegistryEntry,
+    sessionCount?: number,
   ): Promise<Workspace> {
     const [{ is_git_repo, branch }, session_count] = await Promise.all([
       detectGit(entry.root),
-      countActiveSessions(join(this.sessionsDir, workspaceId)),
+      sessionCount ?? countActiveSessions(join(this.sessionsDir, workspaceId)),
     ]);
     return {
       id: workspaceId,
@@ -215,7 +282,7 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'ENOTDIR') {
-        return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {} };
+        return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {}, deleted_workspace_ids: [] };
       }
       throw err;
     }
@@ -227,7 +294,7 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         { path: this.registryPath, err: String(err) },
         'workspaces.json malformed; treating as empty',
       );
-      return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {} };
+      return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {}, deleted_workspace_ids: [] };
     }
     if (
       typeof parsed !== 'object' ||
@@ -239,7 +306,7 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         { path: this.registryPath },
         'workspaces.json missing required keys; treating as empty',
       );
-      return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {} };
+      return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {}, deleted_workspace_ids: [] };
     }
     const rawWorkspaces = (parsed as { workspaces: Record<string, unknown> }).workspaces;
     const workspaces: Record<string, WorkspaceRegistryEntry> = {};
@@ -253,7 +320,11 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       typeof (parsed as { version?: unknown }).version === 'number'
         ? (parsed as { version: number }).version
         : WORKSPACE_REGISTRY_VERSION;
-    return { version, workspaces };
+    const rawDeleted = (parsed as { deleted_workspace_ids?: unknown }).deleted_workspace_ids;
+    const deleted_workspace_ids = Array.isArray(rawDeleted)
+      ? rawDeleted.filter((id): id is string => typeof id === 'string')
+      : [];
+    return { version, workspaces, deleted_workspace_ids };
   }
 
   private sanitizeEntry(value: unknown): WorkspaceRegistryEntry | null {

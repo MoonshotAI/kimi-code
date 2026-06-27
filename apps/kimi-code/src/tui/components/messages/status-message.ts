@@ -12,19 +12,30 @@ export class StatusMessageComponent extends Container {
     super();
     this.content = content;
     this.color = color;
-    const text = color === undefined
-      ? currentTheme.fg('textDim', content)
-      : currentTheme.fg(color, content);
-    this.textComponent = new Text(`  ${text}`, 0, 0);
+    this.textComponent = new Text(this.renderText(), 0, 0);
     this.addChild(this.textComponent);
   }
 
+  // Update the body in place (used for live-streamed `!` shell output) without
+  // remounting the component.
+  updateContent(content: string): void {
+    this.content = content;
+    this.textComponent.setText(this.renderText());
+  }
+
   override invalidate(): void {
-    const text = this.color === undefined
+    this.textComponent.setText(this.renderText());
+    super.invalidate();
+  }
+
+  // Indent every line, not just the first. The `content` may be multi-line
+  // (e.g. `!` shell output); prefixing the whole string once would only indent
+  // the first line and leave the rest at column 0.
+  private renderText(): string {
+    const colored = this.color === undefined
       ? currentTheme.fg('textDim', this.content)
       : currentTheme.fg(this.color, this.content);
-    this.textComponent.setText(`  ${text}`);
-    super.invalidate();
+    return colored.split('\n').map((line) => `  ${line}`).join('\n');
   }
 }
 

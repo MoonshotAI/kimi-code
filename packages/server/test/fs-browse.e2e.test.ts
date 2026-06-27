@@ -12,12 +12,13 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 import type {
   FsBrowseEntry,
   FsBrowseResponse,
@@ -55,6 +56,7 @@ afterEach(async () => {
 
 async function bootDaemon(): Promise<RunningServer> {
   server = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -67,12 +69,24 @@ async function bootDaemon(): Promise<RunningServer> {
 function appOf(r: RunningServer): {
   inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
 } {
-  return r.services.invokeFunction((a) => {
+  const app = r.services.invokeFunction((a) => {
     const gw = a.get(IRestGateway);
     return gw.app as unknown as {
-      inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
-    };
+  inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
+};
   });
+  // Auto-attach the fixed bearer token so the M5.1 auth hook passes. A
+  // caller-supplied `authorization` header wins, so explicit token tests keep
+  // working; every other header (Range, content-type, …) is preserved.
+  return {
+    inject(req: unknown) {
+      const q = req as { headers?: Record<string, string | string[] | undefined> };
+      return app.inject({
+        ...q,
+        headers: { authorization: 'Bearer test-token', ...q.headers },
+      });
+    },
+  };
 }
 
 function envelopeOf<T>(body: unknown): {
@@ -170,7 +184,7 @@ describe('GET /api/v1/fs:browse', () => {
     expect(envelopeOf(res.json()).code).toBe(40409);
   });
 
-  it('returns 40411 when path is unreadable (chmod 000)', async () => {
+  it.skipIf(process.platform === 'win32')('returns 40411 when path is unreadable (chmod 000)', async () => {
     if (process.getuid?.() === 0) {
       // Root bypasses permission checks; skip.
       return;
@@ -197,9 +211,9 @@ describe('GET /api/v1/fs:browse', () => {
     const env = envelopeOf<FsBrowseResponse>(res.json());
     expect(env.code).toBe(0);
     // realpath of $HOME on macOS may differ from os.homedir() (e.g. /Users vs
-    // /System/Volumes/Data/Users). Just sanity-check the response has an
-    // absolute path.
-    expect(env.data!.path.startsWith('/')).toBe(true);
+    // /System/Volumes/Data/Users), and on Windows it is a drive path. Just
+    // sanity-check the response has an absolute path.
+    expect(isAbsolute(env.data!.path)).toBe(true);
   });
 });
 

@@ -2,9 +2,11 @@
 // Unified right-side detail layer. Only one detail is open at a time.
 
 import { computed, ref, watch, type Ref } from 'vue';
-import type { AgentMember } from '../types';
+import type { AgentMember, ToolDiffTarget } from '../types';
 import type { DetailTarget } from './useFilePreview';
 import type { useKimiWebClient } from './useKimiWebClient';
+import { buildEditDiffLines, extractEditPath, findToolCallById } from '../lib/toolDiff';
+import { toolLabel } from '../lib/toolMeta';
 import { clampPanelWidth, panelMaxWidth, useViewportWidth } from './useViewportWidth';
 
 type KimiWebClient = ReturnType<typeof useKimiWebClient>;
@@ -154,12 +156,56 @@ export function useDetailPanel({
   }
 
   // ---------------------------------------------------------------------------
+  // Edit/Write tool-call diff preview
+  // ---------------------------------------------------------------------------
+  // Store only the tool id and re-derive the panel payload from the live tool
+  // call in the session turns, so a panel opened while the tool is still
+  // running keeps tracking its status / output / diff as they update.
+  const toolDiffToolId = ref<string | null>(null);
+
+  const toolDiffTarget = computed<ToolDiffTarget | null>(() => {
+    const id = toolDiffToolId.value;
+    if (!id) return null;
+    const tool = findToolCallById(client.turns.value, id);
+    if (!tool) return null;
+    return {
+      id,
+      title: toolLabel(tool.name),
+      path: extractEditPath(tool.arg),
+      // On error the diff describes what was attempted, not what happened —
+      // show the tool output (the failure reason) instead.
+      lines: tool.status === 'error' ? null : buildEditDiffLines(tool),
+      output: tool.output,
+    };
+  });
+
+  const toolDiffVisible = computed(() => toolDiffTarget.value !== null);
+
+  function openToolDiff(id: string): void {
+    if (detailTarget.value === 'toolDiff' && toolDiffToolId.value === id) {
+      closeToolDiff();
+      return;
+    }
+    detailTarget.value = 'toolDiff';
+    toolDiffToolId.value = id;
+  }
+
+  function closeToolDiff(): void {
+    toolDiffToolId.value = null;
+    if (detailTarget.value === 'toolDiff') detailTarget.value = null;
+  }
+
+  // ---------------------------------------------------------------------------
   // Diff detail layer (opened from the chat header git area)
   // ---------------------------------------------------------------------------
   const detailDiffMode = ref<'list' | 'detail'>('list');
   const detailDiffPath = ref<string | null>(null);
 
   function openDiffDetail(): void {
+    if (detailTarget.value === 'diff') {
+      closeDiffDetail();
+      return;
+    }
     detailTarget.value = 'diff';
     detailDiffMode.value = 'list';
     detailDiffPath.value = null;
@@ -207,6 +253,7 @@ export function useDetailPanel({
       (detailTarget.value !== 'thinking' || thinkingVisible.value) &&
       (detailTarget.value !== 'compaction' || compactionPanelVisible.value) &&
       (detailTarget.value !== 'agent' || agentPanelVisible.value) &&
+      (detailTarget.value !== 'toolDiff' || toolDiffVisible.value) &&
       (detailTarget.value !== 'btw' || btwVisible.value),
   );
 
@@ -219,6 +266,7 @@ export function useDetailPanel({
     if (detailTarget.value === 'thinking' && thinkingVisible.value) { closeThinkingPanel(); return true; }
     if (detailTarget.value === 'compaction' && compactionPanelVisible.value) { closeCompactionPanel(); return true; }
     if (detailTarget.value === 'agent' && agentPanelVisible.value) { closeAgentPanel(); return true; }
+    if (detailTarget.value === 'toolDiff' && toolDiffVisible.value) { closeToolDiff(); return true; }
     if (detailTarget.value === 'file') { closeFilePreview(); return true; }
     if (detailTarget.value === 'diff') { closeDiffDetail(); return true; }
     if (detailTarget.value === 'btw') { closeSideChat(); return true; }
@@ -230,6 +278,7 @@ export function useDetailPanel({
     closeThinkingPanel();
     closeCompactionPanel();
     closeAgentPanel();
+    closeToolDiff();
     closeDiffDetail();
     hideSideChatPanel();
   });
@@ -253,6 +302,10 @@ export function useDetailPanel({
     agentPanelVisible,
     openAgentPanel,
     closeAgentPanel,
+    toolDiffTarget,
+    toolDiffVisible,
+    openToolDiff,
+    closeToolDiff,
     detailDiffMode,
     detailDiffPath,
     openDiffDetail,

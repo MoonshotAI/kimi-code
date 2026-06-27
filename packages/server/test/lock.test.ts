@@ -8,7 +8,7 @@
  * 0)` returns ESRCH for any unallocated pid on Linux/macOS).
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -77,6 +77,14 @@ describe('acquireLock — basic acquire / release', () => {
     // Operator manually rm'd it between acquire and release.
     rmSync(lockPath);
     expect(() => handle.release()).not.toThrow();
+  });
+
+  it.skipIf(process.platform === 'win32')('creates the lock file with 0600 permissions (ROADMAP M5.2)', () => {
+    const handle = acquireLock({ lockPath, port: 58627 });
+    // The lock file lives next to the per-pid bearer token; it must not be
+    // group/world readable.
+    expect(statSync(lockPath).mode & 0o777).toBe(0o600);
+    handle.release();
   });
 });
 

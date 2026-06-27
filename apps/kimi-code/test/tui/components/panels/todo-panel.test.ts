@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
   TodoPanelComponent,
+  formatHiddenCounts,
   selectVisibleTodos,
   type TodoItem,
 } from '#/tui/components/chrome/todo-panel';
@@ -106,6 +107,43 @@ describe('TodoPanelComponent', () => {
     const out = strip(panel.render(80).join('\n'));
     expect(out).toMatch(/\+2 more/);
     expect(out).toMatch(/ctrl\+t to expand/);
+  });
+
+  it('collapsed footer shows hidden status distribution', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos([
+      ...Array.from({ length: 6 }, (_, i) => ({
+        title: `ip${i}`,
+        status: 'in_progress' as const,
+      })),
+      ...Array.from({ length: 3 }, (_, i) => ({ title: `d${i}`, status: 'done' as const })),
+      ...Array.from({ length: 3 }, (_, i) => ({ title: `p${i}`, status: 'pending' as const })),
+    ]);
+    const out = strip(panel.render(80).join('\n'));
+    expect(out).toMatch(/\+7 more \(3 done · 1 in progress · 3 pending\)/);
+    expect(out).toMatch(/ctrl\+t to expand/);
+  });
+
+  it('collapsed footer omits zero-count statuses', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos(
+      Array.from({ length: 8 }, (_, i) => ({ title: `d${i}`, status: 'done' as const })),
+    );
+    const out = strip(panel.render(80).join('\n'));
+    expect(out).toMatch(/\+3 more \(3 done\)/);
+    expect(out).not.toMatch(/0 in progress/);
+    expect(out).not.toMatch(/0 pending/);
+  });
+
+  it('expanded footer does not include status distribution', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos(
+      Array.from({ length: 8 }, (_, i) => ({ title: `d${i}`, status: 'done' as const })),
+    );
+    panel.setExpanded(true);
+    const out = strip(panel.render(80).join('\n'));
+    expect(out).toMatch(/all 8 items · ctrl\+t to collapse/);
+    expect(out).not.toMatch(/\d+ done ·/);
   });
 
   it('renders every todo with a collapse hint when expanded', () => {
@@ -304,5 +342,42 @@ describe('selectVisibleTodos', () => {
     const { rows, hidden } = selectVisibleTodos(todos);
     expect(rows.map((r) => r.title)).toEqual(['ip0', 'ip1', 'ip2', 'ip3', 'ip4']);
     expect(hidden).toBe(2);
+  });
+
+  it('returns hiddenCounts reflecting the hidden items', () => {
+    const todos: TodoItem[] = [
+      ...Array.from({ length: 6 }, (_, i) => T(`ip${i}`, 'in_progress')),
+      ...Array.from({ length: 3 }, (_, i) => T(`d${i}`, 'done')),
+      ...Array.from({ length: 3 }, (_, i) => T(`p${i}`, 'pending')),
+    ];
+    const { hidden, hiddenCounts } = selectVisibleTodos(todos);
+    expect(hidden).toBe(7);
+    expect(hiddenCounts).toEqual({ done: 3, in_progress: 1, pending: 3 });
+  });
+
+  it('returns zero hiddenCounts when count <= 5', () => {
+    const todos: TodoItem[] = [T('a', 'done'), T('b', 'in_progress'), T('c', 'pending')];
+    const { hidden, hiddenCounts } = selectVisibleTodos(todos);
+    expect(hidden).toBe(0);
+    expect(hiddenCounts).toEqual({ done: 0, in_progress: 0, pending: 0 });
+  });
+});
+
+describe('formatHiddenCounts', () => {
+  it('formats all three statuses in done / in progress / pending order', () => {
+    expect(formatHiddenCounts({ done: 2, in_progress: 1, pending: 3 })).toBe(
+      '2 done · 1 in progress · 3 pending',
+    );
+  });
+
+  it('omits zero-count statuses', () => {
+    expect(formatHiddenCounts({ done: 5, in_progress: 0, pending: 0 })).toBe('5 done');
+    expect(formatHiddenCounts({ done: 0, in_progress: 2, pending: 3 })).toBe(
+      '2 in progress · 3 pending',
+    );
+  });
+
+  it('returns empty string when all counts are zero', () => {
+    expect(formatHiddenCounts({ done: 0, in_progress: 0, pending: 0 })).toBe('');
   });
 });

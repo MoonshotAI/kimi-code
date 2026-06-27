@@ -250,9 +250,13 @@ describe('ExitPlanMode options documentation consistency', () => {
     expect(optionsParamDescription()).not.toMatch(/2-3 options/);
   });
 
-  it('documents that a single option is equivalent to a plain plan approval', () => {
-    expect(DESCRIPTION).toMatch(/single option/i);
-    expect(DESCRIPTION).toMatch(/plain plan approval/i);
+  it('keeps single-option / plain-approval semantics in the options param only, not duplicated in the .md', () => {
+    // Field mechanics are the options param describe's job (single source of
+    // truth). The tool description routes to the param instead of repeating
+    // them, so the two surfaces cannot drift.
     expect(optionsParamDescription()).toMatch(/single option/i);
+    expect(optionsParamDescription()).toMatch(/plain plan approval/i);
+    expect(DESCRIPTION).not.toMatch(/single option/i);
+    expect(DESCRIPTION).toMatch(/pass them via the .?options.? parameter/i);
   });
 });

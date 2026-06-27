@@ -74,11 +74,13 @@ import {
   GoalSetMessageComponent,
 } from './components/messages/goal-panel';
 import { SkillActivationComponent } from './components/messages/skill-activation';
+import { ShellRunComponent } from './components/messages/shell-run';
 import {
   NoticeMessageComponent,
   StatusMessageComponent,
 } from './components/messages/status-message';
 import { ThinkingComponent } from './components/messages/thinking';
+import { StepSummaryComponent } from './components/messages/step-summary';
 import { ToolCallComponent } from './components/messages/tool-call';
 import { UserMessageComponent } from './components/messages/user-message';
 import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
@@ -122,7 +124,7 @@ import {
   type TUIStartupOptions,
   type TUIStartupState,
 } from './types';
-import { isExpandable } from './utils/component-capabilities';
+import { hasDispose, isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
@@ -135,7 +137,17 @@ import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
-import { markTranscriptComponent } from './utils/transcript-component-metadata';
+import { getTranscriptComponentEntry, markTranscriptComponent } from './utils/transcript-component-metadata';
+import {
+  TRANSCRIPT_EXPAND_TURNS,
+  TRANSCRIPT_HYSTERESIS,
+  TRANSCRIPT_KEEP_RECENT_STEPS,
+  TRANSCRIPT_MAX_TURNS,
+  TRANSCRIPT_WINDOW_ENABLED,
+  groupTurns,
+  turnsToTrim,
+} from './utils/transcript-window';
+import { formatBashOutputForDisplay } from './utils/shell-output';
 import { nextTranscriptId } from './utils/transcript-id';
 
 export type { TUIState } from './tui-state';
@@ -189,6 +201,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     sessionId: '',
     permissionMode: startupPermission,
     planMode: input.cliOptions.plan,
+    inputMode: 'prompt',
     swarmMode: false,
     thinking: false,
     contextUsage: 0,
@@ -251,6 +264,14 @@ export class KimiTUI {
   private currentLoadingTip: { kind: LoadingTipKind; tip: string | undefined } | undefined =
     undefined;
   private lastHistoryContent: string | undefined;
+  // Live `!` shell output entries, keyed by commandId so concurrent commands
+  // each update their own card and stale events are dropped. Mutated in place
+  // as `shell.output` events arrive; removed when the command completes.
+  // `taskId` (from `shell.started`) lets ctrl+b detach the exact task.
+  private readonly shellOutputStreams = new Map<
+    string,
+    { entry: TranscriptEntry; component: ShellRunComponent; taskId?: string }
+  >();
   readonly streamingUI: StreamingUIController;
   readonly authFlow: AuthFlowController;
   readonly btwPanelController: BtwPanelController;
@@ -831,14 +852,154 @@ export class KimiTUI {
     void slashCommands.handlePlanCommand(this, next ? 'on' : 'off');
   }
 
+  handleInputModeChange(mode: 'prompt' | 'bash'): void {
+    this.setAppState({ inputMode: mode });
+    this.updateEditorBorderHighlight();
+  }
+
   handleUserInput(text: string): void {
+    const wasBashMode = this.state.appState.inputMode === 'bash';
+    if (wasBashMode) {
+      // A submit always exits bash mode (the `!` is consumed by this command).
+      this.state.editor.inputMode = 'prompt';
+      this.handleInputModeChange('prompt');
+    }
     if (text.trim().length === 0) return;
     if (this.state.appState.isReplaying) {
       this.showError('Cannot send input while session history is replaying.');
       return;
     }
-    void this.persistInputHistory(text);
+    // Shell commands (`! …`) are not prompts — keep them out of input history
+    // so ↑ recall never surfaces a bare command stripped of its `!`.
+    if (!wasBashMode) {
+      void this.persistInputHistory(text);
+    }
+    if (wasBashMode) {
+      // Only one foreground action at a time: queue the shell command while
+      // another shell command is running or an agent turn is in progress.
+      if (this.state.appState.streamingPhase !== 'idle') {
+        this.enqueueMessage(text, undefined, 'bash');
+        this.updateQueueDisplay();
+        this.state.ui.requestRender();
+        return;
+      }
+      this.runShellCommandFromInput(text);
+      return;
+    }
     slashCommands.dispatchInput(this, text);
+  }
+
+  private runShellCommandFromInput(command: string): void {
+    const session = this.session;
+    if (session === undefined) {
+      this.showError('No active session for shell command.');
+      return;
+    }
+    // Echo the command locally (bash-input) with a `$` prompt. The agent also
+    // records it for resume; this is the live view.
+    this.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'user',
+      turnId: undefined,
+      renderMode: 'plain',
+      content: currentTheme.fg('shellMode', `$ ${command}`),
+      bullet: '',
+    });
+    // Create the live output entry up front. ShellRunComponent owns its own
+    // rendering (running card → final view) and is mutated in place as output
+    // streams in and on completion.
+    const commandId = nextTranscriptId();
+    const outputEntry: TranscriptEntry = {
+      id: commandId,
+      kind: 'status',
+      turnId: undefined,
+      renderMode: 'plain',
+      content: '',
+    };
+    const outputComponent = new ShellRunComponent(() => this.state.ui.requestRender());
+    this.shellOutputStreams.set(commandId, { entry: outputEntry, component: outputComponent });
+    this.state.transcriptEntries.push(outputEntry);
+    markTranscriptComponent(outputComponent, outputEntry);
+    this.state.transcriptContainer.addChild(outputComponent);
+    // Treat command execution as a streaming phase so input queues, the activity
+    // pane shows the moon spinner, and ctrl+b is enabled while it runs.
+    this.setAppState({ streamingPhase: 'shell' });
+    this.state.ui.requestRender();
+
+    void session.runShellCommand(command, { commandId }).then(
+      ({ stdout, stderr, isError, backgrounded }) => {
+        this.finishShellOutput(commandId, stdout, stderr, isError, backgrounded);
+      },
+      (error: unknown) => {
+        const message = formatErrorMessage(error);
+        this.finishShellOutput(commandId, '', message, true);
+        this.showError(`Shell command failed: ${message}`);
+      },
+    );
+  }
+
+  handleShellOutput(event: { commandId: string; update: { kind: string; text?: string } }): void {
+    const stream = this.shellOutputStreams.get(event.commandId);
+    if (stream === undefined) return;
+    const text = event.update.text ?? '';
+    if (text.length === 0) return;
+    stream.component.append(text);
+  }
+
+  handleShellStarted(event: { commandId: string; taskId: string }): void {
+    const stream = this.shellOutputStreams.get(event.commandId);
+    if (stream === undefined) return;
+    stream.taskId = event.taskId;
+  }
+
+  cancelRunningShellCommand(): void {
+    const session = this.session;
+    if (session === undefined) return;
+    for (const commandId of this.shellOutputStreams.keys()) {
+      void session.cancelShellCommand(commandId).catch((error: unknown) => {
+        this.showError(`Failed to cancel shell command: ${formatErrorMessage(error)}`);
+      });
+    }
+  }
+
+  private finishShellOutput(
+    commandId: string,
+    stdout: string,
+    stderr: string,
+    isError?: boolean,
+    backgrounded?: boolean,
+  ): void {
+    const stream = this.shellOutputStreams.get(commandId);
+    if (stream === undefined) return;
+    if (backgrounded === true) {
+      // The command was moved to the background; detachRunningShellCommand owns
+      // the UI and the model notification, so there is nothing to render here.
+      return;
+    }
+    stream.component.finish(stdout, stderr, isError);
+    // Keep the transcript entry's metadata in sync for anything that reads it
+    // (export / copy). The component renders itself.
+    stream.entry.content = formatBashOutputForDisplay(stdout, stderr, isError);
+    this.shellOutputStreams.delete(commandId);
+    // When the last shell command finishes, leave the shell streaming phase,
+    // release one queued message (if any), and refresh the activity pane.
+    if (this.shellOutputStreams.size === 0) {
+      this.setAppState({ streamingPhase: 'idle' });
+      this.drainOneQueuedMessage();
+    }
+  }
+
+  private drainOneQueuedMessage(): void {
+    const item = this.shiftQueuedMessage();
+    if (item === undefined) return;
+    const session = this.session;
+    if (session === undefined) return;
+    if (item.mode === 'bash') {
+      this.runShellCommandFromInput(item.text);
+    } else {
+      this.sendQueuedMessage(session, item);
+    }
+    this.updateQueueDisplay();
   }
 
   sendNormalUserInput(text: string): void {
@@ -922,18 +1083,22 @@ export class KimiTUI {
     }
   }
 
-  recallLastQueued(): string | undefined {
+  recallLastQueued(): QueuedMessage | undefined {
     if (this.state.queuedMessages.length === 0) return undefined;
     const last = this.state.queuedMessages.at(-1)!;
     this.state.queuedMessages = this.state.queuedMessages.slice(0, -1);
-    return last.text;
+    return last;
   }
 
   // =========================================================================
   // Session Requests / Queues
   // =========================================================================
 
-  private enqueueMessage(text: string, options?: SendMessageOptions): void {
+  private enqueueMessage(
+    text: string,
+    options?: SendMessageOptions,
+    mode?: 'prompt' | 'bash',
+  ): void {
     this.state.queuedMessages.push({
       text,
       agentId: this.harness.interactiveAgentId,
@@ -942,6 +1107,7 @@ export class KimiTUI {
         options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
           ? options.imageAttachmentIds
           : undefined,
+      mode,
     });
     this.track('input_queue');
   }
@@ -970,6 +1136,10 @@ export class KimiTUI {
   }
 
   sendQueuedMessage(session: Session, item: QueuedMessage): void {
+    if (item.mode === 'bash') {
+      this.runShellCommandFromInput(item.text);
+      return;
+    }
     this.harness.withInteractiveAgent(item.agentId ?? MAIN_AGENT_ID, () => {
       this.sendMessageInternal(session, item.text, {
         parts: item.parts,
@@ -1500,7 +1670,7 @@ export class KimiTUI {
         const images = entry.imageAttachmentIds
           ?.map((id) => this.imageStore.get(id))
           .filter((a): a is ImageAttachment => a?.kind === 'image');
-        return new UserMessageComponent(entry.content, images);
+        return new UserMessageComponent(entry.content, images, entry.bullet);
       }
       case 'skill_activation':
         return new SkillActivationComponent(
@@ -1568,6 +1738,10 @@ export class KimiTUI {
     if (component) {
       markTranscriptComponent(component, entry);
       this.state.transcriptContainer.addChild(component);
+    }
+    const trimmed = this.trimTranscriptWindow();
+    const merged = this.mergeCurrentTurnSteps();
+    if (component || trimmed || merged) {
       this.state.ui.requestRender();
     }
   }
@@ -1629,6 +1803,12 @@ export class KimiTUI {
     this.streamingUI.resetLiveText();
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
+    // Dispose disposable children (e.g. ShellRunComponent's 1s timer) before
+    // dropping them, so a /clear or session switch can't leak intervals that
+    // keep firing requestRender on a removed component.
+    for (const child of this.state.transcriptContainer.children) {
+      if (hasDispose(child)) child.dispose();
+    }
     this.state.transcriptContainer.clear();
     this.btwPanelController.clear();
     this.clearTerminalInlineImages();
@@ -1636,6 +1816,210 @@ export class KimiTUI {
     this.state.todoPanelContainer.clear();
     this.imageStore.clear();
     this.renderWelcome();
+  }
+
+  private isTurnBoundaryComponent(child: Component): boolean {
+    if (!(child instanceof UserMessageComponent)) return false;
+    const entry = getTranscriptComponentEntry(child);
+    if (entry === undefined) return false;
+    // Live user messages have an undefined turnId; replayed user messages get a
+    // `replay:N` turnId. Both start a new turn. Steer messages carry a defined
+    // non-replay turnId and are not boundaries.
+    return entry.turnId === undefined || entry.turnId.startsWith('replay:');
+  }
+
+  private trimTranscriptWindow(): boolean {
+    if (!TRANSCRIPT_WINDOW_ENABLED || TRANSCRIPT_MAX_TURNS <= 0) return false;
+    // Session replay already caps history to its own turn limit; trimming during
+    // replay would shrink it further and fight that limit.
+    if (this.state.appState.isReplaying) return false;
+
+    const children = this.state.transcriptContainer.children;
+
+    // Trim whole turns by *position* in the child list rather than by entry
+    // lookup — otherwise only the (registered) user message would be removed and
+    // the rest of the turn would be left behind.
+    const boundaries: number[] = [];
+    for (let i = 0; i < children.length; i++) {
+      if (this.isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
+    }
+
+    const turns = groupTurns(this.state.transcriptEntries);
+
+    const toRemove = turnsToTrim(turns, TRANSCRIPT_MAX_TURNS, TRANSCRIPT_HYSTERESIS);
+    if (toRemove.size === 0) return false;
+
+    let boundariesToRemove = 0;
+    for (const entry of toRemove) {
+      if (entry.kind === 'user' && entry.turnId === undefined) boundariesToRemove++;
+    }
+    if (boundariesToRemove === 0) {
+      this.state.transcriptEntries = this.state.transcriptEntries.filter((e) => !toRemove.has(e));
+      return true;
+    }
+
+    let boundariesSeen = 0;
+    let cutoff = 0;
+    for (let i = 0; i < children.length; i++) {
+      if (this.isTurnBoundaryComponent(children[i]!)) {
+        if (boundariesSeen === boundariesToRemove) {
+          cutoff = i;
+          break;
+        }
+        boundariesSeen++;
+      }
+    }
+
+    const componentsToRemove: Component[] = [];
+    for (let i = 0; i < cutoff; i++) {
+      const child = children[i]!;
+      if (child instanceof WelcomeComponent) continue;
+      componentsToRemove.push(child);
+    }
+    for (const child of componentsToRemove) {
+      // pi-tui Container.removeChild (not a DOM node); `child.remove()` does not exist.
+      // oxlint-disable-next-line unicorn/prefer-dom-node-remove
+      this.state.transcriptContainer.removeChild(child);
+      if (hasDispose(child)) child.dispose();
+    }
+
+    this.state.transcriptEntries = this.state.transcriptEntries.filter((e) => !toRemove.has(e));
+    return true;
+  }
+
+  mergeCurrentTurnSteps(): boolean {
+    if (TRANSCRIPT_KEEP_RECENT_STEPS <= 0) return false;
+    const children = this.state.transcriptContainer.children;
+
+    // Find the start of the current turn (last turn-starting user message).
+    let turnStart = -1;
+    for (let i = children.length - 1; i >= 0; i--) {
+      if (this.isTurnBoundaryComponent(children[i]!)) {
+        turnStart = i;
+        break;
+      }
+    }
+    if (turnStart < 0) return false;
+
+    // Locate an existing summary, the assistant message, and the mergeable steps.
+    let summaryIndex = -1;
+    const stepIndices: number[] = [];
+    for (let i = turnStart + 1; i < children.length; i++) {
+      const child = children[i]!;
+      if (child instanceof StepSummaryComponent) {
+        summaryIndex = i;
+        continue;
+      }
+      if (child instanceof AssistantMessageComponent) continue;
+      stepIndices.push(i);
+    }
+
+    if (stepIndices.length <= TRANSCRIPT_KEEP_RECENT_STEPS) return false;
+    const mergeCount = stepIndices.length - TRANSCRIPT_KEEP_RECENT_STEPS;
+    const toMergeIndices = stepIndices.slice(0, mergeCount);
+
+    let thinkingCount = 0;
+    let toolCount = 0;
+    for (const idx of toMergeIndices) {
+      const child = children[idx]!;
+      if (child instanceof ThinkingComponent) thinkingCount++;
+      else if (child instanceof ToolCallComponent) toolCount++;
+    }
+    if (thinkingCount === 0 && toolCount === 0) return false;
+
+    let summary: StepSummaryComponent;
+    if (summaryIndex >= 0) {
+      summary = children[summaryIndex] as StepSummaryComponent;
+      summary.addCounts(thinkingCount, toolCount);
+    } else {
+      summary = new StepSummaryComponent();
+      summary.addCounts(thinkingCount, toolCount);
+    }
+
+    // Rebuild children: keep everything except the merged steps, with the summary
+    // sitting right after the user message.
+    const toMergeSet = new Set(toMergeIndices);
+    const newChildren: Component[] = [];
+    for (let i = 0; i <= turnStart; i++) newChildren.push(children[i]!);
+    newChildren.push(summary);
+    for (let i = turnStart + 1; i < children.length; i++) {
+      if (i === summaryIndex) continue;
+      if (toMergeSet.has(i)) continue;
+      newChildren.push(children[i]!);
+    }
+
+    for (const idx of toMergeIndices) {
+      const child = children[idx]!;
+      if (hasDispose(child)) child.dispose();
+    }
+
+    children.splice(0, children.length, ...newChildren);
+    return true;
+  }
+
+  mergeAllTurnSteps(): void {
+    if (TRANSCRIPT_KEEP_RECENT_STEPS <= 0) return;
+    const children = this.state.transcriptContainer.children;
+
+    const boundaries: number[] = [];
+    for (let i = 0; i < children.length; i++) {
+      if (this.isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
+    }
+    if (boundaries.length === 0) return;
+
+    const newChildren: Component[] = [];
+    const toDispose: Component[] = [];
+    for (let i = 0; i < boundaries[0]!; i++) newChildren.push(children[i]!);
+
+    for (let t = 0; t < boundaries.length; t++) {
+      const turnStart = boundaries[t]!;
+      const turnEnd = t + 1 < boundaries.length ? boundaries[t + 1]! : children.length;
+      newChildren.push(children[turnStart]!);
+
+      let summaryIndex = -1;
+      const stepIndices: number[] = [];
+      for (let i = turnStart + 1; i < turnEnd; i++) {
+        const child = children[i]!;
+        if (child instanceof StepSummaryComponent) summaryIndex = i;
+        else if (child instanceof AssistantMessageComponent) continue;
+        else stepIndices.push(i);
+      }
+
+      if (stepIndices.length > TRANSCRIPT_KEEP_RECENT_STEPS) {
+        const mergeCount = stepIndices.length - TRANSCRIPT_KEEP_RECENT_STEPS;
+        const toMergeIndices = stepIndices.slice(0, mergeCount);
+        let thinkingCount = 0;
+        let toolCount = 0;
+        for (const idx of toMergeIndices) {
+          const child = children[idx]!;
+          if (child instanceof ThinkingComponent) thinkingCount++;
+          else if (child instanceof ToolCallComponent) toolCount++;
+        }
+        let summary: StepSummaryComponent;
+        if (summaryIndex >= 0) {
+          summary = children[summaryIndex] as StepSummaryComponent;
+          summary.addCounts(thinkingCount, toolCount);
+        } else {
+          summary = new StepSummaryComponent();
+          summary.addCounts(thinkingCount, toolCount);
+        }
+        newChildren.push(summary);
+        for (const idx of toMergeIndices) toDispose.push(children[idx]!);
+        const toMergeSet = new Set(toMergeIndices);
+        for (let i = turnStart + 1; i < turnEnd; i++) {
+          if (i === summaryIndex) continue;
+          if (toMergeSet.has(i)) continue;
+          newChildren.push(children[i]!);
+        }
+      } else {
+        for (let i = turnStart + 1; i < turnEnd; i++) newChildren.push(children[i]!);
+      }
+    }
+
+    for (const child of toDispose) {
+      if (hasDispose(child)) child.dispose();
+    }
+    children.splice(0, children.length, ...newChildren);
   }
 
   showStatus(message: string, color?: ColorToken): void {
@@ -1669,6 +2053,9 @@ export class KimiTUI {
         const symbol = ok ? '✓' : '✗';
         spinner.setText(currentTheme.fg(tone, `${symbol} ${finalLabel}`));
         this.state.ui.requestRender();
+      },
+      setLabel: (nextLabel) => {
+        spinner.setLabel(nextLabel);
       },
     };
   }
@@ -1795,6 +2182,11 @@ export class KimiTUI {
     if (this.state.livePane.pendingQuestion !== null) return 'hidden';
 
     const streamingPhase = this.state.appState.streamingPhase;
+
+    // A running `!` shell command shows the moon spinner (same as `waiting`)
+    // until it finishes, signalling that input is busy / queued.
+    if (streamingPhase === 'shell') return 'waiting';
+
     if (this.state.livePane.mode === 'idle') {
       if (streamingPhase === 'thinking' || streamingPhase === 'composing') {
         return streamingPhase;
@@ -1821,10 +2213,27 @@ export class KimiTUI {
 
   toggleToolOutputExpansion(): void {
     this.state.toolOutputExpanded = !this.state.toolOutputExpanded;
-    for (const child of this.state.transcriptContainer.children) {
-      if (isExpandable(child)) {
-        child.setExpanded(this.state.toolOutputExpanded);
-      }
+    const children = this.state.transcriptContainer.children;
+
+    // A component is expandable only if it sits at or after the start of the
+    // (totalTurns - expandTurns)-th turn — i.e. it belongs to one of the most
+    // recent `expandTurns` turns. Position-based so it also covers streaming
+    // components that have no entry in the metadata map.
+    const boundaries: number[] = [];
+    for (let i = 0; i < children.length; i++) {
+      if (this.isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
+    }
+    const expandCutoff =
+      TRANSCRIPT_EXPAND_TURNS <= 0
+        ? children.length
+        : boundaries.length > TRANSCRIPT_EXPAND_TURNS
+          ? boundaries[boundaries.length - TRANSCRIPT_EXPAND_TURNS]!
+          : 0;
+
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i]!;
+      if (!isExpandable(child)) continue;
+      child.setExpanded(this.state.toolOutputExpanded && i >= expandCutoff);
     }
     this.state.ui.requestRender();
   }
@@ -1834,7 +2243,49 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
+  private async detachRunningShellCommand(): Promise<void> {
+    // Only one `!` command runs at a time (input is queued while busy).
+    const next = this.shellOutputStreams.entries().next();
+    if (next.done) {
+      this.showDetachHint('No shell command running.');
+      return;
+    }
+    const [commandId, stream] = next.value;
+    if (stream.taskId === undefined) {
+      this.showDetachHint('Command is still starting — try again.');
+      return;
+    }
+    const session = this.session;
+    if (session === undefined) return;
+    try {
+      const info = await session.detachBackgroundTask(stream.taskId);
+      if (info === undefined) {
+        this.showDetachHint('Command already finished.');
+        return;
+      }
+    } catch (error) {
+      this.showError(`Failed to move to background: ${formatErrorMessage(error)}`);
+      return;
+    }
+    // Finalize the card as backgrounded and drop the stream so the eventual
+    // runShellCommand resolution (which carries background metadata) is a no-op
+    // instead of overwriting this view.
+    stream.component.finishBackgrounded();
+    stream.entry.content = 'Moved to background.';
+    this.shellOutputStreams.delete(commandId);
+    // The backgrounded command's notification turn (started by agent-core via
+    // appendSystemReminderAndNotify) owns the streaming phase and drains the
+    // queue when it completes, so we intentionally leave both untouched here.
+    this.showDetachHint('Moved to background. /tasks to view.');
+  }
+
   async detachCurrentForegroundTask(): Promise<void> {
+    // A running `!` shell command takes priority over agent foreground tasks.
+    if (this.shellOutputStreams.size > 0) {
+      await this.detachRunningShellCommand();
+      return;
+    }
+
     const session = this.session;
     if (session === undefined) {
       this.showError(NO_ACTIVE_SESSION_MESSAGE);
@@ -1901,10 +2352,12 @@ export class KimiTUI {
 
   updateEditorBorderHighlight(text?: string): void {
     const trimmed = (text ?? this.state.editor.getText()).trimStart();
-    const highlighted = this.state.appState.planMode || trimmed.startsWith('/');
+    const isBash = this.state.appState.inputMode === 'bash';
+    const highlighted = this.state.appState.planMode || isBash || trimmed.startsWith('/');
     this.state.editor.borderHighlighted = highlighted;
-    this.state.editor.borderColor = (s: string) =>
-      currentTheme.fg(highlighted ? 'primary' : 'border', s);
+    // Shell mode gets its own hue; plan-mode and slash context stay primary.
+    const borderToken = isBash ? 'shellMode' : highlighted ? 'primary' : 'border';
+    this.state.editor.borderColor = (s: string) => currentTheme.fg(borderToken, s);
     this.state.ui.requestRender();
   }
 
