@@ -32,6 +32,11 @@ import {
   type BufferedChatCompletionToolCall,
 } from './chat-completions-stream';
 import {
+  DeepSeekInlineToolCallFilter,
+  firstBlockStart,
+  parseDeepSeekInlineToolCalls,
+} from './deepseek-inline-tool-calls';
+import {
   mergeRequestHeaders,
   requireProviderApiKey,
   resolveAuthBackedClient,
@@ -369,20 +374,36 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
     }
 
-    if (message.content) {
-      yield { type: 'text', text: message.content } satisfies StreamedMessagePart;
+    const structuredToolCalls = (message.tool_calls ?? []).filter(isFunctionToolCall);
+    const content = typeof message.content === 'string' ? message.content : '';
+
+    // Fallback: a backend served a DeepSeek-format model but left its inline
+    // tool-call tokens in `content` instead of structuring them as `tool_calls`.
+    // Strip the block from visible text whenever a block boundary is present (and
+    // the provider returned no structured call) — even if some blocks fail to
+    // parse — so the raw tokens never render. Parse what we can into dispatchable
+    // tool calls. No-op when absent or already structured.
+    const blockStart = structuredToolCalls.length === 0 ? firstBlockStart(content) : -1;
+    const inlineToolCalls = blockStart >= 0 ? parseDeepSeekInlineToolCalls(content) : [];
+
+    if (content.length > 0) {
+      const text = blockStart >= 0 ? content.slice(0, blockStart) : content;
+      if (text.length > 0) {
+        yield { type: 'text', text } satisfies StreamedMessagePart;
+      }
     }
 
-    if (message.tool_calls) {
-      for (const toolCall of message.tool_calls) {
-        if (!isFunctionToolCall(toolCall)) continue;
-        yield {
-          type: 'function',
-          id: toolCall.id || crypto.randomUUID(),
-          name: toolCall.function.name,
-          arguments: toolCall.function.arguments,
-        } satisfies ToolCall;
-      }
+    for (const toolCall of structuredToolCalls) {
+      yield {
+        type: 'function',
+        id: toolCall.id || crypto.randomUUID(),
+        name: toolCall.function.name,
+        arguments: toolCall.function.arguments,
+      } satisfies ToolCall;
+    }
+
+    for (const toolCall of inlineToolCalls) {
+      yield toolCall;
     }
   }
 
@@ -391,6 +412,8 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     reasoningKey: string | undefined,
   ): AsyncGenerator<StreamedMessagePart> {
     const bufferedToolCalls = new Map<number | string, BufferedChatCompletionToolCall>();
+    const inlineFilter = new DeepSeekInlineToolCallFilter();
+    let sawStructuredToolCall = false;
 
     try {
       for await (const chunk of response) {
@@ -424,17 +447,44 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 
-        // text content
+        // text content — funnel through the inline filter so a leaked DeepSeek
+        // tool-call block is stripped from visible text (and captured for parsing
+        // once the stream ends) instead of being shown to the user.
         if (delta.content) {
-          yield { type: 'text', text: delta.content } satisfies StreamedMessagePart;
+          const visible = inlineFilter.push(delta.content);
+          if (visible.length > 0) {
+            yield { type: 'text', text: visible } satisfies StreamedMessagePart;
+          }
         }
 
         // tool calls — preserve `index` on every yielded part so the generate
         // loop can route interleaved argument deltas from parallel tool calls.
+        if (delta.tool_calls && delta.tool_calls.length > 0 && !sawStructuredToolCall) {
+          sawStructuredToolCall = true;
+          // A structured tool call means no inline leak is possible: release any
+          // held-back preamble text now so it isn't reordered after the call parts.
+          const released = inlineFilter.releaseHoldback();
+          if (released.length > 0) {
+            yield { type: 'text', text: released } satisfies StreamedMessagePart;
+          }
+        }
         for (const toolCall of delta.tool_calls ?? []) {
           for (const part of convertChatCompletionStreamToolCall(toolCall, bufferedToolCalls)) {
             yield part;
           }
+        }
+      }
+
+      // Flush any text held back for partial begin-marker detection.
+      const tail = inlineFilter.flush();
+      if (tail.length > 0) {
+        yield { type: 'text', text: tail } satisfies StreamedMessagePart;
+      }
+      // Fallback: the backend served a DeepSeek-format model but left its inline
+      // tool-call tokens in `content` instead of structuring them. Parse them.
+      if (!sawStructuredToolCall && inlineFilter.sawToolBlock) {
+        for (const toolCall of parseDeepSeekInlineToolCalls(inlineFilter.content)) {
+          yield toolCall;
         }
       }
     } catch (error: unknown) {
