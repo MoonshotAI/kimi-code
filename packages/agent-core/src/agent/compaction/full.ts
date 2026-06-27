@@ -39,6 +39,15 @@ import {
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 
+/**
+ * Default hard cap on compaction output tokens when `maxOutputSize` is not
+ * configured on the model alias. Without this, compaction falls back to the
+ * full context window size, which exceeds the `max_tokens` ceiling enforced
+ * by many OpenAI-compatible providers. 128k matches the chat-completions
+ * ceiling applied by the OpenAI Legacy provider.
+ */
+const DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS = 128 * 1024;
+
 class CompactionTruncatedError extends Error {
   constructor() {
     super('Compaction response was truncated before producing a complete summary.');
@@ -261,13 +270,25 @@ export class FullCompaction {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
       const model = this.agent.config.model;
+      const capability = this.agent.config.modelCapabilities;
+      const maxContextTokens = capability.max_context_tokens;
+      // When the model's context window is known and the user has not set
+      // `maxOutputSize`, cap compaction output to a safe default so a large
+      // context window does not push `max_tokens` past the provider's ceiling.
+      // When the window is unknown (maxContextTokens === 0), leave
+      // `maxOutputSize` unset so `resolveCompletionBudget` falls back to the
+      // conservative unknown-context fallback.
+      const defaultCompactionCap =
+        maxContextTokens > 0
+          ? Math.min(maxContextTokens, DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS)
+          : undefined;
       const provider = applyCompletionBudget({
         provider: this.agent.config.provider,
         budget: resolveCompletionBudget({
-          maxOutputSize: this.agent.config.maxOutputSize,
+          maxOutputSize: this.agent.config.maxOutputSize ?? defaultCompactionCap,
           reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
         }),
-        capability: this.agent.config.modelCapabilities,
+        capability,
       });
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);

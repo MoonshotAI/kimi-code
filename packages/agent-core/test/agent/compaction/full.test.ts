@@ -1811,6 +1811,39 @@ describe('FullCompaction', () => {
     expect(compactionMaxCompletionTokens).toEqual([384000]);
   });
 
+  it('uses default 128k hardCap when maxOutputSize is not configured', async () => {
+    let callCount = 0;
+    const compactionMaxCompletionTokens: unknown[] = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-default-cap');
+      }
+      if (callCount === 2) {
+        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        return textResult('Default cap compacted summary.');
+      }
+      await callbacks?.onMessagePart?.({
+        type: 'text',
+        text: 'Recovered with default cap.',
+      });
+      return textResult('Recovered with default cap.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry with default cap' }] });
+    await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(3);
+    expect(compactionMaxCompletionTokens).toEqual([128 * 1024]);
+  });
+
   it('ignores filtered assistant placeholders when checking the retained overflow suffix', async () => {
     let callCount = 0;
     const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
