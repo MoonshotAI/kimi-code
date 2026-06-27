@@ -19,6 +19,11 @@ export function stubEnvironment(homeDir = '/tmp/kimi-home'): IEnvironmentService
     _serviceBrand: undefined,
     homeDir,
     configPath: `${homeDir}/config.toml`,
+    sessionsDir: `${homeDir}/sessions`,
+    blobsDir: `${homeDir}/blobs`,
+    storeDir: `${homeDir}/store`,
+    cacheDir: `${homeDir}/cache`,
+    logsDir: `${homeDir}/logs`,
     detect: () => Promise.reject(new Error('unused in test')),
   };
 }

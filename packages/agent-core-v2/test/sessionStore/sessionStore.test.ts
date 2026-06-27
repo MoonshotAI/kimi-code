@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
-import { IKaosFactory } from '#/kaos';
+import { HostFileSystem, IHostFileSystem } from '#/hostFs';
 import { ISessionStore } from '#/sessionStore/sessionStore';
 import { SessionStore, encodeWorkDirKey } from '#/sessionStore/sessionStoreService';
 
@@ -39,7 +39,7 @@ describe('SessionStore workspace helpers', () => {
   });
 
   function build(): ISessionStore {
-    const host = createScopedTestHost([stubPair(IKaosFactory, { _serviceBrand: undefined } as unknown as IKaosFactory)]);
+    const host = createScopedTestHost([stubPair(IHostFileSystem, new HostFileSystem())]);
     disposeHost = () => host.dispose();
     return host.core.accessor.get(ISessionStore);
   }

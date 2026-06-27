@@ -16,7 +16,7 @@ import { generateHeroSlug } from "#/_base/utils/hero-slug";
 import { IContextMemory, type ContextMessage } from '#/contextMemory';
 import { IContextInjector } from '../contextInjector';
 import { IEventSink } from '../eventSink';
-import { IKaosService } from '#/kaos';
+import { IAgentFileSystem } from '#/agentFs';
 import { IProfileService } from '#/profile';
 import { IReplayBuilderService } from '#/replayBuilder';
 import { ITelemetryService } from '#/telemetry';
@@ -53,7 +53,7 @@ export class PlanService extends Disposable implements IPlanService {
     @IContextMemory private readonly context: IContextMemory,
     @IWireRecord private readonly wireRecord: IWireRecord,
     @IEventSink private readonly events: IEventSink,
-    @IKaosService private readonly kaosService: IKaosService,
+    @IAgentFileSystem private readonly agentFs: IAgentFileSystem,
     @IProfileService private readonly profile: IProfileService,
     @IReplayBuilderService private readonly replayBuilder: IReplayBuilderService,
     @IToolRegistry toolRegistry: IToolRegistry,
@@ -200,11 +200,9 @@ export class PlanService extends Disposable implements IPlanService {
 
   async status(): Promise<PlanData> {
     if (this.planId === null || this._planFilePath === null) return null;
-    const kaos = this.kaosService.kaos;
-    if (kaos === undefined) return null;
     let content = '';
     try {
-      content = await kaos.readText(this._planFilePath);
+      content = await this.agentFs.readText(this._planFilePath);
     } catch (error) {
       if (!isMissingFileError(error)) throw error;
     }
@@ -362,14 +360,11 @@ export class PlanService extends Disposable implements IPlanService {
 
   private async writeEmptyPlanFile(path: string): Promise<void> {
     await this.ensurePlanDirectory(path);
-    await this.kaosService.kaos?.writeText(path, '');
+    await this.agentFs.writeText(path, '');
   }
 
   private async ensurePlanDirectory(path: string): Promise<void> {
-    await this.kaosService.kaos?.mkdir(dirname(path), {
-      parents: true,
-      existOk: true,
-    });
+    await this.agentFs.mkdir(dirname(path));
   }
 
   private currentCwd(): string {

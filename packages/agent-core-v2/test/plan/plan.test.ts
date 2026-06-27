@@ -6,7 +6,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IContextMemory } from '#/contextMemory';
 import { IContextInjector } from '../../src/contextInjector';
 import { IEventSink } from '../../src/eventSink';
-import { IKaosService } from '#/kaos';
+import { IAgentFileSystem } from '#/agentFs';
 import { IPlanService } from '#/plan';
 import { PlanService } from '#/plan/planService';
 import { IProfileService } from '#/profile';
@@ -39,8 +39,12 @@ describe('PlanService', () => {
     ix.stub(ITelemetryService, { track() {} });
     ix.stub(IToolRegistry, { register: () => ({ dispose() {} }) });
     ix.stub(IContextInjector, { register: () => ({ dispose() {} }) });
-    // kaos undefined → filesystem access short-circuits via optional chaining.
-    ix.stub(IKaosService, { kaos: undefined });
+    // Agent filesystem no-op — plan file IO is not exercised by these tests.
+    ix.stub(IAgentFileSystem, {
+      readText: () => Promise.resolve(''),
+      writeText: () => Promise.resolve(),
+      mkdir: () => Promise.resolve(),
+    });
     // PlanService.currentCwd() reads profile.data().cwd.
     ix.stub(IProfileService, 'data', () => ({ cwd: '/tmp' }));
 

@@ -1,36 +1,37 @@
 /**
- * `sessionMetaStore` — session-scope metadata persistence.
+ * `sessionMetaStore` domain (L2) — `ISessionMetaStore` implementation.
+ *
+ * Persists session metadata as a single atomic document through the program
+ * side `storage` (`IConfigStore`). Bound at Session scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { ISessionKaosService } from '#/kaos';
 import { ILogService } from '#/log';
+import { IConfigStore } from '#/storage';
 
 import { ISessionMetaStore } from './sessionMetaStore';
+
+const SCOPE = 'session-meta';
 
 export class SessionMetaStore extends Disposable implements ISessionMetaStore {
   declare readonly _serviceBrand: undefined;
   private data: Record<string, unknown> = {};
-  private readonly path: string;
+  private readonly key: string;
 
   constructor(
-    @ISessionKaosService private readonly sessionKaos: ISessionKaosService,
+    @IConfigStore private readonly configStore: IConfigStore,
     @ILogService _log: ILogService,
-    path: string = 'state.json',
+    key: string = 'state.json',
   ) {
     super();
-    this.path = path;
+    this.key = key;
   }
 
   async read(): Promise<Record<string, unknown>> {
-    try {
-      const text = await this.sessionKaos.persistenceKaos.readText(this.path);
-      this.data = JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      this.data = {};
-    }
+    this.data =
+      (await this.configStore.get<Record<string, unknown>>(SCOPE, this.key)) ?? {};
     return this.data;
   }
 
@@ -40,10 +41,7 @@ export class SessionMetaStore extends Disposable implements ISessionMetaStore {
   }
 
   async flush(): Promise<void> {
-    await this.sessionKaos.persistenceKaos.writeText(
-      this.path,
-      JSON.stringify(this.data, null, 2),
-    );
+    await this.configStore.set(SCOPE, this.key, this.data);
   }
 }
 

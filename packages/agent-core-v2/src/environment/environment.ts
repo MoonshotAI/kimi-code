@@ -1,10 +1,11 @@
 /**
  * `environment` domain (L1) — resolved environment paths and OS probe.
  *
- * Defines the public contract of the environment: the resolved paths
- * (`homeDir`, `configPath`) and the `IEnvironmentService` used by other
- * domains to locate config and detect the host `Environment`, plus the
- * Core-scope `environmentSeed`. Core-scoped — one shared instance.
+ * Defines the public contract of the environment: the resolved paths the app
+ * writes to (`homeDir`, `configPath`, `sessionsDir`, `blobsDir`, `storeDir`,
+ * `cacheDir`, `logsDir`) and the `IEnvironmentService` used by other domains
+ * to locate those paths and detect the host `Environment`, plus the Core-scope
+ * `environmentSeed`. Pure configuration — it performs no IO. Core-scoped.
  */
 
 import type { Environment } from '@moonshot-ai/kaos';
@@ -23,6 +24,11 @@ export interface IEnvironmentService {
   readonly _serviceBrand: undefined;
   readonly homeDir: string;
   readonly configPath: string;
+  readonly sessionsDir: string;
+  readonly blobsDir: string;
+  readonly storeDir: string;
+  readonly cacheDir: string;
+  readonly logsDir: string;
   detect(): Promise<Environment>;
 }
 
