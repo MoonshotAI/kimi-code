@@ -610,42 +610,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /**
-   * Create a session in a workspace — the one-click path (no cwd typing).
-   * Register/touch the workspace first when the daemon supports it; if that
-   * fails, fall back to the legacy cwd-only create path.
-   */
-  async function createSessionInWorkspace(workspaceId: string): Promise<AppSession | undefined> {
-    const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
-    if (!ws) return undefined;
-    try {
-      const api = getKimiWebApi();
-      let workspaceIdForCreate: string | undefined;
-      let cwdForCreate = ws.root;
-      try {
-        const registered = await api.addWorkspace({ root: ws.root });
-        workspaceIdForCreate = registered.id;
-        cwdForCreate = registered.root;
-        upsertWorkspacePreserveOrder(registered);
-      } catch {
-        // Older daemons may not have /workspaces. In that mode, sending a local
-        // path-like workspace id as workspace_id would fail validation, so use
-        // metadata.cwd only.
-      }
-      const session = await api.createSession({ workspaceId: workspaceIdForCreate, cwd: cwdForCreate });
-      upsertSessionFront(session);
-      selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
-      // Locally created sessions start empty; trust that so the empty-composer
-      // renders immediately instead of flashing a loading state.
-      sessionsKnownEmpty.add(session.id);
-      await selectSession(session.id);
-      return session;
-    } catch (err) {
-      pushOperationFailure('createSessionInWorkspace', err);
-      return undefined;
-    }
-  }
-
-  /**
    * Create a session and immediately submit the first prompt.
    * This is the unified path when there is no active session (e.g. after
    * clicking "+" or in an empty workspace).
@@ -884,20 +848,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (rawState.activeSessionId === sessionId) {
         rawState.sessionLoading = false;
       }
-    }
-  }
-
-  async function createSession(cwd: string, opts?: { title?: string; model?: string }): Promise<void> {
-    try {
-      const api = getKimiWebApi();
-      const session = await api.createSession({ cwd, title: opts?.title, model: opts?.model });
-      upsertSessionFront(session);
-      // Locally created sessions start empty; trust that so the empty-composer
-      // renders immediately instead of flashing a loading state.
-      sessionsKnownEmpty.add(session.id);
-      await selectSession(session.id);
-    } catch (err) {
-      pushOperationFailure('createSession', err);
     }
   }
 
@@ -1730,7 +1680,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     applyWorkspaceEvent,
     clearActiveSession,
     openWorkspaceDraft,
-    createSessionInWorkspace,
     startSessionAndSendPrompt,
     addWorkspaceByPath,
     browseFs,
@@ -1740,7 +1689,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     onSessionRoutePopState,
     bindSessionRoute,
     selectSession,
-    createSession,
     submitPromptInternal,
     sendPrompt,
     steerPrompt,

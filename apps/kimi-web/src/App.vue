@@ -14,7 +14,6 @@ import DiffView from './components/chat/DiffView.vue';
 import ModelPicker from './components/settings/ModelPicker.vue';
 import ProviderManager from './components/settings/ProviderManager.vue';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
-import NewSessionDialog from './components/dialogs/NewSessionDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
 import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
 import StatusPanel from './components/chat/StatusPanel.vue';
@@ -227,7 +226,6 @@ function handleSelectWorkspaces(ids: string[]): void {
 const showModelPicker = ref(false);
 const showProviders = ref(false);
 const showLogin = ref(false);
-const showNewSession = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
@@ -246,7 +244,6 @@ const anyOverlayOpen = computed<boolean>(() =>
   showModelPicker.value ||
   showProviders.value ||
   showLogin.value ||
-  showNewSession.value ||
   showAddWorkspace.value ||
   showStatusPanel.value ||
   showSettings.value ||
@@ -391,8 +388,8 @@ function handleCommand(cmd: string): void {
     return;
   }
   switch (cmd) {
-    // `/new` and `/clear` are aliases: both open the onboarding composer (or
-    // the new-session dialog when no workspace is active).
+    // `/new` and `/clear` are aliases: both open the onboarding composer. The
+    // session is only created when the user sends the first message.
     case '/new':
     case '/clear':
       handleCreateSession();
@@ -505,10 +502,10 @@ function handleCreateSession(): void {
   const wsId = client.activeWorkspaceId.value;
   if (wsId) {
     client.openWorkspaceDraft(wsId);
-    focusComposerAfterDraft();
   } else {
-    showNewSession.value = true;
+    client.clearActiveSession();
   }
+  focusComposerAfterDraft();
 }
 
 // Workspace-level "+ New" (sidebar group or mobile switcher): enter the draft
@@ -852,14 +849,6 @@ function openPr(url: string): void {
       @delete="handleDeleteProvider($event)"
       @open-login="() => { showProviders = false; openLogin(); }"
       @close="showProviders = false"
-    />
-
-    <!-- New Session Dialog overlay (fallback cwd-typing path) -->
-    <NewSessionDialog
-      v-if="showNewSession"
-      :recent-cwds="client.recentCwds.value"
-      @create="({ cwd, title }) => { showNewSession = false; void client.createSession(cwd, { title }); }"
-      @close="showNewSession = false"
     />
 
     <!-- Status panel overlay (/status) — renders current client state, no daemon call -->

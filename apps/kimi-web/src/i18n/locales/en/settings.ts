@@ -1,5 +1,6 @@
 export default {
   title: 'Settings',
+  close: 'Close (Esc)',
   tabs: {
     general: 'General',
     agent: 'Agent',
