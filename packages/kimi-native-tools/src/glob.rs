@@ -162,6 +162,36 @@ fn build_glob_matcher(pattern: &str) -> Option<globset::GlobMatcher> {
         .map(|g| g.compile_matcher())
 }
 
+/// Check if `path` matches any of the given glob patterns.
+///
+/// All patterns are compiled into a single `GlobSet` and tested in one
+/// `is_match` call, eliminating the per-pattern overhead of building and
+/// testing individual regexes.
+///
+/// Uses case-sensitive matching with `literal_separator(true)` to mirror
+/// `globToRegExp` in `fsSearchService.ts` — `*` does NOT cross `/`, only `**`
+/// does. This also matches ripgrep's `--glob` semantics. Do NOT use
+/// `build_glob_matcher` which sets `.case_insensitive(true)` for the glob
+/// tool's file-discovery use.
+pub fn glob_matches_any(globs: &[String], path: &str) -> bool {
+    if globs.is_empty() {
+        return false;
+    }
+    let mut builder = globset::GlobSetBuilder::new();
+    for g in globs {
+        if let Ok(glob) = globset::GlobBuilder::new(g)
+            .literal_separator(true)
+            .build()
+        {
+            builder.add(glob);
+        }
+    }
+    match builder.build() {
+        Ok(set) => set.is_match(path),
+        Err(_) => false,
+    }
+}
+
 /// Expand brace expressions in a glob pattern.
 ///
 /// Supports:
@@ -169,11 +199,19 @@ fn build_glob_matcher(pattern: &str) -> Option<globset::GlobMatcher> {
 ///   - `{src,test}/**` → `["src/**", "test/**"]`
 ///   - Nested braces: `{a,{b,c}}` → `["a", "b", "c"]`
 ///   - Cartesian: `{a,b}{c,d}` → `["ac", "ad", "bc", "bd"]`
+///   - Escaped braces: `\{a,b\}` → `["\{a,b\}"]` (literal)
+///   - Comma-less groups: `{abc}{d,e}` → `["{abc}d", "{abc}e"]`
 ///
 /// Falls through as literal if braces are unbalanced or empty.
-fn expand_braces(pattern: &str) -> Vec<String> {
-    // Find the first top-level brace group and expand it.
-    // Then recursively expand the results.
+/// Caps at MAX_BRACE_EXPANSIONS; if exceeded, returns `[pattern]`.
+pub(crate) fn expand_braces(pattern: &str) -> Vec<String> {
+    expand_braces_inner(pattern).unwrap_or_else(|| vec![pattern.to_string()])
+}
+
+/// Inner expansion — returns `None` when the result count exceeds
+/// MAX_BRACE_EXPANSIONS, so the top-level caller can return `[pattern]`.
+/// The `?` operator propagates the overflow up the recursion stack.
+fn expand_braces_inner(pattern: &str) -> Option<Vec<String>> {
     if let Some(group) = find_first_brace_group(pattern) {
         let before = &pattern[..group.start];
         let after = &pattern[group.end + 1..];
@@ -181,68 +219,85 @@ fn expand_braces(pattern: &str) -> Vec<String> {
         let mut results = Vec::new();
         for alt in &group.alternatives {
             let expanded = format!("{}{}{}", before, alt, after);
-            // Recursively expand any remaining brace groups.
-            let sub_results = expand_braces(&expanded);
-            results.extend(sub_results);
+            let sub_results = expand_braces_inner(&expanded)?;
+            for r in sub_results {
+                results.push(r);
+                if results.len() > MAX_BRACE_EXPANSIONS {
+                    return None;
+                }
+            }
         }
-
-        if results.len() > MAX_BRACE_EXPANSIONS {
-            return vec![pattern.to_string()];
-        }
-
-        results
+        Some(results)
     } else {
-        vec![pattern.to_string()]
+        Some(vec![pattern.to_string()])
     }
 }
 
-/// Find the first top-level brace group in a pattern.
+/// Find the first brace group that contains at least one comma (i.e., a real
+/// alternation). Comma-less groups like `{abc}` are skipped so scanning can
+/// find a later real group (e.g., `{abc}{d,e}` → expands `{d,e}`).
 fn find_first_brace_group(pattern: &str) -> Option<BraceGroup> {
     let bytes = pattern.as_bytes();
-    let mut depth = 0;
-    let mut group_start: Option<usize> = None;
-    let mut alternatives: Vec<String> = Vec::new();
-    let mut current_alt_start = 0;
+    let mut i = 0;
 
-    for i in 0..bytes.len() {
+    while i < bytes.len() {
         match bytes[i] {
-            b'{' if depth == 0 => {
-                group_start = Some(i);
-                current_alt_start = i + 1;
-                depth = 1;
+            b'\\' => {
+                i += 2;
+                continue;
             }
             b'{' => {
-                depth += 1;
+                if let Some(group) = parse_brace_group(pattern, i) {
+                    return Some(group);
+                }
             }
-            b'}' if depth > 0 => {
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Parse a brace group starting at `start` (the `{` byte).
+/// Returns `None` if the group has no commas (comma-less) or is unbalanced.
+fn parse_brace_group(pattern: &str, start: usize) -> Option<BraceGroup> {
+    let bytes = pattern.as_bytes();
+    let mut depth = 1;
+    let mut alternatives: Vec<String> = Vec::new();
+    let mut current_alt_start = start + 1;
+    let mut has_comma = false;
+
+    let mut i = start + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                i += 2;
+                continue;
+            }
+            b'{' => depth += 1,
+            b'}' => {
                 depth -= 1;
                 if depth == 0 {
-                    if let Some(start) = group_start {
-                        let alt = &pattern[current_alt_start..i];
-                        if !alt.is_empty() {
-                            alternatives.push(alt.to_string());
-                        }
-
-                        if !alternatives.is_empty() {
-                            return Some(BraceGroup {
-                                start,
-                                end: i,
-                                alternatives,
-                            });
-                        }
+                    alternatives.push(pattern[current_alt_start..i].to_string());
+                    if has_comma {
+                        return Some(BraceGroup {
+                            start,
+                            end: i,
+                            alternatives,
+                        });
                     }
                     return None;
                 }
             }
             b',' if depth == 1 => {
-                let alt = &pattern[current_alt_start..i];
-                alternatives.push(alt.to_string());
+                has_comma = true;
+                alternatives.push(pattern[current_alt_start..i].to_string());
                 current_alt_start = i + 1;
             }
             _ => {}
         }
+        i += 1;
     }
-
     None
 }
 
@@ -420,5 +475,44 @@ mod tests {
         let expanded = expand_braces("*.{ts,tsx");
         // Unbalanced braces — should fall through as literal.
         assert_eq!(expanded, vec!["*.{ts,tsx"]);
+    }
+
+    #[test]
+    fn test_brace_expansion_escaped() {
+        // Escaped braces are not treated as groups
+        let expanded = expand_braces(r"\{a,b\}");
+        assert_eq!(expanded, vec![r"\{a,b\}"]);
+    }
+
+    #[test]
+    fn test_brace_expansion_comma_less_skip() {
+        // {abc} has no comma → skipped; {d,e} is expanded
+        let expanded = expand_braces("{abc}{d,e}");
+        assert_eq!(expanded, vec!["{abc}d", "{abc}e"]);
+    }
+
+    #[test]
+    fn test_brace_expansion_empty_alternative() {
+        // {a,} → ["a", ""]
+        let expanded = expand_braces("{a,}");
+        assert_eq!(expanded, vec!["a", ""]);
+    }
+
+    #[test]
+    fn test_brace_expansion_nested_with_escape() {
+        // Escaped brace inside a group
+        let expanded = expand_braces(r"{a,\{b}");
+        assert_eq!(expanded.len(), 2);
+        assert!(expanded.contains(&"a".to_string()));
+        assert!(expanded.contains(&r"\{b".to_string()));
+    }
+
+    #[test]
+    fn test_brace_expansion_cap() {
+        // Exceeding MAX_BRACE_EXPANSIONS returns original pattern
+        let groups: String = (0..10).map(|_| "{a,b,c,d,e,f,g,h}").collect();
+        let expanded = expand_braces(&groups);
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0], groups);
     }
 }

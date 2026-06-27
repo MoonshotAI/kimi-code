@@ -11,7 +11,7 @@ use regex::RegexBuilder;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -102,6 +102,98 @@ struct MatchEntry {
     file: PathBuf,
     line_no: usize,
     line: String,
+}
+
+// ============================================================================
+// Structured grep (fs:grep service)
+// ============================================================================
+
+/// A single structured match for the fs:grep service.
+#[derive(Debug, Clone)]
+#[napi(object)]
+pub struct GrepStructuredMatch {
+    /// 1-indexed line number.
+    pub line: u32,
+    /// 1-indexed column of the first match on the line (byte offset + 1).
+    pub col: u32,
+    /// Full text of the matched line (no trailing newline).
+    pub text: String,
+    /// Context lines before the match (up to `context_lines`).
+    pub before: Vec<String>,
+    /// Context lines after the match (up to `context_lines`).
+    pub after: Vec<String>,
+}
+
+/// A file with one or more matches.
+#[derive(Debug, Clone)]
+#[napi(object)]
+pub struct GrepStructuredFileHit {
+    /// Path relative to the search root (forward slashes).
+    pub path: String,
+    /// Matches in this file, in order.
+    pub matches: Vec<GrepStructuredMatch>,
+}
+
+/// Structured grep result — mirrors `FsGrepResponse`.
+#[derive(Debug, Clone)]
+#[napi(object)]
+pub struct GrepStructuredResult {
+    pub files: Vec<GrepStructuredFileHit>,
+    pub files_scanned: u32,
+    pub truncated: bool,
+    pub elapsed_ms: u32,
+    pub error: Option<String>,
+}
+
+/// Configuration for structured grep (fs:grep service).
+///
+/// Independent from `GrepConfig` — the fs:grep service uses a different
+/// field set (include/exclude globs, max_files, max_total_matches) and
+/// always returns structured match data rather than a formatted string.
+pub struct GrepStructuredConfig {
+    /// Search pattern (regex or literal depending on `literal`).
+    pub pattern: String,
+    /// Root directory to search.
+    pub path: String,
+    /// If true, treat `pattern` as a literal string (`regex::escape` applied).
+    pub literal: bool,
+    /// Case-insensitive search.
+    pub case_insensitive: bool,
+    /// Include only paths matching any of these globs (case-sensitive GlobSet).
+    pub include_globs: Vec<String>,
+    /// Exclude paths matching any of these globs (case-sensitive GlobSet).
+    pub exclude_globs: Vec<String>,
+    /// Respect .gitignore / .git/info/exclude. Defaults to true.
+    pub follow_gitignore: bool,
+    /// Context lines before AND after each match (mirrors FsGrepRequest.context_lines).
+    pub context_lines: u32,
+    /// Max files to scan (default 200).
+    pub max_files: u32,
+    /// Max matches per file (default 50).
+    pub max_matches_per_file: u32,
+    /// Max total matches across all files (default 5000).
+    pub max_total_matches: u32,
+    /// Wall-clock timeout in milliseconds (default 30000).
+    pub timeout_ms: u64,
+}
+
+impl Default for GrepStructuredConfig {
+    fn default() -> Self {
+        Self {
+            pattern: String::new(),
+            path: ".".to_string(),
+            literal: false,
+            case_insensitive: false,
+            include_globs: Vec::new(),
+            exclude_globs: Vec::new(),
+            follow_gitignore: true,
+            context_lines: 2,
+            max_files: 200,
+            max_matches_per_file: 50,
+            max_total_matches: 5000,
+            timeout_ms: 30_000,
+        }
+    }
 }
 
 /// Search for a pattern in files under the given path.
@@ -411,6 +503,240 @@ pub fn grep_search(config: &GrepConfig) -> GrepResult {
         filtered_sensitive,
         timed_out,
     }
+}
+
+/// Search for a pattern in files under the given path, returning structured
+/// match data (file → matches with line/col/context).
+///
+/// Mirrors `fsSearchService.ts:grepWithNode`. Used as the middle tier of the
+/// `rg → native → TS fallback` chain in `FsSearchService.grep()`.
+///
+/// Behavior:
+///   - `literal=true` → pattern is regex-escaped (matches fixed strings only).
+///   - `case_insensitive=true` → case-insensitive matching.
+///   - `include_globs`/`exclude_globs` are compiled into a single `GlobSet`
+///     (case-sensitive, `literal_separator(true)` so `*` does not cross `/`,
+///     matching `globToRegExp` semantics and ripgrep's `--glob`).
+///   - `follow_gitignore=true` → respect .gitignore / .git/info/exclude.
+///   - `context_lines` applies to both before and after each match.
+///   - Each line records only the first match's column (mirrors TS `re.exec`).
+///   - `max_files`, `max_matches_per_file`, `max_total_matches` enforce caps.
+///   - `timeout_ms` is a wall-clock deadline; on expiry, returns partial
+///     results with `truncated=true`.
+///   - File order follows walk order (NOT mtime-sorted) to match TS behavior.
+pub fn grep_search_structured(config: &GrepStructuredConfig) -> GrepStructuredResult {
+    let started = Instant::now();
+    let search_path = PathBuf::from(&config.path);
+
+    if !search_path.exists() {
+        return GrepStructuredResult {
+            files: Vec::new(),
+            files_scanned: 0,
+            truncated: false,
+            elapsed_ms: started.elapsed().as_millis() as u32,
+            error: Some(format!("Path does not exist: {}", search_path.display())),
+        };
+    }
+
+    // Build regex: apply regex::escape if literal, prepend (?i) if case_insensitive.
+    let escaped_pattern = if config.literal {
+        regex::escape(&config.pattern)
+    } else {
+        config.pattern.clone()
+    };
+    let pattern_str = if config.case_insensitive {
+        format!("(?i){}", escaped_pattern)
+    } else {
+        escaped_pattern
+    };
+    let regex = match RegexBuilder::new(&pattern_str).build() {
+        Ok(r) => r,
+        Err(e) => {
+            return GrepStructuredResult {
+                files: Vec::new(),
+                files_scanned: 0,
+                truncated: false,
+                elapsed_ms: started.elapsed().as_millis() as u32,
+                error: Some(format!("Invalid regex pattern: {}", e)),
+            };
+        }
+    };
+
+    let include_set = build_glob_set(&config.include_globs);
+    let exclude_set = build_glob_set(&config.exclude_globs);
+
+    let mut builder = WalkBuilder::new(&search_path);
+    builder.hidden(false);
+    if config.follow_gitignore {
+        builder.git_ignore(true);
+        builder.git_exclude(true);
+    } else {
+        builder.git_ignore(false);
+        builder.git_exclude(false);
+        builder.git_global(false);
+        builder.ignore(false);
+        builder.parents(false);
+    }
+
+    let context_lines = config.context_lines as usize;
+    let max_files = config.max_files as usize;
+    let max_matches_per_file = config.max_matches_per_file as usize;
+    let max_total_matches = config.max_total_matches as usize;
+    let timeout_ms = config.timeout_ms;
+
+    let files: Mutex<Vec<GrepStructuredFileHit>> = Mutex::new(Vec::new());
+    let files_scanned = AtomicUsize::new(0usize);
+    let total_matches = AtomicUsize::new(0usize);
+    let truncated = AtomicBool::new(false);
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+
+    builder.build_parallel().run(|| {
+        let regex = &regex;
+        let include_set = &include_set;
+        let exclude_set = &exclude_set;
+        let files = &files;
+        let files_scanned = &files_scanned;
+        let total_matches = &total_matches;
+        let truncated = &truncated;
+        let deadline = &deadline;
+        let search_path = &search_path;
+
+        Box::new(move |entry| {
+            if truncated.load(Ordering::Relaxed) {
+                return ignore::WalkState::Quit;
+            }
+            if Instant::now() >= *deadline {
+                truncated.store(true, Ordering::Relaxed);
+                return ignore::WalkState::Quit;
+            }
+
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => return ignore::WalkState::Continue,
+            };
+
+            // Skip VCS metadata directories.
+            if entry
+                .path()
+                .components()
+                .any(|c| matches!(c.as_os_str().to_str(), Some(name) if VCS_DIRECTORIES_TO_EXCLUDE.contains(&name)))
+            {
+                return ignore::WalkState::Continue;
+            }
+
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                return ignore::WalkState::Continue;
+            }
+
+            let path = entry.path();
+            let rel_path = path.strip_prefix(search_path).unwrap_or(path);
+            let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+
+            // Apply glob filters (case-sensitive, mirroring globToRegExp).
+            if let Some(ref inc) = *include_set {
+                if !inc.is_match(&rel_str) && !inc.is_match(path) {
+                    return ignore::WalkState::Continue;
+                }
+            }
+            if let Some(ref exc) = *exclude_set {
+                if exc.is_match(&rel_str) || exc.is_match(path) {
+                    return ignore::WalkState::Continue;
+                }
+            }
+
+            // Enforce max_files cap (approximate — parallel workers may overshoot by 1-2).
+            if files_scanned.load(Ordering::Relaxed) >= max_files {
+                truncated.store(true, Ordering::Relaxed);
+                return ignore::WalkState::Quit;
+            }
+            files_scanned.fetch_add(1, Ordering::Relaxed);
+
+            // Read file content.
+            let content = match fs::read_to_string(path) {
+                Ok(c) => c,
+                Err(_) => return ignore::WalkState::Continue,
+            };
+
+            // Split into lines (mirrors TS content.split(/\r?\n/) — uses split('\n')
+            // for consistency with existing grep_search).
+            let lines: Vec<&str> = content.split('\n').collect();
+            let mut matches: Vec<GrepStructuredMatch> = Vec::new();
+
+            for (i, line) in lines.iter().enumerate() {
+                if matches.len() >= max_matches_per_file {
+                    truncated.store(true, Ordering::Relaxed);
+                    break;
+                }
+                if total_matches.load(Ordering::Relaxed) >= max_total_matches {
+                    truncated.store(true, Ordering::Relaxed);
+                    break;
+                }
+                // Find first match only (mirrors TS re.exec(line)).
+                if let Some(m) = regex.find(line) {
+                    let before_start = i.saturating_sub(context_lines);
+                    let before: Vec<String> = lines[before_start..i]
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect();
+                    let after_end = (i + 1 + context_lines).min(lines.len());
+                    let after: Vec<String> = lines[i + 1..after_end]
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect();
+                    matches.push(GrepStructuredMatch {
+                        line: (i + 1) as u32,
+                        col: (m.start() + 1) as u32,
+                        text: line.to_string(),
+                        before,
+                        after,
+                    });
+                    total_matches.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+
+            if !matches.is_empty() {
+                files.lock().unwrap().push(GrepStructuredFileHit {
+                    path: rel_str,
+                    matches,
+                });
+            }
+
+            ignore::WalkState::Continue
+        })
+    });
+
+    let files = files.into_inner().unwrap();
+    let files_scanned = files_scanned.load(Ordering::Relaxed) as u32;
+    let truncated = truncated.load(Ordering::Relaxed);
+
+    GrepStructuredResult {
+        files,
+        files_scanned,
+        truncated,
+        elapsed_ms: started.elapsed().as_millis() as u32,
+        error: None,
+    }
+}
+
+/// Build a case-sensitive GlobSet from a list of patterns.
+///
+/// Mirrors `glob::glob_matches_any` — uses `GlobBuilder::new(g)
+/// .literal_separator(true).build()` so `*` does not cross `/`, matching
+/// `globToRegExp` semantics in `fsSearchService.ts` and ripgrep's `--glob`.
+fn build_glob_set(globs: &[String]) -> Option<globset::GlobSet> {
+    if globs.is_empty() {
+        return None;
+    }
+    let mut builder = globset::GlobSetBuilder::new();
+    for g in globs {
+        if let Ok(glob) = globset::GlobBuilder::new(g)
+            .literal_separator(true)
+            .build()
+        {
+            builder.add(glob);
+        }
+    }
+    builder.build().ok()
 }
 
 fn search_single_file(path: &Path, regex: &regex::Regex, config: &GrepConfig) -> GrepResult {
@@ -1003,5 +1329,216 @@ mod tests {
         assert!(result.content.contains("line 2"));
         assert!(result.content.contains("MATCH HERE"));
         assert!(result.content.contains("line 4"));
+    }
+
+    // ── Structured grep (fs:grep service) ────────────────────────────────
+
+    #[test]
+    fn test_grep_structured_basic() {
+        let dir = setup_test_dir();
+        let result = grep_search_structured(&GrepStructuredConfig {
+            pattern: "hello".to_string(),
+            path: dir.path().to_str().unwrap().to_string(),
+            context_lines: 0,
+            ..Default::default()
+        });
+        assert!(result.error.is_none());
+        assert!(result.files_scanned >= 2);
+        // test1.txt contains "hello world" (line 1) and "hello again" (line 3).
+        let test1 = result.files.iter().find(|f| f.path == "test1.txt");
+        assert!(test1.is_some(), "test1.txt should be in results");
+        let matches = &test1.unwrap().matches;
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].line, 1);
+        assert_eq!(matches[0].text, "hello world");
+        assert_eq!(matches[0].col, 1);
+        assert_eq!(matches[1].line, 3);
+        assert_eq!(matches[1].text, "hello again");
+    }
+
+    #[test]
+    fn test_grep_structured_literal() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("test.txt");
+        let mut f = fs::File::create(&file).unwrap();
+        writeln!(f, "1 + 2 = 3").unwrap();
+        writeln!(f, "no match here").unwrap();
+
+        // literal=true: pattern "+" is escaped, matches literal "+".
+        let result = grep_search_structured(&GrepStructuredConfig {
+            pattern: "+".to_string(),
+            path: dir.path().to_str().unwrap().to_string(),
+            literal: true,
+            context_lines: 0,
+            ..Default::default()
+        });
+        assert!(result.error.is_none());
+        assert_eq!(result.files.len(), 1);
+        assert_eq!(result.files[0].matches.len(), 1);
+        assert_eq!(result.files[0].matches[0].line, 1);
+        assert_eq!(result.files[0].matches[0].col, 3); // "+" is at byte offset 2 (0-indexed) → col 3
+    }
+
+    #[test]
+    fn test_grep_structured_case_insensitive() {
+        let dir = setup_test_dir();
+        // "HELLO" appears in test2.txt line 2.
+        let result = grep_search_structured(&GrepStructuredConfig {
+            pattern: "hello".to_string(),
+            path: dir.path().to_str().unwrap().to_string(),
+            case_insensitive: true,
+            context_lines: 0,
+            ..Default::default()
+        });
+        assert!(result.error.is_none());
+        let test2 = result.files.iter().find(|f| f.path == "test2.txt");
+        assert!(test2.is_some(), "test2.txt should match with case_insensitive");
+        assert_eq!(test2.unwrap().matches[0].text, "some HELLO text");
+    }
+
+    #[test]
+    fn test_grep_structured_context_lines() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("ctx.txt");
+        let mut f = fs::File::create(&file).unwrap();
+        writeln!(f, "line 1").unwrap();
+        writeln!(f, "line 2").unwrap();
+        writeln!(f, "MATCH").unwrap();
+        writeln!(f, "line 4").unwrap();
+        writeln!(f, "line 5").unwrap();
+
+        let result = grep_search_structured(&GrepStructuredConfig {
+            pattern: "MATCH".to_string(),
+            path: dir.path().to_str().unwrap().to_string(),
+            context_lines: 2,
+            ..Default::default()
+        });
+        assert!(result.error.is_none());
+        assert_eq!(result.files.len(), 1);
+        let m = &result.files[0].matches[0];
+        assert_eq!(m.line, 3);
+        assert_eq!(m.before, vec!["line 1".to_string(), "line 2".to_string()]);
+        assert_eq!(m.after, vec!["line 4".to_string(), "line 5".to_string()]);
+    }
+
+    #[test]
+    fn test_grep_structured_include_globs() {
+        let dir = setup_test_dir();
+        // Only include test1.txt — should not return test2.txt or subdir/test3.txt.
+        let result = grep_search_structured(&GrepStructuredConfig {
+            pattern: "hello".to_string(),
+            path: dir.path().to_str().unwrap().to_string(),
+            include_globs: vec!["test1.txt".to_string()],
+            case_insensitive: true,
+            context_lines: 0,
+            ..Default::default()
+        });
+        assert!(result.error.is_none());
+        let paths: Vec<&str> = result.files.iter().map(|f| f.path.as_str()).collect();
+        assert!(paths.iter().all(|p| *p == "test1.txt"), "only test1.txt should match");
+    }
+
+    #[test]
+    fn test_grep_structured_exclude_globs() {
+        let dir = setup_test_dir();
+        // Exclude test1.txt — should still return test2.txt and subdir/test3.txt.
+        let result = grep_search_structured(&GrepStructuredConfig {
+            pattern: "hello".to_string(),
+            path: dir.path().to_str().unwrap().to_string(),
+            exclude_globs: vec!["test1.txt".to_string()],
+            case_insensitive: true,
+            context_lines: 0,
+            ..Default::default()
+        });
+        assert!(result.error.is_none());
+        let paths: Vec<&str> = result.files.iter().map(|f| f.path.as_str()).collect();
+        assert!(!paths.contains(&"test1.txt"), "test1.txt should be excluded");
+        assert!(paths.contains(&"test2.txt") || paths.contains(&"subdir/test3.txt"));
+    }
+
+    #[test]
+    fn test_grep_structured_max_matches_per_file() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("many.txt");
+        let mut f = fs::File::create(&file).unwrap();
+        for i in 0..10 {
+            writeln!(f, "match {}", i).unwrap();
+        }
+
+        let result = grep_search_structured(&GrepStructuredConfig {
+            pattern: "match".to_string(),
+            path: dir.path().to_str().unwrap().to_string(),
+            max_matches_per_file: 3,
+            context_lines: 0,
+            ..Default::default()
+        });
+        assert!(result.error.is_none());
+        assert_eq!(result.files[0].matches.len(), 3);
+        assert!(result.truncated);
+    }
+
+    #[test]
+    fn test_grep_structured_truncated_max_total() {
+        let dir = TempDir::new().unwrap();
+        // Create 5 files, each with 2 matches → 10 total.
+        for i in 0..5 {
+            let file = dir.path().join(format!("file{}.txt", i));
+            let mut f = fs::File::create(&file).unwrap();
+            writeln!(f, "match one").unwrap();
+            writeln!(f, "match two").unwrap();
+        }
+
+        let result = grep_search_structured(&GrepStructuredConfig {
+            pattern: "match".to_string(),
+            path: dir.path().to_str().unwrap().to_string(),
+            max_total_matches: 4,
+            context_lines: 0,
+            ..Default::default()
+        });
+        assert!(result.error.is_none());
+        assert!(result.truncated);
+        let total: usize = result.files.iter().map(|f| f.matches.len()).sum();
+        assert_eq!(total, 4);
+    }
+
+    #[test]
+    fn test_grep_structured_nonexistent_path() {
+        let result = grep_search_structured(&GrepStructuredConfig {
+            pattern: "x".to_string(),
+            path: "/nonexistent/path/xyz".to_string(),
+            context_lines: 0,
+            ..Default::default()
+        });
+        assert!(result.error.is_some());
+        assert!(result.error.unwrap().contains("does not exist"));
+        assert_eq!(result.files.len(), 0);
+    }
+
+    #[test]
+    fn test_grep_structured_invalid_regex() {
+        let dir = setup_test_dir();
+        let result = grep_search_structured(&GrepStructuredConfig {
+            pattern: "[invalid".to_string(),
+            path: dir.path().to_str().unwrap().to_string(),
+            literal: false,
+            context_lines: 0,
+            ..Default::default()
+        });
+        assert!(result.error.is_some());
+        assert!(result.error.unwrap().contains("Invalid regex"));
+    }
+
+    #[test]
+    fn test_grep_structured_no_matches() {
+        let dir = setup_test_dir();
+        let result = grep_search_structured(&GrepStructuredConfig {
+            pattern: "zzz_nonexistent_zzz".to_string(),
+            path: dir.path().to_str().unwrap().to_string(),
+            context_lines: 0,
+            ..Default::default()
+        });
+        assert!(result.error.is_none());
+        assert_eq!(result.files.len(), 0);
+        assert!(!result.truncated);
     }
 }
