@@ -38,6 +38,8 @@ export interface SessionSubagentHost {
   spawn(options: SpawnSubagentOptions): Promise<SubagentHandle>;
   resume(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle>;
   retry(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle>;
+  getProfileName(agentId: string): Promise<string | undefined>;
+  markActiveChildDetached(agentId: string): void;
   runQueued<T>(tasks: readonly QueuedSubagentTask<T>[]): Promise<Array<SubagentResult<T>>>;
 }
 
@@ -49,6 +51,10 @@ export interface ISubagentHost {
   getSwarmItem(agentId: string): string | undefined;
   startBtw(): Promise<string>;
   generateAgentsMd(): Promise<void>;
+  spawn(options: SpawnSubagentOptions): Promise<SubagentHandle>;
+  resume(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle>;
+  getProfileName(agentId: string): Promise<string | undefined>;
+  markActiveChildDetached(agentId: string): void;
   runQueued<T>(tasks: readonly QueuedSubagentTask<T>[]): Promise<Array<SubagentResult<T>>>;
 }
 

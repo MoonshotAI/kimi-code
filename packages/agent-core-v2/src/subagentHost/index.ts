@@ -4,3 +4,5 @@
 
 export * from './subagentHost';
 export * from './subagentHostService';
+export { AgentTool, AgentToolInputSchema, AgentToolOutputSchema } from './agentTool';
+export type { AgentToolInput, AgentToolOutput } from './agentTool';
