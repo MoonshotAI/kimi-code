@@ -339,9 +339,9 @@ describe('OpenAILegacyChatProvider', () => {
     });
 
     it('tool call with audio result notes the omission inline without reattaching', async () => {
-      // Chat Completions has no url-based audio/video content part (only
-      // base64 input_audio), so unlike images these cannot be reattached as
-      // a user message — a standard OpenAI endpoint would reject the request
+      // Chat Completions has no url-based audio content part (only base64
+      // input_audio), so unlike image/video URLs it cannot be reattached as a
+      // user message — a standard OpenAI endpoint would reject the request
       // with a 400. The tool message notes the omission inline instead.
       const provider = createProvider();
       const history: Message[] = [
@@ -373,7 +373,7 @@ describe('OpenAILegacyChatProvider', () => {
       expect(messages).toHaveLength(3);
     });
 
-    it('tool call with text and video result appends the omission note to the text', async () => {
+    it('tool call with text and video result keeps the tool result textual and reattaches video as user input', async () => {
       const provider = createProvider();
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Record it' }], toolCalls: [] },
@@ -397,10 +397,16 @@ describe('OpenAILegacyChatProvider', () => {
       const messages = body['messages'] as Record<string, unknown>[];
       expect(messages[2]).toEqual({
         role: 'tool',
-        content: 'recorded 5s clip\n(video omitted: not supported by this provider)',
+        content: 'recorded 5s clip',
         tool_call_id: 'call_rec',
       });
-      expect(messages).toHaveLength(3);
+      expect(messages[3]).toEqual({
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Attached media from tool result:' },
+          { type: 'video_url', video_url: { url: 'https://example.com/rec.mp4' } },
+        ],
+      });
     });
 
     it('groups consecutive tool result images after all matching tool messages', async () => {

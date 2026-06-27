@@ -226,11 +226,10 @@ function convertMessage(
   return result;
 }
 
-// Chat Completions has no url-based audio/video content part (only base64
-// `input_audio`), so unlike images these cannot be reattached as user input.
-// Note the omission inline in the tool message text instead.
+// Chat Completions has no url-based audio content part (only base64
+// `input_audio`), so unlike image/video URLs it cannot be reattached as user
+// input. Note the omission inline in the tool message text instead.
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: not supported by this provider)';
-const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
 
 function convertToolMessageContentForChat(
   message: Message,
@@ -244,25 +243,26 @@ function convertToolMessageContentForChat(
   if (message.content.some((part) => part.type === 'audio_url')) {
     lines.push(OMITTED_AUDIO_PLACEHOLDER);
   }
-  if (message.content.some((part) => part.type === 'video_url')) {
-    lines.push(OMITTED_VIDEO_PLACEHOLDER);
-  }
-  if (lines.length === 0 && message.content.some((part) => part.type === 'image_url')) {
+  if (lines.length === 0 && message.content.some((part) => isReattachableToolMediaPart(part))) {
     return TOOL_RESULT_MEDIA_PLACEHOLDER;
   }
   return lines.join('\n');
 }
 
-function toolResultImageParts(message: Message): OpenAIContentPart[] {
-  const images: OpenAIContentPart[] = [];
+function isReattachableToolMediaPart(part: ContentPart): boolean {
+  return part.type === 'image_url' || part.type === 'video_url';
+}
+
+function toolResultMediaParts(message: Message): OpenAIContentPart[] {
+  const media: OpenAIContentPart[] = [];
   for (const part of message.content) {
-    if (part.type !== 'image_url') continue;
+    if (!isReattachableToolMediaPart(part)) continue;
     const converted = convertContentPart(part);
     if (converted !== null) {
-      images.push(converted);
+      media.push(converted);
     }
   }
-  return images;
+  return media;
 }
 
 function appendToolResultMediaMessage(
@@ -291,7 +291,7 @@ function convertHistoryMessages(
     }
     messages.push(convertMessage(msg, reasoningKey, toolMessageConversion));
     if (msg.role === 'tool') {
-      pendingToolResultMedia.push(...toolResultImageParts(msg));
+      pendingToolResultMedia.push(...toolResultMediaParts(msg));
     }
   }
 
