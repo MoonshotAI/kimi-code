@@ -24,6 +24,8 @@ export interface SessionListQuery extends CursorQuery {
   status?: import('@moonshot-ai/protocol').SessionStatus;
   workDir?: string;
   includeArchive?: boolean;
+  /** When true, hide sessions the user has never interacted with (no prompt yet). */
+  excludeEmpty?: boolean;
 }
 
 export interface SessionClientTelemetry {
