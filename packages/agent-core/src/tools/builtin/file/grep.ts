@@ -13,8 +13,16 @@
  *   - stdout/stderr are capped while streams continue draining;
  *   - hidden files are searched, but VCS metadata and common sensitive glob
  *     patterns are prefiltered where possible;
- *   - parsed path records are filtered again after rg returns, using the active
- *     backend path class.
+ *   - parsed path records are filtered against the sensitive-file rules using
+ *     the active backend path class.
+ *
+ * `files_with_matches` (the default) takes a streaming fast path: ripgrep is
+ * run with `--sortr modified` so it emits matches most-recently-modified
+ * first, and we stop reading (and kill the subprocess) as soon as we have
+ * `head_limit` non-sensitive matches. This avoids stat-ing every match from
+ * JS (a cross-channel round-trip per file on remote Kaos backends) and avoids
+ * a full tree scan for broad patterns, at the cost of not reporting an exact
+ * total match count. `content` and `count_matches` keep the buffered path.
  */
 
 import type { Readable } from 'node:stream';
@@ -148,7 +156,6 @@ async function disposeProcess(proc: KaosProcess): Promise<void> {
 // matching lines in full so the cap is intentionally skipped there.
 const RG_MAX_COLUMNS = 500;
 const DEFAULT_HEAD_LIMIT = 250;
-const MTIME_STAT_CONCURRENCY = 32;
 const VCS_DIRECTORIES_TO_EXCLUDE = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'] as const;
 // This is a conservative prefilter. The authoritative sensitive-file check
 // still happens on parsed rg records after execution.
@@ -229,6 +236,11 @@ export class GrepTool implements BuiltinTool<GrepInput> {
       return { isError: true, output: rgUnavailableMessage(error) };
     }
 
+    const mode = args.output_mode ?? 'files_with_matches';
+    if (mode === 'files_with_matches') {
+      return this.executeFilesWithMatches(args, signal, searchPaths, rgPath, pathClass);
+    }
+
     let runResult = await runRipgrepOnce(this.kaos, buildRgArgs(rgPath, args, searchPaths), signal);
     if (runResult.kind === 'tool-error') return runResult.result;
     if (shouldRetryRipgrepEagain(runResult)) {
@@ -252,7 +264,6 @@ export class GrepTool implements BuiltinTool<GrepInput> {
       };
     }
 
-    const mode = args.output_mode ?? 'files_with_matches';
     if (bufferTruncated || timedOut) {
       stdoutText = omitIncompleteTrailingRecord(stdoutText, mode);
     }
@@ -269,19 +280,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     const rawLines = parseRipgrepOutput(stdoutText, mode);
 
     const filteredSensitive = new Set<string>();
-    const keptLines = filterSensitiveLines(rawLines, mode, filteredSensitive, pathClass);
-    let orderedLines: ParsedGrepLine[];
-    try {
-      orderedLines =
-        mode === 'files_with_matches' && !timedOut
-          ? await sortFilesWithMatchesByMtime(keptLines, this.kaos, signal)
-          : keptLines;
-    } catch (error) {
-      if (error instanceof GrepAbortedError) {
-        return { isError: true, output: 'Grep aborted' };
-      }
-      throw error;
-    }
+    const orderedLines = filterSensitiveLines(rawLines, mode, filteredSensitive, pathClass);
 
     const offset = args.offset ?? 0;
     const headLimit = args.head_limit ?? DEFAULT_HEAD_LIMIT;
@@ -358,6 +357,89 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     return builder.ok();
   }
 
+  private async executeFilesWithMatches(
+    args: GrepInput,
+    signal: AbortSignal,
+    searchPaths: string[],
+    rgPath: string,
+    pathClass: PathClass,
+  ): Promise<ExecutableToolResult> {
+    const offset = args.offset ?? 0;
+    const headLimit = args.head_limit ?? DEFAULT_HEAD_LIMIT;
+    const streamResult = await runRipgrepStreaming(
+      this.kaos,
+      buildRgArgs(rgPath, args, searchPaths),
+      signal,
+      {
+        offset,
+        limit: headLimit > 0 ? headLimit : undefined,
+        pathClass,
+      },
+    );
+    if (streamResult.kind === 'tool-error') return streamResult.result;
+
+    const { records, filteredSensitive, hasMore, timedOut } = streamResult;
+
+    if (timedOut && records.length === 0) {
+      return {
+        isError: true,
+        output: `Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s. Try a more specific path or pattern.`,
+      };
+    }
+    if (signal.aborted) {
+      return { isError: true, output: 'Grep aborted' };
+    }
+
+    // Records are already sensitive-filtered, offset-skipped, capped at the
+    // limit, and emitted by ripgrep in most-recently-modified-first order.
+    const messages: string[] = [];
+    if (filteredSensitive.size > 0) {
+      const displayedFilteredPaths = [...filteredSensitive].map((path) =>
+        relativizeIfUnder(path, this.workspace.workspaceDir, pathClass),
+      );
+      messages.push(
+        `Filtered ${String(filteredSensitive.size)} sensitive file(s): ${displayedFilteredPaths.join(', ')}`,
+      );
+    }
+    if (hasMore) {
+      // We stopped reading after the limit, so more matches may exist. The
+      // exact total is intentionally not computed (that would require a full
+      // scan, defeating the early-stop); point the user at pagination instead.
+      const nextOffset = offset + records.length;
+      messages.push(
+        `Results truncated to ${String(records.length)} lines (more available). Use offset=${String(nextOffset)} to see more.`,
+      );
+    }
+    if (timedOut) {
+      messages.push(
+        `Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned`,
+      );
+    }
+
+    const displayedLines = records.map((line) =>
+      formatDisplayLine(line, 'files_with_matches', this.workspace.workspaceDir, pathClass, false),
+    );
+    const contentBody = displayedLines.join('\n');
+    const visibleBody =
+      records.length === 0 && filteredSensitive.size > 0
+        ? 'No non-sensitive matches found'
+        : contentBody;
+    const emptyResultMessage =
+      SENSITIVE_GLOBS_TO_EXCLUDE.length > 0 ? 'No non-sensitive matches found' : 'No matches found';
+    const combined =
+      visibleBody === '' && messages.length === 0
+        ? emptyResultMessage
+        : messages.length > 0
+          ? visibleBody === ''
+            ? messages.join('\n')
+            : `${visibleBody}\n${messages.join('\n')}`
+          : visibleBody;
+
+    const builder = new ToolResultBuilder();
+    builder.write(combined);
+    return builder.ok('');
+  }
+
 }
 
 interface RipgrepRunResult {
@@ -389,13 +471,6 @@ type ParsedGrepLine =
       readonly kind: 'legacy';
       readonly text: string;
     };
-
-class GrepAbortedError extends Error {
-  constructor() {
-    super('Grep aborted');
-    this.name = 'GrepAbortedError';
-  }
-}
 
 async function runRipgrepOnce(
   kaos: Kaos,
@@ -537,6 +612,214 @@ async function runRipgrepOnce(
   };
 }
 
+interface RipgrepStreamResult {
+  readonly kind: 'result';
+  readonly records: ParsedGrepLine[];
+  readonly filteredSensitive: Set<string>;
+  readonly hasMore: boolean;
+  readonly timedOut: boolean;
+  readonly exitCode: number;
+  readonly stderrText: string;
+}
+
+type RipgrepStreamOutcome =
+  | RipgrepStreamResult
+  | { readonly kind: 'tool-error'; readonly result: ExecutableToolResult };
+
+/**
+ * Run ripgrep for `files_with_matches`, streaming records and stopping as soon
+ * as we have enough (`offset` skipped + `limit` kept).
+ *
+ * ripgrep is invoked with `--sortr modified`, so it emits matching files in
+ * most-recently-modified-first order. We kill it the moment we have `limit`
+ * non-sensitive matches, so broad patterns in large trees don't force a full
+ * scan plus a per-file stat from JS. When `limit` is `undefined` (unlimited),
+ * the stream is read to completion.
+ *
+ * Records are split on either NUL (the `--null` runtime format) or newline
+ * (used by tests and the legacy fallback), whichever appears first.
+ */
+async function runRipgrepStreaming(
+  kaos: Kaos,
+  rgArgs: readonly string[],
+  signal: AbortSignal,
+  options: {
+    readonly offset: number;
+    readonly limit: number | undefined;
+    readonly pathClass: PathClass;
+  },
+): Promise<RipgrepStreamOutcome> {
+  if (signal.aborted) {
+    return { kind: 'tool-error', result: { isError: true, output: 'Grep aborted' } };
+  }
+
+  let proc: KaosProcess;
+  try {
+    proc = await kaos.exec(...rgArgs);
+  } catch (error) {
+    const isEnoent =
+      error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT';
+    return {
+      kind: 'tool-error',
+      result: {
+        isError: true,
+        output: isEnoent
+          ? rgUnavailableMessage(error)
+          : error instanceof Error
+            ? error.message
+            : String(error),
+      },
+    };
+  }
+
+  try {
+    proc.stdin.end();
+  } catch {
+    /* already gone */
+  }
+
+  let timedOut = false;
+  let aborted = false;
+  let killed = false;
+
+  const killProc = async (): Promise<void> => {
+    if (killed) return;
+    killed = true;
+    try {
+      await proc.kill('SIGTERM');
+    } catch {
+      /* process already gone */
+    }
+    const exited = proc
+      .wait()
+      .then(() => true)
+      .catch(() => true);
+    const raced = await Promise.race([
+      exited,
+      new Promise<false>((resolve) => {
+        setTimeout(() => {
+          resolve(false);
+        }, SIGTERM_GRACE_MS);
+      }),
+    ]);
+    if (!raced && proc.exitCode === null) {
+      try {
+        await proc.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const onAbort = (): void => {
+    aborted = true;
+    void killProc();
+  };
+  signal.addEventListener('abort', onAbort);
+  if (signal.aborted) onAbort();
+
+  const timeoutHandle = setTimeout(() => {
+    timedOut = true;
+    void killProc();
+  }, DEFAULT_TIMEOUT_MS);
+
+  const records: ParsedGrepLine[] = [];
+  const filteredSensitive = new Set<string>();
+  let nonSensitiveSeen = 0;
+  let limitReached = false;
+  let stderrText = '';
+  let stderrTruncated = false;
+
+  try {
+    const stdoutDone = (async (): Promise<void> => {
+      let buffer = '';
+      try {
+        for await (const chunk of proc.stdout) {
+          if (limitReached) continue; // drain and discard after early-stop
+          const buf: Buffer =
+            typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : (chunk as Buffer);
+          buffer += buf.toString('utf8');
+          while (true) {
+            const nulIndex = buffer.indexOf('\0');
+            const newlineIndex = buffer.indexOf('\n');
+            if (nulIndex < 0 && newlineIndex < 0) break;
+            const sepIndex =
+              nulIndex < 0
+                ? newlineIndex
+                : newlineIndex < 0
+                  ? nulIndex
+                  : Math.min(nulIndex, newlineIndex);
+            const filePath = stripTrailingCarriageReturn(buffer.slice(0, sepIndex));
+            buffer = buffer.slice(sepIndex + 1);
+            if (filePath === '') continue;
+            if (isSensitiveFile(filePath, options.pathClass)) {
+              filteredSensitive.add(filePath);
+              continue;
+            }
+            nonSensitiveSeen += 1;
+            if (nonSensitiveSeen <= options.offset) continue;
+            records.push({ kind: 'record', filePath, payload: '' });
+            if (options.limit !== undefined && records.length >= options.limit) {
+              limitReached = true;
+              void killProc();
+              break;
+            }
+          }
+        }
+      } catch (error) {
+        // Tearing the stream down after an early-stop / timeout / abort is
+        // expected; anything before that is a real failure and should surface.
+        if (!limitReached && !timedOut && !aborted) throw error;
+      }
+    })();
+
+    const stderrDone = (async (): Promise<void> => {
+      try {
+        const result = await readStreamWithCap(proc.stderr, MAX_OUTPUT_BYTES);
+        stderrText = result.text;
+        stderrTruncated = result.truncated;
+      } catch {
+        /* stderr is best-effort */
+      }
+    })();
+
+    const [, , exitCode] = await Promise.all([stdoutDone, stderrDone, proc.wait()]);
+
+    if (aborted) {
+      return { kind: 'tool-error', result: { isError: true, output: 'Grep aborted' } };
+    }
+
+    // rg exit codes: 0 = matches, 1 = no matches, 2 = error. When we stop
+    // early ripgrep is killed (signal exit), which is expected and not an
+    // error. A non-zero/non-one exit without an early-stop or timeout is a
+    // real ripgrep error.
+    if (exitCode !== 0 && exitCode !== 1 && !timedOut && !limitReached) {
+      return {
+        kind: 'tool-error',
+        result: { isError: true, output: formatRipgrepError(exitCode, stderrText, stderrTruncated) },
+      };
+    }
+
+    return {
+      kind: 'result',
+      records,
+      filteredSensitive,
+      hasMore: limitReached,
+      timedOut,
+      exitCode,
+      stderrText,
+    };
+  } catch (error) {
+    return {
+      kind: 'tool-error',
+      result: { isError: true, output: error instanceof Error ? error.message : String(error) },
+    };
+  } finally {
+    clearTimeout(timeoutHandle);
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
 function shouldRetryRipgrepEagain(result: RipgrepRunResult): boolean {
   return (
     result.exitCode !== 0 &&
@@ -548,61 +831,6 @@ function shouldRetryRipgrepEagain(result: RipgrepRunResult): boolean {
 
 function isEagainRipgrepError(stderr: string): boolean {
   return stderr.includes('os error 11') || stderr.includes('Resource temporarily unavailable');
-}
-
-async function sortFilesWithMatchesByMtime(
-  lines: readonly ParsedGrepLine[],
-  kaos: Kaos,
-  signal: AbortSignal,
-): Promise<ParsedGrepLine[]> {
-  const entries = await mapWithConcurrency(
-    lines,
-    MTIME_STAT_CONCURRENCY,
-    signal,
-    async (line, index) => {
-      const path =
-        line.kind === 'record' ? line.filePath : line.kind === 'legacy' ? line.text : undefined;
-      let mtime = 0;
-      if (path !== undefined) {
-        try {
-          mtime = (await kaos.stat(path)).stMtime ?? 0;
-        } catch {
-          // Keep stat failures visible; use mtime=0 so they sort after known files.
-        }
-      }
-      return { line, mtime, index };
-    },
-  );
-  entries.sort((a, b) => b.mtime - a.mtime || a.index - b.index);
-  return entries.map((entry) => entry.line);
-}
-
-async function mapWithConcurrency<T, U>(
-  items: readonly T[],
-  concurrency: number,
-  signal: AbortSignal,
-  mapper: (item: T, index: number) => Promise<U>,
-): Promise<U[]> {
-  if (signal.aborted) throw new GrepAbortedError();
-  if (items.length === 0) return [];
-
-  const results: U[] = [];
-  results.length = items.length;
-  let nextIndex = 0;
-  const workerCount = Math.min(Math.max(1, concurrency), items.length);
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (true) {
-        if (signal.aborted) return;
-        const index = nextIndex;
-        nextIndex += 1;
-        if (index >= items.length) return;
-        results[index] = await mapper(items[index] as T, index);
-      }
-    }),
-  );
-  if (signal.aborted) throw new GrepAbortedError();
-  return results;
 }
 
 function buildRgArgs(
@@ -627,8 +855,16 @@ function buildRgArgs(
     cmd.push('--glob', `!${dir}`);
   }
 
-  if (mode === 'files_with_matches') cmd.push('-l');
-  else if (mode === 'count_matches') {
+  if (mode === 'files_with_matches') {
+    // Delegate "most-recently-modified first" ordering to ripgrep itself.
+    // Combined with the streaming early-stop in `runRipgrepStreaming`, this
+    // avoids stat-ing every match from JS (which is one cross-channel
+    // round-trip per file on remote Kaos backends) while preserving the
+    // recency ordering UX. ripgrep emits matching files in mtime order and
+    // we stop reading once we have enough, so broad patterns in large trees
+    // don't force a full scan + N stat calls.
+    cmd.push('-l', '--sortr', 'modified');
+  } else if (mode === 'count_matches') {
     // rg omits the filename when only one file is searched, so pin it on. Without
     // this, the per-file line collapses to a bare count and the summary parser
     // disagrees with the displayed number.
