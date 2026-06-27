@@ -174,7 +174,7 @@ function setTab(tab: SettingsTab): void {
     <div ref="dialogRef" class="dialog" role="dialog" aria-modal="true" tabindex="-1" :aria-label="t('settings.title')">
       <div class="dh">
         <span class="dtitle">{{ t('settings.title') }}</span>
-        <button class="close-btn" :title="t('newSession.close')" @click="emit('close')">
+        <button class="close-btn" :title="t('settings.close')" @click="emit('close')">
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">
             <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
           </svg>

@@ -1995,21 +1995,6 @@ const attentionByWorkspace = computed<Record<string, number>>(() => {
 /** Recently-used roots for the add-workspace quick-pick (from /fs:home). */
 const recentRoots = computed<string[]>(() => rawState.recentRoots);
 
-/** Distinct cwd values from loaded sessions, most-recent first, deduped, max 8 */
-const recentCwds = computed<string[]>(() => {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const s of rawState.sessions) {
-    const cwd = s.cwd;
-    if (cwd && !seen.has(cwd)) {
-      seen.add(cwd);
-      result.push(cwd);
-      if (result.length >= 8) break;
-    }
-  }
-  return result;
-});
-
 /** Installed external apps the "Open in app" menu may offer for this host. */
 const availableOpenInApps = computed<string[]>(() => rawState.availableOpenInApps);
 
@@ -2166,7 +2151,6 @@ export function useKimiWebClient() {
     activePullRequest,
     changesByPath,
     pendingApprovals,
-    recentCwds,
     availableOpenInApps,
 
     // New Phase 1 computed
@@ -2221,7 +2205,7 @@ export function useKimiWebClient() {
     // Actions
     load: workspaceState.load,
     selectSession: workspaceState.selectSession,
-    createSession: workspaceState.createSession,
+    clearActiveSession: workspaceState.clearActiveSession,
     loadOlderMessages: workspaceState.loadOlderMessages,
 
     // Workspace actions
@@ -2231,7 +2215,6 @@ export function useKimiWebClient() {
     selectWorkspace: workspaceState.selectWorkspace,
     openWorkspace: workspaceState.openWorkspace,
     openWorkspaceDraft: workspaceState.openWorkspaceDraft,
-    createSessionInWorkspace: workspaceState.createSessionInWorkspace,
     startSessionAndSendPrompt: workspaceState.startSessionAndSendPrompt,
     addWorkspaceByPath: workspaceState.addWorkspaceByPath,
     browseFs: workspaceState.browseFs,
