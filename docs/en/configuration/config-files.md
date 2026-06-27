@@ -244,6 +244,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | Color theme: `auto` (follow the terminal), `dark`, `light`, or the name of a [custom theme](../customization/themes) |
+| `show_tips_banner` | `boolean` | `true` | Whether startup fetches and displays the remote tips banner; set to `false` to skip the request |
 | `[editor].command` | `string` | `""` | External editor command for composing long input; empty falls back to `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
@@ -252,6 +253,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 ```toml
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | custom theme name
+show_tips_banner = true # true | false
 
 [editor]
 command = "" # empty uses $VISUAL / $EDITOR
@@ -264,7 +266,7 @@ notification_condition = "unfocused" # "unfocused" | "always"
 auto_install = true
 ```
 
-Changes apply on the next start, or immediately with `/reload-tui` (which reloads only `tui.toml`); `/reload` reloads both `config.toml` and `tui.toml`.
+Most changes apply on the next start, or immediately with `/reload-tui` (which reloads only `tui.toml`); `/reload` reloads both `config.toml` and `tui.toml`. `show_tips_banner` controls the startup fetch, so disabling it takes effect on the next launch.
 
 ## Project-local configuration
 

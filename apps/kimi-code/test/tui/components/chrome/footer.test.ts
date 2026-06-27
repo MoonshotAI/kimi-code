@@ -51,6 +51,7 @@ const appState: AppState = {
   inputMode: 'prompt',
   swarmMode: false,
   theme: 'dark',
+  showTipsBanner: true,
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },

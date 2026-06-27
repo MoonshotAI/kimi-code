@@ -88,6 +88,7 @@ function makeStartupInput(
     },
     tuiConfig: {
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
@@ -1620,6 +1621,34 @@ describe('KimiTUI startup', () => {
     );
     expect(welcomeIndex).toBeGreaterThanOrEqual(0);
     expect(bannerIndex).toBe(welcomeIndex + 1);
+
+    loadSpy.mockRestore();
+  });
+
+  it('does not load the remote tips banner when disabled in TUI config', async () => {
+    const loadSpy = vi.spyOn(BannerProvider.prototype, 'load').mockResolvedValue({
+      key: 'new-banner',
+      tag: 'New',
+      mainText: 'Banner main',
+      subText: null,
+      display: 'always' as const,
+    });
+    const session = makeSession({ id: 'ses-target' });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: 'ses-target', workDir: '/tmp/proj-a' }]),
+    });
+    const driver = makeDriver(
+      harness,
+      makeStartupInput({ session: 'ses-target' }, { showTipsBanner: false }),
+    ) as unknown as MigrateExitDriver;
+
+    await driver.initMainTui();
+
+    expect(loadSpy).not.toHaveBeenCalled();
+    expect(driver.state.appState.banner).toBeNull();
+    expect(
+      driver.state.transcriptContainer.children.some((child) => child instanceof BannerComponent),
+    ).toBe(false);
 
     loadSpy.mockRestore();
   });

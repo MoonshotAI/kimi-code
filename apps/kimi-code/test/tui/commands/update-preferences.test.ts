@@ -26,6 +26,7 @@ describe('update preference commands', () => {
       state: {
         appState: {
           theme: 'auto' as const,
+          showTipsBanner: false,
           editorCommand: null,
           notifications: { enabled: true, condition: 'unfocused' as const },
           upgrade: { autoInstall: true },
@@ -41,6 +42,7 @@ describe('update preference commands', () => {
 
     expect(mocks.saveTuiConfig).toHaveBeenCalledWith({
       theme: 'auto',
+      showTipsBanner: false,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: false },

@@ -44,6 +44,7 @@ export async function applyReloadedTuiConfig(
   await host.applyTheme(config.theme, resolved);
   host.refreshTerminalThemeTracking();
   host.setAppState({
+    showTipsBanner: config.showTipsBanner,
     editorCommand: config.editorCommand,
     notifications: config.notifications,
     upgrade: config.upgrade,

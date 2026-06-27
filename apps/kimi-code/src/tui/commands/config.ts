@@ -274,6 +274,7 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
   try {
     await saveTuiConfig({
       theme: host.state.appState.theme,
+      showTipsBanner: host.state.appState.showTipsBanner,
       editorCommand,
       notifications: host.state.appState.notifications,
       upgrade: host.state.appState.upgrade,
@@ -440,6 +441,7 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   try {
     await saveTuiConfig({
       theme,
+      showTipsBanner: host.state.appState.showTipsBanner,
       editorCommand: host.state.appState.editorCommand,
       notifications: host.state.appState.notifications,
       upgrade: host.state.appState.upgrade,
@@ -562,7 +564,7 @@ type UpdatePreferenceHost = {
   readonly state: {
     readonly appState: Pick<
       SlashCommandHost['state']['appState'],
-      'theme' | 'editorCommand' | 'notifications' | 'upgrade'
+      'theme' | 'showTipsBanner' | 'editorCommand' | 'notifications' | 'upgrade'
     >;
   };
   setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'upgrade'>): void;
@@ -583,6 +585,7 @@ export async function applyUpdatePreferenceChoice(
   try {
     await saveTuiConfig({
       theme: host.state.appState.theme,
+      showTipsBanner: host.state.appState.showTipsBanner,
       editorCommand: host.state.appState.editorCommand,
       notifications: host.state.appState.notifications,
       upgrade,

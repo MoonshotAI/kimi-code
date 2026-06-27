@@ -12,8 +12,10 @@ type CreateKimiDeviceId = typeof createKimiDeviceIdFn;
 const mocks = vi.hoisted(() => {
   type TuiConfigFallback = {
     theme: 'dark' | 'light' | 'auto';
+    showTipsBanner: boolean;
     editorCommand: string | null;
     notifications: { enabled: boolean; condition: 'unfocused' | 'always' };
+    upgrade: { autoInstall: boolean };
   };
 
   class TuiConfigParseError extends Error {
@@ -164,8 +166,10 @@ describe('runShell', () => {
   it('constructs KimiHarness and KimiTUI with startup input', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     });
     mocks.tuiStart.mockResolvedValue(undefined);
     mocks.tuiGetStartupMcpMs.mockResolvedValue(47);
@@ -224,6 +228,7 @@ describe('runShell', () => {
       additionalDirs: ['../shared', '/tmp/extra'],
       tuiConfig: {
         theme: 'dark',
+        showTipsBanner: true,
         editorCommand: null,
         notifications: { enabled: true, condition: 'unfocused' },
       },
@@ -243,8 +248,10 @@ describe('runShell', () => {
   it('tracks first launch when device id creation reports first launch', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     });
     mocks.tuiStart.mockResolvedValue(undefined);
     mocks.createKimiDeviceId.mockImplementationOnce((homeDir, options) => {
@@ -278,8 +285,10 @@ describe('runShell', () => {
   it('registers first launch before harness construction can create the device id', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     });
     mocks.tuiStart.mockResolvedValue(undefined);
     mocks.harnessCreatesDeviceIdOnConstruction = true;
@@ -325,8 +334,10 @@ describe('runShell', () => {
   it('binds startup_perf to the session captured before MCP metrics resolve', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     });
     mocks.tuiStart.mockResolvedValue(undefined);
     let currentSessionId = 'ses-startup';
@@ -364,8 +375,10 @@ describe('runShell', () => {
   it('bridges OAuth refresh outcomes to telemetry', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     });
     mocks.tuiStart.mockResolvedValue(undefined);
 
@@ -413,8 +426,10 @@ describe('runShell', () => {
     mocks.loadTuiConfig.mockRejectedValue(
       new mocks.TuiConfigParseError({
         theme: 'auto',
+        showTipsBanner: true,
         editorCommand: 'vim',
         notifications: { enabled: true, condition: 'always' },
+        upgrade: { autoInstall: true },
       }),
     );
     mocks.detectTerminalTheme.mockResolvedValue('light');
@@ -441,6 +456,7 @@ describe('runShell', () => {
       startupNotice: 'Invalid TUI config in ~/.kimi-code/tui.toml; using defaults.',
       tuiConfig: {
         theme: 'auto',
+        showTipsBanner: true,
         editorCommand: 'vim',
         notifications: { enabled: true, condition: 'always' },
       },
@@ -450,8 +466,10 @@ describe('runShell', () => {
   it('forwards config.toml diagnostics as startup notices', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     });
     mocks.harnessGetConfigDiagnostics.mockResolvedValue({
       warnings: ['Ignored invalid config in config.toml: loop_control.'],
@@ -482,8 +500,10 @@ describe('runShell', () => {
   it('closes the harness when TUI startup fails', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     });
     mocks.tuiStart.mockRejectedValue(new Error('boom'));
 
@@ -513,8 +533,10 @@ describe('runShell', () => {
   it('tracks exit and prints resume instructions from the TUI exit handler', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     });
     mocks.tuiStart.mockResolvedValue(undefined);
     mocks.tuiGetCurrentSessionId.mockReturnValue('ses-1');
@@ -567,8 +589,10 @@ describe('runShell', () => {
   it('prints the opened web URL from the TUI exit handler when set', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     });
     mocks.tuiStart.mockResolvedValue(undefined);
     mocks.tuiGetCurrentSessionId.mockReturnValue('ses-1');
@@ -614,8 +638,10 @@ describe('runShell', () => {
   it('surfaces an invalid target config as an error for kimi migrate, not silently', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
+      showTipsBanner: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     });
     mocks.detectPendingMigration.mockResolvedValue({ totalSessions: 1 });
     mocks.harnessGetConfig.mockRejectedValue(
