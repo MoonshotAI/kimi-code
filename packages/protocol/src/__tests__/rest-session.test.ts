@@ -98,6 +98,15 @@ describe('listSessionsQuerySchema', () => {
       include_archive: false,
     });
   });
+
+  it('parses exclude_empty to boolean', () => {
+    expect(listSessionsQuerySchema.parse({ exclude_empty: 'true' })).toEqual({
+      exclude_empty: true,
+    });
+    expect(listSessionsQuerySchema.parse({ exclude_empty: 'false' })).toEqual({
+      exclude_empty: false,
+    });
+  });
 });
 
 describe('getSessionProfileResponseSchema', () => {

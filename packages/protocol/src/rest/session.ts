@@ -46,6 +46,7 @@ export const listSessionsQuerySchema = cursorQuerySchema.and(
   z.object({
     status: sessionStatusSchema.optional(),
     include_archive: booleanQueryParam,
+    exclude_empty: booleanQueryParam,
   }),
 );
 export type ListSessionsQuery = z.infer<typeof listSessionsQuerySchema>;
