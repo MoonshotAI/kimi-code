@@ -35,6 +35,7 @@
   --r-sm: 8px;
   --r-md: 12px;
   --r-lg: 16px;
+  --r-xl: 20px;
   --ui-font-size: 14px;
   --ui-font-size-sm: calc(var(--ui-font-size) - 1px);
   --ui-font-size-xs: calc(var(--ui-font-size) - 2px);
@@ -876,8 +877,12 @@ html[data-color-scheme="dark"][data-theme="kimi"] {
 /* Composer: the one card that keeps a shadow (effect.shadow.inputDefault),
    with the chat-input radius documented in web-best-practices §8. */
 html[data-theme="kimi"] .composer-card {
-  border-radius: 20px;
+  border-radius: var(--r-xl);
   box-shadow: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
+}
+
+html[data-theme="kimi"] .toolbar {
+  border-radius: 0 0 var(--r-xl) var(--r-xl);
 }
 
 /* Cards stay flat: no hover lift, no shadow (Quiet Utility / card.md). */
