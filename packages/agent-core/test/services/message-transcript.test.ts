@@ -449,7 +449,10 @@ describe('MessageService over a compacted wire log', () => {
     ];
     const rpc: Partial<CoreRPC> = {
       listSessions: vi.fn().mockImplementation(async () => [summary()]),
-      resumeSession: vi.fn().mockResolvedValue(undefined as unknown as never),
+      // The message service now calls `resumeSession` directly (the prior
+      // `listSessions` + `resumeSession` round-trip was removed by the
+      // perf commit that landed alongside the empty-snapshot test fixture).
+      resumeSession: vi.fn().mockImplementation(async () => summary()),
       getContext: vi.fn().mockImplementation(async (): Promise<AgentContextData> => {
         return { history: liveHistory, tokenCount: 0 };
       }),
