@@ -287,7 +287,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   const SESSION_PAGE_SIZE = 100;
   // Sessions fetched per workspace on first load — keeps the initial request
   // count at (number of workspaces) and each response small.
-  const SESSIONS_INITIAL_PAGE_SIZE = 10;
+  const SESSIONS_INITIAL_PAGE_SIZE = 5;
   // Sessions fetched per "load more" click within a workspace.
   const SESSIONS_LOAD_MORE_SIZE = 30;
 
