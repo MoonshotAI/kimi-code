@@ -10,7 +10,7 @@ exports[`migration snapshot: archived > migration succeeds and matches snapshot 
   "lastPrompt": "<system-reminder>\\nYou are running in non-interactive mode. The user cannot answer questions or provide feedback during execution.\\n- Do NOT call AskUserQuestion. If you need to make a decision, make yo",
   "agents": {
     "main": {
-      "homedir": "C:\\\\Users\\\\Administrator\\\\AppData\\\\Local\\\\Temp\\\\fixtures-snap-ljvOFK\\\\sessions\\\\wd_proj_6c0b95216042\\\\ses_archived\\\\agents\\\\main",
+      "homedir": "<TARGET>\\\\sessions\\\\wd_proj_33c5ea5aa7eb\\\\ses_archived\\\\agents\\\\main",
       "type": "main",
       "parentAgentId": null
     }
@@ -43,7 +43,7 @@ exports[`migration snapshot: large-100msgs > migration succeeds and matches snap
   "lastPrompt": "source /Users/example/proj/example-project/.venv/bin/activate",
   "agents": {
     "main": {
-      "homedir": "C:\\\\Users\\\\Administrator\\\\AppData\\\\Local\\\\Temp\\\\fixtures-snap-ptSFl5\\\\sessions\\\\wd_proj_6c0b95216042\\\\ses_large-100msgs\\\\agents\\\\main",
+      "homedir": "<TARGET>\\\\sessions\\\\wd_proj_33c5ea5aa7eb\\\\ses_large-100msgs\\\\agents\\\\main",
       "type": "main",
       "parentAgentId": null
     }
@@ -131,7 +131,7 @@ exports[`migration snapshot: legacy-protocol-1.3 > migration succeeds and matche
   "lastPrompt": "<system-reminder>\\n<!-- plan-mode-reminder -->\\nPlan mode is active. You are in a research and planning phase.\\n\\nIn plan mode, you should:\\n1. Thoroughly explore the codebase using Glob, Grep, and ReadFil",
   "agents": {
     "main": {
-      "homedir": "C:\\\\Users\\\\Administrator\\\\AppData\\\\Local\\\\Temp\\\\fixtures-snap-v7Kbpr\\\\sessions\\\\wd_proj_6c0b95216042\\\\ses_legacy-protocol-1.3\\\\agents\\\\main",
+      "homedir": "<TARGET>\\\\sessions\\\\wd_proj_33c5ea5aa7eb\\\\ses_legacy-protocol-1.3\\\\agents\\\\main",
       "type": "main",
       "parentAgentId": null
     }
@@ -164,7 +164,7 @@ exports[`migration snapshot: recent-protocol-1.10 > migration succeeds and match
   "lastPrompt": "探索这个项目",
   "agents": {
     "main": {
-      "homedir": "C:\\\\Users\\\\Administrator\\\\AppData\\\\Local\\\\Temp\\\\fixtures-snap-joDzgf\\\\sessions\\\\wd_proj_6c0b95216042\\\\ses_recent-protocol-1.10\\\\agents\\\\main",
+      "homedir": "<TARGET>\\\\sessions\\\\wd_proj_33c5ea5aa7eb\\\\ses_recent-protocol-1.10\\\\agents\\\\main",
       "type": "main",
       "parentAgentId": null
     }
@@ -200,7 +200,7 @@ exports[`migration snapshot: tiny-hello-world > migration succeeds and matches s
   "lastPrompt": "hi",
   "agents": {
     "main": {
-      "homedir": "C:\\\\Users\\\\Administrator\\\\AppData\\\\Local\\\\Temp\\\\fixtures-snap-4CuE18\\\\sessions\\\\wd_proj_6c0b95216042\\\\ses_tiny-hello-world\\\\agents\\\\main",
+      "homedir": "<TARGET>\\\\sessions\\\\wd_proj_33c5ea5aa7eb\\\\ses_tiny-hello-world\\\\agents\\\\main",
       "type": "main",
       "parentAgentId": null
     }
@@ -231,7 +231,7 @@ exports[`migration snapshot: with-image > migration succeeds and matches snapsho
   "lastPrompt": "Describe this audio clip.",
   "agents": {
     "main": {
-      "homedir": "C:\\\\Users\\\\Administrator\\\\AppData\\\\Local\\\\Temp\\\\fixtures-snap-iJZTg3\\\\sessions\\\\wd_proj_6c0b95216042\\\\ses_with-image\\\\agents\\\\main",
+      "homedir": "<TARGET>\\\\sessions\\\\wd_proj_33c5ea5aa7eb\\\\ses_with-image\\\\agents\\\\main",
       "type": "main",
       "parentAgentId": null
     }
@@ -264,7 +264,7 @@ exports[`migration snapshot: with-subagent-collapsed > migration succeeds and ma
   "lastPrompt": "你启动三个 sub agent，每个 sub，都要运行一些需要被批准的简单指令，运行两个以上",
   "agents": {
     "main": {
-      "homedir": "C:\\\\Users\\\\Administrator\\\\AppData\\\\Local\\\\Temp\\\\fixtures-snap-pbaGdh\\\\sessions\\\\wd_proj_6c0b95216042\\\\ses_with-subagent-collapsed\\\\agents\\\\main",
+      "homedir": "<TARGET>\\\\sessions\\\\wd_proj_33c5ea5aa7eb\\\\ses_with-subagent-collapsed\\\\agents\\\\main",
       "type": "main",
       "parentAgentId": null
     }
@@ -298,7 +298,7 @@ exports[`migration snapshot: with-thinking > migration succeeds and matches snap
   "lastPrompt": "Describe this video.",
   "agents": {
     "main": {
-      "homedir": "C:\\\\Users\\\\Administrator\\\\AppData\\\\Local\\\\Temp\\\\fixtures-snap-PAkKKz\\\\sessions\\\\wd_proj_6c0b95216042\\\\ses_with-thinking\\\\agents\\\\main",
+      "homedir": "<TARGET>\\\\sessions\\\\wd_proj_33c5ea5aa7eb\\\\ses_with-thinking\\\\agents\\\\main",
       "type": "main",
       "parentAgentId": null
     }
@@ -331,7 +331,7 @@ exports[`migration snapshot: with-tool-calls > migration succeeds and matches sn
   "lastPrompt": "<system-reminder>\\nYou are running in non-interactive mode. The user cannot answer questions or provide feedback during execution.\\n- Do NOT call AskUserQuestion. If you need to make a decision, make yo",
   "agents": {
     "main": {
-      "homedir": "C:\\\\Users\\\\Administrator\\\\AppData\\\\Local\\\\Temp\\\\fixtures-snap-CjIyM0\\\\sessions\\\\wd_proj_6c0b95216042\\\\ses_with-tool-calls\\\\agents\\\\main",
+      "homedir": "<TARGET>\\\\sessions\\\\wd_proj_33c5ea5aa7eb\\\\ses_with-tool-calls\\\\agents\\\\main",
       "type": "main",
       "parentAgentId": null
     }

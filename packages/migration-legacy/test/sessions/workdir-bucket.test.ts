@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeWorkdirBucket, oldMd5BucketName } from '../../src/sessions/workdir-bucket.js';
 import { createHash } from 'node:crypto';
-import { basename, resolve } from 'node:path';
+import { basename, resolve } from 'pathe';
 
 /**
  * Reference re-implementation of kimi-core `encodeWorkDirKey` +
@@ -27,9 +27,12 @@ function referenceEncodeWorkDirKey(workDir: string): string {
 
 describe('computeWorkdirBucket', () => {
   it('produces wd_<slug>_<sha256-12> for a normal path', () => {
-    const bucket = computeWorkdirBucket('/Users/me/Developer/proj');
+    const workDir = '/Users/me/Developer/proj';
+    const bucket = computeWorkdirBucket(workDir);
     expect(bucket).toMatch(/^wd_proj_[0-9a-f]{12}$/);
-    const expected = createHash('sha256').update('/Users/me/Developer/proj').digest('hex').slice(0, 12);
+    // The bucket hashes the platform-resolved absolute path so different
+    // hosts don't collide. Match that here.
+    const expected = createHash('sha256').update(resolve(workDir)).digest('hex').slice(0, 12);
     expect(bucket).toBe(`wd_proj_${expected}`);
   });
 

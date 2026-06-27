@@ -1,4 +1,4 @@
-import { basename, resolve } from 'node:path';
+import { basename, resolve } from 'pathe';
 import { createHash } from 'node:crypto';
 
 const WORKDIR_KEY_PREFIX = 'wd_';
