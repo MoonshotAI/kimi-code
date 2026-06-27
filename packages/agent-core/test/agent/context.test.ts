@@ -1,4 +1,4 @@
-import { Readable, type Writable } from 'node:stream';
+import { PassThrough, Readable, type Writable } from 'node:stream';
 
 import type { KaosProcess } from '@moonshot-ai/kaos';
 import type { Message } from '@moonshot-ai/kosong';
@@ -131,6 +131,69 @@ describe('Agent context', () => {
       message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
     expect(textOf(ctx.agent.context.history[0]!)).toContain('echo hello');
     expect(textOf(ctx.agent.context.history[1]!)).toContain('<bash-stdout>hello');
+  });
+
+  it('does not auto-yield manual shell commands after the Bash yield window', async () => {
+    vi.useFakeTimers();
+    try {
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      let exitCode: number | null = null;
+      let resolveWait: (code: number) => void = () => {};
+      const waitPromise = new Promise<number>((resolve) => {
+        resolveWait = resolve;
+      });
+      const proc: KaosProcess = {
+        stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+        stdout,
+        stderr,
+        pid: 2,
+        get exitCode(): number | null {
+          return exitCode;
+        },
+        wait: vi.fn(async () => waitPromise),
+        kill: vi.fn(async () => {}),
+        dispose: vi.fn(async () => {
+          stdout.destroy();
+          stderr.destroy();
+        }),
+      };
+      const execWithEnv = vi.fn().mockResolvedValue(proc);
+      const kaos = createFakeKaos({ execWithEnv });
+      const ctx = testAgent({ kaos });
+      ctx.configure();
+
+      const running = ctx.agent.tools.runShellCommand('sleep 20');
+      let settled = false;
+      void running.finally(() => {
+        settled = true;
+      });
+
+      await vi.waitFor(() => {
+        expect(execWithEnv).toHaveBeenCalledTimes(1);
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(settled).toBe(false);
+
+      stdout.write('done\n');
+      stdout.end();
+      stderr.end();
+      exitCode = 0;
+      resolveWait(0);
+
+      const result = await running;
+
+      expect(result).toMatchObject({
+        stdout: 'done\n',
+        stderr: '',
+        isError: false,
+      });
+      expect(result.backgrounded).toBeUndefined();
+      expect(result.stdout).not.toContain('task_id:');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('surfaces the failure reason when a shell command fails with no output', async () => {
