@@ -44,7 +44,14 @@ import {
   type SetSessionModelResponse,
   type Stream,
 } from '@agentclientprotocol/sdk';
-import type { KimiHarness, Session, SessionSummary } from '@moonshot-ai/kimi-code-sdk';
+import type {
+  KimiConfig,
+  KimiHarness,
+  ModelAlias,
+  ProviderConfig,
+  Session,
+  SessionSummary,
+} from '@moonshot-ai/kimi-code-sdk';
 import { log } from '@moonshot-ai/kimi-code-sdk';
 import { LocalKaos, type Kaos } from '@moonshot-ai/kaos';
 
@@ -107,12 +114,90 @@ function toResolvedSlashCommands(
 /**
  * Inline auth gate — moved out of `KimiAuthFacade.hasUsableToken()` so
  * the SDK doesn't have to carry an ACP-specific convenience method.
- * Mirrors the original semantics exactly: any provider with `hasToken`
- * set counts as authed.
+ * OAuth tokens still count as authed, but ACP can also start when the
+ * active model resolves to a provider with config-file credentials.
  */
 async function harnessIsAuthed(harness: KimiHarness): Promise<boolean> {
   const status = await harness.auth.status();
-  return status.providers.some((entry) => entry.hasToken === true);
+  if (status.providers.some((entry) => entry.hasToken)) return true;
+  return hasUsableConfiguredDefaultModel(harness);
+}
+
+async function hasUsableConfiguredDefaultModel(harness: KimiHarness): Promise<boolean> {
+  if (typeof harness.getConfig !== 'function') return false;
+  let config: KimiConfig;
+  try {
+    config = await harness.getConfig();
+  } catch (error) {
+    log.warn('acp: harness.getConfig threw during auth gate; requiring terminal auth', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+
+  if (config.defaultModel === undefined) return false;
+  const alias = config.models?.[config.defaultModel];
+  if (alias === undefined) return false;
+
+  const provider = providerForAlias(config, alias);
+  return provider !== undefined && providerHasNonOAuthCredentials(provider);
+}
+
+function providerForAlias(config: KimiConfig, alias: ModelAlias): ProviderConfig | undefined {
+  const providerName = alias.provider ?? config.defaultProvider;
+  return providerName === undefined ? undefined : config.providers[providerName];
+}
+
+function providerHasNonOAuthCredentials(provider: ProviderConfig): boolean {
+  if (provider.oauth !== undefined) return false;
+  switch (provider.type) {
+    case 'anthropic':
+      return hasProviderValue(provider, 'ANTHROPIC_API_KEY');
+    case 'openai':
+    case 'openai_responses':
+      return hasProviderValue(provider, 'OPENAI_API_KEY');
+    case 'kimi':
+      return hasProviderValue(provider, 'KIMI_API_KEY');
+    case 'google-genai':
+      return hasProviderValue(provider, 'GOOGLE_API_KEY');
+    case 'vertexai':
+      return (
+        hasProviderValue(provider, 'VERTEXAI_API_KEY') ||
+        hasEnvValue(provider, 'GOOGLE_API_KEY') ||
+        (hasEnvValue(provider, 'GOOGLE_CLOUD_PROJECT') &&
+          (hasEnvValue(provider, 'GOOGLE_CLOUD_LOCATION') ||
+            vertexAILocationFromBaseUrl(provider.baseUrl) !== undefined))
+      );
+    default: {
+      const exhaustive: never = provider.type;
+      return exhaustive;
+    }
+  }
+}
+
+function hasProviderValue(provider: ProviderConfig, envKey: string): boolean {
+  return nonEmptyString(provider.apiKey) !== undefined || hasEnvValue(provider, envKey);
+}
+
+function hasEnvValue(provider: ProviderConfig, envKey: string): boolean {
+  return nonEmptyString(provider.env?.[envKey]) !== undefined;
+}
+
+function vertexAILocationFromBaseUrl(baseUrl: string | undefined): string | undefined {
+  const url = nonEmptyString(baseUrl);
+  if (url === undefined) return undefined;
+  try {
+    const host = new URL(url).hostname;
+    const suffix = '-aiplatform.googleapis.com';
+    return host.endsWith(suffix) ? nonEmptyString(host.slice(0, -suffix.length)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function nonEmptyString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }
 
 /**
