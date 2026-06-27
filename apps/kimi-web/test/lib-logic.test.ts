@@ -5,6 +5,7 @@ import {
   parseFilePathLinkCandidate,
 } from '../src/lib/filePathLinks';
 import { parseDiff } from '../src/lib/parseDiff';
+import { parseSkillCommand } from '../src/lib/slashCommands';
 import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
@@ -123,6 +124,31 @@ describe('filePathLinks', () => {
       { path: 'src/a.ts', line: 12, text: 'src/a.ts#L12' },
       { path: '/assets/demo.png', text: 'demo.png' },
     ]);
+  });
+});
+
+describe('parseSkillCommand', () => {
+  it('returns null for an empty skill name', () => {
+    expect(parseSkillCommand('/')).toBeNull();
+  });
+
+  it('parses a bare built-in-style skill command', () => {
+    expect(parseSkillCommand('/deploy')).toEqual({ name: 'deploy' });
+  });
+
+  it('strips the skill: prefix from non-built-in skill commands', () => {
+    expect(parseSkillCommand('/skill:deploy')).toEqual({ name: 'deploy' });
+  });
+
+  it('preserves arguments after the skill name', () => {
+    expect(parseSkillCommand('/skill:deploy production')).toEqual({
+      name: 'deploy',
+      args: 'production',
+    });
+  });
+
+  it('ignores empty arguments', () => {
+    expect(parseSkillCommand('/skill:deploy ')).toEqual({ name: 'deploy' });
   });
 });
 
