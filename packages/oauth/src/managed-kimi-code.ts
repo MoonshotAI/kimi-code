@@ -127,6 +127,7 @@ export interface ManagedKimiModelAlias {
   capabilities?: string[] | undefined;
   displayName?: string | undefined;
   protocol?: ManagedKimiCodeProtocol;
+  betaApi?: boolean;
   readonly [key: string]: unknown;
 }
 
@@ -477,6 +478,16 @@ export function applyManagedKimiCodeConfig(
   }
   for (const model of options.models) {
     const capabilities = capabilitiesForModel(model);
+    // Kimi's Anthropic-compatible endpoint only accepts adaptive thinking
+    // (`thinking: { type: 'adaptive' }`); the kosong adapter otherwise infers
+    // budget-based thinking from the model name, which fails for Kimi model ids.
+    // Restrict the override to thinking-capable models: the UI treats
+    // `adaptiveThinking === true` as "supports a thinking toggle", so marking a
+    // non-thinking model would misrepresent it.
+    const supportsAdaptiveThinking =
+      model.protocol === 'anthropic' &&
+      (capabilities?.includes('thinking') === true ||
+        capabilities?.includes('always_thinking') === true);
     existingModels[managedModelKey(model.id)] = {
       provider: KIMI_CODE_PROVIDER_NAME,
       model: model.id,
@@ -484,6 +495,11 @@ export function applyManagedKimiCodeConfig(
       capabilities,
       displayName: model.displayName,
       protocol: model.protocol,
+      // Kimi's anthropic-compatible endpoint is served behind the beta Messages
+      // API (`/v1/messages?beta=true`), so route anthropic-protocol models
+      // through `client.beta.messages.create`.
+      ...(model.protocol === 'anthropic' ? { betaApi: true } : {}),
+      ...(supportsAdaptiveThinking ? { adaptiveThinking: true } : {}),
     };
   }
 

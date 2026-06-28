@@ -141,6 +141,83 @@ const MUL_TOOL: Tool = {
 const B64_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA' +
   'DUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+/**
+ * Capture the request body sent to the Anthropic beta Messages API by mocking
+ * the client (non-stream mode). Also asserts the standard Messages API was
+ * not called.
+ */
+async function captureBetaRequestBody(
+  provider: AnthropicChatProvider,
+  systemPrompt: string,
+  tools: Tool[],
+  history: Message[],
+): Promise<Record<string, unknown>> {
+  let capturedParams: Record<string, unknown> | undefined;
+  let capturedOptions: Record<string, unknown> | undefined;
+
+  (provider as any)._client.beta.messages.create = vi
+    .fn()
+    .mockImplementation((params: unknown, options?: unknown) => {
+      capturedParams = params as Record<string, unknown>;
+      capturedOptions = options as Record<string, unknown> | undefined;
+      return Promise.resolve(makeAnthropicResponse());
+    });
+  const standardCreate = vi.fn();
+  (provider as any)._client.messages.create = standardCreate;
+
+  const stream = await provider.generate(systemPrompt, tools, history);
+  for await (const part of stream) {
+    void part;
+  }
+
+  if (capturedParams === undefined) {
+    throw new Error('Expected provider.generate() to call beta.messages.create');
+  }
+  expect(standardCreate).not.toHaveBeenCalled();
+
+  const result = { ...capturedParams };
+  if (capturedOptions !== undefined && capturedOptions['headers'] !== undefined) {
+    result['_extra_headers'] = capturedOptions['headers'];
+  }
+  return result;
+}
+
+describe('betaApi', () => {
+  const history: Message[] = [
+    { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+  ];
+
+  it('routes to client.beta.messages.create with betas in the body and no beta header', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'kimi-for-coding',
+      apiKey: 'test-key',
+      defaultMaxTokens: 1024,
+      stream: false,
+      betaApi: true,
+    });
+    const body = await captureBetaRequestBody(provider, '', [], history);
+
+    expect(body['betas']).toEqual(['interleaved-thinking-2025-05-14']);
+    const headers = body['_extra_headers'] as Record<string, string> | undefined;
+    expect(headers?.['anthropic-beta']).toBeUndefined();
+  });
+
+  it('keeps beta features in the anthropic-beta header when betaApi is off', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'kimi-for-coding',
+      apiKey: 'test-key',
+      defaultMaxTokens: 1024,
+      stream: false,
+    });
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['betas']).toBeUndefined();
+    const headers = body['_extra_headers'] as Record<string, string> | undefined;
+    expect(headers?.['anthropic-beta']).toContain('interleaved-thinking-2025-05-14');
+  });
+});
+
 describe('AnthropicChatProvider', () => {
   it('does not read ANTHROPIC_API_KEY from process.env inside the adapter', () => {
     const previousApiKey = process.env['ANTHROPIC_API_KEY'];
