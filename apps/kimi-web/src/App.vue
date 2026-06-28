@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/App.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, provide, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Sidebar from './components/Sidebar.vue';
 import ResizeHandle from './components/ResizeHandle.vue';
@@ -135,6 +135,15 @@ function onGlobalKeydown(e: KeyboardEvent): void {
 // composables can both claim the single right-side slot.
 // ---------------------------------------------------------------------------
 const detailTarget = ref<DetailTarget | null>(null);
+
+// True for one frame while the active session changes: suppresses the right
+// panel's width transition so a restored panel snaps to its width instead of
+// animating open from zero.
+const panelSwitching = ref(false);
+watch(client.activeSessionId, () => {
+  panelSwitching.value = true;
+  void nextTick(() => { panelSwitching.value = false; });
+});
 
 const {
   previewTarget,
@@ -735,7 +744,7 @@ function openPr(url: string): void {
     <aside
       v-if="!isMobile || sidePanelVisible"
       class="global-preview"
-      :class="{ open: sidePanelVisible, mobile: isMobile, 'no-anim': panelDragging }"
+      :class="{ open: sidePanelVisible, mobile: isMobile, 'no-anim': panelDragging || panelSwitching }"
       role="complementary"
       :aria-label="t('layout.detailPanelAria')"
       :aria-hidden="!sidePanelVisible"
