@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readApiErrorMessage } from './api-error';
 import { DEFAULT_KIMI_CODE_OAUTH_HOST } from './constants';
 import { OAuthUnauthorizedError } from './errors';
+import { parseKimiCodeCustomHeaders } from './identity';
 import { DEFAULT_KIMI_CODE_BASE_URL, kimiCodeBaseUrl } from './managed-usage';
 import { isRecord } from './utils';
 
@@ -50,6 +51,7 @@ export interface FetchManagedKimiCodeModelsOptions {
   readonly accessToken: string;
   readonly baseUrl?: string | undefined;
   readonly fetchImpl?: typeof fetch | undefined;
+  readonly headers?: Record<string, string> | undefined;
 }
 
 export interface ManagedKimiCodeApplyResult {
@@ -177,6 +179,7 @@ export interface ProvisionManagedKimiCodeConfigOptions<TConfig> {
   readonly oauthHost?: string | undefined;
   readonly preserveDefaultModel?: boolean | undefined;
   readonly fetchImpl?: typeof fetch | undefined;
+  readonly headers?: Record<string, string> | undefined;
 }
 
 function managedModelKey(modelId: string): string {
@@ -273,6 +276,14 @@ export function kimiCodeEnvOAuthHost(env: ManagedKimiEnv = process.env): string 
   return env.KIMI_CODE_OAUTH_HOST ?? env.KIMI_OAUTH_HOST;
 }
 
+// Base URLs that share the default `oauth/kimi-code` credential slot. The
+// internal dev endpoint is hardcoded here so it reuses the same OAuth token as
+// the production managed endpoint instead of requiring a separate login.
+const SHARED_DEFAULT_BASE_URLS: readonly string[] = [
+  normalizeEndpoint(DEFAULT_KIMI_CODE_BASE_URL),
+  'http://10.4.232.131:38081/v1',
+];
+
 export function resolveKimiCodeOAuthKey(options: {
   readonly oauthHost?: string | undefined;
   readonly baseUrl?: string | undefined;
@@ -280,9 +291,8 @@ export function resolveKimiCodeOAuthKey(options: {
   const oauthHost = normalizeEndpoint(options.oauthHost ?? DEFAULT_KIMI_CODE_OAUTH_HOST);
   const baseUrl = defaultBaseUrl(options.baseUrl);
   const defaultOauthHost = normalizeEndpoint(DEFAULT_KIMI_CODE_OAUTH_HOST);
-  const defaultApiBaseUrl = normalizeEndpoint(DEFAULT_KIMI_CODE_BASE_URL);
 
-  if (oauthHost === defaultOauthHost && baseUrl === defaultApiBaseUrl) {
+  if (oauthHost === defaultOauthHost && SHARED_DEFAULT_BASE_URLS.includes(baseUrl)) {
     return KIMI_CODE_OAUTH_KEY;
   }
 
@@ -410,6 +420,8 @@ export async function fetchManagedKimiCodeModels(
   const baseUrl = defaultBaseUrl(options.baseUrl);
   const response = await fetchImpl(`${baseUrl}/models`, {
     headers: {
+      ...parseKimiCodeCustomHeaders(),
+      ...options.headers,
       Authorization: `Bearer ${options.accessToken}`,
       Accept: 'application/json',
     },
