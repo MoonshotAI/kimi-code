@@ -232,7 +232,7 @@ const {
   handleDragLeave,
   handleDrop,
   clearAfterSubmit,
-} = useAttachmentUpload({ uploadImage: () => props.uploadImage });
+} = useAttachmentUpload({ uploadImage: () => props.uploadImage, sessionId: () => props.sessionId });
 
 // Silence noUnusedLocals: fileInputRef is used as a template ref (ref="fileInputRef").
 void fileInputRef;
