@@ -2126,8 +2126,13 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
 
 function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
   const first = question.questions[0];
-  // Prefer the short header; fall back to the question text for the body.
-  const preview = (first?.header ?? first?.question ?? '').trim();
+  // Lead with the actionable question text; keep the short header as context
+  // when both are present so the desktop notification actually says what is
+  // being asked (e.g. "Storage: Which database?").
+  const header = first?.header?.trim() ?? '';
+  const questionText = first?.question?.trim() ?? '';
+  const preview =
+    header && questionText ? `${header}: ${questionText}` : questionText || header;
 
   // Browser notification when the user isn't watching this session.
   notification.maybeNotifyQuestion(sid, {
