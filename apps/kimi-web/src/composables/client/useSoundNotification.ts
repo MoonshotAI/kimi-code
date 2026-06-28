@@ -117,20 +117,25 @@ function playChime(): void {
     traceClientEvent('sound: skipped, AudioContext unavailable');
     return;
   }
-  try {
+  // Never queue tones on a suspended context: its clock is frozen, so a chime
+  // scheduled now would play stale when the context later resumes (e.g. on the
+  // next click) rather than at completion time. If it isn't running yet, try to
+  // unlock it for next time and skip this one.
+  if (ctx.state !== 'running') {
+    traceClientEvent('sound: skipped, context not running', { state: ctx.state });
     if (ctx.state === 'suspended') {
-      // Last-ditch resume in case no gesture unlocked it yet (e.g. a session
-      // completed before the user interacted). Logs whether the browser allows it.
-      traceClientEvent('sound: context suspended at play time, attempting resume');
       void ctx.resume().then(
         () => {
-          traceClientEvent('sound: resume resolved', { state: ctx.state });
+          traceClientEvent('sound: context resumed for next time', { state: ctx.state });
         },
         (error) => {
           traceClientEvent('sound: resume rejected', { error: String(error) });
         },
       );
     }
+    return;
+  }
+  try {
     // A short two-note "ding": a soft lower note followed by a brighter one.
     tone(ctx, 880, 0, 0.16, 0.18);
     tone(ctx, 1320, 0.1, 0.22, 0.16);
