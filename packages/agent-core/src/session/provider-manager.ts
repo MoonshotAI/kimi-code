@@ -1,7 +1,7 @@
 import type { Logger } from '#/logging/types';
 import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
 import { APIStatusError, getModelCapability, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
-import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig } from '../config';
+import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig, ProviderType } from '../config';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
 
 export interface BearerTokenProvider {
@@ -20,6 +20,10 @@ export interface ResolvedRuntimeProvider {
   /** Declared 'always_thinking' capability — the model cannot disable thinking. */
   readonly alwaysThinking?: boolean;
   readonly maxOutputSize?: number;
+  /** Configured provider wire type (`provider.type`), before any model-level protocol override. */
+  readonly type: ProviderType;
+  /** Model-level protocol override (`alias.protocol`); when set, takes precedence over `type` for transport selection. */
+  readonly protocol: ModelAlias['protocol'];
 }
 
 interface ProviderManagerOptions {
@@ -60,6 +64,8 @@ export class SingleModelProvider implements ModelProvider {
       modelCapabilities: this.modelCapabilities,
       providerName: 'single-model-provider',
       provider: this.providerConfig,
+      type: this.providerConfig.type,
+      protocol: undefined,
     };
   }
 }
@@ -123,6 +129,8 @@ export class ProviderManager implements ModelProvider {
         (c) => c.trim().toLowerCase() === 'always_thinking',
       ),
       maxOutputSize: alias.maxOutputSize,
+      type: providerConfig.type,
+      protocol: alias.protocol,
     };
   }
 
