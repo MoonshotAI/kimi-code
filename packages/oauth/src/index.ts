@@ -60,6 +60,7 @@ export type {
   FetchManagedKimiCodeModelsOptions,
   ManagedKimiCodeApplyResult,
   ManagedKimiCodeCleanupResult,
+  ManagedKimiCodeProtocol,
   ManagedKimiEnv,
   ManagedKimiLoginAuth,
   ManagedKimiCodeModelInfo,

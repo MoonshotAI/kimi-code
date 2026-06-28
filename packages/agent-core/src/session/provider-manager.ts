@@ -107,6 +107,7 @@ export class ProviderManager implements ModelProvider {
     const provider = toKosongProviderConfig(
       providerConfig,
       alias.model,
+      alias.protocol,
       this.options.kimiRequestHeaders,
       alias.maxOutputSize,
       alias.reasoningKey,
@@ -219,23 +220,33 @@ function resolveModelCapabilities(
 function toKosongProviderConfig(
   provider: ProviderConfig,
   model: string,
+  modelProtocol: ModelAlias['protocol'],
   kimiRequestHeaders: Record<string, string> | undefined,
   maxOutputSize: number | undefined,
   reasoningKey: string | undefined,
   promptCacheKey: string | undefined,
   adaptiveThinking: boolean | undefined,
 ): KosongProviderConfig {
-  switch (provider.type) {
-    case 'anthropic':
+  const effectiveType = modelProtocol === 'anthropic' ? 'anthropic' : provider.type;
+  switch (effectiveType) {
+    case 'anthropic': {
+      const baseUrl = providerValue(provider.baseUrl, provider.env, 'ANTHROPIC_BASE_URL');
       return {
         type: 'anthropic',
         model,
-        baseUrl: providerValue(provider.baseUrl, provider.env, 'ANTHROPIC_BASE_URL'),
+        baseUrl:
+          modelProtocol === 'anthropic' && baseUrl !== undefined
+            ? baseUrl.replace(/\/v1\/?$/, '')
+            : baseUrl,
         apiKey: providerApiKey(provider),
         ...(maxOutputSize !== undefined ? { defaultMaxTokens: maxOutputSize } : {}),
         ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
+        // Session affinity: Anthropic's analog of OpenAI `prompt_cache_key` is
+        // `metadata.user_id` on the Messages API (cache-affinity / end-user id).
+        ...(promptCacheKey !== undefined ? { metadata: { user_id: promptCacheKey } } : {}),
         ...defaultHeadersField(provider.customHeaders),
       };
+    }
     case 'openai':
       return {
         type: 'openai',
@@ -280,7 +291,7 @@ function toKosongProviderConfig(
       };
     }
     default: {
-      const exhaustive: never = provider.type;
+      const exhaustive: never = effectiveType;
       throw new KimiError(
         ErrorCodes.MODEL_CONFIG_INVALID,
         `Unsupported provider type: ${String(exhaustive)}`,
