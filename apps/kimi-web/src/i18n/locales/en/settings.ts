@@ -10,6 +10,7 @@ export default {
   appearance: 'Appearance',
   notifications: 'Notifications',
   notifyOnComplete: 'Notify when a turn completes',
+  soundOnComplete: 'Play a sound when a turn completes',
   notifyDenied: 'Blocked in browser settings',
   notifyBody: 'Finished a turn',
   account: 'Account',

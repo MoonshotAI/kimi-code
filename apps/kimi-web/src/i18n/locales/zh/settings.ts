@@ -10,6 +10,7 @@ export default {
   appearance: '外观',
   notifications: '通知',
   notifyOnComplete: '会话完成时通知',
+  soundOnComplete: '会话完成时播放提示音',
   notifyDenied: '已在浏览器设置中被阻止',
   notifyBody: '已完成一轮',
   account: '账户',

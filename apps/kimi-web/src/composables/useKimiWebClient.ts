@@ -21,6 +21,7 @@ import {
 import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
 import { useAppearance } from './client/useAppearance';
 import { useNotification } from './client/useNotification';
+import { useSoundNotification } from './client/useSoundNotification';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
 import { useSideChat } from './client/useSideChat';
@@ -28,6 +29,7 @@ import { useWorkspaceState } from './client/useWorkspaceState';
 
 const appearance = useAppearance();
 const notification = useNotification();
+const sound = useSoundNotification();
 import type {
   AppEvent,
   AppApprovalRequest,
@@ -2088,6 +2090,12 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
     },
   });
 
+  // Completion sound — only for real completions (aborted/cancelled turns stay
+  // silent). Plays regardless of visibility so it also reaches a backgrounded tab.
+  if (status === 'idle') {
+    sound.maybePlayCompletionSound();
+  }
+
   const queue = rawState.queuedBySession[sid] ?? [];
   if (queue.length === 0) return;
 
@@ -2199,6 +2207,8 @@ export function useKimiWebClient() {
     notifyOnComplete: notification.notifyOnComplete,
     notifyPermission: notification.notifyPermission,
     setNotifyOnComplete: notification.setNotifyOnComplete,
+    soundOnComplete: sound.soundOnComplete,
+    setSoundOnComplete: sound.setSoundOnComplete,
     onboarded,
     setOnboarded,
 

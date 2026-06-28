@@ -24,6 +24,8 @@ const props = defineProps<{
   notify: boolean;
   /** OS permission state ('default' | 'granted' | 'denied') for the hint. */
   notifyPermission?: string;
+  /** Play-a-sound-on-completion preference. */
+  sound: boolean;
   /** Beta conversation TOC (proportional, viewport, hover tooltip). */
   betaToc?: boolean;
   /** Global daemon config from GET /api/v1/config. Secrets are redacted server-side. */
@@ -41,6 +43,7 @@ const emit = defineEmits<{
   setColorScheme: [colorScheme: ColorScheme];
   setUiFontSize: [size: number];
   setNotify: [on: boolean];
+  setSound: [on: boolean];
   setBetaToc: [on: boolean];
   login: [];
   logout: [];
@@ -262,6 +265,19 @@ function setTab(tab: SettingsTab): void {
                   :aria-checked="notify"
                   :disabled="notifyPermission === 'denied'"
                   @click="emit('setNotify', !notify)"
+                >
+                  <span class="knob" />
+                </button>
+              </div>
+              <div class="row">
+                <span class="rlabel">{{ t('settings.soundOnComplete') }}</span>
+                <button
+                  type="button"
+                  class="switch"
+                  role="switch"
+                  :class="{ on: sound }"
+                  :aria-checked="sound"
+                  @click="emit('setSound', !sound)"
                 >
                   <span class="knob" />
                 </button>
