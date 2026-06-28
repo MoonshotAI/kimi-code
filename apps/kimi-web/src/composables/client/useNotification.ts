@@ -1,31 +1,37 @@
 // apps/kimi-web/src/composables/client/useNotification.ts
 // Browser notifications for when the agent needs attention: a turn finished or
-// a question is waiting for an answer. The on/off preference (persisted) and
-// the OS permission + Notification API. Pure UI action module — it never reads
-// rawState or calls the API. The rawState-dependent bits (is the session active
-// & visible, its title, the click-to-select action) are passed in by the caller
-// via the ctx objects.
+// a question is waiting for an answer. Each kind has its own on/off preference
+// (persisted) plus the shared OS permission + Notification API. Pure UI action
+// module — it never reads rawState or calls the API. The rawState-dependent
+// bits (is the session active & visible, its title, the click-to-select action)
+// are passed in by the caller via the ctx objects.
+//
+// Why two preferences: completion notifications default on (existing behavior),
+// but question notifications surface question text and default OFF, so an
+// existing user who only opted into completion alerts doesn't start receiving
+// question content on their desktop without explicitly opting in.
 
-import { ref } from 'vue';
+import { ref, type Ref } from 'vue';
 import { i18n } from '../../i18n';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
 
-function loadNotify(): boolean {
-  const v = safeGetString(STORAGE_KEYS.notifyOnComplete);
-  return v === null ? true : v === '1';
+function loadNotify(key: string, defaultOn: boolean): boolean {
+  const v = safeGetString(key);
+  return v === null ? defaultOn : v === '1';
 }
 
-const notifyOnComplete = ref(loadNotify());
+const notifyOnComplete = ref(loadNotify(STORAGE_KEYS.notifyOnComplete, true));
+const notifyOnQuestion = ref(loadNotify(STORAGE_KEYS.notifyOnQuestion, false));
 const notifyPermission = ref<string>(
   typeof Notification !== 'undefined' ? Notification.permission : 'denied',
 );
 
-/** Enable/disable attention notifications. Enabling requests OS permission;
-    if the user blocks it the preference stays off. */
-async function setNotifyOnComplete(on: boolean): Promise<void> {
+/** Shared setter: disabling is instant; enabling requests OS permission first
+    and stays off if the user blocks it. */
+async function setNotifyPref(pref: Ref<boolean>, key: string, on: boolean): Promise<void> {
   if (!on) {
-    notifyOnComplete.value = false;
-    safeSetString(STORAGE_KEYS.notifyOnComplete, '0');
+    pref.value = false;
+    safeSetString(key, '0');
     return;
   }
   if (typeof Notification === 'undefined') return;
@@ -39,8 +45,18 @@ async function setNotifyOnComplete(on: boolean): Promise<void> {
   }
   notifyPermission.value = perm;
   if (perm !== 'granted') return; // blocked — leave the toggle off
-  notifyOnComplete.value = true;
-  safeSetString(STORAGE_KEYS.notifyOnComplete, '1');
+  pref.value = true;
+  safeSetString(key, '1');
+}
+
+/** Enable/disable turn-completion notifications. */
+function setNotifyOnComplete(on: boolean): Promise<void> {
+  return setNotifyPref(notifyOnComplete, STORAGE_KEYS.notifyOnComplete, on);
+}
+
+/** Enable/disable question (needs-answer) notifications. Off by default. */
+function setNotifyOnQuestion(on: boolean): Promise<void> {
+  return setNotifyPref(notifyOnQuestion, STORAGE_KEYS.notifyOnQuestion, on);
 }
 
 export interface NotifyCompletionCtx {
@@ -59,11 +75,11 @@ export interface NotifyQuestionCtx extends NotifyCompletionCtx {
   questionPreview: string;
 }
 
-/** Shared permission gate + fire. `body` and `tag` let each kind carry its own
-    text and a per-kind dedup tag so a completion and a question don't collapse
-    into one notification. */
-function maybeNotify(ctx: NotifyCompletionCtx, body: string, tag: string): void {
-  if (!notifyOnComplete.value) return;
+/** Shared permission gate + fire. `enabled` is the caller's per-kind preference;
+    `body` and `tag` let each kind carry its own text and a per-kind dedup tag
+    so a completion and a question don't collapse into one notification. */
+function maybeNotify(enabled: boolean, ctx: NotifyCompletionCtx, body: string, tag: string): void {
+  if (!enabled) return;
   if (typeof Notification === 'undefined') return;
   const perm = Notification.permission;
   if (perm === 'denied') return;
@@ -100,21 +116,23 @@ function fire(ctx: NotifyCompletionCtx, body: string, tag: string): void {
 /** Fire a completion notification for a finished session, but only when the
     caller says the user isn't already looking at it. */
 function maybeNotifyCompletion(sid: string, ctx: NotifyCompletionCtx): void {
-  maybeNotify(ctx, i18n.global.t('settings.notifyBody'), `kimi-complete-${sid}`);
+  maybeNotify(notifyOnComplete.value, ctx, i18n.global.t('settings.notifyBody'), `kimi-complete-${sid}`);
 }
 
-/** Fire a notification when a session asks a question, but only when the
-    caller says the user isn't already looking at it. */
+/** Fire a notification when a session asks a question, but only when the user
+    explicitly opted into question notifications and isn't already looking. */
 function maybeNotifyQuestion(sid: string, ctx: NotifyQuestionCtx): void {
   const body = ctx.questionPreview || i18n.global.t('settings.notifyQuestionBody');
-  maybeNotify(ctx, body, `kimi-question-${sid}`);
+  maybeNotify(notifyOnQuestion.value, ctx, body, `kimi-question-${sid}`);
 }
 
 export function useNotification() {
   return {
     notifyOnComplete,
+    notifyOnQuestion,
     notifyPermission,
     setNotifyOnComplete,
+    setNotifyOnQuestion,
     maybeNotifyCompletion,
     maybeNotifyQuestion,
   };
