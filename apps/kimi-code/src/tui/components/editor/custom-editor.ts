@@ -111,6 +111,7 @@ function stripSgr(s: string): string {
 
 function getNewlineInput(data: string): string | undefined {
   if (data === '\n' || data === '\u001B\r' || data === '\u001B[13;2~') return data;
+  if (data === '\u001B[13;2u') return '\n';
   if (matchesKey(data, Key.ctrl('j'))) return '\n';
   return undefined;
 }
