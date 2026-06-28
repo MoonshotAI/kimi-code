@@ -160,7 +160,7 @@ watch(() => props.sessionId, () => {
 // implementation; the composer keeps the keydown orchestration (which also
 // juggles the slash and mention menus).
 // ---------------------------------------------------------------------------
-const history = useInputHistory({ text, textareaRef, autosize });
+const history = useInputHistory({ text, textareaRef, autosize, sessionId: () => props.sessionId });
 
 // ---------------------------------------------------------------------------
 // Slash-command menu — see useSlashMenu for the implementation. The composer
