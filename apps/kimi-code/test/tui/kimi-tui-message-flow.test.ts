@@ -28,6 +28,7 @@ import {
   PluginRemoveConfirmComponent,
   PluginsPanelComponent,
 } from '#/tui/components/dialogs/plugins-selector';
+import { PermissionSelectorComponent } from '#/tui/components/dialogs/permission-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
@@ -984,17 +985,121 @@ command = "vim"
   it('routes /yolo through session permission state without app-layer telemetry duplication', async () => {
     const { driver, session, harness } = await makeDriver();
     harness.track.mockClear();
+    harness.setConfig.mockClear();
 
     driver.handleUserInput('/yolo on');
 
     await vi.waitFor(() => {
       expect(session.setPermission).toHaveBeenCalledWith('yolo');
+      expect(harness.setConfig).toHaveBeenCalledWith({ defaultPermissionMode: 'yolo' });
     });
     expect(driver.state.appState).toMatchObject({
       permissionMode: 'yolo',
     });
     expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'yolo' });
     expect(harness.track).not.toHaveBeenCalledWith('yolo_toggle', expect.anything());
+  });
+
+  it.each([
+    {
+      input: '/yolo off',
+      initialMode: 'yolo',
+      persistedMode: 'manual',
+      notice: 'YOLO mode: OFF',
+    },
+    {
+      input: '/auto on',
+      initialMode: 'manual',
+      persistedMode: 'auto',
+      notice: 'Auto mode: ON',
+    },
+    {
+      input: '/auto off',
+      initialMode: 'auto',
+      persistedMode: 'manual',
+      notice: 'Auto mode: OFF',
+    },
+  ] as const)('persists permission defaults for $input', async ({
+    input,
+    initialMode,
+    persistedMode,
+    notice,
+  }) => {
+    const { driver, session, harness } = await makeDriver();
+    driver.state.appState.permissionMode = initialMode;
+    session.setPermission.mockClear();
+    harness.setConfig.mockClear();
+
+    driver.handleUserInput(input);
+
+    await vi.waitFor(() => {
+      expect(session.setPermission).toHaveBeenCalledWith(persistedMode);
+      expect(harness.setConfig).toHaveBeenCalledWith({
+        defaultPermissionMode: persistedMode,
+      });
+    });
+    expect(driver.state.appState.permissionMode).toBe(persistedMode);
+    expect(stripSgr(renderTranscript(driver))).toContain(notice);
+  });
+
+  it('persists permission changes selected from /permission', async () => {
+    const { driver, session, harness } = await makeDriver();
+    session.setPermission.mockClear();
+    harness.setConfig.mockClear();
+
+    driver.handleUserInput('/permission');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PermissionSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as PermissionSelectorComponent;
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.setPermission).toHaveBeenCalledWith('auto');
+      expect(harness.setConfig).toHaveBeenCalledWith({ defaultPermissionMode: 'auto' });
+    });
+    expect(driver.state.appState.permissionMode).toBe('auto');
+  });
+
+  it('does not persist permission defaults when runtime permission setup fails', async () => {
+    const session = makeSession({
+      setPermission: vi.fn(async () => {
+        throw new Error('permission denied');
+      }),
+    });
+    const { driver, harness } = await makeDriver(session);
+    harness.setConfig.mockClear();
+
+    driver.handleUserInput('/yolo on');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Failed to set permission mode: permission denied',
+      );
+    });
+    expect(harness.setConfig).not.toHaveBeenCalled();
+    expect(driver.state.appState.permissionMode).toBe('manual');
+  });
+
+  it('reports default permission persistence failures without losing runtime state', async () => {
+    const setConfig = vi.fn(async () => {
+      throw new Error('disk full');
+    });
+    const { driver, session } = await makeDriver(makeSession(), { setConfig });
+    session.setPermission.mockClear();
+
+    driver.handleUserInput('/auto on');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Permission mode set for this session, but failed to save default: disk full',
+      );
+    });
+    expect(session.setPermission).toHaveBeenCalledWith('auto');
+    expect(driver.state.appState.permissionMode).toBe('auto');
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Auto mode: ON');
   });
 
   it('hydrates MCP server status after subscribing to session events', async () => {
