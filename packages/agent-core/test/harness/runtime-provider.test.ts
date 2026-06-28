@@ -338,6 +338,35 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     });
   });
 
+  it('forwards alias.betaApi to the anthropic provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          anthropic: { type: 'anthropic', apiKey: 'sk-anthropic' },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'kimi-alias': {
+            provider: 'anthropic',
+            model: 'kimi-for-coding',
+            maxContextSize: 200000,
+            protocol: 'anthropic',
+            betaApi: true,
+          },
+        },
+      },
+      model: 'kimi-alias',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'anthropic',
+      model: 'kimi-for-coding',
+      betaApi: true,
+    });
+  });
+
   it('omits adaptiveThinking when alias.adaptiveThinking is unset', () => {
     const resolved = resolveRuntimeProvider({
       config: {
