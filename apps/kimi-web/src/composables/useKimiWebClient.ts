@@ -761,6 +761,14 @@ function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number
   ) {
     onSessionIdle(appEvent.sessionId, appEvent.status);
   }
+
+  // The agent asked a question and is waiting for an answer — surface it so
+  // the user comes back. Hooked on the request event (fires once per new
+  // question, and not for questions restored from a snapshot) rather than the
+  // awaitingQuestion status flip, which can arrive in any order relative to it.
+  if (appEvent.type === 'questionRequested') {
+    onQuestionRequested(appEvent.sessionId, appEvent.question);
+  }
 }
 
 const enqueueEvent = createEventBatcher<PendingEvent>(
@@ -2114,6 +2122,29 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
       }
     });
   }
+}
+
+function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
+  const first = question.questions[0];
+  // Prefer the short header; fall back to the question text for the body.
+  const preview = (first?.header ?? first?.question ?? '').trim();
+
+  // Browser notification when the user isn't watching this session.
+  notification.maybeNotifyQuestion(sid, {
+    isActiveAndVisible:
+      sid === rawState.activeSessionId &&
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'visible',
+    sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
+    questionPreview: preview,
+    onClick: () => {
+      void workspaceState.selectSession(sid);
+    },
+  });
+
+  // Attention sound — plays regardless of visibility so it also reaches a
+  // backgrounded tab (same as the completion sound).
+  sound.maybePlayQuestionSound();
 }
 
 // ---------------------------------------------------------------------------

@@ -35,7 +35,7 @@ function installStorage(storage: Storage): void {
 
 // Singleton — module-level ref + setter. Audio unlock/listeners are no-ops here
 // because the test env has no `window`.
-const { soundOnComplete, setSoundOnComplete } = useSoundNotification();
+const { soundOnComplete, setSoundOnComplete, maybePlayQuestionSound } = useSoundNotification();
 // Captured at import (before beforeEach resets the ref), so this reflects the
 // load-from-storage default when nothing has been stored yet.
 const importedDefault = soundOnComplete.value;
@@ -65,5 +65,11 @@ describe('useSoundNotification', () => {
 
   it('defaults to off when nothing is stored', () => {
     expect(importedDefault).toBe(false);
+  });
+
+  it('maybePlayQuestionSound is a no-op without throwing when audio is unavailable', () => {
+    expect(() => {
+      maybePlayQuestionSound();
+    }).not.toThrow();
   });
 });

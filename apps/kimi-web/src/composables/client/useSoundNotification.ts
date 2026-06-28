@@ -149,10 +149,18 @@ function maybePlayCompletionSound(): void {
   playChime();
 }
 
+/** Play the attention sound when a session asks a question, whenever the
+    preference is on. Same chime as completion: it means "the agent needs you". */
+function maybePlayQuestionSound(): void {
+  if (!soundOnComplete.value) return;
+  playChime();
+}
+
 export function useSoundNotification() {
   return {
     soundOnComplete,
     setSoundOnComplete,
     maybePlayCompletionSound,
+    maybePlayQuestionSound,
   };
 }
