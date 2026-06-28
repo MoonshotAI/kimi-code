@@ -91,4 +91,4 @@ apps/kimi-code (CLI)            apps/kimi-web (browser)
 For conventions, gotchas, and the boot wiring order, see
 [`packages/server/AGENTS.md`](./AGENTS.md). For the service naming and
 registration rules, see
-[`packages/services/AGENTS.md`](../services/AGENTS.md).
+[`packages/agent-core/src/services/AGENTS.md`](../agent-core/src/services/AGENTS.md).
