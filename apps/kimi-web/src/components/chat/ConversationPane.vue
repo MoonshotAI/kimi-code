@@ -678,13 +678,10 @@ watch(
     const saved = newKey ? scrollStateBySession.get(String(newKey)) : undefined;
     if (saved && el2) {
       following.value = saved.following;
+      el2.scrollTop = saved.top;
+      lastScrollTop = saved.top;
       if (saved.following) {
-        lastScrollTop = 0;
-        scrollToBottom(false);
         scheduleStableFollow();
-      } else {
-        el2.scrollTop = saved.top;
-        lastScrollTop = saved.top;
       }
     } else {
       following.value = true;
