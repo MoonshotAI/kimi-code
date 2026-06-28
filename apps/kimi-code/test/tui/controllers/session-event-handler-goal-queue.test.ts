@@ -52,6 +52,11 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
         streamingPhase: 'waiting',
         model: 'kimi-model',
         permissionMode: 'auto',
+        sessionTitle: 'Test session',
+        notifications: {
+          enabled: true,
+          condition: 'unfocused',
+        },
       },
       queuedMessages: [],
       theme: { palette: getBuiltInPalette('dark') },
@@ -59,6 +64,15 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
       todoPanel: { getTodos: vi.fn(() => []) },
       transcriptContainer: { addChild: vi.fn() },
       ui: { requestRender: vi.fn() },
+      terminalState: {
+        notificationKeys: new Set<string>(),
+        focused: false,
+        supportsOsc9: true,
+        insideTmux: false,
+      },
+      terminal: {
+        write: vi.fn(),
+      },
     },
     session,
     aborted: false,
@@ -67,7 +81,7 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
       setTurnId: vi.fn(),
       flushNow: vi.fn(),
       resetToolUi: vi.fn(),
-      finalizeTurn: vi.fn(),
+      finalizeTurn: vi.fn(() => false),
       hasThinkingDraft: vi.fn(() => false),
       flushThinkingToTranscript: vi.fn(),
       appendAssistantDelta: vi.fn(),
@@ -96,6 +110,7 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
   });
   host.streamingUI.finalizeTurn.mockImplementation(() => {
     host.setAppState({ streamingPhase: 'idle' });
+    return false;
   });
   return { host: host as any, session };
 }
@@ -201,9 +216,10 @@ describe('SessionEventHandler goal queue promotion', () => {
         setTimeout(() => {
           sendQueued(next);
         }, 0);
-        return;
+        return true;
       }
       host.setAppState({ streamingPhase: 'idle' });
+      return false;
     });
     host.sendQueuedMessage.mockImplementation((_session: unknown, item: { text: string }) => {
       if (item.text === 'queued user turn') {

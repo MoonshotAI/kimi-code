@@ -10,7 +10,6 @@ import { ToolCallComponent } from '../components/messages/tool-call';
 import { STREAMING_UI_FLUSH_MS } from '../constant/streaming';
 import { hasDispose } from '../utils/component-capabilities';
 import { appendStreamingArgsPreview, parseStreamingArgs } from '../utils/event-payload';
-import { notifyTerminalOnce } from '../utils/terminal-notification';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { TodoItem } from '../components/chrome/todo-panel';
 import type {
@@ -547,12 +546,17 @@ export class StreamingUIController {
     this.finalizeAssistantStream();
   }
 
-  finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
+
+
+  /**
+   * Flushes live text/tool state, drains any queued message, and resets the
+   * turn UI. Returns `true` when a queued message was scheduled (so the caller
+   * should skip the terminal-completion notification), and `false` otherwise.
+   */
+  finalizeTurn(sendQueued: (item: QueuedMessage) => void): boolean {
     const { state } = this.host;
-    if (state.appState.streamingPhase === 'idle') return;
+    if (state.appState.streamingPhase === 'idle') return false;
     this.host.deferUserMessages = false;
-    const completedTurnKey =
-      this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
     this.finalizeLiveTextBuffers('idle');
     this.resetToolCallState();
     this._currentTurnId = undefined;
@@ -564,15 +568,12 @@ export class StreamingUIController {
       setTimeout(() => {
         sendQueued(next);
       }, 0);
-      return;
+      return true;
     }
 
     this.host.setAppState({ streamingPhase: 'idle' });
     this.host.resetLivePane();
-    notifyTerminalOnce(state, `turn-complete:${completedTurnKey}`, {
-      title: 'Kimi Code task complete',
-      body: state.appState.sessionTitle ?? undefined,
-    });
+    return false;
   }
 
   // ---------------------------------------------------------------------------
