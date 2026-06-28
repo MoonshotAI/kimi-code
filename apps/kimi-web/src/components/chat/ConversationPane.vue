@@ -659,30 +659,39 @@ watch(
   },
 );
 
-// Per-session scroll position: switching back to a session restores where the
-// user was instead of always jumping to the bottom (which replayed the
-// conversation when the session was already at the bottom).
-const scrollTopBySession = new Map<string, number>();
+// Per-session scroll state: switching back to a session restores both the scroll
+// position and whether the user was following the bottom, instead of always
+// jumping to the bottom (which replayed the conversation when the session was
+// already there) or getting yanked to the bottom by a new message after
+// restoring a scrolled-up position.
+const scrollStateBySession = new Map<string, { top: number; following: boolean }>();
 
 watch(
   () => props.fileReloadKey,
   async (newKey, oldKey) => {
     const el = panesRef.value;
     if (oldKey && el) {
-      scrollTopBySession.set(String(oldKey), el.scrollTop);
+      scrollStateBySession.set(String(oldKey), { top: el.scrollTop, following: following.value });
     }
-    following.value = true;
-    lastScrollTop = 0;
     await nextTick();
     const el2 = panesRef.value;
-    const saved = newKey ? scrollTopBySession.get(String(newKey)) : undefined;
-    if (saved !== undefined && el2) {
-      el2.scrollTop = saved;
-      lastScrollTop = saved;
+    const saved = newKey ? scrollStateBySession.get(String(newKey)) : undefined;
+    if (saved && el2) {
+      following.value = saved.following;
+      if (saved.following) {
+        lastScrollTop = 0;
+        scrollToBottom(false);
+        scheduleStableFollow();
+      } else {
+        el2.scrollTop = saved.top;
+        lastScrollTop = saved.top;
+      }
     } else {
+      following.value = true;
+      lastScrollTop = 0;
       scrollToBottom(false);
+      scheduleStableFollow();
     }
-    scheduleStableFollow();
     updateTocViewport();
   },
 );
