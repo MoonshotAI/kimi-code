@@ -56,6 +56,10 @@ export const ModelAliasSchema = z.object({
   // config.toml. The user's chosen effort is stored globally in thinking.effort.
   supportEfforts: z.array(z.string()).optional(),
   defaultEffort: z.string().optional(),
+  // Route the Anthropic transport through the beta Messages API
+  // (`POST /v1/messages?beta=true`) instead of the standard endpoint. Used by
+  // managed Kimi Code models that declare `protocol: 'anthropic'`.
+  betaApi: z.boolean().optional(),
 });
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;

@@ -117,6 +117,7 @@ export class ModelCatalogService
       const models = await fetchManagedKimiCodeModels({
         accessToken: token,
         baseUrl: auth.baseUrl,
+        headers: this.core.kimiRequestHeaders,
       });
       if (models.length === 0) return { changed, unchanged, failed };
 

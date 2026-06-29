@@ -1347,6 +1347,7 @@ describe('managed protocol routing', () => {
     expect(config.models?.['kimi-code/kimi-for-coding']).toMatchObject({
       provider: KIMI_CODE_PROVIDER_NAME,
       protocol: 'anthropic',
+      betaApi: true,
     });
   });
 

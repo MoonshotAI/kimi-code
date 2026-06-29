@@ -501,6 +501,8 @@ export class TurnFlow {
           const properties: Record<string, TelemetryPropertyValue> = {
             error_type: classification.errorType,
             model: this.agent.config.model,
+            alias: this.agent.config.modelAlias,
+            ...this.requestProtocolProps(),
             retryable: summary.retryable,
             duration_ms: Date.now() - startedAt,
           };
@@ -534,6 +536,12 @@ export class TurnFlow {
         inputData: { turnId, reason: 'cancelled' },
       });
     }
+    this.agent.telemetry.track('turn_ended', {
+      reason: ended.reason,
+      duration_ms: ended.durationMs,
+      mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
+      ...this.requestProtocolProps(),
+    });
     this.agent.emitEvent(ended);
     // Release the active turn in the same frame as turn.ended for a standalone
     // turn, so the session is observably idle the instant turn.ended fires.
@@ -923,6 +931,7 @@ export class TurnFlow {
     this.agent.telemetry.track('turn_interrupted', {
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
       at_step: atStep,
+      ...this.requestProtocolProps(),
     });
   }
 

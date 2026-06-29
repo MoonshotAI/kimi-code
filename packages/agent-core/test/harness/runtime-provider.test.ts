@@ -338,6 +338,35 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     });
   });
 
+  it('forwards alias.betaApi to the anthropic provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          anthropic: { type: 'anthropic', apiKey: 'sk-anthropic' },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'kimi-alias': {
+            provider: 'anthropic',
+            model: 'kimi-for-coding',
+            maxContextSize: 200000,
+            protocol: 'anthropic',
+            betaApi: true,
+          },
+        },
+      },
+      model: 'kimi-alias',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'anthropic',
+      model: 'kimi-for-coding',
+      betaApi: true,
+    });
+  });
+
   it('omits adaptiveThinking when alias.adaptiveThinking is unset', () => {
     const resolved = resolveRuntimeProvider({
       config: {
@@ -453,7 +482,7 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
     });
   });
 
-  it('does not apply kimiRequestHeaders to non-Kimi providers', () => {
+  it('applies only the User-Agent from kimiRequestHeaders to non-Kimi providers', () => {
     const resolved = resolveRuntimeProvider({
       config: {
         defaultModel: 'gpt-alias',
@@ -479,8 +508,16 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
       type: 'openai',
       model: 'gpt-runtime',
       apiKey: 'sk-openai',
+      defaultHeaders: {
+        'User-Agent': TEST_KIMI_HEADERS['User-Agent'],
+      },
     });
-    expect('defaultHeaders' in resolved.provider).toBe(false);
+    // Device identity headers (`X-Msh-*`) stay Kimi-only — they must not leak
+    // to third-party providers.
+    const headers = (resolved.provider as { defaultHeaders?: Record<string, string> })
+      .defaultHeaders;
+    expect(headers).toBeDefined();
+    expect('X-Msh-Platform' in headers!).toBe(false);
     expect('generationKwargs' in resolved.provider).toBe(false);
   });
 });

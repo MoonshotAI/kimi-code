@@ -1,6 +1,7 @@
 import type { Logger } from '#/logging/types';
 import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
 import { APIStatusError, getModelCapability, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
+import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
 import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig, ProviderType } from '../config';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
 
@@ -31,6 +32,8 @@ interface ProviderManagerOptions {
   readonly kimiRequestHeaders?: Record<string, string>;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver;
   readonly promptCacheKey?: string;
+  // remove before commit
+  readonly adaptiveThinkingOverride?: () => boolean | undefined;
 }
 
 type AuthorizedRequest = <T>(
@@ -110,6 +113,9 @@ export class ProviderManager implements ModelProvider {
       );
     }
 
+    // remove before commit
+    const adaptiveThinkingOverride = this.options.adaptiveThinkingOverride?.();
+    const effectiveAdaptiveThinking = adaptiveThinkingOverride ?? alias.adaptiveThinking;
     const provider = toKosongProviderConfig(
       providerConfig,
       alias.model,
@@ -118,7 +124,8 @@ export class ProviderManager implements ModelProvider {
       alias.maxOutputSize,
       alias.reasoningKey,
       this.options.promptCacheKey,
-      alias.adaptiveThinking,
+      effectiveAdaptiveThinking,
+      alias.betaApi,
       alias.supportEfforts,
     );
 
@@ -235,9 +242,11 @@ function toKosongProviderConfig(
   reasoningKey: string | undefined,
   promptCacheKey: string | undefined,
   adaptiveThinking: boolean | undefined,
+  betaApi: boolean | undefined,
   supportEfforts: readonly string[] | undefined,
 ): KosongProviderConfig {
   const effectiveType = modelProtocol === 'anthropic' ? 'anthropic' : provider.type;
+  const envCustomHeaders = parseKimiCodeCustomHeaders();
   switch (effectiveType) {
     case 'anthropic': {
       const baseUrl = providerValue(provider.baseUrl, provider.env, 'ANTHROPIC_BASE_URL');
@@ -251,10 +260,22 @@ function toKosongProviderConfig(
         apiKey: providerApiKey(provider),
         ...(maxOutputSize !== undefined ? { defaultMaxTokens: maxOutputSize } : {}),
         ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
+        ...(betaApi !== undefined ? { betaApi } : {}),
         // Session affinity: Anthropic's analog of OpenAI `prompt_cache_key` is
         // `metadata.user_id` on the Messages API (cache-affinity / end-user id).
         ...(promptCacheKey !== undefined ? { metadata: { user_id: promptCacheKey } } : {}),
-        ...defaultHeadersField(provider.customHeaders),
+        // When a Kimi provider is routed through the Anthropic transport
+        // (`protocol: 'anthropic'`), upstream is the managed Kimi endpoint,
+        // so align its full outbound identity headers (User-Agent + X-Msh-*)
+        // with the Kimi OpenAI transport. Plain Anthropic providers only
+        // receive the unified `User-Agent` (no `X-Msh-*` device identity),
+        // matching the other non-Kimi transports. Provider `customHeaders`
+        // still win on conflict.
+        ...defaultHeadersField(
+          provider.type === 'kimi' && modelProtocol === 'anthropic'
+            ? { ...envCustomHeaders, ...kimiRequestHeaders, ...provider.customHeaders }
+            : { ...envCustomHeaders, ...kimiUserAgentHeader(kimiRequestHeaders), ...provider.customHeaders },
+        ),
       };
     }
     case 'openai':
@@ -264,7 +285,11 @@ function toKosongProviderConfig(
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
         reasoningKey,
-        ...defaultHeadersField(provider.customHeaders),
+        ...defaultHeadersField({
+          ...envCustomHeaders,
+          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...provider.customHeaders,
+        }),
       };
     case 'kimi':
       return {
@@ -274,13 +299,22 @@ function toKosongProviderConfig(
         apiKey: providerApiKey(provider),
         generationKwargs: { prompt_cache_key: promptCacheKey },
         supportEfforts,
-        ...defaultHeadersField({ ...kimiRequestHeaders, ...provider.customHeaders }),
+        ...defaultHeadersField({
+          ...envCustomHeaders,
+          ...kimiRequestHeaders,
+          ...provider.customHeaders,
+        }),
       };
     case 'google-genai':
       return {
         type: 'google-genai',
         model,
         apiKey: providerApiKey(provider),
+        ...defaultHeadersField({
+          ...envCustomHeaders,
+          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...provider.customHeaders,
+        }),
       };
     case 'openai_responses':
       return {
@@ -288,7 +322,11 @@ function toKosongProviderConfig(
         model,
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
-        ...defaultHeadersField(provider.customHeaders),
+        ...defaultHeadersField({
+          ...envCustomHeaders,
+          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...provider.customHeaders,
+        }),
       };
     case 'vertexai': {
       const useServiceAccount = hasVertexAIServiceEnv(provider);
@@ -299,6 +337,11 @@ function toKosongProviderConfig(
         apiKey: useServiceAccount ? undefined : providerApiKey(provider),
         project: vertexAIProject(provider),
         location: vertexAILocation(provider),
+        ...defaultHeadersField({
+          ...envCustomHeaders,
+          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...provider.customHeaders,
+        }),
       };
     }
     default: {
@@ -319,6 +362,19 @@ function defaultHeadersField(
 ): { defaultHeaders?: Record<string, string> } {
   if (headers === undefined || Object.keys(headers).length === 0) return {};
   return { defaultHeaders: { ...headers } };
+}
+
+// Extract just the `User-Agent` from the Kimi identity headers so non-Kimi
+// providers (OpenAI, Anthropic, Google, Vertex) also identify as
+// `kimi-code-cli/<version>` without leaking the `X-Msh-*` device identity
+// headers to third-party endpoints. The full `kimiRequestHeaders` set stays
+// reserved for the Kimi transport (and the Kimi-routed Anthropic transport),
+// where upstream is the managed Kimi endpoint.
+function kimiUserAgentHeader(
+  kimiRequestHeaders: Record<string, string> | undefined,
+): Record<string, string> {
+  const userAgent = kimiRequestHeaders?.['User-Agent'];
+  return userAgent === undefined ? {} : { 'User-Agent': userAgent };
 }
 
 function providerApiKey(provider: ProviderConfig): string | undefined {

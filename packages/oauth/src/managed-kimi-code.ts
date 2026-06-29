@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readApiErrorMessage } from './api-error';
 import { DEFAULT_KIMI_CODE_OAUTH_HOST } from './constants';
 import { OAuthUnauthorizedError } from './errors';
+import { parseKimiCodeCustomHeaders } from './identity';
 import { DEFAULT_KIMI_CODE_BASE_URL, kimiCodeBaseUrl } from './managed-usage';
 import { isRecord } from './utils';
 
@@ -52,6 +53,7 @@ export interface FetchManagedKimiCodeModelsOptions {
   readonly accessToken: string;
   readonly baseUrl?: string | undefined;
   readonly fetchImpl?: typeof fetch | undefined;
+  readonly headers?: Record<string, string> | undefined;
 }
 
 export interface ManagedKimiCodeApplyResult {
@@ -131,6 +133,7 @@ export interface ManagedKimiModelAlias {
   defaultEffort?: string | undefined;
   displayName?: string | undefined;
   protocol?: ManagedKimiCodeProtocol;
+  betaApi?: boolean;
   readonly [key: string]: unknown;
 }
 
@@ -186,6 +189,7 @@ export interface ProvisionManagedKimiCodeConfigOptions<TConfig> {
   readonly oauthHost?: string | undefined;
   readonly preserveDefaultModel?: boolean | undefined;
   readonly fetchImpl?: typeof fetch | undefined;
+  readonly headers?: Record<string, string> | undefined;
 }
 
 function managedModelKey(modelId: string): string {
@@ -282,6 +286,11 @@ export function kimiCodeEnvOAuthHost(env: ManagedKimiEnv = process.env): string 
   return env.KIMI_CODE_OAUTH_HOST ?? env.KIMI_OAUTH_HOST;
 }
 
+// Base URLs that share the default `oauth/kimi-code` credential slot.
+const SHARED_DEFAULT_BASE_URLS: readonly string[] = [
+  normalizeEndpoint(DEFAULT_KIMI_CODE_BASE_URL),
+];
+
 export function resolveKimiCodeOAuthKey(options: {
   readonly oauthHost?: string | undefined;
   readonly baseUrl?: string | undefined;
@@ -289,9 +298,8 @@ export function resolveKimiCodeOAuthKey(options: {
   const oauthHost = normalizeEndpoint(options.oauthHost ?? DEFAULT_KIMI_CODE_OAUTH_HOST);
   const baseUrl = defaultBaseUrl(options.baseUrl);
   const defaultOauthHost = normalizeEndpoint(DEFAULT_KIMI_CODE_OAUTH_HOST);
-  const defaultApiBaseUrl = normalizeEndpoint(DEFAULT_KIMI_CODE_BASE_URL);
 
-  if (oauthHost === defaultOauthHost && baseUrl === defaultApiBaseUrl) {
+  if (oauthHost === defaultOauthHost && SHARED_DEFAULT_BASE_URLS.includes(baseUrl)) {
     return KIMI_CODE_OAUTH_KEY;
   }
 
@@ -458,6 +466,8 @@ export async function fetchManagedKimiCodeModels(
   const baseUrl = defaultBaseUrl(options.baseUrl);
   const response = await fetchImpl(`${baseUrl}/models`, {
     headers: {
+      ...parseKimiCodeCustomHeaders(),
+      ...options.headers,
       Authorization: `Bearer ${options.accessToken}`,
       Accept: 'application/json',
     },
@@ -538,6 +548,16 @@ export function applyManagedKimiCodeConfig(
     const capabilities = capabilitiesForModel(model);
     const key = managedModelKey(model.id);
     const existing = isRecord(existingModels[key]) ? existingModels[key] : {};
+    // Kimi's Anthropic-compatible endpoint only accepts adaptive thinking
+    // (`thinking: { type: 'adaptive' }`); the kosong adapter otherwise infers
+    // budget-based thinking from the model name, which fails for Kimi model ids.
+    // Restrict the override to thinking-capable models: the UI treats
+    // `adaptiveThinking === true` as "supports a thinking toggle", so marking a
+    // non-thinking model would misrepresent it.
+    const supportsAdaptiveThinking =
+      model.protocol === 'anthropic' &&
+      (capabilities?.includes('thinking') === true ||
+        capabilities?.includes('always_thinking') === true);
     existingModels[key] = {
       ...existing,
       provider: KIMI_CODE_PROVIDER_NAME,
@@ -548,6 +568,12 @@ export function applyManagedKimiCodeConfig(
       ...(model.supportEfforts !== undefined ? { supportEfforts: model.supportEfforts } : {}),
       ...(model.defaultEffort !== undefined ? { defaultEffort: model.defaultEffort } : {}),
       protocol: model.protocol,
+      // Kimi's anthropic-compatible endpoint is served behind the beta Messages
+      // API (`/v1/messages?beta=true`), so route anthropic-protocol models
+      // through `client.beta.messages.create`. Cleared on refresh when the
+      // server stops declaring anthropic so stale routing never lingers.
+      betaApi: model.protocol === 'anthropic' ? true : undefined,
+      adaptiveThinking: supportsAdaptiveThinking ? true : undefined,
     };
   }
 
