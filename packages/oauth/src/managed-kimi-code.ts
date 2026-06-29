@@ -276,12 +276,9 @@ export function kimiCodeEnvOAuthHost(env: ManagedKimiEnv = process.env): string 
   return env.KIMI_CODE_OAUTH_HOST ?? env.KIMI_OAUTH_HOST;
 }
 
-// Base URLs that share the default `oauth/kimi-code` credential slot. The
-// internal dev endpoint is hardcoded here so it reuses the same OAuth token as
-// the production managed endpoint instead of requiring a separate login.
+// Base URLs that share the default `oauth/kimi-code` credential slot.
 const SHARED_DEFAULT_BASE_URLS: readonly string[] = [
   normalizeEndpoint(DEFAULT_KIMI_CODE_BASE_URL),
-  'http://10.4.232.131:38081/v1',
 ];
 
 export function resolveKimiCodeOAuthKey(options: {
