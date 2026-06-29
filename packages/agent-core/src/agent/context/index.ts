@@ -237,6 +237,7 @@ export class ContextMemory {
       tokensBefore: input.tokensBefore,
       tokensAfter,
       keptUserMessageCount,
+      droppedCount: input.droppedCount,
     };
     this.agent.records.logRecord({
       type: 'context.apply_compaction',
@@ -249,6 +250,7 @@ export class ContextMemory {
         tokensBefore: result.tokensBefore,
         tokensAfter: result.tokensAfter,
         keptUserMessageCount: result.keptUserMessageCount,
+        droppedCount: result.droppedCount,
       },
     });
     this._history = [

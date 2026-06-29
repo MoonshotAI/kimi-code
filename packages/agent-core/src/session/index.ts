@@ -718,7 +718,8 @@ export class Session {
   ): Agent {
     const parentAgent = parentAgentId !== null ? this.getReadyAgent(parentAgentId) : undefined;
     const cwd = parentAgent?.config.cwd ?? this.toolKaos.getcwd();
-    return new Agent({
+    let agent!: Agent;
+    agent = new Agent({
       ...config,
       type,
       kaos: this.toolKaos.withCwd(cwd),
@@ -737,7 +738,14 @@ export class Session {
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
       experimentalFlags: this.experimentalFlags,
       additionalDirs: parentAgent?.getAdditionalDirs() ?? this.additionalDirs,
+      systemPromptContextProvider: () =>
+        prepareSystemPromptContext(
+          this.systemContextKaos(agent.kaos.getcwd()),
+          this.options.kimiHomeDir,
+          { additionalDirs: agent.getAdditionalDirs() },
+        ),
     });
+    return agent;
   }
 
   private permissionOptions(
@@ -810,6 +818,7 @@ export class Session {
     try {
       const agent = this.instantiateAgent(id, meta.homedir, meta.type, {}, parentAgentId);
       const result = await agent.resume();
+      this.restoreAgentProfileHandle(agent, meta, parent?.agent);
       this.agents.set(id, agent);
       return { agent, warning: parent?.warning ?? result.warning };
     } catch (error) {
@@ -819,6 +828,34 @@ export class Session {
       }
       throw error;
     }
+  }
+
+  private restoreAgentProfileHandle(
+    agent: Agent,
+    meta: AgentMeta,
+    parentAgent: Agent | undefined,
+  ): void {
+    if (agent.config.systemPrompt === '') return;
+    const profile = this.resolvePersistedProfile(agent, meta, parentAgent);
+    if (profile === undefined) return;
+    agent.setActiveProfile(profile, this.options.kimiHomeDir);
+  }
+
+  private resolvePersistedProfile(
+    agent: Agent,
+    meta: AgentMeta,
+    parentAgent: Agent | undefined,
+  ): ResolvedAgentProfile | undefined {
+    const profileName = agent.config.profileName;
+    if (profileName === undefined) return undefined;
+    if (meta.type === 'sub') {
+      const parentProfileName = parentAgent?.config.profileName;
+      return (
+        DEFAULT_AGENT_PROFILES[parentProfileName ?? 'agent']?.subagents?.[profileName] ??
+        DEFAULT_AGENT_PROFILES['agent']?.subagents?.[profileName]
+      );
+    }
+    return DEFAULT_AGENT_PROFILES[profileName];
   }
 
   private nextGeneratedAgentId(): string {

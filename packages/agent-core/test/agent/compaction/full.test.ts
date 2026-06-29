@@ -228,6 +228,32 @@ describe('FullCompaction', () => {
     expect(refreshSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('does not reset active tools while refreshing the system prompt after compaction', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.agent.useProfile({
+      name: 'tool-profile',
+      systemPrompt: () => '<profile-prompt>',
+      tools: ['Read', 'Write'],
+    });
+    ctx.agent.tools.setActiveTools(['Read']);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    const activeTools = ctx.agent.tools
+      .data()
+      .filter((tool) => tool.active)
+      .map((tool) => tool.name)
+      .toSorted();
+    expect(activeTools).toEqual(['Read']);
+  });
+
   it('projects the compacted prefix before sending the summary request', async () => {
     const ctx = testAgent({ compactionStrategy: alwaysCompactOnce });
     ctx.configure({
@@ -1602,6 +1628,10 @@ describe('FullCompaction', () => {
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
     ctx.appendToolExchange();
+    let applyRecord: { compactedCount?: number; droppedCount?: number } | undefined;
+    ctx.emitter.on('context.apply_compaction', (entry) => {
+      applyRecord = (entry as { args: { compactedCount?: number; droppedCount?: number } }).args;
+    });
     const compacted = ctx.once('context.apply_compaction');
 
     await ctx.rpc.beginCompaction({});
@@ -1615,6 +1645,11 @@ describe('FullCompaction', () => {
     ]);
     expect(inputs[2]?.map((entry) => entry.split(':', 1)[0])).toEqual(['user']);
     expect(inputs[2]?.[0]).toBe('user: <compaction-instruction>');
+    // The whole 3-message history was folded (compactedCount), and all 3 were
+    // trimmed from the summarizer input on overflow (droppedCount), so the
+    // record honestly reports that the summary covers none of them.
+    expect(applyRecord?.compactedCount).toBe(3);
+    expect(applyRecord?.droppedCount).toBe(3);
     await ctx.expectResumeMatches();
   });
 

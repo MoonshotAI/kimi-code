@@ -379,9 +379,13 @@ export class FullCompaction {
       let summary: string | undefined;
       // Compact the whole history, dropping the oldest item on overflow to
       // preserve the prefix-cache-friendly tail. `historyForModel` is the
-      // (possibly trimmed) view sent to the model; the summary is always built
-      // from the untouched `originalHistory`.
+      // (possibly trimmed) view sent to the model. When it is trimmed, the
+      // dropped oldest messages are not covered by the produced summary (a
+      // kept real-user message among them may still be retained verbatim, but
+      // assistant/tool messages are lost); `droppedCount` tracks how many so
+      // records and telemetry can surface the summary's blind spot honestly.
       let historyForModel = originalHistory;
+      let droppedCount = 0;
       while (true) {
         const messages = [
           ...this.agent.context.project(historyForModel),
@@ -419,7 +423,9 @@ export class FullCompaction {
             // Dropping a bare `slice(1)` can strand a tool result at the front,
             // which the provider rejects as a malformed request. Trim any
             // leading tool results along with the oldest message.
+            const before = historyForModel.length;
             historyForModel = dropOldestMessageAndLeadingToolResults(historyForModel);
+            droppedCount += before - historyForModel.length;
             retryCount = 0;
             continue;
           }
@@ -452,6 +458,7 @@ export class FullCompaction {
         summary: summaryText,
         compactedCount: originalHistory.length,
         tokensBefore,
+        droppedCount: droppedCount === 0 ? undefined : droppedCount,
       });
 
       // Telemetry keys are snake_case, but the `context.apply_compaction`
@@ -464,6 +471,7 @@ export class FullCompaction {
         tokens_after: result.tokensAfter,
         duration_ms: Date.now() - startedAt,
         compacted_count: result.compactedCount,
+        dropped_count: result.droppedCount,
         retry_count: retryCount,
         round: 1,
         thinking_level: this.agent.config.thinkingLevel,

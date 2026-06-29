@@ -392,23 +392,6 @@ function injectCacheControlOnLastBlock(messages: MessageParam[]): void {
   }
 }
 
-/**
- * Check whether a MessageParam is a user message whose content consists
- * entirely of `tool_result` blocks.
- *
- * Used to detect adjacent tool-result-only messages that must be merged
- * before hitting the Anthropic wire. Per the Messages API parallel-tool-use
- * spec, all `tool_result` blocks answering parallel `tool_use` calls must
- * live in a single user message — splitting them across consecutive user
- * messages fails on strict Anthropic-compatible backends (HTTP 400) and
- * silently degrades parallel tool use on api.anthropic.com.
- */
-function isToolResultOnly(message: MessageParam): boolean {
-  if (message.role !== 'user') return false;
-  const content = message.content;
-  if (!Array.isArray(content) || content.length === 0) return false;
-  return content.every((block) => block.type === 'tool_result');
-}
 interface AnthropicImageBlock {
   type: 'image';
   source: { type: 'base64'; data: string; media_type: string } | { type: 'url'; url: string };
@@ -1000,8 +983,15 @@ export class AnthropicChatProvider implements ChatProvider {
         ]
       : undefined;
 
-    // Convert messages, merging consecutive tool-result-only user messages
-    // into a single user message (Anthropic parallel-tool-use spec).
+    // Convert messages, merging consecutive user messages into one. Strict
+    // Anthropic-compatible backends reject consecutive user messages with HTTP
+    // 400 ("roles must alternate"), and api.anthropic.com concatenates them
+    // anyway — so merging is safe for native Anthropic and required for strict
+    // backends. This subsumes the parallel-tool-use requirement that all
+    // tool_result blocks answering parallel tool_use calls live in a single
+    // user message. Consecutive user messages arise naturally after compaction
+    // (kept user prompts + user-role summary + injected reminders) and from
+    // back-to-back system/tool messages converted to user role above.
     const messages: MessageParam[] = [];
     const normalizedHistory = normalizeToolCallIdsForProvider(
       history,
@@ -1010,7 +1000,7 @@ export class AnthropicChatProvider implements ChatProvider {
     for (const msg of normalizedHistory) {
       const converted = convertMessage(msg, this._model);
       const last = messages.at(-1);
-      if (last !== undefined && isToolResultOnly(last) && isToolResultOnly(converted)) {
+      if (last !== undefined && last.role === 'user' && converted.role === 'user') {
         last.content = [
           ...(last.content as ContentBlockParam[]),
           ...(converted.content as ContentBlockParam[]),

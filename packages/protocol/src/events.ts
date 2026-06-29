@@ -293,6 +293,13 @@ export interface CompactionResult {
    * Optional for backward compatibility with older wire records.
    */
   readonly keptUserMessageCount?: number;
+  /**
+   * Oldest messages trimmed from the summarizer input when the compaction
+   * request overflowed the model window; not covered by the produced summary.
+   * Mirrors agent-core's `CompactionResult.droppedCount`; optional for backward
+   * compatibility.
+   */
+  readonly droppedCount?: number;
 }
 
 export interface ToolUpdate {
@@ -954,6 +961,7 @@ export const compactionResultSchema = z.object({
   tokensBefore: z.number(),
   tokensAfter: z.number(),
   keptUserMessageCount: z.number().optional(),
+  droppedCount: z.number().optional(),
 }) satisfies z.ZodType<CompactionResult>;
 
 export const toolUpdateSchema = z.object({

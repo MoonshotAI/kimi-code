@@ -86,6 +86,7 @@ export interface AgentOptions {
   readonly experimentalFlags?: ExperimentalFlagResolver;
   readonly replay?: ReplayBuilderOptions;
   readonly additionalDirs?: readonly string[];
+  readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 }
 
 export class Agent {
@@ -133,6 +134,7 @@ export class Agent {
   private additionalDirs: readonly string[];
   private activeProfile?: ResolvedAgentProfile;
   private brandHome?: string;
+  private readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
@@ -151,6 +153,7 @@ export class Agent {
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
     this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
+    this.systemPromptContextProvider = options.systemPromptContextProvider;
 
     this.llmRequestLogger = new LlmRequestLogger(this.log);
     this.blobStore = options.homedir
@@ -259,18 +262,14 @@ export class Agent {
     context?: PreparedSystemPromptContext,
     brandHome?: string,
   ): void {
+    this.setActiveProfile(profile, brandHome);
+    this.updateSystemPromptFromProfile(profile, context);
+    this.tools.setActiveTools(profile.tools);
+  }
+
+  setActiveProfile(profile: ResolvedAgentProfile, brandHome?: string): void {
     this.activeProfile = profile;
     this.brandHome = brandHome;
-    const systemPrompt = profile.systemPrompt({
-      osEnv: this.kaos.osEnv,
-      cwd: this.config.cwd,
-      skills: this.skills?.registry,
-      cwdListing: context?.cwdListing,
-      agentsMd: context?.agentsMd,
-      additionalDirsInfo: context?.additionalDirsInfo,
-    });
-    this.config.update({ profileName: profile.name, systemPrompt });
-    this.tools.setActiveTools(profile.tools);
   }
 
   /**
@@ -281,10 +280,27 @@ export class Agent {
    */
   async refreshSystemPrompt(): Promise<void> {
     if (this.activeProfile === undefined) return;
-    const context = await prepareSystemPromptContext(this.kaos, this.brandHome, {
-      additionalDirs: this.additionalDirs,
+    const context = this.systemPromptContextProvider === undefined
+      ? await prepareSystemPromptContext(this.kaos, this.brandHome, {
+          additionalDirs: this.additionalDirs,
+        })
+      : await this.systemPromptContextProvider();
+    this.updateSystemPromptFromProfile(this.activeProfile, context);
+  }
+
+  private updateSystemPromptFromProfile(
+    profile: ResolvedAgentProfile,
+    context?: PreparedSystemPromptContext,
+  ): void {
+    const systemPrompt = profile.systemPrompt({
+      osEnv: this.kaos.osEnv,
+      cwd: this.config.cwd,
+      skills: this.skills?.registry,
+      cwdListing: context?.cwdListing,
+      agentsMd: context?.agentsMd,
+      additionalDirsInfo: context?.additionalDirsInfo,
     });
-    this.useProfile(this.activeProfile, context, this.brandHome);
+    this.config.update({ profileName: profile.name, systemPrompt });
   }
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {

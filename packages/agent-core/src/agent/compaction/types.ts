@@ -12,16 +12,26 @@ export interface CompactionResult {
    * compatibility with older wire records.
    */
   keptUserMessageCount?: number;
+  /**
+   * Number of oldest messages trimmed from the summarizer input when the
+   * compaction request itself overflowed the model window. These messages are
+   * not covered by the produced summary — a real-user message among them may
+   * still be retained verbatim in the live context via `keptUserMessageCount`,
+   * but assistant/tool messages are lost. Surfacing the count lets records and
+   * telemetry report the summary's blind spot honestly. Optional for backward
+   * compatibility with older wire records.
+   */
+  droppedCount?: number;
 }
 
 /**
  * Inputs `ContextMemory.applyCompaction` needs to derive a `CompactionResult`.
- * `tokensAfter` / `keptUserMessageCount` are optional: the live path omits them
- * (they are derived from the current history), while restore passes the
- * persisted record so its historical values are preserved verbatim.
+ * `tokensAfter` / `keptUserMessageCount` / `droppedCount` are optional: the live
+ * path fills in what it knows, while restore passes the persisted record so its
+ * historical values are preserved verbatim.
  */
 export type CompactionInput = Pick<CompactionResult, 'summary' | 'compactedCount' | 'tokensBefore'> &
-  Partial<Pick<CompactionResult, 'tokensAfter' | 'keptUserMessageCount'>>;
+  Partial<Pick<CompactionResult, 'tokensAfter' | 'keptUserMessageCount' | 'droppedCount'>>;
 
 export type CompactionSource = 'manual' | 'auto';
 
