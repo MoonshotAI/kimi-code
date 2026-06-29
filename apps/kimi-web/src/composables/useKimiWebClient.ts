@@ -676,6 +676,11 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     rawState.defaultModel = event.config.defaultModel ?? null;
   }
 
+  if (event.type === 'modelCatalogChanged') {
+    void modelProvider.loadModels();
+    void modelProvider.loadProviders();
+  }
+
   if (event.type === 'sessionUsageUpdated' && event.sessionId === rawState.activeSessionId && event.swarmMode !== undefined) {
     rawState.swarmMode = event.swarmMode;
   }
