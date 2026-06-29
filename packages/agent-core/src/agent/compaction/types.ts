@@ -14,8 +14,14 @@ export interface CompactionResult {
   keptUserMessageCount?: number;
 }
 
-/** Inputs `ContextMemory.applyCompaction` needs to derive a `CompactionResult`. */
-export type CompactionInput = Pick<CompactionResult, 'summary' | 'compactedCount' | 'tokensBefore'>;
+/**
+ * Inputs `ContextMemory.applyCompaction` needs to derive a `CompactionResult`.
+ * `tokensAfter` / `keptUserMessageCount` are optional: the live path omits them
+ * (they are derived from the current history), while restore passes the
+ * persisted record so its historical values are preserved verbatim.
+ */
+export type CompactionInput = Pick<CompactionResult, 'summary' | 'compactedCount' | 'tokensBefore'> &
+  Partial<Pick<CompactionResult, 'tokensAfter' | 'keptUserMessageCount'>>;
 
 export type CompactionSource = 'manual' | 'auto';
 

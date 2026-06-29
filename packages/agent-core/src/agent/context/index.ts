@@ -223,14 +223,19 @@ export class ContextMemory {
       collectCompactableUserMessages(this._history),
       COMPACT_USER_MESSAGE_MAX_TOKENS,
     );
+    // Live compaction omits these so they are derived from the actual
+    // `_history`; restore passes the persisted record so its historical values
+    // are preserved verbatim.
     const tokensAfter =
+      input.tokensAfter ??
       estimateTokens(input.summary) + estimateTokensForMessages(keptUserMessages);
+    const keptUserMessageCount = input.keptUserMessageCount ?? keptUserMessages.length;
     const result: CompactionResult = {
       summary: input.summary,
       compactedCount: input.compactedCount,
       tokensBefore: input.tokensBefore,
       tokensAfter,
-      keptUserMessageCount: keptUserMessages.length,
+      keptUserMessageCount,
     };
     this.agent.records.logRecord({
       type: 'context.apply_compaction',

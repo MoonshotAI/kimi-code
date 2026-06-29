@@ -380,6 +380,7 @@ describe('Agent resume', () => {
           compactedCount: 1,
           tokensBefore: 120,
           tokensAfter: 24,
+          keptUserMessageCount: 1,
         },
         instruction: 'preserve implementation notes',
       }),

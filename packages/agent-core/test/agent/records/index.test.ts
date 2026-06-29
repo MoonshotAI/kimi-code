@@ -428,6 +428,7 @@ describe('agent replay range build', () => {
           compactedCount: 0,
           tokensBefore: 10,
           tokensAfter: 3,
+          keptUserMessageCount: 0,
         },
       }),
     ]);
