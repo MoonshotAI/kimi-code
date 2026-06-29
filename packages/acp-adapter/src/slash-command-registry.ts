@@ -33,7 +33,7 @@ export const SLASH_COMMAND_REGISTRY = [
     description: 'Toggle auto permission mode',
     priority: 100,
     availability: 'always',
-    surfaces: ['tui'],
+    surfaces: ['tui', 'acp'],
   },
   {
     name: 'permission',
@@ -57,7 +57,7 @@ export const SLASH_COMMAND_REGISTRY = [
     description: 'Toggle plan mode',
     priority: 100,
     availability: 'always',
-    surfaces: ['tui'],
+    surfaces: ['tui', 'acp'],
   },
   {
     name: 'swarm',
@@ -65,7 +65,8 @@ export const SLASH_COMMAND_REGISTRY = [
     description: 'Toggle swarm mode or run one task in swarm mode',
     priority: 100,
     availability: 'idle-only',
-    surfaces: ['tui'],
+    input: { hint: '<task> | on | off' },
+    surfaces: ['tui', 'acp'],
   },
   {
     name: 'model',
@@ -73,7 +74,8 @@ export const SLASH_COMMAND_REGISTRY = [
     description: 'Switch LLM model',
     priority: 100,
     availability: 'always',
-    surfaces: ['tui'],
+    input: { hint: '<model>' },
+    surfaces: ['tui', 'acp'],
   },
   {
     name: 'provider',
@@ -183,7 +185,8 @@ export const SLASH_COMMAND_REGISTRY = [
     aliases: [],
     description: 'Start or manage an autonomous goal',
     priority: 80,
-    surfaces: ['tui'],
+    input: { hint: '<objective> | status | pause | resume | cancel' },
+    surfaces: ['tui', 'acp'],
   },
   {
     name: 'init',
@@ -236,7 +239,7 @@ export const SLASH_COMMAND_REGISTRY = [
     description: 'Withdraw the last prompt from the transcript',
     priority: 80,
     availability: 'idle-only',
-    surfaces: ['tui'],
+    surfaces: ['tui', 'acp'],
   },
   {
     name: 'editor',

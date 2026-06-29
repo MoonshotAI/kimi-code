@@ -10,12 +10,14 @@ import {
 } from '@agentclientprotocol/sdk';
 import {
   ErrorCodes,
+  isKimiError,
   log,
   type ApprovalRequest,
   type ApprovalResponse,
   type BackgroundTaskInfo,
   type ContextMessage,
   type Event,
+  type GoalSnapshot,
   type KimiErrorPayload,
   type KimiHarness,
   type McpServerInfo,
@@ -818,6 +820,22 @@ export class AcpSession {
             formatTasksReport(await this.session.listBackgroundTasks()),
           );
           break;
+        case 'plan':
+          await this.runToggleModeCommand('plan', 'Plan mode');
+          break;
+        case 'auto':
+          await this.runToggleModeCommand('auto', 'Auto permission mode');
+          break;
+        case 'model':
+          await this.runModelCommand(args);
+          break;
+        case 'undo':
+          await this.runUndoCommand();
+          break;
+        case 'swarm':
+          return await this.runSwarmCommand(args);
+        case 'goal':
+          return await this.runGoalCommand(args);
         case 'help':
         case 'h':
         case '?':
@@ -828,6 +846,102 @@ export class AcpSession {
       await this.emitLocalCommandMessage(`/${name} failed: ${errorMessage(error)}`);
     }
     return { stopReason: 'end_turn' };
+  }
+
+  private async runToggleModeCommand(mode: 'plan' | 'auto', label: string): Promise<void> {
+    const enable = this.currentModeId !== mode;
+    await this.setMode(enable ? mode : 'default');
+    await this.emitLocalCommandMessage(enable ? `${label} enabled.` : `${label} disabled.`);
+  }
+
+  private async runModelCommand(args: string): Promise<void> {
+    const arg = args.trim();
+    if (arg.length === 0) {
+      await this.emitLocalCommandMessage(`Current model: ${this.currentModelId}`);
+      return;
+    }
+    await this.setModel(arg as ModelId);
+    await this.emitLocalCommandMessage(`Switched model to ${this.currentModelId}.`);
+  }
+
+  private async runUndoCommand(): Promise<void> {
+    await this.session.undoHistory(1);
+    await this.emitLocalCommandMessage('Withdrew the last prompt from the transcript.');
+  }
+
+  private async runSwarmCommand(args: string): Promise<PromptResponse> {
+    const arg = args.trim();
+    const lower = arg.toLowerCase();
+    if (lower === 'on' || lower === 'off' || arg.length === 0) {
+      let enable: boolean;
+      if (lower === 'on') {
+        enable = true;
+      } else if (lower === 'off') {
+        enable = false;
+      } else {
+        const status = await this.session.getStatus();
+        enable = status.swarmMode !== true;
+      }
+      await this.session.setSwarmMode(enable, 'manual');
+      await this.emitLocalCommandMessage(enable ? 'Swarm mode enabled.' : 'Swarm mode disabled.');
+      return { stopReason: 'end_turn' };
+    }
+
+    // Mirror the TUI: turn swarm mode on, then start a normal turn with the
+    // task as the prompt so the agent pursues it in swarm mode.
+    await this.session.setSwarmMode(true, 'task');
+    return this.runTurnBody(this.id, this.conn, () =>
+      this.session.prompt([{ type: 'text', text: arg }]),
+    );
+  }
+
+  private async runGoalCommand(args: string): Promise<PromptResponse> {
+    const parsed = parseGoalCommandArgs(args);
+    switch (parsed.kind) {
+      case 'status': {
+        const { goal } = await this.session.getGoal();
+        await this.emitLocalCommandMessage(formatGoalStatus(goal));
+        return { stopReason: 'end_turn' };
+      }
+      case 'pause': {
+        const snapshot = await this.session.pauseGoal();
+        await this.emitLocalCommandMessage(`Goal paused: ${snapshot.objective}`);
+        return { stopReason: 'end_turn' };
+      }
+      case 'resume': {
+        const snapshot = await this.session.resumeGoal();
+        await this.emitLocalCommandMessage(`Goal resumed: ${snapshot.objective}`);
+        return { stopReason: 'end_turn' };
+      }
+      case 'cancel': {
+        const snapshot = await this.session.cancelGoal();
+        await this.emitLocalCommandMessage(`Goal cancelled: ${snapshot.objective}`);
+        return { stopReason: 'end_turn' };
+      }
+      case 'create': {
+        try {
+          await this.session.createGoal({ objective: parsed.objective, replace: parsed.replace });
+        } catch (error) {
+          if (isKimiError(error) && error.code === ErrorCodes.GOAL_ALREADY_EXISTS) {
+            await this.emitLocalCommandMessage(
+              'A goal is already active. Use `/goal replace <objective>` to replace it, or `/goal status` to inspect it.',
+            );
+            return { stopReason: 'end_turn' };
+          }
+          throw error;
+        }
+        await this.emitLocalCommandMessage(`Goal set: ${parsed.objective}`);
+        // Kick off the first turn pursuing the goal, mirroring the TUI which
+        // sends the objective as user input right after creating the goal.
+        return this.runTurnBody(this.id, this.conn, () =>
+          this.session.prompt([{ type: 'text', text: parsed.objective }]),
+        );
+      }
+      case 'hint': {
+        await this.emitLocalCommandMessage(parsed.message);
+        return { stopReason: 'end_turn' };
+      }
+    }
   }
 
   private async runUnknownSlashCommand(name: string): Promise<PromptResponse> {
@@ -1721,6 +1835,69 @@ function formatHelpReport(commands: readonly AvailableCommand[]): string {
       return `- /${command.name}${hint} — ${command.description}`;
     }),
   ].join('\n');
+}
+
+const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
+const GOAL_CONTROL_SUBCOMMANDS = new Set(['pause', 'resume', 'cancel']);
+
+type ParsedGoalArgs =
+  | { readonly kind: 'status' }
+  | { readonly kind: 'pause' }
+  | { readonly kind: 'resume' }
+  | { readonly kind: 'cancel' }
+  | { readonly kind: 'create'; readonly objective: string; readonly replace: boolean }
+  | { readonly kind: 'hint'; readonly message: string };
+
+/**
+ * Parse the `/goal` argument string. Mirrors the deterministic grammar of the
+ * TUI (`apps/kimi-code/src/tui/commands/goal.ts`) — kept in sync by hand to
+ * avoid an app→package import inversion. Reserved subcommands are only honored
+ * as the first token; use `/goal -- <objective>` to start a goal whose text
+ * begins with a reserved word. `next <objective>` is treated as `create`
+ * because the upcoming-goal queue is a TUI-local concept.
+ */
+function parseGoalCommandArgs(rawArgs: string): ParsedGoalArgs {
+  const args = rawArgs.trim();
+  if (args.length === 0 || args === 'status') return { kind: 'status' };
+
+  const tokens = args.split(/\s+/);
+  const first = tokens[0];
+  if (first !== undefined && GOAL_CONTROL_SUBCOMMANDS.has(first) && tokens.length === 1) {
+    return { kind: first as 'pause' | 'resume' | 'cancel' };
+  }
+
+  let index = 0;
+  let replace = false;
+  if (tokens[index] === 'replace') {
+    replace = true;
+    index += 1;
+  }
+  if (tokens[index] === 'next') {
+    index += 1;
+  }
+  if (tokens[index] === '--') {
+    index += 1;
+  }
+
+  const objective = tokens.slice(index).join(' ').trim();
+  if (objective.length === 0) {
+    return {
+      kind: 'hint',
+      message: 'Provide a goal objective, e.g. `/goal Ship feature X`.',
+    };
+  }
+  if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
+    return {
+      kind: 'hint',
+      message: `Goal objective is too long (max ${MAX_GOAL_OBJECTIVE_LENGTH} characters). Reference long details by file path.`,
+    };
+  }
+  return { kind: 'create', objective, replace };
+}
+
+function formatGoalStatus(goal: GoalSnapshot | null): string {
+  if (goal === null) return 'No active goal.';
+  return [`Goal: ${goal.objective}`, `Status: ${goal.status}`].join('\n');
 }
 
 function formatStatusReport(status: SessionStatus): string {

@@ -25,6 +25,13 @@ describe('ACP slash command contract', () => {
     expect(ACP_BUILTIN_SLASH_COMMAND_NAMES.has('new')).toBe(true);
     expect(ACP_BUILTIN_SLASH_COMMAND_NAMES.has('clear')).toBe(true);
     expect(ACP_BUILTIN_SLASH_COMMAND_NAMES.has('yolo')).toBe(true);
+    // Session-level commands shared with the TUI surface.
+    expect(ACP_BUILTIN_SLASH_COMMAND_NAMES.has('goal')).toBe(true);
+    expect(ACP_BUILTIN_SLASH_COMMAND_NAMES.has('plan')).toBe(true);
+    expect(ACP_BUILTIN_SLASH_COMMAND_NAMES.has('auto')).toBe(true);
+    expect(ACP_BUILTIN_SLASH_COMMAND_NAMES.has('swarm')).toBe(true);
+    expect(ACP_BUILTIN_SLASH_COMMAND_NAMES.has('model')).toBe(true);
+    expect(ACP_BUILTIN_SLASH_COMMAND_NAMES.has('undo')).toBe(true);
   });
 
   it('keeps TUI-only workspace commands on the tui surface', () => {
