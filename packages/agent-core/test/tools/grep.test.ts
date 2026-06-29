@@ -1,6 +1,6 @@
 import { Readable, type Writable } from 'node:stream';
 
-import type { KaosProcess, StatResult } from '@moonshot-ai/kaos';
+import type { KaosProcess } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { type GrepInput, GrepInputSchema, GrepTool } from '../../src/tools/builtin/file/grep';
@@ -39,6 +39,8 @@ const COMMON_RG_ARGS = [
 ] as const;
 const DEFAULT_RG_ARGS = ['--hidden', ...MAX_COLUMNS_RG_ARGS, ...COMMON_RG_ARGS] as const;
 const CONTENT_RG_ARGS = ['--hidden', ...COMMON_RG_ARGS] as const;
+// `files_with_matches` delegates mtime ordering to ripgrep via `--sortr modified`.
+const FILES_WITH_MATCHES_ARGS = ['-l', '--sortr', 'modified'] as const;
 const SENSITIVE_KEY_BASENAMES = ['id_rsa', 'id_ed25519', 'id_ecdsa'] as const;
 const SENSITIVE_KEY_RG_ARGS = SENSITIVE_KEY_BASENAMES.flatMap((basename) => [
   '--glob',
@@ -79,21 +81,6 @@ function processWithOutput(stdout: string, stderr = '', exitCode = 0): KaosProce
       stdoutStream.destroy();
       stderrStream.destroy();
     }),
-  };
-}
-
-function statResult(mtime: number): StatResult {
-  return {
-    stMode: 0o100000,
-    stIno: 1,
-    stDev: 1,
-    stNlink: 1,
-    stUid: 0,
-    stGid: 0,
-    stSize: 0,
-    stAtime: mtime,
-    stMtime: mtime,
-    stCtime: mtime,
   };
 }
 
@@ -302,7 +289,7 @@ describe('GrepTool', () => {
     expect(exec).toHaveBeenCalledWith(
       '/mock/rg',
       ...DEFAULT_RG_ARGS,
-      '-l',
+      ...FILES_WITH_MATCHES_ARGS,
       ...SENSITIVE_RG_ARGS,
       '--',
       'hit',
@@ -320,7 +307,7 @@ describe('GrepTool', () => {
     expect(exec).toHaveBeenCalledWith(
       '/mock/rg',
       ...DEFAULT_RG_ARGS,
-      '-l',
+      ...FILES_WITH_MATCHES_ARGS,
       ...SENSITIVE_RG_ARGS,
       '--',
       'hit',
@@ -358,15 +345,15 @@ describe('GrepTool', () => {
     expect(result.output).toBe('No non-sensitive matches found');
   });
 
-  it('sorts files_with_matches by mtime before pagination after sensitive filtering', async () => {
-    const stdout = ['/workspace/src/old.ts', '/workspace/.env', '/workspace/src/new.ts', ''].join(
-      '\n',
-    );
-    const stat = vi.fn(async (path: string) => {
-      if (path === '/workspace/src/new.ts') return statResult(10);
-      if (path === '/workspace/src/old.ts') return statResult(1);
-      throw new Error(`unexpected stat: ${path}`);
-    });
+  it('preserves ripgrep mtime order and filters sensitive files before pagination', async () => {
+    // ripgrep (--sortr modified) emits most-recently-modified first; the
+    // sensitive file is encountered before the head_limit is reached.
+    const stdout = [
+      nullRecord('/workspace/.env'),
+      nullRecord('/workspace/src/new.ts'),
+      nullRecord('/workspace/src/old.ts'),
+    ].join('');
+    const stat = vi.fn();
     const tool = new GrepTool(
       createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout)), stat }),
       { workspaceDir: '/workspace', additionalDirs: [] },
@@ -378,99 +365,68 @@ describe('GrepTool', () => {
       [
         'src/new.ts',
         'Filtered 1 sensitive file(s): .env',
-        'Results truncated to 1 lines (total: 2). Use offset=1 to see more.',
+        'Results truncated to 1 lines (more available). Use offset=1 to see more.',
       ].join('\n'),
     );
-    expect(stat).toHaveBeenCalledTimes(2);
-    expect(stat).toHaveBeenCalledWith('/workspace/src/old.ts');
-    expect(stat).toHaveBeenCalledWith('/workspace/src/new.ts');
+    // mtime ordering is delegated to ripgrep; no stat calls from JS.
+    expect(stat).not.toHaveBeenCalled();
   });
 
-  it('limits concurrent mtime stats while sorting files_with_matches', async () => {
-    const filePaths = Array.from(
-      { length: 40 },
-      (_, index) => `/workspace/src/file-${String(index).padStart(2, '0')}.ts`,
-    );
-    let activeStats = 0;
-    let maxActiveStats = 0;
-    const stat = vi.fn(async (path: string) => {
-      activeStats += 1;
-      maxActiveStats = Math.max(maxActiveStats, activeStats);
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 0);
+  describe('files_with_matches streaming early-stop', () => {
+    it('kills ripgrep and reports more available once head_limit is reached', async () => {
+      const paths = Array.from({ length: 300 }, (_, i) => `/workspace/src/${String(i)}.ts`);
+      const proc = processWithOutput(paths.map((p) => nullRecord(p)).join(''));
+      const killSpy = proc.kill as unknown as ReturnType<typeof vi.fn>;
+      const exec = vi.fn().mockResolvedValue(proc);
+      const tool = new GrepTool(createFakeKaos({ exec }), {
+        workspaceDir: '/workspace',
+        additionalDirs: [],
       });
-      activeStats -= 1;
-      const mtime = Number(path.match(/file-(\d+)\.ts$/)?.[1] ?? 0);
-      return statResult(mtime);
+
+      const result = await executeTool(tool, context({ pattern: 'hit', head_limit: 10 }));
+      const output = toolContentString(result);
+
+      expect(killSpy).toHaveBeenCalled();
+      expect(output.split('\n').filter((line) => line.startsWith('src/'))).toHaveLength(10);
+      expect(output).toContain('more available');
     });
-    const tool = new GrepTool(
-      createFakeKaos({
-        exec: vi.fn().mockResolvedValue(processWithOutput(`${filePaths.join('\n')}\n`)),
-        stat,
-      }),
-      { workspaceDir: '/workspace', additionalDirs: [] },
-    );
 
-    const result = await executeTool(tool, context({ pattern: 'hit', head_limit: 0 }));
-    const lines = toolContentString(result).split('\n');
-
-    expect(stat).toHaveBeenCalledTimes(filePaths.length);
-    expect(maxActiveStats).toBeLessThanOrEqual(32);
-    expect(lines.at(0)).toBe('src/file-39.ts');
-    expect(lines.at(-1)).toBe('src/file-00.ts');
-  });
-
-  it('stops scheduling mtime stats when aborted during files_with_matches sorting', async () => {
-    const filePaths = Array.from(
-      { length: 40 },
-      (_, index) => `/workspace/src/file-${String(index).padStart(2, '0')}.ts`,
-    );
-    const abortController = new AbortController();
-    const stat = vi.fn(async () => {
-      abortController.abort();
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 0);
+    it('does not kill ripgrep when matches stay under head_limit', async () => {
+      const paths = Array.from({ length: 5 }, (_, i) => `/workspace/src/${String(i)}.ts`);
+      const proc = processWithOutput(paths.map((p) => nullRecord(p)).join(''));
+      const killSpy = proc.kill as unknown as ReturnType<typeof vi.fn>;
+      const exec = vi.fn().mockResolvedValue(proc);
+      const tool = new GrepTool(createFakeKaos({ exec }), {
+        workspaceDir: '/workspace',
+        additionalDirs: [],
       });
-      return statResult(1);
+
+      const result = await executeTool(tool, context({ pattern: 'hit', head_limit: 10 }));
+      const output = toolContentString(result);
+
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(output.split('\n').filter((line) => line.startsWith('src/'))).toHaveLength(5);
+      expect(output).not.toContain('more available');
     });
-    const tool = new GrepTool(
-      createFakeKaos({
-        exec: vi.fn().mockResolvedValue(processWithOutput(`${filePaths.join('\n')}\n`)),
-        stat,
-      }),
-      { workspaceDir: '/workspace', additionalDirs: [] },
-    );
 
-    const result = await executeTool(tool,
-      context({ pattern: 'hit', head_limit: 0 }, abortController.signal),
-    );
+    it('skips offset records before applying head_limit', async () => {
+      const paths = Array.from({ length: 50 }, (_, i) => `/workspace/src/${String(i)}.ts`);
+      const proc = processWithOutput(paths.map((p) => nullRecord(p)).join(''));
+      const exec = vi.fn().mockResolvedValue(proc);
+      const tool = new GrepTool(createFakeKaos({ exec }), {
+        workspaceDir: '/workspace',
+        additionalDirs: [],
+      });
 
-    expect(result).toMatchObject({ isError: true, output: 'Grep aborted' });
-    expect(stat.mock.calls.length).toBeLessThan(filePaths.length);
-  });
+      const result = await executeTool(tool, context({ pattern: 'hit', offset: 5, head_limit: 3 }));
+      const output = toolContentString(result);
 
-  it('keeps files_with_matches entries when mtime stat fails', async () => {
-    const stdout = [
-      '/workspace/src/old.ts',
-      '/workspace/src/missing.ts',
-      '/workspace/src/new.ts',
-      '',
-    ].join('\n');
-    const stat = vi.fn(async (path: string) => {
-      if (path === '/workspace/src/new.ts') return statResult(10);
-      if (path === '/workspace/src/old.ts') return statResult(1);
-      throw new Error('stat failed');
+      expect(output).toContain('src/5.ts');
+      expect(output).toContain('src/6.ts');
+      expect(output).toContain('src/7.ts');
+      expect(output).not.toContain('src/4.ts');
+      expect(output).not.toContain('src/8.ts');
     });
-    const tool = new GrepTool(
-      createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout)), stat }),
-      { workspaceDir: '/workspace', additionalDirs: [] },
-    );
-
-    const result = await executeTool(tool, context({ pattern: 'hit', head_limit: 0 }));
-
-    expect(toolContentString(result)).toBe(
-      ['src/new.ts', 'src/old.ts', 'src/missing.ts'].join('\n'),
-    );
   });
 
   it('uses count-matches and ignores context flags outside content output mode', async () => {
@@ -499,12 +455,14 @@ describe('GrepTool', () => {
       .mockResolvedValueOnce(
         processWithOutput('', 'rg: failed to spawn worker: Resource temporarily unavailable\n', 2),
       )
-      .mockResolvedValueOnce(processWithOutput('/workspace/src/a.ts\n'));
+      .mockResolvedValueOnce(processWithOutput('/workspace/src/a.ts:1:hit\n'));
     const tool = new GrepTool(createFakeKaos({ exec }), workspace);
 
-    const result = await executeTool(tool, context({ pattern: 'hit' }));
+    // EAGAIN retry lives in the buffered path (content / count_matches);
+    // files_with_matches is already single-threaded via `--sortr modified`.
+    const result = await executeTool(tool, context({ pattern: 'hit', output_mode: 'content' }));
 
-    expect(toolContentString(result)).toBe('src/a.ts');
+    expect(toolContentString(result)).toBe('src/a.ts:1:hit');
     expect(exec).toHaveBeenCalledTimes(2);
     expect(exec.mock.calls[0]).not.toContain('-j');
     expect(exec).toHaveBeenNthCalledWith(
@@ -512,8 +470,9 @@ describe('GrepTool', () => {
       '/mock/rg',
       '-j',
       '1',
-      ...DEFAULT_RG_ARGS,
-      '-l',
+      ...CONTENT_RG_ARGS,
+      '--with-filename',
+      '-n',
       ...SENSITIVE_RG_ARGS,
       '--',
       'hit',
@@ -538,7 +497,7 @@ describe('GrepTool', () => {
     expect(exec).toHaveBeenCalledWith(
       '/mock/rg',
       ...DEFAULT_RG_ARGS,
-      '-l',
+      ...FILES_WITH_MATCHES_ARGS,
       '-i',
       '--type',
       'ts',
@@ -629,7 +588,7 @@ describe('GrepTool', () => {
     expect(exec).toHaveBeenCalledWith(
       '/mock/rg',
       ...DEFAULT_RG_ARGS,
-      '-l',
+      ...FILES_WITH_MATCHES_ARGS,
       '--glob',
       '**/.env',
       ...SENSITIVE_RG_ARGS,
@@ -1041,7 +1000,7 @@ describe('GrepTool', () => {
     expect(lines.slice(0, 250)).toEqual(displayPaths.slice(0, 250));
     expect(output).not.toContain(displayPaths[250]);
     expect(output).toContain(
-      'Results truncated to 250 lines (total: 251). Use offset=250 to see more.',
+      'Results truncated to 250 lines (more available). Use offset=250 to see more.',
     );
   });
 
