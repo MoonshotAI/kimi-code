@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { migrateV1_1ToV1_2 } from '../../../../../src/services/agent';
+import { migrateV1_1ToV1_2 } from '#/wireRecord/migration';
 import { runMigration } from './utils';
 
 describe('1.1 to 1.2', () => {

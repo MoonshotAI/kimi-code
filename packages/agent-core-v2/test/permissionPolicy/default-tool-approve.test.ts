@@ -1,9 +1,9 @@
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
-import { ToolAccesses } from '../../../../src/loop';
-import type { ResolvedToolExecutionHookContext } from '../../../../src/loop';
-import { DefaultToolApprovePermissionPolicyService } from '../../../../src/services/agent/permissionPolicy/policies/default-tool-approve';
+import type { ResolvedToolExecutionHookContext } from '#/loop';
+import { DefaultToolApprovePermissionPolicyService } from '#/permissionPolicy/policies/default-tool-approve';
+import { ToolAccesses } from '#/tool';
 
 const signal = new AbortController().signal;
 

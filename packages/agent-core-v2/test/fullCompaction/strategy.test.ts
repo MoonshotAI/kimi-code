@@ -3,8 +3,8 @@ import {
 } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
-import { DefaultCompactionStrategy } from '../../../../src/services/agent/fullCompaction/compactionStrategy';
-import { estimateTokensForMessages } from '../../../../src/utils/tokens';
+import { estimateTokensForMessages } from '#/_base/utils/tokens';
+import { DefaultCompactionStrategy } from '#/fullCompaction/strategy';
 
 describe('DefaultCompactionStrategy', () => {
   it('keeps an oversized trailing user message as recent', () => {
