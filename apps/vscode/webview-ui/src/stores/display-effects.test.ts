@@ -5,8 +5,8 @@ import { runDisplayEffects } from "./display-effects";
 
 vi.mock("@/services", () => ({
   bridge: {
-    trackFiles: vi.fn(),
-    clearTrackedFiles: vi.fn(),
+    trackFiles: vi.fn().mockResolvedValue(undefined),
+    clearTrackedFiles: vi.fn().mockResolvedValue(undefined),
   },
 }));
 

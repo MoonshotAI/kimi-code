@@ -175,6 +175,7 @@ function toKimiSlashCommand(command: SlashCommandDescriptor): KimiSlashCommand<S
     aliases: command.aliases ?? [],
     description: command.description,
     priority: command.priority,
+    argumentHint: command.argumentHint,
     availability: extension?.availability ?? command.availability,
     ...(extension?.completeArgs ? { completeArgs: extension.completeArgs } : {}),
     ...(extension?.experimentalFlag ? { experimentalFlag: extension.experimentalFlag } : {}),

@@ -40,7 +40,11 @@ export function MCPServersModal() {
   );
 
   useEffect(() => {
-    if (mcpModalOpen) bridge.getMCPServers().then(setMCPServers);
+    if (mcpModalOpen) {
+      bridge.getMCPServers().then(setMCPServers, (err) => {
+        console.warn("Failed to load MCP servers:", err);
+      });
+    }
   }, [mcpModalOpen, setMCPServers]);
 
   if (!mcpModalOpen) return null;

@@ -5,11 +5,18 @@ export function runDisplayEffects(effects: DisplayEffect[]): void {
   for (const effect of effects) {
     switch (effect.type) {
       case "TrackFiles":
-        void bridge.trackFiles(effect.paths);
+        bridge.trackFiles(effect.paths).catch((err) => {
+          console.warn("Failed to track files:", err);
+        });
         break;
       case "ClearTrackedFiles":
-        void bridge.clearTrackedFiles();
+        bridge.clearTrackedFiles().catch((err) => {
+          console.warn("Failed to clear tracked files:", err);
+        });
         break;
+      // These effects are handled through dedicated state paths in the webview
+      // (approvals, session status, available commands, notifications) rather
+      // than via the bridge, so they are intentionally no-ops here.
       case "OpenApproval":
       case "ClearApprovals":
       case "UpdateStatus":

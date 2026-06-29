@@ -212,6 +212,7 @@
     "vscode:prepublish": "pnpm run build",
     "dev": "node dev.js",
     "lint": "eslint src shared agent-sdk agent-display-model/src agent-display-model/test webview-ui/src",
+    "test": "pnpm -C ./agent-sdk test && pnpm -C ./agent-display-model test && pnpm -C ./webview-ui test",
     "check:boundaries": "node scripts/check-vscode-runtime-boundaries.mjs",
     "typecheck": "pnpm run build:sdk && pnpm -C ./agent-display-model run typecheck && pnpm run check:boundaries && tsc --noEmit -p tsconfig.json",
     "build": "pnpm run typecheck && pnpm run build:webview && pnpm run build:extension",

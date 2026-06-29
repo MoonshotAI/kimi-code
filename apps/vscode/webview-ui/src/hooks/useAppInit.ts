@@ -94,7 +94,9 @@ export function useAppInit(): AppInitState {
         }
 
         // Load MCP servers
-        bridge.getMCPServers().then(setMCPServers);
+        bridge.getMCPServers().then(setMCPServers, (err) => {
+          console.warn("Failed to load MCP servers:", err);
+        });
 
         setState({ status: "ready", errorType: null, errorMessage: null });
       } catch (err) {
