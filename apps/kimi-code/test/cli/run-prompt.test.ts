@@ -1399,6 +1399,53 @@ describe('runPrompt', () => {
     );
   });
 
+  it('waits for background tasks but suppresses drain notifications in final-message-only mode', async () => {
+    let listCalls = 0;
+    mocks.session.listBackgroundTasks.mockImplementation(async () => {
+      listCalls += 1;
+      return listCalls === 1 ? [{ taskId: 'b1', status: 'running' }] : [];
+    });
+    const fakeClock = {
+      now: () => 0,
+      sleep: vi.fn(async () => {
+        for (const handler of Array.from(mocks.eventHandlers)) {
+          handler(
+            mocks.mainEvent({
+              type: 'background.task.terminated',
+              info: {
+                taskId: 'b1',
+                kind: 'process',
+                status: 'completed',
+                description: 'build',
+                startedAt: 0,
+                endedAt: 1,
+              },
+            }),
+          );
+        }
+      }),
+    };
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 80, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 80, delta: 'done' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 80, reason: 'completed' }));
+      }
+    });
+    const stdout = writer();
+
+    await runPrompt(opts({ outputFormat: 'stream-json', finalMessageOnly: true }), '1.2.3-test', {
+      stdout,
+      stderr: writer(),
+      clock: fakeClock,
+    });
+
+    // Still waits for the task, but emits nothing beyond the single final message.
+    expect(fakeClock.sleep).toHaveBeenCalled();
+    expect(stdout.text()).toBe('{"role":"assistant","content":"done"}\n');
+    expect(stdout.text()).not.toContain('notification');
+  });
+
   it('skips the background-task wait when keepAliveOnExit is set via env (Tier 2)', async () => {
     process.env['KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT'] = '1';
     mocks.session.listBackgroundTasks.mockResolvedValue([{ taskId: 'b1', status: 'running' }]);

@@ -236,6 +236,7 @@ export async function runPrompt(
       resolveKeepAliveOnExit(config, process.env),
       resolvePrintWaitCeilingMs(config),
       outputFormat,
+      finalOnly,
       stdout,
       stderr,
       io.clock ?? defaultPromptClock,
@@ -1170,6 +1171,7 @@ async function drainBackgroundTasksOnExit(
   keepAliveOnExit: boolean,
   ceilingMs: number,
   outputFormat: PromptOutputFormat,
+  finalOnly: boolean,
   stdout: PromptOutput,
   stderr: PromptOutput,
   clock: PromptClock,
@@ -1177,8 +1179,10 @@ async function drainBackgroundTasksOnExit(
   if (keepAliveOnExit) return;
   let active = await session.listBackgroundTasks({ activeOnly: true });
   if (active.length === 0) return;
+  // `--final-message-only` promises a single final assistant message per turn,
+  // so the drain still waits for tasks but does not emit their notifications.
   const unsubscribe =
-    outputFormat === 'stream-json'
+    outputFormat === 'stream-json' && !finalOnly
       ? session.onEvent((event) => {
           const notification = toNotificationMessage(event);
           if (notification?.event === 'background.task.terminated') {
