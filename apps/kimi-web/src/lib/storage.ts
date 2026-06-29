@@ -26,6 +26,8 @@ export const STORAGE_KEYS = {
   workspaceOrder: 'kimi-web.workspace-order',
   betaToc: 'kimi-web.beta-toc',
   notifyOnComplete: 'kimi-web.notify-on-complete',
+  notifyOnQuestion: 'kimi-web.notify-on-question',
+  soundOnComplete: 'kimi-web.sound-on-complete',
   inputHistory: 'kimi-web.input-history',
   // cross-file
   locale: 'kimi-locale',

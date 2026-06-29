@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 import type { ClipboardModule } from './clipboard-native';
 
@@ -9,6 +9,11 @@ export type RunCommand = (
   args: string[],
   options?: RunCommandOptions,
 ) => { stdout: Buffer; ok: boolean };
+export type RunCommandAsync = (
+  command: string,
+  args: string[],
+  options?: RunCommandOptions,
+) => Promise<{ stdout: Buffer; ok: boolean }>;
 
 export const SUPPORTED_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
 
@@ -47,6 +52,74 @@ export function runCommand(
   }
   const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? '');
   return { ok: true, stdout };
+}
+
+/**
+ * Non-blocking counterpart of `runCommand`. Used by the clipboard image probe
+ * on the startup path so a slow or wedged helper (notably `powershell.exe` on
+ * WSL, or a stuck `wl-paste`/`xclip`) cannot freeze the event loop. The child
+ * is killed and the promise resolves with `ok: false` once `timeoutMs` elapses
+ * or the captured stdout exceeds `DEFAULT_MAX_BUFFER_BYTES`.
+ */
+export function runCommandAsync(
+  command: string,
+  args: string[],
+  options?: RunCommandOptions,
+): Promise<{ stdout: Buffer; ok: boolean }> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_LIST_TIMEOUT_MS;
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(command, args, {
+        env: options?.env,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch {
+      resolve({ ok: false, stdout: Buffer.alloc(0) });
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    // Marks the promise as settled and clears the timeout. Returns true only for
+    // the first caller, so each event handler below resolves at most once.
+    const claim = (): boolean => {
+      if (settled) return false;
+      settled = true;
+      clearTimeout(timer);
+      return true;
+    };
+
+    timer = setTimeout(() => {
+      child.kill();
+      if (claim()) resolve({ ok: false, stdout: Buffer.alloc(0) });
+    }, timeoutMs);
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      totalBytes += chunk.length;
+      if (totalBytes > DEFAULT_MAX_BUFFER_BYTES) {
+        child.kill();
+        if (claim()) resolve({ ok: false, stdout: Buffer.alloc(0) });
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    child.on('error', () => {
+      if (claim()) resolve({ ok: false, stdout: Buffer.alloc(0) });
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        if (claim()) resolve({ ok: false, stdout: Buffer.alloc(0) });
+        return;
+      }
+      if (claim()) resolve({ ok: true, stdout: Buffer.concat(chunks) });
+    });
+  });
 }
 
 export function isWaylandSession(env: NodeJS.ProcessEnv): boolean {

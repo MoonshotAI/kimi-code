@@ -78,6 +78,8 @@ describe('Event public types', () => {
         case 'tool.call.delta':
         case 'tool.call.started':
         case 'tool.progress':
+        case 'shell.output':
+        case 'shell.started':
         case 'tool.result':
         case 'tool.list.updated':
         case 'mcp.server.status':

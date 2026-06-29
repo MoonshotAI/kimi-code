@@ -3,7 +3,7 @@
      The old workspace rail and workspace tabs have been removed;
      workspace switching, folding and renaming all live in the group header. -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { serverEndpointLabel } from '../api/config';
 import { copyTextToClipboard } from '../lib/clipboard';
@@ -58,6 +58,8 @@ const emit = defineEmits<{
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
   reorderWorkspaces: [ids: string[]];
+  loadMoreSessions: [workspaceId: string];
+  loadAllSessions: [];
   openSettings: [];
   collapse: [];
 }>();
@@ -89,6 +91,12 @@ function onSelectResult(sessionId: string): void {
   onSelectSession(sessionId);
 }
 
+// Sessions are loaded per-workspace (first page only). The first time the user
+// searches, lazily drain the rest so the client-side filter covers everything.
+watch(isSearching, (active) => {
+  if (active) emit('loadAllSessions');
+});
+
 // ---------------------------------------------------------------------------
 // Collapse groups
 // ---------------------------------------------------------------------------
@@ -100,15 +108,8 @@ function isCollapsed(id: string): boolean {
 
 function toggleCollapse(id: string): void {
   const next = new Set(collapsedIds.value);
-  if (next.has(id)) {
-    next.delete(id);
-    // Reset session expansion when workspace is expanded
-    const expandedNext = new Set(expandedWsIds.value);
-    expandedNext.delete(id);
-    expandedWsIds.value = expandedNext;
-  } else {
-    next.add(id);
-  }
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
   collapsedIds.value = next;
   saveCollapsedWorkspaces(next);
 }
@@ -159,37 +160,6 @@ function onGroupDrop(targetId: string): void {
     position,
   );
   emit('reorderWorkspaces', next);
-}
-
-// ---------------------------------------------------------------------------
-// Session list truncation per workspace
-// ---------------------------------------------------------------------------
-const DEFAULT_VISIBLE_COUNT = 10;
-
-/** workspace id → true = show all sessions */
-const expandedWsIds = ref<Set<string>>(new Set());
-
-function isExpanded(wsId: string): boolean {
-  return expandedWsIds.value.has(wsId);
-}
-
-function toggleExpand(wsId: string): void {
-  const next = new Set(expandedWsIds.value);
-  if (next.has(wsId)) next.delete(wsId);
-  else next.add(wsId);
-  expandedWsIds.value = next;
-}
-
-/** Show the most recent N sessions. If the active session is older than N,
-    replace the last slot with it so the highlight never disappears. */
-function visibleSessions(sessions: Session[], expanded: boolean, activeId?: string): Session[] {
-  if (expanded || sessions.length <= DEFAULT_VISIBLE_COUNT) return sessions;
-  const visible = sessions.slice(0, DEFAULT_VISIBLE_COUNT);
-  if (activeId && !visible.some((s) => s.id === activeId)) {
-    const active = sessions.find((s) => s.id === activeId);
-    if (active) visible[DEFAULT_VISIBLE_COUNT - 1] = active;
-  }
-  return visible;
 }
 
 // ---------------------------------------------------------------------------
@@ -603,8 +573,6 @@ function blinkOnce(): void {
               :ws-menu-open-id="wsMenuOpenId"
               :dragging="draggingWsId === g.workspace.id"
               :is-collapsed="isCollapsed"
-              :is-expanded="isExpanded"
-              :visible-sessions="visibleSessions"
               @group-click="handleGhClick"
               @group-contextmenu="openGhMenu"
               @toggle-ws-menu="toggleWsMenu"
@@ -613,7 +581,7 @@ function blinkOnce(): void {
               @rename-session="(id, title) => emit('rename', id, title)"
               @archive-session="(id) => emit('archive', id)"
               @fork-session="(id) => emit('fork', id)"
-              @toggle-expand="toggleExpand"
+              @load-more="(id) => emit('loadMoreSessions', id)"
               @confirm-rename="confirmRenameWorkspace"
               @cancel-rename="cancelRenameWorkspace"
               @update-rename-value="onUpdateRenameValue"

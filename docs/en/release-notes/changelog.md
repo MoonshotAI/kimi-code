@@ -6,6 +6,70 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.20.1 (2026-06-26)
+
+### Features
+
+- Plugins now support declaring lifecycle hooks in `kimi.plugin.json` to run scripts at specific stages. See [Hooks in Plugins](../customization/plugins.md#hooks-in-plugins).
+- `/feedback` now supports attaching diagnostic logs and codebase context.
+- Add the `kimi update` command, equivalent to `kimi upgrade`, for upgrading to the latest version.
+- `kimi web` adds the `--allowed-host <host>` option to add a specified Host to the DNS-rebinding allowlist; 403 errors now explain how to allow it via `--allowed-host` or `KIMI_CODE_ALLOWED_HOSTS`, e.g. `kimi web --allowed-host example.com`.
+
+### Bug Fixes
+
+- Fix kimi server failing to start on Windows after the first run.
+- Fix the Web UI opened by the `/web` command not signing in automatically; the terminal now prints the access token.
+- Cap chat-completions providers' `max_tokens` to the remaining context window, avoiding context overflow and invalid parameter errors.
+
+### Polish
+
+- Optimize the default system prompt and built-in tool descriptions to stop the agent from blocking background tasks, unify tool guidance across profiles, and surface previously missing tool-result details (fetched-page mode, Grep match totals).
+- Cache rendered message lines to keep the terminal responsive in long conversations.
+- Retain only recent turns in the transcript and collapse older steps within each turn to keep long sessions responsive.
+- Make the web chat input grow with its content and add an expandable editor for longer messages.
+- Show the done / in progress / pending breakdown of hidden todos in the collapsed todo panel.
+
+## 0.20.0 (2026-06-26)
+
+### Features
+
+- Add shell mode to the TUI. Type `!` in the input box to enable it. For long-running commands, press Ctrl+B to move them to the background. For example, you can run `!gh auth login` to sign in to the GitHub CLI without opening a new terminal.
+- Add a `--host` CLI option so `kimi web --host` can expose the server to the internet, with hardened token authentication, rate limiting, and other security measures.
+- Render LaTeX display math (`$$…$$`) in the web UI.
+
+### Bug Fixes
+
+- Fix a startup crash on Linux caused by an unhandled native clipboard error.
+- Fix `kimi web` and `/web` failing to start the background server daemon on Windows with `spawn EFTYPE` when the CLI is installed via npm/pnpm or run from source. The official single-binary install script was not affected.
+- Fix the terminal window repeatedly losing focus on Linux Wayland, which broke IME input.
+- Stop auto-dismissing questions in the web UI after 60 seconds so they wait for the user's answer.
+- Fix explore subagents silently losing git context when git commands time out or the directory is not a repository.
+- Fix Ctrl-C during compaction so it clears a pending editor draft first instead of cancelling immediately.
+- Fix MCP server working directories when sessions are hosted by the web server.
+- Fix duplicate session snapshot reloads in the bundled web UI during resync.
+- Fix truncated skill descriptions missing an ellipsis in the model's skill listing.
+
+### Polish
+
+- Redesign `/plugins` as a single tabbed panel: **Installed** (manage installed plugins — toggle, remove, MCP, details, reload), **Official** (Kimi-maintained marketplace plugins), **Third-party** (marketplace plugins from other publishers), and **Custom** (install straight from a GitHub URL, zip URL, or local path). Use `Tab` / `Shift-Tab` to switch tabs.
+- Show a line-by-line diff when the agent edits or writes a file in the web chat.
+- Show the plan body and approach choices in the plan review card when exiting plan mode in the web UI.
+- Show the full accumulated progress of a subagent in its detail panel, with concise tool-call summaries instead of raw JSON.
+- `/reload` now refreshes the assistant's view of plugin skills, so plugin changes take effect in the current session instead of requiring a new one.
+- Replace silent AGENTS.md truncation with a visible warning in the TUI status bar and web UI.
+- Add a confirmation prompt before installing third-party plugins.
+- Show update badges on the `/plugins` Installed tab, where Enter now installs the available update and I opens plugin details.
+- Add a copy button to user messages in the web chat.
+- Preserve full tool output logs when previews are truncated and link background task completion notifications to saved output.
+- Sync session title changes across all connected clients in server mode.
+- Add Ctrl+U and Ctrl+D as page up and page down shortcuts in the task output viewer.
+- Add a hint to the per-turn step limit error pointing users to the `loop_control.max_steps_per_turn` config option.
+- Reduce streaming redraw cost for long assistant messages with code blocks.
+- Page the web session list per workspace so the first screen no longer fetches every session up front.
+- Keep the web session sidebar from re-rendering on every streaming token to improve rendering performance.
+- Create missing parent directories automatically when writing a file.
+- Improve the image paste hint.
+
 ## 0.19.2 (2026-06-24)
 
 ### Features

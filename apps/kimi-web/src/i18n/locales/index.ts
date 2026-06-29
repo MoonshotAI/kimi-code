@@ -8,7 +8,6 @@ import en_composer from './en/composer';
 import en_login from './en/login';
 import en_providers from './en/providers';
 import en_model from './en/model';
-import en_newSession from './en/newSession';
 import en_sessions from './en/sessions';
 import en_approval from './en/approval';
 import en_question from './en/question';
@@ -35,7 +34,6 @@ import zh_composer from './zh/composer';
 import zh_login from './zh/login';
 import zh_providers from './zh/providers';
 import zh_model from './zh/model';
-import zh_newSession from './zh/newSession';
 import zh_sessions from './zh/sessions';
 import zh_approval from './zh/approval';
 import zh_question from './zh/question';
@@ -72,7 +70,6 @@ export const messages = {
     login: en_login,
     providers: en_providers,
     model: en_model,
-    newSession: en_newSession,
     sessions: en_sessions,
     approval: en_approval,
     question: en_question,
@@ -104,7 +101,6 @@ export const messages = {
     login: zh_login,
     providers: zh_providers,
     model: zh_model,
-    newSession: zh_newSession,
     sessions: zh_sessions,
     approval: zh_approval,
     question: zh_question,

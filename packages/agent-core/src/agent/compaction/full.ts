@@ -8,8 +8,10 @@ import {
   APIEmptyResponseError,
   isRetryableGenerateError,
   type GenerateResult,
+  type Message,
   type TokenUsage,
   APIContextOverflowError,
+  APIStatusError,
   createUserMessage,
 } from '@moonshot-ai/kosong';
 
@@ -23,6 +25,7 @@ import { renderPrompt } from '../../utils/render-prompt';
 import {
   estimateTokens,
   estimateTokensForMessages,
+  estimateTokensForTools,
 } from '../../utils/tokens';
 import {
   applyCompletionBudget,
@@ -39,6 +42,10 @@ import {
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 
+const DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS = 128 * 1024;
+const OVERFLOW_CONTEXT_SAFETY_RATIO = 0.85;
+const OVERFLOW_STATUS_RECOVERY_RATIO = 0.5;
+
 class CompactionTruncatedError extends Error {
   constructor() {
     super('Compaction response was truncated before producing a complete summary.');
@@ -53,6 +60,7 @@ export class FullCompaction {
     promise: Promise<void>;
     blockedByTurn: boolean;
   } | null = null;
+  private readonly observedMaxContextTokensByModel = new Map<string, number>();
   protected readonly strategy: CompactionStrategy;
 
   constructor(
@@ -62,7 +70,7 @@ export class FullCompaction {
     this.strategy =
       strategy ??
       new DefaultCompactionStrategy(
-        () => agent.config.modelCapabilities.max_context_tokens,
+        () => this.getEffectiveMaxContextTokens(),
         {
           ...DEFAULT_COMPACTION_CONFIG,
           reservedContextSize:
@@ -74,6 +82,45 @@ export class FullCompaction {
 
   get isCompacting(): boolean {
     return this.compacting !== null;
+  }
+
+  getEffectiveMaxContextTokens(): number {
+    const configured = this.agent.config.modelCapabilities.max_context_tokens;
+    const modelAlias = this.agent.config.modelAlias;
+    const observed =
+      modelAlias === undefined ? undefined : this.observedMaxContextTokensByModel.get(modelAlias);
+    if (observed === undefined) return configured;
+    if (configured <= 0) return observed;
+    return Math.min(configured, observed);
+  }
+
+  estimateCurrentRequestTokens(): number {
+    return this.estimateRequestTokens(this.agent.context.messages);
+  }
+
+  shouldRecoverFromContextOverflow(
+    error: unknown,
+    estimatedRequestTokens = this.estimateCurrentRequestTokens(),
+  ): boolean {
+    if (error instanceof APIContextOverflowError) return true;
+    if (!(error instanceof APIStatusError) || error.statusCode !== 413) return false;
+    const effectiveMax = this.getEffectiveMaxContextTokens();
+    return (
+      effectiveMax > 0 && estimatedRequestTokens >= effectiveMax * OVERFLOW_STATUS_RECOVERY_RATIO
+    );
+  }
+
+  observeContextOverflow(estimatedRequestTokens: number): void {
+    if (!Number.isFinite(estimatedRequestTokens) || estimatedRequestTokens <= 0) return;
+    const modelAlias = this.agent.config.modelAlias;
+    if (modelAlias === undefined) return;
+    const observed = Math.max(
+      1,
+      Math.floor(estimatedRequestTokens * OVERFLOW_CONTEXT_SAFETY_RATIO),
+    );
+    const current = this.getEffectiveMaxContextTokens();
+    if (current > 0 && observed >= current) return;
+    this.observedMaxContextTokensByModel.set(modelAlias, observed);
   }
 
   begin(data: Readonly<CompactionBeginData>): void {
@@ -134,6 +181,14 @@ export class FullCompaction {
 
   private get tokenCountWithPending(): number {
     return this.agent.context.tokenCountWithPending;
+  }
+
+  private estimateRequestTokens(messages: readonly Message[]): number {
+    return (
+      estimateTokens(this.agent.config.systemPrompt) +
+      estimateTokensForTools(this.agent.tools.loopTools) +
+      estimateTokensForMessages(messages)
+    );
   }
 
   resetForTurn(): void {
@@ -261,12 +316,25 @@ export class FullCompaction {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
       const model = this.agent.config.model;
+      const capability = this.agent.config.modelCapabilities;
+      const maxContextTokens = capability.max_context_tokens;
+      // When the model's context window is known and the user has not set
+      // `maxOutputSize`, cap compaction output to a safe default so a large
+      // context window does not push `max_tokens` past the provider's ceiling.
+      // When the window is unknown (maxContextTokens === 0), leave
+      // `maxOutputSize` unset so `resolveCompletionBudget` falls back to the
+      // conservative unknown-context fallback.
+      const defaultCompactionCap =
+        maxContextTokens > 0
+          ? Math.min(maxContextTokens, DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS)
+          : undefined;
       const provider = applyCompletionBudget({
         provider: this.agent.config.provider,
         budget: resolveCompletionBudget({
+          maxOutputSize: this.agent.config.maxOutputSize ?? defaultCompactionCap,
           reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
         }),
-        capability: this.agent.config.modelCapabilities,
+        capability,
       });
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
@@ -278,6 +346,7 @@ export class FullCompaction {
           ...this.agent.context.project(messagesToCompact),
           createUserMessage(renderPrompt(compactionInstructionTemplate, { customInstruction: data.instruction ?? '' })),
         ];
+        const estimatedCompactionRequestTokens = this.estimateRequestTokens(messages);
         try {
           const response = await this.agent.generate(
             provider,
@@ -294,8 +363,15 @@ export class FullCompaction {
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
+          const isContextOverflow = this.shouldRecoverFromContextOverflow(
+            error,
+            estimatedCompactionRequestTokens,
+          );
+          if (isContextOverflow) {
+            this.observeContextOverflow(estimatedCompactionRequestTokens);
+          }
           if (
-            error instanceof APIContextOverflowError ||
+            isContextOverflow ||
             error instanceof CompactionTruncatedError ||
             error instanceof APIEmptyResponseError // e.g. think-only
           ) {
@@ -340,7 +416,7 @@ export class FullCompaction {
       this.agent.telemetry.track('compaction_finished', {
         tokensBefore: result.tokensBefore,
         tokensAfter: result.tokensAfter,
-        duration: Date.now() - startedAt,
+        duration_ms: Date.now() - startedAt,
         compactedCount: result.compactedCount,
         retryCount,
         round,
@@ -355,7 +431,7 @@ export class FullCompaction {
       this.agent.telemetry.track('compaction_failed', {
         ...data,
         tokensBefore,
-        duration: Date.now() - startedAt,
+        duration_ms: Date.now() - startedAt,
         round,
         retryCount,
         thinkingLevel: this.agent.config.thinkingLevel,

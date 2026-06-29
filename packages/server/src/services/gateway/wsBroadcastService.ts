@@ -240,6 +240,10 @@ function isGlobalSessionEvent(type: string): boolean {
   return (
     type === 'event.session.created' ||
     type === 'event.session.status_changed' ||
+    // Session metadata (e.g. title) must reach every connection, including
+    // clients not yet subscribed to the session, so session lists stay in sync
+    // when another client creates or renames a session.
+    type === 'session.meta.updated' ||
     type === 'event.config.changed' ||
     // Workspace registry is not session-scoped: workspace lifecycle events ride
     // the '__global__' watermark and fan out to every connection.

@@ -85,7 +85,8 @@ export class HookEngine {
       matched.map((hook) =>
         runHook(hook.command, inputData, {
           timeout: hook.timeout ?? DEFAULT_HOOK_TIMEOUT_SECONDS,
-          cwd: this.options.cwd === '' ? undefined : this.options.cwd,
+          cwd: hook.cwd ?? (this.options.cwd === '' ? undefined : this.options.cwd),
+          env: hook.env,
           signal: args.signal,
         }),
       ),
@@ -96,13 +97,14 @@ export class HookEngine {
   }
 
   private matchingHooks(event: string, matcherValue: string): HookDef[] {
-    const seenCommands = new Set<string>();
+    const seen = new Set<string>();
     const matched: HookDef[] = [];
 
     for (const hook of this.byEvent.get(event) ?? []) {
       if (!matches(hook.matcher ?? '', matcherValue)) continue;
-      if (seenCommands.has(hook.command)) continue;
-      seenCommands.add(hook.command);
+      const key = (hook.cwd ?? '') + '\0' + hook.command;
+      if (seen.has(key)) continue;
+      seen.add(key);
       matched.push(hook);
     }
 

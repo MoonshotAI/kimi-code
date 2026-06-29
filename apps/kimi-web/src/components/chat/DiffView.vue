@@ -6,6 +6,7 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { DiffViewLine } from '../../types';
+import DiffLines from './DiffLines.vue';
 
 const { t } = useI18n();
 
@@ -96,18 +97,6 @@ const renderDetail = computed(
 );
 const diffLines = computed<DiffViewLine[]>(() => props.fileDiff ?? []);
 const loading = computed(() => props.fileDiffLoading === true);
-
-/** Gutter cell text for a diff row (old / new line numbers). */
-function oldGutter(line: DiffViewLine): string {
-  return line.oldNo !== undefined ? String(line.oldNo) : '';
-}
-function newGutter(line: DiffViewLine): string {
-  return line.newNo !== undefined ? String(line.newNo) : '';
-}
-
-function rowClass(line: DiffViewLine): string {
-  return `dl-${line.type}`;
-}
 
 function onOpen(path: string): void {
   emit('open', path);
@@ -243,23 +232,8 @@ function treePadding(depth: number): string {
 
       <div v-if="loading" class="empty-state">{{ t('diff.loading') }}</div>
 
-      <div v-else-if="diffLines.length > 0" class="diff-lines">
-        <div
-          v-for="(line, i) in diffLines"
-          :key="i"
-          class="dl"
-          :class="rowClass(line)"
-        >
-          <template v-if="line.type === 'hunk'">
-            <span class="hunk-text">{{ line.text }}</span>
-          </template>
-          <template v-else>
-            <span class="dl-gutter old">{{ oldGutter(line) }}</span>
-            <span class="dl-gutter new">{{ newGutter(line) }}</span>
-            <span class="dl-sign">{{ line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ' }}</span>
-            <span class="dl-text">{{ line.text }}</span>
-          </template>
-        </div>
+      <div v-else-if="diffLines.length > 0" class="dv-lines-wrap">
+        <DiffLines :lines="diffLines" />
       </div>
 
       <div v-else class="empty-state">{{ t('diff.noDiff') }}</div>
@@ -682,81 +656,12 @@ function treePadding(depth: number): string {
   outline-offset: 1px;
 }
 
-.diff-lines {
+/* Wrapper that lets <DiffLines> fill the panel height and scroll internally.
+   The line-row styles themselves live in DiffLines.vue. */
+.dv-lines-wrap {
   flex: 1;
+  min-height: 0;
   overflow: auto;
-  padding: 4px 0 12px;
-  font-size: var(--ui-font-size);
-  line-height: 1.5;
-  -webkit-overflow-scrolling: touch;
-}
-
-.dl {
-  display: flex;
-  align-items: flex-start;
-  min-height: 18px;
-  white-space: pre;
-}
-
-.dl-gutter {
-  flex: none;
-  width: 40px;
-  padding: 0 6px;
-  text-align: right;
-  color: var(--faint, #aeb4bc);
-  background: var(--panel, #fafbfc);
-  user-select: none;
-  border-right: 1px solid var(--line2, #eef1f4);
-  font-variant-numeric: tabular-nums;
-}
-
-.dl-gutter.new { border-right: 1px solid var(--line, #e7eaee); }
-
-.dl-sign {
-  flex: none;
-  width: 16px;
-  text-align: center;
-  color: var(--muted);
-  user-select: none;
-}
-
-.dl-text {
-  flex: 1;
-  padding-right: 14px;
-  white-space: pre;
-  color: var(--text);
-  min-width: 0;
-}
-
-/* Added / removed lines: a faint background plus a left accent bar mark the
-   change, while the code TEXT keeps the normal ink colour. Washing the whole
-   line in green/red competed with reading the code itself; the sign (+/-) and
-   the accent carry the colour so the content stays legible. */
-.dl-add {
-  background: color-mix(in srgb, var(--ok) 7%, var(--bg));
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
-}
-.dl-add .dl-sign {
-  color: var(--ok, #0e7a38);
-}
-
-.dl-del {
-  background: color-mix(in srgb, var(--err) 7%, var(--bg));
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--err) 55%, transparent);
-}
-.dl-del .dl-sign {
-  color: var(--err, #b91c1c);
-}
-
-/* Hunk header — muted band spanning the whole row. */
-.dl-hunk {
-  background: var(--panel2, #f3f5f8);
-}
-.dl-hunk .hunk-text {
-  flex: 1;
-  padding: 1px 12px;
-  color: var(--muted, #8b929b);
-  font-style: normal;
 }
 
 /* Context rows keep plain colors (inherit). */
@@ -794,11 +699,5 @@ function treePadding(depth: number): string {
   }
   .back-btn:active { background: var(--panel2, #f5f6f8); }
   .diff-path { font-size: calc(var(--ui-font-size) - 1.5px); }
-
-  /* Line panel: horizontal scroll for long lines; keep the mono gutter intact. */
-  .diff-lines {
-    overflow-x: auto;
-    font-size: var(--ui-font-size);
-  }
 }
 </style>

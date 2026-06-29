@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -16,6 +16,7 @@ import {
 } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { KimiConfig } from '../../../src/config';
 import type { AgentOptions } from '../../../src/agent';
 import { DefaultCompactionStrategy, type CompactionStrategy } from '../../../src/agent/compaction';
 import { FLAG_DEFINITIONS, MASTER_ENV } from '../../../src/flags';
@@ -237,7 +238,7 @@ describe('FullCompaction', () => {
         instruction: 'Keep the important test facts.',
         tokensBefore: 39,
         tokensAfter: 5,
-        duration: expect.any(Number),
+        duration_ms: expect.any(Number),
         compactedCount: 6,
         retryCount: 0,
         thinkingLevel: 'off',
@@ -764,7 +765,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'manual',
         tokensBefore: 25,
-        duration: expect.any(Number),
+        duration_ms: expect.any(Number),
         round: 1,
         retryCount: 0,
         errorType: 'Error',
@@ -878,7 +879,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'manual',
         tokensBefore: 25,
-        duration: expect.any(Number),
+        duration_ms: expect.any(Number),
         retryCount: 4,
         errorType: 'APIConnectionError',
       }),
@@ -1588,6 +1589,113 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('uses observed max from overflow to size compaction input', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 1_000_000,
+      },
+    });
+    for (let i = 0; i < 20; i++) {
+      ctx.appendExchange(
+        i + 1,
+        `old user ${String(i)}`,
+        `old assistant ${String(i)} ${'x'.repeat(40_000)}`,
+        20_000,
+      );
+    }
+    ctx.agent.fullCompaction.observeContextOverflow(200_000);
+    const compacted = ctx.once('context.apply_compaction');
+    const completed = ctx.once('compaction.completed');
+
+    ctx.mockNextResponse({ type: 'text', text: 'Observed max summary.' });
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+    await completed;
+
+    expect(ctx.agent.fullCompaction.getEffectiveMaxContextTokens()).toBe(170_000);
+    const compactionTokens = estimateTokensForMessages(ctx.llmCalls[0]?.history ?? []);
+    expect(compactionTokens).toBeLessThan(200_000);
+    expect(ctx.compactHistory()[0]).toEqual({ role: 'assistant', text: 'Observed max summary.' });
+    await ctx.expectResumeMatches();
+  });
+
+  it('recovers from plain 413 when estimated request is over effective max', async () => {
+    let callCount = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIStatusError(413, 'Request Entity Too Large', 'req-plain-413');
+      }
+      if (callCount === 2) {
+        return textResult('Plain 413 compacted summary.');
+      }
+      await callbacks?.onMessagePart?.({
+        type: 'text',
+        text: 'Recovered after plain 413 compaction.',
+      });
+      return textResult('Recovered after plain 413 compaction.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 200_000,
+      },
+    });
+    ctx.appendExchange(1, 'old user one', `old assistant one ${'x'.repeat(600_000)}`, 150_000);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry after plain 413' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(3);
+    expect(ctx.agent.fullCompaction.getEffectiveMaxContextTokens()).toBeLessThan(200_000);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'compaction.started',
+        args: { trigger: 'auto' },
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: { turnId: 0, reason: 'completed' },
+      }),
+    );
+    await ctx.expectResumeMatches();
+  });
+
+  it('does not compact plain 413 when estimated request is small', async () => {
+    const generate: GenerateFn = async () => {
+      throw new APIStatusError(413, 'Request Entity Too Large', 'req-small-413');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 200_000,
+      },
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'small prompt' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(eventIndex(events, 'compaction.started')).toBe(-1);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({ turnId: 0, reason: 'failed' }),
+      }),
+    );
+  });
+
   it('preserves thinking effort when compacting after provider context overflow', async () => {
     let callCount = 0;
     const records: TelemetryRecord[] = [];
@@ -1768,6 +1876,79 @@ describe('FullCompaction', () => {
 
     expect(callCount).toBe(3);
     expect(compactionMaxCompletionTokens).toEqual([undefined]);
+  });
+
+  it('honors maxOutputSize from model config during compaction', async () => {
+    let callCount = 0;
+    const compactionMaxCompletionTokens: unknown[] = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-max-output');
+      }
+      if (callCount === 2) {
+        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        return textResult('Max output compacted summary.');
+      }
+      await callbacks?.onMessagePart?.({
+        type: 'text',
+        text: 'Recovered with max output.',
+      });
+      return textResult('Recovered with max output.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    // Set maxOutputSize on the harness's internal kimiConfig — the
+    // compaction path reads it via ConfigState.maxOutputSize.
+    const models = (ctx as unknown as { kimiConfig: KimiConfig }).kimiConfig.models;
+    models![CATALOGUED_PROVIDER.model] = {
+      ...models![CATALOGUED_PROVIDER.model]!,
+      maxOutputSize: 384000,
+    };
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry with max output' }] });
+    await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(3);
+    expect(compactionMaxCompletionTokens).toEqual([384000]);
+  });
+
+  it('uses default 128k hardCap when maxOutputSize is not configured', async () => {
+    let callCount = 0;
+    const compactionMaxCompletionTokens: unknown[] = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-default-cap');
+      }
+      if (callCount === 2) {
+        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        return textResult('Default cap compacted summary.');
+      }
+      await callbacks?.onMessagePart?.({
+        type: 'text',
+        text: 'Recovered with default cap.',
+      });
+      return textResult('Recovered with default cap.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry with default cap' }] });
+    await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(3);
+    expect(compactionMaxCompletionTokens).toEqual([128 * 1024]);
   });
 
   it('ignores filtered assistant placeholders when checking the retained overflow suffix', async () => {
@@ -2120,6 +2301,10 @@ function messageText(message: Message | undefined): string {
 }
 
 function hookPayloadLoggerCommand(logPath: string): string {
+  // Write the hook script to a file and run it with node, instead of
+  // `node -e <json>` — cmd.exe on Windows mangles the escaped quotes in the
+  // inline form and corrupts the script before it can run.
+  const scriptPath = `${logPath}.cjs`;
   const script = [
     "const fs = require('node:fs');",
     "let input = '';",
@@ -2128,7 +2313,8 @@ function hookPayloadLoggerCommand(logPath: string): string {
     `  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(JSON.parse(input)) + '\\n');`,
     '});',
   ].join('');
-  return `node -e ${JSON.stringify(script)}`;
+  writeFileSync(scriptPath, script);
+  return `${process.execPath} ${scriptPath}`;
 }
 
 function readHookPayloads(logPath: string): Array<Record<string, unknown>> {

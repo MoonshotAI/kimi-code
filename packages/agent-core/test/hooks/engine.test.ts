@@ -1,3 +1,6 @@
+import { realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+
 import { describe, expect, it, vi } from 'vitest';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
@@ -10,6 +13,8 @@ type HookDef = {
   matcher?: string;
   command: string;
   timeout?: number;
+  cwd?: string;
+  env?: Readonly<Record<string, string>>;
 };
 
 interface HookResult {
@@ -127,7 +132,7 @@ describe('HookEngine', () => {
       {
         event: 'PreToolUse',
         matcher: 'ReadFile',
-        command: "echo 'blocked' >&2; exit 2",
+        command: 'node -e "process.stderr.write(\'blocked\'); process.exit(2)"',
         timeout: 5,
       },
     ]);
@@ -348,5 +353,47 @@ describe('HookEngine', () => {
     } finally {
       spy?.mockRestore();
     }
+  });
+
+  it('runs a hook with HookDef.cwd as the working directory', async () => {
+    const { HookEngine } = await importEngine();
+    const pluginCwd = tmpdir();
+    const engine = new HookEngine(
+      [
+        {
+          event: 'PreToolUse',
+          command: 'node -e "process.stdout.write(process.cwd())"',
+          timeout: 5,
+          cwd: pluginCwd,
+        },
+      ],
+      { cwd: process.cwd() },
+    );
+    const results = await engine.trigger('PreToolUse', { inputData: {} });
+    expect(results[0]?.stdout).toBe(realpathSync(pluginCwd));
+  });
+
+  it('passes HookDef.env into the hook process environment', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([
+      {
+        event: 'PreToolUse',
+        command: 'node -e "process.stdout.write(process.env.KIMI_PLUGIN_TEST ?? \'missing\')"',
+        timeout: 5,
+        env: { KIMI_PLUGIN_TEST: 'plugin-value' },
+      },
+    ]);
+    const results = await engine.trigger('PreToolUse', { inputData: {} });
+    expect(results[0]?.stdout).toBe('plugin-value');
+  });
+
+  it('does not dedupe hooks that share a command but have different cwd', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([
+      { event: 'Stop', command: 'echo same', timeout: 5, cwd: process.cwd() },
+      { event: 'Stop', command: 'echo same', timeout: 5, cwd: tmpdir() },
+    ]);
+    const results = await engine.trigger('Stop', { inputData: {} });
+    expect(results).toHaveLength(2);
   });
 });

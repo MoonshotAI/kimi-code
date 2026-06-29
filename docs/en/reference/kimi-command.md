@@ -274,7 +274,7 @@ For full migration instructions, see [Migrating from kimi-cli](../guides/migrati
 
 ### `kimi upgrade`
 
-Immediately check for the latest version and display an update prompt; exits after you make a selection.
+Immediately check for the latest version and display an update prompt; exits after you make a selection. `kimi update` is an alias for this command.
 
 ```sh
 kimi upgrade

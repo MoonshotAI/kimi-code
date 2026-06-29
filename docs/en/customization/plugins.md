@@ -2,8 +2,6 @@
 
 Plugins package reusable Kimi Code CLI capabilities into installable units — they can add [Agent Skills](./skills.md), automatically load a specified Skill at session start, and declare MCP servers to provide real tool capabilities. They are ideal for sharing workflows with a team, connecting to external services, or installing extensions from the official marketplace.
 
-Kimi Code CLI applies a conservative loading strategy for plugins: installing a plugin does not execute any Python, Node.js, shell, hook, or command scripts it contains.
-
 ## Installation and Management
 
 Run `/plugins` in the TUI to open the plugin manager. It is a single panel with four tabs — **Installed** (manage what you have), **Official** (Kimi-maintained marketplace plugins), **Third-party** (marketplace plugins from other publishers), and **Custom** (install from a URL) — switched with `Tab` / `Shift-Tab`. Common keys:
@@ -15,7 +13,8 @@ Run `/plugins` in the TUI to open the plugin manager. It is a single panel with 
 | `D` | Remove the selected installed plugin (Installed tab) |
 | `M` | Manage MCP servers for the selected plugin (Installed tab) |
 | `R` | Reload `installed.json` and all manifests (Installed tab) |
-| `Enter` | Installed tab: view plugin details · Official/Third-party tab: install or update · Custom tab: install |
+| `Enter` | Installed tab: install the available update, or view details if up to date · Official/Third-party tab: install or update · Custom tab: install |
+| `I` | View plugin details (Installed tab) |
 | `Esc` | Go back or cancel |
 
 You can also use slash commands directly:
@@ -34,7 +33,7 @@ You can also use slash commands directly:
 | `/plugins mcp enable <id> <server>` | Enable an MCP server declared by a plugin |
 | `/plugins mcp disable <id> <server>` | Disable an MCP server declared by a plugin |
 
-The **Official** and **Third-party** tabs list marketplace plugins by tier; the **Custom** tab installs from a URL. Marketplace catalogs load when you switch to those tabs. Each install shows a trust badge: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else).
+The **Installed** tab lists your installed plugins and shows an update badge when a newer version is available in the marketplace. The **Official** and **Third-party** tabs list marketplace plugins by tier; the **Custom** tab installs from a URL. Marketplace catalogs load automatically when needed. Each install shows a trust badge: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else). Installing a third-party plugin (anything not from the official address, including Custom installs) first shows a confirmation prompt that defaults to cancelling, so it is only installed if you choose to trust the source.
 
 ### Installing from GitHub
 
@@ -158,8 +157,9 @@ Supported fields:
 | `sessionStart.skill` | Loads the specified plugin Skill into the main Agent when a new or resumed session starts |
 | `skillInstructions` | Additional instructions appended whenever a Skill from this plugin is loaded |
 | `mcpServers` | MCP server declarations; enabled by default, can be disabled from `/plugins` |
+| `hooks` | Hook rules run on lifecycle events while the plugin is enabled; see [Hooks in Plugins](#hooks-in-plugins) |
 
-Unsupported runtime fields such as `tools`, `commands`, `hooks`, `apps`, `inject`, and `configFile` appear as diagnostics and are ignored.
+Unsupported runtime fields such as `tools`, `commands`, `apps`, `inject`, and `configFile` appear as diagnostics and are ignored.
 
 ## Skills and Session Start
 
@@ -220,11 +220,36 @@ Plugin MCP servers start after `/reload` or in new sessions. To enable or disabl
 /reload
 ```
 
+## Hooks in Plugins
+
+A plugin can declare hook rules in its manifest that run on lifecycle events while the plugin is enabled. Each entry uses the same fields as a [`[[hooks]]` rule in `config.toml`](./hooks.md#configuration) (`event`, `matcher`, `command`, `timeout`):
+
+```json
+{
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "command": "node ./hooks/check-bash.mjs",
+      "timeout": 5
+    }
+  ]
+}
+```
+
+Plugin hooks reuse the same mechanism as global hooks — see [Hooks](./hooks.md) for the event list, the stdin JSON payload, and how exit codes and return values affect the main flow. The differences are:
+
+- A plugin's hooks are active only while the plugin is **enabled**; disabling the plugin stops its hooks.
+- Each hook runs with its working directory set to the plugin root, so `command` can use `./` paths inside the plugin.
+- The hook process receives two extra environment variables: `KIMI_CODE_HOME` and `KIMI_PLUGIN_ROOT` (the plugin root directory).
+
+Installing a plugin never runs its hooks by itself — they only fire when their matching event occurs while the plugin is enabled.
+
 ## Security Model
 
 Plugins have a limited loading scope. The following operations do not occur during installation or session startup:
 
-- Command-type plugin tools, hooks, and legacy tool runtimes are not executed
+- Command-type plugin tools and legacy tool runtimes are not executed
 - All paths must remain within the plugin root directory after symbolic link resolution
 - MCP servers of enabled plugins start after `/reload` or in new sessions and can be disabled at any time from `/plugins`
 - Broken manifests or unsafe paths appear in `/plugins info <id>` diagnostics and do not affect other sessions

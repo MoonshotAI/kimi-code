@@ -8,6 +8,7 @@ import type {
   BeginCompactionPayload,
   CancelPayload,
   CancelPlanPayload,
+  CancelShellCommandPayload,
   CreateGoalPayload,
   DetachBackgroundPayload,
   EmptyPayload,
@@ -17,6 +18,7 @@ import type {
   McpServerInfo,
   McpStartupMetrics,
   PromptPayload,
+  RunShellCommandPayload,
   ReconnectMcpServerPayload,
   RenameSessionPayload,
   RegisterToolPayload,
@@ -111,6 +113,14 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async steer({ agentId, ...payload }: AgentScopedPayload<SteerPayload>) {
     return (await this.getAgent(agentId)).steer(payload);
+  }
+
+  async runShellCommand({ agentId, ...payload }: AgentScopedPayload<RunShellCommandPayload>) {
+    return (await this.getAgent(agentId)).runShellCommand(payload);
+  }
+
+  async cancelShellCommand({ agentId, ...payload }: AgentScopedPayload<CancelShellCommandPayload>) {
+    return (await this.getAgent(agentId)).cancelShellCommand(payload);
   }
 
   async cancel({ agentId, ...payload }: AgentScopedPayload<CancelPayload>) {

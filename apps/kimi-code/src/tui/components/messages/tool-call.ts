@@ -25,6 +25,7 @@ import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
@@ -463,6 +464,8 @@ function tailNonEmptyLines(text: string, maxLines: number): string[] {
 }
 
 class PrefixedWrappedLine implements Component {
+  private renderCache: { width: number; lines: string[] } | undefined;
+
   constructor(
     private readonly firstPrefix: string,
     private readonly continuationPrefix: string,
@@ -473,11 +476,17 @@ class PrefixedWrappedLine implements Component {
     private readonly tailLines?: number,
   ) { }
 
-  invalidate(): void { }
+  invalidate(): void {
+    this.renderCache = undefined;
+  }
 
   render(width: number): string[] {
     const safeWidth = Math.max(0, width);
     if (safeWidth <= 0) return [''];
+
+    if (isRenderCacheEnabled() && this.renderCache?.width === safeWidth) {
+      return this.renderCache.lines;
+    }
 
     const prefixWidth = Math.max(
       visibleWidth(this.firstPrefix),
@@ -489,11 +498,15 @@ class PrefixedWrappedLine implements Component {
       this.tailLines !== undefined && wrapped.length > this.tailLines
         ? wrapped.slice(wrapped.length - this.tailLines)
         : wrapped;
-    return lines
+    const rendered = lines
       .map((line, index) =>
         index === 0 ? `${this.firstPrefix}${line}` : `${this.continuationPrefix}${line}`,
       )
       .map((line) => truncateToWidth(line, safeWidth, '…'));
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width: safeWidth, lines: rendered };
+    }
+    return rendered;
   }
 }
 
@@ -620,7 +633,49 @@ export class ToolCallComponent extends Container {
     this.startDetachHintTimer();
   }
 
+  private renderCache:
+    | { width: number; lines: string[]; childRefs: Component[]; childLines: string[][] }
+    | undefined;
+
+  override render(width: number): string[] {
+    const cache = this.renderCache;
+    const cacheValid =
+      isRenderCacheEnabled() &&
+      cache !== undefined &&
+      cache.width === width &&
+      cache.childRefs.length === this.children.length;
+
+    const childRefs: Component[] = [];
+    const childLines: string[][] = [];
+    let allReused = cacheValid;
+
+    let i = 0;
+    for (const child of this.children) {
+      const lines = child.render(width);
+      childRefs.push(child);
+      childLines.push(lines);
+      if (cacheValid && (cache.childRefs[i] !== child || cache.childLines[i] !== lines)) {
+        allReused = false;
+      }
+      i++;
+    }
+
+    if (allReused) {
+      return cache!.lines;
+    }
+
+    const out: string[] = [];
+    for (const lines of childLines) {
+      for (const line of lines) out.push(line);
+    }
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width, lines: out, childRefs, childLines };
+    }
+    return out;
+  }
+
   override invalidate(): void {
+    this.renderCache = undefined;
     this.headerText.setText(this.buildHeader());
     this.rebuildBody();
     super.invalidate();

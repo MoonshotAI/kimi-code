@@ -1,5 +1,14 @@
 # @moonshot-ai/agent-core
 
+## 0.14.1
+
+### Patch Changes
+
+- [#1131](https://github.com/MoonshotAI/kimi-code/pull/1131) [`76c643b`](https://github.com/MoonshotAI/kimi-code/commit/76c643bcb6da447c8c47728b4f58512a7a11cfa6) - Cap completion tokens to the remaining context window for chat-completions providers, avoiding context-overflow and invalid max_tokens errors.
+
+- Updated dependencies [[`76c643b`](https://github.com/MoonshotAI/kimi-code/commit/76c643bcb6da447c8c47728b4f58512a7a11cfa6)]:
+  - @moonshot-ai/kosong@0.5.0
+
 ## 0.14.0
 
 ### Minor Changes
