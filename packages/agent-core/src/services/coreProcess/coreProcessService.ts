@@ -31,6 +31,8 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
    */
   public readonly rpc: CoreRPC;
 
+  public readonly kimiRequestHeaders: Record<string, string> | undefined;
+
   /**
    * The in-process `KimiCore` instance. Kept private so daemon-side code can't
    * grab it and bypass the peer-service indirection.
@@ -91,7 +93,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     // synthesize from `options.identity`. Hosts that pass neither
     // (no identity, no headers) still construct — but their requests will
     // trip the 40340 guard.
-    const kimiRequestHeaders: Record<string, string> | undefined =
+    this.kimiRequestHeaders =
       options.kimiRequestHeaders ??
       CoreProcessService._defaultKimiRequestHeaders(env.homeDir, options.identity);
 
@@ -107,7 +109,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
       ...options,
       homeDir: env.homeDir,
       configPath: env.configPath,
-      kimiRequestHeaders,
+      kimiRequestHeaders: this.kimiRequestHeaders,
       appVersion,
       resolveOAuthTokenProvider,
     });
