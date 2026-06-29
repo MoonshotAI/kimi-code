@@ -5,6 +5,25 @@ import type { AppSessionStatus } from './api/types';
     list can distinguish awaiting / aborted instead of collapsing to running|idle. */
 export type SessionStatus = AppSessionStatus;
 
+/** File content loaded for preview (text or base64-encoded binary). */
+export interface FileData {
+  path: string;
+  content: string;
+  encoding: 'utf-8' | 'base64';
+  mime: string;
+  sourceUrl?: string;
+  languageId?: string;
+  isBinary: boolean;
+  size: number;
+  lineCount?: number;
+}
+
+/** A file entry shown in the composer's @-mention menu. */
+export interface FileItem {
+  path: string;
+  name: string;
+}
+
 export interface Session {
   id: string;
   title: string;
@@ -51,6 +70,10 @@ export interface WorkspaceView {
 export interface WorkspaceGroup {
   workspace: WorkspaceView;
   sessions: Session[];
+  /** True when the server has more sessions in this workspace than are loaded. */
+  hasMore: boolean;
+  /** True while the next page of sessions is being fetched for this workspace. */
+  loadingMore: boolean;
 }
 
 /** Sidebar session-list scope: only the active workspace, or all workspaces. */
@@ -67,6 +90,9 @@ export interface ToolCall {
   output?: string[]; // shown line by line when expanded
   media?: ToolMedia;
   defaultExpanded?: boolean;
+  /** Absolute path of the plan file (ExitPlanMode only) — rendered as a
+   *  clickable link that opens the plan in the file preview. */
+  planPath?: string;
 }
 
 export interface ToolMedia {
@@ -136,6 +162,12 @@ export type ApprovalBlock =
   | { kind: 'search'; query: string; scope?: string }
   | { kind: 'invocation'; kind2: string; name: string; description?: string }
   | { kind: 'todo'; items: { title: string; status: string }[] }
+  | {
+      kind: 'plan_review';
+      plan: string;
+      path?: string;
+      options?: { label: string; description?: string }[];
+    }
   | { kind: 'generic'; summary: string };
 
 export type TurnRole = 'user' | 'assistant' | 'compaction';
@@ -143,6 +175,22 @@ export type TurnRole = 'user' | 'assistant' | 'compaction';
 export interface FilePreviewRequest {
   path: string;
   line?: number;
+}
+
+/**
+ * Payload for opening an Edit/Write tool-call diff in the right-side detail
+ * panel. `lines` carries the synthesized diff for single edits / new writes;
+ * it is null for operations a from-args diff can't represent (replace_all,
+ * append, multi-edit, errors), in which case `output` (the tool result) is
+ * shown instead.
+ */
+export interface ToolDiffTarget {
+  /** Tool-call id; used so clicking the same card again toggles the panel closed. */
+  id: string;
+  title: string;
+  path?: string;
+  lines: DiffViewLine[] | null;
+  output?: string[];
 }
 
 /** One ordered piece of an assistant turn: a thinking segment, a text segment

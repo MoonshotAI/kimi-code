@@ -11,7 +11,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
-import { AgentBackgroundTask, ProcessBackgroundTask } from '../../src/agent/background';
+import { ProcessBackgroundTask } from '../../src/agent/background';
+import { agentTask } from '../agent/background/helpers';
 
 
 const tempDirs: string[] = [];
@@ -19,7 +20,7 @@ const tempDirs: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) {
-    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -200,10 +201,11 @@ describe('Session lifecycle hooks', () => {
       turnSettled.resolve();
     });
     vi.spyOn(child.turn, 'hasActiveTurn', 'get').mockReturnValue(true);
-    const abort = vi.fn();
+    const abortController = new AbortController();
+    const abort = vi.spyOn(abortController, 'abort');
     const taskId = main.background.registerTask(
-      new AgentBackgroundTask(new Promise(() => {}), 'keep background agent alive', {
-        abort,
+      agentTask(new Promise(() => {}), 'keep background agent alive', {
+        abortController,
         agentId: childId,
         subagentType: 'coder',
       }),

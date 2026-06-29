@@ -17,7 +17,7 @@ pnpm -C apps/kimi-web run dev:stub      # then run dev in another shell
 
 # checks
 pnpm -C apps/kimi-web run typecheck     # vue-tsc --noEmit
-pnpm -C apps/kimi-web run test          # vitest
+pnpm -C apps/kimi-web run test          # vitest (pure logic only)
 pnpm -C apps/kimi-web run build         # vite build
 ```
 
@@ -62,8 +62,6 @@ server (REST + WS)
   protocol (`event.*`) frames; the projector converts them to `AppEvent`s.
 - **i18n** (`src/i18n/`): vue-i18n, en/zh, per-namespace flat camelCase keys.
   Detect order: `localStorage('kimi-locale')` → `navigator.language` → `en`.
-- **Tests**: Vitest + @vue/test-utils + jsdom, colocated under `__tests__/`.
-
 ---
 
 ## Server contract — non-obvious notes

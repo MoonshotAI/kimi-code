@@ -29,6 +29,11 @@ export interface BackgroundTaskInfoBase {
   readonly taskId: string;
   readonly description: string;
   readonly status: BackgroundTaskStatus;
+  /**
+   * `false` means a tool call is still waiting on this task in the
+   * foreground. Omitted legacy records should be treated as detached.
+   */
+  readonly detached?: boolean;
   readonly startedAt: number;
   readonly endedAt: number | null;
   /** Human-readable reason for the terminal status, when available. */
@@ -57,6 +62,7 @@ export interface BackgroundTask {
   readonly timeoutMs?: number;
 
   start(sink: BackgroundTaskSink): void | Promise<void>;
+  onDetach?(): void;
   forceStop?(): Promise<void>;
   toInfo(base: BackgroundTaskInfoBase): BackgroundTaskInfo;
 }

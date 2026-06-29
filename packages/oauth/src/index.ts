@@ -60,6 +60,7 @@ export type {
   FetchManagedKimiCodeModelsOptions,
   ManagedKimiCodeApplyResult,
   ManagedKimiCodeCleanupResult,
+  ManagedKimiCodeProtocol,
   ManagedKimiEnv,
   ManagedKimiLoginAuth,
   ManagedKimiCodeModelInfo,
@@ -95,6 +96,21 @@ export type {
   FetchSubmitFeedbackResult,
   SubmitFeedbackBody,
 } from './managed-feedback';
+
+export {
+  fetchCompleteFeedbackUpload,
+  fetchCreateFeedbackUploadUrl,
+  kimiCodeFeedbackUploadCompleteUrl,
+  kimiCodeFeedbackUploadUrl,
+} from './managed-feedback-upload';
+export type {
+  CompleteFeedbackUploadBody,
+  CreateFeedbackUploadUrlBody,
+  CreateFeedbackUploadUrlResponse,
+  FetchCompleteFeedbackUploadResult,
+  FetchCreateFeedbackUploadUrlResult,
+  FetchFeedbackUploadError,
+} from './managed-feedback-upload';
 
 export {
   applyOpenPlatformConfig,

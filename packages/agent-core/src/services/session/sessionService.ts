@@ -17,6 +17,7 @@ import {
   type SessionStatus,
   type SessionStatusResponse,
   type SessionUpdate,
+  type SessionWarning,
   type UndoSessionRequest,
   type UndoSessionResponse,
 } from '@moonshot-ai/protocol';
@@ -202,7 +203,7 @@ export class SessionService extends Disposable implements ISessionService {
       case 'turn.ended': {
         this._activeTurns.delete(sessionId);
         const reason = (event as { reason?: string }).reason;
-        if (reason === 'cancelled' || reason === 'failed') {
+        if (reason === 'cancelled' || reason === 'failed' || reason === 'filtered') {
           this._abortedTurns.add(sessionId);
         } else {
           this._abortedTurns.delete(sessionId);
@@ -222,8 +223,7 @@ export class SessionService extends Disposable implements ISessionService {
       case 'event.approval.expired':
       case 'event.question.requested':
       case 'event.question.answered':
-      case 'event.question.dismissed':
-      case 'event.question.expired': {
+      case 'event.question.dismissed': {
         this._emitStatusChanged(sessionId);
         break;
       }
@@ -260,21 +260,26 @@ export class SessionService extends Disposable implements ISessionService {
     };
     const all = await this.core.rpc.listSessions(corePayload);
     const sorted = all.toSorted((a, b) => b.updatedAt - a.updatedAt);
+    // Hide sessions the user has never interacted with: a session is "empty" when
+    // it has no lastPrompt (the first prompt has not been sent yet). Filtered
+    // before cursor pagination so each returned page is filled with non-empty
+    // sessions and has_more reflects the filtered set.
+    const visible = query.excludeEmpty ? sorted.filter((s) => s.lastPrompt) : sorted;
 
     let pivotIndex = -1;
     if (query.before_id !== undefined) {
-      pivotIndex = sorted.findIndex((s) => s.id === query.before_id);
+      pivotIndex = visible.findIndex((s) => s.id === query.before_id);
     } else if (query.after_id !== undefined) {
-      pivotIndex = sorted.findIndex((s) => s.id === query.after_id);
+      pivotIndex = visible.findIndex((s) => s.id === query.after_id);
     }
 
-    let slice: typeof sorted;
+    let slice: typeof visible;
     if (query.before_id !== undefined && pivotIndex >= 0) {
-      slice = sorted.slice(pivotIndex + 1);
+      slice = visible.slice(pivotIndex + 1);
     } else if (query.after_id !== undefined && pivotIndex >= 0) {
-      slice = sorted.slice(0, pivotIndex);
+      slice = visible.slice(0, pivotIndex);
     } else {
-      slice = sorted;
+      slice = visible;
     }
 
     const requestedSize = query.page_size ?? DEFAULT_PAGE_SIZE;
@@ -472,6 +477,23 @@ export class SessionService extends Disposable implements ISessionService {
       max_context_tokens: maxContextTokens,
       context_usage: contextUsage,
     };
+  }
+
+  async getSessionWarnings(id: string): Promise<readonly SessionWarning[]> {
+    const all = await this.core.rpc.listSessions({});
+    if (!all.some((s) => s.id === id)) {
+      throw new SessionNotFoundError(id);
+    }
+    try {
+      await this.core.rpc.resumeSession({ sessionId: id });
+    } catch {
+      // best-effort: the session may already be loaded in core memory.
+    }
+    try {
+      return await this.core.rpc.getSessionWarnings({ sessionId: id });
+    } catch {
+      return [];
+    }
   }
 
   async compact(id: string, input: CompactSessionRequest): Promise<CompactSessionResponse> {

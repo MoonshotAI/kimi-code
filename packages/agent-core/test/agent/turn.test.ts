@@ -425,6 +425,50 @@ describe('Agent turn flow', () => {
     );
   });
 
+  it('ends the turn with reason filtered when the provider filters a non-empty response', async () => {
+    const generate: GenerateFn = async () => ({
+      id: null,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'some filtered text' }],
+        toolCalls: [],
+      },
+      usage: {
+        inputOther: 10,
+        output: 5,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      },
+      finishReason: 'filtered',
+      rawFinishReason: 'content_filter',
+    });
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Trigger filtered response' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'filtered',
+        }),
+      }),
+    );
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'turn.ended',
+        args: expect.objectContaining({ reason: 'completed' }),
+      }),
+    );
+  });
+
   it('emits a friendly model.not_configured error when no model is configured', async () => {
     const ctx = testAgent();
 
@@ -453,7 +497,7 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: "echo 'hook response 2'",
+        command: 'node -e "process.stdout.write(\'hook response 2\')"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -514,12 +558,12 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: "echo '{}'",
+        command: 'node -e "process.stdout.write(\'{}\')"',
       },
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: 'echo \'{"hookSpecificOutput":{}}\'',
+        command: 'node -e "process.stdout.write(JSON.stringify({hookSpecificOutput:{}}))"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -577,7 +621,7 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'bad words',
-        command: "echo 'no profanity' >&2; exit 2",
+        command: 'node -e "process.stderr.write(\'no profanity\'); process.exit(2)"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -669,7 +713,7 @@ describe('Agent turn flow', () => {
     const hookEngine = new HookEngine([
       {
         event: 'Stop',
-        command: "echo 'continue from hook' >&2; exit 2",
+        command: 'node -e "process.stderr.write(\'continue from hook\'); process.exit(2)"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -1164,6 +1208,7 @@ describe('Agent turn flow', () => {
           reason: 'failed',
           error: expect.objectContaining({
             code: 'loop.max_steps_exceeded',
+            message: expect.stringContaining('config.toml'),
             details: expect.objectContaining({
               maxSteps: 1,
             }),

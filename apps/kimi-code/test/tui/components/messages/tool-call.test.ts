@@ -49,6 +49,79 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain(`${String.fromCodePoint(0x23fa, 0xfe0e)} Used Read`);
   });
 
+  describe('detach hint for long-running foreground Bash/Agent', () => {
+    it('shows the Ctrl+B hint after 10s for a running Bash call', () => {
+      vi.useFakeTimers();
+      const component = new ToolCallComponent(
+        { id: 'call_bash_long', name: 'Bash', args: { command: 'sleep 30' } },
+        undefined,
+        stubTui(30),
+      );
+
+      expect(strip(component.render(100).join('\n'))).not.toContain(
+        'Press Ctrl+B to run in background',
+      );
+
+      vi.advanceTimersByTime(10_000);
+      expect(strip(component.render(100).join('\n'))).toContain(
+        'Press Ctrl+B to run in background',
+      );
+
+      component.dispose();
+    });
+
+    it('shows the hint immediately for a running Agent call', () => {
+      vi.useFakeTimers();
+      const component = new ToolCallComponent(
+        { id: 'call_agent_long', name: 'Agent', args: { description: 'explore' } },
+        undefined,
+        stubTui(30),
+      );
+
+      // No timer advancement — Agents advertise Ctrl+B immediately.
+      expect(strip(component.render(100).join('\n'))).toContain(
+        'Press Ctrl+B to run in background',
+      );
+
+      component.dispose();
+    });
+
+    it('does not show the hint for non-detachable tools', () => {
+      vi.useFakeTimers();
+      const component = new ToolCallComponent(
+        { id: 'call_read_long', name: 'Read', args: { path: 'foo.ts' } },
+        undefined,
+        stubTui(30),
+      );
+
+      vi.advanceTimersByTime(15_000);
+      expect(strip(component.render(100).join('\n'))).not.toContain(
+        'Press Ctrl+B to run in background',
+      );
+
+      component.dispose();
+    });
+
+    it('does not show the hint when the result lands before 10s', () => {
+      vi.useFakeTimers();
+      const component = new ToolCallComponent(
+        { id: 'call_bash_short', name: 'Bash', args: { command: 'echo hi' } },
+        undefined,
+        stubTui(30),
+      );
+
+      vi.advanceTimersByTime(5_000);
+      component.setResult({ tool_call_id: 'call_bash_short', output: 'hi', is_error: false });
+      vi.advanceTimersByTime(10_000);
+
+      expect(strip(component.render(100).join('\n'))).not.toContain(
+        'Press Ctrl+B to run in background',
+      );
+
+      component.dispose();
+    });
+  });
+
   it('keeps collapsed tool-call lines within very narrow widths', () => {
     const component = new ToolCallComponent(
       {
@@ -139,6 +212,50 @@ describe('ToolCallComponent', () => {
     expect(out).toContain('Used Bash');
     expect(out).toContain('final-only');
     expect(out).not.toContain('streamed-only');
+  });
+
+  describe('in-flight Bash command preview (args finalized, no result yet)', () => {
+    const longCommand = Array.from({ length: 15 }, (_, i) => `echo step${String(i + 1)}`).join(
+      '\n',
+    );
+
+    it('shows the truncated command while running and reveals the rest when expanded', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_bash_running', name: 'Bash', args: { command: longCommand } },
+        undefined,
+      );
+
+      const collapsed = strip(component.render(100).join('\n'));
+      expect(collapsed).toContain('Using Bash');
+      expect(collapsed).toContain('echo step1');
+      expect(collapsed).toContain('echo step10');
+      expect(collapsed).not.toContain('echo step11');
+
+      component.setExpanded(true);
+
+      const expanded = strip(component.render(100).join('\n'));
+      expect(expanded).toContain('echo step11');
+      expect(expanded).toContain('echo step15');
+    });
+
+    it('yields command rendering to the result renderer once the result lands', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_bash_done', name: 'Bash', args: { command: longCommand } },
+        undefined,
+      );
+
+      // Sanity: while running, the in-flight preview shows the command.
+      expect(strip(component.render(100).join('\n'))).toContain('$ echo step1');
+
+      component.setResult({ tool_call_id: 'call_bash_done', output: 'done', is_error: false });
+
+      // Collapsed result view delegates to shellExecutionResultRenderer, which
+      // hides the command — so the in-flight buildCallPreview preview must be
+      // gone, otherwise the command would render twice when expanded.
+      const out = strip(component.render(100).join('\n'));
+      expect(out).toContain('Used Bash');
+      expect(out).not.toContain('$ echo step1');
+    });
   });
 
   it('hides tool output bodies that start with a <system tag', () => {
@@ -738,9 +855,11 @@ describe('ToolCallComponent', () => {
     );
 
     const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('Used Read (apps/kimi-code/src/main.ts)');
+    const expectedReadPath =
+      process.platform === 'win32' ? 'apps\\kimi-code\\src\\main.ts' : 'apps/kimi-code/src/main.ts';
+    expect(out).toContain(`Used Read (${expectedReadPath})`);
     expect(out).not.toContain('/tmp/proj-a/apps');
-    expect(component.getReadSnapshot().filePath).toBe('apps/kimi-code/src/main.ts');
+    expect(component.getReadSnapshot().filePath).toBe(expectedReadPath);
   });
 
   it('keeps Read paths outside the active workspace absolute', () => {
@@ -835,6 +954,50 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('Used Agent');
     expect(out).not.toContain('parent duplicate result');
     expect(out).not.toContain('summary fallback');
+  });
+
+  it('shows Backgrounded after a foreground subagent is detached, even after setResult', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_detach',
+        name: 'Agent',
+        args: { description: 'long task' },
+      },
+      undefined,
+      stubTui(30),
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_detach_1',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.onSubagentStarted({
+      agentId: 'sub_detach_1',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+
+    // Sanity: running before detach.
+    expect(strip(component.render(120).join('\n'))).toContain('Running');
+
+    component.markBackgrounded();
+    let out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Backgrounded');
+    expect(out).not.toContain('Completed');
+
+    // The spawn-success ToolResult landing must NOT flip the card to Completed.
+    component.setResult({
+      tool_call_id: 'call_agent_detach',
+      output: 'agent_id: sub_detach_1\nactual_subagent_type: explore\n',
+      is_error: false,
+    });
+    out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Backgrounded');
+    expect(out).not.toContain('Completed');
+
+    component.dispose();
   });
 
   it('keeps the single subagent tool area to the latest four activities', () => {

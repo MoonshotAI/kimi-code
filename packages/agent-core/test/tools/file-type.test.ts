@@ -212,6 +212,17 @@ describe('detectFileType', () => {
     expect(detectFileType('clip.mpg', mpegProgramStreamHeader).kind).toBe('unknown');
   });
 
+  it('returns unknown for an image extension whose bytes fail to sniff', () => {
+    // A `.png` file with no recognisable image magic and no NUL byte must not
+    // be reported as `image/png` in either mode. In media mode it would build
+    // a mismatched data URL the model API rejects as
+    // `application/octet-stream`; in text mode it would redirect the user to
+    // ReadMediaFile for a file that is not an image.
+    const garbage = Buffer.from('plain ascii, definitely not a png');
+    expect(detectFileType('fake.png', garbage, 'media').kind).toBe('unknown');
+    expect(detectFileType('fake.png', garbage).kind).toBe('unknown');
+  });
+
   it('extension in NON_TEXT_SUFFIXES → unknown', () => {
     // A `.zip` file with no header and no image/video hint must not
     // be treated as text.

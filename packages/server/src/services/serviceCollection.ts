@@ -22,6 +22,7 @@ import { IWSGateway } from '#/services/gateway/wsGateway';
 import { WSGateway } from '#/services/gateway/wsGatewayService';
 import { IWSBroadcastService } from '#/services/gateway/wsBroadcast';
 import { WSBroadcastService } from '#/services/gateway/wsBroadcastService';
+import { ISnapshotService, SnapshotService, loadSnapshotConfig } from '#/services/snapshot';
 
 export interface ServerServiceCollectionOptions {
   readonly server: ServerStartOptions;
@@ -35,6 +36,8 @@ export function createServerServiceCollection(
 ): ServiceCollection {
   const { server, app, pinoLogger, envService } = input;
 
+  const snapshotConfig = loadSnapshotConfig();
+
   const services = new ServiceCollection(
     ...getSingletonServiceDescriptors(),
     [IConnectionRegistry, new SyncDescriptor(ConnectionRegistry, [], false)],
@@ -43,6 +46,10 @@ export function createServerServiceCollection(
     [Services.IApprovalService, new SyncDescriptor(ApprovalService, [], false)],
     [Services.IQuestionService, new SyncDescriptor(QuestionService, [], false)],
   );
+
+  if (snapshotConfig.mode !== 'legacy') {
+    services.set(ISnapshotService, new SyncDescriptor(SnapshotService, [], false));
+  }
 
   services.set(Services.ILogService, new PinoLoggerAdapter(pinoLogger));
   services.set(IRestGateway, new FastifyRestGateway(app));
@@ -57,6 +64,12 @@ export function createServerServiceCollection(
     new SyncDescriptor(Services.CoreProcessService, [server.coreProcessOptions ?? {}], false),
   );
 
+  // `IAuthTokenService` (ROADMAP M2.1) is intentionally NOT registered here:
+  // its real instance needs an async-built `TokenStore` + `passwordHash` that
+  // are only available in `start.ts` (M5.1). It is therefore supplied via
+  // `server.serviceOverrides` (last-wins) — the same seam tests use to inject
+  // a fixed-token impl. A silent default would be a security hole, so the
+  // absence is deliberate: an unconfigured server has no auth token service.
   for (const [id, override] of server.serviceOverrides ?? []) {
     services.set(id, override);
   }

@@ -14,6 +14,7 @@ import {
   type SessionCreate,
   type SessionFork,
   type SessionStatusResponse,
+  type SessionWarning,
   type SessionUpdate,
   type UndoSessionRequest,
   type UndoSessionResponse,
@@ -23,6 +24,8 @@ export interface SessionListQuery extends CursorQuery {
   status?: import('@moonshot-ai/protocol').SessionStatus;
   workDir?: string;
   includeArchive?: boolean;
+  /** When true, hide sessions the user has never interacted with (no prompt yet). */
+  excludeEmpty?: boolean;
 }
 
 export interface SessionClientTelemetry {
@@ -54,6 +57,8 @@ export interface ISessionService {
   createChild(id: string, input: SessionChildCreate): Promise<Session>;
 
   getStatus(id: string): Promise<SessionStatusResponse>;
+
+  getSessionWarnings(id: string): Promise<readonly SessionWarning[]>;
 
   compact(id: string, input: CompactSessionRequest): Promise<CompactSessionResponse>;
 

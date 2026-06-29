@@ -25,16 +25,26 @@ import {
 } from '@moonshot-ai/agent-core';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 import { rawDataToString } from '../src/ws/rawData';
-import {
-  QuestionService,
-  QuestionExpiredError,
-} from '#/services/question/questionService';
+import { QuestionService } from '#/services/question/questionService';
 
 let tmpDir: string;
 let lockPath: string;
 let bridgeHome: string;
 let server: RunningServer | undefined;
+
+function rmSyncRobust(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 60, retryDelay: 250 });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY') throw error;
+    // Best-effort cleanup: a child process may still hold the cwd or be
+    // writing into the dir after server.close(); the OS reclaims the temp dir
+    // later and a cleanup hiccup must not fail an otherwise-passing test.
+  }
+}
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'kimi-server-questions-test-'));
@@ -49,12 +59,13 @@ afterEach(async () => {
     // ignore
   }
   server = undefined;
-  rmSync(tmpDir, { recursive: true, force: true });
-  rmSync(bridgeHome, { recursive: true, force: true });
+  rmSyncRobust(tmpDir);
+  rmSyncRobust(bridgeHome);
 });
 
 async function bootDaemon(): Promise<RunningServer> {
   server = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -68,12 +79,24 @@ async function bootDaemon(): Promise<RunningServer> {
 function appOf(r: RunningServer): {
   inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
 } {
-  return r.services.invokeFunction((a) => {
+  const app = r.services.invokeFunction((a) => {
     const gw = a.get(IRestGateway);
     return gw.app as unknown as {
-      inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
-    };
+  inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
+};
   });
+  // Auto-attach the fixed bearer token so the M5.1 auth hook passes. A
+  // caller-supplied `authorization` header wins, so explicit token tests keep
+  // working; every other header (Range, content-type, …) is preserved.
+  return {
+    inject(req: unknown) {
+      const q = req as { headers?: Record<string, string | string[] | undefined> };
+      return app.inject({
+        ...q,
+        headers: { authorization: 'Bearer test-token', ...q.headers },
+      });
+    },
+  };
 }
 
 function envelopeOf<T>(body: unknown): {
@@ -115,7 +138,7 @@ async function openSubscriber(
   const wsUrl = r.address.replace('http://', 'ws://') + '/api/v1/ws';
   const received: Record<string, unknown>[] = [];
   const ws = await new Promise<WebSocket>((resolve, reject) => {
-    const sock = new WebSocket(wsUrl);
+    const sock = new WebSocket(wsUrl, ['kimi-code.bearer.test-token']);
     sock.on('message', (data) => {
       try {
         received.push(JSON.parse(rawDataToString(data)) as Record<string, unknown>);
@@ -297,7 +320,6 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
             other_label?: string;
           }>;
           created_at: string;
-          expires_at: string;
         }>;
       }>(res.json());
       expect(env.code).toBe(0);
@@ -320,7 +342,6 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
         { id: 'opt_0_1', label: 'No' },
       ]);
       expect(item?.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-      expect(item?.expires_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
       const dismissed = await appOf(r).inject({
         method: 'POST',
@@ -485,6 +506,52 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
     ws.close();
   });
 
+  it('aborts the pending question when the request signal aborts', async () => {
+    const r = await bootDaemon();
+    const sid = await createSession(r);
+    const { ws, received } = await openSubscriber(r, sid);
+
+    const broker = r.services.invokeFunction(
+      (a) => a.get(IQuestionService) as QuestionService,
+    );
+
+    const controller = new AbortController();
+    const pending = broker.request(
+      {
+        sessionId: sid,
+        agentId: 'main',
+        questions: [{ question: '?', options: [{ label: 'A' }, { label: 'B' }] }],
+      },
+      { signal: controller.signal },
+    );
+
+    const requested = await waitFor(
+      received,
+      (f) => f['type'] === 'event.question.requested',
+      2000,
+    );
+    const payload = requested['payload'] as { question_id: string };
+
+    // Simulate the turn being aborted before the user answers.
+    controller.abort();
+
+    const dismissedFrame = await waitFor(
+      received,
+      (f) => f['type'] === 'event.question.dismissed',
+      2000,
+    );
+    const dPayload = dismissedFrame['payload'] as { question_id: string };
+    expect(dPayload.question_id).toBe(payload.question_id);
+
+    // Broker entry is cleaned up so listPending/session status don't stick.
+    expect(broker.isPending(payload.question_id)).toBe(false);
+
+    const result: QuestionResult = await pending;
+    expect(result).toBeNull();
+
+    ws.close();
+  });
+
   it('REST resolve on unknown question_id returns 40405', async () => {
     const r = await bootDaemon();
     const sid = await createSession(r);
@@ -510,6 +577,8 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
   });
 
   it('REST re-resolve on already-resolved question returns 40902 with data:{resolved:false}', async () => {
+
+
     const r = await bootDaemon();
     const sid = await createSession(r);
 
@@ -585,42 +654,5 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
 
     // Cleanup so the test doesn't leave a hanging Promise.
     broker.dismiss(questionId!);
-  });
-
-  it('60s timeout broadcasts event.question.expired + rejects with QuestionExpiredError', async () => {
-    const r = await bootDaemon();
-    const sid = await createSession(r);
-    const { ws, received } = await openSubscriber(r, sid);
-
-    const broker = r.services.invokeFunction(
-      (a) => a.get(IQuestionService) as QuestionService,
-    );
-    (broker as unknown as { _timeoutMs: number })._timeoutMs = 40;
-
-    const pending = broker.request({
-      sessionId: sid,
-      agentId: 'main',
-      questions: [
-        { question: '?', options: [{ label: 'A' }, { label: 'B' }] },
-      ],
-    });
-
-    let rejection: unknown;
-    try {
-      await pending;
-    } catch (err) {
-      rejection = err;
-    }
-    expect(rejection).toBeInstanceOf(QuestionExpiredError);
-
-    const expiredFrame = await waitFor(
-      received,
-      (f) => f['type'] === 'event.question.expired',
-      2000,
-    );
-    const payload = expiredFrame['payload'] as { question_id: string };
-    expect(payload.question_id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-
-    ws.close();
   });
 });

@@ -19,6 +19,7 @@ import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
 import type { ContentPart } from '@moonshot-ai/kosong';
+import type { SessionWarning } from '@moonshot-ai/protocol';
 
 import type { PluginInfo, PluginSummary, ReloadSummary } from '#/plugin';
 import type { UsageStatus } from './events';
@@ -55,6 +56,7 @@ export interface CreateSessionPayload {
   readonly permission?: PermissionMode | undefined;
   readonly metadata?: JsonObject | undefined;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly additionalDirs?: readonly string[];
   readonly client?: ClientTelemetryInfo | undefined;
 }
 
@@ -69,10 +71,18 @@ export interface ArchiveSessionPayload {
 export interface ResumeSessionPayload {
   readonly sessionId: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly additionalDirs?: readonly string[];
 }
 
 export interface ReloadSessionPayload {
   readonly sessionId: string;
+  /**
+   * When true, append a fresh `<plugin_session_start>` system reminder to the
+   * main agent after the session is reloaded, reflecting the currently enabled
+   * plugins. Used by the explicit `/reload` command so the model sees plugin
+   * changes without starting a new session. Defaults to false.
+   */
+  readonly forcePluginSessionStartReminder?: boolean;
 }
 
 export interface ForkSessionPayload {
@@ -153,10 +163,34 @@ export interface SessionSummary {
   readonly updatedAt: number;
   readonly archived?: boolean | undefined;
   readonly metadata?: JsonObject | undefined;
+  readonly additionalDirs?: readonly string[];
 }
 
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
+}
+export interface RunShellCommandPayload {
+  readonly command: string;
+  /**
+   * TUI-generated correlation id echoed back on every `shell.output` live event
+   * so the client can route chunks to the matching entry and drop stale events
+   * from a prior run. Optional for callers that don't stream.
+   */
+  readonly commandId?: string;
+}
+export interface ShellCommandResult {
+  readonly stdout: string;
+  readonly stderr: string;
+  /** True when the command failed (non-zero exit / timeout / killed) — used by
+   *  the TUI to render stderr in red only for actual failures, not warnings. */
+  readonly isError?: boolean;
+  /** True when the command was detached to the background (ctrl+b) instead of
+   *  completing in the foreground. The TUI uses this to skip the normal final
+   *  render (the backgrounding path owns the UI + model notification). */
+  readonly backgrounded?: boolean;
+}
+export interface CancelShellCommandPayload {
+  readonly commandId: string;
 }
 export interface SteerPayload {
   readonly input: readonly ContentPart[];
@@ -204,6 +238,9 @@ export interface StopBackgroundPayload {
   readonly taskId: string;
   /** Free-form human-readable reason persisted with the task record. */
   readonly reason?: string;
+}
+export interface DetachBackgroundPayload {
+  readonly taskId: string;
 }
 export interface GetBackgroundOutputPayload {
   readonly taskId: string;
@@ -276,6 +313,18 @@ export interface GetPluginInfoPayload {
 export type ReloadPluginsResult = ReloadSummary;
 export type { PluginSummary, PluginInfo };
 
+export interface AddAdditionalDirPayload {
+  readonly path: string;
+  readonly persist: boolean;
+}
+
+export interface AddAdditionalDirResult {
+  readonly additionalDirs: readonly string[];
+  readonly projectRoot: string;
+  readonly configPath: string;
+  readonly persisted: boolean;
+}
+
 export interface RenameSessionPayload {
   readonly title: string;
 }
@@ -320,6 +369,8 @@ export interface RemoveKimiProviderPayload {
 
 export interface AgentAPI {
   prompt: (payload: PromptPayload) => void;
+  runShellCommand: (payload: RunShellCommandPayload) => Promise<ShellCommandResult>;
+  cancelShellCommand: (payload: CancelShellCommandPayload) => void;
   steer: (payload: SteerPayload) => void;
   cancel: (payload: CancelPayload) => void;
   undoHistory: (payload: UndoHistoryPayload) => void;
@@ -339,6 +390,7 @@ export interface AgentAPI {
   unregisterTool: (payload: UnregisterToolPayload) => void;
   setActiveTools: (payload: SetActiveToolsPayload) => void;
   stopBackground: (payload: StopBackgroundPayload) => void;
+  detachBackground: (payload: DetachBackgroundPayload) => BackgroundTaskInfo | undefined;
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
   startBtw: (payload: EmptyPayload) => string;
@@ -368,6 +420,8 @@ export interface SessionAPI extends AgentAPIWithId {
   getMcpStartupMetrics: (payload: EmptyPayload) => McpStartupMetrics;
   reconnectMcpServer: (payload: ReconnectMcpServerPayload) => void;
   generateAgentsMd: (payload: EmptyPayload) => void;
+  getSessionWarnings: (payload: EmptyPayload) => readonly SessionWarning[];
+  addAdditionalDir: (payload: AddAdditionalDirPayload) => AddAdditionalDirResult;
 }
 
 type SessionAPIWithId = WithSessionId<SessionAPI>;

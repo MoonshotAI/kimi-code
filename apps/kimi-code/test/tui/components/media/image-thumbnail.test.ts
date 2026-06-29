@@ -1,18 +1,8 @@
-import { visibleWidth } from '@earendil-works/pi-tui';
+import { resetCapabilitiesCache, setCapabilities, visibleWidth } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
-
-const getCapabilitiesMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@earendil-works/pi-tui', async () => {
-  const actual = (await vi.importActual('@earendil-works/pi-tui')) as Record<string, unknown>;
-  return {
-    ...actual,
-    getCapabilities: getCapabilitiesMock,
-  };
-});
 
 const image: ImageAttachment = {
   id: 1,
@@ -26,11 +16,13 @@ const image: ImageAttachment = {
 
 describe('ImageThumbnail', () => {
   afterEach(() => {
+    resetCapabilitiesCache();
     vi.restoreAllMocks();
   });
 
   it('keeps rendered output within narrow widths', () => {
-    getCapabilitiesMock.mockReturnValue({ images: undefined } as never);
+    setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+
     const component = new ImageThumbnail(image);
 
     for (const width of [39, 20, 3, 1]) {
@@ -41,7 +33,8 @@ describe('ImageThumbnail', () => {
   });
 
   it('does not rebuild inline image children on repeated same-width renders', () => {
-    getCapabilitiesMock.mockReturnValue({ images: 'kitty' } as never);
+    setCapabilities({ images: 'kitty', trueColor: true, hyperlinks: true });
+
     const bufferFrom = vi.spyOn(Buffer, 'from');
     const component = new ImageThumbnail(image);
     bufferFrom.mockClear();

@@ -97,7 +97,7 @@ interface PromptState {
   body: PromptSubmission;
   createdAt: string;
   turnId: number | null;
-  /** Set on `turn.ended` for the top-level turn (reason='completed'|'failed'). */
+  /** Set on `turn.ended` for the top-level turn (reason='completed'|'failed'|'filtered'). */
   completed: boolean;
   /** Set on `turn.ended` with reason='cancelled' or after a successful abort RPC. */
   aborted: boolean;
@@ -205,7 +205,7 @@ function isTurnStarted(e: Event): e is Event & { type: 'turn.started'; turnId: n
 function isTurnEnded(e: Event): e is Event & {
   type: 'turn.ended';
   turnId: number;
-  reason: 'completed' | 'cancelled' | 'failed';
+  reason: 'completed' | 'cancelled' | 'failed' | 'filtered';
 } {
   return (e as { type?: string }).type === 'turn.ended';
 }
@@ -853,7 +853,7 @@ export class PromptService
         sessionId: sid,
         promptId: state.promptId,
         finishedAt: new Date().toISOString(),
-        reason: reason === 'failed' ? 'failed' : 'completed',
+        reason: reason === 'failed' || reason === 'filtered' ? 'failed' : 'completed',
       };
       this._active.delete(key);
       // Fire typed listeners BEFORE publishing the synth event.
@@ -984,8 +984,8 @@ export class PromptService
   }
 
   private async _requireSession(sid: string): Promise<void> {
-    const all = await this.core.rpc.listSessions({});
-    if (!all.some((s) => s.id === sid)) {
+    const matches = await this.core.rpc.listSessions({ sessionId: sid });
+    if (matches.length === 0) {
       throw new SessionNotFoundError(sid);
     }
   }

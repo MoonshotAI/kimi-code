@@ -15,6 +15,7 @@ import {
 } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 export type ThinkingRenderMode = 'live' | 'finalized';
 
@@ -32,6 +33,8 @@ export class ThinkingComponent implements Component {
   // once the transcript accumulates many finalized thinking blocks.
   private readonly textComponent: Text;
 
+  private renderCache: { width: number; lines: string[] } | undefined;
+
   constructor(
     text: string,
     showMarker: boolean = true,
@@ -48,13 +51,19 @@ export class ThinkingComponent implements Component {
     }
   }
 
+  private markRenderDirty(): void {
+    this.renderCache = undefined;
+  }
+
   invalidate(): void {
+    this.markRenderDirty();
     this.textComponent.setText(this.styled(this.text));
   }
 
   setText(text: string): void {
     if (this.text === text) return;
     this.text = text;
+    this.markRenderDirty();
     this.textComponent.setText(this.styled(text));
   }
 
@@ -64,6 +73,7 @@ export class ThinkingComponent implements Component {
 
   finalize(): void {
     this.mode = 'finalized';
+    this.markRenderDirty();
     this.stopSpinner();
   }
 
@@ -74,12 +84,22 @@ export class ThinkingComponent implements Component {
   setExpanded(expanded: boolean): void {
     if (this.expanded === expanded) return;
     this.expanded = expanded;
+    this.markRenderDirty();
   }
 
   render(width: number): string[] {
+    if (
+      isRenderCacheEnabled() &&
+      this.renderCache !== undefined &&
+      this.renderCache.width === width
+    ) {
+      return this.renderCache.lines;
+    }
+
     const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
     const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
 
+    let rendered: string[];
     if (this.mode === 'live') {
       const visibleLines =
         contentLines.length > THINKING_PREVIEW_LINES
@@ -89,39 +109,45 @@ export class ThinkingComponent implements Component {
         'textDim',
         `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
       );
-      return [
+      rendered = [
         '',
         spinner + currentTheme.fg('textDim', 'thinking...'),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
       ];
+    } else {
+      const lines: string[] = [''];
+      for (let i = 0; i < contentLines.length; i++) {
+        const p = i === 0 && this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
+        lines.push(p + contentLines[i]);
+      }
+
+      if (this.expanded || contentLines.length <= THINKING_PREVIEW_LINES) {
+        rendered = lines;
+      } else {
+        // Leading blank + first PREVIEW_LINES content lines + hint line.
+        const truncated = lines.slice(0, 1 + THINKING_PREVIEW_LINES);
+        const remaining = contentLines.length - THINKING_PREVIEW_LINES;
+        const hint = `... (${String(remaining)} more lines, ctrl+o to expand)`;
+        const indentWidth = Math.min(MESSAGE_INDENT.length, Math.max(0, width));
+        const hintWidth = Math.max(0, width - indentWidth);
+        truncated.push(
+          ' '.repeat(indentWidth) + currentTheme.dim(truncateToWidth(hint, hintWidth, '…')),
+        );
+        rendered = truncated;
+      }
     }
 
-    const rendered: string[] = [''];
-    for (let i = 0; i < contentLines.length; i++) {
-      const p = i === 0 && this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
-      rendered.push(p + contentLines[i]);
+    if (isRenderCacheEnabled()) {
+      this.renderCache = { width, lines: rendered };
     }
-
-    if (this.expanded || contentLines.length <= THINKING_PREVIEW_LINES) {
-      return rendered;
-    }
-
-    // Leading blank + first PREVIEW_LINES content lines + hint line.
-    const truncated = rendered.slice(0, 1 + THINKING_PREVIEW_LINES);
-    const remaining = contentLines.length - THINKING_PREVIEW_LINES;
-    const hint = `... (${String(remaining)} more lines, ctrl+o to expand)`;
-    const indentWidth = Math.min(MESSAGE_INDENT.length, Math.max(0, width));
-    const hintWidth = Math.max(0, width - indentWidth);
-    truncated.push(
-      ' '.repeat(indentWidth) + currentTheme.dim(truncateToWidth(hint, hintWidth, '…')),
-    );
-    return truncated;
+    return rendered;
   }
 
   private startSpinner(): void {
     if (this.ui === undefined || this.spinnerInterval !== undefined) return;
     this.spinnerInterval = setInterval(() => {
       this.spinnerFrame = (this.spinnerFrame + 1) % BRAILLE_SPINNER_FRAMES.length;
+      this.markRenderDirty();
       this.ui?.requestRender();
     }, BRAILLE_SPINNER_INTERVAL_MS);
   }

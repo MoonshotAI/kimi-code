@@ -10,7 +10,7 @@ The browser web UI for Kimi Code — a peer to the TUI in `apps/kimi-code`. It t
 
 - `main.ts` — bootstrap (creates the app, installs i18n, mounts `#app`). `App.vue` — root component, holds most app state.
 - `api/` — server client. `index.ts` exposes the `getKimiWebApi()` singleton; `config.ts` builds REST/WS URLs; `daemon/` holds the wire client (`http.ts`, `ws.ts`, `wire.ts`, `mappers.ts`, `agentEventProjector.ts`, `eventReducer.ts`).
-- `components/` — ~50 flat SFCs, no subdirectories.
+- `components/` — SFCs grouped by area: `chat/` (conversation/chat UI), `settings/` (settings & configuration), `dialogs/` (modal dialogs & sheets), `mobile/` (mobile-specific shell), plus shared layout components at the top level.
 - `composables/` — reusable state logic, `useX` naming (`useKimiWebClient`, `useIsDark`, `usePaneLayout`, …).
 - `lib/` — pure helpers (`parseDiff`, `slashCommands`, `sessionRoute`, `toolMeta`, …).
 - `i18n/` — vue-i18n setup plus locale namespaces.
@@ -39,7 +39,7 @@ All via `pnpm --filter @moonshot-ai/kimi-web …`:
 - `dev:stub` — offline stub daemon (`dev/stub-daemon.mjs`).
 - `build` — production build into `dist/`.
 - `typecheck` — `vue-tsc --noEmit`.
-- `test` — `vitest run` (jsdom; setup in `test/setup.ts`).
+- `test` — `vitest run` (pure logic tests only; no jsdom / component tests).
 - There is **no `lint` script** in this package; linting runs at the repo root via oxlint.
 
 ## Gotchas / hard rules

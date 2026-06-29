@@ -79,6 +79,10 @@ function mockSubagentHost<T extends Partial<SessionSubagentHost>>(
   } as unknown as T & SessionSubagentHost;
 }
 
+function agentTool(host: SessionSubagentHost): AgentTool {
+  return new AgentTool(host, createBackgroundManager().manager);
+}
+
 function mockSwarmMode(): SwarmMode {
   return { enter: vi.fn() } as unknown as SwarmMode;
 }
@@ -237,6 +241,7 @@ describe('current builtin file and shell tools', () => {
         },
       }),
       '/workspace',
+      createBackgroundManager().manager,
     );
 
     expect(BashInputSchema.safeParse({ command: 'printf ok' }).success).toBe(true);
@@ -284,6 +289,15 @@ describe('current builtin collaboration tools', () => {
     expect(result.output).toBe(JSON.stringify({ answers: { 'Which path?': 'A' } }));
   });
 
+  it('AskUserQuestion documents the answers result shape and dismissal handling', () => {
+    // The result is JSON {answers}; a dismissal returns isError:false with empty
+    // answers + a note (ask-user.ts), so the description must teach the model to
+    // fall back rather than silently re-ask.
+    const description = new AskUserQuestionTool({} as unknown as Agent).description.toLowerCase();
+    expect(description).toContain('answers');
+    expect(description).toContain('dismiss');
+  });
+
   it('Agent exposes parameters and returns a foreground subagent summary', async () => {
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({
@@ -293,7 +307,7 @@ describe('current builtin collaboration tools', () => {
         completion: Promise.resolve({ result: 'child result' }),
       }),
     });
-    const tool = new AgentTool(host);
+    const tool = agentTool(host);
 
     const input = { prompt: 'Investigate', description: 'Find cause' };
     expect(AgentToolInputSchema.safeParse(input).success).toBe(true);
@@ -436,6 +450,15 @@ describe('current builtin collaboration tools', () => {
 
     expect(execution.approvalRule).toBe('AgentSwarm');
     expect(execution.matchesRule).toBeUndefined();
+  });
+
+  it('AgentSwarm description states the enforced input requirements', () => {
+    const description = new AgentSwarmTool(mockSubagentHost({}), mockSwarmMode()).description;
+    // Mirrors the throws in createAgentSwarmSpecs (agent-swarm.ts): min-2-unless-resume,
+    // prompt_template required + must contain {{item}}, distinct resulting prompts.
+    expect(description).toContain('at least 2');
+    expect(description).toContain('{{item}}');
+    expect(description.toLowerCase()).toContain('distinct');
   });
 
   it('AgentSwarm rejects more than 128 subagents at execution time', async () => {

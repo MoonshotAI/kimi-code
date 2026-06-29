@@ -25,6 +25,14 @@ export interface InjectionOrigin {
   readonly variant: string;
 }
 
+export interface ShellCommandOrigin {
+  readonly kind: 'shell_command';
+  readonly phase: 'input' | 'output';
+  /** Only present on `phase: 'output'` — whether the command failed, so replay
+   *  can colour stderr red only for actual failures (not warnings). */
+  readonly isError?: boolean;
+}
+
 export interface CompactionSummaryOrigin {
   readonly kind: 'compaction_summary';
 }
@@ -73,6 +81,7 @@ export type PromptOrigin =
   | UserPromptOrigin
   | SkillActivationOrigin
   | InjectionOrigin
+  | ShellCommandOrigin
   | CompactionSummaryOrigin
   | SystemTriggerOrigin
   | BackgroundTaskOrigin

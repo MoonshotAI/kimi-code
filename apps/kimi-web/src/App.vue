@@ -1,36 +1,46 @@
 <!-- apps/kimi-web/src/App.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, watchEffect } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Sidebar from './components/Sidebar.vue';
 import ResizeHandle from './components/ResizeHandle.vue';
-import ConversationPane from './components/ConversationPane.vue';
-import FilePreview, { type FileData } from './components/FilePreview.vue';
-import ThinkingPanel from './components/ThinkingPanel.vue';
-import AgentDetailPanel from './components/AgentDetailPanel.vue';
-import SideChatPanel from './components/SideChatPanel.vue';
-import DiffView from './components/DiffView.vue';
-import type { AgentMember } from './types';
-import ModelPicker from './components/ModelPicker.vue';
-import ProviderManager from './components/ProviderManager.vue';
-import LoginDialog from './components/LoginDialog.vue';
-import NewSessionDialog from './components/NewSessionDialog.vue';
-import SettingsDialog from './components/SettingsDialog.vue';
-import SessionsDialog from './components/SessionsDialog.vue';
-import AddWorkspaceDialog from './components/AddWorkspaceDialog.vue';
-import StatusPanel from './components/StatusPanel.vue';
+import ConversationPane from './components/chat/ConversationPane.vue';
+import FilePreview from './components/FilePreview.vue';
+import ThinkingPanel from './components/chat/ThinkingPanel.vue';
+import AgentDetailPanel from './components/chat/AgentDetailPanel.vue';
+import ToolDiffPanel from './components/chat/ToolDiffPanel.vue';
+import SideChatPanel from './components/chat/SideChatPanel.vue';
+import DiffView from './components/chat/DiffView.vue';
+import ModelPicker from './components/settings/ModelPicker.vue';
+import ProviderManager from './components/settings/ProviderManager.vue';
+import LoginDialog from './components/dialogs/LoginDialog.vue';
+import SettingsDialog from './components/settings/SettingsDialog.vue';
+import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
+import StatusPanel from './components/chat/StatusPanel.vue';
 import WarningToasts from './components/WarningToasts.vue';
-import MobileTopBar from './components/MobileTopBar.vue';
-import MobileSwitcherSheet from './components/MobileSwitcherSheet.vue';
-import MobileSettingsSheet from './components/MobileSettingsSheet.vue';
-import Onboarding from './components/Onboarding.vue';
+import MobileTopBar from './components/mobile/MobileTopBar.vue';
+import MobileSwitcherSheet from './components/mobile/MobileSwitcherSheet.vue';
+import MobileSettingsSheet from './components/mobile/MobileSettingsSheet.vue';
+import Onboarding from './components/settings/Onboarding.vue';
 import GlobalLoading from './components/GlobalLoading.vue';
 import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
+import { useAuthGate } from './composables/useAuthGate';
+import { usePageTitle } from './composables/usePageTitle';
+import { useSidebarLayout } from './composables/useSidebarLayout';
+import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
+import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
+import ServerAuthDialog from './components/ServerAuthDialog.vue';
+import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
-import type { FilePreviewRequest, ToolMedia } from './types';
+
+// Hydrate the server-transport credential (fragment token or sessionStorage)
+// BEFORE the client connects, so the first REST/WS calls already carry it.
+const hasServerCredential = initServerAuth();
+const showServerAuth = ref(!hasServerCredential);
+let offAuthRequired: (() => void) | null = null;
 
 const client = useKimiWebClient();
 provide('resolveImage', client.resolveImageUrl);
@@ -40,7 +50,7 @@ const { t } = useI18n();
 const debugEnabled = isTraceEnabled();
 
 // Narrow viewports (≤640px) render the single-column mobile shell; desktop is
-// unchanged. jsdom defaults to false (desktop) so component tests are unaffected.
+// unchanged. Falls back to desktop when matchMedia is unavailable.
 const isMobile = useIsMobile();
 
 // Mobile sheet visibility
@@ -63,92 +73,14 @@ const running = computed(() => client.activity.value !== 'idle');
 
 // Auth readiness gates the main app. Once the first load finishes and auth is
 // still missing, show a full-page login entry instead of an in-app banner.
-const authReady = computed(() => client.authReady.value);
-const showAuthGate = computed(() => client.initialized.value && !authReady.value);
-const LOGIN_PATH = '/login';
-const authReturnPath = ref<string | null>(null);
 const authLogoRef = ref<SVGSVGElement | null>(null);
-let authLogoBlinkTimer: ReturnType<typeof setTimeout> | null = null;
-
-function currentPathWithSuffix(): string {
-  if (typeof window === 'undefined') return '/';
-  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
-}
-
-function replaceBrowserPath(path: string): void {
-  if (typeof window === 'undefined') return;
-  window.history.replaceState(window.history.state, '', path);
-}
-
-watch(showAuthGate, (show) => {
-  if (typeof window === 'undefined') return;
-  if (show) {
-    if (window.location.pathname !== LOGIN_PATH) {
-      authReturnPath.value = currentPathWithSuffix();
-      replaceBrowserPath(LOGIN_PATH);
-    }
-    return;
-  }
-  if (window.location.pathname === LOGIN_PATH) {
-    replaceBrowserPath(authReturnPath.value ?? '/');
-    authReturnPath.value = null;
-  }
-}, { immediate: true });
-
-function blinkAuthLogo(): void {
-  const el = authLogoRef.value;
-  if (!el) return;
-  el.classList.remove('blink-now');
-  void el.getBoundingClientRect();
-  el.classList.add('blink-now');
-  if (authLogoBlinkTimer !== null) clearTimeout(authLogoBlinkTimer);
-  authLogoBlinkTimer = setTimeout(() => {
-    authLogoBlinkTimer = null;
-    el.classList.remove('blink-now');
-  }, 300);
-}
+const { showAuthGate, blinkAuthLogo } = useAuthGate({ client, authLogoRef });
 
 
-// Dynamic page title: session title first, then workspace name, then app name.
-// Prefix an animated spinner when the agent is running so users can see activity
-// at a glance.
-const SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
-const spinnerFrame = ref(0);
-let spinnerTimer: ReturnType<typeof setInterval> | null = null;
-
-function startSpinner(): void {
-  if (spinnerTimer !== null) return;
-  spinnerFrame.value = 0;
-  spinnerTimer = setInterval(() => {
-    spinnerFrame.value = (spinnerFrame.value + 1) % SPINNER_FRAMES.length;
-  }, 250);
-}
-
-function stopSpinner(): void {
-  if (spinnerTimer !== null) {
-    clearInterval(spinnerTimer);
-    spinnerTimer = null;
-  }
-  spinnerFrame.value = 0;
-}
-
-watch(running, (isRunning) => {
-  if (isRunning) startSpinner();
-  else stopSpinner();
-}, { immediate: true });
-
-const pageTitle = computed<string>(() => {
-  const prefix = running.value ? `${SPINNER_FRAMES[spinnerFrame.value]} ` : '';
-  if (showAuthGate.value) return `${prefix}${t('app.authPageTitle')} - Kimi Code Web`;
-  const sessionTitle = activeSessionTitle.value;
-  if (sessionTitle) return `${prefix}${sessionTitle} - Kimi Code Web`;
-  const workspaceName = client.visibleWorkspace.value?.name;
-  if (workspaceName) return `${prefix}${workspaceName} - Kimi Code Web`;
-  return `${prefix}Kimi Code Web`;
-});
-watchEffect(() => {
-  if (typeof document !== 'undefined') document.title = pageTitle.value;
-});
+// Static page title (app name only). The session title and workspace name are
+// intentionally excluded so the tab title stays stable. Prefixes an animated
+// spinner while the agent is running so activity is visible at a glance.
+usePageTitle({ running, showAuthGate });
 
 // Thinking is on/off (TUI parity — no effort-level cycling). The /thinking
 // command flips between off and the backend default effort ('high').
@@ -173,24 +105,18 @@ onMounted(() => {
   // Capture-phase so Escape closes the side detail layer BEFORE the
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
+  offAuthRequired = onAuthRequired(() => {
+    showServerAuth.value = true;
+  });
 });
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
-  stopSpinner();
-  if (authLogoBlinkTimer !== null) clearTimeout(authLogoBlinkTimer);
+  if (offAuthRequired !== null) {
+    offAuthRequired();
+    offAuthRequired = null;
+  }
 });
-
-// Escape closes whichever transient right-side detail panel is open.
-function closeOpenSidePanel(): boolean {
-  if (detailTarget.value === 'thinking' && thinkingVisible.value) { closeThinkingPanel(); return true; }
-  if (detailTarget.value === 'compaction' && compactionPanelVisible.value) { closeCompactionPanel(); return true; }
-  if (detailTarget.value === 'agent' && agentPanelVisible.value) { closeAgentPanel(); return true; }
-  if (detailTarget.value === 'file') { closeFilePreview(); return true; }
-  if (detailTarget.value === 'diff') { closeDiffDetail(); return true; }
-  if (detailTarget.value === 'btw') { closeSideChat(); return true; }
-  return false;
-}
 
 function onGlobalKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
@@ -204,386 +130,94 @@ function onGlobalKeydown(e: KeyboardEvent): void {
 }
 
 // ---------------------------------------------------------------------------
+// Unified right-side detail layer. Only one detail is open at a time. The
+// shared `detailTarget` ref lives here so the file-preview and detail-panel
+// composables can both claim the single right-side slot.
+// ---------------------------------------------------------------------------
+const detailTarget = ref<DetailTarget | null>(null);
+
+// True for one frame while the active session changes: suppresses the right
+// panel's width transition so a restored panel snaps to its width instead of
+// animating open from zero.
+const panelSwitching = ref(false);
+watch(client.activeSessionId, () => {
+  panelSwitching.value = true;
+  void nextTick(() => { panelSwitching.value = false; });
+});
+
+const {
+  previewTarget,
+  previewFile,
+  previewLoading,
+  previewError,
+  previewDownloadUrl,
+  previewExternalActions,
+  openFilePreview,
+  openMediaPreview,
+  closeFilePreview,
+  openPreviewInEditor,
+  revealPreviewFile,
+} = useFilePreview({ client, detailTarget });
+
+// True while the right-side slot is actually occupied, so the sidebar reserves
+// room for it and the conversation can never be squeezed. Keyed off detailTarget
+// (the real occupant) rather than previewTarget, which can stay set after the
+// panel is hidden.
+const previewOpen = computed(() => detailTarget.value !== null);
+
+// ---------------------------------------------------------------------------
 // Layout: resizable session column. ResizeHandle owns the column width (with
 // localStorage persistence); we mirror it here to drive the App grid.
 // ---------------------------------------------------------------------------
-const SIDEBAR_WIDTH_KEY = 'kimi-web.sidebar-width';
-const SIDEBAR_COLLAPSED_KEY = 'kimi-web.sidebar-collapsed';
-const SIDEBAR_DEFAULT = 270;
-const SIDEBAR_MIN = 170;
-const SIDEBAR_MAX = 420;
-const SIDEBAR_COLLAPSED_WIDTH = 36;
-
-const sessionColWidth = ref(SIDEBAR_DEFAULT);
-const sidebarCollapsed = ref(false);
-const sideWidth = computed(() =>
-  sidebarCollapsed.value ? SIDEBAR_COLLAPSED_WIDTH : sessionColWidth.value,
-);
-
-function loadSidebarCollapsed(): void {
-  try {
-    sidebarCollapsed.value = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
-  } catch {
-    sidebarCollapsed.value = false;
-  }
-}
-
-function saveSidebarCollapsed(): void {
-  try {
-    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed.value));
-  } catch {
-    // ignore
-  }
-}
-
-function toggleSidebarCollapse(): void {
-  sidebarCollapsed.value = !sidebarCollapsed.value;
-  saveSidebarCollapsed();
-}
+const {
+  SIDEBAR_WIDTH_KEY,
+  SIDEBAR_DEFAULT,
+  SIDEBAR_MIN,
+  sidebarMax,
+  sessionColWidth,
+  sidebarCollapsed,
+  sideWidth,
+  loadSidebarCollapsed,
+  toggleSidebarCollapse,
+} = useSidebarLayout({ previewOpen });
 
 // ---------------------------------------------------------------------------
-// Unified right-side detail layer. Only one detail is open at a time.
+// Unified right-side detail layer (thinking / compaction / agent / diff / side
+// chat) plus the preview-panel width. Only one detail is open at a time.
 // ---------------------------------------------------------------------------
-type DetailTarget = 'file' | 'diff' | 'thinking' | 'compaction' | 'agent' | 'btw';
-const detailTarget = ref<DetailTarget | null>(null);
-
-const PREVIEW_WIDTH_KEY = 'kimi-web.file-preview-width';
-const PREVIEW_MIN = 320;
-
-function previewAreaWidth(): number {
-  if (typeof window === 'undefined') return PREVIEW_MIN * 2;
-  return Math.max(0, window.innerWidth - sideWidth.value);
-}
-
-function clampPreviewWidth(width: number): number {
-  const max = Math.max(PREVIEW_MIN, previewAreaWidth() - PREVIEW_MIN);
-  return Math.min(max, Math.max(PREVIEW_MIN, Math.round(width)));
-}
-
-function defaultPreviewWidth(): number {
-  return clampPreviewWidth(previewAreaWidth() / 2);
-}
-
-const previewDefaultWidth = computed(() => defaultPreviewWidth());
-const previewMaxWidth = computed(() => Math.max(PREVIEW_MIN, previewAreaWidth() - PREVIEW_MIN));
-const previewWidth = ref(previewDefaultWidth.value);
-const previewTarget = ref<FilePreviewRequest | null>(null);
-const previewFile = ref<FileData | null>(null);
-const previewLoading = ref(false);
-const previewError = ref<string | null>(null);
-// Normalized workspace-relative path of the currently-open preview. Used for
-// the download URL so it matches the server's relative-path contract even when
-// the user opened the preview from an absolute path in the chat.
-const previewNormalizedPath = ref<string | null>(null);
-// Incremented on every openFilePreview call so a slower earlier request can't
-// overwrite the result of a later one (request-sequence guard).
-let previewRequestSeq = 0;
-
-const previewDownloadUrl = computed(() => {
-  const path = previewNormalizedPath.value;
-  return path ? client.getFileDownloadUrl(path) : null;
-});
-const previewExternalActions = computed(() => previewTarget.value !== null);
-
-function trimTrailingSlash(path: string): string {
-  return path.length > 1 ? path.replace(/\/+$/, '') : path;
-}
-
-function normalizeRelativePath(path: string): string {
-  const out: string[] = [];
-  for (const part of path.split(/[\\/]+/)) {
-    if (!part || part === '.') continue;
-    if (part === '..') {
-      out.pop();
-      continue;
-    }
-    out.push(part);
-  }
-  return out.join('/');
-}
-
-function normalizePreviewPath(inputPath: string): { path: string } | { error: string } {
-  const raw = inputPath.trim();
-  if (!raw) return { error: t('filePreview.errors.emptyPath') };
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
-    return { error: t('filePreview.errors.unsupportedPath') };
-  }
-  if (raw.startsWith('~')) {
-    return { error: t('filePreview.errors.outsideWorkspace') };
-  }
-
-  const cwd = trimTrailingSlash(client.status.value.cwd);
-  if (raw.startsWith('/')) {
-    if (!cwd || (raw !== cwd && !raw.startsWith(`${cwd}/`))) {
-      return { error: t('filePreview.errors.outsideWorkspace') };
-    }
-    const relative = raw === cwd ? '' : raw.slice(cwd.length + 1);
-    if (relative.split(/[\\/]+/).includes('..')) {
-      return { error: t('filePreview.errors.outsideWorkspace') };
-    }
-    const path = normalizeRelativePath(relative);
-    return path ? { path } : { error: t('filePreview.errors.isDirectory') };
-  }
-
-  if (raw.split(/[\\/]+/).includes('..')) {
-    return { error: t('filePreview.errors.outsideWorkspace') };
-  }
-
-  const path = normalizeRelativePath(raw);
-  return path ? { path } : { error: t('filePreview.errors.emptyPath') };
-}
-
-async function openFilePreview(target: FilePreviewRequest): Promise<void> {
-  const requestSeq = ++previewRequestSeq;
-  detailTarget.value = 'file';
-  previewFile.value = null;
-  previewError.value = null;
-  previewLoading.value = true;
-  previewTarget.value = target;
-  previewNormalizedPath.value = null;
-
-  const normalized = normalizePreviewPath(target.path);
-  if ('error' in normalized) {
-    previewLoading.value = false;
-    previewError.value = normalized.error;
-    return;
-  }
-  previewNormalizedPath.value = normalized.path;
-
-  try {
-    const result = await client.readFileContent(normalized.path);
-    // A newer openFilePreview started while this one was in flight — discard
-    // the stale result so the right-side panel shows the latest file.
-    if (requestSeq !== previewRequestSeq) return;
-    if (result) {
-      previewFile.value = { ...result, path: result.path || normalized.path };
-    } else {
-      previewFile.value = {
-        path: normalized.path,
-        content: '',
-        encoding: 'utf-8',
-        mime: 'text/plain',
-        isBinary: false,
-        size: 0,
-      };
-    }
-  } catch (err) {
-    if (requestSeq !== previewRequestSeq) return;
-    previewError.value = err instanceof Error ? err.message : t('filePreview.errors.loadFailed');
-  } finally {
-    if (requestSeq === previewRequestSeq) {
-      previewLoading.value = false;
-    }
-  }
-}
-
-function mimeFromDataUrl(url: string): string | undefined {
-  const match = /^data:([^;,]+)/i.exec(url);
-  return match?.[1];
-}
-
-function openMediaPreview(media: ToolMedia): void {
-  if (media.kind !== 'image') return;
-  detailTarget.value = 'file';
-  previewTarget.value = null;
-  previewNormalizedPath.value = null;
-  previewError.value = null;
-  previewLoading.value = false;
-  previewFile.value = {
-    path: media.path ?? 'ReadMediaFile image',
-    content: '',
-    encoding: 'utf-8',
-    mime: media.mimeType ?? mimeFromDataUrl(media.url) ?? 'image/*',
-    sourceUrl: media.url,
-    isBinary: true,
-    size: media.bytes ?? 0,
-  };
-}
-
-function closeFilePreview(): void {
-  previewTarget.value = null;
-  previewNormalizedPath.value = null;
-  previewFile.value = null;
-  previewError.value = null;
-  previewLoading.value = false;
-  if (detailTarget.value === 'file') detailTarget.value = null;
-}
-
-// ---------------------------------------------------------------------------
-// Thinking panel
-// ---------------------------------------------------------------------------
-const thinkingTarget = ref<{ turnId: string; blockIndex: number } | null>(null);
-
-const thinkingPanelText = computed<string | null>(() => {
-  const target = thinkingTarget.value;
-  if (!target) return null;
-  const turn = client.turns.value.find((tn) => tn.id === target.turnId);
-  const blk = turn?.blocks?.[target.blockIndex];
-  return blk?.kind === 'thinking' ? blk.thinking : null;
-});
-
-const thinkingVisible = computed(() => thinkingPanelText.value !== null);
-
-function openThinkingPanel(target: { turnId: string; blockIndex: number }): void {
-  const current = thinkingTarget.value;
-  if (current && current.turnId === target.turnId && current.blockIndex === target.blockIndex) {
-    thinkingTarget.value = null;
-    if (detailTarget.value === 'thinking') detailTarget.value = null;
-    return;
-  }
-  detailTarget.value = 'thinking';
-  thinkingTarget.value = target;
-}
-
-function closeThinkingPanel(): void {
-  thinkingTarget.value = null;
-  if (detailTarget.value === 'thinking') detailTarget.value = null;
-}
-
-// ---------------------------------------------------------------------------
-// Compaction summary panel
-// ---------------------------------------------------------------------------
-const compactionTarget = ref<{ turnId: string } | null>(null);
-
-const compactionPanelText = computed<string | null>(() => {
-  const target = compactionTarget.value;
-  if (!target) return null;
-  const turn = client.turns.value.find((tn) => tn.id === target.turnId);
-  return turn?.role === 'compaction' && turn.text ? turn.text : null;
-});
-
-const compactionPanelVisible = computed(() => compactionPanelText.value !== null);
-
-function openCompactionPanel(target: { turnId: string }): void {
-  if (compactionTarget.value?.turnId === target.turnId) {
-    compactionTarget.value = null;
-    if (detailTarget.value === 'compaction') detailTarget.value = null;
-    return;
-  }
-  detailTarget.value = 'compaction';
-  compactionTarget.value = target;
-}
-
-function closeCompactionPanel(): void {
-  compactionTarget.value = null;
-  if (detailTarget.value === 'compaction') detailTarget.value = null;
-}
-
-// ---------------------------------------------------------------------------
-// Subagent detail panel
-// ---------------------------------------------------------------------------
-const agentTarget = ref<{ turnId: string; blockIndex: number; memberId: string } | null>(null);
-
-const agentPanelMember = computed<AgentMember | null>(() => {
-  const target = agentTarget.value;
-  if (!target) return null;
-  const turn = client.turns.value.find((tn) => tn.id === target.turnId);
-  const blk = turn?.blocks?.[target.blockIndex];
-  if (!blk) return null;
-  if (blk.kind === 'agent') return blk.member.id === target.memberId ? blk.member : null;
-  if (blk.kind === 'agentGroup') return blk.members.find((m) => m.id === target.memberId) ?? null;
-  return null;
-});
-
-const agentPanelVisible = computed(() => agentPanelMember.value !== null);
-
-function openAgentPanel(target: { turnId: string; blockIndex: number; memberId: string }): void {
-  const current = agentTarget.value;
-  if (current && current.turnId === target.turnId && current.memberId === target.memberId) {
-    agentTarget.value = null;
-    if (detailTarget.value === 'agent') detailTarget.value = null;
-    return;
-  }
-  detailTarget.value = 'agent';
-  agentTarget.value = target;
-}
-
-function closeAgentPanel(): void {
-  agentTarget.value = null;
-  if (detailTarget.value === 'agent') detailTarget.value = null;
-}
-
-// ---------------------------------------------------------------------------
-// Diff detail layer (opened from the chat header git area)
-// ---------------------------------------------------------------------------
-const detailDiffMode = ref<'list' | 'detail'>('list');
-const detailDiffPath = ref<string | null>(null);
-
-function openDiffDetail(): void {
-  detailTarget.value = 'diff';
-  detailDiffMode.value = 'list';
-  detailDiffPath.value = null;
-  void client.loadGitStatus(client.activeSessionId.value!);
-}
-
-function closeDiffDetail(): void {
-  if (detailTarget.value === 'diff') detailTarget.value = null;
-  detailDiffMode.value = 'list';
-  detailDiffPath.value = null;
-  client.clearFileDiff();
-}
-
-async function selectDiffFile(path: string): Promise<void> {
-  detailDiffMode.value = 'detail';
-  detailDiffPath.value = path;
-  await client.loadFileDiff(path);
-}
-
-// ---------------------------------------------------------------------------
-// Side chat (BTW) — now rendered in the unified right-side detail layer.
-// ---------------------------------------------------------------------------
-async function openSideChatTab(prompt?: string): Promise<void> {
-  await client.openSideChat(prompt);
-  detailTarget.value = 'btw';
-}
-
-function closeSideChat(): void {
-  client.closeSideChat();
-  if (detailTarget.value === 'btw') detailTarget.value = null;
-}
-
-// Only hides the right-side BTW panel; the side-chat target is per-session and
-// preserved so switching back to a session restores its BTW transcript.
-function hideSideChatPanel(): void {
-  if (detailTarget.value === 'btw') detailTarget.value = null;
-}
-
-const btwVisible = computed(() => client.sideChatVisible.value);
-
-/** Any occupant of the shared right-side slot. */
-const sidePanelVisible = computed(
-  () =>
-    detailTarget.value !== null &&
-    (detailTarget.value !== 'thinking' || thinkingVisible.value) &&
-    (detailTarget.value !== 'compaction' || compactionPanelVisible.value) &&
-    (detailTarget.value !== 'agent' || agentPanelVisible.value) &&
-    (detailTarget.value !== 'btw' || btwVisible.value),
-);
-
-/** True while the panel's resize handle is being dragged — the width
-    transition is disabled so the panel follows the pointer 1:1. */
-const panelDragging = ref(false);
-
-function openPreviewInEditor(): void {
-  const path = previewFile.value?.path ?? previewTarget.value?.path;
-  if (!path) return;
-  void client.openWorkspaceFile(path, previewTarget.value?.line);
-}
-
-function revealPreviewFile(): void {
-  const path = previewFile.value?.path ?? previewTarget.value?.path;
-  if (!path) return;
-  void client.revealWorkspaceFile(path);
-}
-
-watch(client.activeSessionId, () => {
-  closeFilePreview();
-  closeThinkingPanel();
-  closeCompactionPanel();
-  closeAgentPanel();
-  closeDiffDetail();
-  hideSideChatPanel();
-});
+const {
+  PREVIEW_WIDTH_KEY,
+  PREVIEW_MIN,
+  previewDefaultWidth,
+  previewMax,
+  previewWidth,
+  previewPanelWidth,
+  thinkingPanelText,
+  thinkingVisible,
+  openThinkingPanel,
+  closeThinkingPanel,
+  compactionPanelText,
+  compactionPanelVisible,
+  openCompactionPanel,
+  closeCompactionPanel,
+  agentPanelMember,
+  openAgentPanel,
+  closeAgentPanel,
+  toolDiffTarget,
+  openToolDiff,
+  closeToolDiff,
+  detailDiffMode,
+  detailDiffPath,
+  openDiffDetail,
+  closeDiffDetail,
+  selectDiffFile,
+  btwVisible,
+  openSideChatTab,
+  closeSideChat,
+  sidePanelVisible,
+  panelDragging,
+  closeOpenSidePanel,
+} = useDetailPanel({ client, sideWidth, detailTarget, closeFilePreview });
 
 // Reference to ConversationPane so we can imperatively switch tabs
 const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(null);
@@ -601,8 +235,6 @@ function handleSelectWorkspaces(ids: string[]): void {
 const showModelPicker = ref(false);
 const showProviders = ref(false);
 const showLogin = ref(false);
-const showNewSession = ref(false);
-const showSessions = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
@@ -621,8 +253,6 @@ const anyOverlayOpen = computed<boolean>(() =>
   showModelPicker.value ||
   showProviders.value ||
   showLogin.value ||
-  showNewSession.value ||
-  showSessions.value ||
   showAddWorkspace.value ||
   showStatusPanel.value ||
   showSettings.value ||
@@ -758,19 +388,20 @@ function handleCommand(cmd: string): void {
   if (cmd === '/btw' || cmd.startsWith('/btw ')) {
     const arg = cmd.slice('/btw'.length).trim();
     if (!arg && client.sideChatVisible.value) {
-      client.closeSideChat();
+      // Use the detail-layer close so detailTarget is cleared too; the bare
+      // client.closeSideChat() only hides the panel and leaves detailTarget set.
+      closeSideChat();
     } else {
       void openSideChatTab(arg || undefined);
     }
     return;
   }
   switch (cmd) {
+    // `/new` and `/clear` are aliases: both open the onboarding composer. The
+    // session is only created when the user sends the first message.
     case '/new':
     case '/clear':
-      showNewSession.value = true;
-      break;
-    case '/sessions':
-      showSessions.value = true;
+      handleCreateSession();
       break;
     case '/fork':
       void client.forkSession();
@@ -867,6 +498,12 @@ function handleCloseAddWorkspace(): void {
   showAddWorkspace.value = false;
 }
 
+function focusComposerAfterDraft(): void {
+  void nextTick(() => {
+    conversationPaneRef.value?.focusComposer();
+  });
+}
+
 // Primary "+ New": enter the draft state in the current workspace so the
 // right pane shows the onboarding composer. The session is only created when
 // the user sends the first message.
@@ -875,8 +512,9 @@ function handleCreateSession(): void {
   if (wsId) {
     client.openWorkspaceDraft(wsId);
   } else {
-    showNewSession.value = true;
+    client.clearActiveSession();
   }
+  focusComposerAfterDraft();
 }
 
 // Workspace-level "+ New" (sidebar group or mobile switcher): enter the draft
@@ -884,6 +522,7 @@ function handleCreateSession(): void {
 // actually sends a message.
 function handleCreateSessionInWorkspace(workspaceId: string): void {
   client.openWorkspaceDraft(workspaceId);
+  focusComposerAfterDraft();
 }
 
 // Chat header: open a GitHub PR in a new tab.
@@ -894,6 +533,7 @@ function openPr(url: string): void {
 
 <template>
   <div class="app-shell">
+    <ServerAuthDialog v-if="showServerAuth" />
     <section v-if="showAuthGate" class="auth-page">
       <div class="auth-page-inner">
         <svg ref="authLogoRef" class="auth-page-logo ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @mousedown.prevent @click="blinkAuthLogo">
@@ -926,13 +566,13 @@ function openPr(url: string): void {
       v-else
       class="app"
       :class="{ mobile: isMobile, 'sidebar-collapsed': sidebarCollapsed && !isMobile }"
-      :style="{ '--side-w': sideWidth + 'px', '--preview-w': previewWidth + 'px' }"
+      :style="{ '--side-w': sideWidth + 'px', '--preview-w': previewPanelWidth + 'px' }"
     >
     <!-- Desktop navigation: workspace rail + resizable session column. -->
     <template v-if="!isMobile">
       <Sidebar
         v-show="!sidebarCollapsed"
-        :col-width="sessionColWidth"
+        :col-width="sideWidth"
         :active-workspace="client.visibleWorkspace.value"
         :active-workspace-id="client.activeWorkspaceId.value"
         :sessions="client.sessionsForView.value"
@@ -951,6 +591,9 @@ function openPr(url: string): void {
         @fork="(id) => client.forkSession(id)"
         @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
         @delete-workspace="(id) => client.deleteWorkspace(id)"
+        @reorder-workspaces="client.reorderWorkspaces($event)"
+        @load-more-sessions="(id) => void client.loadMoreSessions(id)"
+        @load-all-sessions="void client.loadAllSessions()"
         @select-workspaces="handleSelectWorkspaces"
         @open-settings="showSettings = true"
         @collapse="toggleSidebarCollapse"
@@ -960,7 +603,7 @@ function openPr(url: string): void {
         :storage-key="SIDEBAR_WIDTH_KEY"
         :default-width="SIDEBAR_DEFAULT"
         :min="SIDEBAR_MIN"
-        :max="SIDEBAR_MAX"
+        :max="sidebarMax"
         @update:width="sessionColWidth = $event"
       />
       <div v-if="sidebarCollapsed" class="sidebar-rail">
@@ -1071,6 +714,7 @@ function openPr(url: string): void {
       @open-thinking="openThinkingPanel($event)"
       @open-compaction="openCompactionPanel($event)"
       @open-agent="openAgentPanel($event)"
+      @open-tool-diff="openToolDiff($event)"
       @edit-message="handleEditMessage"
     />
 
@@ -1085,7 +729,7 @@ function openPr(url: string): void {
       :storage-key="PREVIEW_WIDTH_KEY"
       :default-width="previewDefaultWidth"
       :min="PREVIEW_MIN"
-      :max="previewMaxWidth"
+      :max="previewMax"
       reverse
       :aria-label="t('layout.resizePreviewAria')"
       @update:width="previewWidth = $event"
@@ -1100,7 +744,7 @@ function openPr(url: string): void {
     <aside
       v-if="!isMobile || sidePanelVisible"
       class="global-preview"
-      :class="{ open: sidePanelVisible, mobile: isMobile, 'no-anim': panelDragging }"
+      :class="{ open: sidePanelVisible, mobile: isMobile, 'no-anim': panelDragging || panelSwitching }"
       role="complementary"
       :aria-label="t('layout.detailPanelAria')"
       :aria-hidden="!sidePanelVisible"
@@ -1142,6 +786,11 @@ function openPr(url: string): void {
         @back="detailDiffMode = 'list'; detailDiffPath = null; client.clearFileDiff()"
         @close="closeDiffDetail"
       />
+      <ToolDiffPanel
+        v-else-if="detailTarget === 'toolDiff' && toolDiffTarget"
+        :target="toolDiffTarget"
+        @close="closeToolDiff"
+      />
       <FilePreview
         v-else-if="detailTarget === 'file'"
         :file="previewFile"
@@ -1180,7 +829,9 @@ function openPr(url: string): void {
       :auth-ready="client.authReady.value"
       :account-model="client.defaultModel.value"
       :notify="client.notifyOnComplete.value"
+      :notify-question="client.notifyOnQuestion.value"
       :notify-permission="client.notifyPermission.value"
+      :sound="client.soundOnComplete.value"
       :beta-toc="client.betaToc.value"
       :config="client.config.value"
       :models="client.models.value"
@@ -1190,6 +841,8 @@ function openPr(url: string): void {
       @set-color-scheme="client.setColorScheme($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
       @set-notify="client.setNotifyOnComplete($event)"
+      @set-notify-question="client.setNotifyOnQuestion($event)"
+      @set-sound="client.setSoundOnComplete($event)"
       @set-beta-toc="client.setBetaToc($event)"
       @update-config="handleUpdateConfig($event)"
       @login="() => { showSettings = false; openLogin(); }"
@@ -1209,25 +862,6 @@ function openPr(url: string): void {
       @delete="handleDeleteProvider($event)"
       @open-login="() => { showProviders = false; openLogin(); }"
       @close="showProviders = false"
-    />
-
-    <!-- New Session Dialog overlay (fallback cwd-typing path) -->
-    <NewSessionDialog
-      v-if="showNewSession"
-      :recent-cwds="client.recentCwds.value"
-      @create="({ cwd, title }) => { showNewSession = false; void client.createSession(cwd, { title }); }"
-      @close="showNewSession = false"
-    />
-
-    <!-- Sessions browser overlay (/sessions) — client-side list, click to switch -->
-    <SessionsDialog
-      v-if="showSessions"
-      :sessions="client.sessions.value"
-      :workspace-groups="client.workspaceGroups.value"
-      :attention-by-session="client.attentionBySession.value"
-      :active-id="client.activeSessionId.value"
-      @select="(id) => { void client.selectSession(id); showSessions = false; }"
-      @close="showSessions = false"
     />
 
     <!-- Status panel overlay (/status) — renders current client state, no daemon call -->
@@ -1288,6 +922,7 @@ function openPr(url: string): void {
       @rename="(id, title) => client.renameSession(id, title)"
       @archive="(id) => client.archiveSession(id)"
       @delete-workspace="(id) => client.deleteWorkspace(id)"
+      @load-more="(id) => void client.loadMoreSessions(id)"
     />
 
     <!-- Mobile settings bottom-sheet: session controls + app prefs + auth -->

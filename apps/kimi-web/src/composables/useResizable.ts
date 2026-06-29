@@ -4,7 +4,8 @@
 // up pointer events (pointerdown/move/up with capture, no text-selection while
 // dragging). Used by the sidebar session column drag handle.
 
-import { onBeforeUnmount, ref, type Ref } from 'vue';
+import { onBeforeUnmount, ref, toValue, type MaybeRefOrGetter, type Ref } from 'vue';
+import { safeGetString, safeSetString } from '../lib/storage';
 
 export interface UseResizableOptions {
   /** localStorage key the chosen width is persisted under. */
@@ -13,8 +14,9 @@ export interface UseResizableOptions {
   defaultWidth: number;
   /** Smallest allowed width (px). */
   min: number;
-  /** Largest allowed width (px). */
-  max: number;
+  /** Largest allowed width (px). Accepts a ref/getter so a cap derived from the
+   *  viewport keeps working as the window is resized after the handle mounts. */
+  max: MaybeRefOrGetter<number>;
   /** True when dragging right should shrink the controlled width. */
   reverse?: boolean;
 }
@@ -34,7 +36,7 @@ export interface UseResizable {
 
 function readStored(key: string): number | null {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = safeGetString(key);
     if (raw === null) return null;
     const n = Number(raw);
     return Number.isFinite(n) ? n : null;
@@ -45,7 +47,7 @@ function readStored(key: string): number | null {
 
 function writeStored(key: string, value: number): void {
   try {
-    localStorage.setItem(key, String(value));
+    safeSetString(key, String(value));
   } catch {
     // localStorage unavailable (e.g. private mode) — width still works in-memory
   }
@@ -56,7 +58,7 @@ export function useResizable(options: UseResizableOptions): UseResizable {
 
   function clamp(value: number): number {
     if (!Number.isFinite(value)) return defaultWidth;
-    return Math.min(max, Math.max(min, Math.round(value)));
+    return Math.min(toValue(max), Math.max(min, Math.round(value)));
   }
 
   const width = ref<number>(clamp(readStored(storageKey) ?? defaultWidth));
@@ -106,7 +108,10 @@ export function useResizable(options: UseResizableOptions): UseResizable {
     event.preventDefault();
     dragging.value = true;
     startX = event.clientX;
-    startWidth = width.value;
+    // The stored width can exceed the current cap (e.g. after the window narrows
+    // or a side panel opens). Clamp the drag start so the handle responds
+    // immediately instead of first covering an invisible delta.
+    startWidth = clamp(width.value);
     activeEl = event.currentTarget as HTMLElement;
     activePointerId = event.pointerId;
     // Suppress text selection / show a resize cursor for the whole drag.

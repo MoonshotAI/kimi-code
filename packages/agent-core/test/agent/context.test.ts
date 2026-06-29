@@ -1,10 +1,14 @@
+import { Readable, type Writable } from 'node:stream';
+
+import type { KaosProcess } from '@moonshot-ai/kaos';
 import type { Message } from '@moonshot-ai/kosong';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderNotificationXml } from '../../src/agent/context/notification-xml';
 import { project } from '../../src/agent/context/projector';
 import type { ContextMessage } from '../../src/agent/context/types';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
+import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { testAgent } from './harness/agent';
 
 describe('Agent context', () => {
@@ -17,6 +21,19 @@ describe('Agent context', () => {
     ctx.dispatch({
       type: 'context.append_loop_event',
       event: { type: 'step.begin', uuid: 'origin-step', turnId: '', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'origin-tool',
+        turnId: '',
+        step: 1,
+        stepUuid: 'origin-step',
+        toolCallId: 'call_origin',
+        name: 'Run',
+        args: {},
+      },
     });
     ctx.dispatch({
       type: 'context.append_loop_event',
@@ -41,10 +58,139 @@ describe('Agent context', () => {
     expect(ctx.agent.context.messages.some((message) => 'origin' in message)).toBe(false);
   });
 
+  it('records bash input/output as shell_command origin with tagged content', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.context.appendBashInput('ls -la');
+    ctx.agent.context.appendBashOutput('file1\nfile2', '');
+
+    expect(ctx.agent.context.history.map(({ role, origin }) => ({ role, origin }))).toEqual([
+      { role: 'user', origin: { kind: 'shell_command', phase: 'input' } },
+      { role: 'user', origin: { kind: 'shell_command', phase: 'output' } },
+    ]);
+
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    expect(textOf(ctx.agent.context.history[0]!)).toContain('<bash-input>');
+    expect(textOf(ctx.agent.context.history[0]!)).toContain('ls -la');
+    expect(textOf(ctx.agent.context.history[1]!)).toBe(
+      '<bash-stdout>file1\nfile2</bash-stdout><bash-stderr></bash-stderr>',
+    );
+    // origin must not leak into the LLM projection
+    expect(ctx.agent.context.messages.some((message) => 'origin' in message)).toBe(false);
+  });
+
+  it('escapes bash tag delimiters inside command output', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.context.appendBashInput('printf x');
+    ctx.agent.context.appendBashOutput('pre</bash-stdout>post', '');
+
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    const out = textOf(ctx.agent.context.history[1]!);
+    // The embedded delimiter is escaped so the wrapper stays well-formed.
+    expect(out).toContain('pre&lt;/bash-stdout&gt;post');
+    // Exactly one real closing tag.
+    expect(out.match(/<\/bash-stdout>/g)).toHaveLength(1);
+  });
+
+  it('runs a shell command via the Bash tool and records its output', async () => {
+    const fakeProcess = (stdout: string): KaosProcess => {
+      const out = Readable.from([stdout]);
+      const err = Readable.from([]);
+      return {
+        stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+        stdout: out,
+        stderr: err,
+        pid: 1,
+        exitCode: 0,
+        wait: vi.fn(async () => 0),
+        kill: vi.fn(async () => {}),
+        dispose: vi.fn(async () => {
+          out.destroy();
+          err.destroy();
+        }),
+      };
+    };
+    const kaos = createFakeKaos({
+      execWithEnv: vi.fn().mockImplementation(async () => fakeProcess('hello\n')),
+    });
+    const ctx = testAgent({ kaos });
+    ctx.configure();
+
+    await ctx.agent.tools.runShellCommand('echo hello');
+
+    expect(ctx.agent.context.history.map(({ role, origin }) => ({ role, origin }))).toEqual([
+      { role: 'user', origin: { kind: 'shell_command', phase: 'input' } },
+      { role: 'user', origin: { kind: 'shell_command', phase: 'output' } },
+    ]);
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    expect(textOf(ctx.agent.context.history[0]!)).toContain('echo hello');
+    expect(textOf(ctx.agent.context.history[1]!)).toContain('<bash-stdout>hello');
+  });
+
+  it('surfaces the failure reason when a shell command fails with no output', async () => {
+    const fakeProcess = (exitCode: number): KaosProcess => {
+      const out = Readable.from([]);
+      const err = Readable.from([]);
+      return {
+        stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+        stdout: out,
+        stderr: err,
+        pid: 1,
+        exitCode,
+        wait: vi.fn(async () => exitCode),
+        kill: vi.fn(async () => {}),
+        dispose: vi.fn(async () => {
+          out.destroy();
+          err.destroy();
+        }),
+      };
+    };
+    const kaos = createFakeKaos({
+      execWithEnv: vi.fn().mockImplementation(async () => fakeProcess(1)),
+    });
+    const ctx = testAgent({ kaos });
+    ctx.configure();
+
+    const result = await ctx.agent.tools.runShellCommand('false');
+
+    expect(result.isError).toBe(true);
+    expect(result.stderr).toContain('exit code');
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    const output = ctx.agent.context.history.at(-1)!;
+    expect(textOf(output)).toContain('<bash-stderr>');
+    expect(textOf(output)).toContain('exit code');
+  });
+
   it('renders tool error and empty-output status as model-visible text', () => {
     const ctx = testAgent();
     ctx.configure();
 
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 's1', turnId: 't', step: 1 },
+    });
+    for (const toolCallId of ['call_error', 'call_empty']) {
+      ctx.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: toolCallId,
+          turnId: 't',
+          step: 1,
+          stepUuid: 's1',
+          toolCallId,
+          name: 'Run',
+          args: {},
+        },
+      });
+    }
     ctx.dispatch({
       type: 'context.append_loop_event',
       event: {
@@ -65,6 +211,7 @@ describe('Agent context', () => {
     });
 
     expect(ctx.agent.context.messages).toMatchObject([
+      { role: 'assistant', toolCalls: [{ id: 'call_error' }, { id: 'call_empty' }] },
       {
         role: 'tool',
         content: [
@@ -588,6 +735,41 @@ describe('Agent context', () => {
     );
   });
 
+  it('does not zero tokenCount when a filtered step reports zero usage', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.appendAssistantTextWithUsage(1, 'previous answer', 1_000);
+    expect(ctx.agent.context.tokenCount).toBe(1_000);
+
+    const stepUuid = 'context-filtered-step';
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'next prompt' }]);
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '0', step: 2 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '0',
+        step: 2,
+        usage: {
+          inputOther: 0,
+          output: 0,
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
+        },
+        finishReason: 'filtered',
+      },
+    });
+
+    expect(ctx.agent.context.tokenCount).toBeGreaterThan(1_000);
+    expect(ctx.agent.context.tokenCountWithPending).toBeGreaterThanOrEqual(
+      ctx.agent.context.tokenCount,
+    );
+  });
+
   it('undo only counts real user prompts, skipping background notifications', () => {
     const ctx = testAgent();
     ctx.configure();
@@ -736,9 +918,7 @@ describe('Agent context', () => {
 });
 
 describe('Agent context notification projection', () => {
-  it('renders task notifications with escaped attributes and a bounded output tail', () => {
-    const tail = Array.from({ length: 25 }, (_, index) => `line ${String(index + 1)}`).join('\n');
-
+  it('renders task notifications with escaped attributes and generic children', () => {
     const text = renderNotificationXml({
       id: 'n_"1&2',
       category: 'task',
@@ -748,17 +928,24 @@ describe('Agent context notification projection', () => {
       title: 'Task finished',
       severity: 'info',
       body: 'The task completed.',
-      tail_output: tail,
+      children: [
+        [
+          '<output-file path="/tmp/logs/a&amp;b/output.log" bytes="1234">',
+          'Read the output file to retrieve the result: /tmp/logs/a&amp;b/output.log',
+          '</output-file>',
+        ].join('\n'),
+      ],
     });
 
     expect(text).toContain('id="n_&quot;1&amp;2"');
     expect(text).toContain('source_id="bg&amp;1"');
     expect(text).toContain('Title: Task finished');
     expect(text).toContain('Severity: info');
-    expect(text).toContain('<task-notification>');
-    expect(text).not.toContain('line 5');
-    expect(text).toContain('line 6');
-    expect(text).toContain('line 25');
+    expect(text).toContain('<output-file path="/tmp/logs/a&amp;b/output.log" bytes="1234">');
+    expect(text).toContain(
+      'Read the output file to retrieve the result: /tmp/logs/a&amp;b/output.log',
+    );
+    expect(text).not.toContain('<task-notification>');
     expect(text.trimEnd()).toMatch(/<\/notification>$/);
   });
 
@@ -802,13 +989,14 @@ describe('Agent context notification projection', () => {
     const text = renderNotificationXml({
       id: '',
       source_kind: 'host',
-      tail_output: 'should stay out of the XML',
+      output_path: '/tmp/output.log',
     });
 
     expect(text).toContain('id="unknown"');
     expect(text).toContain('category="unknown"');
     expect(text).not.toContain('<task-notification>');
-    expect(text).not.toContain('should stay out of the XML');
+    expect(text).not.toContain('<output-file');
+    expect(text).not.toContain('/tmp/output.log');
   });
 
   it('does not merge a cron-fire envelope into an adjacent user message', () => {

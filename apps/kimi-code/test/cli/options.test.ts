@@ -41,6 +41,7 @@ describe('CLI options parsing', () => {
       expect(opts.outputFormat).toBeUndefined();
       expect(opts.prompt).toBeUndefined();
       expect(opts.skillsDirs).toEqual([]);
+      expect(opts.addDirs).toEqual([]);
     });
   });
 
@@ -152,6 +153,10 @@ describe('CLI options parsing', () => {
 
     it('-C sets continue', () => {
       expect(parse(['-C']).continue).toBe(true);
+    });
+
+    it('-c is an alias for --continue', () => {
+      expect(parse(['-c']).continue).toBe(true);
     });
 
     it('--continue and --session combined raises a conflict', () => {
@@ -307,6 +312,16 @@ describe('CLI options parsing', () => {
     });
   });
 
+  describe('--add-dir', () => {
+    it('parses one additional workspace directory', () => {
+      expect(parse(['--add-dir', '/shared']).addDirs).toEqual(['/shared']);
+    });
+
+    it('parses repeated additional workspace directories', () => {
+      expect(parse(['--add-dir', '/one', '--add-dir=/two']).addDirs).toEqual(['/one', '/two']);
+    });
+  });
+
   describe('sub-commands', () => {
     it('routes upgrade without calling the main action', () => {
       let upgradeCalls = 0;
@@ -328,6 +343,30 @@ describe('CLI options parsing', () => {
       });
 
       program.parse(['node', 'kimi', 'upgrade']);
+
+      expect(upgradeCalls).toBe(1);
+    });
+
+    it('routes update alias to the upgrade handler', () => {
+      let upgradeCalls = 0;
+      const program = createProgram(
+        '0.0.0',
+        () => {
+          throw new Error('main action should not run');
+        },
+        () => {},
+        () => {},
+        () => {
+          upgradeCalls += 1;
+        },
+      );
+      program.exitOverride();
+      program.configureOutput({
+        writeOut: () => {},
+        writeErr: () => {},
+      });
+
+      program.parse(['node', 'kimi', 'update']);
 
       expect(upgradeCalls).toBe(1);
     });
@@ -367,7 +406,6 @@ describe('CLI options parsing', () => {
         '--print',
         '--wire',
         '--agent=default',
-        '--add-dir=/',
         '--raw-model',
         '--config-file=x',
         '--quiet',

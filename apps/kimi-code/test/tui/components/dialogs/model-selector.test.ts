@@ -254,4 +254,50 @@ describe('ModelSelectorComponent', () => {
       }
     }
   });
+
+  it('invokes onSessionOnlySelect on Alt+S with the effective thinking state', () => {
+    const onSelect = vi.fn();
+    const onSessionOnlySelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: { kimi: model('Kimi K2', ['thinking']) },
+      currentValue: 'kimi',
+      currentThinking: true,
+      onSelect,
+      onSessionOnlySelect,
+      onCancel: vi.fn(),
+    });
+
+    // Toggle thinking Off, then Alt+S applies the choice to the session only.
+    picker.handleInput(RIGHT);
+    picker.handleInput(`${ESC}s`);
+    expect(onSessionOnlySelect).toHaveBeenCalledWith({ alias: 'kimi', thinking: false });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('ignores Alt+S and hides its hint when onSessionOnlySelect is not provided', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: { kimi: model('Kimi K2') },
+      currentValue: 'kimi',
+      currentThinking: true,
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    picker.handleInput(`${ESC}s`);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(text(picker)).not.toContain('Alt+S session-only');
+  });
+
+  it('shows the Alt+S session-only hint when onSessionOnlySelect is provided', () => {
+    const picker = new ModelSelectorComponent({
+      models: { kimi: model('Kimi K2') },
+      currentValue: 'kimi',
+      currentThinking: true,
+      onSelect: vi.fn(),
+      onSessionOnlySelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    expect(text(picker)).toContain('Alt+S session-only');
+  });
 });

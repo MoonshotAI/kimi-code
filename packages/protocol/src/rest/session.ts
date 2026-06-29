@@ -46,6 +46,7 @@ export const listSessionsQuerySchema = cursorQuerySchema.and(
   z.object({
     status: sessionStatusSchema.optional(),
     include_archive: booleanQueryParam,
+    exclude_empty: booleanQueryParam,
   }),
 );
 export type ListSessionsQuery = z.infer<typeof listSessionsQuerySchema>;
@@ -85,7 +86,14 @@ export const startBtwSessionResponseSchema = z.object({
 });
 export type StartBtwSessionResponse = z.infer<typeof startBtwSessionResponseSchema>;
 
-export const listSessionChildrenQuerySchema = listSessionsQuerySchema;
+// Child lists intentionally omit exclude_empty: the /sessions/{id}/children route
+// does not filter by it, so advertising it would mislead generated clients.
+export const listSessionChildrenQuerySchema = cursorQuerySchema.and(
+  z.object({
+    status: sessionStatusSchema.optional(),
+    include_archive: booleanQueryParam,
+  }),
+);
 export type ListSessionChildrenQuery = z.infer<typeof listSessionChildrenQuerySchema>;
 
 export const listSessionChildrenResponseSchema = pageResponseSchema(sessionSchema);
@@ -109,6 +117,18 @@ export const sessionStatusResponseSchema = z.object({
   context_usage: z.number().min(0).max(1),
 });
 export type SessionStatusResponse = z.infer<typeof sessionStatusResponseSchema>;
+
+export const sessionWarningSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  severity: z.enum(['info', 'warning', 'error']),
+});
+export type SessionWarning = z.infer<typeof sessionWarningSchema>;
+
+export const sessionWarningsResponseSchema = z.object({
+  warnings: z.array(sessionWarningSchema),
+});
+export type SessionWarningsResponse = z.infer<typeof sessionWarningsResponseSchema>;
 
 export const compactSessionRequestSchema = z.preprocess(
   (value) => value === undefined ? {} : value,

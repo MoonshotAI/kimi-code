@@ -322,6 +322,22 @@ function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
     return { kind: 'todo', items };
   }
 
+  if (kind === 'plan_review') {
+    const plan = typeof d['plan'] === 'string' ? d['plan'] : '';
+    const path = typeof d['path'] === 'string' ? d['path'] : undefined;
+    const rawOptions = Array.isArray(d['options']) ? d['options'] : [];
+    const options = rawOptions
+      .map((item: unknown): { label: string; description?: string } | null => {
+        const it = (item ?? {}) as Record<string, unknown>;
+        const label = typeof it['label'] === 'string' ? it['label'] : '';
+        if (!label) return null;
+        const description = typeof it['description'] === 'string' ? it['description'] : undefined;
+        return { label, description };
+      })
+      .filter((o): o is { label: string; description?: string } => o !== null);
+    return { kind: 'plan_review', plan, path, options: options.length > 0 ? options : undefined };
+  }
+
   return { kind: 'generic', summary: a.action };
 }
 
@@ -393,6 +409,19 @@ function continuesAssistantGroup(group: Group | null, promptId: string | undefin
   );
 }
 
+/** Extract the plan file path from an ExitPlanMode tool result. The approved
+ *  output contains `Plan saved to: <path>`; this survives a page reload (unlike
+ *  the ephemeral plan_review approval display), so the tool card can still link
+ *  to the plan file. */
+function parsePlanSavedPath(output: string[] | undefined): string | undefined {
+  if (!output || output.length === 0) return undefined;
+  const marker = 'Plan saved to: ';
+  for (const line of output) {
+    if (line.startsWith(marker)) return line.slice(marker.length).trim();
+  }
+  return undefined;
+}
+
 export function messagesToTurns(
   messages: AppMessage[],
   approvals: AppApprovalRequest[],
@@ -406,6 +435,9 @@ export function messagesToTurns(
    */
   sessionActive = true,
   subagentTasks: AppTask[] = [],
+  /** Preserved `plan_review` displays keyed by toolCallId — used to link the
+   *  ExitPlanMode tool card back to the plan file after the approval resolves. */
+  planReviewByToolCallId: Record<string, { plan: string; path?: string }> = {},
 ): ChatTurn[] {
   const turns: ChatTurn[] = [];
   let no = 1;
@@ -541,6 +573,7 @@ export function messagesToTurns(
           // flushGroup settles dangling tools of finished turns back to 'ok'.
           status: 'running',
           output: c.outputLines,
+          planPath: c.toolName === 'ExitPlanMode' ? planReviewByToolCallId[c.toolCallId]?.path : undefined,
         };
         g.tools.push(toolCall);
         g.blocks.push({ kind: 'tool', tool: toolCall });
@@ -560,6 +593,12 @@ export function messagesToTurns(
             output: normalizeToolOutput(c.output),
             media: c.isError ? undefined : normalizeToolMedia(tool.name, c.output),
           };
+          // ExitPlanMode: if the plan path wasn't captured from the (ephemeral)
+          // approval display, recover it from the result output so the file link
+          // survives a reload for approved plans.
+          if (updated.name === 'ExitPlanMode' && !updated.planPath) {
+            updated.planPath = parsePlanSavedPath(updated.output);
+          }
           g.tools[idx] = updated;
           const blk = g.blocks.find((b) => b.kind === 'tool' && b.tool.id === c.toolCallId);
           if (blk && blk.kind === 'tool') blk.tool = updated;

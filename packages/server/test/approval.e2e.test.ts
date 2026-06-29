@@ -15,8 +15,6 @@
  *   - REST `POST` resolves → broker Promise settles → response converts back
  *     to in-process SDK shape
  *   - Idempotency (40902) + not-found (40404)
- *   - 60s timeout (override to 30ms) broadcasts `event.approval.expired` AND
- *     rejects the Promise with `ApprovalExpiredError`.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -29,14 +27,16 @@ import { WebSocket } from 'ws';
 
 import {
   IApprovalService,
+  IEventService,
   type ApprovalRequest,
   type ApprovalResponse,
+  type Event,
 } from '@moonshot-ai/agent-core';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 import { rawDataToString } from '../src/ws/rawData';
 import {
-  ApprovalExpiredError,
   ApprovalService,
 } from '#/services/approval/approvalService';
 
@@ -64,6 +64,7 @@ afterEach(async () => {
 
 async function bootDaemon(): Promise<RunningServer> {
   server = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -77,12 +78,24 @@ async function bootDaemon(): Promise<RunningServer> {
 function appOf(r: RunningServer): {
   inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
 } {
-  return r.services.invokeFunction((a) => {
+  const app = r.services.invokeFunction((a) => {
     const gw = a.get(IRestGateway);
     return gw.app as unknown as {
-      inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
-    };
+  inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
+};
   });
+  // Auto-attach the fixed bearer token so the M5.1 auth hook passes. A
+  // caller-supplied `authorization` header wins, so explicit token tests keep
+  // working; every other header (Range, content-type, …) is preserved.
+  return {
+    inject(req: unknown) {
+      const q = req as { headers?: Record<string, string | string[] | undefined> };
+      return app.inject({
+        ...q,
+        headers: { authorization: 'Bearer test-token', ...q.headers },
+      });
+    },
+  };
 }
 
 function envelopeOf<T>(body: unknown): {
@@ -124,7 +137,7 @@ async function openSubscriber(
   const wsUrl = r.address.replace('http://', 'ws://') + '/api/v1/ws';
   const received: Record<string, unknown>[] = [];
   const ws = await new Promise<WebSocket>((resolve, reject) => {
-    const sock = new WebSocket(wsUrl);
+    const sock = new WebSocket(wsUrl, ['kimi-code.bearer.test-token']);
     sock.on('message', (data) => {
       try {
         received.push(JSON.parse(rawDataToString(data)) as Record<string, unknown>);
@@ -267,6 +280,67 @@ describe('Approval reverse-RPC: WS broadcast → REST resolve → Promise settle
     ws.close();
   });
 
+  it('aborts the pending approval when the turn ends for a cancellation reason', async () => {
+    const r = await bootDaemon();
+    const sid = await createSession(r);
+    const { ws, received } = await openSubscriber(r, sid);
+
+    const broker = r.services.invokeFunction(
+      (a) => a.get(IApprovalService) as ApprovalService,
+    );
+    const eventService = r.services.invokeFunction((a) => a.get(IEventService));
+
+    const pending = broker.request({
+      sessionId: sid,
+      agentId: 'main',
+      turnId: 21,
+      toolCallId: 'tc_approval_abort',
+      toolName: 'shell.run',
+      action: 'Run `ls`',
+      display: { kind: 'command', command: 'ls', summary: 'ls' } as never,
+    });
+
+    const requested = await waitFor(
+      received,
+      (f) => f['type'] === 'event.approval.requested',
+      2000,
+    );
+    const payload = requested['payload'] as { approval_id: string };
+    expect(broker.isPending(payload.approval_id)).toBe(true);
+
+    // Simulate the agent's turn being aborted before the user resolves the
+    // approval. The broker subscribes to the in-process bus because the turn
+    // abort signal never reaches it through the RPC boundary.
+    eventService.publish({
+      type: 'turn.ended',
+      sessionId: sid,
+      agentId: 'main',
+      turnId: 21,
+      reason: 'cancelled',
+    } as unknown as Event);
+
+    const resolvedFrame = await waitFor(
+      received,
+      (f) => f['type'] === 'event.approval.resolved',
+      2000,
+    );
+    const resolvedPayload = resolvedFrame['payload'] as {
+      approval_id: string;
+      decision: string;
+    };
+    expect(resolvedPayload.approval_id).toBe(payload.approval_id);
+    expect(resolvedPayload.decision).toBe('cancelled');
+
+    // Broker entry is cleaned up so listPending()/session status don't stick
+    // in awaiting_approval for a dead turn.
+    expect(broker.isPending(payload.approval_id)).toBe(false);
+
+    const inProcResp: ApprovalResponse = await pending;
+    expect(inProcResp.decision).toBe('cancelled');
+
+    ws.close();
+  });
+
   it('GET pending approvals lists recoverable requests and omits resolved ones', async () => {
     const r = await bootDaemon();
     const sid = await createSession(r);
@@ -357,52 +431,6 @@ describe('Approval reverse-RPC: WS broadcast → REST resolve → Promise settle
     });
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(40001);
-  });
-
-  it('60s timeout broadcasts event.approval.expired + rejects with ApprovalExpiredError', async () => {
-    const r = await bootDaemon();
-    const sid = await createSession(r);
-    const { ws, received } = await openSubscriber(r, sid);
-
-    // Swap in a short-timeout broker for this session — clean by reaching into
-    // the container, since startServer doesn't expose a broker-options
-    // override yet.
-    const broker = r.services.invokeFunction(
-      (a) => a.get(IApprovalService) as ApprovalService,
-    );
-    // Stamp the timeout via a private field hack — the test already
-    // co-owns the impl. (In a fuller world we'd thread a `brokerOptions`
-    // option through ServerStartOptions.)
-    (broker as unknown as { _timeoutMs: number })._timeoutMs = 40;
-
-    const pending = broker.request({
-      sessionId: sid,
-      agentId: 'main',
-      toolCallId: 'tc_timeout',
-      toolName: 'shell.run',
-      action: 'Run',
-      display: { kind: 'generic', summary: 'test' } as never,
-      turnId: 1,
-    });
-
-    // Expect a rejection AND an event.approval.expired frame.
-    let rejection: unknown;
-    try {
-      await pending;
-    } catch (err) {
-      rejection = err;
-    }
-    expect(rejection).toBeInstanceOf(ApprovalExpiredError);
-
-    const expiredFrame = await waitFor(
-      received,
-      (f) => f['type'] === 'event.approval.expired',
-      2000,
-    );
-    const payload = expiredFrame['payload'] as { approval_id: string };
-    expect(payload.approval_id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-
-    ws.close();
   });
 
   it('REST resolve on unknown approval_id returns 40404', async () => {

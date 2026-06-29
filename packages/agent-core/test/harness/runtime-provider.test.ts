@@ -509,6 +509,49 @@ describe('resolveRuntimeProvider customHeaders propagation', () => {
     });
   });
 
+  it('passes the prompt cache key to Anthropic metadata.user_id', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'claude-alias',
+        providers: {
+          anthropic: {
+            type: 'anthropic',
+            apiKey: 'sk-anthropic',
+          },
+        },
+        models: {
+          'claude-alias': { provider: 'anthropic', model: 'claude-runtime', maxContextSize: 200000 },
+        },
+      },
+      promptCacheKey: 'session-test',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'anthropic',
+      metadata: { user_id: 'session-test' },
+    });
+  });
+
+  it('omits Anthropic metadata when no prompt cache key is set', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'claude-alias',
+        providers: {
+          anthropic: {
+            type: 'anthropic',
+            apiKey: 'sk-anthropic',
+          },
+        },
+        models: {
+          'claude-alias': { provider: 'anthropic', model: 'claude-runtime', maxContextSize: 200000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({ type: 'anthropic' });
+    expect('metadata' in resolved.provider).toBe(false);
+  });
+
   it('forwards customHeaders to an openai provider', () => {
     const resolved = resolveRuntimeProvider({
       config: {
@@ -789,5 +832,66 @@ describe('resolveThinkingLevel', () => {
     ).toBe('off');
 
     expect(resolveThinkingLevel(undefined, {})).toBe('high');
+  });
+});
+
+describe('per-model protocol routing', () => {
+  it('routes a protocol:anthropic model on a kimi provider through the anthropic transport with the REST base stripped of /v1', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        models: {
+          'kimi-code/kimi-for-coding': {
+            ...BASE_CONFIG.models!['kimi-code/kimi-for-coding']!,
+            protocol: 'anthropic',
+          },
+        },
+      },
+    });
+
+    expect(resolved.providerName).toBe('managed:kimi-code');
+    expect(resolved.provider).toMatchObject({
+      type: 'anthropic',
+      model: 'kimi-for-coding',
+      baseUrl: 'https://api.example',
+    });
+  });
+
+  it('keeps a model without protocol on the provider wire type and leaves the REST base intact', () => {
+    const resolved = resolveRuntimeProvider({ config: BASE_CONFIG });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'kimi',
+      model: 'kimi-for-coding',
+      baseUrl: 'https://api.example/v1',
+    });
+  });
+
+  it('does not strip the baseUrl of a provider that is itself typed anthropic', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'claude',
+        providers: {
+          anthropic: {
+            type: 'anthropic',
+            apiKey: 'sk-anthropic',
+            baseUrl: 'https://api.anthropic.example/v1',
+          },
+        },
+        models: {
+          claude: {
+            provider: 'anthropic',
+            model: 'claude-sonnet-4-5',
+            maxContextSize: 200_000,
+          },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'anthropic',
+      model: 'claude-sonnet-4-5',
+      baseUrl: 'https://api.anthropic.example/v1',
+    });
   });
 });

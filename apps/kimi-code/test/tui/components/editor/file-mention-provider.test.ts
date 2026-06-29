@@ -49,16 +49,42 @@ const HELP_FULL_COMMAND = {
   description: 'Show help',
 };
 
+const ADD_DIR_COMMAND = {
+  name: 'add-dir',
+  description: 'Add or list an additional workspace directory',
+  getArgumentCompletions: (prefix: string) =>
+    prefix === '/'
+      ? [
+          {
+            value: '/tmp/shared/',
+            label: 'shared/',
+            description: '/tmp/shared',
+          },
+        ]
+      : null,
+};
+
 describe('FileMentionProvider', () => {
   let workDir: string;
+  let extraDirs: string[];
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), 'kimi-file-mention-'));
+    extraDirs = [];
   });
 
   afterEach(() => {
     rmSync(workDir, { recursive: true, force: true });
+    for (const extraDir of extraDirs) {
+      rmSync(extraDir, { recursive: true, force: true });
+    }
   });
+
+  function createExtraDir(): string {
+    const extraDir = mkdtempSync(join(tmpdir(), 'kimi-file-mention-extra-'));
+    extraDirs.push(extraDir);
+    return extraDir;
+  }
 
   it('returns null when there is no completable prefix', async () => {
     const provider = new FileMentionProvider([], workDir, NO_FD);
@@ -80,6 +106,20 @@ describe('FileMentionProvider', () => {
     expect(result).not.toBeNull();
     expect(result!.prefix).toBe('');
     expect(result!.items.map((item) => item.value)).toEqual(['status']);
+  });
+
+  it('opens add-dir directory completions after slash command completion and entering slash', async () => {
+    const provider = new FileMentionProvider([ADD_DIR_COMMAND], workDir, NO_FD);
+    const command = ADD_DIR_COMMAND;
+    const completed = provider.applyCompletion(['/add'], 0, 4, { value: command.name, label: command.name }, '/add');
+    const completedLine = completed.lines[0]!;
+    const line = `${completedLine}/`;
+    const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+
+    expect(completedLine).toBe('/add-dir ');
+    expect(result).not.toBeNull();
+    expect(result!.prefix).toBe('/');
+    expect(result!.items.map((item) => item.value)).toEqual(['/tmp/shared/']);
   });
 
   it('searches slash command aliases and displays aliases in the command label', async () => {
@@ -227,6 +267,54 @@ describe('FileMentionProvider', () => {
     expect(result).not.toBeNull();
     expect(result!.prefix).toBe('@but');
     expect(result!.items.map((item) => item.value)).toContain('@src/components/Button.tsx');
+  });
+
+  it('uses the filesystem fallback for additionalDirs when fd is unavailable', async () => {
+    const extraDir = createExtraDir();
+    mkdirSync(join(extraDir, 'src'), { recursive: true });
+    writeFileSync(join(extraDir, 'src', 'Additional.ts'), 'export {};');
+    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'), [extraDir]);
+
+    const result = await provider.getSuggestions(['@add'], 0, 4, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((item) => item.value)).toContain(
+      `@${join(extraDir, 'src', 'Additional.ts').replaceAll('\\', '/')}`,
+    );
+  });
+
+  it('keeps cwd @ mention values relative and additionalDir values absolute', async () => {
+    mkdirSync(join(workDir, 'src'), { recursive: true });
+    writeFileSync(join(workDir, 'src', 'Cwd.ts'), 'export {};');
+    const extraDir = createExtraDir();
+    mkdirSync(join(extraDir, 'src'), { recursive: true });
+    writeFileSync(join(extraDir, 'src', 'Additional.ts'), 'export {};');
+    const provider = new FileMentionProvider([], workDir, NO_FD, [extraDir]);
+
+    const cwdResult = await provider.getSuggestions(['@cwd'], 0, 4, { signal: ctrl() });
+    expect(cwdResult).not.toBeNull();
+    expect(cwdResult!.items.map((item) => item.value)).toContain('@src/Cwd.ts');
+
+    const additionalResult = await provider.getSuggestions(['@add'], 0, 4, { signal: ctrl() });
+    expect(additionalResult).not.toBeNull();
+    expect(additionalResult!.items.map((item) => item.value)).toContain(
+      `@${join(extraDir, 'src', 'Additional.ts').replaceAll('\\', '/')}`,
+    );
+  });
+
+  it('deduplicates cwd and additionalDir candidates by absolute path', async () => {
+    const extraDir = join(workDir, 'extra');
+    mkdirSync(join(extraDir, 'src'), { recursive: true });
+    writeFileSync(join(extraDir, 'src', 'Overlap.ts'), 'export {};');
+    const provider = new FileMentionProvider([], workDir, NO_FD, [extraDir]);
+
+    const result = await provider.getSuggestions(['@overlap'], 0, 8, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    const overlapItems = result!.items.filter(
+      (item) => item.description === join(extraDir, 'src', 'Overlap.ts').replaceAll('\\', '/'),
+    );
+    expect(overlapItems).toHaveLength(1);
   });
 
   it('does not bypass fd filtering with filesystem suggestions when fd returns no matches', async () => {

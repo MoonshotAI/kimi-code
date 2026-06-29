@@ -16,7 +16,7 @@ kimi <subcommand> [options]
 | `--version` | `-V` | 打印版本号并退出 |
 | `--help` | `-h` | 显示帮助信息并退出 |
 | `--session [id]` | `-S` | 恢复一个会话。带 ID 时直接打开指定会话；不带 ID 时进入交互式选择器 |
-| `--continue` | `-C` | 继续当前工作目录下最近一次的会话，无需手动指定 ID |
+| `--continue` | `-c` | 继续当前工作目录下最近一次的会话，无需手动指定 ID |
 | `--model <model>` | `-m` | 为本次启动指定模型别名。省略时新会话使用配置文件中的 `default_model` |
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式不会打开 TUI |
 | `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用，默认 `text` |
@@ -24,6 +24,7 @@ kimi <subcommand> [options]
 | `--auto` | | 以 auto 权限模式启动；工具审批自动处理，Agent 不会向用户提问 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
+| `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
 
@@ -273,7 +274,7 @@ kimi migrate
 
 ### `kimi upgrade`
 
-立即检查最新版本并展示更新提示，选择操作后退出。
+立即检查最新版本并展示更新提示，选择操作后退出。也可以使用别名 `kimi update`。
 
 ```sh
 kimi upgrade

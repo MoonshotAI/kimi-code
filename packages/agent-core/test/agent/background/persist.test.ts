@@ -27,6 +27,7 @@ function sample(overrides: Partial<Extract<BackgroundTaskInfo, { kind: 'process'
     endedAt: null,
     exitCode: null,
     status: 'running',
+    detached: true,
     ...overrides,
   };
 }
@@ -91,7 +92,7 @@ describe('BackgroundTaskPersistence', () => {
     expect(all.map((task) => task.taskId)).toEqual(['bash-11111111']);
   });
 
-  it('writeTask creates tasks dir with mode 0700', async () => {
+  it.skipIf(process.platform === 'win32')('writeTask creates tasks dir with mode 0700', async () => {
     await persistence.writeTask(sample());
     const st = await stat(join(sessionDir, 'tasks'));
     // eslint-disable-next-line no-bitwise

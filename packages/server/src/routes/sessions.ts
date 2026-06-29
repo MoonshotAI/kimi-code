@@ -13,6 +13,7 @@ import {
   pageResponseSchema,
   sessionAbortResponseSchema,
   sessionSchema,
+  sessionWarningsResponseSchema,
   sessionStatusResponseSchema,
   sessionStatusSchema,
   startBtwSessionResponseSchema,
@@ -20,8 +21,9 @@ import {
   undoSessionRequestSchema,
   undoSessionResponseSchema,
   workspaceIdSchema,
+  type Event,
 } from '@moonshot-ai/protocol';
-import { IPromptService, ISessionService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IWorkspaceRegistry, WorkspaceNotFoundError, type IInstantiationService, type SessionClientTelemetry } from '@moonshot-ai/agent-core';
+import { IPromptService, ISessionService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IWorkspaceRegistry, WorkspaceNotFoundError, IEventService, type IInstantiationService, type SessionClientTelemetry } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -81,6 +83,7 @@ const sessionsListQueryCoercion = z
     page_size: z.coerce.number().int().min(1).max(100).optional(),
     status: sessionStatusSchema.optional(),
     include_archive: booleanQueryParam,
+    exclude_empty: booleanQueryParam,
 
     workspace_id: workspaceIdSchema.optional(),
   })
@@ -270,6 +273,7 @@ export function registerSessionsRoutes(
           page_size: raw.page_size,
           status: raw.status,
           includeArchive: raw.include_archive,
+          excludeEmpty: raw.exclude_empty,
         };
         let query;
         if (raw.workspace_id !== undefined) {
@@ -374,6 +378,20 @@ export function registerSessionsRoutes(
         const session = await ix.invokeFunction((a) =>
           a.get(ISessionService).update(session_id, body),
         );
+        // Broadcast the title change to every connection (including clients not
+        // subscribed to this session, and covering inactive sessions whose rename
+        // does not go through the live Session path), so session lists stay in sync.
+        if (typeof body.title === 'string' && body.title.trim().length > 0) {
+          ix.invokeFunction((a) =>
+            a.get(IEventService).publish({
+              type: 'session.meta.updated',
+              agentId: 'main',
+              sessionId: session_id,
+              title: session.title,
+              patch: { title: session.title, isCustomTitle: true },
+            } as Event),
+          );
+        }
         reply.send(okEnvelope(session, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
@@ -574,6 +592,37 @@ export function registerSessionsRoutes(
     },
   );
   app.get(statusRoute.path, statusRoute.options, statusRoute.handler as Parameters<SessionRouteHost['get']>[2]);
+
+  const sessionWarningsRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions/{session_id}/warnings',
+      params: sessionIdParamSchema,
+      success: { data: sessionWarningsResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+      },
+      description: 'Get session-level warnings (e.g. oversized AGENTS.md)',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      try {
+        const { session_id } = req.params;
+        const warnings = await ix.invokeFunction((a) =>
+          a.get(ISessionService).getSessionWarnings(session_id),
+        );
+        reply.send(okEnvelope({ warnings }, req.id));
+      } catch (err) {
+        sendMappedError(reply, req.id, err);
+      }
+    },
+  );
+  app.get(
+    sessionWarningsRoute.path,
+    sessionWarningsRoute.options,
+    sessionWarningsRoute.handler as Parameters<SessionRouteHost['get']>[2],
+  );
 
 }
 

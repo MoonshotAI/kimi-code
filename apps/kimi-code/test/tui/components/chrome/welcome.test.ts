@@ -12,6 +12,7 @@ const TRUECOLOR_PATTERN = /\u001B\[38;2;(\d+);(\d+);(\d+)m/g;
 const appState: AppState = {
   version: '1.2.3',
   workDir: '/tmp/project',
+  additionalDirs: [],
   sessionId: 'ses-1',
   sessionTitle: null,
   model: 'kimi-k2',
@@ -25,6 +26,7 @@ const appState: AppState = {
   streamingPhase: 'idle',
   streamingStartTime: 0,
   planMode: false,
+  inputMode: 'prompt',
   swarmMode: false,
   theme: 'dark',
   editorCommand: null,

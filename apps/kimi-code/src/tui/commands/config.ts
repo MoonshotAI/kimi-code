@@ -311,7 +311,11 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
       currentThinking: host.state.appState.thinking,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, thinking);
+        void performModelSwitch(host, alias, thinking, true);
+      },
+      onSessionOnlySelect: ({ alias, thinking }) => {
+        host.restoreEditor();
+        void performModelSwitch(host, alias, thinking, false);
       },
       onCancel: () => {
         host.restoreEditor();
@@ -320,7 +324,12 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
   );
 }
 
-async function performModelSwitch(host: SlashCommandHost, alias: string, thinking: boolean): Promise<void> {
+async function performModelSwitch(
+  host: SlashCommandHost,
+  alias: string,
+  thinking: boolean,
+  persist: boolean,
+): Promise<void> {
   if (host.state.appState.streamingPhase !== 'idle') {
     host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
     return;
@@ -360,19 +369,26 @@ async function performModelSwitch(host: SlashCommandHost, alias: string, thinkin
   }
 
   let persisted = false;
-  try {
-    persisted = await persistModelSelection(host, alias, thinking);
-  } catch (error) {
-    const msg = formatErrorMessage(error);
-    host.showError(`Switched to ${alias}, but failed to save default: ${msg}`);
-    return;
+  if (persist) {
+    try {
+      persisted = await persistModelSelection(host, alias, thinking);
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      host.showError(`Switched to ${alias}, but failed to save default: ${msg}`);
+      return;
+    }
   }
 
-  const status = runtimeChanged
-    ? `Switched to ${alias} with thinking ${level}.`
-    : persisted
-      ? `Saved ${alias} with thinking ${level} as default.`
-      : `Already using ${alias} with thinking ${level}.`;
+  let status: string;
+  if (runtimeChanged) {
+    status = persist
+      ? `Switched to ${alias} with thinking ${level}.`
+      : `Switched to ${alias} with thinking ${level} for this session only.`;
+  } else if (persist && persisted) {
+    status = `Saved ${alias} with thinking ${level} as default.`;
+  } else {
+    status = `Already using ${alias} with thinking ${level}.`;
+  }
   host.showStatus(status, 'success');
 }
 

@@ -64,11 +64,11 @@ export async function runShell(
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {
       if (outcome.success) {
-        track('oauth_refresh', { success: true });
+        track('oauth_refresh', { outcome: 'success' });
         return;
       }
       track('oauth_refresh', {
-        success: false,
+        outcome: 'error',
         reason: outcome.reason,
       });
     },
@@ -100,6 +100,7 @@ export async function runShell(
   const configMs = Date.now() - configStartedAt;
   const tui = new KimiTUI(harness, {
     cliOptions: opts,
+    additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     tuiConfig,
     version,
     workDir,
@@ -136,7 +137,7 @@ export async function runShell(
     const sessionId = tui.getCurrentSessionId();
     const hasContent = tui.hasSessionContent();
     setCrashPhase('shutdown');
-    trackLifecycle('exit', { duration_s: (Date.now() - startedAt) / 1000 });
+    trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     const gutter = ' '.repeat(CHROME_GUTTER);
     process.stdout.write(`${gutter}Bye!\n`);
@@ -171,7 +172,7 @@ export async function runShell(
     });
   } catch (error) {
     setCrashPhase('shutdown');
-    trackLifecycle('exit', { duration_s: (Date.now() - startedAt) / 1000 });
+    trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     await harness.close();
     throw error;

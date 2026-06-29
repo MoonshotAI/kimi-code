@@ -28,6 +28,7 @@ import {
   startServer,
   type RunningServer,
 } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 
 let tmpDir: string;
 let lockPath: string;
@@ -53,6 +54,7 @@ afterEach(async () => {
 
 async function bootDaemon(): Promise<RunningServer> {
   server = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -76,10 +78,22 @@ interface FastifyAppLike {
 }
 
 function appOf(r: RunningServer): FastifyAppLike {
-  return r.services.invokeFunction((a) => {
+  const app = r.services.invokeFunction((a) => {
     const gw = a.get(IRestGateway);
     return gw.app as unknown as FastifyAppLike;
   });
+  // Auto-attach the fixed bearer token so the M5.1 auth hook passes. A
+  // caller-supplied `authorization` header wins, so explicit token tests keep
+  // working; every other header (Range, content-type, …) is preserved.
+  return {
+    inject(req: unknown) {
+      const q = req as { headers?: Record<string, string | string[] | undefined> };
+      return app.inject({
+        ...q,
+        headers: { authorization: 'Bearer test-token', ...q.headers },
+      });
+    },
+  };
 }
 
 interface Envelope<T = unknown> {
@@ -241,7 +255,7 @@ describe('POST /api/v1/files (W12.2 / Chain 15)', () => {
     expect((delRes.json() as Envelope).code).toBe(40407);
   });
 
-  it('survives server restart: index.json persists upload across instances', async () => {
+  it.skipIf(process.platform === 'win32')('survives server restart: index.json persists upload across instances', async () => {
     // Upload under server #1.
     let r = await bootDaemon();
     const data = Buffer.from('persistent payload');

@@ -1,3 +1,6 @@
+import { mkdtempSync, realpathSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'pathe';
 import { fileURLToPath } from 'node:url';
 
@@ -8,6 +11,7 @@ import { mergeStdioEnv, StdioMcpClient } from '../../src/mcp/client-stdio';
 
 const here = import.meta.dirname;
 const fixture = join(here, 'fixtures', 'mock-stdio-server.mjs');
+const cwdFixture = join(here, 'fixtures', 'cwd-stdio-server.mjs');
 const stderrThenExitFixture = join(here, 'fixtures', 'stderr-then-exit-stdio-server.mjs');
 const crashAfterConnectFixture = join(here, 'fixtures', 'crash-after-connect-stdio-server.mjs');
 
@@ -33,6 +37,51 @@ describe('StdioMcpClient', () => {
     }
     expect(thrown).toBeInstanceOf(KimiError);
   });
+
+  it('uses defaultCwd when config.cwd is omitted', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-default-cwd-'));
+    const client = new StdioMcpClient(
+      {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [cwdFixture],
+      },
+      { defaultCwd: cwd },
+    );
+    try {
+      await client.connect();
+      const result = await client.callTool('get_cwd', {});
+      const text = (result.content[0] as { type: 'text'; text: string }).text;
+      expect(realpathSync(text)).toBe(realpathSync(cwd));
+    } finally {
+      await client.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('prefers explicit config.cwd over defaultCwd', async () => {
+    const defaultCwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-default-cwd-'));
+    const configuredCwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-configured-cwd-'));
+    const client = new StdioMcpClient(
+      {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [cwdFixture],
+        cwd: configuredCwd,
+      },
+      { defaultCwd },
+    );
+    try {
+      await client.connect();
+      const result = await client.callTool('get_cwd', {});
+      const text = (result.content[0] as { type: 'text'; text: string }).text;
+      expect(realpathSync(text)).toBe(realpathSync(configuredCwd));
+    } finally {
+      await client.close();
+      await rm(defaultCwd, { recursive: true, force: true });
+      await rm(configuredCwd, { recursive: true, force: true });
+    }
+  }, 15000);
 
   it('connects, lists tools, and round-trips a text result', async () => {
     const client = new StdioMcpClient({
@@ -154,7 +203,7 @@ describe('StdioMcpClient', () => {
       transport: 'stdio',
       command: process.execPath,
       args: [crashAfterConnectFixture],
-      env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '50', KIMI_TEST_MCP_STDERR: banner },
+      env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '500', KIMI_TEST_MCP_STDERR: banner },
     });
     const closes: Array<{ stderr?: string; error?: string }> = [];
     client.onUnexpectedClose((reason) => {

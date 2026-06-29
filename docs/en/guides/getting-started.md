@@ -88,10 +88,10 @@ To run a single instruction without entering the interactive UI, use `-p`:
 kimi -p "Take a look at this project's directory structure"
 ```
 
-To resume the previous session, add `-C`:
+To resume the previous session, add `-c`:
 
 ```sh
-kimi -C
+kimi -c
 ```
 
 On first launch you need to configure an API source. In the interactive UI, enter `/login` to begin the login flow:

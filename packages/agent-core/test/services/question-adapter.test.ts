@@ -48,7 +48,6 @@ describe('question-adapter · toBrokerRequest (in-process → protocol)', () => 
       questionId: '01J_QUESTION',
       sessionId: 'sess_x',
       createdAt: '2026-06-04T10:30:00.000Z',
-      expiresAt: '2026-06-04T10:31:00.000Z',
     });
 
     expect(protoReq.question_id).toBe('01J_QUESTION');
@@ -63,6 +62,9 @@ describe('question-adapter · toBrokerRequest (in-process → protocol)', () => 
     expect(protoReq.questions[0]?.header).toBe('Pets');
     expect(protoReq.questions[0]?.body).toBe('pick one');
     expect(protoReq.questions[0]?.multi_select).toBe(false);
+    // Other affordance is always on, even when the SDK item has no otherLabel.
+    expect(protoReq.questions[0]?.allow_other).toBe(true);
+    expect(protoReq.questions[0]?.other_label).toBeUndefined();
 
     expect(protoReq.questions[1]?.id).toBe('q_1');
     expect(protoReq.questions[1]?.options.map((o) => o.id)).toEqual([
@@ -88,7 +90,6 @@ describe('question-adapter · toBrokerRequest (in-process → protocol)', () => 
       questionId: 'q',
       sessionId: 's',
       createdAt: '2026-06-04T10:30:00.000Z',
-      expiresAt: '2026-06-04T10:31:00.000Z',
     });
     expect(protoReq.turn_id).toBeUndefined();
     expect(protoReq.tool_call_id).toBeUndefined();

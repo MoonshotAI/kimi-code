@@ -8,8 +8,8 @@ import type { Writable } from 'node:stream';
 import type { KaosProcess } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
-import { AgentBackgroundTask, BackgroundTaskPersistence } from '../../../src/agent/background';
-import { createBackgroundManager, registerProcess } from './helpers';
+import { BackgroundTaskPersistence } from '../../../src/agent/background';
+import { agentTask, createBackgroundManager, registerProcess } from './helpers';
 
 function pendingProcess(): KaosProcess {
   return {
@@ -36,7 +36,7 @@ describe('background task id format', () => {
   it('assigns agent-prefixed ids to agent tasks', () => {
     const { manager } = createBackgroundManager();
     const id = manager.registerTask(
-      new AgentBackgroundTask(new Promise(() => {}), 'agent task'),
+      agentTask(new Promise(() => {}), 'agent task'),
     );
 
     expect(id).toMatch(/^agent-[0-9a-z]{8}$/);

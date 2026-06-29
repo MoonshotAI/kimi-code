@@ -1,4 +1,4 @@
-import type { ChildProcess } from 'node:child_process';
+import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import {
   appendFile,
@@ -22,6 +22,22 @@ import type { KaosProcess } from './process';
 import type { StatResult } from './types';
 
 const isWindows: boolean = process.platform === 'win32';
+const READ_CHUNK_SIZE = 64 * 1024;
+
+type TextDecodeErrors = 'strict' | 'replace' | 'ignore';
+
+interface LineEndingFlags {
+  hasCrLf: boolean;
+  hasLf: boolean;
+  hasLoneCr: boolean;
+}
+
+interface TextFileScan {
+  totalLines: number;
+  endsWithNewline: boolean;
+  hasNul: boolean;
+  lineEndingFlags: LineEndingFlags;
+}
 
 /**
  * Build the `(dev, ino)` cycle-detection key used by `_globWalk`'s
@@ -35,6 +51,20 @@ const isWindows: boolean = process.platform === 'win32';
 function cycleKey(s: { dev: number; ino: number }): string | null {
   if (s.ino === 0) return null;
   return `${String(s.dev)}:${String(s.ino)}`;
+}
+
+export function buildLocalSpawnOptions(
+  isWindows: boolean,
+  cwd: string,
+  env: Record<string, string> | undefined,
+): SpawnOptions {
+  return {
+    cwd,
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    detached: !isWindows,
+    windowsHide: true,
+  };
 }
 
 class LocalProcess implements KaosProcess {
@@ -89,13 +119,13 @@ class LocalProcess implements KaosProcess {
     }
 
     // On Windows, `ChildProcess.kill()` only signals the shell parent, leaving
-    // grandchildren alive. Use `taskkill /T` so the caller's graceful and force
-    // kill phases apply to the whole process tree.
+    // grandchildren alive, so terminate the whole process tree with
+    // `taskkill /T`. A graceful `taskkill /T` (no `/F`) does not actually
+    // terminate a console node.exe tree, and Windows has no real graceful
+    // signal for it — Node's own `ChildProcess.kill()` is always a forceful
+    // TerminateProcess on Windows — so always force-terminate the tree.
     if (isWindows) {
-      const useForce = signal === 'SIGKILL';
-      const taskkillArgs = useForce
-        ? ['/T', '/F', '/PID', String(this.pid)]
-        : ['/T', '/PID', String(this.pid)];
+      const taskkillArgs = ['/T', '/F', '/PID', String(this.pid)];
       return new Promise<void>((resolve) => {
         const killer = spawn('taskkill', taskkillArgs, {
           stdio: 'ignore',
@@ -442,22 +472,173 @@ export class LocalKaos implements Kaos {
 
   async *readLines(
     path: string,
-    options?: { encoding?: BufferEncoding; errors?: 'strict' | 'replace' | 'ignore' },
+    options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): AsyncGenerator<string> {
     const resolved = this._resolvePath(path);
     const encoding = options?.encoding ?? 'utf-8';
     const errors = options?.errors ?? 'strict';
-    const buf = await readFile(resolved);
-    const content = decodeTextWithErrors(buf, encoding, errors);
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line === undefined) continue;
-      if (i < lines.length - 1) {
-        yield line + '\n';
-      } else if (line !== '') {
-        yield line;
+
+    if (!isUtf8Encoding(encoding)) {
+      const content = decodeTextWithErrors(await readFile(resolved), encoding, errors);
+      yield* splitLinesKeepingTerminator(content);
+      return;
+    }
+
+    yield* this._readUtf8Lines(resolved, errors);
+  }
+
+  async scanTextFile(path: string): Promise<TextFileScan> {
+    const resolved = this._resolvePath(path);
+    const fh = await open(resolved, 'r');
+    try {
+      const buf = Buffer.alloc(READ_CHUNK_SIZE);
+      const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
+      const validator = createUtf8Validator();
+      let totalLines = 0;
+      let totalBytes = 0;
+      let endsWithNewline = false;
+      let hasNul = false;
+      let prevWasCr = false;
+
+      while (true) {
+        const { bytesRead } = await fh.read(buf, 0, buf.length, null);
+        if (bytesRead === 0) break;
+        const chunk = buf.subarray(0, bytesRead);
+        validator.write(chunk);
+        for (let i = 0; i < chunk.length; i += 1) {
+          const byte = chunk[i];
+          if (byte === undefined) continue;
+          if (byte === 0) hasNul = true;
+          if (byte === 0x0a) totalLines += 1;
+        }
+        prevWasCr = updateLineEndingFlagsFromBytes(flags, chunk, prevWasCr);
+        totalBytes += bytesRead;
+        endsWithNewline = chunk[bytesRead - 1] === 0x0a;
       }
+
+      if (prevWasCr) flags.hasLoneCr = true;
+      validator.end();
+      if (totalBytes > 0 && !endsWithNewline) totalLines += 1;
+      return { totalLines, endsWithNewline, hasNul, lineEndingFlags: flags };
+    } finally {
+      await fh.close();
+    }
+  }
+
+  async *readLineRange(
+    path: string,
+    options: { startLine: number; maxLines: number; errors?: TextDecodeErrors },
+  ): AsyncGenerator<string> {
+    const resolved = this._resolvePath(path);
+    const errors = options.errors ?? 'strict';
+    yield* this._readUtf8Lines(resolved, errors, {
+      startLine: options.startLine,
+      maxLines: options.maxLines,
+    });
+  }
+
+  async *readTailLines(
+    path: string,
+    options: { tailCount: number; errors?: TextDecodeErrors },
+  ): AsyncGenerator<string> {
+    if (options.tailCount <= 0) return;
+    const resolved = this._resolvePath(path);
+    const errors = options.errors ?? 'strict';
+    const fh = await open(resolved, 'r');
+    try {
+      const s = await fh.stat();
+      if (s.size === 0) return;
+
+      let pos = s.size;
+      let foundLf = 0;
+      let startOffset = 0;
+      let needLf = options.tailCount;
+      let sawTailBlock = false;
+
+      while (pos > 0 && foundLf < needLf) {
+        const readSize = Math.min(READ_CHUNK_SIZE, pos);
+        pos -= readSize;
+        const buf = Buffer.alloc(readSize);
+        await fh.read(buf, 0, readSize, pos);
+        if (!sawTailBlock) {
+          sawTailBlock = true;
+          const endsWithNewline = buf[readSize - 1] === 0x0a;
+          needLf = endsWithNewline ? options.tailCount + 1 : options.tailCount;
+        }
+        for (let i = readSize - 1; i >= 0; i -= 1) {
+          const byte = buf[i];
+          if (byte !== 0x0a) continue;
+          foundLf += 1;
+          if (foundLf === needLf) {
+            startOffset = pos + i + 1;
+            break;
+          }
+        }
+      }
+
+      if (foundLf < needLf) startOffset = 0;
+      const data = await readRange(fh, startOffset, s.size - startOffset);
+      const text = decodeTextWithErrors(data, 'utf-8', errors, startOffset !== 0);
+      yield* splitLinesKeepingTerminator(text);
+    } finally {
+      await fh.close();
+    }
+  }
+
+  private async *_readUtf8Lines(
+    resolved: string,
+    errors: TextDecodeErrors,
+    range?: { startLine?: number; maxLines?: number },
+  ): AsyncGenerator<string> {
+    const startLine = range?.startLine ?? 1;
+    const maxLines = range?.maxLines ?? Number.POSITIVE_INFINITY;
+    const fh = await open(resolved, 'r');
+    try {
+      const buf = Buffer.alloc(READ_CHUNK_SIZE);
+      let pending: Buffer[] = [];
+      let pendingOffset = 0;
+      let fileOffset = 0;
+      let lineNo = 1;
+      let yielded = 0;
+
+      while (true) {
+        const { bytesRead } = await fh.read(buf, 0, buf.length, null);
+        if (bytesRead === 0) break;
+        const chunk = buf.subarray(0, bytesRead);
+        let lineStart = 0;
+
+        for (let i = 0; i < chunk.length; i += 1) {
+          const byte = chunk[i];
+          if (byte !== 0x0a) continue;
+          const piece = chunk.subarray(lineStart, i + 1);
+          const lineOffset = pending.length === 0 ? fileOffset + lineStart : pendingOffset;
+          const line = pending.length === 0 ? piece : Buffer.concat([...pending, piece]);
+          if (lineNo >= startLine) {
+            yield decodeTextWithErrors(line, 'utf-8', errors, lineOffset !== 0);
+            yielded += 1;
+            if (yielded >= maxLines) return;
+          }
+          pending = [];
+          lineStart = i + 1;
+          lineNo += 1;
+        }
+
+        if (lineStart < chunk.length) {
+          const tail = Buffer.from(chunk.subarray(lineStart));
+          if (pending.length === 0) pendingOffset = fileOffset + lineStart;
+          pending.push(tail);
+        }
+        fileOffset += bytesRead;
+      }
+
+      if (pending.length > 0) {
+        const line = Buffer.concat(pending);
+        if (lineNo >= startLine) {
+          yield decodeTextWithErrors(line, 'utf-8', errors, pendingOffset !== 0);
+        }
+      }
+    } finally {
+      await fh.close();
     }
   }
 
@@ -544,16 +725,11 @@ export class LocalKaos implements Kaos {
       throw new Error('LocalKaos.exec(): at least one argument (the command to run) is required.');
     }
     const restArgs = args.slice(1);
-    const child = spawn(command, restArgs, {
-      cwd: this._cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      // POSIX `detached:true` makes the child a process-group leader so
-      // `LocalProcess.kill()` can signal the entire tree. No-op on Windows
-      // (`taskkill /T` handles the tree there). We do not call `child.unref()`
-      // because the parent still waits on the child's exit through `wait()`.
-      detached: !isWindows,
-      env: this._buildExecEnv(),
-    });
+    const child = spawn(
+      command,
+      restArgs,
+      buildLocalSpawnOptions(isWindows, this._cwd, this._buildExecEnv()),
+    );
     await waitForSpawn(child);
     return new LocalProcess(child);
   }
@@ -566,12 +742,11 @@ export class LocalKaos implements Kaos {
       );
     }
     const restArgs = args.slice(1);
-    const child = spawn(command, restArgs, {
-      cwd: this._cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: !isWindows,
-      env: this._buildExecEnv(env),
-    });
+    const child = spawn(
+      command,
+      restArgs,
+      buildLocalSpawnOptions(isWindows, this._cwd, this._buildExecEnv(env)),
+    );
     await waitForSpawn(child);
     return new LocalProcess(child);
   }
@@ -587,6 +762,118 @@ export class LocalKaos implements Kaos {
     }
     return merged;
   }
+}
+
+function isUtf8Encoding(encoding: BufferEncoding): boolean {
+  return encoding === 'utf-8' || encoding === 'utf8';
+}
+
+function* splitLinesKeepingTerminator(text: string): Generator<string> {
+  if (text.length === 0) return;
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text.codePointAt(i) === 0x0a) {
+      yield text.slice(start, i + 1);
+      start = i + 1;
+    }
+  }
+  if (start < text.length) {
+    yield text.slice(start);
+  }
+}
+
+function updateLineEndingFlagsFromBytes(
+  flags: LineEndingFlags,
+  chunk: Buffer,
+  prevWasCr: boolean,
+): boolean {
+  for (let i = 0; i < chunk.length; i += 1) {
+    const byte = chunk[i];
+    if (byte === undefined) continue;
+    if (byte === 0x0d) {
+      if (prevWasCr) flags.hasLoneCr = true;
+      prevWasCr = true;
+    } else if (byte === 0x0a) {
+      if (prevWasCr) {
+        flags.hasCrLf = true;
+      } else {
+        flags.hasLf = true;
+      }
+      prevWasCr = false;
+    } else {
+      if (prevWasCr) flags.hasLoneCr = true;
+      prevWasCr = false;
+    }
+  }
+  return prevWasCr;
+}
+
+function createUtf8Validator(): { write(chunk: Buffer): void; end(): void } {
+  let needed = 0;
+  let lower = 0x80;
+  let upper = 0xbf;
+
+  const fail = (): never => {
+    throw new TypeError('Invalid UTF-8 data');
+  };
+
+  return {
+    write(chunk: Buffer): void {
+      for (let i = 0; i < chunk.length; i += 1) {
+        const byte = chunk[i];
+        if (byte === undefined) continue;
+        if (needed === 0) {
+          if (byte <= 0x7f) continue;
+          if (byte >= 0xc2 && byte <= 0xdf) {
+            needed = 1;
+          } else if (byte === 0xe0) {
+            needed = 2;
+            lower = 0xa0;
+          } else if (byte >= 0xe1 && byte <= 0xec) {
+            needed = 2;
+          } else if (byte === 0xed) {
+            needed = 2;
+            upper = 0x9f;
+          } else if (byte >= 0xee && byte <= 0xef) {
+            needed = 2;
+          } else if (byte === 0xf0) {
+            needed = 3;
+            lower = 0x90;
+          } else if (byte >= 0xf1 && byte <= 0xf3) {
+            needed = 3;
+          } else if (byte === 0xf4) {
+            needed = 3;
+            upper = 0x8f;
+          } else {
+            fail();
+          }
+        } else {
+          if (byte < lower || byte > upper) fail();
+          lower = 0x80;
+          upper = 0xbf;
+          needed -= 1;
+        }
+      }
+    },
+    end(): void {
+      if (needed !== 0) fail();
+    },
+  };
+}
+
+async function readRange(
+  fh: Awaited<ReturnType<typeof open>>,
+  start: number,
+  length: number,
+): Promise<Buffer> {
+  const data = Buffer.alloc(length);
+  let offset = 0;
+  while (offset < length) {
+    const { bytesRead } = await fh.read(data, offset, length - offset, start + offset);
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  return offset === length ? data : data.subarray(0, offset);
 }
 
 // Wait for a freshly spawned ChildProcess to either emit 'spawn' (success) or

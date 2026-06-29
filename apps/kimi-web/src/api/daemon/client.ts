@@ -74,6 +74,8 @@ import type {
   WireProviderRefreshResult,
   WireSession,
   WireSessionAbortResult,
+  WireSessionWarning,
+  WireSessionWarningsResponse,
   WireSessionRuntimeStatus,
   WireSessionSnapshot,
   WireWorkspace,
@@ -284,7 +286,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
   // -------------------------------------------------------------------------
 
   async listSessions(
-    input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string; includeArchive?: boolean },
+    input?: PageRequest & {
+      status?: AppSessionStatus;
+      workspaceId?: string;
+      includeArchive?: boolean;
+      excludeEmpty?: boolean;
+    },
   ): Promise<Page<AppSession>> {
     const query: Record<string, string | number | boolean | undefined> = {
       before_id: input?.beforeId,
@@ -292,6 +299,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       page_size: input?.pageSize,
       status: input?.status ? toWireSessionStatus(input.status) : undefined,
       include_archive: input?.includeArchive,
+      exclude_empty: input?.excludeEmpty,
       // PRESUMED — daemon supports ?workspace_id= once the registry ships; it
       // ignores unknown query params until then, so this is safe to always send.
       workspace_id: input?.workspaceId,
@@ -392,6 +400,13 @@ export class DaemonKimiWebApi implements KimiWebApi {
       maxContextTokens: data.max_context_tokens ?? 0,
       contextUsage: data.context_usage ?? 0,
     };
+  }
+
+  async getSessionWarnings(sessionId: string): Promise<WireSessionWarning[]> {
+    const data = await this.http.get<WireSessionWarningsResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/warnings`,
+    );
+    return data.warnings ?? [];
   }
 
   async archiveSession(sessionId: string): Promise<{ archived: true }> {

@@ -66,7 +66,10 @@ export interface IQuestionService {
    * Resolves with the in-process `QuestionResult` (null = no handler / fully
    * dismissed). Concrete impls own timeout policy.
    */
-  request(req: InProcessQuestionRequest & { sessionId: string; agentId: string }): Promise<QuestionResult>;
+  request(
+    req: InProcessQuestionRequest & { sessionId: string; agentId: string },
+    options?: { signal?: AbortSignal },
+  ): Promise<QuestionResult>;
 
   /**
    * Called by the answer-side (REST handler / TUI / mock) to settle a pending
@@ -104,8 +107,6 @@ export interface QuestionToBrokerRequestParams {
   readonly sessionId: string;
   /** `createdAt` ISO string; broker passes `new Date().toISOString()`. */
   readonly createdAt: string;
-  /** `expiresAt` ISO string; broker computes `createdAt + 60s`. */
-  readonly expiresAt: string;
 }
 
 /**
@@ -142,14 +143,8 @@ function buildItem(
   if (item.header !== undefined) out.header = item.header;
   if (item.body !== undefined) out.body = item.body;
   if (item.multiSelect !== undefined) out.multi_select = item.multiSelect;
-  // SDK has no `allowOther` field — `otherLabel` / `otherDescription` exist
-  // and we expose them on the wire alongside an inferred `allow_other: true`
-  // when either tag is set. (SDK semantics: presence of `otherLabel` enables
-  // the "Other" affordance; we surface that explicitly on the wire so client
-  // renderers don't have to infer.)
-  const hasOtherAffordance =
-    item.otherLabel !== undefined || item.otherDescription !== undefined;
-  if (hasOtherAffordance) out.allow_other = true;
+  // SDK has no allowOther field; always advertise the free-text Other option on the wire.
+  out.allow_other = true;
   if (item.otherLabel !== undefined) out.other_label = item.otherLabel;
   if (item.otherDescription !== undefined) out.other_description = item.otherDescription;
   return out;
@@ -167,7 +162,6 @@ export function toBrokerRequest(
     session_id: params.sessionId,
     questions: req.questions.map((q, i) => buildItem(q, i)),
     created_at: params.createdAt,
-    expires_at: params.expiresAt,
   };
   if (req.turnId !== undefined) out.turn_id = req.turnId;
   if (req.toolCallId !== undefined) out.tool_call_id = req.toolCallId;

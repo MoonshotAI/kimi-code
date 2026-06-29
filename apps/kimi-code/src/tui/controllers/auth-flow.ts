@@ -1,4 +1,4 @@
-import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { CreateSessionOptions, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import type { SkillListSession } from '../commands';
 
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
@@ -10,6 +10,10 @@ import {
 import type { SessionEventHandler } from './session-event-handler';
 import type { AppState, KimiTUIOptions } from '../types';
 import type { TUIState } from '../tui-state';
+
+type MutableCreateSessionOptions = {
+  -readonly [P in keyof CreateSessionOptions]: CreateSessionOptions[P];
+};
 
 export interface AuthFlowHost {
   state: TUIState;
@@ -67,7 +71,7 @@ export class AuthFlowController {
       return;
     }
 
-    const session = await host.harness.createSession({
+    const options: MutableCreateSessionOptions = {
       workDir: host.state.appState.workDir,
       model,
       thinking: level,
@@ -77,7 +81,11 @@ export class AuthFlowController {
           ? 'yolo'
           : undefined,
       planMode: host.state.appState.planMode ? true : undefined,
-    });
+    };
+    if (host.state.appState.additionalDirs.length > 0) {
+      options.additionalDirs = [...host.state.appState.additionalDirs];
+    }
+    const session = await host.harness.createSession(options);
     await host.setSession(session);
     host.setAppState({
       sessionId: session.id,

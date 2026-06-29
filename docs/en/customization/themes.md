@@ -26,6 +26,7 @@ Custom themes can override the tokens below. The `dark` and `light` columns show
 | `diffGutter` | `#6B6B6B` | `#737373` | Diff line-number gutter |
 | `diffMeta` | `#888888` | `#5F5F5F` | Diff meta / hunk headers |
 | `roleUser` | `#FFCB6B` | `#9A4A00` | User message bullet and text, skill-activation name |
+| `shellMode` | `#BD93F9` | `#7C3AED` | Shell mode (`!`) prompt, editor border, and the echoed `$ command` line |
 
 ## Use the custom-theme skill
 

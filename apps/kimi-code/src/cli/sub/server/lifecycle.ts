@@ -25,6 +25,7 @@ import {
   DEFAULT_LOG_LEVEL,
   DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
+  LOCAL_SERVER_HOST,
   parseLogLevel,
   parsePort,
   serverOrigin,
@@ -249,5 +250,5 @@ function withStatusDetails(
 }
 
 function formatServiceUrl(host: string, port: number): string {
-  return serverOrigin(host === '0.0.0.0' ? DEFAULT_SERVER_HOST : host, port);
+  return serverOrigin(host === '0.0.0.0' ? LOCAL_SERVER_HOST : host, port);
 }

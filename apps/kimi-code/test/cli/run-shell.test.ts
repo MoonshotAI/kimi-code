@@ -181,6 +181,7 @@ describe('runShell', () => {
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
+      addDirs: ['../shared', '/tmp/extra'],
     };
 
     await runShell(cliOptions, '1.2.3-test');
@@ -220,6 +221,7 @@ describe('runShell', () => {
     expect(harness).toBeTypeOf('object');
     expect(startupInput).toMatchObject({
       cliOptions,
+      additionalDirs: ['../shared', '/tmp/extra'],
       tuiConfig: {
         theme: 'dark',
         editorCommand: null,
@@ -396,13 +398,13 @@ describe('runShell', () => {
     harnessOptions.onOAuthRefresh({ success: false, reason: 'unauthorized' });
     harnessOptions.onOAuthRefresh({ success: false, reason: 'network_or_other' });
 
-    expect(mocks.telemetryTrack).toHaveBeenCalledWith('oauth_refresh', { success: true });
+    expect(mocks.telemetryTrack).toHaveBeenCalledWith('oauth_refresh', { outcome: 'success' });
     expect(mocks.telemetryTrack).toHaveBeenCalledWith('oauth_refresh', {
-      success: false,
+      outcome: 'error',
       reason: 'unauthorized',
     });
     expect(mocks.telemetryTrack).toHaveBeenCalledWith('oauth_refresh', {
-      success: false,
+      outcome: 'error',
       reason: 'network_or_other',
     });
   });
@@ -503,7 +505,7 @@ describe('runShell', () => {
     ).rejects.toThrow('boom');
 
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('shutdown');
-    expect(mocks.harnessTrack).toHaveBeenCalledWith('exit', { duration_s: expect.any(Number) });
+    expect(mocks.harnessTrack).toHaveBeenCalledWith('exit', { duration_ms: expect.any(Number) });
     expect(mocks.shutdownTelemetry).toHaveBeenCalledOnce();
     expect(mocks.harnessClose).toHaveBeenCalledOnce();
   });
@@ -549,7 +551,7 @@ describe('runShell', () => {
       expect(mocks.setCrashPhase).toHaveBeenCalledWith('shutdown');
       expect(mocks.withTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses-1' });
       expect(mocks.lifecycleTrack).toHaveBeenCalledWith('exit', {
-        duration_s: expect.any(Number),
+        duration_ms: expect.any(Number),
       });
       expect(mocks.harnessTrack).not.toHaveBeenCalledWith('exit', expect.anything());
       expect(mocks.shutdownTelemetry).toHaveBeenCalledOnce();
@@ -592,7 +594,7 @@ describe('runShell', () => {
         '1.2.3-test',
       );
       const [tui] = mocks.kimiTuiConstructor.mock.calls[0]!;
-      const openedUrl = 'http://127.0.0.1:58627/sessions/ses-1';
+      const openedUrl = 'http://127.0.0.1:58627/sessions/ses-1#token=tok-1';
       (tui as { exitOpenUrl?: string }).exitOpenUrl = openedUrl;
 
       await expect((tui as { onExit: () => Promise<void> }).onExit()).rejects.toBeInstanceOf(
