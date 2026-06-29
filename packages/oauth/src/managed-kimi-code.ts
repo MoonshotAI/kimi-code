@@ -11,6 +11,12 @@ export const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 export const KIMI_CODE_OAUTH_KEY = 'oauth/kimi-code';
 const KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX = 'oauth/kimi-code-env-';
 
+export type ManagedKimiCodeProtocol = 'kimi' | 'anthropic';
+
+export function parseModelProtocol(value: unknown): ManagedKimiCodeProtocol | undefined {
+  return value === 'anthropic' ? 'anthropic' : undefined;
+}
+
 /**
  * Server-declared thinking toggle support from `/models`:
  *  - 'only' — thinking cannot be turned off (always-thinking)
@@ -31,6 +37,7 @@ export interface ManagedKimiCodeModelInfo {
   readonly supportEfforts?: readonly string[];
   readonly defaultEffort?: string;
   readonly displayName?: string | undefined;
+  readonly protocol?: ManagedKimiCodeProtocol | undefined;
 }
 
 export interface ManagedKimiCodeProvisionResult {
@@ -108,7 +115,7 @@ export class ManagedKimiCodeModelsAuthError extends OAuthUnauthorizedError {
 }
 
 export interface ManagedKimiProviderConfig {
-  type: 'kimi';
+  type: ManagedKimiCodeProtocol;
   baseUrl?: string | undefined;
   apiKey?: string | undefined;
   oauth?: ManagedKimiOAuthRef | undefined;
@@ -123,6 +130,7 @@ export interface ManagedKimiModelAlias {
   supportEfforts?: readonly string[] | undefined;
   defaultEffort?: string | undefined;
   displayName?: string | undefined;
+  protocol?: ManagedKimiCodeProtocol;
   readonly [key: string]: unknown;
 }
 
@@ -399,6 +407,7 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
     supportEfforts: thinkEfforts.supportEfforts,
     defaultEffort: thinkEfforts.defaultEffort,
     displayName: normalizedDisplayName,
+    protocol: parseModelProtocol(item['protocol']),
   };
 }
 
@@ -538,6 +547,7 @@ export function applyManagedKimiCodeConfig(
       ...(model.displayName !== undefined ? { displayName: model.displayName } : {}),
       ...(model.supportEfforts !== undefined ? { supportEfforts: model.supportEfforts } : {}),
       ...(model.defaultEffort !== undefined ? { defaultEffort: model.defaultEffort } : {}),
+      protocol: model.protocol,
     };
   }
 

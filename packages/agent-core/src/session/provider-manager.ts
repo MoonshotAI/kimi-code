@@ -1,7 +1,7 @@
 import type { Logger } from '#/logging/types';
 import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
 import { APIStatusError, getModelCapability, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
-import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig } from '../config';
+import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig, ProviderType } from '../config';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
 
 export interface BearerTokenProvider {
@@ -20,6 +20,10 @@ export interface ResolvedRuntimeProvider {
   /** Declared 'always_thinking' capability — the model cannot disable thinking. */
   readonly alwaysThinking?: boolean;
   readonly maxOutputSize?: number;
+  /** Configured provider wire type (`provider.type`), before any model-level protocol override. */
+  readonly type: ProviderType;
+  /** Model-level protocol override (`alias.protocol`); when set, takes precedence over `type` for transport selection. */
+  readonly protocol: ModelAlias['protocol'];
 }
 
 interface ProviderManagerOptions {
@@ -60,6 +64,8 @@ export class SingleModelProvider implements ModelProvider {
       modelCapabilities: this.modelCapabilities,
       providerName: 'single-model-provider',
       provider: this.providerConfig,
+      type: this.providerConfig.type,
+      protocol: undefined,
     };
   }
 }
@@ -107,6 +113,7 @@ export class ProviderManager implements ModelProvider {
     const provider = toKosongProviderConfig(
       providerConfig,
       alias.model,
+      alias.protocol,
       this.options.kimiRequestHeaders,
       alias.maxOutputSize,
       alias.reasoningKey,
@@ -123,6 +130,8 @@ export class ProviderManager implements ModelProvider {
         (c) => c.trim().toLowerCase() === 'always_thinking',
       ),
       maxOutputSize: alias.maxOutputSize,
+      type: providerConfig.type,
+      protocol: alias.protocol,
     };
   }
 
@@ -220,6 +229,7 @@ function resolveModelCapabilities(
 function toKosongProviderConfig(
   provider: ProviderConfig,
   model: string,
+  modelProtocol: ModelAlias['protocol'],
   kimiRequestHeaders: Record<string, string> | undefined,
   maxOutputSize: number | undefined,
   reasoningKey: string | undefined,
@@ -227,17 +237,26 @@ function toKosongProviderConfig(
   adaptiveThinking: boolean | undefined,
   supportEfforts: readonly string[] | undefined,
 ): KosongProviderConfig {
-  switch (provider.type) {
-    case 'anthropic':
+  const effectiveType = modelProtocol === 'anthropic' ? 'anthropic' : provider.type;
+  switch (effectiveType) {
+    case 'anthropic': {
+      const baseUrl = providerValue(provider.baseUrl, provider.env, 'ANTHROPIC_BASE_URL');
       return {
         type: 'anthropic',
         model,
-        baseUrl: providerValue(provider.baseUrl, provider.env, 'ANTHROPIC_BASE_URL'),
+        baseUrl:
+          modelProtocol === 'anthropic' && baseUrl !== undefined
+            ? baseUrl.replace(/\/v1\/?$/, '')
+            : baseUrl,
         apiKey: providerApiKey(provider),
         ...(maxOutputSize !== undefined ? { defaultMaxTokens: maxOutputSize } : {}),
         ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
+        // Session affinity: Anthropic's analog of OpenAI `prompt_cache_key` is
+        // `metadata.user_id` on the Messages API (cache-affinity / end-user id).
+        ...(promptCacheKey !== undefined ? { metadata: { user_id: promptCacheKey } } : {}),
         ...defaultHeadersField(provider.customHeaders),
       };
+    }
     case 'openai':
       return {
         type: 'openai',
@@ -283,7 +302,7 @@ function toKosongProviderConfig(
       };
     }
     default: {
-      const exhaustive: never = provider.type;
+      const exhaustive: never = effectiveType;
       throw new KimiError(
         ErrorCodes.MODEL_CONFIG_INVALID,
         `Unsupported provider type: ${String(exhaustive)}`,

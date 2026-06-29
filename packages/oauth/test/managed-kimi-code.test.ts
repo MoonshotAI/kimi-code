@@ -13,6 +13,7 @@ import {
   resolveKimiCodeOAuthKey,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  type ManagedKimiCodeModelInfo,
   type ManagedKimiConfigShape,
 } from '../src/managed-kimi-code';
 import { OAuthUnauthorizedError } from '../src/errors';
@@ -1292,5 +1293,97 @@ describe('selective merge', () => {
 
     expect(config.models?.['kimi-code/kimi-k2']).toBeDefined();
     expect(config.models?.['kimi-code/removed']).toBeUndefined();
+  });
+});
+
+function makeModelInfo(
+  id: string,
+  overrides: Partial<ManagedKimiCodeModelInfo> = {},
+): ManagedKimiCodeModelInfo {
+  return {
+    id,
+    contextLength: 200000,
+    supportsReasoning: false,
+    supportsImageIn: false,
+    supportsVideoIn: false,
+    ...overrides,
+  };
+}
+
+const KIMI_BASE_URL = 'https://api.kimi.com/coding/v1';
+
+describe('managed protocol routing', () => {
+  it('reads protocol from the /models response', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'kimi-for-coding', context_length: 262144, protocol: 'anthropic' }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as unknown as typeof fetch;
+
+    const models = await fetchManagedKimiCodeModels({ accessToken: 't', fetchImpl });
+    expect(models).toHaveLength(1);
+    expect(models[0]?.protocol).toBe('anthropic');
+  });
+
+  it('keeps the provider on the kimi REST base and records the model protocol when anthropic', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyManagedKimiCodeConfig(config, {
+      baseUrl: KIMI_BASE_URL,
+      models: [makeModelInfo('kimi-for-coding', { protocol: 'anthropic' })],
+    });
+
+    // The provider stays on the kimi wire + REST base; the anthropic transport
+    // is resolved per-model at runtime, not baked into the provider config, so
+    // the REST base keeps flowing to OAuth key derivation and plugin env.
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+      type: 'kimi',
+      baseUrl: KIMI_BASE_URL,
+      apiKey: '',
+    });
+    expect(config.models?.['kimi-code/kimi-for-coding']).toMatchObject({
+      provider: KIMI_CODE_PROVIDER_NAME,
+      protocol: 'anthropic',
+    });
+  });
+
+  it('keeps the kimi protocol and baseUrl when the model has no anthropic protocol', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyManagedKimiCodeConfig(config, {
+      baseUrl: KIMI_BASE_URL,
+      models: [makeModelInfo('kimi-for-coding')],
+    });
+
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+      type: 'kimi',
+      baseUrl: KIMI_BASE_URL,
+      apiKey: '',
+    });
+    expect(config.models?.['kimi-code/kimi-for-coding']?.provider).toBe(KIMI_CODE_PROVIDER_NAME);
+    expect(config.models?.['kimi-code/kimi-for-coding']?.protocol).toBeUndefined();
+  });
+
+  it('drops the model protocol on refresh when the server stops declaring anthropic', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyManagedKimiCodeConfig(config, {
+      baseUrl: KIMI_BASE_URL,
+      models: [makeModelInfo('kimi-for-coding', { protocol: 'anthropic' })],
+    });
+    expect(config.models?.['kimi-code/kimi-for-coding']?.protocol).toBe('anthropic');
+
+    applyManagedKimiCodeConfig(config, {
+      baseUrl: KIMI_BASE_URL,
+      models: [makeModelInfo('kimi-for-coding')],
+    });
+    // The provider never leaves the kimi wire / REST base across refreshes —
+    // only the per-model protocol annotation changes.
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+      type: 'kimi',
+      baseUrl: KIMI_BASE_URL,
+    });
+    expect(config.models?.['kimi-code/kimi-for-coding']?.protocol).toBeUndefined();
   });
 });

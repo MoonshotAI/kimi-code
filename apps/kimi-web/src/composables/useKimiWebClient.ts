@@ -21,6 +21,7 @@ import {
 import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
 import { useAppearance } from './client/useAppearance';
 import { useNotification } from './client/useNotification';
+import { useSoundNotification } from './client/useSoundNotification';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
 import { useSideChat } from './client/useSideChat';
@@ -28,6 +29,7 @@ import { useWorkspaceState } from './client/useWorkspaceState';
 
 const appearance = useAppearance();
 const notification = useNotification();
+const sound = useSoundNotification();
 import type {
   AppEvent,
   AppApprovalRequest,
@@ -758,6 +760,14 @@ function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number
     (appEvent.status === 'idle' || appEvent.status === 'aborted')
   ) {
     onSessionIdle(appEvent.sessionId, appEvent.status);
+  }
+
+  // The agent asked a question and is waiting for an answer — surface it so
+  // the user comes back. Hooked on the request event (fires once per new
+  // question, and not for questions restored from a snapshot) rather than the
+  // awaitingQuestion status flip, which can arrive in any order relative to it.
+  if (appEvent.type === 'questionRequested') {
+    onQuestionRequested(appEvent.sessionId, appEvent.question);
   }
 }
 
@@ -1995,21 +2005,6 @@ const attentionByWorkspace = computed<Record<string, number>>(() => {
 /** Recently-used roots for the add-workspace quick-pick (from /fs:home). */
 const recentRoots = computed<string[]>(() => rawState.recentRoots);
 
-/** Distinct cwd values from loaded sessions, most-recent first, deduped, max 8 */
-const recentCwds = computed<string[]>(() => {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const s of rawState.sessions) {
-    const cwd = s.cwd;
-    if (cwd && !seen.has(cwd)) {
-      seen.add(cwd);
-      result.push(cwd);
-      if (result.length >= 8) break;
-    }
-  }
-  return result;
-});
-
 /** Installed external apps the "Open in app" menu may offer for this host. */
 const availableOpenInApps = computed<string[]>(() => rawState.availableOpenInApps);
 
@@ -2103,6 +2098,12 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
     },
   });
 
+  // Completion sound — only for real completions (aborted/cancelled turns stay
+  // silent). Plays regardless of visibility so it also reaches a backgrounded tab.
+  if (status === 'idle') {
+    sound.maybePlayCompletionSound();
+  }
+
   const queue = rawState.queuedBySession[sid] ?? [];
   if (queue.length === 0) return;
 
@@ -2121,6 +2122,34 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
       }
     });
   }
+}
+
+function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
+  const first = question.questions[0];
+  // Lead with the actionable question text; keep the short header as context
+  // when both are present so the desktop notification actually says what is
+  // being asked (e.g. "Storage: Which database?").
+  const header = first?.header?.trim() ?? '';
+  const questionText = first?.question?.trim() ?? '';
+  const preview =
+    header && questionText ? `${header}: ${questionText}` : questionText || header;
+
+  // Browser notification when the user isn't watching this session.
+  notification.maybeNotifyQuestion(sid, {
+    isActiveAndVisible:
+      sid === rawState.activeSessionId &&
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'visible',
+    sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
+    questionPreview: preview,
+    onClick: () => {
+      void workspaceState.selectSession(sid);
+    },
+  });
+
+  // Attention sound — plays regardless of visibility so it also reaches a
+  // backgrounded tab (same as the completion sound).
+  sound.maybePlayQuestionSound();
 }
 
 // ---------------------------------------------------------------------------
@@ -2166,7 +2195,6 @@ export function useKimiWebClient() {
     activePullRequest,
     changesByPath,
     pendingApprovals,
-    recentCwds,
     availableOpenInApps,
 
     // New Phase 1 computed
@@ -2213,15 +2241,19 @@ export function useKimiWebClient() {
     accent: appearance.accent,
     setAccent: appearance.setAccent,
     notifyOnComplete: notification.notifyOnComplete,
+    notifyOnQuestion: notification.notifyOnQuestion,
     notifyPermission: notification.notifyPermission,
     setNotifyOnComplete: notification.setNotifyOnComplete,
+    setNotifyOnQuestion: notification.setNotifyOnQuestion,
+    soundOnComplete: sound.soundOnComplete,
+    setSoundOnComplete: sound.setSoundOnComplete,
     onboarded,
     setOnboarded,
 
     // Actions
     load: workspaceState.load,
     selectSession: workspaceState.selectSession,
-    createSession: workspaceState.createSession,
+    clearActiveSession: workspaceState.clearActiveSession,
     loadOlderMessages: workspaceState.loadOlderMessages,
 
     // Workspace actions
@@ -2231,7 +2263,6 @@ export function useKimiWebClient() {
     selectWorkspace: workspaceState.selectWorkspace,
     openWorkspace: workspaceState.openWorkspace,
     openWorkspaceDraft: workspaceState.openWorkspaceDraft,
-    createSessionInWorkspace: workspaceState.createSessionInWorkspace,
     startSessionAndSendPrompt: workspaceState.startSessionAndSendPrompt,
     addWorkspaceByPath: workspaceState.addWorkspaceByPath,
     browseFs: workspaceState.browseFs,

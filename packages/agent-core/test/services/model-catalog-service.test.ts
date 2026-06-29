@@ -275,4 +275,57 @@ describe('ModelCatalogService', () => {
       },
     });
   });
+
+  it('keeps the kimi-code provider on the REST base and records the model protocol when anthropic', async () => {
+    const configRef: { current: KimiConfig } = {
+      current: {
+        providers: {
+          [KIMI_CODE_PROVIDER_NAME]: {
+            type: 'kimi',
+            apiKey: '',
+            baseUrl: 'https://api.example.test/coding/v1',
+            oauth: { storage: 'file', key: 'oauth/kimi-code' },
+          },
+        },
+        defaultModel: 'kimi-code/kimi-for-coding',
+        models: {
+          'kimi-code/kimi-for-coding': {
+            provider: KIMI_CODE_PROVIDER_NAME,
+            model: 'kimi-for-coding',
+            maxContextSize: 200_000,
+          },
+        },
+      },
+    };
+    const { core, setCalls } = makeCore(configRef);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-for-coding',
+                context_length: 200_000,
+                protocol: 'anthropic',
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+    const svc = ModelCatalogService._createForTest(makeEnv(), core, authFacade());
+
+    await svc.refreshOAuthProviderModels();
+
+    const last = setCalls.at(-1) as Record<string, unknown>;
+    const providers = last['providers'] as Record<string, { type: string; baseUrl: string }>;
+    const models = last['models'] as Record<string, { provider: string; protocol?: string }>;
+    // Provider type/baseUrl stay on the kimi wire + REST base; the anthropic
+    // transport is carried on the model alias for per-model resolution.
+    expect(providers[KIMI_CODE_PROVIDER_NAME]?.type).toBe('kimi');
+    expect(providers[KIMI_CODE_PROVIDER_NAME]?.baseUrl).toBe('https://api.example.test/coding/v1');
+    expect(models['kimi-code/kimi-for-coding']?.provider).toBe(KIMI_CODE_PROVIDER_NAME);
+    expect(models['kimi-code/kimi-for-coding']?.protocol).toBe('anthropic');
+  });
 });

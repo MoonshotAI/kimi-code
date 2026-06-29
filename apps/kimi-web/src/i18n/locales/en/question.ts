@@ -1,8 +1,8 @@
 export default {
   title: 'Question',
   step: 'Q{current}/{total}',
-  prev: '‹ Prev',
-  next: 'Next ›',
+  back: '‹ Back',
+  nextQuestion: 'Next question ›',
   otherDefault: 'Other…',
   submit: 'Submit',
   dismiss: 'Dismiss',

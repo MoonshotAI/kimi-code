@@ -72,5 +72,16 @@ export function useComposerDraft(deps: ComposerDraftDeps) {
     });
   }
 
-  return { text, textareaRef, autosize, loadForEdit };
+  /**
+   * Synchronously clear the persisted draft for the current session.
+   * Call this right after clearing `text.value` on send/steer; relying on the
+   * text watcher is unsafe because the Composer may unmount before the watcher
+   * flushes (e.g. when the optimistic user message replaces the empty-session
+   * composer), causing the next mount to reload the stale draft.
+   */
+  function clearDraft(): void {
+    saveDraft(sessionId(), '');
+  }
+
+  return { text, textareaRef, autosize, loadForEdit, clearDraft };
 }

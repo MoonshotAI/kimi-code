@@ -150,10 +150,37 @@ describe('BackgroundManager — event emission', () => {
       'background_task_completed',
       expect.objectContaining({
         kind: 'process',
-        duration: expect.any(Number),
+        duration_ms: expect.any(Number),
         status: 'completed',
       }),
     );
+  });
+
+  it('sends null duration_ms when a terminal task has no endedAt', () => {
+    const { agent, manager } = createBackgroundManager();
+    agent.telemetry.track.mockClear();
+
+    const info: BackgroundTaskInfo = {
+      taskId: 'task-1',
+      description: 'lost task',
+      status: 'lost',
+      kind: 'process',
+      command: 'sleep 60',
+      pid: 123,
+      exitCode: null,
+      startedAt: 100,
+      endedAt: null,
+    };
+
+    (manager as unknown as { emitTaskTerminated: (info: BackgroundTaskInfo) => void }).emitTaskTerminated(
+      info,
+    );
+
+    const trackCall = agent.telemetry.track.mock.calls.find(
+      (call) => call[0] === 'background_task_completed',
+    );
+    expect(trackCall?.[1]).toMatchObject({ kind: 'process', status: 'lost' });
+    expect(trackCall?.[1]?.duration_ms).toBeNull();
   });
 
   it('tracks failed and timed-out terminal statuses', async () => {

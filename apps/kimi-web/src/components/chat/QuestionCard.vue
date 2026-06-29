@@ -36,6 +36,23 @@ function goNext(): void {
   if (step.value < total.value - 1) step.value++;
 }
 
+function goToStep(index: number): void {
+  if (index >= 0 && index < total.value) step.value = index;
+}
+
+function isQuestionAnswered(qid: string): boolean {
+  const a = answers.value[qid];
+  if (!a) return false;
+  if (a.kind === 'multi') return a.optionIds.length > 0;
+  if (a.kind === 'multiWithOther') return a.optionIds.length > 0 || a.otherText.trim().length > 0;
+  if (a.kind === 'other') return a.text.trim().length > 0;
+  return true;
+}
+
+function isCurrentAnswered(): boolean {
+  return isQuestionAnswered(current.value.id);
+}
+
 // ---------------------------------------------------------------------------
 // Per-question answers: Record<questionId, QuestionAnswer>
 // ---------------------------------------------------------------------------
@@ -145,14 +162,7 @@ function isOtherSelected(qid: string): boolean {
 
 function canSubmit(): boolean {
   // All questions must have an answer
-  return props.question.questions.every((qi) => {
-    const a = answers.value[qi.id];
-    if (!a) return false;
-    if (a.kind === 'multi') return a.optionIds.length > 0;
-    if (a.kind === 'multiWithOther') return a.optionIds.length > 0 || a.otherText.trim().length > 0;
-    if (a.kind === 'other') return a.text.trim().length > 0;
-    return true;
-  });
+  return props.question.questions.every((qi) => isQuestionAnswered(qi.id));
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +194,15 @@ function handleKeydown(e: KeyboardEvent): void {
   if (minimized.value && e.key !== 'Escape') return;
 
   if (e.key === 'Escape') { e.preventDefault(); dismiss(); return; }
-  if (e.key === 'Enter') { e.preventDefault(); submit(); return; }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (step.value < total.value - 1 && isCurrentAnswered()) {
+      goNext();
+    } else if (canSubmit()) {
+      submit();
+    }
+    return;
+  }
 
   const num = parseInt(e.key, 10);
   if (!isNaN(num) && num >= 1 && num <= 9) {
@@ -208,14 +226,10 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 
 <template>
   <div class="qcard" :class="{ minimized }">
-    <!-- Step indicator (multi-question) -->
+    <!-- Header: title, step count, minimize -->
     <div class="qh">
       <span class="qtitle">{{ t('question.title') }}</span>
-      <template v-if="total > 1 && !minimized">
-        <span class="qstep">{{ t('question.step', { current: step + 1, total }) }}</span>
-        <button class="qnav" :disabled="step === 0" @click="goBack">{{ t('question.prev') }}</button>
-        <button class="qnav" :disabled="step === total - 1" @click="goNext">{{ t('question.next') }}</button>
-      </template>
+      <span v-if="total > 1 && !minimized" class="qstep">{{ t('question.step', { current: step + 1, total }) }}</span>
       <!-- When minimized, surface the question text so the bar stays identifiable -->
       <span v-if="minimized" class="qmin-peek">{{ current.question }}</span>
       <button
@@ -231,6 +245,22 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 
     <!-- Current question -->
     <div v-if="!minimized" class="qbody">
+      <!-- Stepper: only shown when there are multiple questions -->
+      <div v-if="total > 1" class="qsteps" role="tablist" :aria-label="t('question.step', { current: step + 1, total })">
+        <button
+          v-for="(q, i) in props.question.questions"
+          :key="q.id"
+          type="button"
+          class="qstep-dot"
+          :class="{ active: i === step, answered: isQuestionAnswered(q.id) }"
+          :aria-selected="i === step"
+          :aria-label="t('question.step', { current: i + 1, total })"
+          @click="goToStep(i)"
+        >
+          <span class="qstep-num">{{ i + 1 }}</span>
+        </button>
+      </div>
+
       <!-- Header chip -->
       <div v-if="current.header" class="qheader-chip">{{ current.header }}</div>
 
@@ -293,10 +323,31 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
       </div>
     </div>
 
-    <!-- Action buttons -->
+    <!-- Action buttons: primary action first, all left-aligned; dismiss is
+         de-emphasized as a text-only button. -->
     <div v-if="!minimized" class="qfooter">
-      <button class="qbtn pri" :disabled="!canSubmit()" @click="submit">{{ t('question.submit') }}</button>
-      <button class="qbtn" @click="dismiss">{{ t('question.dismiss') }}</button>
+      <button
+        v-if="step < total - 1"
+        type="button"
+        class="qbtn pri qfooter-main"
+        :disabled="!isCurrentAnswered()"
+        @click="goNext"
+      >{{ t('question.nextQuestion') }}</button>
+      <button
+        v-else
+        type="button"
+        class="qbtn pri qfooter-main"
+        :disabled="!canSubmit()"
+        @click="submit"
+      >{{ t('question.submit') }}</button>
+      <button
+        v-if="total > 1"
+        type="button"
+        class="qbtn"
+        :disabled="step === 0"
+        @click="goBack"
+      >{{ t('question.back') }}</button>
+      <button type="button" class="qbtn qbtn-text" @click="dismiss">{{ t('question.dismiss') }}</button>
     </div>
   </div>
 </template>
@@ -322,18 +373,6 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 }
 .qtitle { color: var(--blue2); font-weight: 700; }
 .qstep { color: var(--muted); font-size: calc(var(--ui-font-size) - 3px); margin-left: 4px; }
-.qnav {
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  padding: 2px 8px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  background: var(--bg);
-  color: var(--dim);
-  cursor: pointer;
-}
-.qnav:disabled { color: var(--faint); cursor: default; }
-.qnav:not(:disabled):hover { background: var(--panel2); }
 
 /* Minimize toggle — pinned to the right of the header row. */
 .qmin {
@@ -367,6 +406,40 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 
 /* Body */
 .qbody { padding: 12px 14px; }
+
+/* Stepper */
+.qsteps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.qstep-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--dim);
+  font-size: calc(var(--ui-font-size) - 2px);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.qstep-dot:hover:not(.active) { background: var(--panel2); }
+.qstep-dot.active {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: var(--bg);
+  font-weight: 700;
+}
+.qstep-dot.answered:not(.active) {
+  border-color: var(--blue);
+  color: var(--blue);
+}
 
 .qheader-chip {
   display: inline-block;
@@ -474,6 +547,18 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 }
 .qbtn.pri:hover:not(:disabled) { background: var(--blue2); }
 .qbtn:disabled { opacity: 0.45; cursor: default; }
+.qbtn-text {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.qbtn-text:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+  text-decoration: underline;
+}
 
 /* =========================================================================
    MOBILE (≤640px): bigger option taps, comfortable nav, and full-width footer
@@ -482,10 +567,16 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
    ========================================================================= */
 @media (max-width: 640px) {
   .qh { padding: 9px 12px; flex-wrap: wrap; row-gap: 6px; }
-  .qnav { min-height: 34px; padding: 5px 12px; font-size: var(--ui-font-size-xs); border-radius: 6px; }
 
   .qbody { padding: 14px; }
   .qtext { font-size: var(--ui-font-size); }
+
+  /* Stepper → slightly larger tap targets. */
+  .qstep-dot {
+    width: 28px;
+    height: 28px;
+    font-size: var(--ui-font-size-xs);
+  }
 
   /* Options → taller, finger-friendly rows. Label + description already stack
      via .qopt-text, so no flex-wrap hack is needed. */
@@ -498,7 +589,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   .qopt-desc { font-size: var(--ui-font-size-xs); }
   .other-input { flex-basis: 100%; min-height: 28px; }
 
-  /* Footer → full-width stacked buttons, Submit on top. */
+  /* Footer → full-width stacked buttons, Next/Submit on top. */
   .qfooter { flex-direction: column; gap: 8px; padding: 12px 14px max(14px, env(safe-area-inset-bottom)); }
   .qbtn {
     width: 100%;
@@ -506,5 +597,6 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
     font-size: var(--ui-font-size);
     border-radius: 8px;
   }
+  .qfooter-main { order: -1; }
 }
 </style>

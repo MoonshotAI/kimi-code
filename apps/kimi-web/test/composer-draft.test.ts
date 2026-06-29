@@ -132,4 +132,23 @@ describe('useComposerDraft', () => {
       draft.autosize();
     }).not.toThrow();
   });
+
+  it('clearDraft removes the persisted draft synchronously', async () => {
+    // Regression: when the first message of an empty session is submitted, the
+    // optimistic user turn unmounts the composer before the post-flush text
+    // watcher can clear the draft. clearDraft must therefore clear it
+    // synchronously so a remount does not reload the stale text.
+    globalThis.localStorage.setItem(draftStorageKey('s1'), 'stale draft');
+    const { draft } = setup('s1');
+    draft.clearDraft();
+    // No nextTick — the write is synchronous.
+    expect(globalThis.localStorage.getItem(draftStorageKey('s1'))).toBeNull();
+
+    // Simulate the remount after the optimistic turn: a fresh composable
+    // instance for the same session should start empty, not restore the draft.
+    const { text } = setup('s1');
+    expect(text.value).toBe('');
+    await nextTick();
+    expect(globalThis.localStorage.getItem(draftStorageKey('s1'))).toBeNull();
+  });
 });

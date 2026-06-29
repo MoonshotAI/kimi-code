@@ -276,6 +276,114 @@ describe('AnthropicChatProvider', () => {
       ]);
     });
 
+    it('video url content (base64 data URL)', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: "What's in this video?" },
+            { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AAAA' } },
+          ] satisfies ContentPart[],
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: "What's in this video?" },
+            {
+              type: 'video',
+              source: { type: 'base64', media_type: 'video/mp4', data: 'AAAA' },
+            },
+          ],
+        },
+      ]);
+    });
+
+    it('video url content passes a non-data URL through as a url source', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'describe' },
+            { type: 'video_url', videoUrl: { url: 'ms://file-abc' } },
+            { type: 'video_url', videoUrl: { url: 'https://example.com/video.mp4' } },
+          ] satisfies ContentPart[],
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      // Non-data video references (moonshot `ms://` file ids carried over from a
+      // kimi turn, or http URLs) are emitted as url-source video blocks — the
+      // kimi anthropic endpoint resolves them server-side, exactly like image
+      // url sources.
+      expect(body['messages']).toEqual([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'describe' },
+            { type: 'video', source: { type: 'url', url: 'ms://file-abc' } },
+            { type: 'video', source: { type: 'url', url: 'https://example.com/video.mp4' } },
+          ],
+        },
+      ]);
+    });
+
+    it('video url content rejects unsupported media type', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'user',
+          content: [
+            { type: 'video_url', videoUrl: { url: 'data:image/png;base64,AAAA' } },
+          ] satisfies ContentPart[],
+          toolCalls: [],
+        },
+      ];
+      await expect(captureRequestBody(provider, '', [], history)).rejects.toThrow(ChatProviderError);
+    });
+
+    it('tool result with video content', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Run tool' }],
+          toolCalls: [],
+        },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'call_1', name: 'add', arguments: '{"a":1,"b":2}' }],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'text', text: 'see video' },
+            { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AAAA' } },
+          ] satisfies ContentPart[],
+          toolCalls: [],
+          toolCallId: 'call_1',
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [ADD_TOOL], history);
+
+      const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+      const lastContent = messages.at(-1)!.content as Array<{ type: string; content: unknown[] }>;
+      const toolResult = lastContent[0]!;
+      expect(toolResult.type).toBe('tool_result');
+      expect(toolResult.content).toEqual([
+        { type: 'text', text: 'see video' },
+        { type: 'video', source: { type: 'base64', media_type: 'video/mp4', data: 'AAAA' } },
+      ]);
+    });
+
     it('tool definitions with cache_control on last tool', async () => {
       const provider = createProvider();
       const history: Message[] = [
@@ -490,10 +598,10 @@ describe('AnthropicChatProvider', () => {
       });
     });
 
-    it('user audio/video parts degrade to placeholder text, consecutive same-kind collapse', async () => {
-      // The Messages API cannot carry audio or video. Dropping the parts
-      // silently would leave the model unaware an attachment ever existed,
-      // so each unsupported part degrades to a placeholder text block.
+    it('user audio parts degrade to placeholder text, video parts convert to video blocks', async () => {
+      // Audio still has no Messages-API representation and degrades to a
+      // placeholder text block (consecutive same-kind placeholders collapse).
+      // Video is now carried as a base64 `video` content block.
       const provider = createProvider();
       const history: Message[] = [
         {
@@ -502,7 +610,7 @@ describe('AnthropicChatProvider', () => {
             { type: 'text', text: 'Listen and watch:' },
             { type: 'audio_url', audioUrl: { url: 'https://example.com/a.mp3' } },
             { type: 'audio_url', audioUrl: { url: 'https://example.com/b.mp3' } },
-            { type: 'video_url', videoUrl: { url: 'https://example.com/c.mp4' } },
+            { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AAAA' } },
           ] satisfies ContentPart[],
           toolCalls: [],
         },
@@ -514,9 +622,8 @@ describe('AnthropicChatProvider', () => {
         { type: 'text', text: 'Listen and watch:' },
         { type: 'text', text: '(audio omitted: not supported by this provider)' },
         {
-          type: 'text',
-          text: '(video omitted: not supported by this provider)',
-          cache_control: { type: 'ephemeral' },
+          type: 'video',
+          source: { type: 'base64', media_type: 'video/mp4', data: 'AAAA' },
         },
       ]);
     });

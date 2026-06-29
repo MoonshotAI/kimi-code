@@ -401,9 +401,10 @@ export class SessionEventHandler {
 
   private isAnthropicSessionActive(): boolean {
     const { state } = this.host;
-    const providerKey = state.appState.availableModels[state.appState.model]?.provider;
-    if (providerKey === undefined) return false;
-    return state.appState.availableProviders[providerKey]?.type === 'anthropic';
+    const model = state.appState.availableModels[state.appState.model];
+    if (model === undefined) return false;
+    if (model.protocol === 'anthropic') return true;
+    return state.appState.availableProviders[model.provider]?.type === 'anthropic';
   }
 
   private handleStepInterrupted(event: TurnStepInterruptedEvent): void {

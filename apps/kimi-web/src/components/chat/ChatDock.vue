@@ -75,12 +75,16 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const composerRef = ref<{ loadForEdit: (value: string) => void } | null>(null);
+const composerRef = ref<{ loadForEdit: (value: string) => void; focus: () => void } | null>(null);
 const workPanelRef = ref<HTMLElement | null>(null);
 const workbarRef = ref<HTMLElement | null>(null);
 
 function loadForEdit(value: string): void {
   composerRef.value?.loadForEdit(value);
+}
+
+function focus(): void {
+  composerRef.value?.focus();
 }
 
 function handleEditQueued(index: number): void {
@@ -114,7 +118,7 @@ onUnmounted(() => {
   }
 });
 
-defineExpose({ loadForEdit });
+defineExpose({ loadForEdit, focus });
 </script>
 
 <template>
