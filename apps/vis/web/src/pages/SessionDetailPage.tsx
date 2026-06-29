@@ -5,18 +5,23 @@ import { api } from '../api';
 import { CopyButton } from '../components/shared/CopyButton';
 import { TabBar, useActiveTab } from '../components/layout/TabBar';
 import { ContextTab } from '../components/context/ContextTab';
+import { CronTab } from '../components/tasks/CronTab';
 import { StateTab } from '../components/state/StateTab';
 import { SubagentsTab } from '../components/subagents/SubagentsTab';
+import { TasksTab } from '../components/tasks/TasksTab';
 import { WireTab } from '../components/wire/WireTab';
 import { useSession } from '../hooks/useSession';
+import { useCron, useTasks } from '../hooks/useTasks';
 import { formatAbsoluteTime, formatRelativeTime } from '../util/time';
 
-type TabId = 'wire' | 'context' | 'agents' | 'state';
+type TabId = 'wire' | 'context' | 'agents' | 'tasks' | 'cron' | 'state';
 
 export function SessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const active = useActiveTab('wire') as TabId;
   const { data: session, isLoading, error } = useSession(sessionId);
+  const { data: tasksData } = useTasks(sessionId);
+  const { data: cronData } = useCron(sessionId);
 
   if (!sessionId) return <div className="p-6 text-fg-3">(no session id)</div>;
   if (isLoading) {
@@ -88,6 +93,8 @@ export function SessionDetailPage() {
           { id: 'wire', label: 'Wire', count: wireRecords },
           { id: 'context', label: 'Context', count: null },
           { id: 'agents', label: 'Agents', count: subagentCount },
+          { id: 'tasks', label: 'Tasks', count: tasksData?.tasks.length ?? null },
+          { id: 'cron', label: 'Cron', count: cronData?.cron.length ?? null },
           { id: 'state', label: 'State', count: null },
         ]}
       />
@@ -96,6 +103,8 @@ export function SessionDetailPage() {
         {active === 'wire' ? <WireTab sessionId={sessionId} /> : null}
         {active === 'context' ? <ContextTab sessionId={sessionId} /> : null}
         {active === 'agents' ? <SubagentsTab sessionId={sessionId} /> : null}
+        {active === 'tasks' ? <TasksTab sessionId={sessionId} /> : null}
+        {active === 'cron' ? <CronTab sessionId={sessionId} /> : null}
         {active === 'state' ? <StateTab state={session.state} /> : null}
       </div>
     </div>

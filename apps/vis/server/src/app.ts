@@ -8,9 +8,11 @@ import { KIMI_CODE_HOME } from './config';
 import { serveWebAsset, type WebAsset } from './lib/web-asset';
 import { blobsRoute } from './routes/blobs';
 import { contextRoute } from './routes/context';
+import { cronRoute } from './routes/cron';
 import { sessionDetailRoute } from './routes/session-detail';
 import { sessionsRoute } from './routes/sessions';
 import { subagentsRoute } from './routes/subagents';
+import { tasksRoute } from './routes/tasks';
 import { wireRoute } from './routes/wire';
 
 /** Resolve the SPA bundle directory next to the compiled server.mjs, if it
@@ -96,6 +98,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono> {
   api.route('/sessions', wireRoute(home));
   api.route('/sessions', subagentsRoute(home));
   api.route('/sessions', blobsRoute(home));
+  api.route('/sessions', tasksRoute(home));
+  api.route('/sessions', cronRoute(home));
   // Mount contextRoute last because it currently uses a catch-all stub
   // (Phase C scope) that would otherwise shadow more specific routes
   // registered below it.

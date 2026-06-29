@@ -16,14 +16,38 @@ export type {
   LoopRecordedEvent,
   ContextMessage,
   PromptOrigin,
+  // Background-task shapes are part of agent-core's public surface, so the
+  // visualizer tracks them directly instead of duplicating the union.
+  BackgroundTaskInfo,
+  BackgroundTaskStatus,
+  ProcessBackgroundTaskInfo,
+  AgentBackgroundTaskInfo,
+  QuestionBackgroundTaskInfo,
 } from '@moonshot-ai/agent-core';
 export { AGENT_WIRE_PROTOCOL_VERSION } from '@moonshot-ai/agent-core';
 export type { Message, ContentPart, ToolCall, TokenUsage } from '@moonshot-ai/kosong';
 
-// Local binding for the `AgentRecord` type used by the vis-only DTOs below
-// (e.g. `WireEntry.data`). The `export type { … }` re-export above forwards
-// the name to consumers but does NOT bring it into this module's scope.
-import type { AgentRecord } from '@moonshot-ai/agent-core';
+// Local bindings for the upstream types referenced by the vis-only DTOs
+// below. The `export type { … }` re-export above forwards the names to
+// consumers but does NOT bring them into this module's scope.
+import type { AgentRecord, BackgroundTaskInfo } from '@moonshot-ai/agent-core';
+
+/**
+ * Persistent representation of a cron task.
+ *
+ * Structural mirror of agent-core's `CronTask` (`tools/cron/types.ts`),
+ * which is NOT re-exported from the package entry point. The shape is
+ * tiny and frozen; `cron-store.test.ts` reads a fixture written in the
+ * real on-disk format so the mirror cannot silently drift from disk.
+ */
+export interface CronTask {
+  readonly id: string;
+  readonly cron: string;
+  readonly prompt: string;
+  readonly createdAt: number;
+  readonly recurring?: boolean;
+  readonly lastFiredAt?: number;
+}
 
 // ── vis-only DTOs ──────────────────────────────────────────────────────────
 
@@ -121,4 +145,47 @@ export interface AgentNode extends AgentInfo {
 export interface AgentTreeResponse {
   sessionId: string;
   tree: AgentNode[];
+}
+
+// ── background tasks & cron ─────────────────────────────────────────────────
+
+/** A persisted background task plus vis-derived `output.log` metadata.
+ *  `task` is the normalized agent-core shape; the size/exists fields let the
+ *  UI badge how much output a task produced and offer a "view log" affordance
+ *  without first fetching the (potentially large) log body. */
+export interface BackgroundTaskEntry {
+  task: BackgroundTaskInfo;
+  /** Total byte size of the task's `output.log` (0 when absent). */
+  outputSizeBytes: number;
+  /** Whether an `output.log` file exists for this task. */
+  outputExists: boolean;
+}
+
+export interface BackgroundTasksResponse {
+  sessionId: string;
+  tasks: BackgroundTaskEntry[];
+}
+
+/** One byte-window of a task's `output.log`. Byte-level (not line-level)
+ *  paging mirrors how the log is stored on disk, so arbitrarily large logs
+ *  can be paged without loading the whole file. */
+export interface TaskOutputResponse {
+  sessionId: string;
+  taskId: string;
+  /** Byte offset this window starts at. */
+  offset: number;
+  /** Byte offset immediately after this window; pass as the next `offset`
+   *  to page forward without drift. */
+  nextOffset: number;
+  /** Total byte size of the log on disk. */
+  size: number;
+  /** UTF-8 decoded window content. */
+  content: string;
+  /** True when this window reaches the end of the log. */
+  eof: boolean;
+}
+
+export interface CronTasksResponse {
+  sessionId: string;
+  cron: CronTask[];
 }

@@ -5,6 +5,9 @@ import type {
   WireResponse,
   ContextResponse,
   AgentTreeResponse,
+  BackgroundTasksResponse,
+  TaskOutputResponse,
+  CronTasksResponse,
   ApiError,
 } from './types';
 
@@ -111,6 +114,22 @@ export const api = {
 
   getAgentTree: (id: string) =>
     get<AgentTreeResponse>(`/api/sessions/${enc(id)}/agents`),
+
+  /** Background tasks (process / agent / question) persisted under the
+   *  session's `tasks/` directory, each with `output.log` metadata. */
+  getTasks: (id: string) =>
+    get<BackgroundTasksResponse>(`/api/sessions/${enc(id)}/tasks`),
+
+  /** A byte-window of a single task's `output.log`. */
+  getTaskOutput: (id: string, taskId: string, offset = 0, limit?: number) =>
+    get<TaskOutputResponse>(
+      `/api/sessions/${enc(id)}/tasks/${enc(taskId)}/output?offset=${offset}` +
+        (limit !== undefined ? `&limit=${limit}` : ''),
+    ),
+
+  /** Cron jobs persisted under the session's `cron/` directory. */
+  getCron: (id: string) =>
+    get<CronTasksResponse>(`/api/sessions/${enc(id)}/cron`),
 
   deleteSession: (id: string) => del<DeleteSessionResponse>(`/api/sessions/${enc(id)}`),
 
