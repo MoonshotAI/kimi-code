@@ -52,6 +52,14 @@ export function createServerServiceCollection(
   }
 
   services.set(Services.ILogService, new PinoLoggerAdapter(pinoLogger));
+  services.set(
+    Services.IFsSearchService,
+    new SyncDescriptor(
+      Services.FsSearchService,
+      [server.coreProcessOptions?.telemetry ?? Services.noopTelemetryClient],
+      true,
+    ),
+  );
   services.set(IRestGateway, new FastifyRestGateway(app));
   services.set(Services.IEnvironmentService, envService);
 
