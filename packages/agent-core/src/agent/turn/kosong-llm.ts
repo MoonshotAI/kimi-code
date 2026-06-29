@@ -19,7 +19,9 @@ import {
   emptyUsage,
   generate as kosongGenerate,
   isRetryableGenerateError,
+  isUnknownCapability,
   type ChatProvider,
+  type ContentPart,
   type GenerateCallbacks,
   type Message,
   type ModelCapability,
@@ -119,7 +121,7 @@ export class KosongLLM implements LLM {
       effectiveProvider,
       this.systemPrompt,
       [...params.tools],
-      params.messages,
+      downgradeUnsupportedMedia(params.messages, this.capability),
       callbacks,
       options,
     );
@@ -262,4 +264,51 @@ export function buildMessagesWithSystem(systemPrompt: string, history: Message[]
     { role: 'system', content: [{ type: 'text', text: systemPrompt }], toolCalls: [] },
     ...history,
   ];
+}
+
+export function downgradeUnsupportedMedia(
+  messages: readonly Message[],
+  capability: ModelCapability | undefined,
+): Message[] {
+  if (capability === undefined || isUnknownCapability(capability)) return [...messages];
+  const dropImage = !capability.image_in;
+  const dropVideo = !capability.video_in;
+  const dropAudio = !capability.audio_in;
+  if (!dropImage && !dropVideo && !dropAudio) return [...messages];
+
+  const drop = { dropImage, dropVideo, dropAudio };
+  let changed = false;
+  const out: Message[] = [];
+  for (const message of messages) {
+    let nextContent: ContentPart[] | undefined;
+    for (let i = 0; i < message.content.length; i++) {
+      const part = message.content[i]!;
+      const placeholder = mediaPlaceholder(part, drop);
+      if (placeholder === undefined) {
+        nextContent?.push(part);
+        continue;
+      }
+      nextContent ??= message.content.slice(0, i);
+      nextContent.push({ type: 'text', text: placeholder });
+      changed = true;
+    }
+    out.push(nextContent === undefined ? message : { ...message, content: nextContent });
+  }
+  return changed ? out : [...messages];
+}
+
+function mediaPlaceholder(
+  part: ContentPart,
+  drop: { readonly dropImage: boolean; readonly dropVideo: boolean; readonly dropAudio: boolean },
+): string | undefined {
+  if (part.type === 'image_url' && drop.dropImage) {
+    return '[image omitted: current model has no image input]';
+  }
+  if (part.type === 'video_url' && drop.dropVideo) {
+    return '[video omitted: current model has no video input]';
+  }
+  if (part.type === 'audio_url' && drop.dropAudio) {
+    return '[audio omitted: current model has no audio input]';
+  }
+  return undefined;
 }

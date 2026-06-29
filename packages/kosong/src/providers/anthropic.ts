@@ -406,16 +406,33 @@ interface AnthropicImageBlock {
   cache_control?: { type: 'ephemeral' };
 }
 
-// The Messages API has no representation for audio or video input. Instead of
+interface AnthropicVideoBlock {
+  type: 'video';
+  source:
+    | { type: 'base64'; media_type: string; data: string }
+    | { type: 'url'; url: string };
+}
+
+// The Messages API has no representation for audio input. Instead of
 // silently dropping such parts (the model would not even know an attachment
 // existed), emit a placeholder text block so it can acknowledge the gap.
 // Consecutive parts of the same kind collapse into a single placeholder.
 const OMITTED_MEDIA_PLACEHOLDER = {
   audio_url: '(audio omitted: not supported by this provider)',
-  video_url: '(video omitted: not supported by this provider)',
 } as const;
 
 const SUPPORTED_B64_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+const SUPPORTED_B64_VIDEO_TYPES = new Set([
+  'video/mp4',
+  'video/mpeg',
+  'video/quicktime',
+  'video/webm',
+  'video/x-matroska',
+  'video/x-msvideo',
+  'video/x-flv',
+  'video/3gpp',
+]);
 
 function imageUrlPartToAnthropic(url: string): AnthropicImageBlock {
   if (url.startsWith('data:')) {
@@ -441,6 +458,32 @@ function imageUrlPartToAnthropic(url: string): AnthropicImageBlock {
     source: { type: 'url', url },
   };
 }
+
+function videoUrlPartToAnthropic(url: string): AnthropicVideoBlock {
+  if (url.startsWith('data:')) {
+    const withoutScheme = url.slice(5);
+    const parts = withoutScheme.split(';base64,', 2);
+    if (parts.length !== 2 || parts[0] === undefined || parts[1] === undefined) {
+      throw new ChatProviderError(`Invalid data URL for video: ${url}`);
+    }
+    const mediaType = parts[0];
+    const data = parts[1];
+    if (!SUPPORTED_B64_VIDEO_TYPES.has(mediaType)) {
+      throw new ChatProviderError(
+        `Unsupported media type for base64 video: ${mediaType}, url: ${url}`,
+      );
+    }
+    return {
+      type: 'video',
+      source: { type: 'base64', media_type: mediaType, data },
+    };
+  }
+
+  return {
+    type: 'video',
+    source: { type: 'url', url },
+  };
+}
 interface AnthropicToolParam extends AnthropicTool {
   cache_control?: { type: 'ephemeral' } | null;
 }
@@ -453,7 +496,7 @@ function convertTool(tool: Tool): AnthropicToolParam {
   };
 }
 function toolResultToBlock(toolCallId: string, content: ContentPart[]): ToolResultBlockParam {
-  const blocks: Array<TextBlockParam | AnthropicImageBlock> = [];
+  const blocks: Array<TextBlockParam | AnthropicImageBlock | AnthropicVideoBlock> = [];
   for (const part of content) {
     if (part.type === 'text') {
       if (part.text) {
@@ -461,7 +504,9 @@ function toolResultToBlock(toolCallId: string, content: ContentPart[]): ToolResu
       }
     } else if (part.type === 'image_url') {
       blocks.push(imageUrlPartToAnthropic(part.imageUrl.url));
-    } else if (part.type === 'audio_url' || part.type === 'video_url') {
+    } else if (part.type === 'video_url') {
+      blocks.push(videoUrlPartToAnthropic(part.videoUrl.url));
+    } else if (part.type === 'audio_url') {
       const placeholder = OMITTED_MEDIA_PLACEHOLDER[part.type];
       const last = blocks.at(-1);
       if (!(last?.type === 'text' && last.text === placeholder)) {
@@ -530,7 +575,9 @@ function convertMessage(message: Message, model: string): MessageParam {
       } else if (part.think !== '' && shouldPreserveUnsignedThinking(model)) {
         blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
       }
-    } else if (part.type === 'audio_url' || part.type === 'video_url') {
+    } else if (part.type === 'video_url') {
+      blocks.push(videoUrlPartToAnthropic(part.videoUrl.url) as unknown as ContentBlockParam);
+    } else if (part.type === 'audio_url') {
       const placeholder = OMITTED_MEDIA_PLACEHOLDER[part.type];
       const last = blocks.at(-1);
       if (!(last?.type === 'text' && last.text === placeholder)) {

@@ -83,6 +83,7 @@ const sessionsListQueryCoercion = z
     page_size: z.coerce.number().int().min(1).max(100).optional(),
     status: sessionStatusSchema.optional(),
     include_archive: booleanQueryParam,
+    exclude_empty: booleanQueryParam,
 
     workspace_id: workspaceIdSchema.optional(),
   })
@@ -272,6 +273,7 @@ export function registerSessionsRoutes(
           page_size: raw.page_size,
           status: raw.status,
           includeArchive: raw.include_archive,
+          excludeEmpty: raw.exclude_empty,
         };
         let query;
         if (raw.workspace_id !== undefined) {

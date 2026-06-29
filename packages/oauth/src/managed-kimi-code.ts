@@ -11,6 +11,12 @@ export const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 export const KIMI_CODE_OAUTH_KEY = 'oauth/kimi-code';
 const KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX = 'oauth/kimi-code-env-';
 
+export type ManagedKimiCodeProtocol = 'kimi' | 'anthropic';
+
+export function parseModelProtocol(value: unknown): ManagedKimiCodeProtocol | undefined {
+  return value === 'anthropic' ? 'anthropic' : undefined;
+}
+
 /**
  * Server-declared thinking toggle support from `/models`:
  *  - 'only' — thinking cannot be turned off (always-thinking)
@@ -29,6 +35,7 @@ export interface ManagedKimiCodeModelInfo {
   readonly supportsToolUse?: boolean;
   readonly supportsThinkingType?: SupportsThinkingType;
   readonly displayName?: string | undefined;
+  readonly protocol?: ManagedKimiCodeProtocol | undefined;
 }
 
 export interface ManagedKimiCodeProvisionResult {
@@ -106,7 +113,7 @@ export class ManagedKimiCodeModelsAuthError extends OAuthUnauthorizedError {
 }
 
 export interface ManagedKimiProviderConfig {
-  type: 'kimi';
+  type: ManagedKimiCodeProtocol;
   baseUrl?: string | undefined;
   apiKey?: string | undefined;
   oauth?: ManagedKimiOAuthRef | undefined;
@@ -119,6 +126,7 @@ export interface ManagedKimiModelAlias {
   maxContextSize: number;
   capabilities?: string[] | undefined;
   displayName?: string | undefined;
+  protocol?: ManagedKimiCodeProtocol;
   readonly [key: string]: unknown;
 }
 
@@ -384,6 +392,7 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
     supportsToolUse,
     supportsThinkingType: parseSupportsThinkingType(item['supports_thinking_type']),
     displayName: normalizedDisplayName,
+    protocol: parseModelProtocol(item['protocol']),
   };
 }
 
@@ -474,6 +483,7 @@ export function applyManagedKimiCodeConfig(
       maxContextSize: model.contextLength,
       capabilities,
       displayName: model.displayName,
+      protocol: model.protocol,
     };
   }
 

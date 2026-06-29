@@ -423,11 +423,6 @@ export function resolveKimiTokenStorageName(input: {
   readonly providerName?: string | undefined;
   readonly oauthKey?: string | undefined;
 }): string {
-  const providerName = input.providerName ?? KIMI_CODE_PROVIDER_NAME;
-  if (providerName !== KIMI_CODE_PROVIDER_NAME) {
-    throw new Error(`No OAuth manager configured for provider "${providerName}".`);
-  }
-
   const key = input.oauthKey ?? KIMI_CODE_OAUTH_KEY;
   if (key === 'kimi-code' || key === KIMI_CODE_OAUTH_KEY) return 'kimi-code';
 

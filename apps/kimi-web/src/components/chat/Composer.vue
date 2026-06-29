@@ -83,7 +83,7 @@ const { t } = useI18n();
 // ---------------------------------------------------------------------------
 // Textarea + per-session draft persistence — see useComposerDraft.
 // ---------------------------------------------------------------------------
-const { text, textareaRef, autosize, loadForEdit } = useComposerDraft({
+const { text, textareaRef, autosize, loadForEdit, clearDraft } = useComposerDraft({
   sessionId: () => props.sessionId,
 });
 
@@ -160,7 +160,7 @@ watch(() => props.sessionId, () => {
 // implementation; the composer keeps the keydown orchestration (which also
 // juggles the slash and mention menus).
 // ---------------------------------------------------------------------------
-const history = useInputHistory({ text, textareaRef, autosize });
+const history = useInputHistory({ text, textareaRef, autosize, sessionId: () => props.sessionId });
 
 // ---------------------------------------------------------------------------
 // Slash-command menu — see useSlashMenu for the implementation. The composer
@@ -180,6 +180,7 @@ const {
   skills: () => props.skills,
   emitCommand: (cmd) => emit('command', cmd),
   historyPush: (entry) => history.push(entry),
+  clearDraft,
 });
 
 // ---------------------------------------------------------------------------
@@ -231,7 +232,7 @@ const {
   handleDragLeave,
   handleDrop,
   clearAfterSubmit,
-} = useAttachmentUpload({ uploadImage: () => props.uploadImage });
+} = useAttachmentUpload({ uploadImage: () => props.uploadImage, sessionId: () => props.sessionId });
 
 // Silence noUnusedLocals: fileInputRef is used as a template ref (ref="fileInputRef").
 void fileInputRef;
@@ -257,7 +258,12 @@ onUnmounted(() => {
 // ---------------------------------------------------------------------------
 
 // loadForEdit comes from useComposerDraft (it lives next to the text state).
-defineExpose({ loadForEdit });
+function focus(): void {
+  // preventScroll keeps the pane from jumping if the composer is already in view
+  // or if focus is triggered during an animation/transition.
+  textareaRef.value?.focus({ preventScroll: true });
+}
+defineExpose({ loadForEdit, focus });
 
 function handleSubmit(): void {
   const trimmed = text.value.trim();
@@ -288,6 +294,7 @@ function handleSubmit(): void {
       : false;
     if (parsed && known) {
       text.value = '';
+      clearDraft();
       slashOpen.value = false;
       collapseAndRefit();
       emit('command', parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd);
@@ -305,6 +312,7 @@ function handleSubmit(): void {
   clearAfterSubmit();
 
   text.value = '';
+  clearDraft();
   slashOpen.value = false;
   mentionOpen.value = false;
   collapseAndRefit();
@@ -331,6 +339,7 @@ function handleSteer(): void {
   clearAfterSubmit();
   history.push(trimmed);
   text.value = '';
+  clearDraft();
   slashOpen.value = false;
   mentionOpen.value = false;
   collapseAndRefit();
@@ -835,7 +844,11 @@ function selectModel(modelId: string): void {
             type="button"
             @click="openFilePicker"
           >
-            <svg class="attach-icon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M8 3v10M3 8h10"/></svg>
+            <svg class="attach-icon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+              <rect x="2" y="3" width="12" height="10" rx="1.5"/>
+              <circle cx="5" cy="6" r="1.2"/>
+              <path d="M2 10.5l3-2.5L8 11l2.5-2L14 11"/>
+            </svg>
           </button>
 
           <!-- Permission pill — click to open dropdown -->

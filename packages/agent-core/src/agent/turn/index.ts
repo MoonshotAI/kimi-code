@@ -455,7 +455,7 @@ export class TurnFlow {
     const telemetryMode = this.telemetryMode();
     this.telemetryModeByTurn.set(turnId, telemetryMode);
     this.currentStepByTurn.set(turnId, 0);
-    this.agent.telemetry.track('turn_started', { mode: telemetryMode });
+    this.agent.telemetry.track('turn_started', { mode: telemetryMode, ...this.requestProtocolProps() });
     this.agent.fullCompaction.resetForTurn();
     this.agent.usage.beginTurn();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
@@ -760,10 +760,19 @@ export class TurnFlow {
 
         return result.stopReason;
       } catch (error) {
-        if (
+        const isContextOverflow =
           error instanceof APIContextOverflowError ||
-          (isKimiError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW)
+          (isKimiError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW);
+        const estimatedRequestTokens = isContextOverflow
+          ? this.agent.fullCompaction.estimateCurrentRequestTokens()
+          : undefined;
+        if (
+          isContextOverflow ||
+          this.agent.fullCompaction.shouldRecoverFromContextOverflow(error, estimatedRequestTokens)
         ) {
+          this.agent.fullCompaction.observeContextOverflow(
+            estimatedRequestTokens ?? this.agent.fullCompaction.estimateCurrentRequestTokens(),
+          );
           await this.agent.fullCompaction.handleOverflowError(signal, error);
           continue; // Retry with compacted context
         }
@@ -919,6 +928,27 @@ export class TurnFlow {
 
   private telemetryMode(): 'agent' | 'plan' {
     return this.agent.planMode.isActive ? 'plan' : 'agent';
+  }
+
+  /**
+   * Resolve the current model's provider wire type and any model-level protocol
+   * override for request telemetry. Never throws — telemetry must not break a
+   * turn over an unresolvable provider config (the step loop will surface that
+   * error on its own).
+   */
+  private requestProtocolProps(): { type?: string; protocol?: string } {
+    const model = this.agent.config.modelAlias;
+    if (model === undefined) return {};
+    try {
+      const resolved = this.agent.modelProvider?.resolveProviderConfig(model);
+      if (resolved === undefined) return {};
+      return {
+        type: resolved.type,
+        protocol: resolved.protocol ?? resolved.type,
+      };
+    } catch {
+      return {};
+    }
   }
 
   private shouldTrackApiError(turnId: number): boolean {
