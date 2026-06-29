@@ -290,7 +290,7 @@ export class FullCompaction {
         this.agent.log.error('failed to refresh system prompt after compaction', { error });
       }
       this.agent.emitEvent({ type: 'compaction.completed', result });
-      await this.agent.injection.injectGoal();
+      await this.agent.injection.injectAfterCompaction();
       this.triggerPostCompactHook(data, result);
     } catch (error) {
       if (isAbortError(error)) return;

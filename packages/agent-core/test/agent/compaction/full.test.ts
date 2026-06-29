@@ -1208,6 +1208,59 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('reinjects the plan-mode reminder after manual compaction', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    await ctx.agent.planMode.enter('compact-plan', false);
+    const planFilePath = ctx.agent.planMode.planFilePath;
+    if (planFilePath === null) throw new Error('plan file path missing');
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'draft the plan' }]);
+    await ctx.agent.injection.inject();
+    expect(ctx.compactHistory().at(-1)?.text).toContain(`Plan file: ${planFilePath}`);
+    const completed = ctx.once('compaction.completed');
+
+    ctx.mockNextResponse({ type: 'text', text: 'Plan-mode compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    await vi.waitFor(() => {
+      const planReminders = ctx.agent.context.history.filter(
+        (message) => message.origin?.kind === 'injection' && message.origin.variant === 'plan_mode',
+      );
+      expect(planReminders).toHaveLength(1);
+      expect(messageText(planReminders[0])).toContain(`Plan file: ${planFilePath}`);
+    });
+    expect(ctx.compactHistory().at(-1)?.text).toContain(`Plan file: ${planFilePath}`);
+    await ctx.expectResumeMatches();
+  });
+
+  it('includes the plan-mode reminder in the answer request after auto compaction', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    await ctx.agent.planMode.enter('auto-compact-plan', false);
+    const planFilePath = ctx.agent.planMode.planFilePath;
+    if (planFilePath === null) throw new Error('plan file path missing');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 100);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 950_000);
+    await ctx.agent.injection.inject();
+
+    ctx.mockNextResponse({ type: 'text', text: 'Auto plan compacted summary.' });
+    ctx.mockNextResponse({ type: 'text', text: 'I can answer with the plan path.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue the plan' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(2);
+    const answerTexts = ctx.llmCalls[1]?.history.map(messageText) ?? [];
+    expect(answerTexts.some((text) => text.includes(`Plan file: ${planFilePath}`))).toBe(true);
+    await ctx.expectResumeMatches();
+  });
+
   it('does not auto compact small contexts when reserved size exceeds the model window', async () => {
     const ctx = testAgent({
       initialConfig: {

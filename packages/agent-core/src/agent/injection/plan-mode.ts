@@ -22,6 +22,10 @@ export class PlanModeInjector extends DynamicInjector {
     this.wasActive = this.agent.planMode.isActive;
   }
 
+  override onContextCompacted(): void {
+    this.injectedAt = null;
+  }
+
   override async getInjection(): Promise<string | undefined> {
     const { isActive, planFilePath } = this.agent.planMode;
     if (!isActive) {
