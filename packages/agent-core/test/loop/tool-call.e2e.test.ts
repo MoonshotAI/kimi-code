@@ -201,7 +201,7 @@ describe('runTurn — tool-call behaviour', () => {
             type: 'function',
             id: 'tc-1',
             name: 'echo',
-              arguments: '{',
+            arguments: '{}{',
           },
         ]),
         makeEndTurnResponse('done'),
@@ -212,7 +212,36 @@ describe('runTurn — tool-call behaviour', () => {
     const results = sink.byType('tool.result');
     expect(results.length).toBe(1);
     expect(results[0]?.result.isError).toBe(true);
-    expect(results[0]?.result.output).toContain('malformed JSON in arguments');
+    const output = expectTextOutput(results[0]?.result.output);
+    expect(output).toContain('malformed JSON in arguments');
+    expect(output).toContain('Expected arguments schema:');
+    expect(output).toContain('text (string)');
+  });
+
+  it('repairs malformed tool args JSON before rejecting the tool call', async () => {
+    const echo = new EchoTool();
+    const { sink } = await runTurn({
+      tools: [echo],
+      responses: [
+        makeToolUseResponse([
+          {
+            type: 'function',
+            id: 'tc-1',
+            name: 'echo',
+            arguments: '{"text":"hi",}',
+          },
+        ]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    expect(echo.calls).toHaveLength(1);
+    expect(echo.calls[0]?.args).toEqual({ text: 'hi' });
+
+    const results = sink.byType('tool.result');
+    expect(results.length).toBe(1);
+    expect(results[0]?.result.isError).toBeUndefined();
+    expect(results[0]?.result.output).toBe('hi');
   });
 
   it('captures tool execution failures as error results', async () => {

@@ -27,6 +27,10 @@ import { PathSecurityError } from '../tools/policies/path-access';
 import { isUserCancellation } from '../utils/abort';
 import { errorMessage, isAbortError } from './errors';
 import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
+import {
+  buildToolArgsSchemaHint,
+  parseOrRepairToolCallArguments,
+} from './tool-args-repair';
 import type { LLM, LLMChatResponse } from './llm';
 import { ToolAccesses } from './tool-access';
 import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
@@ -125,7 +129,7 @@ export async function runToolCallBatch(
 ): Promise<ToolCallBatchResult> {
   if (response.toolCalls.length === 0) return { stopTurn: false };
   const batchStep: ToolCallBatchContext = { ...step, toolCalls: response.toolCalls };
-  const calls = response.toolCalls.map((toolCall) => preflightToolCall(step.tools, toolCall));
+  const calls = response.toolCalls.map((toolCall) => preflightToolCall(step, toolCall));
   const scheduler = new ToolScheduler<PendingToolResult>();
   const pendingResults: Array<Promise<PendingToolResult>> = [];
   let stopTurn = false;
@@ -173,31 +177,44 @@ export async function runToolCallBatch(
  * events. Validator compilation may populate the local cache.
  */
 function preflightToolCall(
-  tools: readonly ExecutableTool[] | undefined,
+  step: Pick<ToolCallStepContext, 'tools' | 'log'>,
   toolCall: ToolCall,
 ): PreflightedToolCall {
   const toolName = toolCall.name;
-  const parsedArgs = parseToolCallArguments(toolCall.arguments);
-  const args = parsedArgs.success ? parsedArgs.data : {};
-  const tool = tools?.find((candidate) => candidate.name === toolName);
+  const tool = step.tools?.find((candidate) => candidate.name === toolName);
   if (tool === undefined) {
     return {
       kind: 'rejected',
       toolCall,
       toolName,
-      args,
+      args: {},
       output: `Tool "${toolName}" not found`,
     };
   }
+
+  const parsedArgs = parseOrRepairToolCallArguments(toolCall.arguments);
+
   if (!parsedArgs.success) {
+    const schemaHint = buildToolArgsSchemaHint(tool.parameters);
+    const schemaSuffix = schemaHint.length > 0 ? `\n\n${schemaHint}` : '';
     return {
       kind: 'rejected',
       toolCall,
       toolName,
-      args,
-      output: `Invalid args for tool "${toolName}": malformed JSON in arguments: ${parsedArgs.error}`,
+      args: {},
+      output: `Invalid args for tool "${toolName}": malformed JSON in arguments: ${parsedArgs.error}${schemaSuffix}`,
     };
   }
+
+  if (parsedArgs.repaired) {
+    step.log?.debug('tool args JSON repaired', {
+      toolName,
+      toolCallId: toolCall.id,
+      rawLength: toolCall.arguments?.length ?? 0,
+      originalError: parsedArgs.originalError,
+    });
+  }
+
   const validationError = validateExecutableToolArgs(tool, parsedArgs.data);
   if (validationError !== null) {
     return {
@@ -209,21 +226,6 @@ function preflightToolCall(
     };
   }
   return { kind: 'runnable', toolCall, toolName, tool, args: parsedArgs.data };
-}
-
-function parseToolCallArguments(
-  raw: string | null,
-):
-  | { readonly success: true; readonly data: unknown }
-  | { readonly success: false; readonly error: string } {
-  if (raw === null || raw.length === 0) {
-    return { success: true, data: {} };
-  }
-  try {
-    return { success: true, data: JSON.parse(raw) as unknown };
-  } catch (error) {
-    return { success: false, error: errorMessage(error) };
-  }
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {

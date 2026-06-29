@@ -70,6 +70,7 @@
     "chokidar": "^4.0.3",
     "ignore": "^5.3.2",
     "js-yaml": "^4.1.1",
+    "jsonrepair": "^3.14.1",
     "linkedom": "^0.18.12",
     "node-pty": "^1.1.0",
     "nunjucks": "^3.2.4",
