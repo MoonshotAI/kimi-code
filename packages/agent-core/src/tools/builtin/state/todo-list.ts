@@ -106,6 +106,9 @@ export class TodoListTool implements BuiltinTool<TodoListInput> {
     return {
       description,
       approvalRule: this.name,
+      display: args.todos !== undefined
+        ? { kind: 'todo_list', items: args.todos.map(t => ({ title: t.title, status: t.status })) }
+        : undefined,
       execute: async () => {
         // Query mode — return the current list without mutation.
         if (args.todos === undefined) {
