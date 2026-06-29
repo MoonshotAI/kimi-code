@@ -51,6 +51,42 @@ export interface CronTask {
   readonly lastFiredAt?: number;
 }
 
+/**
+ * `manifest.json` shape inside a `/export-debug-zip` bundle. Structural
+ * mirror of agent-core's `ExportSessionManifest` (`rpc/core-api.ts`), which
+ * is not re-exported from the package entry. All fields optional-tolerant
+ * because the manifest comes from another machine / kimi-code version.
+ */
+export interface ImportManifest {
+  sessionId?: string;
+  exportedAt?: string;
+  kimiCodeVersion?: string;
+  wireProtocolVersion?: string;
+  os?: string;
+  nodejsVersion?: string;
+  sessionFirstActivity?: string;
+  sessionLastActivity?: string;
+  title?: string;
+  workspaceDir?: string;
+  sessionLogPath?: string;
+  globalLogPath?: string;
+  installSource?: string;
+  shellEnv?: unknown;
+}
+
+/** vis-side bookkeeping for one imported bundle, written to
+ *  `imported/<importId>/import-meta.json`. */
+export interface ImportInfo {
+  /** vis-generated id (`imp_…`); also the session id the UI addresses. */
+  importId: string;
+  /** ISO time the zip was imported into vis. */
+  importedAt: string;
+  /** Original uploaded file name, when known. */
+  originalName: string | null;
+  /** Parsed `manifest.json`, when present and readable. */
+  manifest: ImportManifest | null;
+}
+
 // ── vis-only DTOs ──────────────────────────────────────────────────────────
 
 export interface ApiError {
@@ -84,6 +120,10 @@ export interface SessionSummary {
   mainWireRecordCount: number;
   wireProtocolVersion: string | null;
   health: SessionHealth;
+  /** True for sessions imported from a debug zip (under `<home>/imported/`). */
+  imported: boolean;
+  /** Export/import provenance for imported sessions; null for local ones. */
+  importMeta: ImportInfo | null;
 }
 
 export interface AgentInfo {
@@ -110,6 +150,10 @@ export interface SessionDetail {
   workDir: string;
   state: unknown; // 原样透传，前端按 state.json 真实形状渲染
   agents: AgentInfo[];
+  /** True for sessions imported from a debug zip. */
+  imported: boolean;
+  /** Export/import provenance for imported sessions; null for local ones. */
+  importMeta: ImportInfo | null;
 }
 
 /** One line of `wire.jsonl` after vis has parsed (and possibly migrated)
@@ -190,4 +234,39 @@ export interface TaskOutputResponse {
 export interface CronTasksResponse {
   sessionId: string;
   cron: CronTask[];
+}
+
+// ── imported sessions & logs ────────────────────────────────────────────────
+
+/** Result of importing a debug zip. */
+export interface ImportResult {
+  /** The `imp_…` id the UI uses to address the imported session. */
+  sessionId: string;
+  importMeta: ImportInfo;
+}
+
+/** One parsed line of a diagnostic log. */
+export interface LogLine {
+  /** 1-indexed line number in the source log. */
+  lineNo: number;
+  /** ISO timestamp parsed from the line prefix, or null if unparseable. */
+  time: string | null;
+  /** Log level (INFO / WARN / ERROR / DEBUG / …), uppercased, or null. */
+  level: string | null;
+  /** The human message between the level and the structured fields. */
+  message: string;
+  /** Parsed trailing `key=value` fields. */
+  fields: Record<string, string>;
+  /** The original line, verbatim. */
+  raw: string;
+}
+
+export interface LogsResponse {
+  sessionId: string;
+  which: 'session' | 'global';
+  /** Which logs exist on disk for this session. */
+  available: { session: boolean; global: boolean };
+  lines: LogLine[];
+  /** True when the log was longer than the served cap and got truncated. */
+  truncated: boolean;
 }

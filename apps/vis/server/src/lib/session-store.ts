@@ -3,8 +3,9 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 
-import type { SessionSummary, SessionDetail, AgentInfo, SessionHealth } from './agent-record-types';
+import type { SessionSummary, SessionDetail, AgentInfo, SessionHealth, ImportInfo } from './agent-record-types';
 import { compareAgentIds } from './agent-tree';
+import { importedDirOf, isImportId, listImportedIds, readImportMeta } from './import-store';
 
 const SESSION_ID_RE = /^session_[A-Za-z0-9._-]+$/;
 const AGENT_ID_RE = /^[A-Za-z0-9._-]+$/;
@@ -45,11 +46,21 @@ export async function listSessions(home: string): Promise<SessionSummary[]> {
       if (summary !== null) out.push(summary);
     }
   }
+  // Imported debug bundles live under <home>/imported/<importId>/ and surface
+  // in the same list, tagged so the UI can filter them.
+  for (const importId of await listImportedIds(home)) {
+    const dir = importedDirOf(home, importId);
+    const meta = await readImportMeta(home, importId);
+    const workDir = meta?.manifest?.workspaceDir ?? '';
+    const summary = await tryReadSummary(dir, importId, workDir, { imported: true, importMeta: meta });
+    if (summary !== null) out.push(summary);
+  }
   out.sort((a, b) => b.updatedAt - a.updatedAt);
   return out;
 }
 
 export async function readSessionDetail(home: string, sessionId: string): Promise<SessionDetail | null> {
+  if (isImportId(sessionId)) return readImportedDetail(home, sessionId);
   const sessionDir = await findSessionDir(home, sessionId);
   if (sessionDir === null) return null;
   const index = await readSessionIndex(home);
@@ -62,11 +73,31 @@ export async function readSessionDetail(home: string, sessionId: string): Promis
   // still inspect the wire/context of a session whose state is corrupt.
   if (state === null) {
     const agents = await discoverAgentsFromDisk(sessionDir);
-    return { sessionId, sessionDir, workDir, state: null, agents };
+    return { sessionId, sessionDir, workDir, state: null, agents, imported: false, importMeta: null };
   }
   if (state.custom?.['imported_from_kimi_cli'] === true) return null;
   const agents = await inventoryAgents(sessionDir, state);
-  return { sessionId, sessionDir, workDir, state, agents };
+  return { sessionId, sessionDir, workDir, state, agents, imported: false, importMeta: null };
+}
+
+/** Detail for an imported bundle. Same readers as a local session, but the
+ *  directory is `imported/<id>/`, the workDir comes from the manifest, and
+ *  agent homedirs are re-derived from the local extraction (state.json holds
+ *  the exporting machine's absolute paths, which do not exist here). The
+ *  `imported_from_kimi_cli` hide-filter is intentionally NOT applied — the
+ *  user imported this bundle deliberately. */
+async function readImportedDetail(home: string, importId: string): Promise<SessionDetail | null> {
+  const sessionDir = importedDirOf(home, importId);
+  if (!(await pathExists(sessionDir))) return null;
+  const meta = await readImportMeta(home, importId);
+  const workDir = meta?.manifest?.workspaceDir ?? '';
+  const state = await readState(sessionDir);
+  if (state === null) {
+    const agents = await discoverAgentsFromDisk(sessionDir);
+    return { sessionId: importId, sessionDir, workDir, state: null, agents, imported: true, importMeta: meta };
+  }
+  const agents = await inventoryAgents(sessionDir, state, true);
+  return { sessionId: importId, sessionDir, workDir, state, agents, imported: true, importMeta: meta };
 }
 
 /** Fallback inventory used when `state.json` is unreadable: walk
@@ -115,12 +146,21 @@ async function discoverAgentsFromDisk(sessionDir: string): Promise<AgentInfo[]> 
   return out.sort((a, b) => compareAgentIds(a.agentId, b.agentId));
 }
 
-async function tryReadSummary(sessionDir: string, sessionId: string, workDir: string): Promise<SessionSummary | null> {
+async function tryReadSummary(
+  sessionDir: string,
+  sessionId: string,
+  workDir: string,
+  opts: { imported?: boolean; importMeta?: ImportInfo | null } = {},
+): Promise<SessionSummary | null> {
+  const imported = opts.imported ?? false;
+  const importMeta = opts.importMeta ?? null;
   const state = await readState(sessionDir);
   if (state === null) {
-    return brokenStateSummary(sessionDir, sessionId, workDir);
+    return brokenStateSummary(sessionDir, sessionId, workDir, imported, importMeta);
   }
-  if (state.custom?.['imported_from_kimi_cli'] === true) return null;
+  // Local migrated-CLI sessions are hidden; an imported bundle is shown
+  // regardless because the user chose to import it.
+  if (!imported && state.custom?.['imported_from_kimi_cli'] === true) return null;
 
   const mainWirePath = join(sessionDir, 'agents', 'main', 'wire.jsonl');
   const mainExists = await pathExists(mainWirePath);
@@ -156,16 +196,25 @@ async function tryReadSummary(sessionDir: string, sessionId: string, workDir: st
     mainWireRecordCount: mainCount,
     wireProtocolVersion: protocolVersion,
     health,
+    imported,
+    importMeta,
   };
 }
 
-function brokenStateSummary(sessionDir: string, sessionId: string, workDir: string): SessionSummary {
+function brokenStateSummary(
+  sessionDir: string,
+  sessionId: string,
+  workDir: string,
+  imported = false,
+  importMeta: ImportInfo | null = null,
+): SessionSummary {
   return {
     sessionId, sessionDir, workDir,
     title: null, lastPrompt: null, isCustomTitle: false,
     createdAt: 0, updatedAt: 0,
     agentCount: 0, mainAgentExists: false, mainWireRecordCount: 0,
     wireProtocolVersion: null, health: 'broken_state',
+    imported, importMeta,
   };
 }
 
@@ -195,7 +244,7 @@ async function readSessionIndex(home: string): Promise<Map<string, SessionIndexE
   return out;
 }
 
-async function inventoryAgents(sessionDir: string, state: StateJson): Promise<AgentInfo[]> {
+async function inventoryAgents(sessionDir: string, state: StateJson, deriveHomedir = false): Promise<AgentInfo[]> {
   const result: AgentInfo[] = [];
   for (const [id, meta] of Object.entries(state.agents ?? {})) {
     if (!isSafeAgentId(id)) continue;
@@ -218,7 +267,10 @@ async function inventoryAgents(sessionDir: string, state: StateJson): Promise<Ag
       agentId: id,
       type: meta.type,
       parentAgentId: meta.parentAgentId,
-      homedir: meta.homedir,
+      // For imported bundles the persisted homedir is the exporting machine's
+      // absolute path; re-derive it from the local extraction so blob reads
+      // (which join homedir) resolve under the imported directory.
+      homedir: deriveHomedir ? join(sessionDir, 'agents', id) : meta.homedir,
       wireExists: readable,
       wireRecordCount: info.count,
       wireProtocolVersion: info.protocolVersion,

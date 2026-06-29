@@ -34,6 +34,11 @@ export type {
   TaskOutputResponse,
   CronTask,
   CronTasksResponse,
+  ImportInfo,
+  ImportManifest,
+  ImportResult,
+  LogLine,
+  LogsResponse,
 } from '../../server/src/lib/agent-record-types';
 
 export type {

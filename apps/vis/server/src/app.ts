@@ -9,6 +9,8 @@ import { serveWebAsset, type WebAsset } from './lib/web-asset';
 import { blobsRoute } from './routes/blobs';
 import { contextRoute } from './routes/context';
 import { cronRoute } from './routes/cron';
+import { importsRoute } from './routes/imports';
+import { logsRoute } from './routes/logs';
 import { sessionDetailRoute } from './routes/session-detail';
 import { sessionsRoute } from './routes/sessions';
 import { subagentsRoute } from './routes/subagents';
@@ -100,6 +102,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono> {
   api.route('/sessions', blobsRoute(home));
   api.route('/sessions', tasksRoute(home));
   api.route('/sessions', cronRoute(home));
+  api.route('/sessions', logsRoute(home));
+  api.route('/imports', importsRoute(home));
   // Mount contextRoute last because it currently uses a catch-all stub
   // (Phase C scope) that would otherwise shadow more specific routes
   // registered below it.

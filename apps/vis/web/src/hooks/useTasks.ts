@@ -20,3 +20,12 @@ export function useCron(sessionId: string | undefined) {
     enabled: !!sessionId,
   });
 }
+
+/** Parsed diagnostic log for a session (session or global). */
+export function useLogs(sessionId: string | undefined, which: 'session' | 'global') {
+  return useQuery({
+    queryKey: ['logs', sessionId, which] as const,
+    queryFn: () => api.getLogs(sessionId!, which),
+    enabled: !!sessionId,
+  });
+}

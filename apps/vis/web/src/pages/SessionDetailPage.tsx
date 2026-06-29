@@ -7,15 +7,17 @@ import { TabBar, useActiveTab } from '../components/layout/TabBar';
 import { TimelineTab } from '../components/analysis/TimelineTab';
 import { ContextTab } from '../components/context/ContextTab';
 import { CronTab } from '../components/tasks/CronTab';
+import { LogsTab } from '../components/logs/LogsTab';
 import { StateTab } from '../components/state/StateTab';
 import { SubagentsTab } from '../components/subagents/SubagentsTab';
 import { TasksTab } from '../components/tasks/TasksTab';
 import { WireTab } from '../components/wire/WireTab';
+import { Pill } from '../components/shared/Pill';
 import { useSession } from '../hooks/useSession';
 import { useCron, useTasks } from '../hooks/useTasks';
 import { formatAbsoluteTime, formatRelativeTime } from '../util/time';
 
-type TabId = 'wire' | 'timeline' | 'context' | 'agents' | 'tasks' | 'cron' | 'state';
+type TabId = 'wire' | 'timeline' | 'context' | 'agents' | 'tasks' | 'cron' | 'logs' | 'state';
 
 export function SessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -54,6 +56,9 @@ export function SessionDetailPage() {
         <div className="flex items-center gap-3">
           <span className="font-mono text-[14px] text-fg-0">{session.sessionId}</span>
           <CopyButton value={session.sessionId} />
+          {session.imported ? (
+            <Pill tone="subagent" variant="outline">imported</Pill>
+          ) : null}
           {state?.title ? (
             <span className="font-mono text-[12px] text-fg-1">"{state.title}"</span>
           ) : null}
@@ -62,6 +67,18 @@ export function SessionDetailPage() {
             <CopyButton value={session.sessionDir} label="copy path" />
           </span>
         </div>
+        {session.imported && session.importMeta ? (
+          <div className="mt-1 flex flex-wrap items-center gap-3 font-mono text-[10.5px] text-fg-3">
+            {session.importMeta.manifest?.kimiCodeVersion ? (
+              <span>kimi-code v{session.importMeta.manifest.kimiCodeVersion}</span>
+            ) : null}
+            {session.importMeta.manifest?.os ? <span>· {session.importMeta.manifest.os}</span> : null}
+            {session.importMeta.manifest?.exportedAt ? (
+              <span>· exported {formatRelativeTime(Date.parse(session.importMeta.manifest.exportedAt))}</span>
+            ) : null}
+            {session.importMeta.originalName ? <span>· {session.importMeta.originalName}</span> : null}
+          </div>
+        ) : null}
         <div className="mt-1 flex items-center gap-3 font-mono text-[11px] text-fg-2">
           {state?.updatedAt ? (
             <span className="text-fg-3 tabular">
@@ -97,6 +114,7 @@ export function SessionDetailPage() {
           { id: 'agents', label: 'Agents', count: subagentCount },
           { id: 'tasks', label: 'Tasks', count: tasksData?.tasks.length ?? null },
           { id: 'cron', label: 'Cron', count: cronData?.cron.length ?? null },
+          { id: 'logs', label: 'Logs', count: null },
           { id: 'state', label: 'State', count: null },
         ]}
       />
@@ -108,7 +126,8 @@ export function SessionDetailPage() {
         {active === 'agents' ? <SubagentsTab sessionId={sessionId} /> : null}
         {active === 'tasks' ? <TasksTab sessionId={sessionId} /> : null}
         {active === 'cron' ? <CronTab sessionId={sessionId} /> : null}
-        {active === 'state' ? <StateTab state={session.state} /> : null}
+        {active === 'logs' ? <LogsTab sessionId={sessionId} /> : null}
+        {active === 'state' ? <StateTab state={session.state} importMeta={session.importMeta} /> : null}
       </div>
     </div>
   );

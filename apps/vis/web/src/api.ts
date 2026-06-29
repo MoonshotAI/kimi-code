@@ -8,6 +8,8 @@ import type {
   BackgroundTasksResponse,
   TaskOutputResponse,
   CronTasksResponse,
+  ImportResult,
+  LogsResponse,
   ApiError,
 } from './types';
 
@@ -130,6 +132,32 @@ export const api = {
   /** Cron jobs persisted under the session's `cron/` directory. */
   getCron: (id: string) =>
     get<CronTasksResponse>(`/api/sessions/${enc(id)}/cron`),
+
+  /** Parsed diagnostic log for a session (works for local and imported). */
+  getLogs: (id: string, which: 'session' | 'global' = 'session') =>
+    get<LogsResponse>(`/api/sessions/${enc(id)}/logs?which=${which}`),
+
+  /** Import a `/export-debug-zip` bundle. Sends the raw file as the body. */
+  importZip: async (file: File): Promise<ImportResult> => {
+    const headers: Record<string, string> = { accept: 'application/json' };
+    const token = authToken();
+    if (token !== null && token.length > 0) headers['authorization'] = `Bearer ${token}`;
+    const res = await fetch(`/api/imports?name=${enc(file.name)}`, {
+      method: 'POST',
+      headers,
+      body: file,
+    });
+    if (!res.ok) {
+      let err: ApiError | null = null;
+      try {
+        err = (await res.json()) as ApiError;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(err?.error ?? `HTTP ${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as ImportResult;
+  },
 
   deleteSession: (id: string) => del<DeleteSessionResponse>(`/api/sessions/${enc(id)}`),
 
