@@ -2,6 +2,7 @@ import { ErrorCodes, KimiError } from '#/errors';
 import type { SessionWarning } from '@moonshot-ai/protocol';
 import type {
   ActivateSkillPayload,
+  ActivatePluginCommandPayload,
   AddAdditionalDirPayload,
   AddAdditionalDirResult,
   AgentAPI,
@@ -213,6 +214,13 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     if (agentId === 'main') {
       await this.updatePromptMetadata(promptMetadataTextFromSkill(payload));
     }
+  }
+
+  async activatePluginCommand({
+    agentId,
+    ...payload
+  }: AgentScopedPayload<ActivatePluginCommandPayload>) {
+    await (await this.getAgent(agentId)).activatePluginCommand(payload);
   }
 
   async startBtw({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>): Promise<string> {

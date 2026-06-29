@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseCommandText } from '../../src/plugin/commands';
+import { expandCommandArguments, parseCommandText } from '../../src/plugin/commands';
 
 describe('parseCommandText', () => {
   it('parses frontmatter description and body', () => {
@@ -47,5 +47,19 @@ describe('parseCommandText', () => {
     expect(def.name).toBe('x');
     expect(def.description).toBe('No description provided.');
     expect(def.body).toBe('');
+  });
+});
+
+describe('expandCommandArguments', () => {
+  it('replaces $ARGUMENTS with the typed args', () => {
+    expect(expandCommandArguments('Deploy $ARGUMENTS now', 'prod')).toBe('Deploy prod now');
+  });
+
+  it('appends args when there is no placeholder', () => {
+    expect(expandCommandArguments('Deploy now', 'prod')).toBe('Deploy now\n\nARGUMENTS: prod');
+  });
+
+  it('leaves the body unchanged when there is no placeholder and no args', () => {
+    expect(expandCommandArguments('Deploy now', '')).toBe('Deploy now');
   });
 });

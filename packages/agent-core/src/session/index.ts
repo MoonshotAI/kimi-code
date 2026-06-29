@@ -742,6 +742,7 @@ export class Session {
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
+      pluginCommands: type === 'main' ? this.options.pluginCommands : undefined,
       experimentalFlags: this.experimentalFlags,
       additionalDirs: parentAgent?.getAdditionalDirs() ?? this.additionalDirs,
     });

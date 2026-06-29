@@ -47,6 +47,15 @@ export interface SkillActivationOrigin {
   readonly skillSource?: SkillSource;
 }
 
+export interface PluginCommandOrigin {
+  readonly kind: 'plugin_command';
+  readonly activationId: string;
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly commandArgs?: string;
+  readonly trigger: 'user-slash';
+}
+
 export interface InjectionOrigin {
   readonly kind: 'injection';
   readonly variant: string;
@@ -112,6 +121,7 @@ export interface RetryOrigin {
 export type PromptOrigin =
   | UserPromptOrigin
   | SkillActivationOrigin
+  | PluginCommandOrigin
   | InjectionOrigin
   | ShellCommandOrigin
   | CompactionSummaryOrigin
@@ -369,6 +379,15 @@ export interface SkillActivatedEvent {
   readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
   readonly skillPath?: string;
   readonly skillSource?: SkillSource;
+}
+
+export interface PluginCommandActivatedEvent {
+  readonly type: 'plugin_command.activated';
+  readonly activationId: string;
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly commandArgs?: string;
+  readonly trigger: 'user-slash';
 }
 
 export interface ErrorEvent extends KimiErrorPayload {
@@ -630,6 +649,7 @@ export type AgentEvent =
   | ConfigChangedEvent
   | GoalUpdatedEvent
   | SkillActivatedEvent
+  | PluginCommandActivatedEvent
   | TurnStartedEvent
   | TurnEndedEvent
   | TurnStepStartedEvent
@@ -704,6 +724,15 @@ export const skillActivationOriginSchema = z.object({
   skillSource: skillSourceSchema.optional(),
 }) satisfies z.ZodType<SkillActivationOrigin>;
 
+export const pluginCommandOriginSchema = z.object({
+  kind: z.literal('plugin_command'),
+  activationId: z.string(),
+  pluginId: z.string(),
+  commandName: z.string(),
+  commandArgs: z.string().optional(),
+  trigger: z.literal('user-slash'),
+}) satisfies z.ZodType<PluginCommandOrigin>;
+
 export const injectionOriginSchema = z.object({
   kind: z.literal('injection'),
   variant: z.string(),
@@ -768,6 +797,7 @@ export const retryOriginSchema = z.object({
 export const promptOriginSchema = z.discriminatedUnion('kind', [
   userPromptOriginSchema,
   skillActivationOriginSchema,
+  pluginCommandOriginSchema,
   injectionOriginSchema,
   shellCommandOriginSchema,
   compactionSummaryOriginSchema,
@@ -1029,6 +1059,15 @@ export const skillActivatedEventSchema = z.object({
   skillSource: skillSourceSchema.optional(),
 }) satisfies z.ZodType<SkillActivatedEvent>;
 
+export const pluginCommandActivatedEventSchema = z.object({
+  type: z.literal('plugin_command.activated'),
+  activationId: z.string(),
+  pluginId: z.string(),
+  commandName: z.string(),
+  commandArgs: z.string().optional(),
+  trigger: z.literal('user-slash'),
+}) satisfies z.ZodType<PluginCommandActivatedEvent>;
+
 export const errorEventSchema = kimiErrorPayloadSchema.extend({
   type: z.literal('error'),
 }) satisfies z.ZodType<ErrorEvent>;
@@ -1281,6 +1320,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   sessionStatusChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
+  pluginCommandActivatedEventSchema,
   turnStartedEventSchema,
   turnEndedEventSchema,
   turnStepStartedEventSchema,

@@ -51,6 +51,7 @@ import {
 import type { CoreRPCClient } from './client';
 import type {
   ActivateSkillPayload,
+  ActivatePluginCommandPayload,
   AddAdditionalDirPayload,
   AddAdditionalDirResult,
   ArchiveSessionPayload,
@@ -696,6 +697,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     ...payload
   }: SessionAgentPayload<ActivateSkillPayload>): Promise<void> {
     return this.sessionApi(sessionId).activateSkill(payload);
+  }
+
+  activatePluginCommand({
+    sessionId,
+    ...payload
+  }: SessionAgentPayload<ActivatePluginCommandPayload>): Promise<void> {
+    return this.sessionApi(sessionId).activatePluginCommand(payload);
   }
 
   getBackgroundOutput({ sessionId, ...payload }: SessionAgentPayload<GetBackgroundOutputPayload>) {

@@ -273,6 +273,12 @@ export interface ActivateSkillPayload {
   readonly args?: string | undefined;
 }
 
+export interface ActivatePluginCommandPayload {
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly args?: string | undefined;
+}
+
 export interface McpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
@@ -395,6 +401,7 @@ export interface AgentAPI {
   detachBackground: (payload: DetachBackgroundPayload) => BackgroundTaskInfo | undefined;
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
+  activatePluginCommand: (payload: ActivatePluginCommandPayload) => void;
   startBtw: (payload: EmptyPayload) => string;
   createGoal: (payload: CreateGoalPayload) => GoalSnapshot;
   getGoal: (payload: EmptyPayload) => GoalToolResult;
