@@ -1,12 +1,23 @@
 import type { TUI } from '@earendil-works/pi-tui';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { MoonLoader } from '#/tui/components/chrome/moon-loader';
 
+// MoonLoader starts a real setInterval in its constructor, so every loader
+// created in these tests must be stopped to avoid leaving live timers behind.
+const loaders: MoonLoader[] = [];
+
 function createLoader(): MoonLoader {
   const ui = { requestRender() {} } as unknown as TUI;
-  return new MoonLoader(ui, 'moon');
+  const loader = new MoonLoader(ui, 'moon');
+  loaders.push(loader);
+  return loader;
 }
+
+afterEach(() => {
+  for (const loader of loaders) loader.stop();
+  loaders.length = 0;
+});
 
 describe('MoonLoader', () => {
   it('keeps the tip out of renderInline so it does not squeeze against the swarm progress bar', () => {
