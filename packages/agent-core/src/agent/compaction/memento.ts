@@ -1,3 +1,4 @@
+import type { ContentPart } from '@moonshot-ai/kosong';
 import { estimateTokensForMessage } from '../../utils/tokens';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 
@@ -14,21 +15,23 @@ import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 export const COMPACTION_SUMMARY_PREFIX = summaryPrefixTemplate.trimEnd();
 export const COMPACT_USER_MESSAGE_MAX_TOKENS = 20_000;
 
-interface ContentPartLike {
-  readonly type: string;
-  readonly text?: string;
-}
-
+/**
+ * Structural subset of kosong's `Message` that the memento helpers inspect.
+ * Both `ContextMessage` (the live context) and the wire-transcript reducer's
+ * mutable message satisfy this shape, so one set of helpers serves both
+ * layers without introducing a shared nominal type. `origin` is what tells
+ * real user input apart from injections and compaction summaries.
+ */
 interface MessageLike {
   readonly role: string;
-  readonly content: readonly ContentPartLike[];
+  readonly content: readonly ContentPart[];
   readonly origin?: { readonly kind: string; readonly trigger?: string } | undefined;
 }
 
-function extractText(content: readonly ContentPartLike[]): string {
+function extractText(content: readonly ContentPart[]): string {
   let text = '';
   for (const part of content) {
-    if (part.type === 'text' && typeof part.text === 'string') {
+    if (part.type === 'text') {
       text += part.text;
     }
   }
@@ -85,6 +88,11 @@ function truncateTextToTokens(text: string, maxTokens: number): string {
 
 function truncateUserMessage<T extends MessageLike>(message: T, maxTokens: number): T {
   const text = truncateTextToTokens(extractText(message.content), maxTokens);
+  // Spread the original message to preserve every field (notably `origin`),
+  // then replace the content with the truncated text and drop any tool calls.
+  // Real user input never carries tool calls, so clearing them is safe. The
+  // cast back to `T` is unavoidable here: TypeScript cannot prove that a
+  // spread-then-override shape still equals the generic `T`.
   return {
     ...message,
     content: [{ type: 'text', text }],
@@ -105,7 +113,7 @@ export function selectRecentUserMessages<T extends MessageLike>(
   let remaining = maxTokens;
   for (let i = messages.length - 1; i >= 0 && remaining > 0; i--) {
     const message = messages[i]!;
-    const tokens = estimateTokensForMessage(message as never);
+    const tokens = estimateTokensForMessage(message);
     if (tokens <= remaining) {
       selected.push(message);
       remaining -= tokens;

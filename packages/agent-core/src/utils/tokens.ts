@@ -1,6 +1,19 @@
 import type { ContentPart, Message, Tool } from '@moonshot-ai/kosong';
 
-const messageTokenEstimateCache = new WeakMap<Message, number>();
+/**
+ * Structural subset of kosong's {@link Message} that token estimation reads.
+ * Accepting the subset (instead of the full `Message`) lets callers with
+ * message-shaped objects — such as the compaction helpers in `memento.ts`,
+ * which carry only `role`/`content`/`origin` — estimate tokens without an
+ * unsafe cast, while full `Message` values still satisfy it.
+ */
+interface TokenEstimatableMessage {
+  readonly role: string;
+  readonly content: readonly ContentPart[];
+  readonly toolCalls?: readonly { readonly name: string; readonly arguments: unknown }[];
+}
+
+const messageTokenEstimateCache = new WeakMap<TokenEstimatableMessage, number>();
 
 /**
  * Estimate token count from text using a character-based heuristic.
@@ -41,7 +54,7 @@ export function estimateTokensForTools(tools: readonly Tool[]): number {
   return total;
 }
 
-export function estimateTokensForMessage(message: Message): number {
+export function estimateTokensForMessage(message: TokenEstimatableMessage): number {
   const cached = messageTokenEstimateCache.get(message);
   if (cached !== undefined) {
     return cached;

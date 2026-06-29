@@ -3,8 +3,10 @@
  * agent from its `wire.jsonl` record log.
  *
  * Why: `ContextMemory.applyCompaction` rewrites the in-memory history as
- * `[compaction_summary, ...tail]`, so `getContext().history` only reflects the
- * model's CURRENT context. The wire log, however, keeps every record. The TUI
+ * `[...keptUserMessages, compaction_summary]` (the most recent real user
+ * prompts, verbatim within a token budget, followed by a single user-role
+ * summary), so `getContext().history` only reflects the model's CURRENT
+ * context. The wire log, however, keeps every record. The TUI
  * shows the full transcript on resume because `ReplayBuilder` captures every
  * `pushHistory` during record replay and is never folded by compaction. This
  * module reproduces that exact view for daemon REST consumers (web), without
@@ -19,8 +21,11 @@
  *                                     open assistant message; tool.result appends a
  *                                     tool message with the same `<system>` status
  *                                     wrapping as `toolResultOutputForModel`
- *   - `context.apply_compaction`    → keep the prefix, insert the summary message
- *                                     at the fold point (origin `compaction_summary`)
+ *   - `context.apply_compaction`    → keep the full history, append the
+ *                                     user-role summary marker (origin
+ *                                     `compaction_summary`), and recover
+ *                                     `foldedLength` from the recorded
+ *                                     `keptUserMessageCount`
  *   - `context.undo`                → remove tail messages exactly like
  *                                     `ContextMemory.undo` (skip injections, stop at
  *                                     compaction summaries / `context.clear` floors)
