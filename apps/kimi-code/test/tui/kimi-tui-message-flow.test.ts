@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import {
   deleteAllKittyImages,
@@ -31,17 +31,43 @@ import {
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
+import { packageCodebase, scanCodebase } from '../../src/feedback/codebase';
+import { uploadArchive } from '../../src/feedback/upload';
 import {
+  promptFeedbackAttachment,
   promptFeedbackInput,
   runModelSelector,
+  type FeedbackPromptResult,
 } from '#/tui/commands/prompts';
 import type { QueuedMessage } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
-  return { ...actual, promptFeedbackInput: vi.fn() };
+  return {
+    ...actual,
+    promptFeedbackInput: vi.fn(),
+    promptFeedbackAttachment: vi.fn(),
+  };
 });
+
+vi.mock('../../src/feedback/codebase', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/feedback/codebase')>();
+  return {
+    ...actual,
+    scanCodebase: vi.fn().mockResolvedValue(undefined),
+    packageCodebase: vi.fn(),
+  };
+});
+
+vi.mock('../../src/feedback/upload', () => ({
+  uploadArchive: vi.fn(),
+}));
+
+// /feedback falls back to opening GitHub Issues in a browser when not signed in
+// or when submission fails — stub it out so the test suite never spawns a
+// browser window.
+vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
@@ -62,12 +88,13 @@ interface MessageDriver {
   init(): Promise<boolean>;
   handleUserInput(text: string): void;
   persistInputHistory(text: string): Promise<void>;
+  sendQueuedMessage(session: unknown, item: QueuedMessage): void;
   getCurrentSessionId(): string;
 }
 
 interface FeedbackDriver extends MessageDriver {
   handleFeedbackCommand(): Promise<void>;
-  promptFeedbackInput(): Promise<string | undefined>;
+  promptFeedbackInput(): Promise<FeedbackPromptResult | undefined>;
 }
 
 interface ModelSelectorDriver extends MessageDriver {
@@ -212,6 +239,12 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     resumeSession: vi.fn(async () => session),
     forkSession: vi.fn(async () => session),
     listSessions: vi.fn(async () => []),
+    exportSession: vi.fn(async () => ({
+      zipPath: '/tmp/fake-session.zip',
+      entries: ['manifest.json', 'state.json'],
+      sessionDir: '/tmp/session-a',
+      manifest: {},
+    })),
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
@@ -228,8 +261,11 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       logout: vi.fn(),
       getManagedUsage: vi.fn(),
       submitFeedback: vi.fn(
-        async (): Promise<{ kind: 'ok' } | { kind: 'error'; status?: number; message: string }> => ({
+        async (): Promise<
+          { kind: 'ok'; feedbackId: number } | { kind: 'error'; status?: number; message: string }
+        > => ({
           kind: 'ok',
+          feedbackId: 3,
         }),
       ),
     },
@@ -321,6 +357,14 @@ async function makeTempHome(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'kimi-code-tui-'));
   tempDirs.push(dir);
   return dir;
+}
+
+async function makeExportedSessionZip(content = 'session zip'): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'kimi-code-feedback-export-'));
+  tempDirs.push(dir);
+  const zipPath = join(dir, 'session.zip');
+  await writeFile(zipPath, content);
+  return zipPath;
 }
 
 afterEach(async () => {
@@ -466,8 +510,9 @@ command = "vim"
       },
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    vi.mocked(promptFeedbackInput).mockImplementation(async () => 'useful feedback');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok' });
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
     harness.track.mockClear();
 
     await handleFeedbackCommand(feedbackDriver as any);
@@ -481,6 +526,309 @@ command = "vim"
       }),
     );
     expect(harness.track).toHaveBeenCalledWith('feedback_submitted', undefined);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 3');
+  });
+
+  it('submits text feedback before preparing requested attachments', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
+
+    const zipPath = await makeExportedSessionZip();
+    let resolveExport!: () => void;
+    const exportBlocked = new Promise<{
+      zipPath: string;
+      entries: string[];
+      sessionDir: string;
+      manifest: Record<string, never>;
+    }>((resolve) => {
+      resolveExport = () => {
+        resolve({
+          zipPath,
+          entries: ['manifest.json', 'state.json'],
+          sessionDir: '/tmp/session-a',
+          manifest: {},
+        });
+      };
+    });
+    harness.exportSession.mockImplementationOnce(() => exportBlocked);
+
+    let settled = false;
+    const command = handleFeedbackCommand(feedbackDriver as any).then(() => {
+      settled = true;
+    });
+
+    await vi.waitFor(() => {
+      expect(harness.exportSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'ses-1',
+          includeGlobalLog: true,
+          version: '0.0.0-test',
+        }),
+      );
+    });
+    expect(harness.auth.submitFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({ content: 'useful feedback' }),
+    );
+    expect(harness.auth.submitFeedback.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.exportSession.mock.invocationCallOrder[0]!,
+    );
+    expect(settled).toBe(false);
+
+    resolveExport();
+    await command;
+  });
+
+  it('waits for the codebase upload to finish before returning', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(scanCodebase).mockReset();
+    harness.exportSession.mockReset();
+    vi.mocked(packageCodebase).mockReset();
+    vi.mocked(uploadArchive).mockReset();
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.listSessions.mockResolvedValueOnce([
+      { id: 'ses-1', sessionDir: '/tmp/session-a' },
+    ] as never);
+
+    vi.mocked(scanCodebase).mockResolvedValueOnce({
+      root: '/tmp/proj-a',
+      files: [{ path: 'keep.ts', size: 4 }],
+      fingerprint: 'fp-123',
+      usedGitIgnore: false,
+    } as any);
+    const sessionZipPath = await makeExportedSessionZip();
+    harness.exportSession.mockResolvedValueOnce({
+      zipPath: sessionZipPath,
+      entries: ['manifest.json', 'state.json'],
+      sessionDir: '/tmp/session-a',
+      manifest: {},
+    });
+    vi.mocked(packageCodebase).mockResolvedValueOnce({
+      path: '/tmp/fake-codebase.zip',
+      size: 4,
+      sha256: 'hash-123',
+      fingerprint: 'fp-123',
+      fileCount: 1,
+    });
+
+    let resolveCodebaseUpload!: () => void;
+    const codebaseUploadBlocked = new Promise<void>((resolve) => {
+      resolveCodebaseUpload = resolve;
+    });
+    vi.mocked(uploadArchive).mockImplementation((_api, archive) => {
+      if (archive.path === sessionZipPath) return Promise.resolve();
+      return codebaseUploadBlocked;
+    });
+
+    let settled = false;
+    const command = handleFeedbackCommand(feedbackDriver as any).then(() => {
+      settled = true;
+    });
+
+    await vi.waitFor(() => {
+      expect(uploadArchive).toHaveBeenCalledTimes(2);
+    });
+    expect(settled).toBe(false);
+
+    resolveCodebaseUpload();
+    await command;
+    expect(settled).toBe(true);
+    expect(uploadArchive).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ path: sessionZipPath }),
+      3,
+      { filename: 'session.zip' },
+    );
+    expect(uploadArchive).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ path: '/tmp/fake-codebase.zip' }),
+      3,
+      { filename: 'repo.zip' },
+    );
+    expect(harness.auth.submitFeedback).toHaveBeenCalledWith(
+      expect.not.objectContaining({ info: expect.anything() }),
+    );
+  });
+
+  it('uploads session logs when codebase scanning fails but the session directory is available', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(scanCodebase).mockReset();
+    harness.exportSession.mockReset();
+    vi.mocked(packageCodebase).mockReset();
+    vi.mocked(uploadArchive).mockReset();
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
+    const sessionZipPath = await makeExportedSessionZip();
+    vi.mocked(scanCodebase).mockRejectedValueOnce(new Error('scan failed'));
+    harness.exportSession.mockResolvedValueOnce({
+      zipPath: sessionZipPath,
+      entries: ['manifest.json', 'state.json'],
+      sessionDir: '/tmp/session-a',
+      manifest: {},
+    });
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(harness.exportSession).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'ses-1', includeGlobalLog: true }),
+    );
+    expect(packageCodebase).not.toHaveBeenCalled();
+    expect(uploadArchive).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ path: sessionZipPath }),
+      3,
+      { filename: 'session.zip' },
+    );
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 3');
+    expect(transcript).toContain('attachment upload failed');
+  });
+
+  it('tells the user when feedback is sent but codebase packaging fails', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(scanCodebase).mockReset();
+    vi.mocked(packageCodebase).mockReset();
+    harness.exportSession.mockReset();
+    vi.mocked(uploadArchive).mockReset();
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
+    const sessionZipPath = await makeExportedSessionZip();
+
+    vi.mocked(scanCodebase).mockResolvedValueOnce({
+      root: '/tmp/proj-a',
+      files: [{ path: 'keep.ts', size: 4 }],
+      fingerprint: 'fp-123',
+      usedGitIgnore: false,
+    } as any);
+    harness.exportSession.mockResolvedValueOnce({
+      zipPath: sessionZipPath,
+      entries: ['manifest.json', 'state.json'],
+      sessionDir: '/tmp/session-a',
+      manifest: {},
+    });
+    vi.mocked(packageCodebase).mockRejectedValueOnce(new Error('zip failed'));
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    const calls = harness.auth.submitFeedback.mock.calls as unknown as Array<[Record<string, unknown>]>;
+    expect(calls[0]?.[0]?.['info']).toBeUndefined();
+    expect(uploadArchive).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ path: sessionZipPath }),
+      3,
+      { filename: 'session.zip' },
+    );
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 3');
+    expect(transcript).toContain('attachment upload failed');
+  });
+
+  it('tells the user when the codebase upload fails', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+
+    vi.mocked(scanCodebase).mockResolvedValueOnce({
+      root: '/tmp/proj-a',
+      files: [{ path: 'keep.ts', size: 4 }],
+      fingerprint: 'fp-123',
+      usedGitIgnore: false,
+    } as any);
+    vi.mocked(packageCodebase).mockResolvedValueOnce({
+      path: '/tmp/fake-codebase.zip',
+      size: 4,
+      sha256: 'hash-123',
+      fingerprint: 'fp-123',
+      fileCount: 1,
+    });
+    vi.mocked(uploadArchive).mockRejectedValueOnce(new Error('upload failed'));
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(harness.auth.submitFeedback).toHaveBeenCalledOnce();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 3');
+    expect(transcript).toContain('attachment upload failed');
   });
 
   it('shows feedback API error messages without replacing them with HTTP status text', async () => {
@@ -499,7 +847,8 @@ command = "vim"
       },
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    vi.mocked(promptFeedbackInput).mockImplementation(async () => 'useful feedback');
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
     harness.auth.submitFeedback.mockResolvedValueOnce({
       kind: 'error',
       status: 500,
@@ -1025,6 +1374,49 @@ command = "vim"
     expect(transcript).not.toContain('Approved: Run shell command');
   });
 
+  it('removes debug timing status from undone turns', async () => {
+    const { driver, session } = await makeDriver();
+    const previousDebug = process.env['KIMI_CODE_DEBUG'];
+    process.env['KIMI_CODE_DEBUG'] = '1';
+    try {
+      driver.handleUserInput('hello');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.completed',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 1,
+          llmFirstTokenLatencyMs: 120,
+          llmStreamDurationMs: 800,
+        } as Event,
+        () => {},
+      );
+
+      await vi.waitFor(() => {
+        expect(stripSgr(renderTranscript(driver))).toContain('[Debug]');
+      });
+
+      driver.state.appState.streamingPhase = 'idle';
+      driver.handleUserInput('/undo');
+      await confirmUndoSelection(driver);
+
+      await vi.waitFor(() => {
+        expect(session.undoHistory).toHaveBeenCalledWith(1);
+      });
+
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).not.toContain('hello');
+      expect(transcript).not.toContain('[Debug]');
+    } finally {
+      if (previousDebug === undefined) {
+        delete process.env['KIMI_CODE_DEBUG'];
+      } else {
+        process.env['KIMI_CODE_DEBUG'] = previousDebug;
+      }
+    }
+  });
+
   it('undoes multiple turns when a count is provided', async () => {
     const { driver, session } = await makeDriver();
 
@@ -1240,6 +1632,149 @@ command = "vim"
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('queues bash input with mode bash while a turn is streaming', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('ls');
+
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'ls', agentId: 'main', mode: 'bash' },
+    ]);
+  });
+
+  it('dispatches a queued bash item to runShellCommand instead of prompt', async () => {
+    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
+    const session = makeSession({ runShellCommand });
+    const { driver } = await makeDriver(session);
+
+    driver.sendQueuedMessage(session, { text: 'ls', mode: 'bash' });
+    await Promise.resolve();
+
+    expect(runShellCommand).toHaveBeenCalledWith(
+      'ls',
+      expect.objectContaining({ commandId: expect.any(String) }),
+    );
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('does not persist bash input to input history', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('ls');
+
+    expect(driver.persistInputHistory).not.toHaveBeenCalled();
+  });
+
+  it('persists normal input to input history', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('hello');
+
+    expect(driver.persistInputHistory).toHaveBeenCalledWith('hello');
+  });
+
+  it('does not steer queued bash commands, keeping them queued', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [
+      { text: 'ls', agentId: 'main', mode: 'bash' },
+      { text: 'focus on tests', agentId: 'main' },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).toHaveBeenCalledWith('focus on tests');
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'ls', agentId: 'main', mode: 'bash' },
+    ]);
+  });
+
+  it('does not steer while a shell command is running', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'shell';
+    driver.state.queuedMessages = [{ text: 'summarize the output', agentId: 'main' }];
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'summarize the output', agentId: 'main' },
+    ]);
+  });
+
+  it('does not steer the editor draft while it is in bash mode', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.inputMode = 'bash';
+    driver.state.editor.setText('ls');
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.editor.getText()).toBe('ls');
+  });
+
+  it('recalls a queued bash command back into bash mode on Up', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{ text: 'ls', agentId: 'main', mode: 'bash' }];
+    // After a bash command is queued the editor is reset to prompt mode.
+    driver.state.editor.inputMode = 'prompt';
+    driver.state.appState.inputMode = 'prompt';
+
+    const handled = driver.state.editor.onUpArrowEmpty?.();
+
+    expect(handled).toBe(true);
+    expect(driver.state.editor.getText()).toBe('ls');
+    expect(driver.state.editor.inputMode).toBe('bash');
+    expect(driver.state.appState.inputMode).toBe('bash');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('recalls a queued prompt message in prompt mode on Up', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{ text: 'hello', agentId: 'main' }];
+    driver.state.editor.inputMode = 'bash';
+    driver.state.appState.inputMode = 'bash';
+
+    const handled = driver.state.editor.onUpArrowEmpty?.();
+
+    expect(handled).toBe(true);
+    expect(driver.state.editor.getText()).toBe('hello');
+    expect(driver.state.editor.inputMode).toBe('prompt');
+    expect(driver.state.appState.inputMode).toBe('prompt');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('echoes a bash command with a $ prompt in the transcript', async () => {
+    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
+    const session = makeSession({ runShellCommand });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('ls');
+    await Promise.resolve();
+
+    const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('$ ls');
+    expect(transcript).not.toContain('! ls');
   });
 
   it('renders cron fired events as distinct transcript entries', async () => {
@@ -3109,7 +3644,9 @@ command = "vim"
     confirm.handleInput('\r');
 
     await vi.waitFor(() => {
-      expect(session.installPlugin).toHaveBeenCalledWith('/tmp/proj-a/plugins/kimi-datasource');
+      expect(session.installPlugin).toHaveBeenCalledWith(
+        resolve('/tmp/proj-a', './plugins/kimi-datasource'),
+      );
     });
   });
 

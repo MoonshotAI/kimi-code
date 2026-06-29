@@ -72,7 +72,9 @@ auto_install = false
 
     await handleReloadCommand(host);
 
-    expect(session.reloadSession).toHaveBeenCalledOnce();
+    expect(session.reloadSession).toHaveBeenCalledWith({
+      forcePluginSessionStartReminder: true,
+    });
     expect(host.reloadCurrentSessionView).toHaveBeenCalledWith(
       session,
       'Session reloaded.',

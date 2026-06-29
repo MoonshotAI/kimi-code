@@ -31,6 +31,7 @@ import {
   startServer,
   type RunningServer,
 } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 import { rawDataToString } from '../src/ws/rawData';
 
 let tmpDir: string;
@@ -52,12 +53,15 @@ afterEach(async () => {
       // ignore
     }
   }
-  rmSync(tmpDir, { recursive: true, force: true });
-  rmSync(bridgeHome, { recursive: true, force: true });
+  // The server's core process may still flush files into the sandboxed home
+  // briefly after close(), so retry removals to ride out EBUSY/ENOTEMPTY races.
+  rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  rmSync(bridgeHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 });
 
 async function spawn(): Promise<RunningServer> {
   const r = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -91,7 +95,7 @@ interface Conn {
 
 function openConn(url: string): Promise<Conn> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, ['kimi-code.bearer.test-token']);
     const queue: WsFrame[] = [];
     const waiters: Array<(frame: WsFrame) => void> = [];
     ws.on('message', (data) => {

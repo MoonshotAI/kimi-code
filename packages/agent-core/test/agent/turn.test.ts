@@ -72,6 +72,34 @@ describe('Agent turn flow', () => {
     });
   });
 
+  it('tracks turn_ended telemetry with protocol props', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hi' }] });
+    await ctx.untilTurnEnd();
+
+    const started = records.find((candidate) => candidate.event === 'turn_started');
+    expect(started).toEqual({
+      event: 'turn_started',
+      properties: expect.objectContaining({ mode: 'agent', type: 'kimi', protocol: 'kimi' }),
+    });
+
+    const ended = records.find((candidate) => candidate.event === 'turn_ended');
+    expect(ended).toEqual({
+      event: 'turn_ended',
+      properties: expect.objectContaining({
+        mode: 'agent',
+        reason: 'completed',
+        type: 'kimi',
+        protocol: 'kimi',
+        duration_ms: expect.any(Number),
+      }),
+    });
+  });
+
   it('tracks duplicate tool-call detection telemetry', async () => {
     const records: TelemetryRecord[] = [];
     const ctx = testAgent({
@@ -497,7 +525,7 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: "echo 'hook response 2'",
+        command: 'node -e "process.stdout.write(\'hook response 2\')"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -558,12 +586,12 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: "echo '{}'",
+        command: 'node -e "process.stdout.write(\'{}\')"',
       },
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: 'echo \'{"hookSpecificOutput":{}}\'',
+        command: 'node -e "process.stdout.write(JSON.stringify({hookSpecificOutput:{}}))"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -621,7 +649,7 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'bad words',
-        command: "echo 'no profanity' >&2; exit 2",
+        command: 'node -e "process.stderr.write(\'no profanity\'); process.exit(2)"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -713,7 +741,7 @@ describe('Agent turn flow', () => {
     const hookEngine = new HookEngine([
       {
         event: 'Stop',
-        command: "echo 'continue from hook' >&2; exit 2",
+        command: 'node -e "process.stderr.write(\'continue from hook\'); process.exit(2)"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -1426,6 +1454,9 @@ describe('Agent turn flow', () => {
     const expectedProperties: Record<string, unknown> = {
       error_type: errorType,
       model: 'mock-model',
+      alias: 'mock-model',
+      type: 'kimi',
+      protocol: 'kimi',
       retryable: expect.any(Boolean),
       duration_ms: expect.any(Number),
     };

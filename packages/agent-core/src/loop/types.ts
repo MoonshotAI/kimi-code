@@ -118,6 +118,12 @@ export interface ExecutableToolContext {
   readonly metadata?: unknown;
   readonly signal: AbortSignal;
   readonly onUpdate?: ((update: ToolUpdate) => void) | undefined;
+  /**
+   * Fired once when a foreground (non-background) process task is registered,
+   * carrying its task id. Used by the `!` shell-command path so the TUI can
+   * later detach (ctrl+b) that exact task. Background runs skip it.
+   */
+  readonly onForegroundTaskStart?: ((taskId: string) => void) | undefined;
 }
 
 export interface RunnableToolExecution {

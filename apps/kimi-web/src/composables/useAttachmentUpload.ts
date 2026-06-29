@@ -1,5 +1,15 @@
 // apps/kimi-web/src/composables/useAttachmentUpload.ts
-import { onMounted, onUnmounted, ref } from 'vue';
+// Image/video attachment handling for the composer: file picker, paste, drag &
+// drop, the upload machinery, the chip strip, and the preview lightbox.
+//
+// Pending attachments are scoped per session (keyed by session id) so switching
+// sessions can't leak one session's unsent attachments into another session's
+// next submit. The composer keeps `handleSubmit`/`handleSteer` (which read the
+// attachments to build the payload) and the `hasUpload` toolbar flag; this
+// composable owns the attachment state, all the file-input UI handlers, and the
+// paste listener + object-URL cleanup lifecycle.
+
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 
 export interface Attachment {
   /** Unique local id (used as :key) */
@@ -27,21 +37,15 @@ export interface AttachmentUploadDeps {
   /** Upload a blob; resolves to the daemon file id, or null on failure.
       Getter so a prop change is picked up. Undefined disables attaching. */
   uploadImage: () => UploadImage | undefined;
+  /** Active session id — scopes pending attachments (getter for reactivity). */
+  sessionId: () => string | undefined;
 }
 
-/**
- * Image/video attachment handling for the composer: file picker, paste, drag &
- * drop, the upload machinery, the chip strip, and the preview lightbox.
- *
- * The composer keeps `handleSubmit`/`handleSteer` (which read the attachments to
- * build the payload) and the `hasUpload` toolbar flag; this composable owns the
- * attachment state, all the file-input UI handlers, and the paste listener +
- * object-URL cleanup lifecycle.
- */
 export function useAttachmentUpload(deps: AttachmentUploadDeps) {
-  const { uploadImage } = deps;
+  const { uploadImage, sessionId } = deps;
 
-  const attachments = ref<Attachment[]>([]);
+  const attachmentsBySession = ref<Record<string, Attachment[]>>({});
+  const attachments = computed(() => attachmentsBySession.value[sessionId() ?? ''] ?? []);
   const previewAttachment = ref<Attachment | null>(null);
   const fileInputRef = ref<HTMLInputElement | null>(null);
   const isDragOver = ref(false);
@@ -49,6 +53,10 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   let localIdCounter = 0;
   function nextLocalId(): string {
     return `att_${++localIdCounter}`;
+  }
+
+  function setForSession(sid: string, next: Attachment[]): void {
+    attachmentsBySession.value = { ...attachmentsBySession.value, [sid]: next };
   }
 
   function revokeAttachment(att: Attachment): void {
@@ -64,6 +72,9 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   async function addFiles(files: File[]): Promise<void> {
     const upload = uploadImage();
     if (!upload) return;
+    // Capture the session at upload time; async completion must update the same
+    // session even if the user has since switched away.
+    const sid = sessionId() ?? '';
     const media = files
       .map((file) => ({ file, kind: mediaKind(file.type) }))
       .filter((m): m is { file: File; kind: 'image' | 'video' } => m.kind !== null);
@@ -73,28 +84,36 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
       const localId = nextLocalId();
       const previewUrl = URL.createObjectURL(file);
       const att: Attachment = { localId, name: file.name, kind, previewUrl, uploading: true };
-      attachments.value = [...attachments.value, att];
+      setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), att]);
 
       // Upload in background; update the attachment when done.
       upload(file, file.name).then((result) => {
-        attachments.value = attachments.value.map((a) =>
-          a.localId === localId
-            ? { ...a, uploading: false, fileId: result?.fileId, error: result === null }
-            : a,
+        const current = attachmentsBySession.value[sid] ?? [];
+        setForSession(
+          sid,
+          current.map((a) =>
+            a.localId === localId
+              ? { ...a, uploading: false, fileId: result?.fileId, error: result === null }
+              : a,
+          ),
         );
       }).catch(() => {
-        attachments.value = attachments.value.map((a) =>
-          a.localId === localId ? { ...a, uploading: false, error: true } : a,
+        const current = attachmentsBySession.value[sid] ?? [];
+        setForSession(
+          sid,
+          current.map((a) => (a.localId === localId ? { ...a, uploading: false, error: true } : a)),
         );
       });
     }
   }
 
   function removeAttachment(localId: string): void {
-    const att = attachments.value.find((a) => a.localId === localId);
+    const sid = sessionId() ?? '';
+    const current = attachmentsBySession.value[sid] ?? [];
+    const att = current.find((a) => a.localId === localId);
     if (previewAttachment.value?.localId === localId) previewAttachment.value = null;
     if (att) revokeAttachment(att);
-    attachments.value = attachments.value.filter((a) => a.localId !== localId);
+    setForSession(sid, current.filter((a) => a.localId !== localId));
   }
 
   function openAttachmentPreview(att: Attachment): void {
@@ -179,23 +198,31 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     void addFiles(files);
   }
 
-  /** Revoke every object URL and drop all attachments (called after submit/steer). */
+  /** Revoke every object URL and drop all attachments for the current session
+      (called after submit/steer). */
   function clearAfterSubmit(): void {
-    for (const att of attachments.value) {
+    const sid = sessionId() ?? '';
+    for (const att of attachmentsBySession.value[sid] ?? []) {
       revokeAttachment(att);
     }
-    attachments.value = [];
+    setForSession(sid, []);
   }
+
+  // Close the preview lightbox when switching sessions — it may reference an
+  // attachment that belongs to the previous session.
+  watch(sessionId, () => {
+    previewAttachment.value = null;
+  });
 
   onMounted(() => {
     document.addEventListener('paste', handleDocumentPaste);
   });
 
-  // Revoke all object URLs and remove the global listener on unmount.
+  // Revoke all object URLs (every session) and remove the global listener on unmount.
   onUnmounted(() => {
     document.removeEventListener('paste', handleDocumentPaste);
-    for (const att of attachments.value) {
-      revokeAttachment(att);
+    for (const atts of Object.values(attachmentsBySession.value)) {
+      for (const att of atts) revokeAttachment(att);
     }
     previewAttachment.value = null;
   });

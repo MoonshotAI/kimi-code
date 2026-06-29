@@ -14,6 +14,7 @@ import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 import { parsePorcelain, parseNumstat } from '@moonshot-ai/agent-core';
 
 let tmpDir: string;
@@ -21,6 +22,18 @@ let lockPath: string;
 let bridgeHome: string;
 let workspace: string;
 let server: RunningServer | undefined;
+
+function rmSyncRobust(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 60, retryDelay: 250 });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY') throw error;
+    // Best-effort cleanup: a child process may still hold the cwd or be
+    // writing into the dir after server.close(); the OS reclaims the temp dir
+    // later and a cleanup hiccup must not fail an otherwise-passing test.
+  }
+}
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'kimi-server-fs-git-test-'));
@@ -37,12 +50,19 @@ afterEach(async () => {
 
   }
   server = undefined;
-  rmSync(tmpDir, { recursive: true, force: true });
-  rmSync(bridgeHome, { recursive: true, force: true });
-});
+  // On Windows the git/gh child processes and the session core process spawned
+  // during a test can outlive `server.close()` (their disposal is not fully
+  // awaited) and keep the temp workspace as their cwd, which makes rmSync fail
+  // with EPERM. Retry generously to ride out the asynchronous teardown, and if
+  // the cwd is still locked, swallow the error — temp dirs are reclaimed by the
+  // OS and a cleanup hiccup must not fail an otherwise-passing test.
+  rmSyncRobust(tmpDir);
+  rmSyncRobust(bridgeHome);
+}, 20_000);
 
 async function bootDaemon(): Promise<RunningServer> {
   server = await startServer({
+    serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
     port: 0,
     lockPath,
@@ -58,15 +78,27 @@ function appOf(r: RunningServer): {
     json: () => unknown;
   }>;
 } {
-  return r.services.invokeFunction((a) => {
+  const app = r.services.invokeFunction((a) => {
     const gw = a.get(IRestGateway);
     return gw.app as unknown as {
-      inject: (req: unknown) => Promise<{
-        statusCode: number;
-        json: () => unknown;
-      }>;
-    };
+  inject: (req: unknown) => Promise<{
+    statusCode: number;
+    json: () => unknown;
+  }>;
+};
   });
+  // Auto-attach the fixed bearer token so the M5.1 auth hook passes. A
+  // caller-supplied `authorization` header wins, so explicit token tests keep
+  // working; every other header (Range, content-type, …) is preserved.
+  return {
+    inject(req: unknown) {
+      const q = req as { headers?: Record<string, string | string[] | undefined> };
+      return app.inject({
+        ...q,
+        headers: { authorization: 'Bearer test-token', ...q.headers },
+      });
+    },
+  };
 }
 
 function envelopeOf<T>(body: unknown): {
@@ -119,7 +151,8 @@ function initRepo(): void {
   git(['commit', '-m', 'seed', '--no-gpg-sign']);
 }
 
-describe('POST /api/v1/sessions/{sid}/fs:git_status (W11.2)', () => {
+// oxlint-disable-next-line eslint-plugin-jest(valid-describe-callback)
+describe('POST /api/v1/sessions/{sid}/fs:git_status (W11.2)', { timeout: process.platform === 'win32' ? 20_000 : 5_000 }, () => {
   it('clean repo: empty entries, branch populated', async () => {
     initRepo();
 
@@ -146,7 +179,9 @@ describe('POST /api/v1/sessions/{sid}/fs:git_status (W11.2)', () => {
     // Clean tree → no line stats.
     expect(env.data!.additions).toBe(0);
     expect(env.data!.deletions).toBe(0);
-  });
+    // First server-booting test in the file: on Windows, cold module load
+    // plus the `git`/`gh` child-process spawns can exceed the default 5s.
+  }, 20_000);
 
   it('dirty repo: aggregate additions/deletions vs HEAD', async () => {
     initRepo();

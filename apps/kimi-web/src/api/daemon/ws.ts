@@ -5,7 +5,13 @@
 
 import { traceWsIn, traceWsLifecycle, traceWsOut } from '../../debug/trace';
 import { classifyFrame } from './agentEventProjector';
+import { getCredential } from './serverAuth';
 import type { WireEvent, WireServerFrame } from './wire';
+
+// Mirrors packages/server WS_BEARER_PROTOCOL_PREFIX. The browser WebSocket API
+// cannot set arbitrary headers, so the bearer credential rides in the
+// Sec-WebSocket-Protocol subprotocol instead.
+const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
 
 // ---------------------------------------------------------------------------
 // Handler interface
@@ -89,7 +95,10 @@ export class DaemonEventSocket {
     if (this.ws !== null || this.closed) return;
 
     traceWsLifecycle('connect', { url: this.wsUrl, attempt: this.reconnectAttempts });
-    const ws = new WebSocket(this.wsUrl);
+    const credential = getCredential();
+    const protocols =
+      credential !== undefined ? [`${WS_BEARER_PROTOCOL_PREFIX}${credential}`] : undefined;
+    const ws = new WebSocket(this.wsUrl, protocols);
     this.ws = ws;
 
     ws.onopen = () => {

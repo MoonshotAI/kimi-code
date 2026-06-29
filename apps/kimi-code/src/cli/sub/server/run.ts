@@ -13,7 +13,6 @@
 
 import { join } from 'node:path';
 
-import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import { startServer, type RunningServer } from '@moonshot-ai/server';
 import chalk from 'chalk';
@@ -23,21 +22,31 @@ import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_UI_MODE } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
+import { getDataDir } from '#/utils/paths';
 
 import { initializeServerTelemetry } from '../../telemetry';
 import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../../version';
-import { ensureDaemon } from './daemon';
+import {
+  accessUrlLines,
+  buildOpenableUrl,
+  isLoopbackHost,
+  splitTokenFragment,
+} from './access-urls';
+import { ensureDaemon, type EnsureDaemonResult } from './daemon';
+import { type NetworkAddress } from './networks';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
+  DEFAULT_LAN_HOST,
+  DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
   parseServerOptions,
+  tryResolveServerToken,
   VALID_LOG_LEVELS,
   type ParsedServerOptions,
   type ServerCliOptions,
 } from './shared';
 
 const WEB_ASSETS_DIR = 'dist-web';
-const READY_PANEL_WIDTH = 72;
 
 export interface RunCliOptions extends ServerCliOptions {
   open?: boolean;
@@ -51,15 +60,47 @@ export interface StartForegroundHooks {
 }
 
 export interface RunCommandDeps {
-  startServerBackground(options: ParsedServerOptions): Promise<{ origin: string }>;
+  startServerBackground(options: ParsedServerOptions): Promise<{
+    origin: string;
+    /** True when an already-running daemon was reused (no new server started). */
+    reused?: boolean;
+    /** Bind host the running daemon is actually listening on (from the lock). */
+    host?: string;
+    /** Port the running daemon is actually listening on (from the lock). */
+    port?: number;
+  }>;
   /** Foreground runner; defaults to the real in-process runner when omitted. */
   startServerForeground?: (
     options: ParsedServerOptions,
     hooks?: StartForegroundHooks,
   ) => Promise<never>;
   openUrl(url: string): void;
+  /**
+   * Best-effort read of the server's persistent bearer token. When it returns
+   * a token, the ready banner prints it and the opened Web UI URL carries it in
+   * the `#token=` fragment (M5.5). Optional so callers/tests that don't supply
+   * it simply print/open the plain origin.
+   */
+  resolveToken?: () => string | undefined;
+  /**
+   * Non-loopback interface addresses to display for a wildcard bind. Defaults
+   * to the machine's own interfaces (`listNetworkAddresses()`); inject a fixed
+   * list in tests for deterministic output.
+   */
+  networkAddresses?: NetworkAddress[];
   stdout: Pick<NodeJS.WriteStream, 'write'>;
   stderr: Pick<NodeJS.WriteStream, 'write'>;
+}
+
+/**
+ * Build the Web UI URL, carrying the bearer token in the URL fragment.
+ *
+ * The token rides in `#token=<token>` — a client-side fragment that is never
+ * sent to the server (so it never appears in server access logs) and is not
+ * logged by proxies. The Web UI reads it from `location.hash` after load.
+ */
+export function buildWebUrl(origin: string, token: string): string {
+  return buildOpenableUrl(origin, token);
 }
 
 /** Build the `run` subcommand, mounted under a parent (`server` or top-level). */
@@ -69,6 +110,29 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
       '--port <port>',
       `Bind port (default ${DEFAULT_SERVER_PORT})`,
       String(DEFAULT_SERVER_PORT),
+    )
+    .option(
+      '--host [host]',
+      `Bind host. Omit to bind ${DEFAULT_SERVER_HOST} (this machine only); pass --host to bind ${DEFAULT_LAN_HOST} (all interfaces), or --host <host> for a specific host. The bearer token is printed at startup.`,
+    )
+    .option(
+      '--allowed-host <host...>',
+      'Extra Host header value to allow through the DNS-rebinding check. Repeat or comma-separate; a leading dot matches a domain suffix (e.g. .example.com).',
+    )
+    .option(
+      '--insecure-no-tls',
+      'Allow a non-loopback bind without a TLS-terminating reverse proxy. Defaults to true; only relevant for non-loopback binds.',
+      true,
+    )
+    .option(
+      '--allow-remote-shutdown',
+      'On a non-loopback bind, keep POST /api/v1/shutdown enabled (default: route is disabled → 404).',
+      false,
+    )
+    .option(
+      '--allow-remote-terminals',
+      'On a non-loopback bind, keep the PTY /api/v1/terminals/* routes enabled (default: disabled → 404). Remote shell is high risk.',
+      false,
     )
     .option(
       '--log-level <level>',
@@ -119,34 +183,55 @@ export async function handleRunCommand(
     await startServerDaemon(parsed);
     return;
   }
-  const startedAt = Date.now();
+  // Resolve the persistent token once: it is printed in the ready banner and
+  // rides in the opened Web UI URL's `#token=` fragment (M5.5). Falls back to
+  // the plain origin / no token line when unavailable.
+  const writeReady = (result: { origin: string; reused?: boolean; host?: string }): void => {
+    const { origin } = result;
+    const host = result.host ?? parsed.host;
+    const token = deps.resolveToken?.();
+    let output = '';
+    if (result.reused === true) {
+      // A daemon was already running, so this command's --host/--port/etc. did
+      // not start a new one. Say so loudly, then print the actual running
+      // server's URLs (using its real bind host, not the requested one).
+      output += formatReuseNotice(origin);
+    }
+    output +=
+      parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
+        ? formatReadyBanner(origin, host, {
+            token,
+            networkAddresses: deps.networkAddresses,
+          })
+        : formatReadyLine(origin, token);
+    deps.stdout.write(output);
+    if (opts.open === true) {
+      deps.openUrl(token !== undefined ? buildWebUrl(origin, token) : origin);
+    }
+  };
   if (opts.foreground === true) {
     const run = deps.startServerForeground ?? startServerForeground;
     await run(parsed, {
       onReady: (origin) => {
-        const readyMs = Date.now() - startedAt;
-        deps.stdout.write(
-          parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-            ? formatReadyBanner(origin, readyMs)
-            : `Kimi server: ${origin}\n`,
-        );
-        if (opts.open === true) {
-          deps.openUrl(origin);
-        }
+        writeReady({ origin, reused: false, host: parsed.host });
       },
     });
     return;
   }
-  const { origin } = await deps.startServerBackground(parsed);
-  const readyMs = Date.now() - startedAt;
-  deps.stdout.write(
-    parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-      ? formatReadyBanner(origin, readyMs)
-      : `Kimi server: ${origin}\n`,
+  const result = await deps.startServerBackground(parsed);
+  writeReady(result);
+}
+
+function formatReuseNotice(origin: string): string {
+  return (
+    `${chalk.hex(darkColors.warning)('A server is already running')} at ${origin} — ` +
+    `the options from this command were not applied. ` +
+    `Run ${chalk.bold('kimi server kill')} first to bind a new host/port.\n`
   );
-  if (opts.open === true) {
-    deps.openUrl(origin);
-  }
+}
+
+function formatReadyLine(origin: string, token: string | undefined): string {
+  return `Kimi server: ${buildOpenableUrl(origin, token)}\n`;
 }
 
 /**
@@ -157,14 +242,18 @@ export async function handleRunCommand(
  */
 export async function startServerBackground(
   options: ParsedServerOptions,
-): Promise<{ origin: string }> {
-  const { origin } = await ensureDaemon({
+): Promise<EnsureDaemonResult> {
+  return ensureDaemon({
+    host: options.host,
     port: options.port,
     logLevel: options.logLevel,
     debugEndpoints: options.debugEndpoints,
+    insecureNoTls: options.insecureNoTls,
+    allowRemoteShutdown: options.allowRemoteShutdown,
+    allowRemoteTerminals: options.allowRemoteTerminals,
+    allowedHosts: options.allowedHosts,
     idleGraceMs: options.idleGraceMs,
   });
-  return { origin };
 }
 
 /**
@@ -238,6 +327,10 @@ async function runServerInProcess(
     port: options.port,
     logLevel: options.logLevel,
     debugEndpoints: options.debugEndpoints,
+    insecureNoTls: options.insecureNoTls,
+    allowRemoteShutdown: options.allowRemoteShutdown,
+    allowRemoteTerminals: options.allowRemoteTerminals,
+    allowedHosts: options.allowedHosts,
     webAssetsDir: serverWebAssetsDir(),
     coreProcessOptions: {
       identity: createKimiCodeHostIdentity(version),
@@ -323,65 +416,80 @@ export function resolveServerWebAssetsDir(
   return nativeWebAssetsDir ?? join(getHostPackageRoot(), WEB_ASSETS_DIR);
 }
 
-function formatReadyBanner(origin: string, readyMs: number): string {
+interface FormatReadyBannerOptions {
+  /** Persistent bearer token to print; omitted when unresolvable. */
+  token?: string;
+  /** Non-loopback interface addresses to list for a wildcard bind. */
+  networkAddresses?: NetworkAddress[];
+}
+
+function formatReadyBanner(
+  origin: string,
+  host: string,
+  opts: FormatReadyBannerOptions = {},
+): string {
   const primary = (text: string): string => chalk.hex(darkColors.primary)(text);
   const title = (text: string): string => chalk.bold.hex(darkColors.primary)(text);
   const dim = (text: string): string => chalk.hex(darkColors.textDim)(text);
   const muted = (text: string): string => chalk.hex(darkColors.textMuted)(text);
   const label = (text: string): string => chalk.bold.hex(darkColors.textDim)(text);
-  const url = chalk.hex(darkColors.accent)(displayOrigin(origin));
-  const width = READY_PANEL_WIDTH;
-  const innerWidth = width - 4;
-  const pad = '  ';
+  const url = (text: string): string => chalk.hex(darkColors.accent)(text);
+  // Render the `#token=…` fragment in a de-emphasized gray so the host/port
+  // stands out while the full URL stays selectable for copying.
+  const urlWithDimToken = (href: string): string => {
+    const [base, frag] = splitTokenFragment(href);
+    return frag === '' ? url(base) : url(base) + dim(frag);
+  };
 
+  const port = Number(new URL(origin).port);
+  // Borderless header: the Kimi sprite (the little mascot with eyes) sits next
+  // to the title, keeping the brand without the enclosing box.
   const logo = ['▐█▛█▛█▌', '▐█████▌'] as const;
-  const logoWidth = Math.max(...logo.map((row) => visibleWidth(row)));
-  const gap = '  ';
-  const textWidth = innerWidth - logoWidth - gap.length;
-  const headerLines = [
-    primary(logo[0].padEnd(logoWidth)) +
-      gap +
-      truncateToWidth(title('Kimi server ready'), textWidth, '…'),
-    primary(logo[1].padEnd(logoWidth)) +
-      gap +
-      truncateToWidth(dim('Local web UI is available from this machine.'), textWidth, '…'),
-  ];
-  const infoLines = [
-    label('URL:      ') + url,
-    label('Network:  ') + muted('local only'),
-    label('Logs:     ') + muted('off') + dim('  use --log-level info to enable'),
-    label('Stop:     ') + muted('kimi server kill'),
-    label('Ready:    ') + muted(`${String(Math.max(0, readyMs))} ms`),
-    label('Version:  ') + muted(getVersion()),
-  ];
-  const contentLines = [...headerLines, '', ...infoLines];
-
-  const lines = [
+  const lines: string[] = [
     '',
-    primary('╭' + '─'.repeat(width - 2) + '╮'),
-    primary('│') + ' '.repeat(width - 2) + primary('│'),
+    `  ${primary(logo[0])}  ${title('Kimi server ready')}  ${dim(getVersion())}`,
+    `  ${primary(logo[1])}  ${dim('Local web UI is available from this machine.')}`,
+    '',
   ];
 
-  for (const content of contentLines) {
-    const truncated = truncateToWidth(content, innerWidth, '…');
-    const rightPad = Math.max(0, innerWidth - visibleWidth(truncated));
-    lines.push(primary('│') + pad + truncated + ' '.repeat(rightPad) + primary('│'));
+  // Access links.
+  for (const { label: text, url: href } of accessUrlLines(
+    host,
+    port,
+    opts.token,
+    opts.networkAddresses,
+  )) {
+    lines.push(`  ${label(text)}${urlWithDimToken(href)}`);
+  }
+  // On a loopback bind there is no network URL; show how to enable one.
+  if (isLoopbackHost(host)) {
+    lines.push(`  ${label('Network:  ')}${muted('off')}${dim('  use --host to enable')}`);
+  }
+  if (opts.token !== undefined) {
+    // Set the token off with surrounding whitespace rather than color, so it is
+    // easy to spot without being highlighted.
+    lines.push('');
+    lines.push(`  ${label('Token:    ')}${opts.token}`);
+    lines.push('');
   }
 
-  lines.push(primary('│') + ' '.repeat(width - 2) + primary('│'));
-  lines.push(primary('╰' + '─'.repeat(width - 2) + '╯'));
+  // Auxiliary controls last.
+  lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
+  lines.push(`  ${label('Stop:     ')}${muted('kimi server kill')}`);
   lines.push('');
   return lines.join('\n');
-}
-
-function displayOrigin(origin: string): string {
-  return origin.endsWith('/') ? origin : `${origin}/`;
 }
 
 const DEFAULT_RUN_COMMAND_DEPS: RunCommandDeps = {
   startServerBackground,
   startServerForeground,
   openUrl: defaultOpenUrl,
+  resolveToken: () => {
+    // Read the persistent `<homeDir>/server.token` written on first boot
+    // (M5.1). Best-effort: a missing/older server yields undefined and the
+    // caller opens the plain origin.
+    return tryResolveServerToken(getDataDir());
+  },
   stdout: process.stdout,
   stderr: process.stderr,
 };

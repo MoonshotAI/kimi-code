@@ -15,6 +15,8 @@ export default {
   interruptTitle: 'Interrupt current operation',
   steerNow: 'Steer now ⌃S',
   steerTitle: 'Inject into the running turn without waiting (Ctrl+S / ⌘S)',
+  expandTitle: 'Expand input for multi-line editing',
+  collapseTitle: 'Collapse input',
   emptyConversationTitle: 'Kimi Code',
   emptyConversation: 'No messages yet — type below to start the conversation',
   quickStartPlaceholder: 'Type a message to start a new conversation…',

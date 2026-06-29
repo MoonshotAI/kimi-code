@@ -260,21 +260,26 @@ export class SessionService extends Disposable implements ISessionService {
     };
     const all = await this.core.rpc.listSessions(corePayload);
     const sorted = all.toSorted((a, b) => b.updatedAt - a.updatedAt);
+    // Hide sessions the user has never interacted with: a session is "empty" when
+    // it has no lastPrompt (the first prompt has not been sent yet). Filtered
+    // before cursor pagination so each returned page is filled with non-empty
+    // sessions and has_more reflects the filtered set.
+    const visible = query.excludeEmpty ? sorted.filter((s) => s.lastPrompt) : sorted;
 
     let pivotIndex = -1;
     if (query.before_id !== undefined) {
-      pivotIndex = sorted.findIndex((s) => s.id === query.before_id);
+      pivotIndex = visible.findIndex((s) => s.id === query.before_id);
     } else if (query.after_id !== undefined) {
-      pivotIndex = sorted.findIndex((s) => s.id === query.after_id);
+      pivotIndex = visible.findIndex((s) => s.id === query.after_id);
     }
 
-    let slice: typeof sorted;
+    let slice: typeof visible;
     if (query.before_id !== undefined && pivotIndex >= 0) {
-      slice = sorted.slice(pivotIndex + 1);
+      slice = visible.slice(pivotIndex + 1);
     } else if (query.after_id !== undefined && pivotIndex >= 0) {
-      slice = sorted.slice(0, pivotIndex);
+      slice = visible.slice(0, pivotIndex);
     } else {
-      slice = sorted;
+      slice = visible;
     }
 
     const requestedSize = query.page_size ?? DEFAULT_PAGE_SIZE;

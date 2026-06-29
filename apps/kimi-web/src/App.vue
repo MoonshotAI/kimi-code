@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/App.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, provide, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Sidebar from './components/Sidebar.vue';
 import ResizeHandle from './components/ResizeHandle.vue';
@@ -8,14 +8,13 @@ import ConversationPane from './components/chat/ConversationPane.vue';
 import FilePreview from './components/FilePreview.vue';
 import ThinkingPanel from './components/chat/ThinkingPanel.vue';
 import AgentDetailPanel from './components/chat/AgentDetailPanel.vue';
+import ToolDiffPanel from './components/chat/ToolDiffPanel.vue';
 import SideChatPanel from './components/chat/SideChatPanel.vue';
 import DiffView from './components/chat/DiffView.vue';
 import ModelPicker from './components/settings/ModelPicker.vue';
 import ProviderManager from './components/settings/ProviderManager.vue';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
-import NewSessionDialog from './components/dialogs/NewSessionDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
-import SessionsDialog from './components/dialogs/SessionsDialog.vue';
 import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
 import StatusPanel from './components/chat/StatusPanel.vue';
 import WarningToasts from './components/WarningToasts.vue';
@@ -33,7 +32,15 @@ import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
+import ServerAuthDialog from './components/ServerAuthDialog.vue';
+import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
+
+// Hydrate the server-transport credential (fragment token or sessionStorage)
+// BEFORE the client connects, so the first REST/WS calls already carry it.
+const hasServerCredential = initServerAuth();
+const showServerAuth = ref(!hasServerCredential);
+let offAuthRequired: (() => void) | null = null;
 
 const client = useKimiWebClient();
 provide('resolveImage', client.resolveImageUrl);
@@ -98,10 +105,17 @@ onMounted(() => {
   // Capture-phase so Escape closes the side detail layer BEFORE the
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
+  offAuthRequired = onAuthRequired(() => {
+    showServerAuth.value = true;
+  });
 });
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
+  if (offAuthRequired !== null) {
+    offAuthRequired();
+    offAuthRequired = null;
+  }
 });
 
 function onGlobalKeydown(e: KeyboardEvent): void {
@@ -121,6 +135,15 @@ function onGlobalKeydown(e: KeyboardEvent): void {
 // composables can both claim the single right-side slot.
 // ---------------------------------------------------------------------------
 const detailTarget = ref<DetailTarget | null>(null);
+
+// True for one frame while the active session changes: suppresses the right
+// panel's width transition so a restored panel snaps to its width instead of
+// animating open from zero.
+const panelSwitching = ref(false);
+watch(client.activeSessionId, () => {
+  panelSwitching.value = true;
+  void nextTick(() => { panelSwitching.value = false; });
+});
 
 const {
   previewTarget,
@@ -180,6 +203,9 @@ const {
   agentPanelMember,
   openAgentPanel,
   closeAgentPanel,
+  toolDiffTarget,
+  openToolDiff,
+  closeToolDiff,
   detailDiffMode,
   detailDiffPath,
   openDiffDetail,
@@ -209,8 +235,6 @@ function handleSelectWorkspaces(ids: string[]): void {
 const showModelPicker = ref(false);
 const showProviders = ref(false);
 const showLogin = ref(false);
-const showNewSession = ref(false);
-const showSessions = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
@@ -229,8 +253,6 @@ const anyOverlayOpen = computed<boolean>(() =>
   showModelPicker.value ||
   showProviders.value ||
   showLogin.value ||
-  showNewSession.value ||
-  showSessions.value ||
   showAddWorkspace.value ||
   showStatusPanel.value ||
   showSettings.value ||
@@ -375,12 +397,11 @@ function handleCommand(cmd: string): void {
     return;
   }
   switch (cmd) {
+    // `/new` and `/clear` are aliases: both open the onboarding composer. The
+    // session is only created when the user sends the first message.
     case '/new':
     case '/clear':
-      showNewSession.value = true;
-      break;
-    case '/sessions':
-      showSessions.value = true;
+      handleCreateSession();
       break;
     case '/fork':
       void client.forkSession();
@@ -477,6 +498,12 @@ function handleCloseAddWorkspace(): void {
   showAddWorkspace.value = false;
 }
 
+function focusComposerAfterDraft(): void {
+  void nextTick(() => {
+    conversationPaneRef.value?.focusComposer();
+  });
+}
+
 // Primary "+ New": enter the draft state in the current workspace so the
 // right pane shows the onboarding composer. The session is only created when
 // the user sends the first message.
@@ -485,8 +512,9 @@ function handleCreateSession(): void {
   if (wsId) {
     client.openWorkspaceDraft(wsId);
   } else {
-    showNewSession.value = true;
+    client.clearActiveSession();
   }
+  focusComposerAfterDraft();
 }
 
 // Workspace-level "+ New" (sidebar group or mobile switcher): enter the draft
@@ -494,6 +522,7 @@ function handleCreateSession(): void {
 // actually sends a message.
 function handleCreateSessionInWorkspace(workspaceId: string): void {
   client.openWorkspaceDraft(workspaceId);
+  focusComposerAfterDraft();
 }
 
 // Chat header: open a GitHub PR in a new tab.
@@ -504,6 +533,7 @@ function openPr(url: string): void {
 
 <template>
   <div class="app-shell">
+    <ServerAuthDialog v-if="showServerAuth" />
     <section v-if="showAuthGate" class="auth-page">
       <div class="auth-page-inner">
         <svg ref="authLogoRef" class="auth-page-logo ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @mousedown.prevent @click="blinkAuthLogo">
@@ -684,6 +714,7 @@ function openPr(url: string): void {
       @open-thinking="openThinkingPanel($event)"
       @open-compaction="openCompactionPanel($event)"
       @open-agent="openAgentPanel($event)"
+      @open-tool-diff="openToolDiff($event)"
       @edit-message="handleEditMessage"
     />
 
@@ -713,7 +744,7 @@ function openPr(url: string): void {
     <aside
       v-if="!isMobile || sidePanelVisible"
       class="global-preview"
-      :class="{ open: sidePanelVisible, mobile: isMobile, 'no-anim': panelDragging }"
+      :class="{ open: sidePanelVisible, mobile: isMobile, 'no-anim': panelDragging || panelSwitching }"
       role="complementary"
       :aria-label="t('layout.detailPanelAria')"
       :aria-hidden="!sidePanelVisible"
@@ -755,6 +786,11 @@ function openPr(url: string): void {
         @back="detailDiffMode = 'list'; detailDiffPath = null; client.clearFileDiff()"
         @close="closeDiffDetail"
       />
+      <ToolDiffPanel
+        v-else-if="detailTarget === 'toolDiff' && toolDiffTarget"
+        :target="toolDiffTarget"
+        @close="closeToolDiff"
+      />
       <FilePreview
         v-else-if="detailTarget === 'file'"
         :file="previewFile"
@@ -793,7 +829,9 @@ function openPr(url: string): void {
       :auth-ready="client.authReady.value"
       :account-model="client.defaultModel.value"
       :notify="client.notifyOnComplete.value"
+      :notify-question="client.notifyOnQuestion.value"
       :notify-permission="client.notifyPermission.value"
+      :sound="client.soundOnComplete.value"
       :beta-toc="client.betaToc.value"
       :config="client.config.value"
       :models="client.models.value"
@@ -803,6 +841,8 @@ function openPr(url: string): void {
       @set-color-scheme="client.setColorScheme($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
       @set-notify="client.setNotifyOnComplete($event)"
+      @set-notify-question="client.setNotifyOnQuestion($event)"
+      @set-sound="client.setSoundOnComplete($event)"
       @set-beta-toc="client.setBetaToc($event)"
       @update-config="handleUpdateConfig($event)"
       @login="() => { showSettings = false; openLogin(); }"
@@ -822,25 +862,6 @@ function openPr(url: string): void {
       @delete="handleDeleteProvider($event)"
       @open-login="() => { showProviders = false; openLogin(); }"
       @close="showProviders = false"
-    />
-
-    <!-- New Session Dialog overlay (fallback cwd-typing path) -->
-    <NewSessionDialog
-      v-if="showNewSession"
-      :recent-cwds="client.recentCwds.value"
-      @create="({ cwd, title }) => { showNewSession = false; void client.createSession(cwd, { title }); }"
-      @close="showNewSession = false"
-    />
-
-    <!-- Sessions browser overlay (/sessions) — client-side list, click to switch -->
-    <SessionsDialog
-      v-if="showSessions"
-      :sessions="client.sessions.value"
-      :workspace-groups="client.workspaceGroups.value"
-      :attention-by-session="client.attentionBySession.value"
-      :active-id="client.activeSessionId.value"
-      @select="(id) => { void client.selectSession(id); showSessions = false; }"
-      @close="showSessions = false"
     />
 
     <!-- Status panel overlay (/status) — renders current client state, no daemon call -->

@@ -17,7 +17,7 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../..';
 import { errorMessage } from '../../loop/errors';
-import { timeoutOutcome } from '../../utils/promise';
+import { resettableTimeoutOutcome, timeoutOutcome, type ResettableTimeoutPromise } from '../../utils/promise';
 import { escapeXml, escapeXmlAttr } from '../../utils/xml-escape';
 import type { BackgroundTaskOrigin } from '../context';
 import { renderNotificationXml } from '../context/notification-xml';
@@ -67,6 +67,8 @@ interface ManagedTask {
   endedAt: number | null;
   /** Foreground tool call release signal, present only for non-detached starts. */
   foregroundRelease?: ControlledPromise<ForegroundTaskReleaseReason>;
+  /** Resettable deadline timer; reset on detach to apply `detachTimeoutMs`. */
+  timeoutHandle?: ResettableTimeoutPromise<TerminalOutcome>;
   /** User/tool stop request. */
   readonly stop: ControlledPromise<StopRequest>;
   /** Resolved once manager has finalized the task. */
@@ -176,6 +178,12 @@ export interface RegisterBackgroundTaskOptions {
   readonly detached?: boolean;
   /** Deadline owned by BackgroundManager. `0` and `undefined` do not arm a timer. */
   readonly timeoutMs?: number;
+  /**
+   * When set, detaching a foreground task resets its deadline to this value
+   * (counted from the detach moment). Lets a command started with a short
+   * foreground timeout run longer once it is moved to the background.
+   */
+  readonly detachTimeoutMs?: number;
   /** Foreground caller signal. Ignored for tasks created already detached. */
   readonly signal?: AbortSignal;
 }
@@ -229,7 +237,7 @@ export class BackgroundManager {
     this.agent.emitEvent({ type: 'background.task.terminated', info });
     this.agent.telemetry.track('background_task_completed', {
       kind: info.kind,
-      duration: info.endedAt !== null ? info.endedAt - info.startedAt : null,
+      duration_ms: info.endedAt !== null ? info.endedAt - info.startedAt : null,
       status: info.status,
     });
   }
@@ -264,6 +272,7 @@ export class BackgroundManager {
     const entryOptions: RegisterBackgroundTaskOptions = {
       detached,
       timeoutMs,
+      detachTimeoutMs: options.detachTimeoutMs,
       signal: detached ? undefined : options.signal,
     };
     this.assertCanRegister(detached);
@@ -413,6 +422,9 @@ export class BackgroundManager {
     if (foregroundRelease === undefined) return this.toInfo(entry);
 
     entry.foregroundRelease = undefined;
+    if (entry.options.detachTimeoutMs !== undefined) {
+      entry.timeoutHandle?.reset(entry.options.detachTimeoutMs);
+    }
     try {
       entry.task.onDetach?.();
     } catch {
@@ -744,13 +756,17 @@ export class BackgroundManager {
         });
       });
 
-    const timeout = timeoutOutcome(entry.options.timeoutMs, { kind: 'timeout' as const });
+    const timeout = resettableTimeoutOutcome(entry.options.timeoutMs, { kind: 'timeout' as const });
+    entry.timeoutHandle = timeout;
     const outcome = await Promise.race([
       worker.then((settlement): TerminalOutcome => ({ kind: 'worker', settlement })),
       timeout,
       entry.stop.then((request): TerminalOutcome => ({ kind: 'stop', request })),
       this.signalOutcome(entry),
-    ]).finally(() => timeout.clear());
+    ]).finally(() => {
+      timeout.clear();
+      entry.timeoutHandle = undefined;
+    });
     const settlement = await this.settlementForOutcome(entry, outcome, worker);
     await this.finalizeTask(entry, settlement);
   }

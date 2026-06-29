@@ -1,15 +1,27 @@
 // apps/kimi-web/src/composables/useInputHistory.ts
-import { nextTick, ref, type Ref } from 'vue';
+// Shell-style ↑/↓ recall of previously sent messages, scoped per session.
+//
+// `ArrowUp` on the first line steps back through older entries sent in the
+// current session; `ArrowDown` walks forward again and ultimately restores the
+// draft the user had before they started browsing. Any manual edit drops out of
+// browsing mode (see `resetBrowsing`, called from the composer's input handler).
+//
+// The history is persisted to localStorage as a `Record<sessionId, string[]>`.
+// A draft session (no id yet — the empty-session composer before its first
+// message is sent) does NOT record history: that first message is submitted
+// before the session exists, so it is intentionally dropped rather than
+// attributed to the wrong session.
+//
+// The composer keeps the keydown orchestration (which also juggles the slash
+// and mention menus); this composable owns only the history map, the browsing
+// cursor, and the textarea caret/selection work needed to apply a recalled
+// entry.
+
+import { computed, nextTick, ref, watch, type Ref } from 'vue';
 import { STORAGE_KEYS, safeGetJson, safeSetJson } from '../lib/storage';
 
-/** Cap the persisted history so storage can't grow without bound. */
-const MAX_HISTORY = 200;
-
-function loadHistory(): string[] {
-  const stored = safeGetJson<unknown>(STORAGE_KEYS.inputHistory);
-  if (!Array.isArray(stored)) return [];
-  return stored.filter((s): s is string => typeof s === 'string' && s.length > 0);
-}
+/** Cap each session's persisted history so storage can't grow without bound. */
+const MAX_HISTORY = 100;
 
 export interface InputHistoryDeps {
   /** The live composer text — recalled entries overwrite it. */
@@ -18,46 +30,56 @@ export interface InputHistoryDeps {
   textareaRef: Ref<HTMLTextAreaElement | null>;
   /** Re-fit the textarea after its text changes. */
   autosize: () => void;
+  /** Active session id — scopes the recalled history (getter for reactivity). */
+  sessionId: () => string | undefined;
 }
 
 /**
- * Shell-style ↑/↓ recall of previously sent messages.
- *
- * `ArrowUp` on the first line steps back through older entries; `ArrowDown`
- * walks forward again and ultimately restores the draft the user had before
- * they started browsing. Any manual edit drops out of browsing mode (see
- * `resetBrowsing`, called from the composer's input handler).
- *
- * The history is persisted to localStorage (one global list). The composer has
- * two mutually-exclusive instances — the empty-session composer and the docked
- * composer — and the first message of a new session is sent by the empty
- * composer, which unmounts as soon as the first turn appears. Persisting (and
- * re-reading on mount) is what lets the docked composer recall that first
- * message instead of starting from an empty list. A single global list also
- * sidesteps the fact that a new session has no id until after the first submit.
- *
- * The composer keeps the keydown orchestration (which also juggles the slash
- * and mention menus); this composable owns only the history list, the browsing
- * cursor, and the textarea caret/selection work needed to apply a recalled
- * entry.
+ * Read the persisted history map, migrating the legacy global `string[]` format
+ * (pre per-session) into the current session on first sight. Migration is
+ * one-shot: once a sessioned map is written, the array branch never runs again.
  */
-export function useInputHistory(deps: InputHistoryDeps) {
-  const { text, textareaRef, autosize } = deps;
+function loadMap(sessionId: string | undefined): Record<string, string[]> {
+  const raw = safeGetJson<unknown>(STORAGE_KEYS.inputHistory);
+  if (Array.isArray(raw)) {
+    const list = raw.filter((s): s is string => typeof s === 'string' && s.length > 0);
+    // No session yet (empty-session composer): leave the legacy value in place
+    // so a later docked mount — which has a session id — can migrate it.
+    if (!sessionId || list.length === 0) return {};
+    const capped = list.length > MAX_HISTORY ? list.slice(-MAX_HISTORY) : list;
+    const map = { [sessionId]: capped };
+    safeSetJson(STORAGE_KEYS.inputHistory, map);
+    return map;
+  }
+  if (raw && typeof raw === 'object') {
+    return raw as Record<string, string[]>;
+  }
+  return {};
+}
 
-  const inputHistory = ref(loadHistory());
-  // -1 = browsing nothing (live draft). Otherwise an index into inputHistory.
+export function useInputHistory(deps: InputHistoryDeps) {
+  const { text, textareaRef, autosize, sessionId } = deps;
+
+  const historyMap = ref<Record<string, string[]>>(loadMap(sessionId()));
+  const currentList = computed(() => historyMap.value[sessionId() ?? ''] ?? []);
+  // -1 = browsing nothing (live draft). Otherwise an index into currentList.
   let historyIndex = -1;
   let draftBeforeHistory = '';
 
   function push(entry: string): void {
-    const trimmed = entry.trim();
+    const sid = sessionId();
     historyIndex = -1;
+    // Draft sessions have no id yet — drop the entry (see file header).
+    if (!sid) return;
+    const trimmed = entry.trim();
     if (!trimmed) return;
+    const list = historyMap.value[sid] ?? [];
     // Skip consecutive duplicates so repeated sends don't pad the history.
-    if (inputHistory.value.at(-1) === trimmed) return;
-    const next = [...inputHistory.value, trimmed];
-    inputHistory.value = next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
-    safeSetJson(STORAGE_KEYS.inputHistory, inputHistory.value);
+    if (list.at(-1) === trimmed) return;
+    const next = [...list, trimmed];
+    const capped = next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
+    historyMap.value = { ...historyMap.value, [sid]: capped };
+    safeSetJson(STORAGE_KEYS.inputHistory, historyMap.value);
   }
 
   function caretAtFirstLine(): boolean {
@@ -80,23 +102,25 @@ export function useInputHistory(deps: InputHistoryDeps) {
   }
 
   function recallOlder(): void {
-    if (inputHistory.value.length === 0) return;
+    const list = currentList.value;
+    if (list.length === 0) return;
     if (historyIndex === -1) {
       draftBeforeHistory = text.value;
-      historyIndex = inputHistory.value.length - 1;
+      historyIndex = list.length - 1;
     } else if (historyIndex > 0) {
       historyIndex -= 1;
     } else {
       return; // already at the oldest entry
     }
-    applyHistoryText(inputHistory.value[historyIndex]!);
+    applyHistoryText(list[historyIndex]!);
   }
 
   function recallNewer(): void {
     if (historyIndex === -1) return;
-    if (historyIndex < inputHistory.value.length - 1) {
+    const list = currentList.value;
+    if (historyIndex < list.length - 1) {
       historyIndex += 1;
-      applyHistoryText(inputHistory.value[historyIndex]!);
+      applyHistoryText(list[historyIndex]!);
     } else {
       historyIndex = -1;
       applyHistoryText(draftBeforeHistory);
@@ -112,8 +136,14 @@ export function useInputHistory(deps: InputHistoryDeps) {
   }
 
   function hasHistory(): boolean {
-    return inputHistory.value.length > 0;
+    return currentList.value.length > 0;
   }
+
+  // Switching sessions: drop the browsing cursor so a recall in the new session
+  // starts from its own latest entry, not wherever the previous session left off.
+  watch(sessionId, () => {
+    historyIndex = -1;
+  });
 
   return {
     push,

@@ -16,6 +16,12 @@ export interface SlashMenuDeps {
   emitCommand: (cmd: string) => void;
   /** Record a sent command for ↑/↓ recall. */
   historyPush: (entry: string) => void;
+  /**
+   * Synchronously clear the persisted draft when a bare command is chosen.
+   * Mirrors the explicit clear in Composer's submit/steer paths so a draft
+   * is not left behind if the Composer unmounts before the text watcher flushes.
+   */
+  clearDraft?: () => void;
 }
 
 /**
@@ -27,7 +33,7 @@ export interface SlashMenuDeps {
  * when an item is chosen.
  */
 export function useSlashMenu(deps: SlashMenuDeps) {
-  const { text, textareaRef, autosize, skills, emitCommand, historyPush } = deps;
+  const { text, textareaRef, autosize, skills, emitCommand, historyPush, clearDraft } = deps;
 
   const open = ref(false);
   const items = ref<SlashCommand[]>([]);
@@ -61,6 +67,7 @@ export function useSlashMenu(deps: SlashMenuDeps) {
       return;
     }
     text.value = '';
+    clearDraft?.();
     // Menu-selected bare commands (e.g. /model, /login) reach here directly and
     // never go through handleSubmit, so record them for recall too. acceptsInput
     // commands are pushed later by handleSubmit together with their argument.

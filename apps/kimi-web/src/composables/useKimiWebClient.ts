@@ -21,6 +21,7 @@ import {
 import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
 import { useAppearance } from './client/useAppearance';
 import { useNotification } from './client/useNotification';
+import { useSoundNotification } from './client/useSoundNotification';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
 import { useSideChat } from './client/useSideChat';
@@ -28,6 +29,7 @@ import { useWorkspaceState } from './client/useWorkspaceState';
 
 const appearance = useAppearance();
 const notification = useNotification();
+const sound = useSoundNotification();
 import type {
   AppEvent,
   AppApprovalRequest,
@@ -646,6 +648,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     activeSessionId: rawState.activeSessionId,
     messagesBySession: rawState.messagesBySession,
     approvalsBySession: rawState.approvalsBySession,
+    planReviewByToolCallId: rawState.planReviewByToolCallId,
     questionsBySession: rawState.questionsBySession,
     tasksBySession: rawState.tasksBySession,
     goalBySession: rawState.goalBySession,
@@ -660,6 +663,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   setActiveSessionId(next.activeSessionId);
   setMessagesBySession(next.messagesBySession);
   rawState.approvalsBySession = next.approvalsBySession;
+  rawState.planReviewByToolCallId = next.planReviewByToolCallId;
   rawState.questionsBySession = next.questionsBySession;
   rawState.tasksBySession = next.tasksBySession;
   rawState.goalBySession = next.goalBySession;
@@ -756,6 +760,14 @@ function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number
     (appEvent.status === 'idle' || appEvent.status === 'aborted')
   ) {
     onSessionIdle(appEvent.sessionId, appEvent.status);
+  }
+
+  // The agent asked a question and is waiting for an answer — surface it so
+  // the user comes back. Hooked on the request event (fires once per new
+  // question, and not for questions restored from a snapshot) rather than the
+  // awaitingQuestion status flip, which can arrive in any order relative to it.
+  if (appEvent.type === 'questionRequested') {
+    onQuestionRequested(appEvent.sessionId, appEvent.question);
   }
 }
 
@@ -1045,6 +1057,20 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       ...rawState.approvalsBySession,
       [sessionId]: snap.pendingApprovals,
     };
+    // Preserve plan_review paths from the snapshot so the ExitPlanMode tool
+    // card can link to the plan file even after a reload.
+    for (const a of snap.pendingApprovals) {
+      const display = a.display as { kind?: unknown; plan?: unknown; path?: unknown } | null | undefined;
+      if (display?.kind === 'plan_review' && typeof display.plan === 'string' && display.plan.length > 0) {
+        rawState.planReviewByToolCallId = {
+          ...rawState.planReviewByToolCallId,
+          [a.toolCallId]: {
+            plan: display.plan,
+            path: typeof display.path === 'string' ? display.path : undefined,
+          },
+        };
+      }
+    }
     rawState.questionsBySession = {
       ...rawState.questionsBySession,
       [sessionId]: snap.pendingQuestions,
@@ -1262,6 +1288,23 @@ function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
     return { kind: 'todo', items };
   }
 
+  // plan_review — finalised plan presented at plan-mode exit
+  if (kind === 'plan_review') {
+    const plan = typeof d.plan === 'string' ? d.plan : '';
+    const path = typeof d.path === 'string' ? d.path : undefined;
+    const rawOptions = Array.isArray(d.options) ? d.options : [];
+    const options = rawOptions
+      .map((item: unknown): { label: string; description?: string } | null => {
+        const it = (item ?? {}) as Record<string, unknown>;
+        const label = typeof it.label === 'string' ? it.label : '';
+        if (!label) return null;
+        const description = typeof it.description === 'string' ? it.description : undefined;
+        return { label, description };
+      })
+      .filter((o): o is { label: string; description?: string } => o !== null);
+    return { kind: 'plan_review', plan, path, options: options.length > 0 ? options : undefined };
+  }
+
   // Unknown daemon display.kind → 'generic' with summary = action
   return { kind: 'generic', summary: a.action };
 }
@@ -1454,6 +1497,7 @@ const turns = computed<ChatTurn[]>(() => {
     (fileId) => getKimiWebApi().getFileUrl(fileId),
     activity.value !== 'idle',
     activeAppTasks.value,
+    rawState.planReviewByToolCallId,
   );
 });
 
@@ -1749,7 +1793,9 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
 
   // Order: real workspaces in listWorkspaces order, then derived workspaces
   // sorted by root path so the order is stable (not tied to session activity).
-  const realRoots = rawState.workspaces.map((w) => w.root);
+  // Hidden roots must be excluded here too — `byRoot` skips them, so a hidden
+  // real workspace would otherwise make `byRoot.get(root)` return undefined.
+  const realRoots = rawState.workspaces.filter((w) => !hidden.has(w.root)).map((w) => w.root);
   const derivedRoots = [...byRoot.keys()].filter((r) => !realRoots.includes(r));
   derivedRoots.sort((a, b) => a.localeCompare(b));
 
@@ -1959,21 +2005,6 @@ const attentionByWorkspace = computed<Record<string, number>>(() => {
 /** Recently-used roots for the add-workspace quick-pick (from /fs:home). */
 const recentRoots = computed<string[]>(() => rawState.recentRoots);
 
-/** Distinct cwd values from loaded sessions, most-recent first, deduped, max 8 */
-const recentCwds = computed<string[]>(() => {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const s of rawState.sessions) {
-    const cwd = s.cwd;
-    if (cwd && !seen.has(cwd)) {
-      seen.add(cwd);
-      result.push(cwd);
-      if (result.length >= 8) break;
-    }
-  }
-  return result;
-});
-
 /** Installed external apps the "Open in app" menu may offer for this host. */
 const availableOpenInApps = computed<string[]>(() => rawState.availableOpenInApps);
 
@@ -2067,6 +2098,12 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
     },
   });
 
+  // Completion sound — only for real completions (aborted/cancelled turns stay
+  // silent). Plays regardless of visibility so it also reaches a backgrounded tab.
+  if (status === 'idle') {
+    sound.maybePlayCompletionSound();
+  }
+
   const queue = rawState.queuedBySession[sid] ?? [];
   if (queue.length === 0) return;
 
@@ -2085,6 +2122,34 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
       }
     });
   }
+}
+
+function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
+  const first = question.questions[0];
+  // Lead with the actionable question text; keep the short header as context
+  // when both are present so the desktop notification actually says what is
+  // being asked (e.g. "Storage: Which database?").
+  const header = first?.header?.trim() ?? '';
+  const questionText = first?.question?.trim() ?? '';
+  const preview =
+    header && questionText ? `${header}: ${questionText}` : questionText || header;
+
+  // Browser notification when the user isn't watching this session.
+  notification.maybeNotifyQuestion(sid, {
+    isActiveAndVisible:
+      sid === rawState.activeSessionId &&
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'visible',
+    sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
+    questionPreview: preview,
+    onClick: () => {
+      void workspaceState.selectSession(sid);
+    },
+  });
+
+  // Attention sound — plays regardless of visibility so it also reaches a
+  // backgrounded tab (same as the completion sound).
+  sound.maybePlayQuestionSound();
 }
 
 // ---------------------------------------------------------------------------
@@ -2130,7 +2195,6 @@ export function useKimiWebClient() {
     activePullRequest,
     changesByPath,
     pendingApprovals,
-    recentCwds,
     availableOpenInApps,
 
     // New Phase 1 computed
@@ -2177,15 +2241,19 @@ export function useKimiWebClient() {
     accent: appearance.accent,
     setAccent: appearance.setAccent,
     notifyOnComplete: notification.notifyOnComplete,
+    notifyOnQuestion: notification.notifyOnQuestion,
     notifyPermission: notification.notifyPermission,
     setNotifyOnComplete: notification.setNotifyOnComplete,
+    setNotifyOnQuestion: notification.setNotifyOnQuestion,
+    soundOnComplete: sound.soundOnComplete,
+    setSoundOnComplete: sound.setSoundOnComplete,
     onboarded,
     setOnboarded,
 
     // Actions
     load: workspaceState.load,
     selectSession: workspaceState.selectSession,
-    createSession: workspaceState.createSession,
+    clearActiveSession: workspaceState.clearActiveSession,
     loadOlderMessages: workspaceState.loadOlderMessages,
 
     // Workspace actions
@@ -2195,7 +2263,6 @@ export function useKimiWebClient() {
     selectWorkspace: workspaceState.selectWorkspace,
     openWorkspace: workspaceState.openWorkspace,
     openWorkspaceDraft: workspaceState.openWorkspaceDraft,
-    createSessionInWorkspace: workspaceState.createSessionInWorkspace,
     startSessionAndSendPrompt: workspaceState.startSessionAndSendPrompt,
     addWorkspaceByPath: workspaceState.addWorkspaceByPath,
     browseFs: workspaceState.browseFs,

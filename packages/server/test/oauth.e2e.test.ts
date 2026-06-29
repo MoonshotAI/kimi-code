@@ -40,6 +40,7 @@ import type {
 } from '@moonshot-ai/protocol';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
+import { fixedTokenAuth } from './helpers/serverHarness';
 
 let tmpDir: string;
 let lockPath: string;
@@ -128,7 +129,7 @@ async function bootDaemon(stub: StubOAuth): Promise<RunningServer> {
     lockPath,
     logger: pino({ level: 'silent' }),
     coreProcessOptions: { homeDir: bridgeHome },
-    serviceOverrides: [[IOAuthService, stub]],
+    serviceOverrides: [fixedTokenAuth(), [IOAuthService, stub]],
   });
   return server;
 }
@@ -136,12 +137,24 @@ async function bootDaemon(stub: StubOAuth): Promise<RunningServer> {
 function appOf(r: RunningServer): {
   inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
 } {
-  return r.services.invokeFunction((a) => {
+  const app = r.services.invokeFunction((a) => {
     const gw = a.get(IRestGateway);
     return gw.app as unknown as {
-      inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
-    };
+  inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
+};
   });
+  // Auto-attach the fixed bearer token so the M5.1 auth hook passes. A
+  // caller-supplied `authorization` header wins, so explicit token tests keep
+  // working; every other header (Range, content-type, …) is preserved.
+  return {
+    inject(req: unknown) {
+      const q = req as { headers?: Record<string, string | string[] | undefined> };
+      return app.inject({
+        ...q,
+        headers: { authorization: 'Bearer test-token', ...q.headers },
+      });
+    },
+  };
 }
 
 function envelopeOf<T>(body: unknown): {

@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/chat/Composer.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
@@ -83,8 +83,76 @@ const { t } = useI18n();
 // ---------------------------------------------------------------------------
 // Textarea + per-session draft persistence — see useComposerDraft.
 // ---------------------------------------------------------------------------
-const { text, textareaRef, autosize, loadForEdit } = useComposerDraft({
+const { text, textareaRef, autosize, loadForEdit, clearDraft } = useComposerDraft({
   sessionId: () => props.sessionId,
+});
+
+// ---------------------------------------------------------------------------
+// Expanded editor — a taller, multi-line composing mode. While expanded, Enter
+// inserts a newline instead of sending (send via the button or Cmd/Ctrl+Enter);
+// it auto-collapses after a successful send. See handleKeydown / handleSubmit.
+// ---------------------------------------------------------------------------
+const expanded = ref(false);
+function toggleExpand(): void {
+  expanded.value = !expanded.value;
+  // Re-fit the textarea after the min/max-height swap between modes, then
+  // recompute growth against the *post-toggle* resting height. Without this,
+  // collapsing would keep the isGrown measured against the expanded 70vh
+  // min-height, hiding the toggle even though the collapsed draft is still
+  // multi-line. (This does not affect the expanded state itself — once
+  // expanded, it stays at 70vh until toggled back or sent.)
+  void nextTick(() => {
+    autosize();
+    recomputeGrown();
+    // Return focus to the textarea so the user can keep typing right away;
+    // otherwise focus stays on the toggle button and the next Enter would
+    // activate it again instead of inserting a newline.
+    textareaRef.value?.focus();
+  });
+}
+
+// Collapse the expanded editor after a successful send/steer and re-fit the
+// textarea once the 70vh min-height is gone. On image-only sends the text is
+// already empty, so the draft watcher never re-runs autosize — without this,
+// the textarea keeps the inline height measured at 70vh and the collapsed cap
+// (1/4 viewport) leaves an oversized empty box until the next keystroke.
+function collapseAndRefit(): void {
+  if (!expanded.value) return;
+  expanded.value = false;
+  void nextTick(autosize);
+}
+
+// The expand toggle is hidden at the resting height and only appears once the
+// box has grown past it (multi-line content) — keeps the empty composer
+// uncluttered. While expanded it always shows so the user can collapse back.
+//
+// The resting height equals the textarea's computed `min-height`, which varies
+// by theme (the modern/kimi global override in style.css sets 40px; the scoped
+// default is 56px). We read it from the element instead of hard-coding so the
+// threshold matches whatever theme is active.
+const RESTING_HEIGHT_FALLBACK_PX = 56;
+function restingHeightPx(el: HTMLTextAreaElement): number {
+  if (typeof getComputedStyle === 'undefined') return RESTING_HEIGHT_FALLBACK_PX;
+  const min = Number.parseFloat(getComputedStyle(el).minHeight);
+  return Number.isFinite(min) && min > 0 ? min : RESTING_HEIGHT_FALLBACK_PX;
+}
+const isGrown = ref(false);
+function recomputeGrown(): void {
+  const el = textareaRef.value;
+  isGrown.value = !!el && el.scrollHeight > restingHeightPx(el);
+}
+watch(text, () => {
+  // Registered after useComposerDraft's autosize watcher, so the inline height
+  // already reflects the latest content when this reads scrollHeight.
+  void nextTick(recomputeGrown);
+});
+
+// The component instance is reused across session switches (it is not keyed by
+// session), so reset the per-session expanded preference when the active
+// session changes. Without this, expanding in one chat would leave the next
+// session's draft stuck in the tall editor with Enter inserting newlines.
+watch(() => props.sessionId, () => {
+  expanded.value = false;
 });
 
 // ---------------------------------------------------------------------------
@@ -92,7 +160,7 @@ const { text, textareaRef, autosize, loadForEdit } = useComposerDraft({
 // implementation; the composer keeps the keydown orchestration (which also
 // juggles the slash and mention menus).
 // ---------------------------------------------------------------------------
-const history = useInputHistory({ text, textareaRef, autosize });
+const history = useInputHistory({ text, textareaRef, autosize, sessionId: () => props.sessionId });
 
 // ---------------------------------------------------------------------------
 // Slash-command menu — see useSlashMenu for the implementation. The composer
@@ -112,6 +180,7 @@ const {
   skills: () => props.skills,
   emitCommand: (cmd) => emit('command', cmd),
   historyPush: (entry) => history.push(entry),
+  clearDraft,
 });
 
 // ---------------------------------------------------------------------------
@@ -163,14 +232,20 @@ const {
   handleDragLeave,
   handleDrop,
   clearAfterSubmit,
-} = useAttachmentUpload({ uploadImage: () => props.uploadImage });
+} = useAttachmentUpload({ uploadImage: () => props.uploadImage, sessionId: () => props.sessionId });
 
 // Silence noUnusedLocals: fileInputRef is used as a template ref (ref="fileInputRef").
 void fileInputRef;
 
 onMounted(() => {
-  // Fit the box to a restored draft on first render.
-  if (text.value) void nextTick(autosize);
+  // Fit the box to a restored draft on first render, and reflect its grown
+  // state so the expand toggle shows for an already-long draft.
+  if (text.value) {
+    void nextTick(() => {
+      autosize();
+      recomputeGrown();
+    });
+  }
 });
 
 onUnmounted(() => {
@@ -183,7 +258,12 @@ onUnmounted(() => {
 // ---------------------------------------------------------------------------
 
 // loadForEdit comes from useComposerDraft (it lives next to the text state).
-defineExpose({ loadForEdit });
+function focus(): void {
+  // preventScroll keeps the pane from jumping if the composer is already in view
+  // or if focus is triggered during an animation/transition.
+  textareaRef.value?.focus({ preventScroll: true });
+}
+defineExpose({ loadForEdit, focus });
 
 function handleSubmit(): void {
   const trimmed = text.value.trim();
@@ -214,7 +294,9 @@ function handleSubmit(): void {
       : false;
     if (parsed && known) {
       text.value = '';
+      clearDraft();
       slashOpen.value = false;
+      collapseAndRefit();
       emit('command', parsed.arg ? `${parsed.cmd} ${parsed.arg}` : parsed.cmd);
       return;
     }
@@ -230,8 +312,10 @@ function handleSubmit(): void {
   clearAfterSubmit();
 
   text.value = '';
+  clearDraft();
   slashOpen.value = false;
   mentionOpen.value = false;
+  collapseAndRefit();
   emit('submit', payload);
 }
 
@@ -255,8 +339,10 @@ function handleSteer(): void {
   clearAfterSubmit();
   history.push(trimmed);
   text.value = '';
+  clearDraft();
   slashOpen.value = false;
   mentionOpen.value = false;
+  collapseAndRefit();
   emit('steer', payload);
 }
 
@@ -389,6 +475,12 @@ function handleKeydown(e: KeyboardEvent): void {
 
   // Normal Enter / Shift+Enter
   if (e.key === 'Enter' && !e.shiftKey) {
+    // Expanded editor: Enter inserts a newline; Cmd/Ctrl+Enter sends.
+    // (Clicking the send button always sends.) Shift+Enter already falls
+    // through to the default newline above, so behavior matches either way.
+    if (expanded.value && !(e.metaKey || e.ctrlKey)) {
+      return;
+    }
     e.preventDefault();
     handleSubmit();
   }
@@ -581,7 +673,7 @@ function selectModel(modelId: string): void {
 <template>
   <div
     class="composer"
-    :class="{ 'drag-over': isDragOver }"
+    :class="{ 'drag-over': isDragOver, expanded }"
     @dragover="handleDragOver"
     @dragleave="handleDragLeave"
     @drop="handleDrop"
@@ -670,40 +762,63 @@ function selectModel(modelId: string): void {
             @input="handleInput"
           />
 
-          <button
-            class="send"
-            :class="{ aborting: running }"
-            :aria-label="sendLabel"
-            :title="running ? t('composer.interruptTitle') : sendLabel"
-            @click="running ? emit('interrupt') : handleSubmit()"
-          >
-            <svg
-              class="send-icon"
-              :class="{ hidden: running }"
-              viewBox="0 0 16 16"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
+          <div class="send-col">
+            <button
+              v-if="expanded || isGrown"
+              class="expand-btn"
+              type="button"
+              :aria-label="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')"
+              :title="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')"
+              @click="toggleExpand"
             >
-              <path d="M8 3l6 5.5M8 3L2 8.5M8 3v10" />
-            </svg>
-            <svg
-              class="send-icon"
-              :class="{ hidden: !running }"
-              viewBox="0 0 16 16"
-              width="14"
-              height="14"
-              fill="currentColor"
-              aria-hidden="true"
+              <svg v-if="expanded" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 14h6v6" />
+                <path d="M20 10h-6V4" />
+                <path d="M14 10l7-7" />
+                <path d="M3 21l7-7" />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M15 3h6v6" />
+                <path d="M9 21H3v-6" />
+                <path d="M21 3l-7 7" />
+                <path d="M3 21l7-7" />
+              </svg>
+            </button>
+            <button
+              class="send"
+              :class="{ aborting: running }"
+              :aria-label="sendLabel"
+              :title="running ? t('composer.interruptTitle') : sendLabel"
+              @click="running ? emit('interrupt') : handleSubmit()"
             >
-              <rect x="3" y="3" width="10" height="10" rx="1.5" />
-            </svg>
-          </button>
+              <svg
+                class="send-icon"
+                :class="{ hidden: running }"
+                viewBox="0 0 16 16"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M8 3l6 5.5M8 3L2 8.5M8 3v10" />
+              </svg>
+              <svg
+                class="send-icon"
+                :class="{ hidden: !running }"
+                viewBox="0 0 16 16"
+                width="14"
+                height="14"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <rect x="3" y="3" width="10" height="10" rx="1.5" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -729,7 +844,11 @@ function selectModel(modelId: string): void {
             type="button"
             @click="openFilePicker"
           >
-            <svg class="attach-icon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M8 3v10M3 8h10"/></svg>
+            <svg class="attach-icon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+              <rect x="2" y="3" width="12" height="10" rx="1.5"/>
+              <circle cx="5" cy="6" r="1.2"/>
+              <path d="M2 10.5l3-2.5L8 11l2.5-2L14 11"/>
+            </svg>
           </button>
 
           <!-- Permission pill — click to open dropdown -->
@@ -1128,6 +1247,40 @@ function selectModel(modelId: string): void {
   gap: 8px;
 }
 
+/* Right column: expand toggle stacked above the send button */
+.send-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.expand-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.expand-btn:hover {
+  background: var(--panel2);
+  color: var(--ink);
+}
+
+.expand-btn:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
 .ph {
   color: var(--faint);
   flex: 1;
@@ -1137,9 +1290,8 @@ function selectModel(modelId: string): void {
   font-family: var(--mono);
   font-size: var(--ui-font-size);
   background: transparent;
-  height: 56px;
   min-height: 56px;
-  max-height: 56px;
+  max-height: calc(100vh / 4);
   overflow-y: auto;
   line-height: 1.5;
   margin-bottom: 6px;
@@ -1151,6 +1303,15 @@ function selectModel(modelId: string): void {
 
 .ph:not(:placeholder-shown) {
   color: var(--ink);
+}
+
+/* Expanded editor: a tall composing area at ~70% of the viewport — clearly
+   larger than the auto-grow cap, while leaving room for the chat header, the
+   bottom toolbar row, and padding so nothing gets clipped. Content beyond it
+   scrolls internally. */
+.composer.expanded .ph {
+  min-height: 70vh;
+  max-height: 70vh;
 }
 
 /* /compact chip */
@@ -1740,13 +1901,11 @@ function selectModel(modelId: string): void {
   }
 
   /* Bump mobile font sizes +2px and pin input at 16px to prevent iOS zoom.
-     Single-line-friendly height: 56px desktop default → 44px touch target. */
+     Height (min 56px / max one quarter of the viewport) is inherited from the
+     base .ph rule so the box auto-grows the same way on touch and desktop. */
   .ph {
     /* Pinned at 16px to prevent iOS auto-zoom on focus (not part of UI font scale). */
     font-size: 16px;
-    height: 44px;
-    min-height: 44px;
-    max-height: 44px;
   }
   .model-pill,
   .attach-btn {

@@ -11,7 +11,7 @@ import type { IEventService } from '../../src/services/event/event';
 import type { ILogService } from '../../src/services/logger/logger';
 import { WorkspaceRegistryService } from '../../src/services/workspace/workspaceRegistryService';
 import { appendSessionIndexEntry } from '../../src/session/store/session-index';
-import { encodeWorkDirKey } from '../../src/session/store/workdir-key';
+import { encodeWorkDirKey, normalizeWorkDir } from '../../src/session/store/workdir-key';
 
 function makeLogger(): ILogService {
   const noop = (): void => {};
@@ -72,9 +72,11 @@ describe('WorkspaceRegistryService', () => {
   async function makeProjectRoot(label: string): Promise<string> {
     const root = await mkdtemp(join(tmpdir(), `kimi-ws-${label}-`));
     tempRoots.push(root);
-    // realpath so resolve() and realpath() agree on the workDir key even when
-    // tmpdir() is symlinked (e.g. /tmp -> /private/tmp on macOS).
-    return realpath(root);
+    // Normalize to the canonical forward-slash form the registry stores
+    // (via pathe), so `expect(roots).toContain(root)` holds on Windows too.
+    // realpath first so symlinked tmpdir() (e.g. /tmp → /private/tmp on
+    // macOS) still agrees with the workDir key.
+    return normalizeWorkDir(await realpath(root));
   }
 
   async function seedSessionBucket(
@@ -133,7 +135,7 @@ describe('WorkspaceRegistryService', () => {
 
     // A session whose cwd has since been deleted: the bucket + index remain,
     // so the conversation should still show (matches the old global walk).
-    const goneRoot = join(tmpdir(), 'kimi-ws-gone-never-created');
+    const goneRoot = normalizeWorkDir(join(tmpdir(), 'kimi-ws-gone-never-created'));
     await seedSessionBucket(goneRoot, 'sess-gone-1');
 
     const list = await ctx.registry.list();

@@ -57,6 +57,7 @@ import type {
   BeginCompactionPayload,
   CancelPayload,
   CancelPlanPayload,
+  CancelShellCommandPayload,
   CloseSessionPayload,
   ConfigDiagnostics,
   CoreAPI,
@@ -83,6 +84,7 @@ import type {
   PluginInfo,
   PluginSummary,
   PromptPayload,
+  RunShellCommandPayload,
   ReconnectMcpServerPayload,
   RegisterToolPayload,
   ReloadSessionPayload,
@@ -279,7 +281,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       rpc: proxyWithExtraPayload(await this.sdk, { sessionId: summary.id }),
       providerManager: this.resolveProviderManager(summary.id),
       background: config.background,
-      hooks: config.hooks,
+      hooks: [...(config.hooks ?? []), ...this.plugins.enabledHooks()],
       permissionRules: config.permission?.rules,
       skills: this.resolveSessionSkillConfig(config),
       mcpConfig,
@@ -355,7 +357,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async resumeSessionWithOverrides(
     input: ResumeSessionPayload,
-    overrides: { kaos?: Kaos; persistenceKaos?: Kaos },
+    overrides: {
+      kaos?: Kaos;
+      persistenceKaos?: Kaos;
+      forcePluginSessionStartReminder?: boolean;
+    },
   ): Promise<ResumeSessionResult> {
     const summary = await this.sessionStore.get(input.sessionId);
     const parentKaosForRead = overrides.kaos ?? (await this.getKaos());
@@ -406,7 +412,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       rpc: proxyWithExtraPayload(await this.sdk, { sessionId: summary.id }),
       providerManager: this.resolveProviderManager(summary.id),
       background: config.background,
-      hooks: config.hooks,
+      hooks: [...(config.hooks ?? []), ...this.plugins.enabledHooks()],
       permissionRules: config.permission?.rules,
       skills: this.resolveSessionSkillConfig(config),
       mcpConfig,
@@ -430,6 +436,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       throw error;
     }
     this.sessions.set(summary.id, session);
+    if (overrides.forcePluginSessionStartReminder === true) {
+      // Append before constructing the result so the returned ResumeSessionResult
+      // (and any SDK caller's resumeState) reflects the refreshed plugin context.
+      await session.appendPluginSessionStartReminder();
+    }
     return resumeSessionResult(summary, session, warning);
   }
 
@@ -452,7 +463,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       await active.closeForReload();
       this.sessions.delete(summary.id);
     }
-    return this.resumeSession({ sessionId: summary.id });
+    return this.resumeSessionWithOverrides(
+      { sessionId: summary.id },
+      { forcePluginSessionStartReminder: input.forcePluginSessionStartReminder },
+    );
   }
 
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {
@@ -574,6 +588,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
     return this.sessionApi(sessionId).prompt(payload);
+  }
+
+  runShellCommand({ sessionId, ...payload }: SessionAgentPayload<RunShellCommandPayload>) {
+    return this.sessionApi(sessionId).runShellCommand(payload);
+  }
+
+  cancelShellCommand({ sessionId, ...payload }: SessionAgentPayload<CancelShellCommandPayload>) {
+    return this.sessionApi(sessionId).cancelShellCommand(payload);
   }
 
   steer({ sessionId, ...payload }: SessionAgentPayload<SteerPayload>) {

@@ -4,6 +4,9 @@ import type { Socket } from 'node:net';
 import { Disposable, ILogService } from '@moonshot-ai/agent-core';
 import { WebSocketServer, type WebSocket } from 'ws';
 
+import { isAllowedHost } from '#/middleware/hostnames';
+import { isOriginAllowed } from '#/middleware/origin';
+import type { IAuthTokenService } from '#/services/auth/authTokenService';
 import {
   WsConnection,
   type AbortHandler,
@@ -15,7 +18,13 @@ import { IConnectionRegistry } from './connectionRegistry';
 import { IRestGateway } from './restGateway';
 import { ISessionClientsService } from './sessionClients';
 import { IWSBroadcastService } from './wsBroadcast';
-import { IWSGateway, type WSGatewayOptions, WS_PATH } from './wsGateway';
+import {
+  extractWsBearerToken,
+  IWSGateway,
+  type WSGatewayOptions,
+  WS_BEARER_PROTOCOL_PREFIX,
+  WS_PATH,
+} from './wsGateway';
 
 export class WSGateway extends Disposable implements IWSGateway {
   readonly _serviceBrand: undefined;
@@ -26,6 +35,7 @@ export class WSGateway extends Disposable implements IWSGateway {
   private abortHandler: AbortHandler | undefined;
   private fsWatchHandler: FsWatchHandler | undefined;
   private terminalHandler: TerminalHandler | undefined;
+  private authTokenService: IAuthTokenService | undefined;
   private detached = false;
 
   constructor(
@@ -37,9 +47,23 @@ export class WSGateway extends Disposable implements IWSGateway {
     @ILogService private readonly logger: ILogService,
   ) {
     super();
-    this.wss = new WebSocketServer({ noServer: true });
+    this.authTokenService = options.authTokenService;
+    this.wss = new WebSocketServer({
+      noServer: true,
+      // Browsers require the server to select one of the offered subprotocols;
+      // echo back the `kimi-code.bearer.<token>` subprotocol when present so
+      // token-carrying browser clients complete the handshake.
+      handleProtocols: (protocols: Set<string>) => {
+        for (const p of protocols) {
+          if (p.startsWith(WS_BEARER_PROTOCOL_PREFIX)) return p;
+        }
+        return false;
+      },
+    });
     this.server = this.restGateway.app.server;
-    this.upgradeListener = (req, sock, head) => this.onUpgrade(req, sock, head);
+    this.upgradeListener = (req, sock, head) => {
+      void this.onUpgrade(req, sock, head);
+    };
     this.server.on('upgrade', this.upgradeListener);
     this.logger.debug({ path: WS_PATH }, 'ws gateway attached upgrade listener');
   }
@@ -56,7 +80,11 @@ export class WSGateway extends Disposable implements IWSGateway {
     this.terminalHandler = handler;
   }
 
-  private onUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): void {
+  setAuthTokenService(service: IAuthTokenService): void {
+    this.authTokenService = service;
+  }
+
+  private async onUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<void> {
     const url = req.url ?? '';
     const path = url.split('?', 1)[0];
     if (path !== WS_PATH) {
@@ -68,6 +96,49 @@ export class WSGateway extends Disposable implements IWSGateway {
     // ~40 ms clusters, making the stream look stuttery. Trade a little bandwidth
     // for lower latency.
     socket.setNoDelay(true);
+
+    // Host / Origin checks (ROADMAP M4.3) — enforced BEFORE token validation
+    // and only when the corresponding option is provided. When unset (tests /
+    // pre-M5.1 boots) the checks are skipped so existing clients (incl. Node
+    // `ws`, which sends no `Origin`) keep working. Origin is present-only: a
+    // missing `Origin` is treated as a non-browser client and allowed.
+    const hostCheck = this.options.hostCheck;
+    if (hostCheck !== undefined && !isAllowedHost(req.headers.host, hostCheck)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const allowedOrigins = this.options.allowedOrigins;
+    if (
+      allowedOrigins !== undefined &&
+      !isOriginAllowed(req.headers.origin, req.headers.host, allowedOrigins)
+    ) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const authTokenService = this.authTokenService;
+    if (authTokenService !== undefined) {
+      const authorization = req.headers.authorization;
+      const token = authorization?.startsWith('Bearer ')
+        ? authorization.slice('Bearer '.length)
+        : extractWsBearerToken(req.headers['sec-websocket-protocol']);
+      // `isValid` is the only await on this path; wrap it so a rejection
+      // destroys the socket instead of escaping as an unhandled rejection.
+      let ok = false;
+      try {
+        ok = token !== undefined && (await authTokenService.isValid(token));
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+    }
     this.wss.handleUpgrade(req, socket, head, (ws) => this.onConnect(ws, req));
   }
 

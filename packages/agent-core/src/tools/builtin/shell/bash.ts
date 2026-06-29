@@ -137,7 +137,7 @@ function renderBashDescription(shellName: string): string {
 function withoutBackgroundDescription(description: string): string {
   return description
     .replace(
-      /\n\nIf `run_in_background=true`,[\s\S]*?point them to the `\/tasks` command, which opens an interactive panel; it has no subcommands\./,
+      /\r?\n\r?\nIf `run_in_background=true`,[\s\S]*?point them to the `\/tasks` command, which opens an interactive panel; it has no subcommands\./,
       '\n\nBackground execution is disabled for this agent. Do not set `run_in_background=true`.',
     )
     .replace(
@@ -145,7 +145,7 @@ function withoutBackgroundDescription(description: string): string {
       ` For possibly long-running commands, set the \`timeout\` argument in seconds. The default is ${String(DEFAULT_TIMEOUT_S)}s; foreground commands allow up to ${String(MAX_TIMEOUT_S)}s.`,
     )
     .replace(
-      /\n- Prefer `run_in_background=true`[\s\S]*?conversation to continue before the command finishes\./,
+      /\r?\n- Prefer `run_in_background=true`[\s\S]*?conversation to continue before the command finishes\./,
       '\n- Do not set `run_in_background=true`; background task management tools are not available.',
     );
 }
@@ -188,7 +188,8 @@ export class BashTool implements BuiltinTool<BashInput> {
       },
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
-      execute: ({ signal, onUpdate }) => this.execution(args, signal, onUpdate),
+      execute: ({ signal, onUpdate, onForegroundTaskStart }) =>
+        this.execution(args, signal, onUpdate, onForegroundTaskStart),
     };
   }
 
@@ -223,6 +224,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     args: BashInput,
     signal: AbortSignal,
     onUpdate?: ((update: ToolUpdate) => void) | undefined,
+    onForegroundTaskStart?: ((taskId: string) => void) | undefined,
   ): Promise<ExecutableToolResult> {
     const validationError = this.validateRunRequest(args, signal);
     if (validationError !== undefined) return validationError;
@@ -272,6 +274,10 @@ export class BashTool implements BuiltinTool<BashInput> {
         {
           detached: startsInBackground,
           timeoutMs,
+          // Detaching (ctrl+b) moves a foreground command to the background;
+          // give it the background timeout so it is not still bounded by the
+          // shorter foreground deadline.
+          detachTimeoutMs: DEFAULT_BACKGROUND_TIMEOUT_S * MS_PER_SECOND,
           signal: startsInBackground ? undefined : signal,
         },
       );
@@ -284,6 +290,10 @@ export class BashTool implements BuiltinTool<BashInput> {
         output: error instanceof Error ? error.message : String(error),
       };
     }
+
+    // Foreground `!` shell commands surface their task id so the TUI can detach
+    // (ctrl+b) this exact task. Background runs are already detached.
+    if (!startsInBackground) onForegroundTaskStart?.(taskId);
 
     if (startsInBackground) {
       return this.backgroundStartedResult(taskId, proc, description, {
@@ -405,7 +415,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       `description: ${description}\n` +
       `status: ${status}\n` +
       `automatic_notification: true\n` +
-      this.nextStepLines(taskId, scenario) +
+      this.nextStepLines(scenario) +
       'human_shell_hint: Tell the human to run /tasks to open the interactive background-task panel.';
 
     const foregroundResult = builder.ok('');
@@ -429,7 +439,6 @@ export class BashTool implements BuiltinTool<BashInput> {
   }
 
   private nextStepLines(
-    taskId: string,
     scenario: 'background_started' | 'foreground_detached',
   ): string {
     if (scenario === 'foreground_detached') {
@@ -442,13 +451,15 @@ export class BashTool implements BuiltinTool<BashInput> {
         `when it completes — ${avoid}; continue with your current work.\n`
       );
     }
-    // background_started: the model chose to launch in the background.
+    // background_started: the model chose to launch in the background. Same anti-wait
+    // stance — immediately waiting on a background task is just a blocked turn, so do
+    // not invite a TaskOutput peek here.
     if (!this.allowBackground) {
       return 'next_step: You will be automatically notified when it completes.\n';
     }
     return (
-      'next_step: The completion arrives automatically in a later turn — no polling needed. ' +
-      `To peek at progress without blocking, call TaskOutput(task_id="${taskId}", block=false).\n` +
+      'next_step: The completion arrives automatically in a later turn — do NOT wait, poll, ' +
+      'or call TaskOutput on it; continue with your current work.\n' +
       'next_step: Use TaskStop only if the task must be cancelled.\n'
     );
   }

@@ -116,6 +116,13 @@ describe('WebSearchTool', () => {
     expect(description).not.toContain('for each result');
   });
 
+  it('instructs the model to cite source URLs in its description', () => {
+    const tool = new WebSearchTool(fakeProvider());
+    const description = tool.description.toLowerCase();
+    expect(description).toContain('cite');
+    expect(description).toContain('source');
+  });
+
   it('returns no results message when provider returns empty', async () => {
     const tool = new WebSearchTool(fakeProvider([]));
     const result = await executeTool(tool, {

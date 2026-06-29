@@ -87,13 +87,19 @@ describe('resolveKimiTokenStorageName', () => {
     expect(resolveKimiTokenStorageName({ oauthKey: 'kimi-code' })).toBe('kimi-code');
   });
 
-  it('rejects unsupported providers and unsafe token keys', () => {
-    expect(() =>
+  it('accepts non-managed providers with a valid key and rejects unsafe token keys', () => {
+    expect(
       resolveKimiTokenStorageName({
         providerName: 'custom',
-        oauthKey: 'kimi-code',
+        oauthKey: 'oauth/kimi-code',
       }),
-    ).toThrow(/No OAuth manager/);
+    ).toBe('kimi-code');
+    expect(
+      resolveKimiTokenStorageName({
+        providerName: 'kimi-code-anthropic',
+        oauthKey: 'oauth/kimi-code',
+      }),
+    ).toBe('kimi-code');
     expect(() => resolveKimiTokenStorageName({ oauthKey: '../kimi-code' })).toThrow(/Invalid/);
   });
 });
