@@ -121,9 +121,9 @@ describe('ConfigState model capabilities', () => {
       signal: new AbortController().signal,
     });
 
-    // maxOutputSize (384000) is clamped to the 128k ceiling applied to
-    // non-Kimi chat-completions providers.
-    expect(requestMaxTokens).toBe(131072);
+    // maxOutputSize (384000) is honoured as the hard ceiling for OpenAI-compatible
+    // providers. The generic 128k ceiling only applies when max_output_size is unset.
+    expect(requestMaxTokens).toBe(384000);
   });
 
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {

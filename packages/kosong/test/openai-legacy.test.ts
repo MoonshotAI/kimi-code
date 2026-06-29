@@ -655,6 +655,32 @@ describe('OpenAILegacyChatProvider', () => {
       // 1000000 - 30000 = 970000, clamped to 131072
       expect(body['max_tokens']).toBe(131072);
     });
+
+    it('withMaxCompletionTokens respects explicit maxTokens as a ceiling for third-party providers', async () => {
+      // Reproduces issue #1148: a third-party provider (e.g. HuggingFace, Ollama) may
+      // have an output limit (e.g. 65536) lower than CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING
+      // (131072). When max_output_size is configured, withMaxCompletionTokens must not
+      // override it with the generic ceiling.
+      const provider = new OpenAILegacyChatProvider({
+        model: 'deepseek-v4-pro',
+        apiKey: 'test-key',
+        stream: false,
+        maxTokens: 65536,
+      });
+      const capped = provider.withMaxCompletionTokens(1_048_576, {
+        usedContextTokens: 0,
+        maxContextTokens: 1_048_576,
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(capped, '', [], history);
+
+      // Expected: 65536 (the explicit maxTokens cap).
+      // Bug: currently sends 131072 (CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING),
+      // which exceeds the model's actual API limit and causes a 400.
+      expect(body['max_tokens']).toBe(65536);
+    });
   });
 
   describe('maxTokens option', () => {
