@@ -1374,6 +1374,49 @@ command = "vim"
     expect(transcript).not.toContain('Approved: Run shell command');
   });
 
+  it('removes debug timing status from undone turns', async () => {
+    const { driver, session } = await makeDriver();
+    const previousDebug = process.env['KIMI_CODE_DEBUG'];
+    process.env['KIMI_CODE_DEBUG'] = '1';
+    try {
+      driver.handleUserInput('hello');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.completed',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 1,
+          llmFirstTokenLatencyMs: 120,
+          llmStreamDurationMs: 800,
+        } as Event,
+        () => {},
+      );
+
+      await vi.waitFor(() => {
+        expect(stripSgr(renderTranscript(driver))).toContain('[Debug]');
+      });
+
+      driver.state.appState.streamingPhase = 'idle';
+      driver.handleUserInput('/undo');
+      await confirmUndoSelection(driver);
+
+      await vi.waitFor(() => {
+        expect(session.undoHistory).toHaveBeenCalledWith(1);
+      });
+
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).not.toContain('hello');
+      expect(transcript).not.toContain('[Debug]');
+    } finally {
+      if (previousDebug === undefined) {
+        delete process.env['KIMI_CODE_DEBUG'];
+      } else {
+        process.env['KIMI_CODE_DEBUG'] = previousDebug;
+      }
+    }
+  });
+
   it('undoes multiple turns when a count is provided', async () => {
     const { driver, session } = await makeDriver();
 
