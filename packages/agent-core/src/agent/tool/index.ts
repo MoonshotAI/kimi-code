@@ -559,13 +559,13 @@ export class ToolManager {
       };
       try {
         const part = await upload(input);
-        track({ ...base, success: true, latency_ms: Date.now() - startedAt });
+        track({ ...base, outcome: 'success', duration_ms: Date.now() - startedAt });
         return part;
       } catch (error) {
         track({
           ...base,
-          success: false,
-          latency_ms: Date.now() - startedAt,
+          outcome: 'error',
+          duration_ms: Date.now() - startedAt,
           error: error instanceof Error ? error.message : String(error),
         });
         throw error;
@@ -574,7 +574,7 @@ export class ToolManager {
   }
 
   private videoUploadTelemetryProps(modelAlias: string): {
-    type?: string;
+    provider_type?: string;
     protocol?: string;
     model: string;
   } {
@@ -583,7 +583,7 @@ export class ToolManager {
       if (resolved === undefined) return { model: modelAlias };
       return {
         model: modelAlias,
-        type: resolved.type,
+        provider_type: resolved.type,
         protocol: resolved.protocol ?? resolved.type,
       };
     } catch {

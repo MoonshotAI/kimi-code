@@ -936,14 +936,14 @@ export class TurnFlow {
    * turn over an unresolvable provider config (the step loop will surface that
    * error on its own).
    */
-  private requestProtocolProps(): { type?: string; protocol?: string } {
+  private requestProtocolProps(): { provider_type?: string; protocol?: string } {
     const model = this.agent.config.modelAlias;
     if (model === undefined) return {};
     try {
       const resolved = this.agent.modelProvider?.resolveProviderConfig(model);
       if (resolved === undefined) return {};
       return {
-        type: resolved.type,
+        provider_type: resolved.type,
         protocol: resolved.protocol ?? resolved.type,
       };
     } catch {

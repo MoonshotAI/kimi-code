@@ -238,7 +238,7 @@ describe('FullCompaction', () => {
         instruction: 'Keep the important test facts.',
         tokensBefore: 39,
         tokensAfter: 5,
-        duration: expect.any(Number),
+        duration_ms: expect.any(Number),
         compactedCount: 6,
         retryCount: 0,
         thinkingLevel: 'off',
@@ -765,7 +765,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'manual',
         tokensBefore: 25,
-        duration: expect.any(Number),
+        duration_ms: expect.any(Number),
         round: 1,
         retryCount: 0,
         errorType: 'Error',
@@ -879,7 +879,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'manual',
         tokensBefore: 25,
-        duration: expect.any(Number),
+        duration_ms: expect.any(Number),
         retryCount: 4,
         errorType: 'APIConnectionError',
       }),
