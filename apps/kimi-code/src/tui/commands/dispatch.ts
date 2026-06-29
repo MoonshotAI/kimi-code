@@ -40,7 +40,6 @@ import { handleAddDirCommand } from './add-dir';
 import { parseSlashInput } from './parse';
 import { handlePluginsCommand } from './plugins';
 import { handleProviderCommand } from './provider';
-import { expandCommandArguments } from './plugin-commands';
 import type { BuiltinSlashCommandName } from './registry';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
 import { resolveSlashCommandInput, slashBusyMessage } from './resolve';
@@ -139,6 +138,12 @@ export interface SlashCommandHost {
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string): void;
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
+  activatePluginCommand(
+    session: Session,
+    pluginId: string,
+    commandName: string,
+    args: string,
+  ): void;
   readonly skillCommandMap: Map<string, string>;
   readonly pluginCommandMap: Map<string, string>;
 
@@ -199,12 +204,13 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
       return;
     }
     case 'plugin-command': {
-      if (host.state.appState.model.trim().length === 0) {
+      const session = host.session;
+      if (session === undefined) {
         host.showError(LLM_NOT_SET_MESSAGE);
         return;
       }
-      host.track('input_command', { command: intent.commandName });
-      host.sendNormalUserInput(expandCommandArguments(intent.body, intent.args));
+      host.track('input_command', { command: `${intent.pluginId}:${intent.commandName}` });
+      host.activatePluginCommand(session, intent.pluginId, intent.commandName, intent.args);
       return;
     }
     case 'message':

@@ -251,6 +251,8 @@ function isReplayUserTurnRecord(record: AgentReplayRecord): boolean {
       return true;
     case 'skill_activation':
       return message.origin.trigger === 'user-slash';
+    case 'plugin_command':
+      return message.origin.trigger === 'user-slash';
     case 'shell_command':
       // A `!` command's input is a user-turn anchor; its output is not.
       return message.origin.phase === 'input';

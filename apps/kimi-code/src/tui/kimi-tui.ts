@@ -75,6 +75,7 @@ import {
   GoalSetMessageComponent,
 } from './components/messages/goal-panel';
 import { SkillActivationComponent } from './components/messages/skill-activation';
+import { PluginCommandComponent } from './components/messages/plugin-command';
 import { ShellRunComponent } from './components/messages/shell-run';
 import {
   NoticeMessageComponent,
@@ -1210,6 +1211,19 @@ export class KimiTUI {
     });
   }
 
+  activatePluginCommand(
+    session: Session,
+    pluginId: string,
+    commandName: string,
+    args: string,
+  ): void {
+    this.beginSessionRequest();
+    void session.activatePluginCommand(pluginId, commandName, args).catch((error: unknown) => {
+      const message = formatErrorMessage(error);
+      this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
+    });
+  }
+
   private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
     if (
       this.deferUserMessages ||
@@ -1708,6 +1722,11 @@ export class KimiTUI {
           entry.skillArgs,
           entry.skillTrigger,
         );
+      case 'plugin_command': {
+        const data = entry.pluginCommandData;
+        if (data === undefined) return null;
+        return new PluginCommandComponent(data.pluginId, data.commandName, data.args);
+      }
       case 'cron':
         return new CronMessageComponent(entry.content, entry.cronData ?? {});
       case 'goal':

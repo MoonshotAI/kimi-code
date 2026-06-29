@@ -374,7 +374,8 @@ function undoLimitFromError(
 function isUndoAnchorEntry(entry: TranscriptEntry): boolean {
   return (
     entry.kind === 'user' ||
-    (entry.kind === 'skill_activation' && entry.skillTrigger === 'user-slash')
+    (entry.kind === 'skill_activation' && entry.skillTrigger === 'user-slash') ||
+    entry.kind === 'plugin_command'
   );
 }
 
@@ -400,6 +401,7 @@ function isUndoContextEntry(entry: TranscriptEntry): boolean {
     case 'tool_call':
     case 'thinking':
     case 'skill_activation':
+    case 'plugin_command':
     case 'cron':
       return true;
     case 'status':

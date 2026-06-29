@@ -29,7 +29,7 @@ export type SlashCommandIntent =
   | {
       readonly kind: 'plugin-command';
       readonly commandName: string;
-      readonly body: string;
+      readonly pluginId: string;
       readonly args: string;
     }
   | { readonly kind: 'message'; readonly input: string }
@@ -99,8 +99,7 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
     };
   }
 
-  const pluginCommandBody = options.pluginCommandMap.get(parsed.name);
-  if (pluginCommandBody !== undefined) {
+  if (options.pluginCommandMap.has(parsed.name)) {
     const busyReason = slashCommandBusyReason(options);
     if (busyReason !== undefined) {
       return {
@@ -109,10 +108,13 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
         reason: busyReason,
       };
     }
+    const separator = parsed.name.indexOf(':');
+    const pluginId = separator === -1 ? parsed.name : parsed.name.slice(0, separator);
+    const commandName = separator === -1 ? '' : parsed.name.slice(separator + 1);
     return {
       kind: 'plugin-command',
-      commandName: parsed.name,
-      body: pluginCommandBody,
+      commandName,
+      pluginId,
       args: parsed.args.trim(),
     };
   }

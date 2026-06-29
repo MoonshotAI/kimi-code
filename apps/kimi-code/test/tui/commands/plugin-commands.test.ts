@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  buildPluginSlashCommands,
-  expandCommandArguments,
-  pluginCommandName,
-} from '#/tui/commands/plugin-commands';
+import { buildPluginSlashCommands, pluginCommandName } from '#/tui/commands/plugin-commands';
 
 describe('pluginCommandName', () => {
   it('namespaces a command with its plugin id', () => {
@@ -31,19 +27,5 @@ describe('buildPluginSlashCommands', () => {
     const { commands, commandMap } = buildPluginSlashCommands([]);
     expect(commands).toEqual([]);
     expect(commandMap.size).toBe(0);
-  });
-});
-
-describe('expandCommandArguments', () => {
-  it('replaces $ARGUMENTS with the typed args', () => {
-    expect(expandCommandArguments('Deploy $ARGUMENTS now', 'prod')).toBe('Deploy prod now');
-  });
-
-  it('appends args when there is no placeholder', () => {
-    expect(expandCommandArguments('Deploy now', 'prod')).toBe('Deploy now\n\nARGUMENTS: prod');
-  });
-
-  it('leaves the body unchanged when there is no placeholder and no args', () => {
-    expect(expandCommandArguments('Deploy now', '')).toBe('Deploy now');
   });
 });

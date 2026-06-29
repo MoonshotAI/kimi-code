@@ -313,8 +313,8 @@ describe('slash command busy helpers', () => {
     const pluginCommandMap = new Map([['my-plugin:deploy', 'Deploy $ARGUMENTS']]);
     expect(resolve('/my-plugin:deploy prod', { pluginCommandMap })).toEqual({
       kind: 'plugin-command',
-      commandName: 'my-plugin:deploy',
-      body: 'Deploy $ARGUMENTS',
+      commandName: 'deploy',
+      pluginId: 'my-plugin',
       args: 'prod',
     });
   });
