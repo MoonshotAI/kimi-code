@@ -315,4 +315,25 @@ describe('mergeStdioEnv', () => {
     const merged = mergeStdioEnv({ FOO: 'override' }, { FOO: 'parent', PATH: '/x' });
     expect(merged['FOO']).toBe('override');
   });
+
+  it('injects PYTHONIOENCODING=utf-8 and PYTHONUTF8=1 for Python MCP servers', () => {
+    const merged = mergeStdioEnv(undefined, { PATH: '/usr/bin' });
+    expect(merged['PYTHONIOENCODING']).toBe('utf-8');
+    expect(merged['PYTHONUTF8']).toBe('1');
+    expect(merged['PATH']).toBe('/usr/bin');
+  });
+
+  it('does not override user-provided PYTHONIOENCODING or PYTHONUTF8', () => {
+    const merged = mergeStdioEnv(
+      { PYTHONIOENCODING: 'latin-1', PYTHONUTF8: '0' },
+      { PATH: '/usr/bin' },
+    );
+    expect(merged['PYTHONIOENCODING']).toBe('latin-1');
+    expect(merged['PYTHONUTF8']).toBe('0');
+  });
+
+  it('inherits parent PYTHONIOENCODING when present', () => {
+    const merged = mergeStdioEnv(undefined, { PATH: '/usr/bin', PYTHONIOENCODING: 'cp1252' });
+    expect(merged['PYTHONIOENCODING']).toBe('cp1252');
+  });
 });

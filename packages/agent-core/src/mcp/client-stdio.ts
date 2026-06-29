@@ -244,5 +244,18 @@ export function mergeStdioEnv(
   if (configEnv !== undefined) Object.assign(merged, configEnv);
   Object.assign(merged, proxyEnvForChild(merged));
   reconcileChildNoProxy(merged, configEnv);
+  // Ensure Python MCP servers use UTF-8 for stdio encoding.
+  // On Windows the default console code page (e.g. cp1252) cannot encode
+  // non-ASCII characters, causing UnicodeEncodeError when Python servers
+  // print Unicode to stdout/stderr.  JSON-RPC over stdio is always UTF-8,
+  // so forcing the encoding is correct on every platform.
+  // See https://github.com/MoonshotAI/kimi-code/issues/886
+  if (merged['PYTHONIOENCODING'] === undefined) {
+    merged['PYTHONIOENCODING'] = 'utf-8';
+  }
+  if (merged['PYTHONUTF8'] === undefined) {
+    merged['PYTHONUTF8'] = '1';
+  }
+
   return merged;
 }
