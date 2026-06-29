@@ -42,7 +42,7 @@ export function installNativeModuleHook(): void {
       PI_TUI_NATIVE_PATTERN.test(request) &&
       !existsSync(request)
     ) {
-      const pkgRoot = getNativePackageRoot('@earendil-works/pi-tui');
+      const pkgRoot = getNativePackageRoot('@moonshot-ai/pi-tui');
       if (pkgRoot !== null) {
         const match = request.match(PI_TUI_NATIVE_PATTERN);
         if (match !== null) {

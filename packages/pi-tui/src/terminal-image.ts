@@ -63,15 +63,15 @@ function probeTmuxHyperlinks(): boolean {
 }
 
 export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeTmuxHyperlinks): TerminalCapabilities {
-	const termProgram = process.env.TERM_PROGRAM?.toLowerCase() || "";
-	const terminalEmulator = process.env.TERMINAL_EMULATOR?.toLowerCase() || "";
-	const term = process.env.TERM?.toLowerCase() || "";
-	const colorTerm = process.env.COLORTERM?.toLowerCase() || "";
+	const termProgram = process.env['TERM_PROGRAM']?.toLowerCase() || "";
+	const terminalEmulator = process.env['TERMINAL_EMULATOR']?.toLowerCase() || "";
+	const term = process.env['TERM']?.toLowerCase() || "";
+	const colorTerm = process.env['COLORTERM']?.toLowerCase() || "";
 	const hasTrueColorHint = colorTerm === "truecolor" || colorTerm === "24bit";
 
 	// Emit OSC 8 hyperlinks only when tmux confirms it forwards.
 	// Image protocols are unreliable under tmux, so leave `images: null`.
-	if (process.env.TMUX || term.startsWith("tmux")) {
+	if (process.env['TMUX'] || term.startsWith("tmux")) {
 		return { images: null, trueColor: hasTrueColorHint, hyperlinks: tmuxForwardsHyperlink() };
 	}
 
@@ -80,28 +80,28 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 		return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
 	}
 
-	if (process.env.KITTY_WINDOW_ID || termProgram === "kitty") {
+	if (process.env['KITTY_WINDOW_ID'] || termProgram === "kitty") {
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 
-	if (termProgram === "ghostty" || term.includes("ghostty") || process.env.GHOSTTY_RESOURCES_DIR) {
+	if (termProgram === "ghostty" || term.includes("ghostty") || process.env['GHOSTTY_RESOURCES_DIR']) {
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 
-	if (process.env.WEZTERM_PANE || termProgram === "wezterm") {
+	if (process.env['WEZTERM_PANE'] || termProgram === "wezterm") {
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 
 	// Warp supports the Kitty graphics protocol and OSC 8 hyperlinks.
-	if (termProgram === "warpterminal" || process.env.WARP_SESSION_ID || process.env.WARP_TERMINAL_SESSION_UUID) {
+	if (termProgram === "warpterminal" || process.env['WARP_SESSION_ID'] || process.env['WARP_TERMINAL_SESSION_UUID']) {
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 
-	if (process.env.ITERM_SESSION_ID || termProgram === "iterm.app") {
+	if (process.env['ITERM_SESSION_ID'] || termProgram === "iterm.app") {
 		return { images: "iterm2", trueColor: true, hyperlinks: true };
 	}
 
-	if (process.env.WT_SESSION) {
+	if (process.env['WT_SESSION']) {
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
@@ -328,7 +328,7 @@ export function getJpegDimensions(base64Data: string): ImageDimensions | null {
 				continue;
 			}
 
-			const marker = buffer[offset + 1];
+			const marker = buffer[offset + 1]!;
 
 			if (marker >= 0xc0 && marker <= 0xc2) {
 				const height = buffer.readUInt16BE(offset + 5);
@@ -402,8 +402,8 @@ export function getWebpDimensions(base64Data: string): ImageDimensions | null {
 			return { widthPx: width, heightPx: height };
 		} else if (chunk === "VP8X") {
 			if (buffer.length < 30) return null;
-			const width = (buffer[24] | (buffer[25] << 8) | (buffer[26] << 16)) + 1;
-			const height = (buffer[27] | (buffer[28] << 8) | (buffer[29] << 16)) + 1;
+			const width = (buffer[24]! | (buffer[25]! << 8) | (buffer[26]! << 16)) + 1;
+			const height = (buffer[27]! | (buffer[28]! << 8) | (buffer[29]! << 16)) + 1;
 			return { widthPx: width, heightPx: height };
 		}
 

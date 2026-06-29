@@ -1,21 +1,19 @@
 {
-	"name": "@earendil-works/pi-tui",
+	"name": "@moonshot-ai/pi-tui",
 	"version": "0.80.2",
+	"private": true,
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
-	"type": "module",
-	"main": "dist/index.js",
-	"scripts": {
-		"clean": "shx rm -rf dist",
-		"build": "tsgo -p tsconfig.build.json",
-		"test": "node --test test/*.test.ts",
-		"prepublishOnly": "npm run clean && npm run build"
+	"license": "MIT",
+	"author": "Moonshot AI",
+	"homepage": "https://github.com/MoonshotAI/kimi-code/tree/main/packages/pi-tui#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/MoonshotAI/kimi-code.git",
+		"directory": "packages/pi-tui"
 	},
-	"files": [
-		"dist/**/*",
-		"native/win32/prebuilds/**/*.node",
-		"native/darwin/prebuilds/**/*.node",
-		"README.md"
-	],
+	"bugs": {
+		"url": "https://github.com/MoonshotAI/kimi-code/issues"
+	},
 	"keywords": [
 		"tui",
 		"terminal",
@@ -25,23 +23,50 @@
 		"typescript",
 		"cli"
 	],
-	"author": "Mario Zechner",
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
-		"directory": "packages/tui"
+	"files": [
+		"dist",
+		"native",
+		"README.md"
+	],
+	"type": "module",
+	"imports": {
+		"#/*": [
+			"./src/*.ts",
+			"./src/*/index.ts"
+		]
 	},
-	"engines": {
-		"node": ">=22.19.0"
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"default": "./src/index.ts"
+		}
 	},
-	"types": "./dist/index.d.ts",
+	"publishConfig": {
+		"access": "public",
+		"exports": {
+			".": {
+				"types": "./dist/index.d.mts",
+				"import": "./dist/index.mjs",
+				"default": "./dist/index.mjs"
+			}
+		},
+		"provenance": true
+	},
+	"scripts": {
+		"build": "tsdown",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "node --test test/*.test.ts",
+		"clean": "rm -rf dist"
+	},
 	"dependencies": {
 		"get-east-asian-width": "1.6.0",
 		"marked": "18.0.5"
 	},
 	"devDependencies": {
 		"@xterm/headless": "5.5.0",
-		"chalk": "5.6.2"
+		"chalk": "^5.4.1"
+	},
+	"engines": {
+		"node": ">=22.19.0"
 	}
 }

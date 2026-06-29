@@ -41,7 +41,7 @@ describe('resolveTargetDeps', () => {
     const names = deps.map((d) => d.resolvedName);
     expect(names).toContain('@mariozechner/clipboard');
     expect(names).toContain('@mariozechner/clipboard-darwin-arm64');
-    expect(names).toContain('@earendil-works/pi-tui');
+    expect(names).toContain('@moonshot-ai/pi-tui');
   });
 
   it('picks the right clipboard subpackage per target', () => {
@@ -58,17 +58,17 @@ describe('resolveTargetDeps', () => {
 
   it('encodes pi-tui native file path per target', () => {
     const linuxPiTui = resolveTargetDeps('linux-arm64').find(
-      (d) => d.resolvedName === '@earendil-works/pi-tui',
+      (d) => d.resolvedName === '@moonshot-ai/pi-tui',
     );
     expect(linuxPiTui?.nativeFileRelatives).toEqual([]);
     const macPiTui = resolveTargetDeps('darwin-x64').find(
-      (d) => d.resolvedName === '@earendil-works/pi-tui',
+      (d) => d.resolvedName === '@moonshot-ai/pi-tui',
     );
     expect(macPiTui?.nativeFileRelatives).toEqual([
       'native/darwin/prebuilds/darwin-x64/darwin-modifiers.node',
     ]);
     const winArmPiTui = resolveTargetDeps('win32-arm64').find(
-      (d) => d.resolvedName === '@earendil-works/pi-tui',
+      (d) => d.resolvedName === '@moonshot-ai/pi-tui',
     );
     expect(winArmPiTui?.nativeFileRelatives).toEqual([
       'native/win32/prebuilds/win32-arm64/win32-console-mode.node',

@@ -40,7 +40,7 @@ export class Loader extends Text {
 		this.setIndicator(indicator);
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		return ["", ...super.render(width)];
 	}
 

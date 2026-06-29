@@ -75,7 +75,7 @@ export const nativeDeps = Object.freeze([
   },
   {
     id: 'pi-tui',
-    name: () => '@earendil-works/pi-tui',
+    name: () => '@moonshot-ai/pi-tui',
     // pi-tui's JS is bundled into main.cjs, so only the platform-specific
     // native helper (.node under native/) ships alongside the binary — its
     // dist/ JS is intentionally NOT collected (it stays in the bundle). This

@@ -79,13 +79,13 @@
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-tui": "^0.78.1",
     "@moonshot-ai/acp-adapter": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-sdk": "workspace:^",
     "@moonshot-ai/kimi-telemetry": "workspace:^",
     "@moonshot-ai/kimi-web": "workspace:^",
     "@moonshot-ai/migration-legacy": "workspace:^",
+    "@moonshot-ai/pi-tui": "workspace:^",
     "@moonshot-ai/server": "workspace:^",
     "@moonshot-ai/vis-server": "workspace:^",
     "@moonshot-ai/vis-web": "workspace:*",

@@ -95,7 +95,7 @@ function isCompleteCsiSequence(data: string): "complete" | "incomplete" {
 
 	// CSI sequences end with a byte in the range 0x40-0x7E (@-~)
 	// This includes all letters and several special characters
-	const lastChar = payload[payload.length - 1];
+	const lastChar = payload[payload.length - 1]!;
 	const lastCharCode = lastChar.charCodeAt(0);
 
 	if (lastCharCode >= 0x40 && lastCharCode <= 0x7e) {

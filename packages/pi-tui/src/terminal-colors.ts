@@ -38,7 +38,7 @@ export function parseOsc11BackgroundColor(data: string): RgbColor | undefined {
 		return undefined;
 	}
 
-	const value = match[1].trim();
+	const value = match[1]!.trim();
 	if (value.startsWith("#")) {
 		const hex = value.slice(1);
 		if (/^[0-9a-f]{6}$/i.test(hex)) {

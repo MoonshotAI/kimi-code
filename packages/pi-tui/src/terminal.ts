@@ -38,7 +38,7 @@ function isKeyboardProtocolNegotiationSequencePrefix(sequence: string): boolean 
 }
 
 export function isAppleTerminalSession(): boolean {
-	return process.platform === "darwin" && process.env.TERM_PROGRAM === "Apple_Terminal";
+	return process.platform === "darwin" && process.env['TERM_PROGRAM'] === "Apple_Terminal";
 }
 
 export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boolean, isShiftPressed: boolean): string {
@@ -109,7 +109,7 @@ export class ProcessTerminal implements Terminal {
 	private stdinDataHandler?: (data: string) => void;
 	private progressInterval?: ReturnType<typeof setInterval>;
 	private writeLogPath = (() => {
-		const env = process.env.PI_TUI_WRITE_LOG || "";
+		const env = process.env['PI_TUI_WRITE_LOG'] || "";
 		if (!env) return "";
 		try {
 			if (fs.statSync(env).isDirectory()) {
@@ -463,11 +463,11 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	get columns(): number {
-		return process.stdout.columns || Number(process.env.COLUMNS) || 80;
+		return process.stdout.columns || Number(process.env['COLUMNS']) || 80;
 	}
 
 	get rows(): number {
-		return process.stdout.rows || Number(process.env.LINES) || 24;
+		return process.stdout.rows || Number(process.env['LINES']) || 24;
 	}
 
 	moveBy(lines: number): void {

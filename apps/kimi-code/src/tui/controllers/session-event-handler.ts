@@ -1,4 +1,4 @@
-import type { Component, Focusable } from '@earendil-works/pi-tui';
+import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import type {
   AgentStatusUpdatedEvent,
   AssistantDeltaEvent,

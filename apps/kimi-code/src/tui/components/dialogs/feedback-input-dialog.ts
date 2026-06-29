@@ -19,7 +19,7 @@ import {
   truncateToWidth,
   visibleWidth,
   type Focusable,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 import { currentTheme } from '#/tui/theme';
 
 export type FeedbackInputDialogResult =

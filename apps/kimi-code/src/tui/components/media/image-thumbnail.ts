@@ -12,7 +12,7 @@
  * the viewport; pi-tui handles proportional scaling internally.
  */
 
-import { Container, Image, Text, type ImageTheme, getCapabilities } from '@earendil-works/pi-tui';
+import { Container, Image, Text, type ImageTheme, getCapabilities } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';

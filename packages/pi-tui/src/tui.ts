@@ -155,13 +155,13 @@ function parseSizeValue(value: SizeValue | undefined, referenceSize: number): nu
 	// Parse percentage string like "50%"
 	const match = value.match(/^(\d+(?:\.\d+)?)%$/);
 	if (match) {
-		return Math.floor((referenceSize * parseFloat(match[1])) / 100);
+		return Math.floor((referenceSize * parseFloat(match[1]!)) / 100);
 	}
 	return undefined;
 }
 
 function isTermuxSession(): boolean {
-	return Boolean(process.env.TERMUX_VERSION);
+	return Boolean(process.env['TERMUX_VERSION']);
 }
 
 /**
@@ -309,8 +309,8 @@ export class TUI extends Container {
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
-	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
-	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
+	private showHardwareCursor = process.env['PI_HARDWARE_CURSOR'] === "1";
+	private clearOnShrink = process.env['PI_CLEAR_ON_SHRINK'] === "1"; // Clear empty rows when content shrinks (default: off)
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
@@ -877,8 +877,8 @@ export class TUI extends Container {
 			return false;
 		}
 
-		const heightPx = parseInt(match[1], 10);
-		const widthPx = parseInt(match[2], 10);
+		const heightPx = parseInt(match[1]!, 10);
+		const widthPx = parseInt(match[2]!, 10);
 		if (heightPx <= 0 || widthPx <= 0) {
 			return true;
 		}
@@ -945,7 +945,7 @@ export class TUI extends Container {
 				const match = opt.row.match(/^(\d+(?:\.\d+)?)%$/);
 				if (match) {
 					const maxRow = Math.max(0, availHeight - effectiveHeight);
-					const percent = parseFloat(match[1]) / 100;
+					const percent = parseFloat(match[1]!) / 100;
 					row = marginTop + Math.floor(maxRow * percent);
 				} else {
 					// Invalid format, fall back to center
@@ -967,7 +967,7 @@ export class TUI extends Container {
 				const match = opt.col.match(/^(\d+(?:\.\d+)?)%$/);
 				if (match) {
 					const maxCol = Math.max(0, availWidth - width);
-					const percent = parseFloat(match[1]) / 100;
+					const percent = parseFloat(match[1]!) / 100;
 					col = marginLeft + Math.floor(maxCol * percent);
 				} else {
 					// Invalid format, fall back to center
@@ -1081,8 +1081,8 @@ export class TUI extends Container {
 					// Defensive: truncate overlay line to declared width before compositing
 					// (components should already respect width, but this ensures it)
 					const truncatedOverlayLine =
-						visibleWidth(overlayLines[i]) > w ? sliceByColumn(overlayLines[i], 0, w, true) : overlayLines[i];
-					result[idx] = this.compositeLineAt(result[idx], truncatedOverlayLine, col, w, termWidth);
+						visibleWidth(overlayLines[i]!) > w ? sliceByColumn(overlayLines[i]!, 0, w, true) : overlayLines[i]!;
+					result[idx] = this.compositeLineAt(result[idx]!, truncatedOverlayLine, col, w, termWidth);
 				}
 			}
 		}
@@ -1095,7 +1095,7 @@ export class TUI extends Container {
 	private applyLineResets(lines: string[]): string[] {
 		const reset = TUI.SEGMENT_RESET;
 		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i];
+			const line = lines[i]!;
 			if (!isImageLine(line)) {
 				lines[i] = normalizeTerminalOutput(line) + reset;
 			}
@@ -1144,7 +1144,7 @@ export class TUI extends Container {
 		let expandedLastChanged = lastChanged;
 		const expandForLines = (lines: string[]): void => {
 			for (let i = 0; i < lines.length; i++) {
-				if (extractKittyImageIds(lines[i]).length === 0) continue;
+				if (extractKittyImageIds(lines[i]!).length === 0) continue;
 				const blockEnd = i + this.getKittyImageReservedRows(lines, i) - 1;
 				if (i >= firstChanged || (i <= lastChanged && blockEnd >= firstChanged)) {
 					expandedFirstChanged = Math.min(expandedFirstChanged, i);
@@ -1235,7 +1235,7 @@ export class TUI extends Container {
 		// Only scan the bottom `height` lines (visible viewport)
 		const viewportTop = Math.max(0, lines.length - height);
 		for (let row = lines.length - 1; row >= viewportTop; row--) {
-			const line = lines[row];
+			const line = lines[row]!;
 			const markerIndex = line.indexOf(CURSOR_MARKER);
 			if (markerIndex !== -1) {
 				// Calculate visual column (width of text before marker)
@@ -1290,7 +1290,7 @@ export class TUI extends Container {
 			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
-				const line = newLines[i];
+				const line = newLines[i]!;
 				const isImage = isImageLine(line);
 				const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i) : 1;
 				if (imageReservedRows > 1 && imageReservedRows <= height) {
@@ -1324,7 +1324,7 @@ export class TUI extends Container {
 			this.previousHeight = height;
 		};
 
-		const debugRedraw = process.env.PI_DEBUG_REDRAW === "1";
+		const debugRedraw = process.env['PI_DEBUG_REDRAW'] === "1";
 		const logRedraw = (reason: string): void => {
 			if (!debugRedraw) return;
 			const logPath = path.join(os.homedir(), ".pi", "agent", "pi-debug.log");
@@ -1492,7 +1492,7 @@ export class TUI extends Container {
 		const renderEnd = Math.min(lastChanged, newLines.length - 1);
 		for (let i = firstChanged; i <= renderEnd; i++) {
 			if (i > firstChanged) buffer += "\r\n";
-			const line = newLines[i];
+			const line = newLines[i]!;
 			const isImage = isImageLine(line);
 			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
 			if (imageReservedRows > 1) {
@@ -1569,7 +1569,7 @@ export class TUI extends Container {
 
 		buffer += "\x1b[?2026l"; // End synchronized output
 
-		if (process.env.PI_TUI_DEBUG === "1") {
+		if (process.env['PI_TUI_DEBUG'] === "1") {
 			const debugDir = "/tmp/tui";
 			fs.mkdirSync(debugDir, { recursive: true });
 			const debugPath = path.join(debugDir, `render-${Date.now()}-${Math.random().toString(36).slice(2)}.log`);

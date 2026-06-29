@@ -1,5 +1,5 @@
-import type { Component } from '@earendil-works/pi-tui';
-import { Container, Text } from '@earendil-works/pi-tui';
+import type { Component } from '@moonshot-ai/pi-tui';
+import { Container, Text } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';

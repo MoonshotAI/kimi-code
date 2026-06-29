@@ -7,7 +7,7 @@ import {
   type Focusable,
   getCapabilities,
   Spacer,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type {
   ApprovalRequest,

@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 
 import { getEmbeddedNativeAssetManifest, getNativePackageRoot } from './native-assets';
 
-const smokePackages = ['@mariozechner/clipboard', '@earendil-works/pi-tui'];
+const smokePackages = ['@mariozechner/clipboard', '@moonshot-ai/pi-tui'];
 
 // Verify pi-tui's native helper can actually be loaded through the module hook.
 // pi-tui computes native helper paths from process.execPath and require()s them;

@@ -9,8 +9,8 @@
  * is issued.
  */
 
-import type { Component } from '@earendil-works/pi-tui';
-import { truncateToWidth } from '@earendil-works/pi-tui';
+import type { Component } from '@moonshot-ai/pi-tui';
+import { truncateToWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
 import { currentTheme } from '#/tui/theme';

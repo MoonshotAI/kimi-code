@@ -1345,7 +1345,7 @@ export class Editor implements Component, Focusable {
 		let currentVisualCol: number;
 		if (this.snappedFromCursorCol !== null) {
 			const vlIndex = this.findVisualLineAt(visualLines, currentVL.logicalLine, this.snappedFromCursorCol);
-			currentVisualCol = this.snappedFromCursorCol - visualLines[vlIndex].startCol;
+			currentVisualCol = this.snappedFromCursorCol - visualLines[vlIndex]!.startCol;
 		} else {
 			currentVisualCol = this.state.cursorCol - currentVL.startCol;
 		}
@@ -1388,8 +1388,8 @@ export class Editor implements Component, Focusable {
 					let next = targetVisualLine + 1;
 					while (
 						next < visualLines.length &&
-						visualLines[next].logicalLine === targetVL.logicalLine &&
-						visualLines[next].startCol < segEnd
+						visualLines[next]!.logicalLine === targetVL.logicalLine &&
+						visualLines[next]!.startCol < segEnd
 					) {
 						next++;
 					}

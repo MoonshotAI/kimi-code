@@ -6,8 +6,8 @@
  *   Line 2: context: XX.X% (tokens/max)
  */
 
-import type { Component } from '@earendil-works/pi-tui';
-import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import type { Component } from '@moonshot-ai/pi-tui';
+import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
 import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
