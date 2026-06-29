@@ -1,7 +1,7 @@
 import { memo, useCallback } from 'react';
 
 import type { WireEntry } from '../../types';
-import { formatWallClock } from '../../util/time';
+import { formatDuration, formatWallClock } from '../../util/time';
 import { TypeBadge } from './TypeBadge';
 import { renderHeadline } from './WireHeadline';
 import { WireRowDetail } from './WireRowDetail';
@@ -15,6 +15,8 @@ export interface PairHint {
   kind: 'call' | 'result';
   callLineNo: number | null;
   resultLineNo: number | null;
+  /** result.time − call.time, when both records carry a timestamp. */
+  durationMs: number | null;
 }
 
 interface WireRowProps {
@@ -126,31 +128,45 @@ function PairIndicator({
     orphan ? 'text-[var(--color-sev-error)]' : 'text-[var(--color-cat-tools)] hover:text-fg-0'
   }`;
 
+  // Show the call→result elapsed time on whichever row has its partner.
+  const duration =
+    pair.durationMs !== null ? (
+      <span className="font-mono text-[10px] text-fg-3 tabular" title="tool.call → tool.result elapsed">
+        {formatDuration(pair.durationMs)}
+      </span>
+    ) : null;
+
   if (orphan || target === null || onJumpTo === undefined) {
     return (
-      <span className={className} title={title}>
-        {label}
+      <span className="flex items-center gap-1.5">
+        {duration}
+        <span className={className} title={title}>
+          {label}
+        </span>
       </span>
     );
   }
   return (
-    <span
-      role="link"
-      tabIndex={0}
-      className={`${className} cursor-pointer`}
-      title={title}
-      onClick={(e) => {
-        e.stopPropagation();
-        onJumpTo(target);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
+    <span className="flex items-center gap-1.5">
+      {duration}
+      <span
+        role="link"
+        tabIndex={0}
+        className={`${className} cursor-pointer`}
+        title={title}
+        onClick={(e) => {
           e.stopPropagation();
           onJumpTo(target);
-        }
-      }}
-    >
-      {label}
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.stopPropagation();
+            onJumpTo(target);
+          }
+        }}
+      >
+        {label}
+      </span>
     </span>
   );
 }

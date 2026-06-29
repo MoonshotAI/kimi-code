@@ -22,6 +22,8 @@ export type {
   ContentPart,
   Message,
   ToolCall,
+  LoopStepRetryRecord,
+  LoopToolProgressSummary,
   BackgroundTaskInfo,
   BackgroundTaskStatus,
   ProcessBackgroundTaskInfo,

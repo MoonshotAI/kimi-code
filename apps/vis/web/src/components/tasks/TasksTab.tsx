@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { api } from '../../api';
 import type { BackgroundTaskEntry, BackgroundTaskInfo, BackgroundTaskStatus } from '../../types';
@@ -106,7 +107,19 @@ function TaskCard({ sessionId, entry }: { sessionId: string; entry: BackgroundTa
         ) : null}
         {task.kind === 'agent' ? (
           <>
-            <Field label="agentId">{task.agentId ?? <Dim>(none)</Dim>}</Field>
+            <Field label="agentId">
+              {task.agentId ? (
+                <Link
+                  to={`/sessions/${sessionId}/agents/${task.agentId}`}
+                  className="text-[var(--color-cat-subagent)] underline-offset-2 hover:underline"
+                  title="open this subagent's wire"
+                >
+                  {task.agentId} →
+                </Link>
+              ) : (
+                <Dim>(none)</Dim>
+              )}
+            </Field>
             <Field label="subagentType">{task.subagentType ?? <Dim>(none)</Dim>}</Field>
           </>
         ) : null}
