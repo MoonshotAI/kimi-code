@@ -237,7 +237,7 @@ export class BackgroundManager {
     this.agent.emitEvent({ type: 'background.task.terminated', info });
     this.agent.telemetry.track('background_task_completed', {
       kind: info.kind,
-      duration: info.endedAt !== null ? info.endedAt - info.startedAt : null,
+      duration_ms: info.endedAt !== null ? info.endedAt - info.startedAt : null,
       status: info.status,
     });
   }
