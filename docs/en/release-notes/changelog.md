@@ -6,6 +6,45 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.20.2 (2026-06-29)
+
+### Features
+
+- Support the Anthropic-compatible protocol for Kimi Code, including video input.
+- Add a completion sound and question notifications to the web UI, with separate Settings toggles for completion notifications, question notifications, and sound. Question notifications default off so question text only reaches your desktop after you opt in.
+- Add `KIMI_CODE_CUSTOM_HEADERS` for custom outbound LLM request headers, and send the `User-Agent` header to non-Kimi providers. Set `KIMI_CODE_CUSTOM_HEADERS` to newline-separated `Name: Value` lines.
+- Add an optional `exclude_empty` parameter to the session list API to omit sessions that have no messages.
+
+### Bug Fixes
+
+- Recover from provider 413 context overflows by compacting before retrying.
+- Cap compaction output at 128k tokens by default to avoid provider `max_tokens` errors.
+- Fix compaction ignoring the configured max output size.
+- Fix unnecessary full-screen redraws when typing in the input box or toggling the slash panel.
+- Keep unsent composer attachments scoped to their session in the web UI, so switching sessions no longer leaks them into another session's next message.
+- Fix the web composer occasionally keeping typed text after sending the first message of a new session.
+- Fix debug timing output lingering after undoing a turn.
+- Fix working tips getting squeezed against the agent swarm progress bar.
+
+### Polish
+
+- Rework the web ask-user-question card into a step-by-step wizard so multi-question navigation and the final Submit action are easier to see.
+- In the bundled web UI, a new session is now created only when the first message is sent, so `+ New` without a workspace opens the composer instead of making an empty session.
+- Restore each session's scroll position when switching back to it in the web UI.
+- Keep the open side panel when switching between sessions in the web UI.
+- Scope the web composer's up/down input history to the current session instead of sharing it across all sessions.
+- In the bundled web UI, `/new` and `/clear` are now aliases that open the session onboarding composer and focus the input. iOS auto-zoom is prevented by keeping text inputs at 16px instead of disabling viewport scaling.
+- Hide unused "New Session" entries from the web session list by default.
+- Remove the `/sessions` slash command from the web UI; the sidebar already covers session browsing.
+- Show the first five sessions per workspace in the web sidebar instead of ten.
+- Replace the web composer attach button's plus icon with an image icon.
+
+### Refactors
+
+- Route Kimi Code models on the Anthropic-compatible protocol through the beta Messages API.
+- Upgrade web markdown renderer dependencies (katex, markstream-vue, shiki) for bug fixes and performance improvements.
+- Add provider type and protocol attributes to turn and API error telemetry.
+
 ## 0.20.1 (2026-06-26)
 
 ### Features
