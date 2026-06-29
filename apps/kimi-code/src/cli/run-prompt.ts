@@ -78,10 +78,10 @@ export async function runPrompt(
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {
       if (outcome.success) {
-        track('oauth_refresh', { success: true });
+        track('oauth_refresh', { outcome: 'success' });
         return;
       }
-      track('oauth_refresh', { success: false, reason: outcome.reason });
+      track('oauth_refresh', { outcome: 'error', reason: outcome.reason });
     },
     sessionStartedProperties: { yolo: false, plan: false, afk: true },
   });
@@ -153,7 +153,7 @@ export async function runPrompt(
     writeResumeHint(session.id, outputFormat, stdout, stderr);
 
     withTelemetryContext({ sessionId: session.id }).track('exit', {
-      duration_s: (Date.now() - startedAt) / 1000,
+      duration_ms: Date.now() - startedAt,
     });
   } finally {
     await cleanupPromptRun();

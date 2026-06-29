@@ -392,7 +392,14 @@ export class SessionEventHandler {
   private maybeShowDebugTiming(event: TurnStepCompletedEvent): void {
     if (process.env['KIMI_CODE_DEBUG'] !== '1') return;
     const text = formatStepDebugTiming(event);
-    if (text !== undefined) this.host.showStatus(text);
+    if (text === undefined) return;
+    this.host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'status',
+      turnId: String(event.turnId),
+      renderMode: 'plain',
+      content: text,
+    });
   }
 
   private markActiveAgentSwarmsCancelled(): void {
@@ -401,9 +408,10 @@ export class SessionEventHandler {
 
   private isAnthropicSessionActive(): boolean {
     const { state } = this.host;
-    const providerKey = state.appState.availableModels[state.appState.model]?.provider;
-    if (providerKey === undefined) return false;
-    return state.appState.availableProviders[providerKey]?.type === 'anthropic';
+    const model = state.appState.availableModels[state.appState.model];
+    if (model === undefined) return false;
+    if (model.protocol === 'anthropic') return true;
+    return state.appState.availableProviders[model.provider]?.type === 'anthropic';
   }
 
   private handleStepInterrupted(event: TurnStepInterruptedEvent): void {

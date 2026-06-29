@@ -10,7 +10,7 @@ interface MockTextarea {
   setSelectionRange: (start: number, end: number) => void;
 }
 
-function setup(initialText = '', caret = 0) {
+function setup(initialText = '', caret = 0, sessionId: string | null = 'test-session') {
   const textarea: MockTextarea = {
     value: initialText,
     selectionStart: caret,
@@ -22,7 +22,7 @@ function setup(initialText = '', caret = 0) {
   };
   const text = ref(initialText);
   const textareaRef = ref(textarea as unknown as HTMLTextAreaElement) as Ref<HTMLTextAreaElement | null>;
-  const history = useInputHistory({ text, textareaRef, autosize: () => {} });
+  const history = useInputHistory({ text, textareaRef, autosize: () => {}, sessionId: () => sessionId ?? undefined });
   return { text, textarea, history };
 }
 
@@ -53,6 +53,12 @@ describe('useInputHistory — push', () => {
     expect(text.value).toBe('a');
     history.recallOlder(); // already oldest — must stay, not land on a second 'a'
     expect(text.value).toBe('a');
+  });
+
+  it('drops entries pushed without a session (draft / empty composer)', () => {
+    const { history } = setup('', 0, null);
+    history.push('hello');
+    expect(history.hasHistory()).toBe(false);
   });
 });
 
@@ -180,11 +186,11 @@ describe('useInputHistory — persistence', () => {
     }
   });
 
-  it('writes each pushed entry to localStorage', () => {
+  it('writes each pushed entry to localStorage under its session', () => {
     const { history } = setup();
     history.push('hello');
     const stored = globalThis.localStorage.getItem(STORAGE_KEYS.inputHistory);
-    expect(stored).toBe(JSON.stringify(['hello']));
+    expect(stored).toBe(JSON.stringify({ 'test-session': ['hello'] }));
   });
 
   it('a freshly mounted composable reads back the persisted history', () => {
@@ -200,12 +206,30 @@ describe('useInputHistory — persistence', () => {
     expect(second.text.value).toBe('a');
   });
 
-  it('trims to the newest 200 entries, dropping the oldest', () => {
+  it('keeps histories of different sessions isolated', () => {
+    const a = setup('', 0, 'sess-a');
+    a.history.push('from-a');
+    const b = setup('', 0, 'sess-b');
+    b.history.push('from-b');
+
+    // Re-mount each session and confirm each only recalls its own entry.
+    const a2 = setup('', 0, 'sess-a');
+    a2.history.recallOlder();
+    expect(a2.text.value).toBe('from-a');
+    a2.history.recallOlder(); // no older entry — must stay
+    expect(a2.text.value).toBe('from-a');
+
+    const b2 = setup('', 0, 'sess-b');
+    b2.history.recallOlder();
+    expect(b2.text.value).toBe('from-b');
+  });
+
+  it('trims to the newest 100 entries, dropping the oldest', () => {
     const { text, history } = setup();
-    for (let i = 0; i < 205; i++) history.push(`m${i}`);
+    for (let i = 0; i < 105; i++) history.push(`m${i}`);
 
     // Walk all the way back; the oldest kept entry must be m5 (m0..m4 dropped).
-    for (let i = 0; i < 200; i++) history.recallOlder();
+    for (let i = 0; i < 100; i++) history.recallOlder();
     expect(text.value).toBe('m5');
     history.recallOlder(); // already at the oldest kept entry — must not move
     expect(text.value).toBe('m5');
@@ -215,5 +239,27 @@ describe('useInputHistory — persistence', () => {
     globalThis.localStorage.setItem(STORAGE_KEYS.inputHistory, 'not-json');
     const { history } = setup();
     expect(history.hasHistory()).toBe(false);
+  });
+
+  it('migrates a legacy global array into the current session once', () => {
+    globalThis.localStorage.setItem(STORAGE_KEYS.inputHistory, JSON.stringify(['old1', 'old2']));
+    const { text, history } = setup('', 0, 'sess-x');
+    history.recallOlder(); // -> old2
+    expect(text.value).toBe('old2');
+    history.recallOlder(); // -> old1
+    expect(text.value).toBe('old1');
+    // Persisted in the new map format under the current session.
+    const stored = JSON.parse(globalThis.localStorage.getItem(STORAGE_KEYS.inputHistory)!);
+    expect(stored).toEqual({ 'sess-x': ['old1', 'old2'] });
+  });
+
+  it('leaves the legacy array untouched when mounted without a session', () => {
+    globalThis.localStorage.setItem(STORAGE_KEYS.inputHistory, JSON.stringify(['old1']));
+    const { history } = setup('', 0, null);
+    expect(history.hasHistory()).toBe(false);
+    // A later docked mount (with a session id) can still migrate it.
+    const { text, history: docked } = setup('', 0, 'sess-y');
+    docked.recallOlder();
+    expect(text.value).toBe('old1');
   });
 });

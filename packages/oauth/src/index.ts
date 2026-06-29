@@ -32,7 +32,9 @@ export {
   createKimiDeviceHeaders,
   createKimiDeviceId,
   createKimiUserAgent,
+  KIMI_CODE_CUSTOM_HEADERS_ENV,
   KIMI_CODE_PLATFORM,
+  parseKimiCodeCustomHeaders,
   readKimiDeviceId,
 } from './identity';
 export type { KimiHostIdentity, KimiIdentityOptions } from './identity';
@@ -60,6 +62,7 @@ export type {
   FetchManagedKimiCodeModelsOptions,
   ManagedKimiCodeApplyResult,
   ManagedKimiCodeCleanupResult,
+  ManagedKimiCodeProtocol,
   ManagedKimiEnv,
   ManagedKimiLoginAuth,
   ManagedKimiCodeModelInfo,

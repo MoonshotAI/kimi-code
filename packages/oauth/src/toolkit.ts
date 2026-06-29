@@ -3,7 +3,12 @@ import { join } from 'node:path';
 
 import { KIMI_CODE_FLOW_CONFIG } from './constants';
 import { OAuthUnauthorizedError } from './errors';
-import { assertKimiHostIdentity, createKimiDeviceHeaders, type KimiHostIdentity } from './identity';
+import {
+  assertKimiHostIdentity,
+  createKimiDefaultHeaders,
+  createKimiDeviceHeaders,
+  type KimiHostIdentity,
+} from './identity';
 import {
   fetchSubmitFeedback,
   kimiCodeFeedbackUrl,
@@ -107,6 +112,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     'now' | 'sleep' | 'deviceCodeTimeoutMs' | 'refreshThreshold' | 'onRefresh'
   >;
   private readonly managers = new Map<string, OAuthManager>();
+  private _identityHeaders: Record<string, string> | undefined;
 
   constructor(options: KimiOAuthToolkitOptions<TConfig>) {
     this.identity =
@@ -187,6 +193,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
           oauthHost,
           preserveDefaultModel: hadToken,
           fetchImpl: this.fetchImpl,
+          headers: this.identityHeaders(),
         });
       try {
         provision = await provisionWithToken(accessToken);
@@ -417,17 +424,21 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   ): string {
     return oauthRef?.oauthHost ?? oauthHost ?? this.flowConfig.oauthHost;
   }
+
+  private identityHeaders(): Record<string, string> | undefined {
+    if (this.identity === undefined) return undefined;
+    this._identityHeaders ??= createKimiDefaultHeaders({
+      homeDir: this.homeDir,
+      ...this.identity,
+    });
+    return this._identityHeaders;
+  }
 }
 
 export function resolveKimiTokenStorageName(input: {
   readonly providerName?: string | undefined;
   readonly oauthKey?: string | undefined;
 }): string {
-  const providerName = input.providerName ?? KIMI_CODE_PROVIDER_NAME;
-  if (providerName !== KIMI_CODE_PROVIDER_NAME) {
-    throw new Error(`No OAuth manager configured for provider "${providerName}".`);
-  }
-
   const key = input.oauthKey ?? KIMI_CODE_OAUTH_KEY;
   if (key === 'kimi-code' || key === KIMI_CODE_OAUTH_KEY) return 'kimi-code';
 

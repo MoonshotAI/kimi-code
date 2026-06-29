@@ -324,6 +324,21 @@ function traceClientLog(level: ClientLogLevel, label: string, detail?: unknown):
   });
 }
 
+/** Record a client-side diagnostic event (e.g. a feature's internal state, such
+    as audio playback) into the troubleshooting log. No-op unless tracing is
+    enabled (?debug=1 or the debug localStorage flag), so production use pays
+    only a boolean check. Prefer this over raw console.* for diagnostics that
+    should surface in the exported log. */
+export function traceClientEvent(label: string, detail?: unknown): void {
+  if (!isTraceEnabled()) return;
+  push({
+    source: 'client',
+    kind: 'client:event',
+    label: `· ${label}`,
+    detail: detailOf(detail),
+  });
+}
+
 let clientCaptureInstalled = false;
 
 /** Wire up window error + console.error/warn capture into the trace buffer. */

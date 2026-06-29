@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ref } from 'vue';
 import { useAttachmentUpload, type Attachment } from '../src/composables/useAttachmentUpload';
 
 // The composable registers its paste listener and cleanup via onMounted /
@@ -15,8 +16,8 @@ type UploadImage = (
   name?: string,
 ) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
 
-function setup(uploadImage?: UploadImage) {
-  return useAttachmentUpload({ uploadImage: () => uploadImage });
+function setup(uploadImage?: UploadImage, sessionId: string | null = 'test-session') {
+  return useAttachmentUpload({ uploadImage: () => uploadImage, sessionId: () => sessionId ?? undefined });
 }
 
 function imageFile(name: string): File {
@@ -106,5 +107,28 @@ describe('useAttachmentUpload', () => {
     att.clearAfterSubmit();
     expect(att.attachments.value).toHaveLength(0);
     expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+  });
+
+  it('isolates attachments between sessions', () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const sessionId = ref<string | undefined>('sess-a');
+    const att = useAttachmentUpload({ uploadImage: () => uploadImage, sessionId: () => sessionId.value });
+
+    att.handleFileInputChange(inputEvent([imageFile('a.png')]));
+    expect(att.attachments.value).toHaveLength(1);
+
+    // Switch to session B — A's attachment must not show up here.
+    sessionId.value = 'sess-b';
+    expect(att.attachments.value).toHaveLength(0);
+    att.handleFileInputChange(inputEvent([imageFile('b.png')]));
+    expect(att.attachments.value).toHaveLength(1);
+
+    // Switch back to A — its attachment is still there.
+    sessionId.value = 'sess-a';
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0].name).toBe('a.png');
+
+    // B's attachment is gone from A's view.
+    expect(att.attachments.value.map((a) => a.name)).not.toContain('b.png');
   });
 });
