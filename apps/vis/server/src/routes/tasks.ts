@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 
 import { KIMI_CODE_HOME } from '../config';
+import type { BackgroundTaskEntry } from '../lib/agent-record-types';
 import { readSessionDetail } from '../lib/session-store';
 import {
   isSafeTaskId,
@@ -18,24 +19,30 @@ const MAX_OUTPUT_LIMIT = 4 * 1024 * 1024;
 export function tasksRoute(home: string = KIMI_CODE_HOME): Hono {
   const r = new Hono();
 
-  // List background tasks (process / agent / question) for a session.
+  // List background tasks (process / agent / question) for a session. Tasks are
+  // persisted under each spawning agent's homedir (`<homedir>/tasks`), NOT the
+  // session root, so aggregate across every agent in the session.
   r.get('/:id/tasks', async (c) => {
     const id = c.req.param('id');
     const detail = await readSessionDetail(home, id);
     if (!detail) {
       return c.json({ error: 'session not found', code: 'NOT_FOUND' }, 404);
     }
-    const tasks = await listBackgroundTasks(detail.sessionDir);
-    const entries = await Promise.all(
-      tasks.map(async (task) => {
-        const outputSizeBytes = await taskOutputSizeBytes(detail.sessionDir, task.taskId);
-        return { task, outputSizeBytes, outputExists: outputSizeBytes > 0 };
-      }),
-    );
+    const entries: BackgroundTaskEntry[] = [];
+    for (const agent of detail.agents) {
+      const tasks = await listBackgroundTasks(agent.homedir);
+      for (const task of tasks) {
+        const outputSizeBytes = await taskOutputSizeBytes(agent.homedir, task.taskId);
+        entries.push({ task, agentId: agent.agentId, outputSizeBytes, outputExists: outputSizeBytes > 0 });
+      }
+    }
+    // Newest first across all agents.
+    entries.sort((a, b) => (b.task.startedAt ?? 0) - (a.task.startedAt ?? 0));
     return c.json({ sessionId: id, tasks: entries });
   });
 
-  // Read a byte-window of a single task's output.log.
+  // Read a byte-window of a single task's output.log. The task may belong to
+  // any agent, so locate the agent whose tasks/ directory holds it.
   r.get('/:id/tasks/:taskId/output', async (c) => {
     const id = c.req.param('id');
     const taskId = c.req.param('taskId');
@@ -51,7 +58,17 @@ export function tasksRoute(home: string = KIMI_CODE_HOME): Hono {
     if (!detail) {
       return c.json({ error: 'session not found', code: 'NOT_FOUND' }, 404);
     }
-    const window = await readTaskOutput(detail.sessionDir, taskId, offset, limit);
+    // Prefer the agent whose log actually has bytes; otherwise any agent's dir
+    // yields the same empty window. An explicit ?agent= short-circuits the scan.
+    const hinted = c.req.query('agent');
+    let dir = detail.agents.find((a) => a.agentId === hinted)?.homedir ?? detail.agents[0]?.homedir ?? detail.sessionDir;
+    for (const agent of detail.agents) {
+      if ((await taskOutputSizeBytes(agent.homedir, taskId)) > 0) {
+        dir = agent.homedir;
+        break;
+      }
+    }
+    const window = await readTaskOutput(dir, taskId, offset, limit);
     return c.json({
       sessionId: id,
       taskId,

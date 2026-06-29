@@ -101,10 +101,15 @@ export interface LoopToolResultEvent {
   readonly progress?: LoopToolProgressSummary | undefined;
 }
 
-/** Constant-size summary of a tool's sparse progress updates. */
+/**
+ * Constant-size summary of a tool's sparse progress updates. Deliberately
+ * carries NO free-form status text: status strings can contain sensitive data
+ * (e.g. an OAuth authorization URL) that must not leak into persisted wire
+ * files or exported debug bundles. Only the update count and the furthest
+ * reported percent — both non-sensitive — are retained.
+ */
 export interface LoopToolProgressSummary {
   readonly updateCount: number;
-  readonly lastStatus?: string | undefined;
   readonly maxPercent?: number | undefined;
 }
 

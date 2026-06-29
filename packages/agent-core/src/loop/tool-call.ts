@@ -114,21 +114,19 @@ interface PendingToolResult {
  *  constant-size {@link LoopToolProgressSummary} when the tool settles. */
 interface MutableProgress {
   updateCount: number;
-  lastStatus?: string;
   maxPercent?: number;
 }
 
 function recordProgress(p: MutableProgress, update: ToolUpdate): void {
   // stdout/stderr are streamed output, already reflected in result.output;
-  // persisting them per-chunk would bloat the wire. Only summarize the sparse
-  // status/percent/custom signals.
+  // persisting them per-chunk would bloat the wire. Only count the sparse
+  // status/percent/custom signals. Free-form `text` is intentionally NOT
+  // captured: it can carry sensitive data (e.g. an OAuth URL) that must not
+  // leak into persisted wire files or exported debug bundles.
   if (update.kind === 'stdout' || update.kind === 'stderr') return;
   p.updateCount += 1;
   if (typeof update.percent === 'number') {
     p.maxPercent = Math.max(p.maxPercent ?? 0, update.percent);
-  }
-  if (typeof update.text === 'string' && update.text.length > 0) {
-    p.lastStatus = update.text.length > 200 ? `${update.text.slice(0, 200)}…` : update.text;
   }
 }
 
@@ -136,7 +134,6 @@ function progressSummary(p: MutableProgress): LoopToolProgressSummary | undefine
   if (p.updateCount === 0) return undefined;
   return {
     updateCount: p.updateCount,
-    ...(p.lastStatus !== undefined ? { lastStatus: p.lastStatus } : {}),
     ...(p.maxPercent !== undefined ? { maxPercent: p.maxPercent } : {}),
   };
 }

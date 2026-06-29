@@ -1,8 +1,9 @@
 // apps/vis/server/src/lib/cron-store.ts
 //
-// Read-only reader for a session's cron tasks, persisted by agent-core under
-// `<sessionDir>/cron/<id>.json`. The visualizer never writes these files; it
-// mirrors agent-core's on-disk layout (tools/cron/persist.ts) for reading.
+// Read-only reader for cron tasks, persisted by agent-core under each (non-sub)
+// agent's homedir at `<agentDir>/cron/<id>.json` (callers pass the agent
+// homedir, `<session>/agents/<id>`). The visualizer never writes these files;
+// it mirrors agent-core's on-disk layout (tools/cron/persist.ts) for reading.
 
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -18,8 +19,8 @@ export function isSafeCronId(id: string): boolean {
   return VALID_CRON_ID.test(id);
 }
 
-function cronDirOf(sessionDir: string): string {
-  return join(sessionDir, 'cron');
+function cronDirOf(agentDir: string): string {
+  return join(agentDir, 'cron');
 }
 
 /**
@@ -29,8 +30,8 @@ function cronDirOf(sessionDir: string): string {
  * Silently skips filenames that don't match `VALID_CRON_ID`, files that fail
  * to read/parse, and records missing the required cron fields.
  */
-export async function listCronTasks(sessionDir: string): Promise<CronTask[]> {
-  const dir = cronDirOf(sessionDir);
+export async function listCronTasks(agentDir: string): Promise<CronTask[]> {
+  const dir = cronDirOf(agentDir);
   let entries: import('node:fs').Dirent[];
   try {
     entries = await readdir(dir, { withFileTypes: true });

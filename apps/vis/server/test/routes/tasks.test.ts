@@ -10,8 +10,10 @@ describe('tasks route', () => {
   let cleanup: (() => Promise<void>) | null = null;
   afterEach(async () => { if (cleanup) await cleanup(); cleanup = null; });
 
+  // Tasks live under the spawning agent's homedir (<session>/agents/main/tasks),
+  // NOT the session root — seed there so the test mirrors real on-disk layout.
   async function seed(sessionDir: string): Promise<void> {
-    const dir = join(sessionDir, 'tasks');
+    const dir = join(sessionDir, 'agents', 'main', 'tasks');
     await mkdir(join(dir, 'bash-12345678'), { recursive: true });
     await writeFile(join(dir, 'bash-12345678.json'), JSON.stringify({
       taskId: 'bash-12345678', kind: 'process', description: 'build',
@@ -31,11 +33,12 @@ describe('tasks route', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       sessionId: string;
-      tasks: { task: { taskId: string }; outputSizeBytes: number; outputExists: boolean }[];
+      tasks: { task: { taskId: string }; agentId: string; outputSizeBytes: number; outputExists: boolean }[];
     };
     expect(body.sessionId).toBe('session_fixture');
     expect(body.tasks).toHaveLength(1);
     expect(body.tasks[0]!.task.taskId).toBe('bash-12345678');
+    expect(body.tasks[0]!.agentId).toBe('main');
     expect(body.tasks[0]!.outputExists).toBe(true);
     expect(body.tasks[0]!.outputSizeBytes).toBe('line one\nline two\n'.length);
   });

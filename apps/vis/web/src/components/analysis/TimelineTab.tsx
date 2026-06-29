@@ -324,7 +324,7 @@ function ToolRow({ tc, stepDurationMs }: { tc: ToolCallNode; stepDurationMs?: nu
       {tc.isError ? <Pill tone="error" variant="outline">error</Pill> : null}
       {tc.truncated ? <Pill tone="warning" variant="outline">truncated</Pill> : null}
       {tc.progress ? (
-        <span className="text-fg-3" title={tc.progress.lastStatus ?? 'reported progress'}>
+        <span className="text-fg-3" title="tool reported progress while running">
           progress {tc.progress.maxPercent !== undefined ? `${tc.progress.maxPercent}%` : `${tc.progress.updateCount}×`}
         </span>
       ) : null}

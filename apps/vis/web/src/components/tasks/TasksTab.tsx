@@ -85,6 +85,11 @@ function TaskCard({ sessionId, entry }: { sessionId: string; entry: BackgroundTa
         <Pill tone={STATUS_TONE[task.status]}>{task.status}</Pill>
         <span className="font-mono text-[12px] text-fg-0">{task.taskId}</span>
         <CopyButton value={task.taskId} />
+        {entry.agentId !== 'main' ? (
+          <Pill tone="subagent" variant="outline" title="the agent that spawned this task">
+            {entry.agentId}
+          </Pill>
+        ) : null}
         {task.detached === false ? (
           <Pill tone="warning" variant="outline">foreground</Pill>
         ) : null}

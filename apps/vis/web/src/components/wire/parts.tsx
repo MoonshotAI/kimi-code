@@ -311,7 +311,6 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
                 <span className="text-fg-1">
                   {event.progress.updateCount} update{event.progress.updateCount === 1 ? '' : 's'}
                   {event.progress.maxPercent !== undefined ? ` · reached ${event.progress.maxPercent}%` : ''}
-                  {event.progress.lastStatus !== undefined ? ` · last: ${event.progress.lastStatus}` : ''}
                 </span>
               </FieldRow>
             ) : null}

@@ -158,11 +158,11 @@ describe('runTurn — LoopEventDispatcher live event containment', () => {
     expect(typeof tr?.result.output).toBe('string');
   });
 
-  it('summarizes sparse tool progress on the tool.result event (excludes stdout/stderr)', async () => {
+  it('summarizes sparse tool progress on the tool.result event (count + percent only, no status text)', async () => {
     const progressTool = new ProgressTool([
       { kind: 'stdout', text: 'noise' }, // streamed output — excluded from the summary
       { kind: 'progress', percent: 30 },
-      { kind: 'status', text: 'halfway' },
+      { kind: 'status', text: 'sensitive https://auth.example/cb?token=secret' }, // text must NOT be persisted
       { kind: 'progress', percent: 80 },
     ]);
     const { sink } = await runTurn({
@@ -173,7 +173,9 @@ describe('runTurn — LoopEventDispatcher live event containment', () => {
       ],
     });
     const tr = sink.byType('tool.result')[0];
-    expect(tr?.progress).toEqual({ updateCount: 3, lastStatus: 'halfway', maxPercent: 80 });
+    expect(tr?.progress).toEqual({ updateCount: 3, maxPercent: 80 });
+    // The free-form status text (which could carry an OAuth URL/secret) is gone.
+    expect(JSON.stringify(tr?.progress)).not.toContain('secret');
   });
 
   it('omits the progress summary when a tool reports no sparse progress', async () => {

@@ -1,7 +1,9 @@
 // apps/vis/server/src/lib/task-store.ts
 //
-// Read-only reader for a session's background tasks, persisted by agent-core
-// under `<sessionDir>/tasks/<taskId>.json` (+ `tasks/<taskId>/output.log`).
+// Read-only reader for background tasks, persisted by agent-core under each
+// spawning agent's homedir at `<agentDir>/tasks/<taskId>.json`
+// (+ `tasks/<taskId>/output.log`) — NOT the session root. Callers pass the
+// agent homedir (`<session>/agents/<id>`).
 //
 // The visualizer never writes these files; it mirrors agent-core's on-disk
 // layout (background/persist.ts) for reading only:
@@ -27,15 +29,15 @@ export function isSafeTaskId(id: string): boolean {
   return VALID_TASK_ID.test(id);
 }
 
-function tasksDirOf(sessionDir: string): string {
-  return join(sessionDir, 'tasks');
+function tasksDirOf(agentDir: string): string {
+  return join(agentDir, 'tasks');
 }
 
-function taskOutputFile(sessionDir: string, taskId: string): string {
+function taskOutputFile(agentDir: string, taskId: string): string {
   if (!VALID_TASK_ID.test(taskId)) {
     throw new Error(`Invalid task id: "${taskId}"`);
   }
-  return join(tasksDirOf(sessionDir), taskId, 'output.log');
+  return join(tasksDirOf(agentDir), taskId, 'output.log');
 }
 
 /**
@@ -47,9 +49,9 @@ function taskOutputFile(sessionDir: string, taskId: string): string {
  * task shape — matching agent-core's tolerant `listTasks`.
  */
 export async function listBackgroundTasks(
-  sessionDir: string,
+  agentDir: string,
 ): Promise<BackgroundTaskInfo[]> {
-  const dir = tasksDirOf(sessionDir);
+  const dir = tasksDirOf(agentDir);
   let entries: import('node:fs').Dirent[];
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -77,11 +79,11 @@ export async function listBackgroundTasks(
 
 /** Byte size of a task's `output.log` (0 when absent or unreadable). */
 export async function taskOutputSizeBytes(
-  sessionDir: string,
+  agentDir: string,
   taskId: string,
 ): Promise<number> {
   try {
-    return (await stat(taskOutputFile(sessionDir, taskId))).size;
+    return (await stat(taskOutputFile(agentDir, taskId))).size;
   } catch {
     return 0;
   }
@@ -110,7 +112,7 @@ export interface TaskOutputWindow {
  * Mirrors agent-core's `readTaskOutputBytes` so large logs page identically.
  */
 export async function readTaskOutput(
-  sessionDir: string,
+  agentDir: string,
   taskId: string,
   offset: number,
   maxBytes: number,
@@ -119,7 +121,7 @@ export async function readTaskOutput(
   const limit = Math.max(0, Math.trunc(maxBytes));
   let handle;
   try {
-    handle = await open(taskOutputFile(sessionDir, taskId), 'r');
+    handle = await open(taskOutputFile(agentDir, taskId), 'r');
   } catch {
     return { offset: start, nextOffset: start, size: 0, content: '', eof: true };
   }

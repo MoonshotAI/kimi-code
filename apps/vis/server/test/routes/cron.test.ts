@@ -13,7 +13,8 @@ describe('cron route', () => {
   it('GET /:id/cron returns the persisted cron tasks', async () => {
     const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
-    const dir = join(sessionDir, 'cron');
+    // Cron lives under the main agent's homedir, not the session root.
+    const dir = join(sessionDir, 'agents', 'main', 'cron');
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'a1b2c3d4.json'), JSON.stringify({
       id: 'a1b2c3d4', cron: '0 9 * * *', prompt: 'standup', createdAt: 1, recurring: true,

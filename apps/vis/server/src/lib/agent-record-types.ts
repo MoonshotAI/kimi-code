@@ -201,6 +201,9 @@ export interface AgentTreeResponse {
  *  without first fetching the (potentially large) log body. */
 export interface BackgroundTaskEntry {
   task: BackgroundTaskInfo;
+  /** Which agent persisted this task — tasks live under the spawning agent's
+   *  homedir (`<session>/agents/<agentId>/tasks`), not the session root. */
+  agentId: string;
   /** Total byte size of the task's `output.log` (0 when absent). */
   outputSizeBytes: number;
   /** Whether an `output.log` file exists for this task. */
