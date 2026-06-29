@@ -30,7 +30,7 @@ import {
   type McpServerEntry,
   type SessionMcpConfig,
 } from '../mcp';
-import type { EnabledPluginSessionStart } from '../plugin';
+import type { EnabledPluginSessionStart, PluginCommandDef } from '../plugin';
 import {
   DEFAULT_AGENT_PROFILES,
   DEFAULT_INIT_PROMPT,
@@ -71,6 +71,7 @@ export interface SessionOptions {
   readonly mcpConfig?: SessionMcpConfig;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
+  readonly pluginCommands?: readonly PluginCommandDef[];
   readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
   readonly additionalDirs?: readonly string[];
@@ -160,6 +161,7 @@ export class Session {
   private toolKaos: Kaos;
   private persistenceKaos: Kaos;
   private additionalDirs: readonly string[];
+  private readonly pluginCommands: readonly PluginCommandDef[];
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
   metadata: SessionMeta = {
@@ -197,6 +199,7 @@ export class Session {
     this.toolKaos = options.kaos;
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
     this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
+    this.pluginCommands = options.pluginCommands ?? [];
     this.skills = new SessionSkillRegistry({
       sessionId: options.id,
     });
@@ -632,6 +635,10 @@ export class Session {
   async listSkills(): Promise<readonly SkillSummary[]> {
     await this.skillsReady;
     return this.skills.listSkills().map(summarizeSkill);
+  }
+
+  listPluginCommands(): readonly PluginCommandDef[] {
+    return this.pluginCommands;
   }
 
   private async loadSkills(): Promise<void> {

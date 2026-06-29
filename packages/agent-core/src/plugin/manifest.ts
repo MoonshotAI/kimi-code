@@ -1,4 +1,4 @@
-import { realpath, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -23,7 +23,6 @@ const KIMI_PLUGIN_DIR_PATH = '.kimi-plugin/plugin.json';
 // users can see why a field is silently ignored.
 const UNSUPPORTED_RUNTIME_FIELDS = [
   'tools',
-  'commands',
   'apps',
   'inject',
   'configFile',
@@ -126,6 +125,7 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
     sessionStart: readSessionStart(raw['sessionStart'], diagnostics),
     mcpServers: await readMcpServers(pluginRoot, raw['mcpServers'], diagnostics),
     hooks: readHooks(raw['hooks'], diagnostics),
+    commands: await readCommands(pluginRoot, raw['commands'], diagnostics),
     interface: readInterface(raw['interface']),
     skillInstructions,
   };
@@ -311,6 +311,58 @@ function readHooks(
     }
   });
   return out.length === 0 ? undefined : out;
+}
+
+async function readCommands(
+  pluginRoot: string,
+  raw: unknown,
+  diagnostics: PluginDiagnostic[],
+): Promise<readonly string[] | undefined> {
+  if (raw === undefined) return undefined;
+  const entries: string[] = [];
+  if (typeof raw === 'string') {
+    entries.push(raw);
+  } else if (Array.isArray(raw) && raw.every((entry) => typeof entry === 'string')) {
+    entries.push(...raw);
+  } else {
+    diagnostics.push({ severity: 'warn', message: '"commands" must be a string or string[]' });
+    return undefined;
+  }
+
+  const files: string[] = [];
+  for (const entry of entries) {
+    const resolved = await resolvePluginPathField({
+      pluginRoot,
+      field: 'commands',
+      value: entry,
+      diagnostics,
+    });
+    if (resolved === undefined) continue;
+    if (await isDir(resolved)) {
+      files.push(...(await listMarkdownFiles(resolved)));
+    } else if ((await isFile(resolved)) && resolved.endsWith('.md')) {
+      files.push(resolved);
+    } else {
+      diagnostics.push({
+        severity: 'warn',
+        message: `"commands" entry must be a directory or .md file (${entry})`,
+      });
+    }
+  }
+  return files.length === 0 ? undefined : files;
+}
+
+async function listMarkdownFiles(dir: string): Promise<readonly string[]> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .map((entry) => path.join(dir, entry.name))
+    .toSorted();
 }
 
 async function normalizePluginMcpServer(input: {

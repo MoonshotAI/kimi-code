@@ -36,6 +36,7 @@ export interface PluginManifest {
   readonly sessionStart?: PluginSessionStart;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly hooks?: readonly HookDefConfig[];
+  readonly commands?: readonly string[]; // resolved absolute .md paths
   readonly interface?: PluginInterface;
   readonly skillInstructions?: string;
 }
@@ -59,6 +60,14 @@ export interface PluginMcpServerInfo {
   readonly url?: string;
   readonly envKeys?: readonly string[];
   readonly headerKeys?: readonly string[];
+}
+
+export interface PluginCommandDef {
+  readonly pluginId: string;
+  readonly name: string;
+  readonly description: string;
+  readonly body: string;
+  readonly path: string;
 }
 
 export type PluginManifestKind = 'kimi-plugin-root' | 'kimi-plugin-dir';
@@ -107,6 +116,7 @@ export interface PluginSummary {
   readonly mcpServerCount: number;
   readonly enabledMcpServerCount: number;
   readonly hookCount: number;
+  readonly commandCount: number;
   readonly hasErrors: boolean;
   readonly source: PluginSource;
   readonly originalSource?: string;

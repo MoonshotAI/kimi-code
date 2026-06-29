@@ -28,6 +28,7 @@ import type {
   SetPermissionPayload,
   SetThinkingPayload,
   SkillSummary,
+  PluginCommandDef,
   SteerPayload,
   StopBackgroundPayload,
   UndoHistoryPayload,
@@ -77,6 +78,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   listSkills(_payload: EmptyPayload): Promise<readonly SkillSummary[]> {
     return this.session.listSkills();
+  }
+
+  listPluginCommands(_payload: EmptyPayload): readonly PluginCommandDef[] {
+    return this.session.listPluginCommands();
   }
 
   listMcpServers(_payload: EmptyPayload): readonly McpServerInfo[] {
