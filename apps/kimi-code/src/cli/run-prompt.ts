@@ -508,6 +508,15 @@ function runPromptTurn(
         outputWriter.writeNotification(notification);
         return;
       }
+      // TUI-level activity events (subagent lifecycle, warnings, skill/mcp/
+      // compaction/goal/agent-status updates) are likewise not turn-scoped; emit
+      // them as their own JSON lines so a stream-json consumer sees what the TUI
+      // would render. (`tool.progress` is turn-scoped and handled below.)
+      const activity = toActivityMessage(event);
+      if (activity !== undefined) {
+        outputWriter.writeActivity(activity);
+        return;
+      }
       if (event.type === 'error') {
         if (event.agentId !== PROMPT_MAIN_AGENT_ID) {
           return;
@@ -559,7 +568,11 @@ function runPromptTurn(
           outputWriter.writeToolResult(event.toolCallId, event.output);
           return;
         case 'tool.progress':
-          if (event.update.text !== undefined && event.update.text.length > 0) {
+          // stream-json: a JSON line on stdout (keeping the live tool output in
+          // the JSON stream); text: the raw chunk on stderr as before.
+          if (outputFormat === 'stream-json') {
+            outputWriter.writeActivity(toolProgressMessage(event));
+          } else if (event.update.text !== undefined && event.update.text.length > 0) {
             stderr.write(
               event.update.text.endsWith('\n') ? event.update.text : `${event.update.text}\n`,
             );
@@ -615,6 +628,8 @@ interface PromptTurnWriter {
   ): void;
   writeToolResult(toolCallId: string, output: unknown): void;
   writeNotification(message: PromptJsonNotificationMessage): void;
+  /** Emits a TUI-level activity event (tool progress, subagent, warning, …) as its own line. */
+  writeActivity(message: Record<string, unknown>): void;
   flushAssistant(): void;
   discardAssistant(): void;
   finish(): void;
@@ -666,6 +681,8 @@ class PromptTranscriptWriter implements PromptTurnWriter {
   writeToolResult(): void {}
 
   writeNotification(): void {}
+
+  writeActivity(): void {}
 
   flushAssistant(): void {}
 
@@ -785,6 +802,13 @@ class PromptJsonWriter implements PromptTurnWriter {
     // never splits a streaming assistant message.
     this.flushAssistant();
     this.writeJsonLine(message);
+  }
+
+  writeActivity(message: Record<string, unknown>): void {
+    // Same ordering guarantee as notifications: declare the activity after the
+    // assistant content it follows.
+    this.flushAssistant();
+    this.stdout.write(`${JSON.stringify(message)}\n`);
   }
 
   writeToolCall(toolCallId: string, name: string, args: unknown): void {
@@ -914,6 +938,8 @@ class PromptFinalJsonWriter implements PromptTurnWriter {
 
   writeNotification(): void {}
 
+  writeActivity(): void {}
+
   flushAssistant(): void {
     // A new step supersedes the previous one; keep only the latest step's text.
     this.assistantText = '';
@@ -951,6 +977,8 @@ class PromptFinalTextWriter implements PromptTurnWriter {
   writeToolResult(): void {}
 
   writeNotification(): void {}
+
+  writeActivity(): void {}
 
   flushAssistant(): void {
     this.assistantText = '';
@@ -1233,6 +1261,121 @@ function toNotificationMessage(event: Event): PromptJsonNotificationMessage | un
         event: 'cron.fired',
         prompt: event.prompt,
       };
+    default:
+      return undefined;
+  }
+}
+
+/** Builds the JSON line for a turn-scoped `tool.progress` event (stream-json). */
+function toolProgressMessage(event: Extract<Event, { type: 'tool.progress' }>): Record<string, unknown> {
+  const message: Record<string, unknown> = {
+    type: 'tool_progress',
+    tool_call_id: event.toolCallId,
+    kind: event.update.kind,
+  };
+  if (event.update.text !== undefined) message['text'] = event.update.text;
+  if (event.update.percent !== undefined) message['percent'] = event.update.percent;
+  return message;
+}
+
+/**
+ * Maps a TUI-level activity event (subagent lifecycle, warnings, skill / MCP /
+ * compaction / goal / agent-status / tool-list updates) to a JSON line, or
+ * `undefined` for events that are not activity events. `tool.progress` is
+ * turn-scoped and handled separately.
+ */
+function toActivityMessage(event: Event): Record<string, unknown> | undefined {
+  switch (event.type) {
+    case 'subagent.spawned': {
+      const message: Record<string, unknown> = {
+        type: 'subagent',
+        event: event.type,
+        subagent_id: event.subagentId,
+        name: event.subagentName,
+        run_in_background: event.runInBackground,
+      };
+      if (event.description !== undefined) message['description'] = event.description;
+      return message;
+    }
+    case 'subagent.started':
+      return { type: 'subagent', event: event.type, subagent_id: event.subagentId };
+    case 'subagent.suspended':
+      return {
+        type: 'subagent',
+        event: event.type,
+        subagent_id: event.subagentId,
+        reason: event.reason,
+      };
+    case 'subagent.completed':
+      return {
+        type: 'subagent',
+        event: event.type,
+        subagent_id: event.subagentId,
+        result_summary: event.resultSummary,
+      };
+    case 'subagent.failed':
+      return {
+        type: 'subagent',
+        event: event.type,
+        subagent_id: event.subagentId,
+        error: event.error,
+      };
+    case 'warning': {
+      const message: Record<string, unknown> = { type: 'warning', message: event.message };
+      if (event.code !== undefined) message['code'] = event.code;
+      return message;
+    }
+    case 'skill.activated': {
+      const message: Record<string, unknown> = {
+        type: 'skill_activated',
+        skill_name: event.skillName,
+        trigger: event.trigger,
+      };
+      if (event.skillArgs !== undefined) message['skill_args'] = event.skillArgs;
+      return message;
+    }
+    case 'mcp.server.status': {
+      const message: Record<string, unknown> = {
+        type: 'mcp_server_status',
+        name: event.server.name,
+        status: event.server.status,
+        transport: event.server.transport,
+        tool_count: event.server.toolCount,
+      };
+      if (event.server.error !== undefined) message['error'] = event.server.error;
+      return message;
+    }
+    case 'compaction.started':
+      return { type: 'compaction', event: event.type, trigger: event.trigger };
+    case 'compaction.blocked':
+    case 'compaction.cancelled':
+      return { type: 'compaction', event: event.type };
+    case 'compaction.completed':
+      return {
+        type: 'compaction',
+        event: event.type,
+        tokens_before: event.result.tokensBefore,
+        tokens_after: event.result.tokensAfter,
+        compacted_count: event.result.compactedCount,
+      };
+    case 'goal.updated': {
+      const message: Record<string, unknown> = { type: 'goal_update' };
+      if (event.snapshot !== null) {
+        message['goal_id'] = event.snapshot.goalId;
+        message['status'] = event.snapshot.status;
+      }
+      if (event.change !== undefined) message['change'] = event.change.kind;
+      return message;
+    }
+    case 'agent.status.updated': {
+      const message: Record<string, unknown> = { type: 'agent_status' };
+      if (event.model !== undefined) message['model'] = event.model;
+      if (event.contextTokens !== undefined) message['context_tokens'] = event.contextTokens;
+      if (event.contextUsage !== undefined) message['context_usage'] = event.contextUsage;
+      return message;
+    }
+    case 'tool.list.updated':
+      return { type: 'tool_list_updated', reason: event.reason, server_name: event.serverName };
     default:
       return undefined;
   }

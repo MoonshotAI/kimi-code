@@ -1410,6 +1410,172 @@ describe('runPrompt', () => {
     expect(stderr.text()).toContain('background task');
   });
 
+  it('emits tool.progress as a JSON line on stdout in stream-json mode (activity)', async () => {
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 70, origin: { kind: 'user' } }));
+        handler(
+          mocks.mainEvent({
+            type: 'tool.call.started',
+            turnId: 70,
+            toolCallId: 'tc_1',
+            name: 'Bash',
+            args: { command: 'build' },
+          }),
+        );
+        handler(
+          mocks.mainEvent({
+            type: 'tool.progress',
+            turnId: 70,
+            toolCallId: 'tc_1',
+            update: { kind: 'stdout', text: 'compiling...' },
+          }),
+        );
+        handler(
+          mocks.mainEvent({ type: 'tool.result', turnId: 70, toolCallId: 'tc_1', output: 'done' }),
+        );
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 70, reason: 'completed' }));
+      }
+    });
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', { stdout, stderr });
+
+    expect(stdout.text()).toContain(
+      '{"type":"tool_progress","tool_call_id":"tc_1","kind":"stdout","text":"compiling..."}',
+    );
+    expect(stderr.text()).toBe('');
+  });
+
+  it('keeps tool.progress on stderr (not JSON) in text mode', async () => {
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 70, origin: { kind: 'user' } }));
+        handler(
+          mocks.mainEvent({
+            type: 'tool.progress',
+            turnId: 70,
+            toolCallId: 'tc_1',
+            update: { kind: 'stdout', text: 'building' },
+          }),
+        );
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 70, reason: 'completed' }));
+      }
+    });
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts(), '1.2.3-test', { stdout, stderr });
+
+    expect(stderr.text()).toContain('building');
+    expect(stdout.text()).not.toContain('tool_progress');
+  });
+
+  it('emits subagent lifecycle events as JSON lines in stream-json mode (activity)', async () => {
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 71, origin: { kind: 'user' } }));
+        handler(
+          mocks.mainEvent({
+            type: 'subagent.spawned',
+            subagentId: 'a1',
+            subagentName: 'researcher',
+            parentToolCallId: 'tc_1',
+            runInBackground: false,
+          }),
+        );
+        handler(
+          mocks.mainEvent({
+            type: 'subagent.completed',
+            subagentId: 'a1',
+            resultSummary: 'found it',
+          }),
+        );
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 71, reason: 'completed' }));
+      }
+    });
+    const stdout = writer();
+
+    await runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+      stdout,
+      stderr: writer(),
+    });
+
+    expect(stdout.text()).toContain(
+      '{"type":"subagent","event":"subagent.spawned","subagent_id":"a1","name":"researcher","run_in_background":false}',
+    );
+    expect(stdout.text()).toContain(
+      '{"type":"subagent","event":"subagent.completed","subagent_id":"a1","result_summary":"found it"}',
+    );
+  });
+
+  it('emits warning, skill and tool-list activity events as JSON lines', async () => {
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 72, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'warning', message: 'low disk', code: 'disk.low' }));
+        handler(
+          mocks.mainEvent({
+            type: 'skill.activated',
+            activationId: 's1',
+            skillName: 'deploy',
+            trigger: 'model-tool',
+          }),
+        );
+        handler(
+          mocks.mainEvent({
+            type: 'tool.list.updated',
+            reason: 'mcp.connected',
+            serverName: 'fs',
+          }),
+        );
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 72, reason: 'completed' }));
+      }
+    });
+    const stdout = writer();
+
+    await runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+      stdout,
+      stderr: writer(),
+    });
+
+    expect(stdout.text()).toContain('{"type":"warning","message":"low disk","code":"disk.low"}');
+    expect(stdout.text()).toContain(
+      '{"type":"skill_activated","skill_name":"deploy","trigger":"model-tool"}',
+    );
+    expect(stdout.text()).toContain(
+      '{"type":"tool_list_updated","reason":"mcp.connected","server_name":"fs"}',
+    );
+  });
+
+  it('does not emit activity events in text mode', async () => {
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 73, origin: { kind: 'user' } }));
+        handler(
+          mocks.mainEvent({
+            type: 'subagent.spawned',
+            subagentId: 'a1',
+            subagentName: 'researcher',
+            parentToolCallId: 'tc_1',
+            runInBackground: false,
+          }),
+        );
+        handler(mocks.mainEvent({ type: 'warning', message: 'low disk' }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 73, delta: 'ok' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 73, reason: 'completed' }));
+      }
+    });
+    const stdout = writer();
+
+    await runPrompt(opts(), '1.2.3-test', { stdout, stderr: writer() });
+
+    expect(stdout.text()).toBe('• ok\n\n');
+    expect(stdout.text()).not.toContain('subagent');
+    expect(stdout.text()).not.toContain('warning');
+  });
+
   it('approval fallback approves if an unexpected approval request reaches SDK', async () => {
     await runPrompt(opts(), '1.2.3-test', {
       stdout: { write: vi.fn(() => true) },

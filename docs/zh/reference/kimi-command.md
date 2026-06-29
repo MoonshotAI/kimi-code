@@ -121,7 +121,7 @@ kimi -m kimi-code/kimi-for-coding -p "Explain the latest diff"
 kimi -p "List changed files" --output-format stream-json
 ```
 
-`stream-json` 模式下，普通回复输出 Assistant 消息；模型调用工具时，先输出带 `tool_calls` 的 Assistant 消息，再输出对应的 Tool 消息，最后继续输出后续 Assistant 消息。thinking 内容会单独成行——一条带 `"type":"thinking"` 标记的 Assistant 消息，排在它所产生的回复之前。后台任务与 cron 通知会输出为 `{"type":"notification", ...}` 行。工具进度和恢复会话提示仍写到 stderr。
+`stream-json` 模式下，普通回复输出 Assistant 消息；模型调用工具时，先输出带 `tool_calls` 的 Assistant 消息，再输出对应的 Tool 消息，最后继续输出后续 Assistant 消息。thinking 内容会单独成行——一条带 `"type":"thinking"` 标记的 Assistant 消息，排在它所产生的回复之前。除对话外，TUI 级的活动信息同样输出到 stdout，使输出流既完整又全是 JSON：实时工具输出为 `{"type":"tool_progress", ...}`、后台任务/cron 为 `{"type":"notification", ...}`，以及 `{"type":"subagent", ...}`、`{"type":"warning", ...}`、`{"type":"skill_activated", ...}`、`{"type":"mcp_server_status", ...}`、`{"type":"compaction", ...}`、`{"type":"goal_update", ...}`、`{"type":"agent_status", ...}` 与 `{"type":"tool_list_updated", ...}`。（`text` 模式下工具进度仍写到 stderr，且不输出这些活动事件。）恢复会话提示在 `text` 模式下仍写到 stderr。
 
 需要让其它程序驱动 Kimi Code 时，把 `stream-json` 输出与 `--input-format stream-json` 搭配使用：从 stdin 每行喂一个 JSON user 消息，依次作为多轮执行：
 
