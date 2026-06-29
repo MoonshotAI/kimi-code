@@ -150,11 +150,6 @@ import {
 import { formatBashOutputForDisplay } from './utils/shell-output';
 import { nextTranscriptId } from './utils/transcript-id';
 
-// TODO: re-enable once refreshing the model catalog no longer rebuilds (and
-// thus overwrites) manually configured model capabilities such as
-// support_efforts / default_effort on startup.
-const REFRESH_PROVIDER_MODELS_ON_STARTUP = true;
-
 export type { TUIState } from './tui-state';
 export { createTUIState } from './tui-state';
 export type {
@@ -576,7 +571,6 @@ export class KimiTUI {
   }
 
   private async refreshProviderModelsInBackground(): Promise<void> {
-    if (!REFRESH_PROVIDER_MODELS_ON_STARTUP) return;
     try {
       const result = await this.authFlow.refreshProviderModels();
       for (const c of result.changed) {

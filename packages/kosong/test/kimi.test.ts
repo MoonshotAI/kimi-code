@@ -37,7 +37,6 @@ function createProvider(
 type KimiGenerationState = {
   max_tokens?: number | undefined;
   temperature?: number | undefined;
-  reasoning_effort?: string | undefined;
   prompt_cache_key?: string | undefined;
   extra_body?: Record<string, unknown> | undefined;
 };
@@ -679,7 +678,6 @@ describe('KimiChatProvider', () => {
         .withGenerationKwargs({ max_tokens: 512 });
 
       expect(getGenerationState(provider)).toEqual({
-        reasoning_effort: undefined,
         extra_body: {
           thinking: { type: 'enabled' },
         },
@@ -730,26 +728,24 @@ describe('KimiChatProvider', () => {
       expect(body['extra_body']).toBeUndefined();
     });
 
-    it('effort-capable model sends thinking.effort and mirrors reasoning_effort', async () => {
+    it('effort-capable model sends thinking.effort', async () => {
       const provider = createProvider(false, ['low', 'high', 'max']).withThinking('high');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect(body['reasoning_effort']).toBe('high');
       expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high' });
       expect(body['extra_body']).toBeUndefined();
     });
 
-    it('effort-capable model passes max through to both fields (no clamp)', async () => {
+    it('effort-capable model passes max through to thinking.effort (no clamp)', async () => {
       const provider = createProvider(false, ['low', 'high', 'max']).withThinking('max');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect(body['reasoning_effort']).toBe('max');
       expect(body['thinking']).toEqual({ type: 'enabled', effort: 'max' });
     });
 
@@ -804,7 +800,6 @@ describe('KimiChatProvider', () => {
 
       // No stale `effort` lingers on the disabled thinking object.
       expect(getGenerationState(provider)).toEqual({
-        reasoning_effort: undefined,
         extra_body: {
           thinking: { type: 'disabled' },
         },
@@ -1297,10 +1292,9 @@ describe('KimiChatProvider', () => {
   });
 
   describe('withThinking medium', () => {
-    it('maps medium -> reasoning_effort=medium for an effort-capable model', () => {
+    it('maps medium -> thinking.effort=medium for an effort-capable model', () => {
       const provider = createProvider(false, ['low', 'medium', 'high']).withThinking('medium');
       expect(provider.thinkingEffort).toBe('medium');
-      expect(getGenerationState(provider).reasoning_effort).toBe('medium');
     });
   });
 
@@ -1325,7 +1319,6 @@ describe('KimiChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect(body['reasoning_effort']).toBe('high');
       expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high', keep: 'all' });
       expect(body['extra_body']).toBeUndefined();
     });

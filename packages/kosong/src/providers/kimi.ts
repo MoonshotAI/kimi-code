@@ -70,7 +70,6 @@ export interface GenerationKwargs {
   presence_penalty?: number | undefined;
   frequency_penalty?: number | undefined;
   stop?: string | string[] | undefined;
-  reasoning_effort?: string | undefined;
   prompt_cache_key?: string | undefined;
   extra_body?: ExtraBody;
 }
@@ -497,8 +496,8 @@ export class KimiChatProvider implements ChatProvider {
 
     try {
       const client = this._createClient(options?.auth);
-      // Use type assertion via unknown because we pass Moonshot-proprietary fields
-      // (reasoning_effort, thinking) that don't exist in the OpenAI type definitions.
+      // Use type assertion via unknown because we pass the Moonshot-proprietary
+      // `thinking` field (via extra_body) that doesn't exist in the OpenAI type definitions.
       const response = (await client.chat.completions.create(
         createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
         options?.signal ? { signal: options.signal } : undefined,
@@ -511,7 +510,6 @@ export class KimiChatProvider implements ChatProvider {
 
   withThinking(effort: ThinkingEffort): KimiChatProvider {
     let thinking: ThinkingConfig;
-    let reasoningEffort: string | undefined;
     if (effort === 'off') {
       thinking = { type: 'disabled' };
     } else {
@@ -522,10 +520,6 @@ export class KimiChatProvider implements ChatProvider {
       const declared = this._supportEfforts.includes(effort) ? effort : undefined;
       thinking =
         declared !== undefined ? { type: 'enabled', effort: declared } : { type: 'enabled' };
-      // TODO: drop reasoning_effort once the new thinking.effort wire format is
-      // fully rolled out across all kimi models. Until then mirror the same
-      // value so both code paths agree.
-      reasoningEffort = declared;
     }
     // Replace extra_body.thinking wholesale so a stale `effort` from a previous
     // withThinking call can never linger on a disabled or non-effort thinking
@@ -538,7 +532,6 @@ export class KimiChatProvider implements ChatProvider {
       thinking = { ...thinking, keep };
     }
     return this._withGenerationKwargs({
-      reasoning_effort: reasoningEffort,
       extra_body: { ...oldExtra, thinking },
     });
   }

@@ -34,7 +34,6 @@ import type { SlashCommandHost } from './dispatch';
 // ---------------------------------------------------------------------------
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
-const REFRESH_MODELS_ON_PICKER_OPEN = true;
 
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
@@ -288,10 +287,6 @@ function showEditorPicker(host: SlashCommandHost): void {
 }
 
 async function refreshModelsForPicker(host: SlashCommandHost): Promise<void> {
-  // TODO: re-enable once refreshing the model catalog no longer rebuilds (and
-  // thus overwrites) manually configured model capabilities such as
-  // support_efforts / default_effort on every picker open.
-  if (!REFRESH_MODELS_ON_PICKER_OPEN) return;
   try {
     const result = await withTimeout(
       host.authFlow.refreshOAuthProviderModels(),
