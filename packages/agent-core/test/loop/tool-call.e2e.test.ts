@@ -170,6 +170,7 @@ describe('runTurn — tool-call behaviour', () => {
     const tcRow = context.toolCalls();
     const trRow = context.toolResults();
     expect(tcRow.length).toBe(1);
+    expect(tcRow[0]?.args).toEqual({ x: 1 });
     expect(trRow.length).toBe(1);
     expect(trRow[0]?.result.isError).toBe(true);
   });
@@ -191,7 +192,7 @@ describe('runTurn — tool-call behaviour', () => {
     expect(expectTextOutput(results[0]?.result.output).toLowerCase()).toContain('invalid args');
   });
 
-  it('records an error tool.result when LLM-side args parsing already failed', async () => {
+  it('falls back to schema validation when LLM-side args parsing fails', async () => {
     const echo = new EchoTool();
     const { sink } = await runTurn({
       tools: [echo],
@@ -213,12 +214,13 @@ describe('runTurn — tool-call behaviour', () => {
     expect(results.length).toBe(1);
     expect(results[0]?.result.isError).toBe(true);
     const output = expectTextOutput(results[0]?.result.output);
-    expect(output).toContain('malformed JSON in arguments');
-    expect(output).toContain('Expected arguments schema:');
-    expect(output).toContain('text (string)');
+    expect(output).toContain('Invalid args');
+    expect(output).toContain("must have required property 'text'");
+    expect(output).not.toContain('malformed JSON in arguments');
+    expect(output).not.toContain('Expected arguments schema:');
   });
 
-  it('repairs malformed tool args JSON before rejecting the tool call', async () => {
+  it('does not repair malformed tool args JSON', async () => {
     const echo = new EchoTool();
     const { sink } = await runTurn({
       tools: [echo],
@@ -235,13 +237,14 @@ describe('runTurn — tool-call behaviour', () => {
       ],
     });
 
-    expect(echo.calls).toHaveLength(1);
-    expect(echo.calls[0]?.args).toEqual({ text: 'hi' });
+    expect(echo.calls).toHaveLength(0);
 
     const results = sink.byType('tool.result');
     expect(results.length).toBe(1);
-    expect(results[0]?.result.isError).toBeUndefined();
-    expect(results[0]?.result.output).toBe('hi');
+    expect(results[0]?.result.isError).toBe(true);
+    const output = expectTextOutput(results[0]?.result.output);
+    expect(output).toContain('Invalid args');
+    expect(output).toContain("must have required property 'text'");
   });
 
   it('captures tool execution failures as error results', async () => {

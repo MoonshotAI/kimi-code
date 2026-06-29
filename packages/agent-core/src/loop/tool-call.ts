@@ -27,10 +27,7 @@ import { PathSecurityError } from '../tools/policies/path-access';
 import { isUserCancellation } from '../utils/abort';
 import { errorMessage, isAbortError } from './errors';
 import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
-import {
-  buildToolArgsSchemaHint,
-  parseOrRepairToolCallArguments,
-} from './tool-args-repair';
+import { parseToolCallArguments } from './tool-args-parse';
 import type { LLM, LLMChatResponse } from './llm';
 import { ToolAccesses } from './tool-access';
 import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
@@ -181,37 +178,24 @@ function preflightToolCall(
   toolCall: ToolCall,
 ): PreflightedToolCall {
   const toolName = toolCall.name;
+  const parsedArgs = parseToolCallArguments(toolCall.arguments);
   const tool = step.tools?.find((candidate) => candidate.name === toolName);
   if (tool === undefined) {
     return {
       kind: 'rejected',
       toolCall,
       toolName,
-      args: {},
+      args: parsedArgs.data,
       output: `Tool "${toolName}" not found`,
     };
   }
 
-  const parsedArgs = parseOrRepairToolCallArguments(toolCall.arguments);
-
-  if (!parsedArgs.success) {
-    const schemaHint = buildToolArgsSchemaHint(tool.parameters);
-    const schemaSuffix = schemaHint.length > 0 ? `\n\n${schemaHint}` : '';
-    return {
-      kind: 'rejected',
-      toolCall,
-      toolName,
-      args: {},
-      output: `Invalid args for tool "${toolName}": malformed JSON in arguments: ${parsedArgs.error}${schemaSuffix}`,
-    };
-  }
-
-  if (parsedArgs.repaired) {
-    step.log?.debug('tool args JSON repaired', {
+  if (parsedArgs.parseFailed) {
+    step.log?.debug('tool args JSON parse failed', {
       toolName,
       toolCallId: toolCall.id,
       rawLength: toolCall.arguments?.length ?? 0,
-      originalError: parsedArgs.originalError,
+      error: parsedArgs.error,
     });
   }
 
