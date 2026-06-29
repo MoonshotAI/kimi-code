@@ -1386,7 +1386,10 @@ function selectModel(modelId: string): void {
   padding: 6px 10px 4px;
   background: color-mix(in srgb, var(--panel2), black 1.5%);
   position: relative;
-  border-radius: 0 0 var(--r-md) var(--r-md);
+  /* Match the .composer-card's inner bottom corners. The card has a 1px
+     border, so the toolbar's radius must be 1px smaller than the card's
+     outer radius to avoid the toolbar's background bulging past the border. */
+  border-radius: 0 0 15px 15px;
 }
 
 .toolbar-left,

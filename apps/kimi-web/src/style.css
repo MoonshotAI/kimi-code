@@ -444,6 +444,10 @@ html[data-color-scheme="dark"][data-theme="modern"] {
 }
 :is(html[data-theme="modern"], html[data-theme="kimi"]) .toolbar {
   background: color-mix(in srgb, var(--panel), black 1.5%);
+  /* Match the .composer-card's inner bottom corners. The card has a 1px
+     border, so the toolbar's radius must be 1px smaller than the card's
+     outer radius to avoid the toolbar's background bulging past the border. */
+  border-radius: 0 0 calc(var(--r-md) - 1px) calc(var(--r-md) - 1px);
 }
 :is(html[data-theme="modern"], html[data-theme="kimi"]) .attach-btn {
   width: 26px;
