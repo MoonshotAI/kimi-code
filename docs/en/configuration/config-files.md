@@ -151,16 +151,12 @@ You can also switch models temporarily without touching the config file — by s
 | `enabled` | `boolean` | `true` | Whether Thinking is enabled by default for new sessions; set to `false` to force Thinking off |
 | `effort` | `string` | — | Thinking effort level (for example `low`, `medium`, `high`, `xhigh`, `max`); the levels actually available depend on the model's declared `support_efforts`, and unrecognized values are ignored by the provider |
 
-::: info Added
-`enabled` was added in 1.0.0 as the single on/off switch for Thinking, replacing the top-level `default_thinking` field and `thinking.mode`.
-:::
-
 ### Deprecated fields
 
-The following fields were removed in 1.0.0:
-
-- `default_thinking` (top-level boolean) — replaced by `[thinking] enabled`. Migrate `default_thinking = true` to `enabled = true`, and `default_thinking = false` to `enabled = false`.
-- `thinking.mode` (`auto` / `on` / `off`) — replaced by `[thinking] enabled`. `mode = "off"` becomes `enabled = false`; `mode = "on"` and `mode = "auto"` are equivalent to `enabled = true` (the default) and can be removed.
+| Field | Deprecated in | Description |
+| --- | --- | --- |
+| `default_thinking` | 0.21.0 | Top-level boolean, replaced by `[thinking] enabled`. Migrate `default_thinking = true` to `enabled = true`, and `default_thinking = false` to `enabled = false`. |
+| `thinking.mode` | 0.21.0 | One of `auto` / `on` / `off`, replaced by `[thinking] enabled`. `mode = "off"` becomes `enabled = false`; `mode = "on"` and `mode = "auto"` are equivalent to `enabled = true` (the default) and can be removed. |
 
 ## `loop_control`
 

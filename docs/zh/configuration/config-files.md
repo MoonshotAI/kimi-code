@@ -151,16 +151,12 @@ max_context_size = 1047576
 | `enabled` | `boolean` | `true` | 新会话是否默认开启 Thinking，设为 `false` 可强制关闭 |
 | `effort` | `string` | — | Thinking 强度（例如 `low`、`medium`、`high`、`xhigh`、`max`），实际可用等级取决于模型声明的 `support_efforts`，未识别的值会被供应商忽略 |
 
-::: info 新增
-`enabled` 新增于 1.0.0，作为 Thinking 的单一开关，取代顶层 `default_thinking` 字段和 `thinking.mode`。
-:::
-
 ### 已废弃字段
 
-以下字段已于 1.0.0 移除：
-
-- `default_thinking`（顶层布尔值）—— 由 `[thinking] enabled` 取代。将 `default_thinking = true` 迁移为 `enabled = true`，`default_thinking = false` 迁移为 `enabled = false`。
-- `thinking.mode`（`auto` / `on` / `off`）—— 由 `[thinking] enabled` 取代。`mode = "off"` 改为 `enabled = false`；`mode = "on"` 和 `mode = "auto"` 等价于 `enabled = true`（默认值），可删除该行。
+| 字段 | 废弃版本 | 描述 |
+| --- | --- | --- |
+| `default_thinking` | 0.21.0 | 顶层布尔值，由 `[thinking] enabled` 取代。将 `default_thinking = true` 迁移为 `enabled = true`，`default_thinking = false` 迁移为 `enabled = false`。 |
+| `thinking.mode` | 0.21.0 | 可选值 `auto` / `on` / `off`，由 `[thinking] enabled` 取代。`mode = "off"` 改为 `enabled = false`；`mode = "on"` 和 `mode = "auto"` 等价于 `enabled = true`（默认值），可删除该行。 |
 
 ## `loop_control`
 
