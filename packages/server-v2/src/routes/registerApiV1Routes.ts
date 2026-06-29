@@ -5,7 +5,8 @@
  * services from the `agent-core-v2` Core `Scope` instead of the v1 flat
  * `IInstantiationService`. v0.1 mounts the subset of routes that v2 can serve
  * end-to-end today (health, meta, auth readiness, OAuth device flow, config,
- * model/provider catalog, sessions, messages, approvals, workspaces, shutdown).
+ * model/provider catalog, sessions, messages, approvals, workspaces, the fs
+ * folder picker, shutdown).
  */
 
 import type { Scope } from '@moonshot-ai/agent-core-v2';
@@ -25,6 +26,7 @@ import { registerQuestionsRoutes } from './questions';
 import { registerSessionsRoutes } from './sessions';
 import { registerShutdownRoutes } from './shutdown';
 import { registerToolsRoutes } from './tools';
+import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
 
 interface ApiV1AppHost {
@@ -92,6 +94,10 @@ export async function registerApiV1Routes(
       );
       registerWorkspacesRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspacesRoutes>[0],
+        core,
+      );
+      registerWorkspaceFsRoutes(
+        apiV1 as unknown as Parameters<typeof registerWorkspaceFsRoutes>[0],
         core,
       );
       registerFilesRoutes(apiV1 as unknown as Parameters<typeof registerFilesRoutes>[0], core);
