@@ -120,17 +120,14 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'manual',
-        instruction: 'Keep the important test facts.',
-        tokensBefore: 39,
-        tokensAfter: 119,
+        tokens_before: 39,
+        tokens_after: 119,
         duration_ms: expect.any(Number),
-        compactedCount: 6,
-        retryCount: 0,
-        thinkingLevel: 'off',
-        inputOther: 184,
-        output: 8,
-        inputCacheRead: 0,
-        inputCacheCreation: 0,
+        compacted_count: 6,
+        retry_count: 0,
+        thinking_level: 'off',
+        input_tokens: 184,
+        output_tokens: 8,
       }),
     });
     await ctx.expectResumeMatches();
@@ -419,8 +416,8 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'manual',
-        tokensBefore: 25,
-        retryCount: 1,
+        tokens_before: 25,
+        retry_count: 1,
       }),
     });
     await ctx.expectResumeMatches();
@@ -559,8 +556,8 @@ describe('FullCompaction', () => {
       event: 'compaction_failed',
       properties: expect.objectContaining({
         source: 'manual',
-        retryCount: 4,
-        errorType: 'APIEmptyResponseError',
+        retry_count: 4,
+        error_type: 'APIEmptyResponseError',
       }),
     });
     // No summary was ever applied; the original history is left intact.
@@ -673,16 +670,16 @@ describe('FullCompaction', () => {
       event: 'compaction_failed',
       properties: expect.objectContaining({
         source: 'manual',
-        tokensBefore: 25,
+        tokens_before: 25,
         duration_ms: expect.any(Number),
         round: 1,
-        retryCount: 0,
-        errorType: 'Error',
+        retry_count: 0,
+        error_type: 'Error',
       }),
     });
     expect(
       records.find((record) => record.event === 'compaction_failed')?.properties,
-    ).not.toHaveProperty('tokensAfter');
+    ).not.toHaveProperty('tokens_after');
     await ctx.expectResumeMatches();
   });
 
@@ -789,10 +786,10 @@ describe('FullCompaction', () => {
       event: 'compaction_failed',
       properties: expect.objectContaining({
         source: 'manual',
-        tokensBefore: 25,
+        tokens_before: 25,
         duration_ms: expect.any(Number),
-        retryCount: 4,
-        errorType: 'APIConnectionError',
+        retry_count: 4,
+        error_type: 'APIConnectionError',
       }),
     });
     await ctx.expectResumeMatches();
@@ -1043,10 +1040,10 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'auto',
-        tokensBefore: 46,
-        tokensAfter: 127,
-        compactedCount: 7,
-        retryCount: 0,
+        tokens_before: 46,
+        tokens_after: 127,
+        compacted_count: 7,
+        retry_count: 0,
       }),
     });
     await ctx.expectResumeMatches();
@@ -1662,7 +1659,7 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'auto',
-        thinkingLevel: 'high',
+        thinking_level: 'high',
       }),
     });
   });

@@ -566,7 +566,7 @@ export class ToolManager {
           ...base,
           outcome: 'error',
           duration_ms: Date.now() - startedAt,
-          error: error instanceof Error ? error.message : String(error),
+          error_type: error instanceof Error ? error.name : 'Unknown',
         });
         throw error;
       }

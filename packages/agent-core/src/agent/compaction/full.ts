@@ -6,6 +6,7 @@ import {
 } from '#/errors';
 import {
   APIEmptyResponseError,
+  inputTotal,
   isRetryableGenerateError,
   type GenerateResult,
   type Message,
@@ -453,29 +454,35 @@ export class FullCompaction {
         tokensBefore,
       });
 
+      // Telemetry keys are snake_case, but the `context.apply_compaction`
+      // record written below keeps its persisted camelCase field names
+      // (consumed by external projectors). The two channels intentionally
+      // diverge — don't rename the record side to match.
       this.agent.telemetry.track('compaction_finished', {
-        tokensBefore: result.tokensBefore,
-        tokensAfter: result.tokensAfter,
+        source: data.source,
+        tokens_before: result.tokensBefore,
+        tokens_after: result.tokensAfter,
         duration_ms: Date.now() - startedAt,
-        compactedCount: result.compactedCount,
-        retryCount,
+        compacted_count: result.compactedCount,
+        retry_count: retryCount,
         round: 1,
-        thinkingLevel: this.agent.config.thinkingLevel,
-        ...usage,
-        ...data,
+        thinking_level: this.agent.config.thinkingLevel,
+        ...(usage === null
+          ? {}
+          : { input_tokens: inputTotal(usage), output_tokens: usage.output }),
       });
       this.lastCompactedTokenCount = result.tokensAfter;
       return result;
     } catch (error) {
       if (isAbortError(error)) return undefined;
       this.agent.telemetry.track('compaction_failed', {
-        ...data,
-        tokensBefore,
+        source: data.source,
+        tokens_before: tokensBefore,
         duration_ms: Date.now() - startedAt,
         round: 1,
-        retryCount,
-        thinkingLevel: this.agent.config.thinkingLevel,
-        errorType: error instanceof Error ? error.name : 'Unknown',
+        retry_count: retryCount,
+        thinking_level: this.agent.config.thinkingLevel,
+        error_type: error instanceof Error ? error.name : 'Unknown',
       });
       if (isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;
       throw new KimiError(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
