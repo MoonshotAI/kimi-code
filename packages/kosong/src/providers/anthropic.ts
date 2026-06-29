@@ -583,12 +583,21 @@ function convertMessage(message: Message, model: string): MessageParam {
  */
 function classifyAnthropicSdkError(message: string): ChatProviderError {
   const lower = message.toLowerCase();
+
+  // Extract HTTP status code from reverse-proxy error messages like
+  // "429 {...}" or "500 {...}" that arrive as plain Error (not APIError).
+  const statusMatch = message.match(/^\s*(\d{3})\s/);
+  const statusCode = statusMatch !== null ? Number.parseInt(statusMatch[1]!, 10) : undefined;
+
   // Rate-limit patterns (including Xunfei reverse-proxy rate-limit codes)
   // — map to 429 so the full rate-limit handling pipeline kicks in.
   if (PROVIDER_REVERSE_PROXY_RATE_LIMIT_PATTERN.test(lower)) {
     return new APIProviderRateLimitError(`Anthropic error: ${message}`, null);
   }
   if (PROVIDER_RATE_LIMIT_MESSAGE_PATTERN.test(lower)) {
+    return new APIProviderRateLimitError(`Anthropic error: ${message}`, null);
+  }
+  if (statusCode === 429) {
     return new APIProviderRateLimitError(`Anthropic error: ${message}`, null);
   }
   // Provider-side overload / transient failures — map to 503 so the
@@ -601,6 +610,9 @@ function classifyAnthropicSdkError(message: string): ChatProviderError {
   }
   if (PROVIDER_STREAM_INTERRUPTED_MESSAGE_PATTERN.test(lower)) {
     return new APIStatusError(503, `Anthropic error: ${message}`, null);
+  }
+  if (statusCode !== undefined && [429, 500, 502, 503, 504].includes(statusCode)) {
+    return new APIStatusError(statusCode, `Anthropic error: ${message}`, null);
   }
   return new ChatProviderError(`Anthropic error: ${message}`);
 }
@@ -624,7 +636,7 @@ export function convertAnthropicError(error: unknown): ChatProviderError {
     return classifyAnthropicSdkError(error.message);
   }
   if (error instanceof Error) {
-    return new ChatProviderError(`Error: ${error.message}`);
+    return classifyAnthropicSdkError(error.message);
   }
   return new ChatProviderError(`Error: ${String(error)}`);
 }

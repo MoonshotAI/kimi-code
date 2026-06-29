@@ -96,6 +96,13 @@ export function isRetryableGenerateError(error: unknown): boolean {
     return true;
   }
   if (error instanceof APIStatusError) {
+    // Content moderation / safety policy rejections are permanent — the
+    // request content was rejected by the upstream content filter.
+    // These can arrive with a 500 status code from reverse proxies, but
+    // retrying with the same input will always fail.
+    if (PROVIDER_CONTENT_MODERATION_PATTERN.test(error.message)) {
+      return false;
+    }
     if ([429, 500, 502, 503, 504].includes(error.statusCode)) {
       return true;
     }
@@ -126,6 +133,14 @@ export const PROVIDER_RATE_LIMIT_MESSAGE_PATTERN =
 // error when the upstream connection drops mid-stream.
 export const PROVIDER_STREAM_INTERRUPTED_MESSAGE_PATTERN =
   /\b(?:upstream\s+)?stream\s+(?:ended|terminated|closed|interrupted|disconnected)\b/i;
+
+// Content moderation / safety policy rejections. These are permanent — the
+// request content was rejected by the upstream provider's content filter,
+// retrying with the same input will always fail. Matched against the error
+// message so they can be excluded from retry even when the HTTP status code
+// is 500 (which is normally retryable).
+export const PROVIDER_CONTENT_MODERATION_PATTERN =
+  /\b(?:sensitive[_\s-]*words?[_\s-]*detected|content[_\s-]*(?:filter|moderation|policy)|safety[_\s-]*policy)\b/i;
 
 // Transient Xunfei reverse-proxy failure codes:
 //   10006 - concurrent connection conflict (retry after disconnect)

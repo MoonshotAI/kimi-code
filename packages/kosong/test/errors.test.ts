@@ -177,6 +177,24 @@ describe('isRetryableGenerateError', () => {
     expect(isRetryableGenerateError('boom')).toBe(false);
   });
 
+  it('does not retry content moderation errors even with 500 status', () => {
+    expect(
+      isRetryableGenerateError(
+        new APIStatusError(500, 'sensitive_words_detected (request id: abc123)'),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableGenerateError(
+        new APIStatusError(500, 'content filter blocked the request'),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableGenerateError(
+        new APIStatusError(503, 'blocked by safety policy'),
+      ),
+    ).toBe(false);
+  });
+
   it('retries ChatProviderError with engine-busy / overloaded message', () => {
     expect(
       isRetryableGenerateError(
