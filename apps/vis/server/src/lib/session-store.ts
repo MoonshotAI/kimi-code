@@ -96,7 +96,14 @@ async function readImportedDetail(home: string, importId: string): Promise<Sessi
     const agents = await discoverAgentsFromDisk(sessionDir);
     return { sessionId: importId, sessionDir, workDir, state: null, agents, imported: true, importMeta: meta };
   }
-  const agents = await inventoryAgents(sessionDir, state, true);
+  // State is best-effort in a bundle: a readable state.json may still omit the
+  // `agents` map. When the inventory comes back empty, fall back to probing
+  // `agents/*` on disk so routes that require an agent (wire/context/…) still
+  // resolve `main`.
+  let agents = await inventoryAgents(sessionDir, state, true);
+  if (agents.length === 0) {
+    agents = await discoverAgentsFromDisk(sessionDir);
+  }
   return { sessionId: importId, sessionDir, workDir, state, agents, imported: true, importMeta: meta };
 }
 

@@ -7,6 +7,7 @@ import { readSessionDetail } from '../lib/session-store';
 
 const SESSION_LOG_REL = ['logs', 'kimi-code.log'] as const;
 const GLOBAL_LOG_REL = ['logs', 'global', 'kimi-code.log'] as const;
+const HOME_GLOBAL_LOG_REL = ['logs', 'kimi-code.log'] as const;
 
 export function logsRoute(home: string = KIMI_CODE_HOME): Hono {
   const r = new Hono();
@@ -18,7 +19,13 @@ export function logsRoute(home: string = KIMI_CODE_HOME): Hono {
       return c.json({ error: 'session not found', code: 'NOT_FOUND' }, 404);
     }
     const sessionLog = join(detail.sessionDir, ...SESSION_LOG_REL);
-    const globalLog = join(detail.sessionDir, ...GLOBAL_LOG_REL);
+    // The global diagnostic log is a single shared file. In an exported bundle
+    // it is captured under the session dir (logs/global/kimi-code.log); for a
+    // live local session it lives at <KIMI_CODE_HOME>/logs/kimi-code.log
+    // (agent-core's resolveGlobalLogPath), NOT under the session dir.
+    const globalLog = detail.imported
+      ? join(detail.sessionDir, ...GLOBAL_LOG_REL)
+      : join(home, ...HOME_GLOBAL_LOG_REL);
     const available = {
       session: await logExists(sessionLog),
       global: await logExists(globalLog),

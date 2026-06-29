@@ -93,4 +93,23 @@ describe('imports + logs routes', () => {
     const res = await importsRoute(home).request('/', { method: 'POST', body: Buffer.alloc(0) });
     expect(res.status).toBe(400);
   });
+
+  it('falls back to disk agent discovery when an imported bundle state omits agents', async () => {
+    home = await mkdtemp(join(tmpdir(), 'vis-imp-route-'));
+    // Readable state.json, but no `agents` map (best-effort bundle). The main
+    // wire is present on disk, so the agent must still be discoverable.
+    const noAgents: Record<string, string> = {
+      'manifest.json': JSON.stringify({ sessionId: 'session_orig' }),
+      'state.json': JSON.stringify({ createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T01:00:00.000Z', title: 'demo', custom: {} }),
+      'agents/main/wire.jsonl': `${META}\n${PROMPT}\n`,
+    };
+    const importRes = await importsRoute(home).request('/?name=x.zip', { method: 'POST', body: await buildZip(noAgents) });
+    expect(importRes.status).toBe(200);
+    const importId = ((await importRes.json()) as { sessionId: string }).sessionId;
+
+    // Despite the empty state.agents, the wire route resolves `main` via disk.
+    const wireRes = await wireRoute(home).request(`/${importId}/wire?agent=main`);
+    expect(wireRes.status).toBe(200);
+    expect(((await wireRes.json()) as { records: unknown[] }).records.length).toBeGreaterThanOrEqual(1);
+  });
 });
