@@ -276,6 +276,46 @@ describe('Permission auto mode', () => {
     );
   });
 
+  it('reinjects the auto mode reminder after context compaction', async () => {
+    const appendSystemReminder = vi.fn();
+    const agent = {
+      permission: { mode: 'auto' },
+      context: { history: [], appendSystemReminder },
+    } as unknown as Agent;
+    const injector = new PermissionModeInjector(agent);
+
+    await injector.inject();
+    appendSystemReminder.mockClear();
+    injector.onContextCompacted(1);
+    await injector.inject();
+
+    expect(appendSystemReminder).toHaveBeenCalledWith(
+      expect.stringContaining('Do NOT call AskUserQuestion while auto mode is active'),
+      { kind: 'injection', variant: 'permission_mode' },
+    );
+  });
+
+  it('keeps the auto mode exit reminder after compaction if the mode changes', async () => {
+    const appendSystemReminder = vi.fn();
+    const permission = { mode: 'auto' as PermissionMode };
+    const agent = {
+      permission,
+      context: { history: [], appendSystemReminder },
+    } as unknown as Agent;
+    const injector = new PermissionModeInjector(agent);
+
+    await injector.inject();
+    appendSystemReminder.mockClear();
+    injector.onContextCompacted(1);
+    permission.mode = 'manual';
+    await injector.inject();
+
+    expect(appendSystemReminder).toHaveBeenCalledWith(
+      expect.stringContaining('Auto permission mode is no longer active'),
+      { kind: 'injection', variant: 'permission_mode' },
+    );
+  });
+
   it('blocks AskUserQuestion in auto mode before execution', async () => {
     const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',

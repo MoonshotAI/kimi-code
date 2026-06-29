@@ -15,13 +15,20 @@ const AUTO_MODE_EXIT_REMINDER = [
 export class PermissionModeInjector extends DynamicInjector {
   protected override readonly injectionVariant = 'permission_mode';
   private lastMode: PermissionMode | undefined;
+  private refreshAfterCompaction = false;
+
+  override onContextCompacted(_compactedCount: number): void {
+    this.injectedAt = null;
+    this.refreshAfterCompaction = true;
+  }
 
   getInjection(): string | undefined {
     const mode = this.agent.permission.mode;
     const previousMode = this.lastMode;
 
-    if (mode === previousMode) return undefined;
+    if (!this.refreshAfterCompaction && mode === previousMode) return undefined;
 
+    this.refreshAfterCompaction = false;
     this.lastMode = mode;
     if (mode === 'auto') return AUTO_MODE_ENTER_REMINDER;
     if (previousMode === 'auto') return AUTO_MODE_EXIT_REMINDER;
