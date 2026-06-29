@@ -61,18 +61,18 @@ describe('Agent permission', () => {
       [emit] tool.progress               { "turnId": 0, "toolCallId": "call_bash", "update": { "kind": "stdout", "text": "auto-output" } }
       [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "auto-output" } }, "time": "<time>" }
       [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "auto-output" }
-      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
-      [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
-      [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 116, "maxContextTokens": 1000000, "contextUsage": 0.000116, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 91, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 94, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
+      [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 94, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
+      [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 94, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 119, "maxContextTokens": 1000000, "contextUsage": 0.000119, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 94, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 94, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 94, "output": 25, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-3>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 2, "stepId": "<uuid-3>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "The command printed auto-output." }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "stepUuid": "<uuid-3>", "part": { "type": "text", "text": "The command printed auto-output." } }, "time": "<time>" }
-      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 120, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
-      [emit] turn.step.completed         { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 120, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
-      [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 120, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 131, "maxContextTokens": 1000000, "contextUsage": 0.000131, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 211, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 211, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 211, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 123, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
+      [emit] turn.step.completed         { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 123, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
+      [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 123, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 134, "maxContextTokens": 1000000, "contextUsage": 0.000134, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 217, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 217, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 217, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                  { "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
@@ -161,7 +161,7 @@ describe('Agent permission', () => {
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] permission.set_mode         { "mode": "manual", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 96, "maxContextTokens": 1000000, "contextUsage": 0.000096, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 89, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 89, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 99, "maxContextTokens": 1000000, "contextUsage": 0.000099, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 92, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 92, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Back to manual" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started                { "turnId": 1, "origin": { "kind": "user" } }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Back to manual" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
@@ -170,10 +170,10 @@ describe('Agent permission', () => {
       [emit] turn.step.started           { "turnId": 1, "step": 1, "stepId": "<uuid-3>" }
       [emit] assistant.delta             { "turnId": 1, "delta": "Manual turn done." }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-4>", "turnId": "1", "step": 1, "stepUuid": "<uuid-3>", "part": { "type": "text", "text": "Manual turn done." } }, "time": "<time>" }
-      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "1", "step": 1, "usage": { "inputOther": 161, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
-      [emit] turn.step.completed         { "turnId": 1, "step": 1, "stepId": "<uuid-3>", "usage": { "inputOther": 161, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
-      [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 161, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 169, "maxContextTokens": 1000000, "contextUsage": 0.000169, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 250, "output": 15, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 250, "output": 15, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 161, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "1", "step": 1, "usage": { "inputOther": 164, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
+      [emit] turn.step.completed         { "turnId": 1, "step": 1, "stepId": "<uuid-3>", "usage": { "inputOther": 164, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
+      [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 164, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 172, "maxContextTokens": 1000000, "contextUsage": 0.000172, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 256, "output": 15, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 256, "output": 15, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 164, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                  { "turnId": 1, "reason": "completed" }
     `);
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
@@ -271,7 +271,9 @@ describe('Permission auto mode', () => {
     await injector.inject();
 
     expect(appendSystemReminder).toHaveBeenCalledWith(
-      expect.stringContaining('Do NOT call AskUserQuestion while auto mode is active'),
+      expect.stringContaining(
+        'Do NOT call AskUserQuestion while auto mode is active unless the currently loaded skill explicitly asks you to clarify with the user',
+      ),
       { kind: 'injection', variant: 'permission_mode' },
     );
   });
@@ -293,8 +295,114 @@ describe('Permission auto mode', () => {
     ).resolves.toMatchObject({
       block: true,
       reason: expect.stringContaining(
-        'AskUserQuestion is disabled while auto permission mode is active',
+        'AskUserQuestion is disabled while auto permission mode is active outside a loaded skill',
       ),
+    });
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('allows AskUserQuestion in auto mode for the current loaded skill request', async () => {
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+      async () => ({
+        decision: 'approved',
+      }),
+      {
+        contextHistory: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Use the brainstorming skill' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          {
+            role: 'user',
+            content: [{ type: 'text', text: '<system-reminder>auto</system-reminder>' }],
+            toolCalls: [],
+            origin: { kind: 'injection', variant: 'permission_mode' },
+          },
+          {
+            role: 'user',
+            content: [{ type: 'text', text: '<kimi-skill-loaded name="brainstorming">' }],
+            toolCalls: [],
+            origin: {
+              kind: 'skill_activation',
+              activationId: 'act_1',
+              skillName: 'brainstorming',
+              trigger: 'model-tool',
+              skillType: 'inline',
+              skillPath: '/skills/brainstorming/SKILL.md',
+              skillSource: 'extra',
+            },
+          },
+          {
+            role: 'user',
+            content: [{ type: 'text', text: '<system-reminder>still auto</system-reminder>' }],
+            toolCalls: [],
+            origin: { kind: 'injection', variant: 'permission_mode' },
+          },
+        ],
+      },
+    );
+    manager.setMode('auto');
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_skill_question',
+          toolName: 'AskUserQuestion',
+          args: { questions: [] },
+        }),
+      ),
+    ).resolves.toBeUndefined();
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(telemetryTrack).toHaveBeenCalledWith('permission_policy_decision', {
+      policy_name: 'auto-mode-approve',
+      tool_name: 'AskUserQuestion',
+      permission_mode: 'auto',
+      decision: 'approve',
+    });
+  });
+
+  it('still blocks AskUserQuestion in auto mode after a normal user request', async () => {
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({
+        decision: 'approved',
+      }),
+      {
+        contextHistory: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: '<kimi-skill-loaded name="brainstorming">' }],
+            toolCalls: [],
+            origin: {
+              kind: 'skill_activation',
+              activationId: 'act_1',
+              skillName: 'brainstorming',
+              trigger: 'model-tool',
+            },
+          },
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Now do the next task' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+        ],
+      },
+    );
+    manager.setMode('auto');
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_plain_question',
+          toolName: 'AskUserQuestion',
+          args: { questions: [] },
+        }),
+      ),
+    ).resolves.toMatchObject({
+      block: true,
+      reason: expect.stringContaining('AskUserQuestion is disabled'),
     });
     expect(requestApproval).not.toHaveBeenCalled();
   });
@@ -769,8 +877,8 @@ describe('Simple permission policy direct behavior', () => {
     expect(policy.evaluate()).toEqual({ kind: 'approve' });
   });
 
-  it('denies AskUserQuestion only in auto mode', () => {
-    const agent = { permission: { mode: 'manual' } } as unknown as Agent;
+  it('denies AskUserQuestion only in auto mode outside loaded skill requests', () => {
+    const agent = { permission: { mode: 'manual' }, context: { history: [] } } as unknown as Agent;
     const policy = new AutoModeAskUserQuestionDenyPermissionPolicy(agent);
 
     expect(
@@ -793,6 +901,32 @@ describe('Simple permission policy direct behavior', () => {
         }),
       ),
     ).toMatchObject({ kind: 'deny' });
+    Object.assign(agent, {
+      context: {
+        history: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: '<kimi-skill-loaded name="brainstorming">' }],
+            toolCalls: [],
+            origin: {
+              kind: 'skill_activation',
+              activationId: 'act_1',
+              skillName: 'brainstorming',
+              trigger: 'model-tool',
+            },
+          },
+        ],
+      },
+    });
+    expect(
+      policy.evaluate(
+        hookContext({
+          id: 'call_question_auto_skill',
+          toolName: 'AskUserQuestion',
+          args: { questions: [] },
+        }),
+      ),
+    ).toBeUndefined();
     expect(
       policy.evaluate(
         hookContext({
@@ -3829,6 +3963,7 @@ function makePermissionManager(
     readonly hooks?: Agent['hooks'];
     readonly approvalRpc?: boolean;
     readonly swarmModeActive?: boolean;
+    readonly contextHistory?: Agent['context']['history'];
   } = {},
 ): {
   manager: PermissionManager;
@@ -3851,6 +3986,7 @@ function makePermissionManager(
     rpc: options.approvalRpc === false ? undefined : { requestApproval },
     hooks: options.hooks,
     telemetry: { track: telemetryTrack },
+    context: { history: options.contextHistory ?? [] },
     planMode: {
       get isActive() {
         return options.planModeActive ?? false;
