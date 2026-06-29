@@ -12,21 +12,12 @@
  */
 
 import { createHash } from 'node:crypto';
-import { homedir } from 'node:os';
 
-import { basename, join } from 'pathe';
+import { basename } from 'pathe';
 
 import type { IAtomicDocumentStore } from '#/storage';
 
 const CREDENTIALS_SCOPE = 'credentials/mcp';
-
-export function mcpCredentialsDir(kimiHomeDir: string): string {
-  return join(kimiHomeDir, 'credentials', 'mcp');
-}
-
-export function defaultMcpCredentialsDir(): string {
-  return mcpCredentialsDir(join(homedir(), '.kimi-code'));
-}
 
 export function sanitizeStoreKey(name: string): string {
   const safe = basename(name).replaceAll(/[^a-zA-Z0-9_-]/g, '_').replaceAll(/_+/g, '_');

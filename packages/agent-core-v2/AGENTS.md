@@ -16,10 +16,9 @@ Impl (`src/session/sessionService.ts`):
 /**
  * `session` domain (L6) — `ISessionService` implementation.
  *
- * Owns the session's child-agent set and session-level operations; drives
- * agent lifecycle through `agent-lifecycle`, broadcasts through `event`,
- * persists session metadata through `records`, and records activity through
- * `session-activity`. Bound at Session scope.
+ * Runs session-level commands; reads its identity through `session-context`,
+ * mutates metadata through `session-metadata`, drives agent teardown through
+ * `agent-lifecycle`, and broadcasts through `event`. Bound at Session scope.
  */
 ```
 

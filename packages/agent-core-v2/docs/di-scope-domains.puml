@@ -6,156 +6,285 @@ skinparam ranksep 55
 
 legend right
   <b>Scope = node color</b>
-  <back:#D6EAF8>      </back> Core (process-wide, L0)
-  <back:#D5F5E3>      </back> Session (per session, L1)
-  <back:#FDEBD0>      </back> Agent (per agent, L2)
-  <back:#E8DAEF>      </back> Multi-scope (spans layers)
-  <back:#F4F6F7>      </back> WIP: contract only
+  <back:#D6EAF8>      </back> Core (process-wide)
+  <back:#D5F5E3>      </back> Session (per session)
+  <back:#FDEBD0>      </back> Agent (per agent)
   == Edges ==
   <color:#34495E>solid</color>  : DI injection (ctor @IX)
   <color:#16A085>dashed</color> : event-driven (subscribe/emit)
   direction: consumer ---> provider
+  == Notes ==
+  Generated from `node scripts/dep-graph.mjs` output;
+  `_base` / seed / options deps are omitted.
 endlegend
 
 package "Core scope (process-wide)" #EAF3FB {
-  rectangle "<b>environment</b>\n<size:9><i>Core</i></size>\n  IEnvironmentService" as environment #D6EAF8
-  rectangle "<b>log</b>\n<size:9><i>Core</i></size>\n  ILogService\n  ILogSink" as log #D6EAF8
+  rectangle "<b>bootstrap</b>\n<size:9><i>Core</i></size>\n  IBootstrapService" as bootstrap #D6EAF8
+  rectangle "<b>log</b>\n<size:9><i>Core</i></size>\n  ILogService\n  ILogWriterService" as log #D6EAF8
   rectangle "<b>telemetry</b>\n<size:9><i>Core</i></size>\n  ITelemetryService" as telemetry #D6EAF8
   rectangle "<b>event</b>\n<size:9><i>Core</i></size>\n  IEventService" as event #D6EAF8
+  rectangle "<b>storage</b>\n<size:9><i>Core</i></size>\n  IStorageService\n  IAppendLogStore\n  IAtomicDocumentStore\n  IAtomicTomlDocumentStore" as storage #D6EAF8
   rectangle "<b>gateway</b>\n<size:9><i>Core</i></size>\n  IRestGateway\n  IWSGateway\n  IWSBroadcastService" as gateway #D6EAF8
   rectangle "<b>session-lifecycle</b>\n<size:9><i>Core</i></size>\n  ISessionLifecycleService" as session_lifecycle #D6EAF8
-  rectangle "<b>sessionIndex</b>\n<size:9><i>Core</i></size>\n  ISessionIndex" as sessionIndex #D6EAF8
+  rectangle "<b>session-index</b>\n<size:9><i>Core</i></size>\n  ISessionIndex" as sessionIndex #D6EAF8
   rectangle "<b>hostFs</b>\n<size:9><i>Core</i></size>\n  IHostFileSystem" as hostFs #D6EAF8
   rectangle "<b>workspaceRegistry</b>\n<size:9><i>Core</i></size>\n  IWorkspaceRegistry" as workspaceRegistry #D6EAF8
   rectangle "<b>hostFolderBrowser</b>\n<size:9><i>Core</i></size>\n  IHostFolderBrowser" as hostFolderBrowser #D6EAF8
   rectangle "<b>auth</b>\n<size:9><i>Core</i></size>\n  IOAuthService\n  IAuthSummaryService" as auth #D6EAF8
   rectangle "<b>provider</b>\n<size:9><i>Core</i></size>\n  IProviderService" as provider #D6EAF8
-  rectangle "<b>flag</b>\n<size:9><i>Core</i></size>\n  IFlagService" as flag #D6EAF8
+  rectangle "<b>flag</b>\n<size:9><i>Core</i></size>\n  IFlagService\n  IFlagRegistry" as flag #D6EAF8
   rectangle "<b>config</b>\n<size:9><i>Core</i></size>\n  IConfigRegistry\n  IConfigService" as config #D6EAF8
+  rectangle "<b>chatProvider</b>\n<size:9><i>Core</i></size>\n  IChatProviderFactory" as chatProvider #D6EAF8
+  rectangle "<b>model</b>\n<size:9><i>Core</i></size>\n  IModelService" as model #D6EAF8
+  rectangle "<b>modelCatalog</b>\n<size:9><i>Core</i></size>\n  IModelCatalogService" as modelCatalog #D6EAF8
 }
 
 package "Session scope (per session)" #EAFAF1 {
   rectangle "<b>session</b>\n<size:9><i>Session</i></size>\n  ISessionService" as session #D5F5E3
+  rectangle "<b>session-context</b>\n<size:9><i>Session</i></size>\n  ISessionContext (seed)" as session_context #D5F5E3
+  rectangle "<b>session-metadata</b>\n<size:9><i>Session</i></size>\n  ISessionMetadata" as session_metadata #D5F5E3
+  rectangle "<b>session-activity</b>\n<size:9><i>Session</i></size>\n  ISessionActivity" as session_activity #D5F5E3
+  rectangle "<b>agent-lifecycle</b>\n<size:9><i>Session</i></size>\n  IAgentLifecycleService" as agent_lifecycle #D5F5E3
+  rectangle "<b>interaction</b>\n<size:9><i>Session</i></size>\n  IInteractionService" as interaction #D5F5E3
   rectangle "<b>workspaceContext</b>\n<size:9><i>Session</i></size>\n  IWorkspaceContext" as workspaceContext #D5F5E3
   rectangle "<b>agentFs</b>\n<size:9><i>Session</i></size>\n  IAgentFileSystem\n  IFileSystemBackend" as agentFs #D5F5E3
   rectangle "<b>approval</b>\n<size:9><i>Session</i></size>\n  IApprovalService" as approval #D5F5E3
   rectangle "<b>question</b>\n<size:9><i>Session</i></size>\n  IQuestionService" as question #D5F5E3
-  rectangle "<b>session-activity</b>\n<size:9><i>Session</i></size>\n  ISessionActivity" as session_activity #D5F5E3
   rectangle "<b>subagentHost</b>\n<size:9><i>Session</i></size>\n  ISubagentHost" as subagentHost #D5F5E3
   rectangle "<b>process</b>\n<size:9><i>Session</i></size>\n  IProcessRunner\n  IProcessBackend" as process #D5F5E3
   rectangle "<b>terminal</b>\n<size:9><i>Session</i></size>\n  ITerminalService\n  ITerminalBackend" as terminal #D5F5E3
-  rectangle "<b>agent-lifecycle</b>\n<size:9><i>Session</i></size>\n  IAgentLifecycleService" as agent_lifecycle #D5F5E3
-  rectangle "<b>session-context</b>\n<size:9><i>Session</i></size>\n  ISessionContext (seed)" as session_context #D5F5E3
+  rectangle "<b>modelRuntime</b>\n<size:9><i>Session</i></size>\n  IModelResolver(S)\n  IProviderAuthService(S)\n  IModelRuntimeOptions(seed)" as modelRuntime #D5F5E3
 }
 
 package "Agent scope (per agent)" #FDF5E6 {
-  rectangle "<b>permissionMode</b>\n<size:9><i>Agent</i></size>\n  IPermissionModeService" as permissionMode #FDEBD0
-  rectangle "<b>prompt</b>\n<size:9><i>Agent</i></size>\n  IPromptService" as prompt #FDEBD0
-  rectangle "<b>userTool</b>\n<size:9><i>Agent</i></size>\n  IUserToolService" as userTool #FDEBD0
-  rectangle "<b>llmRequestLog</b>\n<size:9><i>Agent</i></size>\n  ILLMRequestLogService" as llmRequestLog #FDEBD0
-  rectangle "<b>dynamicInjector</b>\n<size:9><i>Agent</i></size>\n  IDynamicInjector" as dynamicInjector #FDEBD0
+  rectangle "<b>wireRecord</b>\n<size:9><i>Agent</i></size>\n  IWireRecord (event hub)" as wireRecord #FDEBD0
+  rectangle "<b>eventSink</b>\n<size:9><i>Agent</i></size>\n  IEventSink" as eventSink #FDEBD0
+  rectangle "<b>blobStore</b>\n<size:9><i>Agent</i></size>\n  IBlobStoreService" as blobStore #FDEBD0
+  rectangle "<b>contextMemory</b>\n<size:9><i>Agent</i></size>\n  IContextMemory" as contextMemory #FDEBD0
+  rectangle "<b>contextProjector</b>\n<size:9><i>Agent</i></size>\n  IContextProjector" as contextProjector #FDEBD0
+  rectangle "<b>contextInjector</b>\n<size:9><i>Agent</i></size>\n  IContextInjector" as contextInjector #FDEBD0
+  rectangle "<b>contextSize</b>\n<size:9><i>Agent</i></size>\n  IContextSizeService" as contextSize #FDEBD0
+  rectangle "<b>systemReminder</b>\n<size:9><i>Agent</i></size>\n  ISystemReminderService" as systemReminder #FDEBD0
   rectangle "<b>replayBuilder</b>\n<size:9><i>Agent</i></size>\n  IReplayBuilderService" as replayBuilder #FDEBD0
   rectangle "<b>profile</b>\n<size:9><i>Agent</i></size>\n  IProfileService" as profile #FDEBD0
-  rectangle "<b>rpc</b>\n<size:9><i>Agent</i></size>\n  IAgentRPCService" as rpc #FDEBD0
-  rectangle "<b>contextMemory</b>\n<size:9><i>Agent</i></size>\n  IContextMemory" as contextMemory #FDEBD0
-  rectangle "<b>toolExecutor</b>\n<size:9><i>Agent</i></size>\n  IToolExecutor" as toolExecutor #FDEBD0
-  rectangle "<b>permission</b>\n<size:9><i>Agent</i></size>\n  IPermissionGate" as permission #FDEBD0
-  rectangle "<b>cron</b>\n<size:9><i>Agent</i></size>\n  ICronService" as cron #FDEBD0
+  rectangle "<b>prompt</b>\n<size:9><i>Agent</i></size>\n  IPromptService" as prompt #FDEBD0
+  rectangle "<b>turn</b>\n<size:9><i>Agent</i></size>\n  ITurnService" as turn #FDEBD0
+  rectangle "<b>loop</b>\n<size:9><i>Agent</i></size>\n  ILoopService" as loop #FDEBD0
   rectangle "<b>llmRequester</b>\n<size:9><i>Agent</i></size>\n  ILLMRequester" as llmRequester #FDEBD0
-  rectangle "<b>fullCompaction</b>\n<size:9><i>Agent</i></size>\n  IFullCompaction" as fullCompaction #FDEBD0
+  rectangle "<b>llmRequestLog</b>\n<size:9><i>Agent</i></size>\n  ILLMRequestLogService" as llmRequestLog #FDEBD0
+  rectangle "<b>toolRegistry</b>\n<size:9><i>Agent</i></size>\n  IToolRegistry" as toolRegistry #FDEBD0
+  rectangle "<b>toolExecutor</b>\n<size:9><i>Agent</i></size>\n  IToolExecutor" as toolExecutor #FDEBD0
+  rectangle "<b>toolStore</b>\n<size:9><i>Agent</i></size>\n  IToolStoreService" as toolStore #FDEBD0
+  rectangle "<b>toolDedup</b>\n<size:9><i>Agent</i></size>\n  IToolDedupe" as toolDedup #FDEBD0
+  rectangle "<b>permission</b>\n<size:9><i>Agent</i></size>\n  IPermissionGate" as permission #FDEBD0
+  rectangle "<b>permissionMode</b>\n<size:9><i>Agent</i></size>\n  IPermissionModeService" as permissionMode #FDEBD0
+  rectangle "<b>permissionPolicy</b>\n<size:9><i>Agent</i></size>\n  IPermissionPolicyService" as permissionPolicy #FDEBD0
   rectangle "<b>permissionRules</b>\n<size:9><i>Agent</i></size>\n  IPermissionRulesService" as permissionRules #FDEBD0
-  rectangle "<b>skill</b>\n<size:9><i>Agent</i></size>\n  IAgentSkillService" as skill #FDEBD0
+  rectangle "<b>plan</b>\n<size:9><i>Agent</i></size>\n  IPlanService" as plan #FDEBD0
   rectangle "<b>goal</b>\n<size:9><i>Agent</i></size>\n  IGoalService" as goal #FDEBD0
+  rectangle "<b>skill</b>\n<size:9><i>Agent</i></size>\n  IAgentSkillService" as skill #FDEBD0
+  rectangle "<b>userTool</b>\n<size:9><i>Agent</i></size>\n  IUserToolService" as userTool #FDEBD0
+  rectangle "<b>background</b>\n<size:9><i>Agent</i></size>\n  IBackgroundService" as background #FDEBD0
+  rectangle "<b>cron</b>\n<size:9><i>Agent</i></size>\n  ICronService" as cron #FDEBD0
+  rectangle "<b>swarm</b>\n<size:9><i>Agent</i></size>\n  ISwarmService" as swarm #FDEBD0
+  rectangle "<b>mcp</b>\n<size:9><i>Agent</i></size>\n  IMcpService" as mcp #FDEBD0
+  rectangle "<b>fullCompaction</b>\n<size:9><i>Agent</i></size>\n  IFullCompaction" as fullCompaction #FDEBD0
   rectangle "<b>microCompaction</b>\n<size:9><i>Agent</i></size>\n  IMicroCompactionService" as microCompaction #FDEBD0
   rectangle "<b>externalHooks</b>\n<size:9><i>Agent</i></size>\n  IExternalHooksService" as externalHooks #FDEBD0
-  rectangle "<b>swarm</b>\n<size:9><i>Agent</i></size>\n  ISwarmService" as swarm #FDEBD0
-  rectangle "<b>background</b>\n<size:9><i>Agent</i></size>\n  IBackgroundService" as background #FDEBD0
-  rectangle "<b>toolStore</b>\n<size:9><i>Agent</i></size>\n  IToolStoreService" as toolStore #FDEBD0
-  rectangle "<b>wireRecord</b>\n<size:9><i>Agent</i></size>\n  IWireRecord (event hub)" as wireRecord #FDEBD0
-  rectangle "<b>eventBus</b>\n<size:9><i>Agent</i></size>\n  IEventBus" as eventBus #FDEBD0
-  rectangle "<b>toolRegistry</b>\n<size:9><i>Agent</i></size>\n  IToolRegistry" as toolRegistry #FDEBD0
-  rectangle "<b>usage</b>\n<size:9><i>Agent</i></size>\n  IUsageService" as usage #FDEBD0
-  rectangle "<b>message</b>\n<size:9><i>Agent</i></size>\n  IMessageService" as message #FDEBD0
-  rectangle "<b>mcp</b>\n<size:9><i>Agent</i></size>\n  IMcpService" as mcp #FDEBD0
-  rectangle "<b>contextSize</b>\n<size:9><i>Agent</i></size>\n  IContextSizeService" as contextSize #FDEBD0
-  rectangle "<b>permissionPolicy</b>\n<size:9><i>Agent</i></size>\n  IPermissionPolicyService" as permissionPolicy #FDEBD0
-  rectangle "<b>contextProjector</b>\n<size:9><i>Agent</i></size>\n  IContextProjector" as contextProjector #FDEBD0
   rectangle "<b>todoList</b>\n<size:9><i>Agent</i></size>\n  ITodoListService" as todoList #FDEBD0
-  rectangle "<b>loop</b>\n<size:9><i>Agent</i></size>\n  ILoopService" as loop #FDEBD0
-  rectangle "<b>turn</b>\n<size:9><i>Agent</i></size>\n  ITurnService\n  ITurnEvents\n  ILoopRunner(T)\n  IToolCallExecutor(T)" as turn #FDEBD0
-  rectangle "<b>plan</b>\n<size:9><i>Agent</i></size>\n  IPlanService" as plan #FDEBD0
-  rectangle "<b>blobStore</b>\n<size:9><i>Agent</i></size>\n  IBlobStoreService" as blobStore #FDEBD0
-  rectangle "<b>toolDedup</b>\n<size:9><i>Agent</i></size>\n  IToolDedupe" as toolDedup #FDEBD0
-}
-
-package "Multi-scope" #F5EEF8 {
-  rectangle "<b>kosong</b>\n<size:9><i>Multi</i></size>\n  IProtocolHandlerRegistry(C)\n  IProviderManager(S, seed)" as kosong #E8DAEF
-  rectangle "<b>records</b>\n<size:9><i>Multi</i></size>\n  ISessionStore(C)\n  ISessionMetaStore(S)\n  IAgentRecords(A)" as records #E8DAEF
-  rectangle "<b>tool</b>\n<size:9><i>Multi</i></size>\n  IToolDefinitionRegistry(C)\n  IToolService(A)" as tool #E8DAEF
-}
-
-package "WIP (contract only)" #FBFCFC {
-  rectangle "<b>context</b>\n<size:9><i>WIP</i></size>\n  IContextService (WIP)" as context #F4F6F7
-  rectangle "<b>injection</b>\n<size:9><i>WIP</i></size>\n  IInjectionService (WIP)" as injection #F4F6F7
-  rectangle "<b>turnRunner</b>\n<size:9><i>WIP</i></size>\n  ITurnRunner (WIP)" as turnRunner #F4F6F7
+  rectangle "<b>usage</b>\n<size:9><i>Agent</i></size>\n  IUsageService" as usage #FDEBD0
+  rectangle "<b>rpc</b>\n<size:9><i>Agent</i></size>\n  IAgentRPCService" as rpc #FDEBD0
 }
 
 ' ---- DI injection (solid) ----
-gateway --> event #34495E
 gateway --> session_lifecycle #34495E
-sessionIndex --> hostFs #34495E
+gateway --> log #34495E
+gateway --> eventSink #34495E
 sessionIndex --> bootstrap #34495E
+sessionIndex --> storage #34495E
+session_lifecycle --> bootstrap #34495E
+hostFolderBrowser --> hostFs #34495E
+auth --> provider #34495E
+auth --> bootstrap #34495E
+auth --> telemetry #34495E
+auth --> log #34495E
+provider --> config #34495E
+flag --> bootstrap #34495E
+flag --> config #34495E
+config --> bootstrap #34495E
+config --> log #34495E
+config --> storage #34495E
+model --> config #34495E
+modelCatalog --> provider #34495E
+modelCatalog --> model #34495E
+modelCatalog --> config #34495E
+modelCatalog --> auth #34495E
 agentFs --> workspaceContext #34495E
 agentFs --> hostFs #34495E
 process --> workspaceContext #34495E
 terminal --> workspaceContext #34495E
 terminal --> session_context #34495E
-hostFolderBrowser --> hostFs #34495E
-auth --> provider #34495E
-auth --> environment #34495E
-auth --> telemetry #34495E
-auth --> log #34495E
-provider --> config #34495E
-flag --> config #34495E
-config --> environment #34495E
-config --> log #34495E
-config --> records #34495E
-kosong --> config #34495E
-records --> hostFs #34495E
-records --> storage #34495E
-records --> log #34495E
-tool --> config #34495E
-tool --> records #34495E
-tool --> permission #34495E
-tool --> kosong #34495E
-session --> records #34495E
+approval --> interaction #34495E
+question --> interaction #34495E
+subagentHost --> toolRegistry #34495E
+subagentHost --> background #34495E
+subagentHost --> profile #34495E
+modelRuntime --> config #34495E
+modelRuntime --> provider #34495E
+modelRuntime --> model #34495E
+modelRuntime --> auth #34495E
+session --> session_context #34495E
+session --> session_metadata #34495E
 session --> agent_lifecycle #34495E
-session --> session_activity #34495E
 session --> event #34495E
+session_metadata --> session_context #34495E
+session_metadata --> storage #34495E
+session_metadata --> log #34495E
 session_activity --> agent_lifecycle #34495E
-agent_lifecycle --> session_context #34495E
-agent_lifecycle --> records #34495E
-permissionMode --> wireRecord #34495E
-permissionMode --> eventBus #34495E
-permissionMode --> replayBuilder #34495E
-permissionMode --> dynamicInjector #34495E
-prompt --> contextMemory #34495E
-prompt --> turn #34495E
-prompt --> wireRecord #34495E
-prompt --> eventBus #34495E
-userTool --> toolRegistry #34495E
-userTool --> profile #34495E
-userTool --> wireRecord #34495E
-llmRequestLog --> log #34495E
-dynamicInjector --> contextMemory #34495E
-dynamicInjector --> turn #34495E
+session_activity --> interaction #34495E
+wireRecord --> blobStore #34495E
+wireRecord --> storage #34495E
+blobStore --> storage #34495E
+eventSink --> wireRecord #34495E
+contextMemory --> wireRecord #34495E
+contextMemory --> replayBuilder #34495E
+contextInjector --> contextMemory #34495E
+contextInjector --> turn #34495E
+contextInjector --> systemReminder #34495E
+contextSize --> contextMemory #34495E
+contextSize --> eventSink #34495E
+contextSize --> wireRecord #34495E
+systemReminder --> contextMemory #34495E
 replayBuilder --> wireRecord #34495E
 profile --> wireRecord #34495E
-profile --> eventBus #34495E
+profile --> eventSink #34495E
 profile --> replayBuilder #34495E
 profile --> telemetry #34495E
 profile --> config #34495E
-profile --> kosong #34495E
+profile --> modelRuntime #34495E
+profile --> chatProvider #34495E
+prompt --> contextMemory #34495E
+prompt --> turn #34495E
+prompt --> wireRecord #34495E
+prompt --> eventSink #34495E
+turn --> loop #34495E
+turn --> eventSink #34495E
+turn --> wireRecord #34495E
+turn --> contextMemory #34495E
+turn --> externalHooks #34495E
+turn --> telemetry #34495E
+loop --> contextMemory #34495E
+loop --> contextProjector #34495E
+loop --> contextSize #34495E
+loop --> llmRequester #34495E
+loop --> eventSink #34495E
+loop --> toolRegistry #34495E
+loop --> toolExecutor #34495E
+loop --> profile #34495E
+loop --> telemetry #34495E
+loop --> wireRecord #34495E
+loop --> externalHooks #34495E
+loop --> config #34495E
+llmRequester --> contextMemory #34495E
+llmRequester --> contextProjector #34495E
+llmRequester --> toolRegistry #34495E
+llmRequester --> profile #34495E
+llmRequester --> llmRequestLog #34495E
+llmRequester --> usage #34495E
+llmRequester --> modelRuntime #34495E
+llmRequester --> config #34495E
+llmRequestLog --> log #34495E
+toolExecutor --> toolRegistry #34495E
+toolStore --> wireRecord #34495E
+toolDedup --> telemetry #34495E
+toolDedup --> turn #34495E
+toolDedup --> toolExecutor #34495E
+permission --> permissionMode #34495E
+permission --> permissionRules #34495E
+permission --> permissionPolicy #34495E
+permission --> externalHooks #34495E
+permission --> telemetry #34495E
+permission --> toolExecutor #34495E
+permissionMode --> wireRecord #34495E
+permissionMode --> eventSink #34495E
+permissionMode --> replayBuilder #34495E
+permissionMode --> contextInjector #34495E
+permissionRules --> wireRecord #34495E
+permissionRules --> replayBuilder #34495E
+permissionRules --> config #34495E
+plan --> contextMemory #34495E
+plan --> wireRecord #34495E
+plan --> eventSink #34495E
+plan --> agentFs #34495E
+plan --> profile #34495E
+plan --> replayBuilder #34495E
+plan --> toolRegistry #34495E
+plan --> contextInjector #34495E
+plan --> telemetry #34495E
+goal --> wireRecord #34495E
+goal --> eventSink #34495E
+goal --> systemReminder #34495E
+goal --> replayBuilder #34495E
+goal --> telemetry #34495E
+goal --> contextInjector #34495E
+skill --> prompt #34495E
+skill --> eventSink #34495E
+skill --> wireRecord #34495E
+skill --> telemetry #34495E
+userTool --> toolRegistry #34495E
+userTool --> profile #34495E
+userTool --> wireRecord #34495E
+background --> eventSink #34495E
+background --> wireRecord #34495E
+background --> telemetry #34495E
+background --> prompt #34495E
+background --> externalHooks #34495E
+background --> contextMemory #34495E
+background --> config #34495E
+background --> storage #34495E
+background --> session_context #34495E
+cron --> prompt #34495E
+cron --> eventSink #34495E
+cron --> wireRecord #34495E
+cron --> turn #34495E
+cron --> telemetry #34495E
+cron --> toolRegistry #34495E
+cron --> config #34495E
+cron --> storage #34495E
+swarm --> wireRecord #34495E
+swarm --> eventSink #34495E
+swarm --> systemReminder #34495E
+mcp --> toolRegistry #34495E
+mcp --> eventSink #34495E
+mcp --> toolExecutor #34495E
+fullCompaction --> contextMemory #34495E
+fullCompaction --> contextProjector #34495E
+fullCompaction --> contextSize #34495E
+fullCompaction --> llmRequester #34495E
+fullCompaction --> profile #34495E
+fullCompaction --> toolStore #34495E
+fullCompaction --> telemetry #34495E
+fullCompaction --> wireRecord #34495E
+fullCompaction --> eventSink #34495E
+fullCompaction --> replayBuilder #34495E
+fullCompaction --> externalHooks #34495E
+fullCompaction --> turn #34495E
+microCompaction --> contextMemory #34495E
+microCompaction --> contextSize #34495E
+microCompaction --> wireRecord #34495E
+microCompaction --> flag #34495E
+microCompaction --> profile #34495E
+microCompaction --> telemetry #34495E
+microCompaction --> turn #34495E
+externalHooks --> toolExecutor #34495E
+externalHooks --> config #34495E
+todoList --> contextMemory #34495E
+todoList --> profile #34495E
+todoList --> toolStore #34495E
+todoList --> toolRegistry #34495E
+todoList --> contextInjector #34495E
+usage --> wireRecord #34495E
+usage --> eventSink #34495E
 rpc --> prompt #34495E
 rpc --> turn #34495E
 rpc --> profile #34495E
@@ -174,122 +303,6 @@ rpc --> subagentHost #34495E
 rpc --> usage #34495E
 rpc --> telemetry #34495E
 rpc --> goal #34495E
-contextMemory --> wireRecord #34495E
-contextMemory --> replayBuilder #34495E
-permission --> permissionMode #34495E
-permission --> permissionRules #34495E
-permission --> permissionPolicy #34495E
-permission --> externalHooks #34495E
-permission --> telemetry #34495E
-permission --> turn #34495E
-cron --> prompt #34495E
-cron --> eventBus #34495E
-cron --> wireRecord #34495E
-cron --> turnRunner #34495E
-cron --> telemetry #34495E
-cron --> toolRegistry #34495E
-llmRequester --> contextMemory #34495E
-llmRequester --> contextProjector #34495E
-llmRequester --> toolRegistry #34495E
-llmRequester --> profile #34495E
-llmRequester --> llmRequestLog #34495E
-llmRequester --> kosong #34495E
-fullCompaction --> contextMemory #34495E
-fullCompaction --> contextProjector #34495E
-fullCompaction --> contextSize #34495E
-fullCompaction --> llmRequester #34495E
-fullCompaction --> profile #34495E
-fullCompaction --> toolStore #34495E
-fullCompaction --> telemetry #34495E
-fullCompaction --> usage #34495E
-fullCompaction --> wireRecord #34495E
-fullCompaction --> eventBus #34495E
-fullCompaction --> replayBuilder #34495E
-fullCompaction --> externalHooks #34495E
-fullCompaction --> turnRunner #34495E
-permissionRules --> wireRecord #34495E
-permissionRules --> replayBuilder #34495E
-permissionRules --> config #34495E
-skill --> prompt #34495E
-skill --> eventBus #34495E
-skill --> wireRecord #34495E
-skill --> telemetry #34495E
-goal --> wireRecord #34495E
-goal --> eventBus #34495E
-goal --> contextMemory #34495E
-goal --> replayBuilder #34495E
-goal --> telemetry #34495E
-goal --> dynamicInjector #34495E
-microCompaction --> contextMemory #34495E
-microCompaction --> contextSize #34495E
-microCompaction --> wireRecord #34495E
-microCompaction --> profile #34495E
-microCompaction --> telemetry #34495E
-microCompaction --> turn #34495E
-swarm --> contextMemory #34495E
-swarm --> wireRecord #34495E
-swarm --> eventBus #34495E
-swarm --> turn #34495E
-swarm --> toolRegistry #34495E
-swarm --> subagentHost #34495E
-background --> eventBus #34495E
-background --> wireRecord #34495E
-background --> telemetry #34495E
-background --> prompt #34495E
-background --> externalHooks #34495E
-background --> contextMemory #34495E
-background --> config #34495E
-toolStore --> wireRecord #34495E
-wireRecord --> blobStore #34495E
-eventBus --> wireRecord #34495E
-usage --> wireRecord #34495E
-usage --> eventBus #34495E
-message --> context #34495E
-mcp --> toolRegistry #34495E
-mcp --> eventBus #34495E
-contextSize --> contextMemory #34495E
-contextSize --> eventBus #34495E
-contextSize --> profile #34495E
-contextSize --> wireRecord #34495E
-todoList --> contextMemory #34495E
-todoList --> profile #34495E
-todoList --> toolStore #34495E
-todoList --> toolRegistry #34495E
-todoList --> dynamicInjector #34495E
-loop --> contextMemory #34495E
-loop --> contextProjector #34495E
-loop --> contextSize #34495E
-loop --> llmRequester #34495E
-loop --> eventBus #34495E
-loop --> toolRegistry #34495E
-loop --> toolExecutor #34495E
-loop --> usage #34495E
-loop --> profile #34495E
-loop --> telemetry #34495E
-loop --> wireRecord #34495E
-loop --> mcp #34495E
-loop --> externalHooks #34495E
-turn --> context #34495E
-turn --> kosong #34495E
-turn --> injection #34495E
-turn --> usage #34495E
-turn --> telemetry #34495E
-turn --> log #34495E
-turn --> agent_lifecycle #34495E
-turn --> tool #34495E
-plan --> contextMemory #34495E
-plan --> wireRecord #34495E
-plan --> eventBus #34495E
-plan --> agentFs #34495E
-plan --> profile #34495E
-plan --> replayBuilder #34495E
-plan --> toolRegistry #34495E
-plan --> dynamicInjector #34495E
-plan --> telemetry #34495E
-toolDedup --> telemetry #34495E
-toolDedup --> turn #34495E
-externalHooks --> turn #34495E
-externalHooks --> config #34495E
 
 ' ---- event-driven (dashed) ----
 gateway ..> event #16A085 : subscribe

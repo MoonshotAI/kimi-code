@@ -14,10 +14,11 @@
  *                debounced), so it survives atomic-replace renames and observes
  *                a file that does not exist yet.
  *
- * It uses raw `node:fs` (like `wireRecord/persistence.ts` and
- * `blobStoreService.ts`) rather than `kaos`: the storage kernel needs direct
- * control over append offsets, fsync, atomic rename and (future) streaming,
- * which the agent-execution-environment abstraction does not expose.
+ * It uses raw `node:fs` rather than `kaos`: the storage kernel needs direct
+ * control over append offsets, fsync, atomic rename and streaming, which the
+ * agent-execution-environment abstraction does not expose. Higher-level code
+ * (`wireRecord`, `blobStore`) goes through the Store / Storage interfaces above
+ * this backend, never `node:fs` directly.
  */
 
 import { createReadStream, mkdirSync, watch as fsWatch, type FSWatcher } from 'node:fs';
