@@ -520,10 +520,10 @@ export class ToolManager {
           : new b.EditTool(kaos, workspace),
         useNative
           ? new NativeGrepTool(kaos, workspace, toolDescs.grep)
-          : new b.GrepTool(kaos, workspace),
+          : new b.GrepTool(kaos, workspace, this.agent.telemetry),
         useNative
           ? new NativeGlobTool(kaos, workspace, toolDescs.glob)
-          : new b.GlobTool(kaos, workspace),
+          : new b.GlobTool(kaos, workspace, this.agent.telemetry),
         useNative
           ? new NativeBashTool(kaos, cwd, background, {
               allowBackground,
@@ -582,8 +582,58 @@ export class ToolManager {
     const withAuth = this.agent.modelProvider?.resolveAuth?.(modelAlias, {
       log: this.agent.log,
     });
-    if (withAuth === undefined) return (input) => uploadVideo(input);
-    return (input) => withAuth((auth) => uploadVideo(input, { auth }));
+    const baseProps = this.videoUploadTelemetryProps(modelAlias);
+    const upload =
+      withAuth === undefined
+        ? (input: b.VideoUploadInput) => uploadVideo(input)
+        : (input: b.VideoUploadInput) => withAuth((auth) => uploadVideo(input, { auth }));
+
+    return async (input) => {
+      const startedAt = Date.now();
+      const base = {
+        ...baseProps,
+        mime_type: input.mimeType,
+        size_bytes: input.data.length,
+      };
+      const track = (props: Record<string, string | number | boolean | undefined>): void => {
+        try {
+          this.agent.telemetry.track('video_upload', props);
+        } catch {
+          // Telemetry must never affect the upload outcome.
+        }
+      };
+      try {
+        const part = await upload(input);
+        track({ ...base, outcome: 'success', duration_ms: Date.now() - startedAt });
+        return part;
+      } catch (error) {
+        track({
+          ...base,
+          outcome: 'error',
+          duration_ms: Date.now() - startedAt,
+          error_type: error instanceof Error ? error.name : 'Unknown',
+        });
+        throw error;
+      }
+    };
+  }
+
+  private videoUploadTelemetryProps(modelAlias: string): {
+    provider_type?: string;
+    protocol?: string;
+    model: string;
+  } {
+    try {
+      const resolved = this.agent.modelProvider?.resolveProviderConfig(modelAlias);
+      if (resolved === undefined) return { model: modelAlias };
+      return {
+        model: modelAlias,
+        provider_type: resolved.type,
+        protocol: resolved.protocol ?? resolved.type,
+      };
+    } catch {
+      return { model: modelAlias };
+    }
   }
 
   get loopTools(): readonly ExecutableTool[] {

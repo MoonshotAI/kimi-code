@@ -12,7 +12,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -211,9 +211,9 @@ describe('GET /api/v1/fs:browse', () => {
     const env = envelopeOf<FsBrowseResponse>(res.json());
     expect(env.code).toBe(0);
     // realpath of $HOME on macOS may differ from os.homedir() (e.g. /Users vs
-    // /System/Volumes/Data/Users). Just sanity-check the response has an
-    // absolute path.
-    expect(/^([A-Za-z]:[\\\/]|\/)/.test(env.data!.path)).toBe(true);
+    // /System/Volumes/Data/Users), and on Windows it is a drive path. Just
+    // sanity-check the response has an absolute path.
+    expect(isAbsolute(env.data!.path)).toBe(true);
   });
 });
 

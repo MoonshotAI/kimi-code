@@ -14,6 +14,7 @@ import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
+import { quoteShellArg } from '#/utils/shell-quote';
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
   ENABLE_TERMINAL_THEME_REPORTING,
@@ -891,17 +892,12 @@ describe('KimiTUI startup', () => {
 
     expect(resumeSession).not.toHaveBeenCalled();
     expect(driver.state.activeDialog).toBeNull();
-    expect(copyTextToClipboardMock).toHaveBeenCalledWith(
-      "cd '/tmp/proj-b' && kimi --resume 'ses-other-cwd'",
-    );
+    const expectedResumeCmd = `cd ${quoteShellArg('/tmp/proj-b')} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
     const transcript = driver.state.transcriptContainer.render(160).join('\n');
     expect(transcript).toContain('Current session is in a different working directory.');
-    expect(transcript).toContain(
-      "To resume, run: cd '/tmp/proj-b' && kimi --resume 'ses-other-cwd'",
-    );
-    expect(transcript).toContain(
-      "To resume, run: cd '/tmp/proj-b' && kimi --resume 'ses-other-cwd'",
-    );
+    expect(transcript).toContain(`To resume, run: ${expectedResumeCmd}`);
+    expect(transcript).toContain(`To resume, run: ${expectedResumeCmd}`);
     expect(transcript).toContain('Command copied to clipboard');
   });
 
@@ -934,13 +930,10 @@ describe('KimiTUI startup', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(resumeSession).not.toHaveBeenCalled();
-    expect(copyTextToClipboardMock).toHaveBeenCalledWith(
-      "cd '/tmp/proj$(touch /tmp/pwned)' && kimi --resume 'ses-other-cwd'",
-    );
+    const expectedResumeCmd = `cd ${quoteShellArg('/tmp/proj$(touch /tmp/pwned)')} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
     const transcript = driver.state.transcriptContainer.render(160).join('\n');
-    expect(transcript).toContain(
-      "To resume, run: cd '/tmp/proj$(touch /tmp/pwned)' && kimi --resume 'ses-other-cwd'",
-    );
+    expect(transcript).toContain(`To resume, run: ${expectedResumeCmd}`);
   });
 
   it('exits after picking another cwd from the startup picker', async () => {
@@ -974,9 +967,8 @@ describe('KimiTUI startup', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(resumeSession).not.toHaveBeenCalled();
-    expect(copyTextToClipboardMock).toHaveBeenCalledWith(
-      "cd '/tmp/proj-b' && kimi --resume 'ses-other-cwd'",
-    );
+    const expectedResumeCmd = `cd ${quoteShellArg('/tmp/proj-b')} && kimi --resume ${quoteShellArg('ses-other-cwd')}`;
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith(expectedResumeCmd);
     expect(stop).toHaveBeenCalledOnce();
     expect(stop).toHaveBeenCalledWith(0);
   });
@@ -1277,6 +1269,7 @@ describe('KimiTUI startup', () => {
     });
     expect(harness.track).toHaveBeenCalledWith('login', {
       provider: 'managed:kimi-code',
+      method: 'oauth',
       already_logged_in: false,
     });
   });
@@ -1310,6 +1303,7 @@ describe('KimiTUI startup', () => {
     );
     expect(harness.track).toHaveBeenCalledWith('login', {
       provider: 'managed:kimi-code',
+      method: 'oauth',
       already_logged_in: true,
     });
   });
@@ -1663,6 +1657,16 @@ describe('KimiTUI startup', () => {
         ).toBe(true);
       });
 
+      // writeBannerDisplayState runs after renderBanner; on Windows the atomic
+      // write can lag behind the render, so wait for the state to land before
+      // asserting it.
+      await vi.waitFor(
+        async () => {
+          const state = await readBannerDisplayState();
+          expect(state.shown['once-banner']?.lastShownAt).toBeDefined();
+        },
+        { timeout: 5000 },
+      );
       await expect(readBannerDisplayState()).resolves.toMatchObject({
         version: 1,
         shown: {

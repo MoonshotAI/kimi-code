@@ -285,6 +285,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   // Backend max page size for GET /sessions. Bigger pages mean fewer round-trips
   // when draining the full session list.
   const SESSION_PAGE_SIZE = 100;
+  // Sessions fetched per workspace on first load — keeps the initial request
+  // count at (number of workspaces) and each response small.
+  const SESSIONS_INITIAL_PAGE_SIZE = 5;
+  // Sessions fetched per "load more" click within a workspace.
+  const SESSIONS_LOAD_MORE_SIZE = 30;
 
   /** Drain every page of sessions, newest first. A single global walk (instead of
    *  per-workspace) so sessions whose cwd is not a registered workspace root are
@@ -294,12 +299,129 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const items: AppSession[] = [];
     let beforeId: string | undefined;
     for (;;) {
-      const page = await api.listSessions({ pageSize: SESSION_PAGE_SIZE, beforeId });
+      const page = await api.listSessions({
+        pageSize: SESSION_PAGE_SIZE,
+        beforeId,
+        excludeEmpty: true,
+      });
       items.push(...page.items);
       if (!page.hasMore || page.items.length === 0) break;
       beforeId = page.items[page.items.length - 1]!.id;
     }
     return items;
+  }
+
+  /** Fetch the first page of sessions for every known workspace concurrently.
+   *  Returns the merged, recency-sorted list and seeds per-workspace hasMore. */
+  async function loadInitialSessionsByWorkspace(): Promise<AppSession[]> {
+    const api = getKimiWebApi();
+    const workspaces = rawState.workspaces;
+    if (workspaces.length === 0) {
+      // /workspaces may be unavailable or empty on older / partially-failing
+      // daemons while /sessions still works. Fall back to the legacy global
+      // walk so history still shows and mergedWorkspaces can derive workspaces
+      // from session cwds, instead of rendering a blank sidebar.
+      const fallback = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
+      rawState.sessionsHasMoreByWorkspace = {};
+      rawState.sessionsCursorByWorkspace = {};
+      rawState.sessionsFullyLoaded = true;
+      return fallback;
+    }
+    const pages = await Promise.all(
+      workspaces.map((w) =>
+        api
+          .listSessions({
+            workspaceId: w.id,
+            pageSize: SESSIONS_INITIAL_PAGE_SIZE,
+            excludeEmpty: true,
+          })
+          .then((page) => ({ workspaceId: w.id, page }))
+          .catch(() => ({
+            workspaceId: w.id,
+            page: { items: [] as AppSession[], hasMore: false },
+          })),
+      ),
+    );
+    const loaded: AppSession[] = [];
+    const hasMore: Record<string, boolean> = {};
+    const cursors: Record<string, string | undefined> = {};
+    for (const { workspaceId, page } of pages) {
+      loaded.push(...page.items);
+      // Trust the server's hasMore — the per-workspace session_count is only a
+      // (possibly stale) label total, not an authority on whether more pages exist.
+      hasMore[workspaceId] = page.hasMore;
+      // Cursor = oldest session of this page (pages are newest-first). Tracked
+      // separately from the loaded set so a deep-linked older session appended
+      // out of band cannot shift the cursor and skip intervening sessions.
+      cursors[workspaceId] =
+        page.items.length > 0 ? page.items[page.items.length - 1]!.id : undefined;
+    }
+    rawState.sessionsHasMoreByWorkspace = hasMore;
+    rawState.sessionsCursorByWorkspace = cursors;
+    rawState.sessionsFullyLoaded = false;
+    // Keep rawState.sessions newest-first for readers that pick sessions[0]
+    // (e.g. auto-selecting the most recent session on first load).
+    loaded.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    return loaded;
+  }
+
+  /** Fetch the next page of sessions for a workspace (the "load more" button). */
+  async function loadMoreSessions(workspaceId: string): Promise<void> {
+    if (rawState.sessionsLoadingMoreByWorkspace[workspaceId]) return;
+    if (rawState.sessionsHasMoreByWorkspace[workspaceId] === false) return;
+    const beforeId = rawState.sessionsCursorByWorkspace[workspaceId];
+    if (beforeId === undefined) return;
+    rawState.sessionsLoadingMoreByWorkspace = {
+      ...rawState.sessionsLoadingMoreByWorkspace,
+      [workspaceId]: true,
+    };
+    try {
+      const page = await getKimiWebApi().listSessions({
+        workspaceId,
+        pageSize: SESSIONS_LOAD_MORE_SIZE,
+        beforeId,
+        excludeEmpty: true,
+      });
+      // Append de-duped against the latest list so a concurrently added/removed
+      // session is respected.
+      const existing = new Set(rawState.sessions.map((s) => s.id));
+      const fresh = page.items.filter((s) => !existing.has(s.id));
+      if (fresh.length > 0) setSessions([...rawState.sessions, ...fresh]);
+      // Advance the cursor to the end of the page we just fetched.
+      rawState.sessionsCursorByWorkspace = {
+        ...rawState.sessionsCursorByWorkspace,
+        [workspaceId]:
+          page.items.length > 0 ? page.items[page.items.length - 1]!.id : beforeId,
+      };
+      // Trust the server's hasMore. Deriving it from the workspace session_count
+      // is unsafe: archive/delete only removes the local session and leaves the
+      // count stale, which would keep hasMore true and re-fetch empty pages.
+      rawState.sessionsHasMoreByWorkspace = {
+        ...rawState.sessionsHasMoreByWorkspace,
+        [workspaceId]: page.hasMore,
+      };
+    } catch (err) {
+      pushOperationFailure('loadMoreSessions', err);
+    } finally {
+      rawState.sessionsLoadingMoreByWorkspace = {
+        ...rawState.sessionsLoadingMoreByWorkspace,
+        [workspaceId]: false,
+      };
+    }
+  }
+
+  /** Drain every session via a single global walk so client-side search covers
+   *  all sessions, not just the first page per workspace. Triggered lazily on
+   *  first search; a no-op once the full list is loaded. */
+  async function loadAllSessions(): Promise<void> {
+    if (rawState.sessionsFullyLoaded) return;
+    const sessions = await listAllSessionsGlobal().catch(() => null);
+    if (sessions === null) return;
+    setSessions(sessions);
+    rawState.sessionsFullyLoaded = true;
+    const cleared: Record<string, boolean> = {};
+    for (const w of rawState.workspaces) cleared[w.id] = false;
+    rawState.sessionsHasMoreByWorkspace = cleared;
   }
 
   async function load(): Promise<void> {
@@ -320,13 +442,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       await checkAuth();
       await loadConfig();
 
-      // Drain every session via a single global walk so sessions whose cwd is not
-      // a registered workspace root are still reachable after a refresh.
-      const sessions = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
-      setSessions(sessions);
-
-      // Load workspaces (real if available, else derived from session cwds).
+      // Load workspaces first (registered + derived, each with a session_count),
+      // then fetch only the first page of sessions per workspace. This replaces
+      // the old full global walk: the sidebar now truncates by loading, not by
+      // hiding already-fetched rows.
       await loadWorkspaces();
+      const sessions = await loadInitialSessionsByWorkspace();
+      setSessions(sessions);
 
       // First load: pick the workspace of the most-recent session, unless the
       // user already has a persisted active workspace that still exists.
@@ -485,42 +607,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     selectWorkspace(workspaceId);
     clearActiveSession();
     clearFileDiff();
-  }
-
-  /**
-   * Create a session in a workspace — the one-click path (no cwd typing).
-   * Register/touch the workspace first when the daemon supports it; if that
-   * fails, fall back to the legacy cwd-only create path.
-   */
-  async function createSessionInWorkspace(workspaceId: string): Promise<AppSession | undefined> {
-    const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
-    if (!ws) return undefined;
-    try {
-      const api = getKimiWebApi();
-      let workspaceIdForCreate: string | undefined;
-      let cwdForCreate = ws.root;
-      try {
-        const registered = await api.addWorkspace({ root: ws.root });
-        workspaceIdForCreate = registered.id;
-        cwdForCreate = registered.root;
-        upsertWorkspacePreserveOrder(registered);
-      } catch {
-        // Older daemons may not have /workspaces. In that mode, sending a local
-        // path-like workspace id as workspace_id would fail validation, so use
-        // metadata.cwd only.
-      }
-      const session = await api.createSession({ workspaceId: workspaceIdForCreate, cwd: cwdForCreate });
-      upsertSessionFront(session);
-      selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
-      // Locally created sessions start empty; trust that so the empty-composer
-      // renders immediately instead of flashing a loading state.
-      sessionsKnownEmpty.add(session.id);
-      await selectSession(session.id);
-      return session;
-    } catch (err) {
-      pushOperationFailure('createSessionInWorkspace', err);
-      return undefined;
-    }
   }
 
   /**
@@ -762,20 +848,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (rawState.activeSessionId === sessionId) {
         rawState.sessionLoading = false;
       }
-    }
-  }
-
-  async function createSession(cwd: string, opts?: { title?: string; model?: string }): Promise<void> {
-    try {
-      const api = getKimiWebApi();
-      const session = await api.createSession({ cwd, title: opts?.title, model: opts?.model });
-      upsertSessionFront(session);
-      // Locally created sessions start empty; trust that so the empty-composer
-      // renders immediately instead of flashing a loading state.
-      sessionsKnownEmpty.add(session.id);
-      await selectSession(session.id);
-    } catch (err) {
-      pushOperationFailure('createSession', err);
     }
   }
 
@@ -1092,7 +1164,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   async function respondApproval(
     approvalId: string,
-    response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string },
+    response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string; selectedLabel?: string },
   ): Promise<void> {
     const sid = rawState.activeSessionId;
     if (!sid) return;
@@ -1102,6 +1174,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         decision: response.decision,
         scope: response.scope,
         feedback: response.feedback,
+        selectedLabel: response.selectedLabel,
       };
       await api.respondApproval(sid, approvalId, fullResponse);
       // Remove from local approvals immediately (WS event will confirm)
@@ -1599,13 +1672,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     listAllSessionsGlobal,
     load,
     loadWorkspaces,
+    loadMoreSessions,
+    loadAllSessions,
     selectWorkspace,
     openWorkspace,
     upsertWorkspacePreserveOrder,
     applyWorkspaceEvent,
     clearActiveSession,
     openWorkspaceDraft,
-    createSessionInWorkspace,
     startSessionAndSendPrompt,
     addWorkspaceByPath,
     browseFs,
@@ -1615,7 +1689,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     onSessionRoutePopState,
     bindSessionRoute,
     selectSession,
-    createSession,
     submitPromptInternal,
     sendPrompt,
     steerPrompt,

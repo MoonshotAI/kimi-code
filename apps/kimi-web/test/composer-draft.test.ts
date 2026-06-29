@@ -103,4 +103,52 @@ describe('useComposerDraft', () => {
     draft.loadForEdit('edit me');
     expect(draft.text.value).toBe('edit me');
   });
+
+  it('autosize fits the textarea height to its content', () => {
+    const { draft } = setup('s1');
+    const style: Record<string, string> = {};
+    const el = { scrollHeight: 120, style };
+    draft.textareaRef.value = el as unknown as HTMLTextAreaElement;
+
+    draft.autosize();
+    expect(style.height).toBe('120px');
+  });
+
+  it('autosize shrinks the textarea when content is removed', () => {
+    const { draft } = setup('s1');
+    const style: Record<string, string> = {};
+    const el = { scrollHeight: 120, style };
+    draft.textareaRef.value = el as unknown as HTMLTextAreaElement;
+
+    draft.autosize();
+    el.scrollHeight = 40;
+    draft.autosize();
+    expect(style.height).toBe('40px');
+  });
+
+  it('autosize is a no-op before the textarea mounts', () => {
+    const { draft } = setup('s1');
+    expect(() => {
+      draft.autosize();
+    }).not.toThrow();
+  });
+
+  it('clearDraft removes the persisted draft synchronously', async () => {
+    // Regression: when the first message of an empty session is submitted, the
+    // optimistic user turn unmounts the composer before the post-flush text
+    // watcher can clear the draft. clearDraft must therefore clear it
+    // synchronously so a remount does not reload the stale text.
+    globalThis.localStorage.setItem(draftStorageKey('s1'), 'stale draft');
+    const { draft } = setup('s1');
+    draft.clearDraft();
+    // No nextTick — the write is synchronous.
+    expect(globalThis.localStorage.getItem(draftStorageKey('s1'))).toBeNull();
+
+    // Simulate the remount after the optimistic turn: a fresh composable
+    // instance for the same session should start empty, not restore the draft.
+    const { text } = setup('s1');
+    expect(text.value).toBe('');
+    await nextTick();
+    expect(globalThis.localStorage.getItem(draftStorageKey('s1'))).toBeNull();
+  });
 });

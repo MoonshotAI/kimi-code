@@ -605,7 +605,7 @@ export interface AppSessionWarning {
 export interface KimiWebApi {
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
   getMeta(): Promise<{ serverVersion: string; serverId: string; startedAt: string; capabilities: Record<string, boolean>; openInApps: string[] }>;
-  listSessions(input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string; includeArchive?: boolean }): Promise<Page<AppSession>>;
+  listSessions(input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string; includeArchive?: boolean; excludeEmpty?: boolean }): Promise<Page<AppSession>>;
   createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string }): Promise<AppSession>;
   /** Fetch one session by id (deep links beyond the first listSessions page). */
   getSession(sessionId: string): Promise<AppSession>;
@@ -656,8 +656,8 @@ export interface KimiWebApi {
   openInApp(sessionId: string, appId: string, path: string, line?: number): Promise<void>;
   connectEvents(handlers: KimiEventHandlers): KimiEventConnection;
 
-  // Workspaces + daemon folder browser
-  // PRESUMED — falls back until the daemon ships /workspaces, /fs:browse, /fs:home.
+  // Workspaces + daemon folder browser. /workspaces now ships and includes
+  // derived workspaces (cwds with sessions that were never explicitly registered).
   listWorkspaces(): Promise<AppWorkspace[]>;
   addWorkspace(input: { root: string; name?: string }): Promise<AppWorkspace>;
   deleteWorkspace(id: string): Promise<void>;

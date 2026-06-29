@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-import { Disposable, InstantiationType, registerSingleton } from '../../di';
+import { Disposable, SyncDescriptor, registerSingleton } from '../../di';
 import type {
   FsGrepFileHit,
   FsGrepMatch,
@@ -19,6 +19,7 @@ import ignore, { type Ignore } from 'ignore';
 import { ISessionService } from '../session/session';
 
 import { ILogService } from '../logger/logger';
+import { noopTelemetryClient, type TelemetryClient } from '../../telemetry';
 import { IFsSearchService, FsGrepTimeoutError } from './fsSearch';
 
 // ── Native module loading (lazy, with TS fallback) ──────────────────────────
@@ -85,11 +86,15 @@ export class FsSearchService
 
   protected rgMissingWarned = false;
 
+  protected readonly telemetry: TelemetryClient;
+
   constructor(
+    telemetry: TelemetryClient,
     @ISessionService protected readonly sessions: ISessionService,
     @ILogService protected readonly logger: ILogService,
   ) {
     super();
+    this.telemetry = telemetry;
   }
 
   override dispose(): void {
@@ -181,6 +186,7 @@ export class FsSearchService
       }
 
       // Tier 3: pure-Node fallback
+      this.telemetry.track('fs_grep_node_fallback', { reason: 'rg_missing' });
       const out = await this.grepWithNode(
         realCwd,
         req,
@@ -771,4 +777,7 @@ async function whichBinary(name: string): Promise<string | null> {
   return null;
 }
 
-registerSingleton(IFsSearchService, FsSearchService, InstantiationType.Delayed);
+registerSingleton(
+  IFsSearchService,
+  new SyncDescriptor(FsSearchService, [noopTelemetryClient], true),
+);

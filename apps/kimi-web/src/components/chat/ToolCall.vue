@@ -1,8 +1,10 @@
 <!-- apps/kimi-web/src/components/chat/ToolCall.vue -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import type { ToolCall, ToolMedia } from '../../types';
-import { toolLabel, toolGlyph, toolChip, toolSummary } from '../../lib/toolMeta';
+import type { DiffViewLine, FilePreviewRequest, ToolCall, ToolMedia } from '../../types';
+import { normalizeToolName, toolLabel, toolGlyph, toolChip, toolSummary } from '../../lib/toolMeta';
+import { diffStats } from '../../lib/diffLines';
+import { buildEditDiffLines } from '../../lib/toolDiff';
 
 const props = withDefaults(
   defineProps<{
@@ -11,18 +13,35 @@ const props = withDefaults(
     mobile?: boolean;
     /** Position inside a consecutive run of non-media tool cards. */
     stackPosition?: 'single' | 'first' | 'middle' | 'last';
+    /**
+     * When true, clicking an Edit/Write card opens the right-side diff panel.
+     * When false (e.g. inside the side chat, where the panel isn't wired), the
+     * card expands inline instead so its output stays reachable.
+     */
+    toolDiffPanel?: boolean;
   }>(),
-  { mobile: false, stackPosition: 'single' },
+  { mobile: false, stackPosition: 'single', toolDiffPanel: false },
 );
 const emit = defineEmits<{
   openMedia: [media: ToolMedia];
+  openFile: [target: FilePreviewRequest];
+  openToolDiff: [id: string];
 }>();
 const isRunningBash = computed(() => props.tool.status === 'running' && /^bash$/i.test(props.tool.name));
 const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
 const canExpand = computed(() => hasOutput.value || isRunningBash.value);
 const open = ref(props.tool.defaultExpanded === true && canExpand.value);
 
+const isEditWrite = computed(() => {
+  const kind = normalizeToolName(props.tool.name);
+  return kind === 'edit' || kind === 'write';
+});
+
 function toggle() {
+  if (isEditWrite.value && props.toolDiffPanel) {
+    emit('openToolDiff', props.tool.id);
+    return;
+  }
   if (canExpand.value) open.value = !open.value;
 }
 
@@ -42,16 +61,46 @@ const glyph = () => toolGlyph(props.tool.name);
 const summary = () => toolSummary(props.tool.name, props.tool.arg);
 // Expanded body has room to wrap → show the full, un-clipped summary (no `…`).
 const summaryFull = () => toolSummary(props.tool.name, props.tool.arg, true);
-const chip = () => toolChip({
-  name: props.tool.name,
-  arg: props.tool.arg,
-  output: props.tool.output,
-  timing: props.tool.timing,
-  status: props.tool.status,
-});
+const chip = () => {
+  const diff = editDiff.value;
+  if (diff && props.tool.status !== 'error') {
+    const { added, removed } = diffStats(diff);
+    if (added || removed) return `+${added} −${removed}`;
+  }
+  return toolChip({
+    name: props.tool.name,
+    arg: props.tool.arg,
+    output: props.tool.output,
+    timing: props.tool.timing,
+    status: props.tool.status,
+  });
+};
 
 const isError = () => props.tool.status === 'error';
 const media = computed(() => (props.tool.status === 'ok' ? props.tool.media : undefined));
+
+/** Line diff for an Edit/Write tool call (drives the +/- chip); null for any
+ *  other tool or when a from-args diff can't represent the operation. */
+const editDiff = computed<DiffViewLine[] | null>(() => buildEditDiffLines(props.tool));
+
+// ExitPlanMode: expose the plan file as a clickable link (opens file preview).
+const isExitPlan = computed(() => props.tool.name === 'ExitPlanMode');
+const planPath = computed(() => (isExitPlan.value ? props.tool.planPath : undefined));
+const planBasename = computed(() => {
+  const p = planPath.value;
+  return p ? p.split(/[\\/]+/).pop() || p : '';
+});
+function openPlanFile(): void {
+  if (planPath.value) emit('openFile', { path: planPath.value });
+}
+
+// TEMP: plan-file preview link is hidden until the server can read files
+// outside the workspace. Plan files live under the session dir (not the cwd),
+// and the server's readFile is workspace-scoped, so the preview rejects them
+// with "outside workspace". The planPath wiring is kept in place; flip this
+// flag to re-enable the chip once a backend API can read the plan file.
+const enablePlanFileLink = false;
+const showPlanFileLink = computed(() => enablePlanFileLink && Boolean(planPath.value));
 
 function basename(path: string): string {
   return path.split(/[\\/]+/).pop() || path;
@@ -136,6 +185,13 @@ function openMediaPreview(): void {
            into the card body (below) so the header stays clean. -->
       <span v-if="!open" class="p" :title="summary()">{{ summary() }}</span>
       <span class="rt">
+        <button
+          v-if="showPlanFileLink"
+          class="plan-link"
+          type="button"
+          :title="planPath"
+          @click.stop="openPlanFile"
+        >📄 {{ planBasename }}</button>
         <span class="chip" v-if="chip()">{{ chip() }}</span>
         <span
           v-if="tool.status === 'running'"
@@ -278,6 +334,22 @@ function openMediaPreview(): void {
   color: var(--dim);
   font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
 }
+.plan-link {
+  appearance: none;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 6px;
+  color: var(--blue2);
+  font: inherit;
+  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
+  cursor: pointer;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-link:hover { background: var(--panel); color: var(--blue); border-color: var(--blue2); }
 .ok { color: var(--ok); font-weight: 700; }
 .er { color: var(--err); font-weight: 700; }
 .tm { color: var(--muted); }

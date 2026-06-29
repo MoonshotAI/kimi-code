@@ -132,9 +132,7 @@ describe('HookEngine', () => {
       {
         event: 'PreToolUse',
         matcher: 'ReadFile',
-        // node-based so `>&2` bash-only redirection does not break the
-        // assertion on Windows.
-        command: `node -e "process.stderr.write('blocked');process.exit(2)"`,
+        command: 'node -e "process.stderr.write(\'blocked\'); process.exit(2)"',
         timeout: 5,
       },
     ]);

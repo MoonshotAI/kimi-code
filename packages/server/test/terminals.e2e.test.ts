@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -128,8 +129,8 @@ describe('terminal REST routes', () => {
     expect(termA.session_id).toBe(sidA);
     expect(termB.session_id).toBe(sidB);
     expect(backend.spawns.map((spawn) => spawn.cwd)).toEqual([
-      realpathSync(rootA),
-      realpathSync(rootB),
+      await realpath(rootA),
+      await realpath(rootB),
     ]);
 
     const listA = envelopeOf<{ items: Terminal[] }>(

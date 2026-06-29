@@ -1,11 +1,16 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { normalize } from 'pathe';
+import { fileURLToPath } from 'node:url';
 
 import { KaosFileExistsError } from '#/errors';
 import { LocalKaos } from '#/local';
 import { afterEach, beforeEach, describe, expect, it, test } from 'vitest';
+
+// LocalKaos normalizes every path to forward slashes (pathe). Mirror that in
+// path assertions so they hold on Windows, where node:path/node:os produce
+// backslashes.
+const toPosix = (p: string): string => p.replaceAll('\\', '/');
 
 function nodeArgs(code: string): string[] {
   return ['node', '-e', code];
@@ -17,7 +22,7 @@ describe('LocalKaos', () => {
 
   beforeEach(async () => {
     kaos = await LocalKaos.create();
-    tempDir = await realpath(await mkdtemp(join(tmpdir(), 'kaos-test-')));
+    tempDir = toPosix(await realpath(await mkdtemp(join(tmpdir(), 'kaos-test-'))));
     await kaos.chdir(tempDir);
   });
 
@@ -40,22 +45,22 @@ describe('LocalKaos', () => {
       // asserting length > 0 alone was too weak — a stub returning any
       // non-empty string would pass.
       const home = kaos.gethome();
-      expect(home).toBe(normalize(homedir()));
+      expect(home).toBe(toPosix(homedir()));
     });
 
     it('should return the current working directory', () => {
       const cwd = kaos.getcwd();
-      expect(cwd).toBe(normalize(tempDir));
+      expect(cwd).toBe(tempDir);
     });
   });
 
   describe('chdir + stat', () => {
     it('should change directory and stat a file', async () => {
-      const nested = join(tempDir, 'nested');
+      const nested = toPosix(join(tempDir, 'nested'));
       await kaos.mkdir(nested);
 
       await kaos.chdir(nested);
-      expect(kaos.getcwd()).toBe(normalize(nested));
+      expect(kaos.getcwd()).toBe(nested);
 
       const filePath = join(nested, 'file.txt');
       await kaos.writeText(filePath, 'hello world');
@@ -101,7 +106,7 @@ describe('LocalKaos', () => {
         entries.push(entry);
       }
 
-      expect(entries).toContain(normalize(join(tempDir, 'file.txt')));
+      expect(entries).toContain(toPosix(join(tempDir, 'file.txt')));
       // No entry should contain duplicated separators.
       expect(entries.every((e) => !e.includes('//'))).toBe(true);
     });
@@ -525,7 +530,7 @@ describe('LocalKaos', () => {
       }
 
       const names = new Set(matches.map((p) => p.split(/[/\\]/).pop() ?? ''));
-      expect(matches).toContain(normalize(tempDir));
+      expect(matches).toContain(tempDir);
       expect(names.has('root.txt')).toBe(true);
       expect(names.has('nested.txt')).toBe(true);
       expect(names.has('sub')).toBe(true);
@@ -849,16 +854,16 @@ describe('LocalKaos instance isolation', () => {
     const kaosA = await LocalKaos.create();
     const kaosB = await LocalKaos.create();
 
-    const tmpA = await realpath(await mkdtemp(join(tmpdir(), 'kaos-a-')));
-    const tmpB = await realpath(await mkdtemp(join(tmpdir(), 'kaos-b-')));
+    const tmpA = toPosix(await realpath(await mkdtemp(join(tmpdir(), 'kaos-a-'))));
+    const tmpB = toPosix(await realpath(await mkdtemp(join(tmpdir(), 'kaos-b-'))));
 
     try {
       await kaosA.chdir(tmpA);
       await kaosB.chdir(tmpB);
 
       // kaosA.chdir must not affect kaosB's cwd (no process.chdir pollution).
-      expect(kaosA.getcwd()).toBe(normalize(tmpA));
-      expect(kaosB.getcwd()).toBe(normalize(tmpB));
+      expect(kaosA.getcwd()).toBe(tmpA);
+      expect(kaosB.getcwd()).toBe(tmpB);
 
       // Write a file named "marker.txt" in each cwd using a relative path.
       await kaosA.writeText('marker.txt', 'A');
@@ -875,8 +880,8 @@ describe('LocalKaos instance isolation', () => {
       await procB.wait();
       const outA = await streamToBuffer(procA.stdout);
       const outB = await streamToBuffer(procB.stdout);
-      expect(outA.toString('utf-8')).toBe(tmpA);
-      expect(outB.toString('utf-8')).toBe(tmpB);
+      expect(toPosix(outA.toString('utf-8'))).toBe(tmpA);
+      expect(toPosix(outB.toString('utf-8'))).toBe(tmpB);
     } finally {
       await rm(tmpA, { recursive: true, force: true });
       await rm(tmpB, { recursive: true, force: true });
@@ -931,33 +936,20 @@ describe('LocalProcess.kill safety', () => {
   // and asserts that `proc.kill('SIGTERM')` tears the whole tree down.
   // The grandchild is probed via its pidfile: if the file still names a
   // live pid after the kill, the tree leaked.
-  test.skipIf(process.platform === 'win32')(
+  test.skipIf(process.platform !== 'win32')(
     'kill() terminates the grandchild on Windows (process tree)',
     async () => {
       const kaos = await LocalKaos.create();
       const tmp = await realpath(await mkdtemp(join(tmpdir(), 'kaos-killtree-')));
-      await kaos.chdir(tmp);
       try {
-        const pidFile = join(tmp, 'grandchild.pid').replaceAll('\\', '\\\\');
-        // Parent: spawns a child that spawns a grandchild (long-running).
-        // The grandchild writes its own pid to a file so the test can
-        // later check if it's still alive.
-        const code = `
-          const { spawn } = require('node:child_process');
-          const child = spawn(process.execPath, ['-e', \`
-            const { spawn } = require('node:child_process');
-            const { writeFileSync } = require('node:fs');
-            const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)']);
-            writeFileSync('${pidFile}', String(g.pid));
-            setInterval(() => {}, 1000);
-          \`], { stdio: 'inherit' });
-          setInterval(() => {}, 1000);
-        `;
-        const proc = await kaos.exec('node', '-e', code);
-
-        // Wait for grandchild pid to be written.
-        const { stat, readFile } = await import('node:fs/promises');
+        // Run the parent → child → grandchild chain from a real script file
+        // (see test/fixtures/killtree.cjs) with the pidfile path passed via
+        // argv. Inline multi-line `node -e` strings get mangled on Windows by
+        // Node's arg-quoting and by JS string escapes, so the pidfile was
+        // never written and the test read ENOENT.
         const pidPath = join(tmp, 'grandchild.pid');
+        const scriptPath = fileURLToPath(new URL('./fixtures/killtree.cjs', import.meta.url));
+        const proc = await kaos.exec('node', scriptPath, pidPath);
         const start = Date.now();
         while (Date.now() - start < 5000) {
           try {
@@ -993,7 +985,7 @@ describe('LocalProcess.kill safety', () => {
         await rm(tmp, { recursive: true, force: true });
       }
     },
-    15_000,
+    30_000,
   );
 
   // ── POSIX process-group kill ────────────────────────────────────────
@@ -1054,7 +1046,7 @@ describe('LocalProcess.kill safety', () => {
         await rm(tmp, { recursive: true, force: true });
       }
     },
-    15_000,
+    30_000,
   );
 });
 

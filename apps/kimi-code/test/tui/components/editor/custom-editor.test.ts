@@ -461,7 +461,7 @@ describe('CustomEditor paste marker expansion', () => {
 
     expect(editor.getText()).toMatch(/\[paste #1/);
 
-    editor.handleInput('\u0016');
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
 
     expect(editor.getText()).not.toContain('[paste #');
     expect(editor.getText()).toContain(longText);

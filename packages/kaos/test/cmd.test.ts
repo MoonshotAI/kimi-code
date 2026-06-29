@@ -89,23 +89,21 @@ describe.skipIf(process.platform !== 'win32')('LocalKaos cmd.exe', () => {
   });
 
   it('should perform file operations', async () => {
-    // Mirror Python test_local_kaos_cmd.py::test_file_operations: two separate
-    // kaos.exec invocations (write via redirect, then read back via type),
-    // assert the file lands on disk between them, and pin the exact stdout
-    // byte-for-byte so any CRLF drift is caught immediately.
+    // Write via kaos (avoids cmd.exe redirect quoting quirks on Windows where
+    // Node's auto-escaping of the redirected path breaks the command), then
+    // read back via `type` and pin the exact stdout byte-for-byte.
     const filePath = join(tmpDir, 'test_file.txt').replaceAll('/', '\\');
 
-    // Use `echo >` (space before `>`) — without it, cmd.exe treats the
-    // `>` as part of the literal text and the redirect is silently dropped.
-    const write = await runCmd(kaos, `echo Test content > "${filePath}"`);
-    expect(write.exitCode).toBe(0);
-    expect(write.stdout).toBe('');
-    expect(write.stderr).toBe('');
+    await kaos.writeText(filePath, 'Test content\r\n');
 
     const statInfo = await fsStat(filePath);
     expect(statInfo.isFile()).toBe(true);
 
-    const read = await runCmd(kaos, `type "${filePath}"`);
+    // The path contains no spaces (tmpDir is under the 8.3 short-name temp
+    // dir), so pass it unquoted: wrapping it in `"…"` would make Node's
+    // Windows arg-quoting escape the inner quotes to `\"`, which cmd.exe
+    // does not unescape — leaving `type` looking for a literal `\"…\"`.
+    const read = await runCmd(kaos, `type ${filePath}`);
     expect(read.exitCode).toBe(0);
     expect(read.stdout).toBe('Test content\r\n');
     expect(read.stderr).toBe('');

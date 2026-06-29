@@ -13,6 +13,11 @@ import {
 } from '../../agent-core/src/config';
 import { TEST_IDENTITY } from './test-identity';
 
+// node-sdk/agent-core normalize paths to forward slashes (pathe). Mirror that
+// in path assertions so they hold on Windows, where node:path produces
+// backslashes.
+const toPosix = (p: string): string => p.replaceAll('\\', '/');
+
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -86,7 +91,7 @@ describe('SDK config TOML', () => {
     const dir = await makeTempDir();
     const rpc = createKimiConfigRpc();
 
-    await expect(rpc.resolveConfigPath({ homeDir: dir })).resolves.toBe(join(dir, 'config.toml'));
+    await expect(rpc.resolveConfigPath({ homeDir: dir })).resolves.toBe(toPosix(join(dir, 'config.toml')));
   });
 
   it('returns structured validation issues through the config RPC wrapper', async () => {

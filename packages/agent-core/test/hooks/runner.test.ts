@@ -33,10 +33,7 @@ describe('runHook process runner', () => {
 
   it('parses stdout JSON message into a hook result message', async () => {
     const runHook = await importRunHook();
-    // Use `node -e` so the payload is identical on Windows (cmd.exe does not
-    // strip single quotes around `{...}` the way POSIX sh does).
-    const cmd = `node -e "process.stdout.write(JSON.stringify({message:'hook says hi'}))"`;
-    const result = await runHook(cmd, {}, { timeout: 5 });
+    const result = await runHook("node -e \"process.stdout.write(JSON.stringify({message:'hook says hi'}))\"", {}, { timeout: 5 });
     expect(result.action).toBe('allow');
     expect(result.message).toBe('hook says hi');
     expect(result.structuredOutput).toBe(true);
@@ -45,17 +42,13 @@ describe('runHook process runner', () => {
   it('marks structured stdout JSON without message as empty hook output', async () => {
     const runHook = await importRunHook();
 
-    const emptyObject = await runHook(
-      `node -e "process.stdout.write('{}')"`,
-      {},
-      { timeout: 5 },
-    );
+    const emptyObject = await runHook("node -e \"process.stdout.write('{}')\"", {}, { timeout: 5 });
     expect(emptyObject.action).toBe('allow');
     expect(emptyObject.message).toBeUndefined();
     expect(emptyObject.structuredOutput).toBe(true);
 
     const emptyHookSpecificOutput = await runHook(
-      `node -e "process.stdout.write(JSON.stringify({hookSpecificOutput:{}}))"`,
+      "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{}}))\"",
       {},
       { timeout: 5 },
     );
@@ -66,9 +59,11 @@ describe('runHook process runner', () => {
 
   it('returns block when the hook exits 2 and captures stderr as the reason', async () => {
     const runHook = await importRunHook();
-    // `>&2` is a POSIX-only redirection; use node -e to stay cross-platform.
-    const cmd = `node -e "process.stderr.write('blocked');process.exit(2)"`;
-    const result = await runHook(cmd, { tool_name: 'Shell' }, { timeout: 5 });
+    const result = await runHook(
+      "node -e \"process.stderr.write('blocked');process.exit(2)\"",
+      { tool_name: 'Shell' },
+      { timeout: 5 },
+    );
     expect(result.action).toBe('block');
     expect(result.reason).toContain('blocked');
   });
@@ -88,7 +83,8 @@ describe('runHook process runner', () => {
 
   it('parses stdout JSON permissionDecision=deny into a block result with the supplied reason', async () => {
     const runHook = await importRunHook();
-    const cmd = `node -e "process.stdout.write(JSON.stringify({hookSpecificOutput:{permissionDecision:'deny',permissionDecisionReason:'use rg'}}))"`;
+    const cmd =
+      "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{permissionDecision:'deny',permissionDecisionReason:'use rg'}}))\"";
     const result = await runHook(cmd, { tool_name: 'Bash' }, { timeout: 5 });
     expect(result.action).toBe('block');
     expect(result.reason).toBe('use rg');

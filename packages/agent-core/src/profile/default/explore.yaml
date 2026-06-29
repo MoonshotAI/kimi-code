@@ -13,7 +13,7 @@ promptVars:
     - Running read-only shell commands (git log, git diff, ls, find, etc.)
 
     Guidelines:
-    - Use Glob for broad file pattern matching. Prefer a pattern with a literal anchor (extension or subdirectory): results are capped at a fixed number of matches, so a broad pattern like `**/*` can truncate before reaching what you need.
+    - Use Glob for broad file pattern matching. Prefer patterns with a literal anchor (extension or subdirectory); pure wildcards like `*` or `**/*` are allowed but usually truncate at the match cap.
     - Use Grep for searching file contents with regex
     - Use Read when you know the specific file path
     - Use Bash ONLY for read-only operations (ls, git status, git log, git diff, find)

@@ -25,7 +25,6 @@ import type { Logger } from '../../../src/logging';
 import { ProviderManager } from '../../../src/session/provider-manager';
 import type { QuestionResult, RPCCallOptions, SDKAgentRPC } from '../../../src/rpc';
 import type { AgentAPI } from '../../../src/rpc/core-api';
-import type { PathClass } from '../../../src/tools/policies/path-access';
 import type { ToolServices } from '../../../src/tools/support/services';
 import type { TelemetryClient } from '../../../src/telemetry';
 import type { PromisifyMethods } from '../../../src/utils/types';
@@ -738,7 +737,7 @@ export class AgentTestContext {
 
   async expectResumeMatches(): Promise<void> {
     const resumed = testAgent({
-      kaos: createResumeNoSideEffectKaos(this.agent.config.cwd, () => this.agent.kaos.pathClass()),
+      kaos: createResumeNoSideEffectKaos(this.agent.config.cwd, this.agent.kaos.pathClass()),
       runtime: {
         urlFetcher: this.agent.toolServices?.urlFetcher,
         webSearcher: this.agent.toolServices?.webSearcher,
@@ -965,7 +964,7 @@ const failOnResumeGenerate: GenerateFn = async () => {
 
 function createResumeNoSideEffectKaos(
   initialCwd: string,
-  pathClass: () => PathClass = () => 'posix',
+  pathClass: 'posix' | 'win32',
 ): Kaos {
   const fail = (method: string): never => {
     throw new Error(`Resume replay unexpectedly called kaos.${method}`);
@@ -973,12 +972,14 @@ function createResumeNoSideEffectKaos(
 
   // Replay may carry `config.update({cwd})` events that route through
   // `kaos.chdir(...)`; let those mutate an internal cwd field so replay
-  // succeeds. Actual fs I/O methods remain forbidden.
+  // succeeds. Actual fs I/O methods remain forbidden. `pathClass` mirrors
+  // the live agent's kaos so platform-conditional tool descriptions (e.g.
+  // Glob's Windows note) match the original in `expectResumeMatches`.
   let cwd = initialCwd;
   return {
     name: 'resume-no-side-effects',
     osEnv: TEST_OS_ENV,
-    pathClass,
+    pathClass: () => pathClass,
     normpath: (p: string) => p,
     gethome: () => '/home/test',
     getcwd: () => cwd,
@@ -1039,7 +1040,7 @@ function configStateSnapshot(agent: Agent): ResumeStateSnapshot['config'] {
   } catch {}
 
   return {
-    cwd: agent.config.cwd,
+    cwd: agent.config.cwd.replaceAll('\\', '/'),
     provider,
     profileName: agent.config.profileName,
     thinkingLevel: agent.config.thinkingLevel,

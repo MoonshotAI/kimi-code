@@ -139,7 +139,7 @@ export function withoutBackgroundDescription(description: string): string {
   const normalized = description.replaceAll('\r\n', '\n');
   return normalized
     .replace(
-      /\n\nIf `run_in_background=true`,[\s\S]*?point them to the `\/tasks` command, which opens an interactive panel; it has no subcommands\./,
+      /\r?\n\r?\nIf `run_in_background=true`,[\s\S]*?point them to the `\/tasks` command, which opens an interactive panel; it has no subcommands\./,
       '\n\nBackground execution is disabled for this agent. Do not set `run_in_background=true`.',
     )
     .replace(
@@ -147,7 +147,7 @@ export function withoutBackgroundDescription(description: string): string {
       ` For possibly long-running commands, set the \`timeout\` argument in seconds. The default is ${String(DEFAULT_TIMEOUT_S)}s; foreground commands allow up to ${String(MAX_TIMEOUT_S)}s.`,
     )
     .replace(
-      /\n- Prefer `run_in_background=true`[\s\S]*?conversation to continue before the command finishes\./,
+      /\r?\n- Prefer `run_in_background=true`[\s\S]*?conversation to continue before the command finishes\./,
       '\n- Do not set `run_in_background=true`; background task management tools are not available.',
     );
 }

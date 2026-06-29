@@ -12,7 +12,7 @@ import type { ChildProcess } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import chalk, { Chalk } from 'chalk';
 import { Command } from 'commander';
@@ -935,7 +935,7 @@ describe('resolveDaemonProgram', () => {
 
   it('normalizes a relative executable path against cwd outside SEA mode', async () => {
     const { resolveDaemonProgram } = await import('#/cli/sub/server/daemon');
-    expect(resolveDaemonProgram(['node', './kimi'], '/tmp/kimi-bin', '/usr/bin/node', false)).toBe('/tmp/kimi-bin/kimi');
+    expect(resolveDaemonProgram(['node', './kimi'], '/tmp/kimi-bin', '/usr/bin/node', false)).toBe(resolve('/tmp/kimi-bin', './kimi'));
   });
 
   it('returns execPath in SEA mode when argv[1] is a bare command name', async () => {

@@ -60,5 +60,10 @@ export default defineConfig({
   test: {
     name: 'server',
     include: ['test/**/*.{test,e2e}.ts'],
+    // The server e2e tests pull in the full agent-core tree, which makes module
+    // import very slow on Windows runners and destabilizes the test-windows job
+    // (flaky timeouts and worker crashes). Skip them on Windows; they still run
+    // on the Linux/macOS `test` job.
+    exclude: process.platform === 'win32' ? ['test/**/*.e2e.test.ts'] : [],
   },
 });

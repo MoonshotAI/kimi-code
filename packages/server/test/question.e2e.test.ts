@@ -34,6 +34,18 @@ let lockPath: string;
 let bridgeHome: string;
 let server: RunningServer | undefined;
 
+function rmSyncRobust(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 60, retryDelay: 250 });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY') throw error;
+    // Best-effort cleanup: a child process may still hold the cwd or be
+    // writing into the dir after server.close(); the OS reclaims the temp dir
+    // later and a cleanup hiccup must not fail an otherwise-passing test.
+  }
+}
+
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'kimi-server-questions-test-'));
   lockPath = join(tmpDir, 'lock');
@@ -47,8 +59,8 @@ afterEach(async () => {
     // ignore
   }
   server = undefined;
-  rmSync(tmpDir, { recursive: true, force: true });
-  rmSync(bridgeHome, { recursive: true, force: true });
+  rmSyncRobust(tmpDir);
+  rmSyncRobust(bridgeHome);
 });
 
 async function bootDaemon(): Promise<RunningServer> {

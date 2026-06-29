@@ -1,15 +1,10 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
-
-// Normalize path to forward slashes (the provider normalizes all paths internally).
-function posixJoin(...segments: string[]): string {
-  return join(...segments).replaceAll(sep, '/');
-}
 
 function ctrl(): AbortSignal {
   return new AbortController().signal;
@@ -284,7 +279,7 @@ describe('FileMentionProvider', () => {
 
     expect(result).not.toBeNull();
     expect(result!.items.map((item) => item.value)).toContain(
-      `@${posixJoin(extraDir, 'src', 'Additional.ts')}`,
+      `@${join(extraDir, 'src', 'Additional.ts').replaceAll('\\', '/')}`,
     );
   });
 
@@ -303,7 +298,7 @@ describe('FileMentionProvider', () => {
     const additionalResult = await provider.getSuggestions(['@add'], 0, 4, { signal: ctrl() });
     expect(additionalResult).not.toBeNull();
     expect(additionalResult!.items.map((item) => item.value)).toContain(
-      `@${posixJoin(extraDir, 'src', 'Additional.ts')}`,
+      `@${join(extraDir, 'src', 'Additional.ts').replaceAll('\\', '/')}`,
     );
   });
 
@@ -317,7 +312,7 @@ describe('FileMentionProvider', () => {
 
     expect(result).not.toBeNull();
     const overlapItems = result!.items.filter(
-      (item) => item.description === posixJoin(extraDir, 'src', 'Overlap.ts'),
+      (item) => item.description === join(extraDir, 'src', 'Overlap.ts').replaceAll('\\', '/'),
     );
     expect(overlapItems).toHaveLength(1);
   });

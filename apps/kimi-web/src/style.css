@@ -224,7 +224,7 @@ body {
 /* ---------------------------------------------------------------------------
    Mobile dialogs → bottom sheets.
    On narrow viewports the centered modal overlays used by ModelPicker,
-   NewSessionDialog, StatusPanel, AddWorkspaceDialog, ProviderManager and
+   StatusPanel, AddWorkspaceDialog, ProviderManager and
    LoginDialog become bottom-anchored full-width sheets (rounded top, slides up).
    The selectors are compound (`.backdrop .dialog`, specificity 0,2,0) so they
    win over each component's scoped `.dialog` rule regardless of injection order.

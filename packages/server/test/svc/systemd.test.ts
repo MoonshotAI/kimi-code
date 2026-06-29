@@ -9,8 +9,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { platform } from 'node:process';
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -80,7 +78,7 @@ afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-describe.skipIf(platform !== 'linux')('buildSystemdUnit', () => {
+describe('buildSystemdUnit', () => {
   it('renders the standard [Unit]/[Service]/[Install] triple', () => {
     const unit = buildSystemdUnit({
       programArguments: ['/usr/local/bin/kimi', 'server', 'run', '--port', '58627'],
@@ -117,7 +115,7 @@ describe.skipIf(platform !== 'linux')('buildSystemdUnit', () => {
   });
 });
 
-describe.skipIf(platform !== 'linux')('parseSystemctlShow', () => {
+describe('parseSystemctlShow', () => {
   it('parses KEY=VALUE lines into a map', () => {
     const out = ['ActiveState=active', 'SubState=running', 'MainPID=4321', 'ExecStart={ path=/x }'].join('\n');
     const fields = parseSystemctlShow(out);
@@ -134,7 +132,7 @@ describe.skipIf(platform !== 'linux')('parseSystemctlShow', () => {
   });
 });
 
-describe.skipIf(platform !== 'linux')('systemd manager — install', () => {
+describe.skipIf(process.platform === 'win32')('systemd manager — install', () => {
   it('writes the unit, daemon-reloads, enables --now', async () => {
     const { deps, calls, unitPath } = makeDeps(
       [
@@ -243,7 +241,7 @@ describe.skipIf(platform !== 'linux')('systemd manager — install', () => {
   });
 });
 
-describe.skipIf(platform !== 'linux')('systemd manager — lifecycle', () => {
+describe.skipIf(process.platform === 'win32')('systemd manager — lifecycle', () => {
   it('start delegates to `systemctl --user start`', async () => {
     const { deps, calls, unitPath } = makeDeps([{ stdout: '', stderr: '', code: 0 }], workDir);
     mkdirSync(unitPath.replace(/\/[^/]+$/, ''), { recursive: true });
@@ -310,7 +308,7 @@ describe.skipIf(platform !== 'linux')('systemd manager — lifecycle', () => {
   });
 });
 
-describe.skipIf(platform !== 'linux')('systemd manager — status', () => {
+describe.skipIf(process.platform === 'win32')('systemd manager — status', () => {
   it('reports installed=false when no unit exists', async () => {
     const { deps } = makeDeps([], workDir);
     const mgr = createSystemdManager(deps);

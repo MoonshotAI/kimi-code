@@ -50,15 +50,13 @@ describe.each(SCENARIOS)('migration snapshot: %s', (name) => {
     // machine-dependent source/target paths so the snapshot is stable across
     // hosts. `agents.main.homedir` is an absolute path under the temp target
     // dir — replace that prefix so only the stable suffix is snapshotted.
-    // The on-disk JSON escapes backslashes (`C:\foo` → `C:\\foo`), so we
-    // escape the target the same way before doing the split-and-join.
-    const jsonEscapedTarget = target.replaceAll('\\', '\\\\');
     const stableState = state
       .replace(/"createdAt": ".+?"/, '"createdAt": "<REDACTED>"')
       .replace(/"updatedAt": ".+?"/, '"updatedAt": "<REDACTED>"')
       .replace(/"imported_at": ".+?"/, '"imported_at": "<REDACTED>"')
       .replace(/"kimi_cli_source_path": ".+?"/, '"kimi_cli_source_path": "<REDACTED>"')
-      .split(jsonEscapedTarget)
+      .replaceAll('\\\\', '/')
+      .split(target.replaceAll('\\', '/'))
       .join('<TARGET>');
     // Redact wire created_at timestamp (derived from wire_mtime or Date.now()).
     const stableWire = wire.replace(/"created_at":\s*\d+/, '"created_at":<REDACTED>');

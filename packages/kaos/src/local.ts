@@ -119,13 +119,13 @@ class LocalProcess implements KaosProcess {
     }
 
     // On Windows, `ChildProcess.kill()` only signals the shell parent, leaving
-    // grandchildren alive. Use `taskkill /T` so the caller's graceful and force
-    // kill phases apply to the whole process tree.
+    // grandchildren alive, so terminate the whole process tree with
+    // `taskkill /T`. A graceful `taskkill /T` (no `/F`) does not actually
+    // terminate a console node.exe tree, and Windows has no real graceful
+    // signal for it — Node's own `ChildProcess.kill()` is always a forceful
+    // TerminateProcess on Windows — so always force-terminate the tree.
     if (isWindows) {
-      const useForce = signal === 'SIGKILL';
-      const taskkillArgs = useForce
-        ? ['/T', '/F', '/PID', String(this.pid)]
-        : ['/T', '/PID', String(this.pid)];
+      const taskkillArgs = ['/T', '/F', '/PID', String(this.pid)];
       return new Promise<void>((resolve) => {
         const killer = spawn('taskkill', taskkillArgs, {
           stdio: 'ignore',

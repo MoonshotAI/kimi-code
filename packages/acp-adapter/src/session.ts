@@ -1314,7 +1314,7 @@ export class AcpSession {
         // event so dashboards stay coherent.
         this.emitTelemetry('question_dismissed');
       } else {
-        this.emitTelemetry('question_answered');
+        this.emitTelemetry('question_answered', { answered: Object.keys(answer).length });
       }
       return answer;
     } catch (err) {

@@ -208,8 +208,15 @@ function killProcess(child: ChildProcessWithoutNullStreams): void {
 }
 
 function tryKillProcess(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+  if (process.platform === 'win32') {
+    // On Windows, `ChildProcess.kill()` only signals the shell spawned by
+    // `shell: true`, leaving grandchildren (the actual hook command) alive
+    // and holding the cwd. `taskkill /T` terminates the whole process tree.
+    killProcessTreeWindows(child, signal === 'SIGKILL');
+    return;
+  }
   try {
-    if (process.platform !== 'win32' && child.pid !== undefined) {
+    if (child.pid !== undefined) {
       process.kill(-child.pid, signal);
     } else {
       child.kill(signal);
@@ -217,6 +224,21 @@ function tryKillProcess(child: ChildProcessWithoutNullStreams, signal: NodeJS.Si
   } catch {
     try {
       child.kill(signal);
+    } catch {}
+  }
+}
+
+function killProcessTreeWindows(child: ChildProcessWithoutNullStreams, force: boolean): void {
+  if (child.pid === undefined) return;
+  const args = force
+    ? ['/T', '/F', '/PID', String(child.pid)]
+    : ['/T', '/PID', String(child.pid)];
+  try {
+    const killer = spawn('taskkill', args, { stdio: 'ignore', windowsHide: true });
+    killer.once('error', () => {});
+  } catch {
+    try {
+      child.kill('SIGTERM');
     } catch {}
   }
 }

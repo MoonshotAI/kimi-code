@@ -382,6 +382,7 @@ describe('kimi export', () => {
       exit: ((code: number) => {
         throw new ExitCalled(code);
       }) as ExportDeps['exit'],
+      getShellEnv: () => ({ term: 'xterm-256color', shell: '/bin/zsh' }),
     });
 
     await program.parseAsync(['node', 'kimi', 'export', 'ses_telemetry', '--output', output], {

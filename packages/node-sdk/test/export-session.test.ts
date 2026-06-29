@@ -19,6 +19,11 @@ import {
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 import { TEST_IDENTITY } from './test-identity';
 
+// agent-core/node-sdk normalize paths to forward slashes (pathe). Mirror that
+// in path assertions so they hold on Windows, where node:path produces
+// backslashes.
+const toPosix = (p: string): string => p.replaceAll('\\', '/');
+
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -129,7 +134,7 @@ describe('exportSessionDirectory', () => {
       }),
     });
 
-    expect(result.zipPath).toBe(outputPath);
+    expect(result.zipPath).toBe(toPosix(outputPath));
     expect(result.sessionDir).toBe(sessionDir);
     expect(result.entries).toEqual([
       'manifest.json',
@@ -177,7 +182,7 @@ describe('exportSessionDirectory', () => {
     });
 
     const expectedPath = resolve(`${sid}.zip`);
-    expect(result.zipPath).toBe(expectedPath);
+    expect(result.zipPath).toBe(toPosix(expectedPath));
     expect(existsSync(result.zipPath)).toBe(true);
     await rm(expectedPath, { force: true });
   });
@@ -222,7 +227,7 @@ describe('exportSessionDirectory', () => {
       summary: makeSummary({ id: sid, sessionDir, workDir: tmp }),
     });
 
-    expect(result.zipPath).toBe(outputPath);
+    expect(result.zipPath).toBe(toPosix(outputPath));
     expect(existsSync(result.zipPath)).toBe(true);
   });
 
@@ -286,7 +291,7 @@ describe('KimiHarness.exportSession', () => {
     const outputPath = join(workDir, 'export.zip');
     const result = await harness.exportSession({ id: session.id, outputPath, version: '1.0.0-test' });
 
-    expect(result.zipPath).toBe(outputPath);
+    expect(result.zipPath).toBe(toPosix(outputPath));
     expect(result.entries).toContain('manifest.json');
     expect(result.entries).toContain('state.json');
     expect(result.entries).toContain('wire.jsonl');
