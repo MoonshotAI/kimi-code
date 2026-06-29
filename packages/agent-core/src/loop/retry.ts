@@ -1,5 +1,5 @@
 import { sleep } from '@antfu/utils';
-import { isProviderRateLimitError } from '@moonshot-ai/kosong';
+import { isProviderRateLimitError, APIStatusError } from '@moonshot-ai/kosong';
 import * as retry from 'retry';
 
 import type { Logger } from '#/logging/types';
@@ -21,6 +21,13 @@ const RETRY_FACTOR = 2;
 const RATE_LIMIT_RETRY_MIN_TIMEOUT_MS = 15_000;
 const RATE_LIMIT_RETRY_MAX_TIMEOUT_MS = 60_000;
 const RATE_LIMIT_RETRY_FACTOR = 2;
+
+// Server overload / 503 / "system is busy" errors need longer backoff than
+// generic transient errors but shorter than rate-limit. The upstream may
+// need 5-10s to recover from a temporary overload spike.
+const OVERLOAD_RETRY_MIN_TIMEOUT_MS = 5_000;
+const OVERLOAD_RETRY_MAX_TIMEOUT_MS = 30_000;
+const OVERLOAD_RETRY_FACTOR = 2;
 
 export interface ChatWithRetryInput {
   readonly llm: LLM;
@@ -59,7 +66,9 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
 
       const delayMs = isProviderRateLimitError(error)
         ? rateLimitBackoffDelay(attempt)
-        : (delays[attempt - 1] ?? 0);
+        : isOverloadError(error)
+          ? overloadBackoffDelay(attempt)
+          : (delays[attempt - 1] ?? 0);
       input.params.signal.throwIfAborted();
       input.dispatchEvent({
         type: 'step.retrying',
@@ -124,6 +133,22 @@ function rateLimitBackoffDelay(attempt: number): number {
     factor: RATE_LIMIT_RETRY_FACTOR,
     randomize: false,
   });
+}
+
+function overloadBackoffDelay(attempt: number): number {
+  return retry.createTimeout(Math.max(0, attempt - 1), {
+    minTimeout: OVERLOAD_RETRY_MIN_TIMEOUT_MS,
+    maxTimeout: OVERLOAD_RETRY_MAX_TIMEOUT_MS,
+    factor: OVERLOAD_RETRY_FACTOR,
+    randomize: false,
+  });
+}
+
+function isOverloadError(error: unknown): boolean {
+  if (error instanceof APIStatusError) {
+    return error.statusCode === 503;
+  }
+  return false;
 }
 
 export async function sleepForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
