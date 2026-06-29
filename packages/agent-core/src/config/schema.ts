@@ -50,6 +50,10 @@ export const ModelAliasSchema = z.object({
   // model-name version inference. Needed for custom-named Anthropic endpoints
   // whose model name does not encode a parseable Claude version.
   adaptiveThinking: z.boolean().optional(),
+  // Route the Anthropic transport through the beta Messages API
+  // (`POST /v1/messages?beta=true`) instead of the standard endpoint. Used by
+  // managed Kimi Code models that declare `protocol: 'anthropic'`.
+  betaApi: z.boolean().optional(),
 });
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;

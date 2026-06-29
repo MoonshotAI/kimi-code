@@ -31,6 +31,8 @@ interface ProviderManagerOptions {
   readonly kimiRequestHeaders?: Record<string, string>;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver;
   readonly promptCacheKey?: string;
+  // remove before commit
+  readonly adaptiveThinkingOverride?: () => boolean | undefined;
 }
 
 type AuthorizedRequest = <T>(
@@ -110,6 +112,9 @@ export class ProviderManager implements ModelProvider {
       );
     }
 
+    // remove before commit
+    const adaptiveThinkingOverride = this.options.adaptiveThinkingOverride?.();
+    const effectiveAdaptiveThinking = adaptiveThinkingOverride ?? alias.adaptiveThinking;
     const provider = toKosongProviderConfig(
       providerConfig,
       alias.model,
@@ -118,7 +123,8 @@ export class ProviderManager implements ModelProvider {
       alias.maxOutputSize,
       alias.reasoningKey,
       this.options.promptCacheKey,
-      alias.adaptiveThinking,
+      effectiveAdaptiveThinking,
+      alias.betaApi,
     );
 
     return {
@@ -234,6 +240,7 @@ function toKosongProviderConfig(
   reasoningKey: string | undefined,
   promptCacheKey: string | undefined,
   adaptiveThinking: boolean | undefined,
+  betaApi: boolean | undefined,
 ): KosongProviderConfig {
   const effectiveType = modelProtocol === 'anthropic' ? 'anthropic' : provider.type;
   switch (effectiveType) {
@@ -249,6 +256,7 @@ function toKosongProviderConfig(
         apiKey: providerApiKey(provider),
         ...(maxOutputSize !== undefined ? { defaultMaxTokens: maxOutputSize } : {}),
         ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
+        ...(betaApi !== undefined ? { betaApi } : {}),
         // Session affinity: Anthropic's analog of OpenAI `prompt_cache_key` is
         // `metadata.user_id` on the Messages API (cache-affinity / end-user id).
         ...(promptCacheKey !== undefined ? { metadata: { user_id: promptCacheKey } } : {}),
