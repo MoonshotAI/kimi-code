@@ -115,6 +115,43 @@ describe('reduceWireRecords', () => {
     expect(foldedLength).toBe(4);
   });
 
+  it('keeps shell and local-command output in the transcript but not foldedLength', () => {
+    const { entries, foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('! pwd', { kind: 'shell_command', phase: 'input' })),
+      appendMessage(userMessage('local output', { kind: 'injection', variant: 'local-command-stdout' })),
+      ...assistantStep('s1', 'a1'),
+      {
+        type: 'context.apply_compaction',
+        summary: 'SUM',
+        compactedCount: 4,
+        tokensBefore: 100,
+        tokensAfter: 20,
+        keptUserMessageCount: 1,
+      } as AgentRecord,
+      appendMessage(userMessage('u2')),
+    ]);
+
+    expect(entries.map((e) => textOf(e.message))).toEqual([
+      'u1',
+      '! pwd',
+      'local output',
+      'a1',
+      'SUM',
+      'u2',
+    ]);
+    expect(entries.map((e) => e.message.role)).toEqual([
+      'user',
+      'user',
+      'user',
+      'assistant',
+      'user',
+      'user',
+    ]);
+    // 1 kept real user message + summary + u2 appended after compaction.
+    expect(foldedLength).toBe(3);
+  });
+
   it('handles repeated compactions', () => {
     const { entries, foldedLength } = reduceWireRecords([
       appendMessage(userMessage('u1')),

@@ -299,6 +299,44 @@ describe('context-projector', () => {
     expect(proj.messages[2]!.message.content[0]).toMatchObject({ text: 'sum' });
   });
 
+  it('apply_compaction drops shell/local-command/background messages in model mode only', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'real user' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: '! pwd' }], toolCalls: [], origin: { kind: 'shell_command' as const, phase: 'input' as const } } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'local output' }], toolCalls: [], origin: { kind: 'injection' as const, variant: 'local-command-stdout' } } }, raw: {} },
+      { lineNo: 4, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'background done' }], toolCalls: [], origin: { kind: 'background_task' as const, taskId: 'task', status: 'completed' as const, notificationId: 'notification' } } }, raw: {} },
+      { lineNo: 5, data: { type: 'context.append_message' as const,
+          message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'assistant reply' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 6, data: { type: 'context.apply_compaction' as const,
+          summary: 'sum', compactedCount: 5, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
+      { lineNo: 7, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'new' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
+    ];
+
+    const model = projectContext(entries as any);
+    expect(model.messages.map((m) => m.source)).toEqual([
+      'append_message', 'compaction_summary', 'append_message',
+    ]);
+    expect(model.messages.map((m) => m.message.content[0])).toMatchObject([
+      { text: 'real user' }, { text: 'sum' }, { text: 'new' },
+    ]);
+
+    const full = projectContext(entries as any, 'full');
+    expect(full.messages.map((m) => m.source)).toEqual([
+      'append_message', 'append_message', 'append_message', 'append_message',
+      'append_message', 'compaction_summary', 'append_message',
+    ]);
+    expect(full.messages.map((m) => m.message.content[0])).toMatchObject([
+      { text: 'real user' }, { text: '! pwd' }, { text: 'local output' },
+      { text: 'background done' }, { text: 'assistant reply' }, { text: 'sum' },
+      { text: 'new' },
+    ]);
+  });
+
   // ---- Fix ④: UI-only markers must not offset agent-core history indices ------
   // agent-core computes compactedCount (and the micro-compaction cutoff) as
   // indices into _history, which NEVER contains the synthetic 'undo'/'clear'

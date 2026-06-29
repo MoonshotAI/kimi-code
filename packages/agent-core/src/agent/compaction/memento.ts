@@ -1,5 +1,6 @@
 import type { ContentPart } from '@moonshot-ai/kosong';
 import { estimateTokensForMessage } from '../../utils/tokens';
+import type { PromptOrigin } from '../context/types';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 
 /**
@@ -25,7 +26,44 @@ export const COMPACT_USER_MESSAGE_MAX_TOKENS = 20_000;
 interface MessageLike {
   readonly role: string;
   readonly content: readonly ContentPart[];
-  readonly origin?: { readonly kind: string; readonly trigger?: string } | undefined;
+  readonly origin?: PromptOrigin | undefined;
+}
+
+export type CompactionUserDisposition = 'keep' | 'drop';
+
+/**
+ * Single source of truth for whether a user-role message survives compaction as
+ * genuine user input. Codex-style semantics: only real user prompts and
+ * user-slash skill activations are kept verbatim. Everything else user-role is
+ * either rebuilt by injectors after compaction or intentionally ephemeral, so
+ * it is dropped from the live context even when transcript/replay retains it
+ * for UI rendering. New `PromptOrigin` kinds must update this switch.
+ */
+export function compactionUserMessageDisposition(
+  origin: PromptOrigin | undefined,
+): CompactionUserDisposition {
+  if (origin === undefined) return 'keep';
+  switch (origin.kind) {
+    case 'user':
+      return 'keep';
+    case 'skill_activation':
+      return origin.trigger === 'user-slash' ? 'keep' : 'drop';
+    case 'injection':
+    case 'shell_command':
+    case 'compaction_summary':
+    case 'system_trigger':
+    case 'background_task':
+    case 'cron_job':
+    case 'cron_missed':
+    case 'hook_result':
+    case 'retry':
+      return 'drop';
+    default: {
+      const _exhaustive: never = origin;
+      void _exhaustive;
+      return 'drop';
+    }
+  }
 }
 
 function extractText(content: readonly ContentPart[]): string {
@@ -45,18 +83,11 @@ export function isCompactionSummaryMessage(message: MessageLike): boolean {
 
 /**
  * Keep only genuine user input (real user prompts and user-slash skill
- * activations). Injections (system reminders, plan-mode reminders),
- * background-task notifications, system triggers, cron/hook/retry messages,
- * and previous compaction summaries are excluded — they are either
- * re-injected each turn or ephemeral, since initial context is rebuilt
- * every turn.
+ * activations). See `compactionUserMessageDisposition` for the full keep/drop
+ * policy and the rationale for each origin.
  */
 export function isRealUserInput(message: MessageLike): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
-  if (origin === undefined || origin.kind === 'user') return true;
-  if (origin.kind === 'skill_activation') return origin.trigger === 'user-slash';
-  return false;
+  return message.role === 'user' && compactionUserMessageDisposition(message.origin) === 'keep';
 }
 
 export function collectCompactableUserMessages<T extends MessageLike>(messages: readonly T[]): T[] {

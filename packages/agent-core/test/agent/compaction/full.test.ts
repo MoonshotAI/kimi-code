@@ -25,7 +25,7 @@ import {
 } from '../../../src/agent/compaction';
 import { FLAG_DEFINITIONS, MASTER_ENV } from '../../../src/flags';
 import { HookEngine, type HookEngineTriggerArgs } from '../../../src/session/hooks';
-import { estimateTokensForMessages } from '../../../src/utils/tokens';
+import { estimateTokens, estimateTokensForMessages } from '../../../src/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../fixtures/telemetry';
 import type { TestAgentContext, TestAgentOptions } from '../harness/agent';
 import { testAgent } from '../harness/agent';
@@ -131,6 +131,83 @@ describe('FullCompaction', () => {
       }),
     });
     await ctx.expectResumeMatches();
+  });
+
+  it('keeps only real user input and re-injects permission reminders after compaction', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'real user one', 'assistant one', 20);
+    ctx.agent.context.appendBashInput('pwd');
+    ctx.agent.context.appendBashOutput('/tmp/repo', '', false);
+    ctx.agent.context.appendLocalCommandStdout('local command output');
+    ctx.agent.context.appendSystemReminder('stale reminder', {
+      kind: 'injection',
+      variant: 'system_reminder',
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'background task done' }], {
+      kind: 'background_task',
+      taskId: 'task-1',
+      status: 'completed',
+      notificationId: 'notification-1',
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'real user two' }]);
+    ctx.agent.permission.setMode('auto');
+
+    const permissionReminder = new Promise<void>((resolve) => {
+      const handler = (entry: unknown) => {
+        const record = entry as {
+          event?: string;
+          args?: { message?: { origin?: { kind?: string; variant?: string } } };
+        };
+        const origin = record.args?.message?.origin;
+        if (
+          record.event === 'context.append_message' &&
+          origin?.kind === 'injection' &&
+          origin.variant === 'permission_mode'
+        ) {
+          ctx.emitter.off('context.append_message', handler);
+          resolve();
+        }
+      };
+      ctx.emitter.on('context.append_message', handler);
+    });
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+    await permissionReminder;
+
+    expect(ctx.agent.context.history.map((message) => message.origin?.kind ?? 'user')).toEqual([
+      'user',
+      'user',
+      'compaction_summary',
+      'injection',
+    ]);
+    expect(
+      ctx.agent.context.history.map((message) =>
+        message.origin?.kind === 'injection' ? message.origin.variant : undefined,
+      ),
+    ).toEqual([undefined, undefined, undefined, 'permission_mode']);
+
+    const applyCompaction = [...ctx.allEvents]
+      .toReversed()
+      .find((entry) => entry.type === '[wire]' && entry.event === 'context.apply_compaction');
+    expect(applyCompaction).toBeDefined();
+    const record = applyCompaction?.args as {
+      keptUserMessageCount?: number;
+      tokensAfter?: number;
+      summary?: string;
+    };
+    expect(record.keptUserMessageCount).toBe(2);
+    const expectedSummary = `${COMPACTION_SUMMARY_PREFIX}\nCompacted summary.`;
+    expect(record.summary).toBe(expectedSummary);
+    expect(record.tokensAfter).toBe(
+      estimateTokens(expectedSummary) +
+        estimateTokensForMessages(ctx.agent.context.history.slice(0, 2)),
+    );
   });
 
   it('refreshes the system prompt after compaction completes', async () => {

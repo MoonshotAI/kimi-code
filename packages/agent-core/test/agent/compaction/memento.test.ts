@@ -5,9 +5,13 @@ import {
   COMPACTION_SUMMARY_PREFIX,
   buildCompactionSummaryText,
   collectCompactableUserMessages,
+  compactionUserMessageDisposition,
   isCompactionSummaryMessage,
+  isRealUserInput,
   selectRecentUserMessages,
+  type CompactionUserDisposition,
 } from '../../../src/agent/compaction';
+import type { PromptOrigin } from '../../../src/agent/context/types';
 import { estimateTokens, estimateTokensForMessage } from '../../../src/utils/tokens';
 
 function textMessage(role: 'user' | 'assistant' | 'tool', text: string): Message {
@@ -16,6 +20,78 @@ function textMessage(role: 'user' | 'assistant' | 'tool', text: string): Message
 
 function messageText(message: Message): string {
   return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+}
+
+const ALL_PROMPT_ORIGIN_KINDS = {
+  user: true,
+  skill_activation: true,
+  injection: true,
+  shell_command: true,
+  compaction_summary: true,
+  system_trigger: true,
+  background_task: true,
+  cron_job: true,
+  cron_missed: true,
+  hook_result: true,
+  retry: true,
+} satisfies Record<PromptOrigin['kind'], true>;
+
+const EXPECTED_DISPOSITION: Record<PromptOrigin['kind'], CompactionUserDisposition> = {
+  user: 'keep',
+  skill_activation: 'keep',
+  injection: 'drop',
+  shell_command: 'drop',
+  compaction_summary: 'drop',
+  system_trigger: 'drop',
+  background_task: 'drop',
+  cron_job: 'drop',
+  cron_missed: 'drop',
+  hook_result: 'drop',
+  retry: 'drop',
+};
+
+function originForKind(kind: PromptOrigin['kind']): PromptOrigin {
+  switch (kind) {
+    case 'user':
+      return { kind: 'user' };
+    case 'skill_activation':
+      return {
+        kind: 'skill_activation',
+        activationId: 'activation',
+        skillName: 'skill',
+        trigger: 'user-slash',
+      };
+    case 'injection':
+      return { kind: 'injection', variant: 'system_reminder' };
+    case 'shell_command':
+      return { kind: 'shell_command', phase: 'input' };
+    case 'compaction_summary':
+      return { kind: 'compaction_summary' };
+    case 'system_trigger':
+      return { kind: 'system_trigger', name: 'system' };
+    case 'background_task':
+      return {
+        kind: 'background_task',
+        taskId: 'task',
+        status: 'completed',
+        notificationId: 'notification',
+      };
+    case 'cron_job':
+      return {
+        kind: 'cron_job',
+        jobId: 'job',
+        cron: '* * * * *',
+        recurring: true,
+        coalescedCount: 1,
+        stale: false,
+      };
+    case 'cron_missed':
+      return { kind: 'cron_missed', count: 1 };
+    case 'hook_result':
+      return { kind: 'hook_result', event: 'PreCompact' };
+    case 'retry':
+      return { kind: 'retry', trigger: 'system' };
+  }
 }
 
 describe('isCompactionSummaryMessage', () => {
@@ -33,6 +109,45 @@ describe('isCompactionSummaryMessage', () => {
 
   it('ignores ordinary user messages', () => {
     expect(isCompactionSummaryMessage(textMessage('user', 'hello'))).toBe(false);
+  });
+});
+
+describe('compactionUserMessageDisposition', () => {
+  it('classifies every prompt origin kind', () => {
+    for (const kind of Object.keys(ALL_PROMPT_ORIGIN_KINDS) as Array<PromptOrigin['kind']>) {
+      expect(compactionUserMessageDisposition(originForKind(kind))).toBe(EXPECTED_DISPOSITION[kind]);
+    }
+  });
+
+  it('drops model-triggered skill activations', () => {
+    expect(
+      compactionUserMessageDisposition({
+        kind: 'skill_activation',
+        activationId: 'activation',
+        skillName: 'skill',
+        trigger: 'model-tool',
+      }),
+    ).toBe('drop');
+  });
+});
+
+describe('isRealUserInput', () => {
+  it('keeps genuine user input and drops other origins', () => {
+    expect(isRealUserInput({ ...textMessage('user', 'hello'), origin: originForKind('user') })).toBe(
+      true,
+    );
+    expect(
+      isRealUserInput({ ...textMessage('user', 'hello'), origin: originForKind('skill_activation') }),
+    ).toBe(true);
+    expect(
+      isRealUserInput({ ...textMessage('user', 'hello'), origin: originForKind('injection') }),
+    ).toBe(false);
+    expect(
+      isRealUserInput({ ...textMessage('user', 'hello'), origin: originForKind('shell_command') }),
+    ).toBe(false);
+    expect(
+      isRealUserInput({ ...textMessage('user', 'hello'), origin: originForKind('background_task') }),
+    ).toBe(false);
   });
 });
 

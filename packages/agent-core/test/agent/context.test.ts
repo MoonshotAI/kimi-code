@@ -616,6 +616,37 @@ describe('Agent context', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('applyCompaction keeps only real user input from mixed user-role history', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'real prompt' }]);
+    ctx.agent.context.appendBashInput('pwd');
+    ctx.agent.context.appendBashOutput('/tmp/repo', '', false);
+    ctx.agent.context.appendLocalCommandStdout('local command output');
+    ctx.agent.context.appendSystemReminder('stale reminder', {
+      kind: 'injection',
+      variant: 'host',
+    });
+
+    const result = ctx.agent.context.applyCompaction({
+      summary: 'summary of mixed history',
+      compactedCount: 5,
+      tokensBefore: 100,
+    });
+    ctx.agent.context.appendSystemReminder('fresh reminder', {
+      kind: 'injection',
+      variant: 'host',
+    });
+
+    expect(ctx.agent.context.history.map(({ role, origin }) => ({ role, origin }))).toEqual([
+      { role: 'user', origin: { kind: 'user' } },
+      { role: 'user', origin: { kind: 'compaction_summary' } },
+      { role: 'user', origin: { kind: 'injection', variant: 'host' } },
+    ]);
+    expect(result.keptUserMessageCount).toBe(1);
+  });
+
   it('clears context before the next LLM request', async () => {
     const ctx = testAgent();
     ctx.configure();
