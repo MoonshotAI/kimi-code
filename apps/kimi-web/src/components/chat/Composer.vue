@@ -160,7 +160,7 @@ watch(() => props.sessionId, () => {
 // implementation; the composer keeps the keydown orchestration (which also
 // juggles the slash and mention menus).
 // ---------------------------------------------------------------------------
-const history = useInputHistory({ text, textareaRef, autosize });
+const history = useInputHistory({ text, textareaRef, autosize, sessionId: () => props.sessionId });
 
 // ---------------------------------------------------------------------------
 // Slash-command menu — see useSlashMenu for the implementation. The composer
@@ -232,7 +232,7 @@ const {
   handleDragLeave,
   handleDrop,
   clearAfterSubmit,
-} = useAttachmentUpload({ uploadImage: () => props.uploadImage });
+} = useAttachmentUpload({ uploadImage: () => props.uploadImage, sessionId: () => props.sessionId });
 
 // Silence noUnusedLocals: fileInputRef is used as a template ref (ref="fileInputRef").
 void fileInputRef;
