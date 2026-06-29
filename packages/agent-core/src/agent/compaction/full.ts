@@ -36,6 +36,7 @@ import {
   applyCompletionBudget,
   resolveCompletionBudget,
 } from '../../utils/completion-budget';
+import { renderPrompt } from '../../utils/render-prompt';
 import compactionInstructionTemplate from './compaction-instruction.md?raw';
 import type { CompactionBeginData, CompactionResult } from './types';
 import {
@@ -323,11 +324,9 @@ export class FullCompaction {
   }
 
   private buildInstruction(customInstruction: string | undefined): string {
-    const base = compactionInstructionTemplate.trimEnd();
-    if (customInstruction === undefined || customInstruction.trim().length === 0) {
-      return base;
-    }
-    return `${base}\n\n${customInstruction}`;
+    return renderPrompt(compactionInstructionTemplate, {
+      customInstruction: customInstruction?.trim() ?? '',
+    }).trimEnd();
   }
 
   private postProcessSummary(summary: string): string {

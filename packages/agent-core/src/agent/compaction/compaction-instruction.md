@@ -61,3 +61,8 @@ Omit non-critical code, intermediate attempts, and resolved errors.
 Be concise, structured, and focused on helping the next LLM seamlessly continue the work.
 
 Respond with text only. Do not call any tools — you already have everything you need in the conversation history.
+
+{% if customInstruction %}
+Optional user instruction:
+{{ customInstruction }}
+{% endif %}
