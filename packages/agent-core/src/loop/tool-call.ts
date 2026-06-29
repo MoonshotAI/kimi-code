@@ -26,7 +26,7 @@ import { PathSecurityError } from '../tools/policies/path-access';
 
 import { isUserCancellation } from '../utils/abort';
 import { errorMessage, isAbortError } from './errors';
-import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
+import type { LoopEventDispatcher, LoopToolCallEvent, LoopToolProgressSummary } from './events';
 import type { LLM, LLMChatResponse } from './llm';
 import { ToolAccesses } from './tool-access';
 import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
@@ -35,6 +35,7 @@ import type {
   ExecutableTool,
   LoopHooks,
   ToolCall,
+  ToolUpdate,
   PrepareToolExecutionResult,
   ExecutableToolResult,
   RunnableToolExecution,
@@ -106,6 +107,38 @@ interface PendingToolResult {
   readonly args: unknown;
   readonly result: ExecutableToolResult;
   readonly stopTurn?: boolean | undefined;
+  readonly progress?: LoopToolProgressSummary | undefined;
+}
+
+/** Mutable accumulator for a tool's sparse progress, distilled into a
+ *  constant-size {@link LoopToolProgressSummary} when the tool settles. */
+interface MutableProgress {
+  updateCount: number;
+  lastStatus?: string;
+  maxPercent?: number;
+}
+
+function recordProgress(p: MutableProgress, update: ToolUpdate): void {
+  // stdout/stderr are streamed output, already reflected in result.output;
+  // persisting them per-chunk would bloat the wire. Only summarize the sparse
+  // status/percent/custom signals.
+  if (update.kind === 'stdout' || update.kind === 'stderr') return;
+  p.updateCount += 1;
+  if (typeof update.percent === 'number') {
+    p.maxPercent = Math.max(p.maxPercent ?? 0, update.percent);
+  }
+  if (typeof update.text === 'string' && update.text.length > 0) {
+    p.lastStatus = update.text.length > 200 ? `${update.text.slice(0, 200)}…` : update.text;
+  }
+}
+
+function progressSummary(p: MutableProgress): LoopToolProgressSummary | undefined {
+  if (p.updateCount === 0) return undefined;
+  return {
+    updateCount: p.updateCount,
+    ...(p.lastStatus !== undefined ? { lastStatus: p.lastStatus } : {}),
+    ...(p.maxPercent !== undefined ? { maxPercent: p.maxPercent } : {}),
+  };
 }
 
 interface PreparedToolCallTask {
@@ -157,6 +190,7 @@ export async function runToolCallBatch(
         parentUuid: result.toolCall.id,
         toolCallId: result.toolCall.id,
         result: result.result,
+        ...(result.progress !== undefined ? { progress: result.progress } : {}),
       });
     }
   } finally {
@@ -478,8 +512,9 @@ async function runRunnableToolCall(
   }
 
   let toolResult: ExecutableToolResult;
+  const progress: MutableProgress = { updateCount: 0 };
   try {
-    const raw = await executeTool(step, execution, toolCall, toolName, metadata);
+    const raw = await executeTool(step, execution, toolCall, toolName, metadata, progress);
     toolResult = coerceToolResult(raw, toolName);
   } catch (error) {
     const aborted = isAbortError(error) || signal.aborted;
@@ -496,7 +531,7 @@ async function runRunnableToolCall(
     return makeErrorToolResult(call, effectiveArgs, output);
   }
 
-  return makeToolResult(call, effectiveArgs, toolResult);
+  return makeToolResult(call, effectiveArgs, toolResult, progressSummary(progress));
 }
 
 async function finalizePendingToolResult(
@@ -556,6 +591,7 @@ async function executeTool(
   toolCall: ToolCall,
   toolName: string,
   metadata: unknown,
+  progress: MutableProgress,
 ): Promise<ExecutableToolResult> {
   const { dispatchEvent, signal, turnId } = step;
 
@@ -568,6 +604,7 @@ async function executeTool(
     signal,
     onUpdate: (update) => {
       if (signal.aborted) return;
+      recordProgress(progress, update);
       dispatchEvent({
         type: 'tool.progress',
         toolCallId: toolCall.id,
@@ -683,6 +720,7 @@ function makeToolResult(
   call: PreflightedToolCall,
   args: unknown,
   result: ExecutableToolResult,
+  progress?: LoopToolProgressSummary | undefined,
 ): PendingToolResult {
   return {
     toolCall: call.toolCall,
@@ -690,6 +728,7 @@ function makeToolResult(
     args,
     result,
     stopTurn: toolResultStopsTurn(result),
+    ...(progress !== undefined ? { progress } : {}),
   };
 }
 

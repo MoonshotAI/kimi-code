@@ -22,11 +22,32 @@ export interface LoopStepEndEvent {
   readonly llmFirstTokenLatencyMs?: number | undefined;
   readonly llmStreamDurationMs?: number | undefined;
   /**
+   * Transient provider failures retried before this step finally succeeded,
+   * in attempt order. Omitted when the step succeeded on the first attempt.
+   * Persisted (unlike the live-only `step.retrying` event) so a post-hoc
+   * analysis can see why a step was slow or flaky.
+   */
+  readonly retries?: readonly LoopStepRetryRecord[] | undefined;
+  /**
    * Provider diagnostics are optional and must not drive loop control.
    * Use `finishReason` for normalized behavior.
    */
   readonly providerFinishReason?: FinishReason | undefined;
   readonly rawFinishReason?: string | undefined;
+}
+
+/**
+ * One recovered transient failure of a model step. Mirrors the recoverable
+ * fields of the live-only `step.retrying` event (minus the redundant
+ * `maxAttempts`/`stepUuid`).
+ */
+export interface LoopStepRetryRecord {
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly delayMs: number;
+  readonly errorName: string;
+  readonly errorMessage: string;
+  readonly statusCode?: number | undefined;
 }
 
 export interface LoopStepRetryingEvent {
@@ -70,6 +91,21 @@ export interface LoopToolResultEvent {
   readonly parentUuid: string;
   readonly toolCallId: string;
   readonly result: ExecutableToolResult;
+  /**
+   * Bounded summary of the sparse progress this tool reported while running
+   * (status / percent updates — NOT streamed stdout/stderr, which would bloat
+   * the wire and is already reflected in `result.output`). Omitted when the
+   * tool reported no such progress. Persisted so a post-hoc analysis can see
+   * that a long-running tool was making progress.
+   */
+  readonly progress?: LoopToolProgressSummary | undefined;
+}
+
+/** Constant-size summary of a tool's sparse progress updates. */
+export interface LoopToolProgressSummary {
+  readonly updateCount: number;
+  readonly lastStatus?: string | undefined;
+  readonly maxPercent?: number | undefined;
 }
 
 export interface LoopTurnInterruptedEvent {

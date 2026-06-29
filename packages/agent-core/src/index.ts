@@ -72,9 +72,11 @@ export type {
   LoopRecordedEvent,
   LoopStepBeginEvent,
   LoopStepEndEvent,
+  LoopStepRetryRecord,
   LoopContentPartEvent,
   LoopToolCallEvent,
   LoopToolResultEvent,
+  LoopToolProgressSummary,
 } from './loop';
 export type {
   ExecutableToolResult,

@@ -4,7 +4,7 @@ import * as retry from 'retry';
 import type { Logger } from '#/logging/types';
 
 import { abortable } from '../utils/abort';
-import type { LoopEventDispatcher } from './events';
+import type { LoopEventDispatcher, LoopStepRetryRecord } from './events';
 import { isAbortError } from './errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 
@@ -23,6 +23,12 @@ export interface ChatWithRetryInput {
   readonly stepUuid: string;
   readonly maxAttempts?: number;
   readonly log?: Logger | undefined;
+  /**
+   * Invoked once per recovered transient failure, in attempt order. Lets the
+   * caller persist the retry history (the live `step.retrying` event is not
+   * recorded). Best-effort: never throws into the retry loop.
+   */
+  readonly onRetry?: ((record: LoopStepRetryRecord) => void) | undefined;
 }
 
 export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatResponse> {
@@ -51,17 +57,26 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
 
       const delayMs = delays[attempt - 1] ?? 0;
       input.params.signal.throwIfAborted();
+      const retryRecord: LoopStepRetryRecord = {
+        failedAttempt: attempt,
+        nextAttempt: attempt + 1,
+        delayMs,
+        ...retryErrorFields(error),
+      };
       input.dispatchEvent({
         type: 'step.retrying',
         turnId: input.turnId,
         step: input.currentStep,
         stepUuid: input.stepUuid,
-        failedAttempt: attempt,
-        nextAttempt: attempt + 1,
         maxAttempts,
-        delayMs,
-        ...retryErrorFields(error),
+        ...retryRecord,
       });
+      // Best-effort: a misbehaving collector must not abort the retry loop.
+      try {
+        input.onRetry?.(retryRecord);
+      } catch {
+        // ignore
+      }
       await sleepForRetry(delayMs, input.params.signal);
     }
   }

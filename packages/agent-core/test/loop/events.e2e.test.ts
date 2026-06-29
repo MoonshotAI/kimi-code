@@ -158,6 +158,35 @@ describe('runTurn — LoopEventDispatcher live event containment', () => {
     expect(typeof tr?.result.output).toBe('string');
   });
 
+  it('summarizes sparse tool progress on the tool.result event (excludes stdout/stderr)', async () => {
+    const progressTool = new ProgressTool([
+      { kind: 'stdout', text: 'noise' }, // streamed output — excluded from the summary
+      { kind: 'progress', percent: 30 },
+      { kind: 'status', text: 'halfway' },
+      { kind: 'progress', percent: 80 },
+    ]);
+    const { sink } = await runTurn({
+      tools: [progressTool],
+      responses: [
+        makeToolUseResponse([makeToolCall('progress', {}, 'tc-p')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+    const tr = sink.byType('tool.result')[0];
+    expect(tr?.progress).toEqual({ updateCount: 3, lastStatus: 'halfway', maxPercent: 80 });
+  });
+
+  it('omits the progress summary when a tool reports no sparse progress', async () => {
+    const { sink } = await runTurn({
+      tools: [new EchoTool()],
+      responses: [
+        makeToolUseResponse([makeToolCall('echo', { text: 'hi' }, 'tc-e')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+    expect(sink.byType('tool.result')[0]?.progress).toBeUndefined();
+  });
+
   it('accepts a custom emitter function', async () => {
     class StrictCollector {
       readonly events: LoopEvent[] = [];

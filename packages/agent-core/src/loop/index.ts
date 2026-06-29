@@ -47,6 +47,7 @@ export type {
   LoopStepBeginEvent,
   LoopStepEndEvent,
   LoopStepRetryingEvent,
+  LoopStepRetryRecord,
   LoopLiveOnlyEvent,
   LoopEvent,
   LoopInterruptReason,
@@ -57,6 +58,7 @@ export type {
   LoopToolCallDeltaEvent,
   LoopToolCallEvent,
   LoopToolProgressEvent,
+  LoopToolProgressSummary,
   LoopToolResultEvent,
   LoopTurnInterruptedEvent,
 } from './events';
